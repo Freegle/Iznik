@@ -347,10 +347,8 @@ func reachCandidateQuery(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenOn
 
 	reachWhere, pointArgs, probe := reachOrOverflowSQL(db, myid, latlng.Lng, latlng.Lat)
 
-	// Two independent shape axes -
-	// unseenFilter (a plain bool toggle) and reachWhere (a live-DB-gated
-	// choice between the legacy exact-polygon test and the sandwich-bounds
-	// form, see reachContainmentSQL/rippling.ReachBoundsReady) - are composed
+	// Two independent shape axes - unseenFilter (a plain bool toggle) and
+	// reachWhere (see reachOrOverflowSQL) - are composed
 	// exactly as the original raw SQL was: one concatenated WHERE string,
 	// passed to a SINGLE Where() call. Splitting this into multiple Where()
 	// calls would trip GORM's own clause.Where wrapping (clause/where.go

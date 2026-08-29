@@ -2850,11 +2850,10 @@ func clipReachCellsOnly(db *gorm.DB, msgid, gid uint64) {
 	}
 
 	clipped := reach.Subtract(group).Encode()
-	set := map[string]interface{}{"polygon_cells": clipped}
-	if rippling.ReachBoundsReady(db) {
-		set["inner_bound"] = gorm.Expr("NULL")
-	}
-	db.Table("rippling_reach").Where("msgid = ?", msgid).Updates(set)
+	db.Table("rippling_reach").Where("msgid = ?", msgid).Updates(map[string]interface{}{
+		"polygon_cells": clipped,
+		"inner_bound":   gorm.Expr("NULL"),
+	})
 }
 
 // RecordRippleEvent bumps the per-day counter for a rippling-out event (design §15/§16 —

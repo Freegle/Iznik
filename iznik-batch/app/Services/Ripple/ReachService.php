@@ -6,7 +6,6 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 
 /**
  * Computes a post's rippled-out reach from the routing server
@@ -584,7 +583,7 @@ class ReachService
      */
     public function storeReachLabels(int $msgid, float $lat, float $lng, float $maxMinutes): bool
     {
-        if ($maxMinutes <= 0 || !$this->reachLabelsReady()) {
+        if ($maxMinutes <= 0) {
             return false;
         }
         try {
@@ -626,10 +625,10 @@ class ReachService
             }
         }
         $update = ['reach_labels' => $labels];
-        if (array_key_exists('origin_union_secs', $body) && self::unionColumnsReady()) {
+        if (array_key_exists('origin_union_secs', $body)) {
             $update['origin_union_secs'] = (float) $body['origin_union_secs'];
         }
-        $fp = self::unionColumnsReady() && !empty($body['fp']) ? (string) $body['fp'] : null;
+        $fp = !empty($body['fp']) ? (string) $body['fp'] : null;
         try {
             // One transaction: the blob and its leaves commit together. A blob
             // without its leaves would permanently hide the post from the leaf
@@ -657,23 +656,6 @@ class ReachService
         return true;
     }
 
-    /** Deploy-before-migrate guard for the endgame columns; checked once. */
-    private static ?bool $unionColsReady = null;
-
-    private static function unionColumnsReady(): bool
-    {
-        if (self::$unionColsReady === null) {
-            try {
-                self::$unionColsReady = Schema::hasColumn('rippling_reach', 'origin_union_secs')
-                    && Schema::hasColumn('rippling_reach_leaves', 'fp');
-            } catch (\Throwable) {
-                self::$unionColsReady = false;
-            }
-        }
-
-        return self::$unionColsReady;
-    }
-
     /**
      * The backfill face of the union computation, for a post whose labels are
      * ALREADY stored: one POST /v1/reach-union with the stored blob computes
@@ -684,9 +666,6 @@ class ReachService
      */
     public function storeUnionSecs(int $msgid): bool
     {
-        if (!self::unionColumnsReady()) {
-            return false;
-        }
         $row = DB::table('rippling_reach')->select('reach_labels')->where('msgid', $msgid)->first();
         if ($row === null || $row->reach_labels === null) {
             return false;
@@ -1002,25 +981,6 @@ class ReachService
         }
 
         return $maxDriveMin * 60.0;
-    }
-
-    /** Both label stores exist (deploy can precede the schema change). */
-    private static ?bool $reachLabelsReady = null;
-
-    private function reachLabelsReady(): bool
-    {
-        if (self::$reachLabelsReady === null) {
-            try {
-                // Only a successful check is cached: a transient DB error here
-                // must not mark the schema absent for the rest of the process.
-                self::$reachLabelsReady = Schema::hasColumn('rippling_reach', 'reach_labels')
-                    && Schema::hasTable('rippling_reach_leaves');
-            } catch (\Throwable) {
-                return false;
-            }
-        }
-
-        return self::$reachLabelsReady;
     }
 
     public function catchmentGeometry(float $lat, float $lng, float $minutes): ?array

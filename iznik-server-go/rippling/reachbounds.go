@@ -1,11 +1,5 @@
 package rippling
 
-import (
-	"sync"
-
-	"gorm.io/gorm"
-)
-
 // Shared sandwich-bounds SQL for the reach containment tests
 // (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md). The bounds live as
 // SAME-ROW columns (outer_bound NOT NULL and spatially indexed, inner_bound
@@ -35,20 +29,3 @@ func ReachOuterOnlyWhere(lng, lat float64, srid int) (string, []interface{}) {
 		[]interface{}{lng, lat, srid, lng, lat, srid}
 }
 
-var reachBoundsOnce sync.Once
-var reachBoundsExists bool
-
-// ReachBoundsReady reports whether the sandwich-bounds columns have been migrated onto
-// rippling_reach. Checked once per process (like chat's AttributionSchemaReady):
-// deploying this code before the migration keeps the bounds-free queries;
-// restart the Go API after the schema migration to pick the sandwich up.
-func ReachBoundsReady(db *gorm.DB) bool {
-	reachBoundsOnce.Do(func() {
-		var n int64
-		db.Table("information_schema.COLUMNS").
-			Where("table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'outer_bound'").
-			Count(&n)
-		reachBoundsExists = n > 0
-	})
-	return reachBoundsExists
-}

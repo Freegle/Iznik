@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-28
+last_reviewed: 2026-08-29
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**

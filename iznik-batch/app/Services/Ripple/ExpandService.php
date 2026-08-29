@@ -7,7 +7,6 @@ use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 
 /**
  * The rippling-out reach engine.
@@ -44,9 +43,6 @@ class ExpandService
     /** Compact cell-set form of the reach polygon (plans/2026-08-24-rippling-reach-raster-storage.md). */
     private CellSetService $cellSets;
 
-    /** Memoized rippling_reach density-column check, so a pre-migration deploy is a no-op. */
-    private static ?bool $densityColumns = null;
-
     public function __construct(
         private ReachService $reach,
         ?ReachBoundsService $bounds = null,
@@ -75,29 +71,6 @@ class ExpandService
         }
 
         return ' AND ' . $column . ' NOT IN (' . implode(',', $ids) . ')';
-    }
-
-    /** Has the density-sizing migration run? Without it the cap still applies, unrecorded. */
-    /** Memoized: has the overflow_cells (raster-storage) migration run? */
-    private static ?bool $overflowCellsColumn = null;
-
-    private function overflowCellsColumnReady(): bool
-    {
-        if (self::$overflowCellsColumn === null) {
-            try {
-                self::$overflowCellsColumn = Schema::hasColumn('rippling_reach', 'overflow_cells');
-            } catch (\Throwable) {
-                self::$overflowCellsColumn = false;
-            }
-        }
-
-        return self::$overflowCellsColumn;
-    }
-
-    /** Test-only: forget the memoized overflow_cells column check. */
-    public static function forgetOverflowCellsColumn(): void
-    {
-        self::$overflowCellsColumn = null;
     }
 
     /**
@@ -164,65 +137,15 @@ class ExpandService
         return empty($out) ? null : json_encode($out);
     }
 
-    private function densityColumnsReady(): bool
-    {
-        if (self::$densityColumns === null) {
-            try {
-                self::$densityColumns = Schema::hasColumn('rippling_reach', 'density_band');
-            } catch (\Throwable) {
-                self::$densityColumns = false;
-            }
-        }
-
-        return self::$densityColumns;
-    }
-
-    /** Test-only: forget the memoized density-column check. */
-    public static function forgetDensityColumns(): void
-    {
-        self::$densityColumns = null;
-    }
-
-    /** Memoized: has the polygon_cells (raster-storage) migration run? */
-    private static ?bool $cellsColumn = null;
-
-    /**
-     * Has plans/2026-08-24-rippling-reach-raster-storage.md's polygon_cells
-     * column landed? A deploy ahead of it keeps writing/reading `polygon`
-     * exactly as before - this is purely additive, following max_polygon_cells.
-     */
-    private function cellsColumnReady(): bool
-    {
-        if (self::$cellsColumn === null) {
-            try {
-                self::$cellsColumn = Schema::hasColumn('rippling_reach', 'polygon_cells');
-            } catch (\Throwable) {
-                self::$cellsColumn = false;
-            }
-        }
-
-        return self::$cellsColumn;
-    }
-
-    /** Test-only: forget the memoized polygon_cells column check. */
-    public static function forgetCellsColumn(): void
-    {
-        self::$cellsColumn = null;
-    }
-
-
     /**
      * SET-clause fragment (+ its params) deriving the sandwich bounds from the SAME
      * polygon WKT being written, so polygon and bounds land in ONE statement — no
-     * timing window in which a new polygon has stale bounds. Empty pre-migration.
+     * timing window in which a new polygon has stale bounds.
      *
      * @return array{0:string,1:array<int,string>}
      */
     private function boundsSetSql(string $storeWkt): array
     {
-        if (!$this->bounds->ready()) {
-            return ['', []];
-        }
         $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
 
         return [
@@ -242,10 +165,6 @@ class ExpandService
      */
     private function boundsEnvelopeSql(string $storeWkt): array
     {
-        if (!$this->bounds->ready()) {
-            return ['', []];
-        }
-
         return [
             ', outer_bound = ST_Envelope(ST_GeomFromText(?, ' . self::SRID . ')), inner_bound = NULL',
             [$storeWkt],
@@ -352,17 +271,11 @@ class ExpandService
             return $stats; // cap not active — there is nothing smaller to shrink to
         }
 
-        $cols = ['msgid', 'lat', 'lng', 'tick', 'total_freeglers', 'rejected_groups', 'status'];
-        if ($this->densityColumnsReady()) {
-            $cols[] = 'max_minutes_cap';
-        }
         $q = DB::table('rippling_reach')
-            ->select($cols)
             // Current footprint, for the crosspost-breadth stat: the stored
             // grid, counted via the spatial server's groups-intersecting
-            // answer. Absent (retired rows now, every row once the operator
-            // drops the columns) the stat simply skips the before-count.
-            ->when($this->cellsColumnReady(), fn ($qq) => $qq->addSelect('polygon_cells'))
+            // answer. Absent (retired rows) the stat skips the before-count.
+            ->select(['msgid', 'lat', 'lng', 'tick', 'total_freeglers', 'rejected_groups', 'status', 'max_minutes_cap', 'polygon_cells'])
             ->where('status', '!=', 'rejected')            // active reach rows only
             ->where('total_freeglers', '>', $target);      // only rows that can exceed the cap
         if ($onlyMsgid !== null) {
@@ -437,8 +350,7 @@ class ExpandService
             // rasterise SKIPS the row (this pass SHRINKS - writing a row
             // whose new, smaller reach nobody can read would admit people
             // the cap just excluded).
-            $withOverflowCells = $this->overflowCellsColumnReady();
-            $ovCellsSet = $withOverflowCells ? ', overflow_cells = ?' : '';
+            $ovCellsSet = ', overflow_cells = ?';
             if ($this->gridRetired((int) $row->msgid)) {
                 // Labels + union threshold answer everything the grid did;
                 // stop re-materialising it (NULL drains the blob) and skip
@@ -452,31 +364,26 @@ class ExpandService
                     continue;
                 }
             }
-            // Anchored on updated_at so the statement stays valid whether or
-            // not the grid column (dropped by the operator at the end of the
-            // cutover) and the derived bounds are present.
-            $gridSet = $this->cellsColumnReady() ? ', polygon_cells = ?' : '';
+            // Anchored on updated_at so the SET clause is never empty.
+            $gridSet = ', polygon_cells = ?';
             $shrinkSql = fn (string $set): string => 'UPDATE rippling_reach
                     SET updated_at = updated_at' . $gridSet . $set . ',
                         schedule = ?, reachable_group_ids = ?, total_freeglers = ?, max_drive_min = ?'
                         . $ovCellsSet . '
                   WHERE msgid = ?';
-            $shrinkTail = array_merge([
+            $shrinkTail = [
                 json_encode($ticks),
                 json_encode($this->tickReachableIds($entry, $schedule)),
                 (int) $schedule['total_freeglers'],
                 $schedule['max_drive_min'],
-            ], $withOverflowCells ? [$this->overflowCellsJson($schedule)] : [], [
+                $this->overflowCellsJson($schedule),
                 $row->msgid,
-            ]);
-            $gridLead = $this->cellsColumnReady() ? [$cells] : [];
+            ];
+            $gridLead = [$cells];
             try {
                 // keep-raw: UPDATE with derived-bounds SQL expressions in SET - the builder cannot render these
                 DB::statement($shrinkSql($boundsSet), array_merge($gridLead, $boundsParams, $shrinkTail));
             } catch (\Throwable $e) {
-                if ($boundsSet === '') {
-                    throw $e;
-                }
                 [$envSet, $envParams] = $this->boundsEnvelopeSql($storeWkt);
                 // keep-raw: envelope-fallback variant of the same spatial UPDATE
                 DB::statement($shrinkSql($envSet), array_merge($gridLead, $envParams, $shrinkTail));
@@ -940,9 +847,7 @@ class ExpandService
      */
     private function outOfReachRippledGroupsFromCells(int $msgid): ?array
     {
-        $cols = $this->cellsColumnReady()
-            ? ['polygon_cells', 'reachable_group_ids']
-            : ['reachable_group_ids'];
+        $cols = ['polygon_cells', 'reachable_group_ids'];
         $rr = DB::table('rippling_reach')
             ->where('msgid', $msgid)
             ->where('status', '<>', 'held')
@@ -1269,7 +1174,6 @@ class ExpandService
                 $reuseParams[] = $p['lat'];
                 $reuseParams[] = $p['lng'];
             }
-            $capCol = $this->densityColumnsReady() ? ', max_minutes_cap' : '';
             // The rings' cell-set form must be carried across a reuse too, so
             // a reused row costs NO rasterise calls: it inherits the cells
             // that were built for the row it is copied from. Rebuilding the
@@ -1277,10 +1181,9 @@ class ExpandService
             // happened before - leaves the column NULL on every reused row,
             // and reuse is commonest exactly where posts cluster. That is the
             // mechanism that left density_band NULL on ~89% of rows.
-            $ovCellsCol = $this->overflowCellsColumnReady() ? ', overflow_cells' : '';
             // keep-raw: row-constructor `(lat, lng) IN ((?,?),(?,?)...)` - the builder cannot render a tuple IN
             $existing = DB::select(
-                'SELECT lat, lng, schedule, total_freeglers, max_drive_min' . $capCol . $ovCellsCol . '
+                'SELECT lat, lng, schedule, total_freeglers, max_drive_min, max_minutes_cap, overflow_cells
                  FROM rippling_reach
                  WHERE schedule IS NOT NULL AND (lat, lng) IN (' . $placeholders . ')',
                 $reuseParams
@@ -1297,17 +1200,15 @@ class ExpandService
                 // grows to the ceiling, so this mostly guards the rows written before
                 // that - and it is what makes a change to the ceiling take effect
                 // everywhere rather than only where nobody had posted before.
-                if ($capCol !== '') {
-                    $storedCap = $e->max_minutes_cap === null ? null : (float) $e->max_minutes_cap;
-                    if ($storedCap === null || abs($storedCap - $ceiling) > 0.001) {
-                        continue;
-                    }
+                $storedCap = $e->max_minutes_cap === null ? null : (float) $e->max_minutes_cap;
+                if ($storedCap === null || abs($storedCap - $ceiling) > 0.001) {
+                    continue;
                 }
                 $ticks = json_decode($e->schedule, true);
                 if (!is_array($ticks) || empty($ticks)) {
                     continue;
                 }
-                $reusedOverflowCells = $ovCellsCol !== '' && ! empty($e->overflow_cells)
+                $reusedOverflowCells = ! empty($e->overflow_cells)
                     ? json_decode($e->overflow_cells, true)
                     : null;
 
@@ -1427,8 +1328,6 @@ class ExpandService
                     // Polygon + derived bounds land in the SAME statement (outer_bound is
                     // NOT NULL, and there must never be a window with stale/absent bounds);
                     // envelope retry if derivation throws on pathological geometry.
-                    $ready = $this->bounds->ready();
-                    $withDensity = $this->densityColumnsReady();
                     // The rings' cell-set form rides the SAME statement as the
                     // reach grid, so the two can never describe different
                     // shapes. The grid is the ONLY stored reach, carried as a
@@ -1436,75 +1335,56 @@ class ExpandService
                     // All the spatial algebra still happens - union, bounds
                     // derivation - but on the SCRATCH WKT parameter, which is
                     // never stored.
-                    $withOverflowCells = $this->overflowCellsColumnReady();
                     $overflowCellsJson = $this->overflowCellsJson($schedule);
                     $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
-                    $initSql = function (string $outerExpr, string $innerExpr) use ($ready, $withDensity, $withOverflowCells): string {
-                        $cols = $ready ? ', outer_bound, inner_bound' : '';
-                        $vals = $ready ? ", $outerExpr, $innerExpr" : '';
-                        $dup = $ready ? ', outer_bound = VALUES(outer_bound), inner_bound = VALUES(inner_bound)' : '';
-                        $dCols = ($withDensity ? ', density_band, density_radius_miles, max_minutes_cap' : '')
-                            . ($withOverflowCells ? ', overflow_cells' : '');
-                        $dVals = ($withDensity ? ', ?, ?, ?' : '')
-                            . ($withOverflowCells ? ', ?' : '');
-                        $dDup = ($withDensity
-                            ? ', density_band = VALUES(density_band),
-                                density_radius_miles = VALUES(density_radius_miles),
-                                max_minutes_cap = VALUES(max_minutes_cap)'
-                            : '')
-                            . ($withOverflowCells ? ', overflow_cells = VALUES(overflow_cells)' : '');
-
-                        $gridCol = $this->cellsColumnReady();
-
+                    $initSql = function (string $outerExpr, string $innerExpr): string {
                         return 'INSERT INTO rippling_reach
-                           (msgid, lat, lng' . ($gridCol ? ', polygon_cells' : '') . $cols . ', arrival, mode, tick, total_ticks,
+                           (msgid, lat, lng, polygon_cells, outer_bound, inner_bound, arrival, mode, tick, total_ticks,
                             total_freeglers, max_drive_min, schedule, reachable_group_ids,
-                            next_expansion_at, status' . $dCols . ', created_at, updated_at)
-                         VALUES (?, ?, ?' . ($gridCol ? ', ?' : '') . $vals . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?' . $dVals . ', NOW(), NOW())
+                            next_expansion_at, status, density_band, density_radius_miles, max_minutes_cap,
+                            overflow_cells, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ' . $outerExpr . ', ' . $innerExpr . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                          ON DUPLICATE KEY UPDATE
-                            lat = VALUES(lat), lng = VALUES(lng)' . ($gridCol ? ', polygon_cells = VALUES(polygon_cells)' : '') . $dup . ',
+                            lat = VALUES(lat), lng = VALUES(lng), polygon_cells = VALUES(polygon_cells),
+                            outer_bound = VALUES(outer_bound), inner_bound = VALUES(inner_bound),
                             arrival = VALUES(arrival), mode = VALUES(mode), tick = VALUES(tick),
                             total_ticks = VALUES(total_ticks), total_freeglers = VALUES(total_freeglers),
                             max_drive_min = VALUES(max_drive_min), schedule = VALUES(schedule),
                             reachable_group_ids = VALUES(reachable_group_ids),
-                            next_expansion_at = VALUES(next_expansion_at), status = VALUES(status)' . $dDup . ',
+                            next_expansion_at = VALUES(next_expansion_at), status = VALUES(status),
+                            density_band = VALUES(density_band),
+                            density_radius_miles = VALUES(density_radius_miles),
+                            max_minutes_cap = VALUES(max_minutes_cap),
+                            overflow_cells = VALUES(overflow_cells),
                             updated_at = NOW()';
                     };
-                    $initTail = array_merge([
+                    $initTail = [
                         $arrival, $this->reach->mode(), $tick, $total,
                         $schedule['total_freeglers'], $schedule['max_drive_min'],
                         json_encode($schedule['ticks']),
                         json_encode($this->tickReachableIds($entry, $schedule)),
                         $next, $status,
-                    ], $withDensity ? [$cap['band'], $cap['radius_miles'], $ceiling] : [],
-                       $withOverflowCells ? [$overflowCellsJson] : []);
-                    $initStore = function (string $wkt) use ($initSql, $initTail, $row, $lat, $lng, $ready, $poly): void {
-                        $head = [$row->msgid, $lat, $lng];
-                        if ($this->cellsColumnReady()) {
-                            // The grid is the only stored reach at birth (the
-                            // label lands moments later), so a failed
-                            // rasterise must FAIL this store (the post keeps
-                            // its previous state and is retried next sweep) -
-                            // it can never write a row whose reach nobody can
-                            // read. Once the operator has dropped the grid
-                            // columns, the label IS the only stored reach and
-                            // there is nothing to rasterise.
-                            $cells = $this->cellSets->rasterize($wkt);
-                            if ($cells === null) {
-                                throw new \RuntimeException('rasterise failed; reach store left for the next pass');
-                            }
-                            $head[] = $cells;
+                        $cap['band'], $cap['radius_miles'], $ceiling,
+                        $overflowCellsJson,
+                    ];
+                    $initStore = function (string $wkt) use ($initSql, $initTail, $row, $lat, $lng, $poly): void {
+                        // The grid is the only stored reach at birth (the label
+                        // lands moments later), so a failed rasterise must FAIL
+                        // this store (the post keeps its previous state and is
+                        // retried next sweep) - it can never write a row whose
+                        // reach nobody can read.
+                        $cells = $this->cellSets->rasterize($wkt);
+                        if ($cells === null) {
+                            throw new \RuntimeException('rasterise failed; reach store left for the next pass');
                         }
+                        $head = [$row->msgid, $lat, $lng, $cells];
                         try {
                             // keep-raw: upsert with ST_GeomFromText/derived-bounds SQL expressions in the column list - the builder cannot render these
                             DB::statement(
                                 $initSql(ReachBoundsService::outerExpr($poly), ReachBoundsService::innerExpr($poly)),
-                                array_merge($head, $ready ? [$wkt, $wkt] : [], $initTail)
+                                array_merge($head, [$wkt, $wkt], $initTail)
                             );
                         } catch (\Throwable $e) {
-                            if (!$ready) {
-                                throw $e;
-                            }
                             // keep-raw: envelope-fallback variant of the same spatial upsert
                             DB::statement(
                                 $initSql('ST_Envelope(' . $poly . ')', 'NULL'),
@@ -1562,7 +1442,7 @@ class ExpandService
         $rows = DB::table('rippling_reach')
             ->select(['msgid', 'lat', 'lng', 'tick', 'min_tick', 'total_ticks', 'arrival', 'rejected_groups'])
             ->addSelect(DB::raw('reach_labels IS NOT NULL AS has_labels'))
-            ->when($this->retirementReady(), fn ($q) => $q->addSelect('origin_union_secs'))
+            ->addSelect('origin_union_secs')
             ->where('status', 'expanding')
             ->whereNotNull('next_expansion_at')
             ->where('next_expansion_at', '<=', now())
@@ -1691,7 +1571,7 @@ class ExpandService
                     // machinery is gone with the polygons - a ~23KB grid plus
                     // ~19KB bounds cannot approach the 16KB-per-column undo
                     // page problem megabyte polygons had.
-                    $gridSet = $this->cellsColumnReady() ? ', polygon_cells = ?' : '';
+                    $gridSet = ', polygon_cells = ?';
                     $advanceSql = fn (string $set): string => 'UPDATE rippling_reach
                          SET updated_at = NOW()' . $gridSet . $set . ',
                              reachable_group_ids = COALESCE(?, reachable_group_ids),
@@ -1712,15 +1592,12 @@ class ExpandService
                                 throw new \RuntimeException('rasterise failed; advance left for the next pass');
                             }
                         }
-                        $lead = $this->cellsColumnReady() ? [$cells] : [];
+                        $lead = [$cells];
                         [$boundsSet, $boundsParams] = $this->boundsSetSql($wkt);
                         try {
                             // keep-raw: UPDATE with derived-bounds SQL expressions in SET - the builder cannot render these
                             DB::statement($advanceSql($boundsSet), array_merge($lead, $boundsParams, $advanceTail));
                         } catch (\Throwable $e) {
-                            if ($boundsSet === '') {
-                                throw $e;
-                            }
                             [$envSet, $envParams] = $this->boundsEnvelopeSql($wkt);
                             // keep-raw: envelope-fallback variant of the same spatial UPDATE
                             DB::statement($advanceSql($envSet), array_merge($lead, $envParams, $advanceTail));
@@ -2461,8 +2338,8 @@ class ExpandService
                         continue;
                     }
                 }
-                $gridSet = $this->cellsColumnReady() ? ', polygon_cells = ?' : '';
-                $lead = $this->cellsColumnReady() ? [$cells] : [];
+                $gridSet = ', polygon_cells = ?';
+                $lead = [$cells];
                 $backfillSql = fn (string $set): string => 'UPDATE rippling_reach
                         SET updated_at = updated_at' . $gridSet . $set . ',
                             schedule = ?, reachable_group_ids = ?,
@@ -2479,9 +2356,6 @@ class ExpandService
                     // keep-raw: UPDATE with ST_GeomFromText/derived-bounds SQL expressions in SET - the builder cannot render these
                     DB::statement($backfillSql($boundsSet), array_merge($lead, $boundsParams, $backfillTail));
                 } catch (\Throwable $e) {
-                    if ($boundsSet === '') {
-                        throw $e;
-                    }
                     [$envSet, $envParams] = $this->boundsEnvelopeSql($storeWkt);
                     // keep-raw: envelope-fallback variant of the same spatial UPDATE
                     DB::statement($backfillSql($envSet), array_merge($lead, $envParams, $backfillTail));
@@ -2616,9 +2490,6 @@ class ExpandService
      */
     private function reapplyClipsCellsOnly(int $msgid, array $gids): void
     {
-        if (!$this->cellsColumnReady()) {
-            return;
-        }
         $row = DB::table('rippling_reach')->where('msgid', $msgid)->first(['polygon_cells']);
         if ($row === null || $row->polygon_cells === null) {
             return;
@@ -2658,11 +2529,10 @@ class ExpandService
             return;
         }
 
-        $update = ['polygon_cells' => $cells];
-        if ($this->bounds->ready()) {
-            $update['inner_bound'] = null;
-        }
-        DB::table('rippling_reach')->where('msgid', $msgid)->update($update);
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'polygon_cells' => $cells,
+            'inner_bound' => null,
+        ]);
     }
 
     /**
@@ -2674,22 +2544,6 @@ class ExpandService
      * rasterise round trip. Rows without the threshold keep their grid: it
      * still carries the union those members depend on. False on any doubt.
      */
-    /** Deploy-before-migrate guard for origin_union_secs; checked once. */
-    private static ?bool $retirementColumns = null;
-
-    private function retirementReady(): bool
-    {
-        if (self::$retirementColumns === null) {
-            try {
-                self::$retirementColumns = Schema::hasColumn('rippling_reach', 'origin_union_secs');
-            } catch (\Throwable) {
-                self::$retirementColumns = false;
-            }
-        }
-
-        return self::$retirementColumns;
-    }
-
     /** gridRetired from an already-fetched row - no query in the hot loop. */
     private function rowRetired(object $row): bool
     {
