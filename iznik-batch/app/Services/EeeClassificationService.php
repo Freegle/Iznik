@@ -38,6 +38,7 @@ class EeeClassificationService
         protected EeeVisionService $vision,
         protected EeeSqliteService $sqlite,
         protected EeeComponentService $componentService,
+        protected EeeProductionStore $productionStore,
     ) {}
 
     public function withDriver(string $driver): static
@@ -133,7 +134,18 @@ class EeeClassificationService
                 })
                 ->whereNotNull('ma.externaluid')
                 ->where('ma.archived', 0)
-                ->where('ma.primary', 1)
+                // Same canonical rule as below. Left as a filter here because this query
+                // samples across many messages for one item type and only needs
+                // representative photos, not exactly one per message.
+                ->where(function ($q) {
+                    $q->where('ma.primary', 1)
+                      ->orWhereNotExists(function ($inner) {
+                          $inner->selectRaw('1')
+                                ->from('messages_attachments as p')
+                                ->whereColumn('p.msgid', 'ma.msgid')
+                                ->where('p.primary', 1);
+                      });
+                })
                 ->where('m.type', 'Offer')   // WANTED posts use stock illustrations — exclude
                 ->whereRaw("(ma.externalmods IS NULL OR JSON_EXTRACT(ma.externalmods, '$.ai') IS NULL)")
                 ->orderByDesc('m.arrival')
@@ -237,7 +249,13 @@ class EeeClassificationService
             ->where('msgid', $messageid)
             ->whereNotNull('externaluid')
             ->where('archived', 0)
-            ->where('primary', 1)
+            // Canonical primary-photo rule: prefer the flagged primary, else the lowest id.
+            // A bare `where('primary', 1)` looks right but silently drops 47% of posts - on
+            // live only 5,432 of 10,307 OFFERs in a week have any attachment flagged primary.
+            // This is the same rule message_list.go uses for thumbnails and the
+            // micro-volunteering challenge uses to pick one photo per message.
+            ->orderByDesc('primary')
+            ->orderBy('id')
             ->first(['id as attid', 'externaluid']);
 
         if (!$att) {
@@ -305,6 +323,7 @@ class EeeClassificationService
         ];
 
         $this->sqlite->insertClassification($data);
+        $this->productionStore->upsert($data);
         $this->recordClassifiedAttachment((int) $message->id, (int) $att->attid);
         return $data;
     }
@@ -315,10 +334,22 @@ class EeeClassificationService
             return null;
         }
 
+        // Approved, undeleted posts only, whoever the caller is: this service sends the
+        // post's photo and text to an external API, so content no moderator has passed
+        // (held, spam, rejected) must never reach it. Once approved a post stays in the
+        // Approved collection, so backfills over history pass this check too.
         $message = DB::table('messages as m')
             ->leftJoin('messages_items as mi', 'mi.msgid', '=', 'm.id')
             ->leftJoin('items as i', 'i.id', '=', 'mi.itemid')
             ->where('m.id', $messageid)
+            ->whereNull('m.deleted')
+            ->whereExists(function ($q) {
+                $q->select(DB::raw(1))
+                  ->from('messages_groups')
+                  ->whereColumn('messages_groups.msgid', 'm.id')
+                  ->where('messages_groups.collection', 'Approved')
+                  ->where('messages_groups.deleted', 0);
+            })
             ->select(['m.id', 'm.subject', 'm.textbody', 'i.name as item_name'])
             ->first();
 
@@ -357,8 +388,15 @@ class EeeClassificationService
             ->where('msgid', $message->id)
             ->whereNotNull('externaluid')
             ->where('archived', 0)
-            ->where('primary', 1)
+            // keep-raw: JSON_EXTRACT path test, excluding AI-generated illustrations.
             ->whereRaw("(externalmods IS NULL OR JSON_EXTRACT(externalmods, '$.ai') IS NULL)")
+            // Canonical primary-photo rule: prefer the flagged primary, else the lowest id.
+            // A bare `where('primary', 1)` looks right but silently drops 47% of posts - on
+            // live only 5,432 of 10,307 OFFERs in a week have any attachment flagged primary.
+            // This is the same rule message_list.go uses for thumbnails and the
+            // micro-volunteering challenge uses to pick one photo per message.
+            ->orderByDesc('primary')
+            ->orderBy('id')
             ->first(['id as attid', 'externaluid']);
 
         $context = [
@@ -399,6 +437,12 @@ class EeeClassificationService
             'run_at'                   => now()->toIso8601String(),
             'data_sources'             => json_encode(['image' => false, 'type_lookup' => true, 'text' => !empty($textSignals['eee']), 'chat' => false]),
             'is_eee'                   => $type['is_eee'],
+            // The production row reads is_eee_from_components, not is_eee. This path only
+            // fires for a homogeneous non-EEE type with zero EEE minority, so the type
+            // consensus IS the component observation; without this key the row would be
+            // stored as NULL and excluded from every statistic.
+            'is_eee_from_components'   => $type['is_eee'],
+            'is_eee_reason'            => 'type_consensus',
             'is_eee_confidence'        => $type['is_eee_confidence'],
             'is_eee_reasoning'         => 'Applied from item-type consensus.',
             'weee_category'            => $type['weee_category'],
@@ -410,6 +454,7 @@ class EeeClassificationService
         ];
 
         $this->sqlite->insertClassification($data);
+        $this->productionStore->upsert($data);
         return $data;
     }
 
@@ -427,16 +472,36 @@ class EeeClassificationService
         }
 
         // Component-index derived EEE verdict (deterministic, no model judgment).
-        // Empty component list = evidence of absence → Not EEE (0).
-        // Supplementary-only components → Uncertain (null).
-        // Primary EEE component found → EEE (1).
+        //
+        // Material Focus line, per plans/2026-08-25-eee-definition-decision.md: any electrical
+        // component is enough, including support/control ones, EXCEPT for the products the
+        // Environment Agency names as not EEE. Those are matched on the item name, which is
+        // why the name is passed in - a gas cooker's ignition looks identical to any other
+        // ignition from the component string alone.
+        //
+        // Empty component list stays "not EEE" rather than unknown: if the model looked and
+        // listed nothing electrical, that is evidence of absence.
         $compDesc = $result['electrical_components_description'] ?? null;
+        $itemName = trim((string) ($message->item_name ?? '')) ?: (string) ($message->subject ?? '');
+        $isEeeReason = null;
+
         if (!$compDesc) {
-            $isEeeFromComponents = 0; // model listed nothing electrical — treat as not EEE
+            $isEeeFromComponents = 0;
+            $isEeeReason = 'no_electrical_components';
         } elseif (!$this->componentService->needsBuilding()) {
             $components = array_filter(array_map('trim', explode(';', $compDesc)));
-            $verdict = $this->componentService->classifyComponents($components);
+            $verdict = $this->componentService->classifyComponents($components, $itemName);
+
+            // Transient: the embedding service was down, so the observed components could
+            // not be decided. A stored NULL would never be revisited (a row exists, so the
+            // incremental run skips the message for ever). Fail the message instead —
+            // nothing is stored, and the next run retries it at the cost of one more call.
+            if (($verdict['is_eee_reason'] ?? null) === 'lookup_unavailable') {
+                throw new \RuntimeException("Component lookup unavailable for message {$message->id} — retry next run.");
+            }
+
             $isEeeFromComponents = $verdict['is_eee'] !== null ? ($verdict['is_eee'] ? 1 : 0) : null;
+            $isEeeReason = $verdict['is_eee_reason'] ?? null;
         } else {
             $isEeeFromComponents = null; // components exist but index not built yet
         }
@@ -452,6 +517,7 @@ class EeeClassificationService
             'is_eee_confidence'                => round($isEeeConfidence, 4),
             'is_eee_reasoning'                 => $result['is_eee_reasoning'] ?? null,
             'is_eee_from_components'           => $isEeeFromComponents,
+            'is_eee_reason'                    => $isEeeReason,
             'contains_eee_components'          => ($result['contains_eee_components'] ?? false) ? 1 : 0,
             'electrical_components_description'=> $result['electrical_components_description'] ?? null,
             'weee_category'                    => $result['weee_category'] ?? null,
@@ -494,6 +560,7 @@ class EeeClassificationService
         ];
 
         $this->sqlite->insertClassification($data);
+        $this->productionStore->upsert($data);
         $this->recordClassifiedAttachment((int) $message->id, $attid);
         return $data;
     }
@@ -518,6 +585,7 @@ class EeeClassificationService
         ];
 
         $this->sqlite->insertClassification($data);
+        $this->productionStore->upsert($data);
         return $data;
     }
 

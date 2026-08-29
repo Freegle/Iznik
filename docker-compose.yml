@@ -1610,6 +1610,21 @@ services:
       - APP_NAME=Freegle Batch Jobs
       - APP_KEY=base64:JXsa9TVxy8PQIrAgimIh0+4v8U7rSYhd3/+an8WYYQc=
       - APP_ENV=local
+      # Electricals classifier. eee:classify-new runs from this container's scheduler and
+      # feeds the public /electricals page, so the key has to be here and not only on the
+      # separate eee-batch research container.
+      #
+      # The accuracy the page carries (96% is-electrical, 93% condition) was measured on
+      # gemini-2.0-flash-lite, which Google has since retired. Pinned to a model that
+      # exists; the payload records which model the figures were measured on and flags that
+      # they have not been re-measured, so the page cannot quote them as this run's own
+      # accuracy. Re-measuring against Natalie's 200 labels is outstanding.
+      #
+      # Pinned rather than -latest deliberately: a moving alias would change the classifier
+      # under us without any signal, and the accuracy claim would drift silently.
+      - GOOGLE_GEMINI_API_KEY=${GOOGLE_GEMINI_API_KEY:-}
+      - EEE_MODEL=${EEE_MODEL:-gemini}
+      - EEE_GEMINI_MODEL=${EEE_GEMINI_MODEL:-gemini-3.5-flash-lite}
       - APP_DEBUG=true
       - RUN_MIGRATIONS=true
       - APP_URL=http://localhost

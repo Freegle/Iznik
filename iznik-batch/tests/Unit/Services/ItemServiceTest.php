@@ -95,6 +95,59 @@ class ItemServiceTest extends TestCase
             ->where('msgid', $message->id)->where('itemid', $itemid)->count());
     }
 
+    /**
+     * popularity is the number of messages that have used an item. The increment was
+     * missing entirely, which froze the column: on live only 2,421 of 3,605,071 rows
+     * carried any value. It feeds the popularity-weighted mean item weight used by
+     * AuthorityStatsService, StatsGenerationService and item/impact.go, so a dead
+     * column narrows that average to a handful of stale rows.
+     */
+    public function test_link_to_message_increments_popularity(): void
+    {
+        $group  = $this->createTestGroup();
+        $itemid = $this->service->findOrCreate('Kettle');
+
+        $this->assertSame(0, (int) DB::table('items')->where('id', $itemid)->value('popularity'));
+
+        $this->service->linkToMessage($this->createTestMessage($this->createTestUser(), $group)->id, $itemid);
+        $this->assertSame(1, (int) DB::table('items')->where('id', $itemid)->value('popularity'));
+
+        $this->service->linkToMessage($this->createTestMessage($this->createTestUser(), $group)->id, $itemid);
+        $this->assertSame(2, (int) DB::table('items')->where('id', $itemid)->value('popularity'));
+    }
+
+    /**
+     * Re-linking the same message must not inflate the count. Reposts and re-runs of
+     * the item extractor both replay the same link, so an unconditional increment
+     * would drift upwards without any new posting having happened.
+     */
+    public function test_relinking_the_same_message_does_not_inflate_popularity(): void
+    {
+        $message = $this->createTestMessage($this->createTestUser(), $this->createTestGroup());
+        $itemid  = $this->service->findOrCreate('Toaster');
+
+        $this->service->linkToMessage($message->id, $itemid);
+        $this->service->linkToMessage($message->id, $itemid);
+        $this->service->linkToMessage($message->id, $itemid);
+
+        $this->assertSame(1, (int) DB::table('items')->where('id', $itemid)->value('popularity'));
+    }
+
+    /** Each item counts its own postings, not another item's. */
+    public function test_popularity_is_per_item(): void
+    {
+        $group   = $this->createTestGroup();
+        $kettle  = $this->service->findOrCreate('Kettle');
+        $blender = $this->service->findOrCreate('Blender');
+
+        $this->service->linkToMessage($this->createTestMessage($this->createTestUser(), $group)->id, $kettle);
+        $this->service->linkToMessage($this->createTestMessage($this->createTestUser(), $group)->id, $kettle);
+        $this->service->linkToMessage($this->createTestMessage($this->createTestUser(), $group)->id, $blender);
+
+        $this->assertSame(2, (int) DB::table('items')->where('id', $kettle)->value('popularity'));
+        $this->assertSame(1, (int) DB::table('items')->where('id', $blender)->value('popularity'));
+    }
+
     public function test_record_from_subject_creates_item_and_link(): void
     {
         $message = $this->createTestMessage($this->createTestUser(), $this->createTestGroup());
