@@ -79,7 +79,18 @@ orbs:
   # source is what carries it, and master picks it up when this branch lands -
   # master must not pin 1.1.383 before then, because it also carries the cap8
   # push-fork rename that only exists on this branch.
-  freegle: freegle/tests@1.1.385
+  #
+  # PINNED BACK 1.1.385 -> 1.1.383 (2026-08-29): 1.1.384 set the android executor to
+  # docker xlarge, which is NOT in our CircleCI plan - every android job from
+  # 2026-08-27 15:56 onwards failed at dispatch with "resource-class-not-in-plan"
+  # (instant zero-duration failure, "Task information unavailable"). 1.1.385 is
+  # 1.1.384 plus comment-only edits, so both are broken the same way. 1.1.383 is the
+  # last version with resource_class: large; the only other thing this repin gives up
+  # is 1.1.384's richer spatial-test failure log extraction. The orb source in this
+  # repo already carries the fix (large + the improved logs): publish it as 1.1.386
+  # from a machine with a CircleCI token (this host has none) and move this pin
+  # forward again.
+  freegle: freegle/tests@1.1.383
 
 jobs:
   mark-ci-passed:

@@ -113,13 +113,22 @@ executors:
   android-executor:
     docker:
       - image: cimg/android:2025.10-node
-    # xlarge (16GB), not large (8GB). R8 minification was turned on for release builds
-    # in #1428, and the first production bundle after it had the Gradle daemon killed by
-    # the OS during packageReleaseBundle - no OutOfMemoryError and no heap dump, despite
-    # -XX:+HeapDumpOnOutOfMemoryError, which is what an outside kill looks like rather
-    # than the JVM hitting its own -Xmx. The JVM alone is allowed 4GB heap plus 1GB
-    # metaspace, and R8 wants a lot more headroom on top of that than 8GB leaves.
-    resource_class: xlarge
+    # large (8GB), NOT xlarge. Docker xlarge is not in our CircleCI plan: #1434 bumped
+    # this to xlarge for R8 release-bundle memory, and from 2026-08-27 15:56 to
+    # 2026-08-29 EVERY android job failed instantly at dispatch with
+    # "resource-class-not-in-plan" (zero-duration, "Task information unavailable" -
+    # visible via GET /api/v2/project/gh/Freegle/Iznik/job/<n> .messages). xlarge never
+    # ran a single build, so this revert loses nothing that ever worked.
+    #
+    # The problem #1434 was addressing remains real but is release-only: R8 minification
+    # (on for release builds since #1428) had the Gradle daemon OS-killed during
+    # packageReleaseBundle on an 8GB box (JVM allowed 4GB heap + 1GB metaspace in
+    # android/gradle.properties, R8 native wants headroom on top). The debug jobs that
+    # run on master (assembleDebug) do not minify and were green on large for months.
+    # If a release bundle OOMs again the fix must fit 8GB (trim org.gradle.jvmargs /
+    # cap workers for the release lane) or the plan must be upgraded - do NOT bump this
+    # back to xlarge without confirming the plan now includes it.
+    resource_class: large
 
   macos-executor:
     macos:
