@@ -35,6 +35,33 @@ import (
 // Set once at boot before the server starts (or by tests).
 var reachLive *ReachEngine
 
+// reachPrev is the PREVIOUS partition build (REACH_DIR_PREV), held so a map
+// refresh stops being a cliff: stored labels embed their build's fingerprint,
+// and every evaluator routes each blob to the build that can read it. The
+// re-backfill after a rebuild then becomes a rolling migration - old labels
+// keep answering until each post's new one lands - instead of a site-wide
+// "nolabels" window. nil = single-build operation, exactly as before.
+var reachPrev *ReachEngine
+
+// decodeLabelsAnyBuild decodes a stored blob against whichever loaded build
+// matches its embedded fingerprint, returning the engine that must evaluate
+// it (arrivals are only meaningful on the build that decoded the blob).
+func decodeLabelsAnyBuild(b []byte) (*ReachLabels, *ReachEngine, error) {
+	if reachLive == nil {
+		return nil, nil, fmt.Errorf("reach engine not configured")
+	}
+	lbl, err := reachLive.DecodeLabels(b)
+	if err == nil {
+		return lbl, reachLive, nil
+	}
+	if reachPrev != nil {
+		if lbl, perr := reachPrev.DecodeLabels(b); perr == nil {
+			return lbl, reachPrev, nil
+		}
+	}
+	return nil, nil, err
+}
+
 // loadReachEngineFromDir loads (or derives) the full artifact set.
 func loadReachEngineFromDir(dir string) (*ReachEngine, error) {
 	g, ov, err := LoadReachSnapshot(filepath.Join(dir, "graph.snap"))
@@ -76,6 +103,18 @@ func reachBootFromEnv() *Graph {
 	reachLive = eng
 	log.Printf("reach: engine ready in %v (%d regions, %d boundary nodes)",
 		time.Since(start).Round(time.Millisecond), len(eng.Part.LeafNodes), len(eng.BI.leafOf))
+	if prevDir := getenv("REACH_DIR_PREV", ""); prevDir != "" {
+		pstart := time.Now()
+		if prev, err := loadReachEngineFromDir(prevDir); err != nil {
+			log.Printf("reach: WARNING: previous build from %s failed (%v); single-build operation", prevDir, err)
+		} else if prev.partFP == eng.partFP {
+			log.Printf("reach: previous build %s is the same partition; ignoring", prevDir)
+		} else {
+			reachPrev = prev
+			log.Printf("reach: previous build ready in %v (%d regions) - rolling label migration active",
+				time.Since(pstart).Round(time.Millisecond), len(prev.Part.LeafNodes))
+		}
+	}
 	return eng.G
 }
 
@@ -107,7 +146,8 @@ func handleReachLabels() fiber.Handler {
 			leaves = append(leaves, leaf)
 		}
 		sort.Slice(leaves, func(i, j int) bool { return leaves[i] < leaves[j] })
-		return c.JSON(fiber.Map{
+
+		resp := fiber.Map{
 			"labels":  base64.StdEncoding.EncodeToString(blob),
 			"t":       lbl.T,
 			"regions": len(lbl.Reached),
@@ -115,7 +155,74 @@ func handleReachLabels() fiber.Handler {
 			"full":    full,
 			"partial": partial,
 			"bytes":   len(blob),
+			"fp":      fmt.Sprintf("%d", e.partFP),
 			"ms":      float64(time.Since(start).Microseconds()) / 1000,
+		}
+		// With the post's msgid we can also answer the origin-group union
+		// road-natively (reach_union.go): the smallest budget at which this
+		// label covers 90% of the origin group's road nodes, and the
+		// partition regions the group's area occupies (merged into the
+		// stored leaves so union-admitted members discover the post).
+		if msgid := uint64(c.QueryInt("msgid")); msgid != 0 {
+			secs, unionLeaves := unionForMsgid(e, lbl, msgid)
+			resp["origin_union_secs"] = secs
+			resp["union_leaves"] = unionLeaves
+		}
+		return c.JSON(resp)
+	}
+}
+
+// unionForMsgid resolves the post's origin group and computes the union
+// threshold + area regions for one label. unionNever when the group has no
+// area, no road nodes, or the label never covers it.
+func unionForMsgid(e *ReachEngine, lbl *ReachLabels, msgid uint64) (float32, []int32) {
+	gid := originGroupForMsgidFn(msgid)
+	if gid == 0 {
+		return unionNever, []int32{}
+	}
+	rings := groupAreaRings(gid)
+	if len(rings) == 0 {
+		return unionNever, []int32{}
+	}
+	secs, leaves := unionSecsForLabel(e, lbl, rings)
+	if leaves == nil {
+		leaves = []int32{}
+	}
+	return secs, leaves
+}
+
+// handleReachUnion handles POST /v1/reach-union: the backfill face of the
+// union computation, for posts whose labels are ALREADY stored - decode the
+// blob, compute origin_union_secs + union leaves, no label refetch.
+func handleReachUnion() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		e := reachLive
+		if e == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
+		}
+		var req struct {
+			Labels string `json:"labels"`
+			Msgid  uint64 `json:"msgid"`
+		}
+		if err := c.BodyParser(&req); err != nil || req.Labels == "" || req.Msgid == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "labels (base64) and msgid required")
+		}
+		raw, err := base64.StdEncoding.DecodeString(req.Labels)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "labels not base64")
+		}
+		lbl, eng, err := decodeLabelsAnyBuild(raw)
+		if err != nil {
+			return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
+		}
+		secs, leaves := unionForMsgid(eng, lbl, req.Msgid)
+		if leaves == nil {
+			leaves = []int32{}
+		}
+		return c.JSON(fiber.Map{
+			"origin_union_secs": secs,
+			"union_leaves":      leaves,
+			"fp":                fmt.Sprintf("%d", eng.partFP),
 		})
 	}
 }
@@ -151,7 +258,10 @@ func handleReachArrival() fiber.Handler {
 		if err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, "labels not base64")
 		}
-		lbl, err := e.DecodeLabels(blob)
+		// Any loaded build may own this blob (rolling label migration after
+		// a partition rebuild); arrivals are computed on the build that
+		// decoded it.
+		lbl, e, err := decodeLabelsAnyBuild(blob)
 		if err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("labels: %v", err))
 		}

@@ -342,6 +342,128 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(0, $stats['emails_sent'], 'a post under moderation must not be digested');
     }
 
+    public function test_daily_digest_drops_a_post_whose_stored_label_says_out(): void
+    {
+        // Labels-truth: the stored road-network label is the deciding record.
+        // The cell grid covers this recipient (over-coverage - the far bank of
+        // an estuary), but the label knows they cannot drive there within the
+        // post's current budget, so the digest must not mail it - the same
+        // narrowing browse applies, so mail can never carry what browse hides.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+        $this->setMyLocation($recipient, 51.5, -0.1);
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $message = $this->createTestMessage($poster, $group);
+
+        // Cells that DO cover the recipient at (51.5, -0.1).
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
+             VALUES (?, 51.5, -0.1, ?,
+                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 3857)),
+                'expanding', NOW())
+             ON DUPLICATE KEY UPDATE status = VALUES(status)",
+            [$message->id, $this->reachCellsFor('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))')]
+        );
+
+        Http::fake(['*/v1/reach-eval*' => Http::response([
+            'results' => [['msgid' => $message->id, 'verdict' => 'out']],
+        ])]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(0, $stats['emails_sent'], 'an OUT label verdict must override in-reach cells');
+    }
+
+    public function test_daily_digest_keeps_a_post_with_no_stored_label(): void
+    {
+        // Not backfilled yet (or the routing server predates labels): the
+        // cell-grid verdict stands unchanged.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+        $this->setMyLocation($recipient, 51.5, -0.1);
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $message = $this->createTestMessage($poster, $group);
+
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
+             VALUES (?, 51.5, -0.1, ?,
+                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 3857)),
+                'expanding', NOW())
+             ON DUPLICATE KEY UPDATE status = VALUES(status)",
+            [$message->id, $this->reachCellsFor('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))')]
+        );
+
+        Http::fake(['*/v1/reach-eval*' => Http::response([
+            'results' => [['msgid' => $message->id, 'verdict' => 'nolabels']],
+        ])]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(1, $stats['emails_sent'], 'with no stored label the cell verdict decides');
+    }
+
+    public function test_daily_digest_discovers_a_labelled_post_the_grid_missed(): void
+    {
+        // The under-coverage band: the post's cell grid does NOT cover this
+        // recipient, so the grid gate alone would exclude it - but its stored
+        // label admits them by road, and the discover arm re-admits it, the
+        // same union the browse feed applies.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+        $this->setMyLocation($recipient, 51.5, -0.1);
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $message = $this->createTestMessage($poster, $group);
+
+        // Cells well away from the recipient at (51.5, -0.1).
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
+             VALUES (?, 51.5, 0.7, ?,
+                ST_Envelope(ST_GeomFromText('POLYGON((0.5 51.3, 0.9 51.3, 0.9 51.7, 0.5 51.7, 0.5 51.3))', 3857)),
+                'expanding', NOW())
+             ON DUPLICATE KEY UPDATE status = VALUES(status)",
+            [$message->id, $this->reachCellsFor('POLYGON((0.5 51.3, 0.9 51.3, 0.9 51.7, 0.5 51.7, 0.5 51.3))')]
+        );
+
+        Http::fake(['*/v1/reach-eval*' => Http::response([
+            'results' => [],
+            'discovered' => [['msgid' => $message->id, 'verdict' => 'in']],
+        ])]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(1, $stats['emails_sent'], 'a label-admitted post the grid missed must still be mailed');
+    }
+
     public function test_daily_digest_flags_already_seen_posts_for_the_recipient(): void
     {
         // A messages_likes 'View' (in-app view, or an opened/clicked digest via
@@ -1119,7 +1241,10 @@ class UnifiedDigestServiceTest extends TestCase
             'primary' => 1, 'archived' => 0,
         ]);
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update(['reach_labels' => 'label-bytes']);
 
+        // The stored label decides who is reached: at first only A's point
+        // (seedReach's box ends at lng 0.0, so A at -0.1 is in, B at 0.5 out).
         $this->service->mailNewlyReachedForPost($msg->id);
 
         $ledgered = fn ($uid) => DB::table('rippling_reach_notified')
@@ -1127,11 +1252,12 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertTrue($ledgered($memberA->id), 'reach-covered member A mailed + ledgered');
         $this->assertFalse($ledgered($memberB->id), 'out-of-reach member B not yet mailed');
 
-        // Reach grows to cover B; the re-run mails B and does NOT re-mail A (ledger
-        // dedup). The outer bound grows in the same statement, as every writer's does.
-        DB::statement('UPDATE rippling_reach SET polygon_cells = ?, outer_bound = ST_Envelope(ST_GeomFromText(?, 3857)) WHERE msgid = ?',
-            [$this->reachCellsFor('POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))'),
-             'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))', $msg->id]);
+        // The reach grows to cover B (the label now admits B's point; the
+        // outer bound grows as every writer keeps it growing). The re-run
+        // mails B and does NOT re-mail A (ledger dedup).
+        DB::statement('UPDATE rippling_reach SET outer_bound = ST_Envelope(ST_GeomFromText(?, 3857)) WHERE msgid = ?',
+            ['POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))', $msg->id]);
+        $this->reachArrivalBox = $this->wktBounds('POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))');
         $before = DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count();
         $this->service->mailNewlyReachedForPost($msg->id);
         $this->assertTrue($ledgered($memberB->id), 'newly-reached member B mailed on re-run');
@@ -1455,6 +1581,47 @@ class UnifiedDigestServiceTest extends TestCase
             . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$msgid, $this->reachCellsFor($wkt), $wkt]
         );
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => 'label-bytes']);
+
+        // The newly-reached mail evaluates the stored label per candidate
+        // point (reach-arrival); fake it to admit points inside the seeded
+        // box. Http::fake merges first-match-wins (null falls through), so
+        // ONE callback is installed and it reads $this->reachArrivalBox -
+        // a test that grows the reach updates the property, not the fake.
+        $this->reachArrivalBox = $this->wktBounds($wkt);
+        if (!$this->reachArrivalFakeInstalled) {
+            $this->reachArrivalFakeInstalled = true;
+            Http::fake(function ($request) {
+                if (!str_contains($request->url(), 'reach-arrival')) {
+                    return null;
+                }
+                [$minLng, $minLat, $maxLng, $maxLat] = $this->reachArrivalBox;
+                $results = [];
+                foreach ($request['points'] ?? [] as $pt) {
+                    $lat = (float) ($pt['lat'] ?? 0);
+                    $lng = (float) ($pt['lng'] ?? 0);
+                    $in = $lat >= $minLat && $lat <= $maxLat && $lng >= $minLng && $lng <= $maxLng;
+                    $results[] = ['arrival' => $in ? 100 : null, 'in' => $in];
+                }
+
+                return Http::response(['results' => $results]);
+            });
+        }
+    }
+
+    /** The box the faked reach-arrival admits; seedReach sets it. */
+    private array $reachArrivalBox = [0.0, 0.0, 0.0, 0.0];
+
+    private bool $reachArrivalFakeInstalled = false;
+
+    /** [minLng, minLat, maxLng, maxLat] of a simple WKT polygon. */
+    private function wktBounds(string $wkt): array
+    {
+        preg_match_all('/(-?\d+\.?\d*) (-?\d+\.?\d*)/', $wkt, $m, PREG_SET_ORDER);
+        $lngs = array_map(fn ($p) => (float) $p[1], $m);
+        $lats = array_map(fn ($p) => (float) $p[2], $m);
+
+        return [min($lngs), min($lats), max($lngs), max($lats)];
     }
 
     /**
@@ -2657,6 +2824,21 @@ class UnifiedDigestServiceTest extends TestCase
             . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'), 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
         );
+        DB::table('rippling_reach')->where('msgid', $message->id)->update(['reach_labels' => 'label-bytes']);
+
+        // The stored label admits every asked point: the reach-mail pass is
+        // under test, not the geometry.
+        Http::fake(function ($request) {
+            if (!str_contains($request->url(), 'reach-arrival')) {
+                return null;
+            }
+            $results = array_map(
+                fn ($pt) => ['arrival' => 100, 'in' => true],
+                $request['points'] ?? []
+            );
+
+            return Http::response(['results' => $results]);
+        });
 
         return [$message, $member];
     }
@@ -3608,6 +3790,46 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertTrue(
             $this->wasMailed($msg->id, $member->id),
             'a member a cluster wedge admits is mailed, exactly as browse and reply admit them'
+        );
+    }
+
+
+    public function test_newly_reached_mail_answers_from_the_label_for_a_retired_grid(): void
+    {
+        // A retired grid (label stored, squares drained): the "you are now in
+        // reach" mail evaluates the stored label at every candidate point in
+        // one routing call, instead of probing squares that no longer exist.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: retired reach mail (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('a', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update([
+            'reach_labels' => 'label-bytes', 'polygon_cells' => null,
+            'tick' => 1, 'max_drive_min' => 30, 'schedule' => null,
+        ]);
+
+        Http::fake(['*reach-arrival*' => Http::response([
+            'results' => [['arrival' => 120, 'in' => true]],
+        ])]);
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertTrue(
+            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $member->id)->exists(),
+            'the label admitted the member, so they are mailed and ledgered'
         );
     }
 }

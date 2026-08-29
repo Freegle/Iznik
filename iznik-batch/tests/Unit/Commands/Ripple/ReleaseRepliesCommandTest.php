@@ -32,6 +32,20 @@ class ReleaseRepliesCommandTest extends TestCase
              VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, $this->reachCellsFor(self::POLY), self::POLY]
         );
+        DB::table('rippling_reach')->where('msgid', $message->id)->update(['reach_labels' => 'label-bytes']);
+        // The stored label admits the held replier's point, so the release
+        // cron frees them - the label is the reach record, faked here.
+        \Illuminate\Support\Facades\Http::fake(function ($request) {
+            if (!str_contains($request->url(), 'reach-eval')) {
+                return null;
+            }
+            $results = array_map(
+                fn ($id) => ['msgid' => (int) $id, 'verdict' => 'in'],
+                $request['msgids'] ?? []
+            );
+
+            return \Illuminate\Support\Facades\Http::response(['results' => $results]);
+        });
 
         $u1 = $this->createTestUser();
         $u2 = $this->createTestUser();

@@ -2,7 +2,6 @@
 
 namespace App\Services\FirstReply;
 
-use App\Services\Ripple\CellSetService;
 use App\Services\Ripple\RingIndex;
 use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
@@ -90,7 +89,6 @@ class MatchMailService
         private UnifiedDigestService $digest,
         private Metrics $metrics,
         private \App\Services\FreegleApiClient $api,
-        private CellSetService $cellSets = new CellSetService(),
     ) {
     }
 
@@ -315,14 +313,6 @@ class MatchMailService
     public function mailMatchesFor(object $post, array $cfg, bool $dryRun = false): int
     {
         $msgid = (int) $post->msgid;
-
-        // This fires as soon as a post is seen, which can be a beat before the
-        // background pass has worked out the post's eventual reach - and without
-        // that nobody is eligible. Ask for it directly rather than making the post
-        // wait a minute for a different cron. Schedule-only, so it costs a JSON
-        // decode and an UPDATE; posts that need a routing call are left to the
-        // background pass and simply get no match mail this time round.
-        $this->maxReach->populateForPost($msgid);
 
         $candidates = $this->candidates($post, $cfg);
         if (empty($candidates)) {
@@ -656,9 +646,7 @@ class MatchMailService
      */
     private function filterEligible(int $msgid, array $userIds, array $cfg): array
     {
-        if (empty($userIds) || !$this->maxReach->available()) {
-            // No max_polygon yet means no basis for reaching beyond today's reach,
-            // and mailing inside today's reach only is the reach mailer's job.
+        if (empty($userIds)) {
             return [];
         }
 
@@ -746,9 +734,9 @@ class MatchMailService
                -- reach is going to be told anyway, by the ordinary ripple, so
                -- mailing them spends a slot and a mail to change nothing.
                -- The whole point of this mail is to reach past the current
-               -- edge. SQL only requires a max reach to exist; the band itself
-               -- is applied by applyCellBand from the stored grids.
-               AND rr.max_polygon_cells IS NOT NULL
+               -- edge. The stored label is the eventual-reach record; the
+               -- band itself is applied by applyCellBand.
+               AND rr.reach_labels IS NOT NULL
                AND NOT EXISTS (
                      SELECT 1 FROM firstreply_scouts fs
                      WHERE fs.userid = u.id AND fs.sent_at > DATE_SUB(NOW(), INTERVAL ? HOUR)
@@ -831,34 +819,45 @@ class MatchMailService
 
         $reach = DB::table('rippling_reach')
             ->where('msgid', $msgid)
-            ->first(['polygon_cells', 'max_polygon_cells']);
-        if ($reach === null || $reach->max_polygon_cells === null) {
+            ->first(['reach_labels', 'tick', 'max_drive_min', 'schedule']);
+        if ($reach === null || $reach->reach_labels === null) {
             return [];
         }
 
+        // ONE routing call evaluates the stored label at every candidate
+        // point - arrival within the label's full budget means inside the
+        // EVENTUAL reach; the in-flag at the current tick budget means
+        // inside the CURRENT one. The band is exactly "arrived eventually
+        // AND not yet current", ordered by how soon past the edge they are.
+        // Routing unreachable means no extra mail this round - this is an
+        // EXTRA mail, and the ordinary reach mail still covers the member
+        // when the ripple arrives. There is no grid fallback.
+        $svc = app(\App\Services\Ripple\ReachService::class);
+        $currentSecs = $svc->currentBudgetSecs(
+            (int) $reach->tick, (float) $reach->max_drive_min, $reach->schedule
+        );
+        $points = [];
+        foreach ($rows as $i => $r) {
+            if ($r->cand_lat !== null && $r->cand_lng !== null) {
+                $points[$i] = [(float) $r->cand_lat, (float) $r->cand_lng];
+            }
+        }
+        $evals = $points !== [] ? $svc->reachArrivalBatch((string) $reach->reach_labels, $currentSecs, $points) : [];
+        if ($evals === null) {
+            return [];
+        }
         $kept = [];
-        foreach ($rows as $r) {
-            if ($r->cand_lat === null || $r->cand_lng === null) {
-                continue;
+        foreach ($points as $i => $p) {
+            $ev = $evals[$i] ?? null;
+            if ($ev === null || $ev['arrival'] === null) {
+                continue; // never reached, even eventually
             }
-            $lng = (float) $r->cand_lng;
-            $lat = (float) $r->cand_lat;
-
-            // Inside the reach it will eventually have - required.
-            if ($this->cellSets->containsEncoded((string) $reach->max_polygon_cells, $lng, $lat) !== true) {
-                continue;
+            if ($ev['in']) {
+                continue; // already inside the current reach
             }
-            // Outside the reach it has now - required. A grid that cannot say
-            // is treated as covering them, which excludes them: the same
-            // direction as the NOT ST_Contains it replaces failing closed.
-            if ($reach->polygon_cells !== null
-                && $this->cellSets->containsEncoded((string) $reach->polygon_cells, $lng, $lat) !== false) {
-                continue;
-            }
-
-            $r->dist = $reach->polygon_cells === null
-                ? null
-                : $this->cellSets->distanceToNearestCellMetres((string) $reach->polygon_cells, $lng, $lat);
+            $r = $rows[$i];
+            // Ordering key: seconds past the current edge.
+            $r->dist = max(0.0, $ev['arrival'] - $currentSecs);
             $kept[] = $r;
         }
 

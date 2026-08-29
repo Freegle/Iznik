@@ -44,32 +44,26 @@ func ReachMembership(db *gorm.DB, msgids []uint64, lng, lat float64) (map[uint64
 		Lng      *float64   `gorm:"column:lng"`
 		Schedule *string    `gorm:"column:schedule"`
 		Arrival  *time.Time `gorm:"column:arrival"`
-		Cells    []byte     `gorm:"column:cells"`
 	}
 	if err := db.Table("rippling_reach rr").
-		Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival, rr.polygon_cells AS cells").
+		Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival").
 		Where("rr.msgid IN ?", msgids).
 		Scan(&rows).Error; err != nil {
 		log.Printf("reach membership fetch failed: %v", err)
 		return out, err
 	}
 
-	var undecided []uint64
+	// The stored label IS the reach record: the exact road-network answer at
+	// the post's current budget, from ONE batched routing call. No verdict -
+	// a post whose label has not been stored yet, or the routing server
+	// being unreachable - means NOT in reach. There is no grid fallback;
+	// routing is a dependency here, by design.
+	verdicts := LabelVerdicts(lat, lng, msgids)
+
 	for _, r := range rows {
 		info := ReachRowInfo{Msgid: r.Msgid, Lat: r.Lat, Lng: r.Lng, Schedule: r.Schedule, Arrival: r.Arrival}
-		if in, ok := CellSetContains(r.Cells, lng, lat); ok {
-			info.InReach = in
-			out[r.Msgid] = info
-			continue
-		}
-		// No usable cells - cannot happen for healthy rows (every writer
-		// stores cells); fail closed, and say so rather than silently.
+		info.InReach = verdicts[r.Msgid] == LabelVerdictIn
 		out[r.Msgid] = info
-		undecided = append(undecided, r.Msgid)
-	}
-
-	if len(undecided) > 0 {
-		log.Printf("reach membership: %d rows undecidable with no legacy fallback (msgids %v)", len(undecided), undecided)
 	}
 
 	return out, nil

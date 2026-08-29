@@ -142,4 +142,81 @@ class ReachLabelsTest extends TestCase
         $this->assertSame('fresh', DB::table('rippling_reach')->where('msgid', $msgid)->value('reach_labels'));
         $this->assertSame([8, 9], DB::table('rippling_reach_leaves')->where('msgid', $msgid)->orderBy('leaf')->pluck('leaf')->all());
     }
+
+
+    public function testStoresUnionThresholdAndFingerprintInline(): void
+    {
+        // The grid-removal endgame fields ride along with the labels fetch:
+        // the road-native union threshold, the union regions (merged into the
+        // leaves so union-admitted members discover the post) and the build
+        // fingerprint on every leaf row.
+        $msgid = $this->seedReach();
+        Http::fake([
+            '*/v1/reach-labels*' => Http::response([
+                'labels' => base64_encode(random_bytes(64)),
+                'leaves' => [7, 42],
+                'union_leaves' => [42, 88],
+                'origin_union_secs' => 512.5,
+                'fp' => '12345678901234567890',
+                't' => 2700,
+            ]),
+        ]);
+
+        $this->assertTrue(app(ReachService::class)->storeReachLabels($msgid, 51.5, -0.1, 45.0));
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertEqualsWithDelta(512.5, (float) $row->origin_union_secs, 0.001);
+        $leaves = DB::table('rippling_reach_leaves')->where('msgid', $msgid)->orderBy('leaf')->get();
+        $this->assertSame([7, 42, 88], $leaves->pluck('leaf')->map(fn ($l) => (int) $l)->all());
+        foreach ($leaves as $leaf) {
+            $this->assertSame('12345678901234567890', (string) $leaf->fp);
+        }
+        // The request asked with the msgid, so the server could resolve the
+        // origin group.
+        Http::assertSent(fn ($req) => str_contains($req->url(), 'msgid=' . $msgid));
+    }
+
+    public function testStoreUnionSecsBackfillsFromStoredBlob(): void
+    {
+        // The backfill face: labels already stored, one reach-union call
+        // fills the threshold, stamps the existing leaves with the build
+        // fingerprint and merges the union regions.
+        $msgid = $this->seedReach();
+        $blob = random_bytes(64);
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => $blob]);
+        DB::table('rippling_reach_leaves')->insert([
+            ['msgid' => $msgid, 'leaf' => 7],
+        ]);
+        Http::fake([
+            '*/v1/reach-union*' => Http::response([
+                'origin_union_secs' => -1,
+                'union_leaves' => [88],
+                'fp' => '999',
+            ]),
+        ]);
+
+        $this->assertTrue(app(ReachService::class)->storeUnionSecs($msgid));
+
+        $this->assertEqualsWithDelta(-1.0, (float) DB::table('rippling_reach')->where('msgid', $msgid)->value('origin_union_secs'), 0.001);
+        $leaves = DB::table('rippling_reach_leaves')->where('msgid', $msgid)->orderBy('leaf')->get();
+        $this->assertSame([7, 88], $leaves->pluck('leaf')->map(fn ($l) => (int) $l)->all());
+        foreach ($leaves as $leaf) {
+            $this->assertSame('999', (string) $leaf->fp, 'existing rows are stamped, new rows written stamped');
+        }
+        // The blob went up base64d for the routing server to decode.
+        Http::assertSent(fn ($req) => ($req['labels'] ?? '') === base64_encode($blob));
+    }
+
+    public function testStoreUnionSecsStaleBuildIsQuiet(): void
+    {
+        // 422 = the blob belongs to a partition build the routing server no
+        // longer holds: the row keeps NULL (transitional behaviour) until the
+        // label backfill refreshes it.
+        $msgid = $this->seedReach();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => 'blob']);
+        Http::fake(['*/v1/reach-union*' => Http::response(null, 422)]);
+
+        $this->assertFalse(app(ReachService::class)->storeUnionSecs($msgid));
+        $this->assertNull(DB::table('rippling_reach')->where('msgid', $msgid)->value('origin_union_secs'));
+    }
 }

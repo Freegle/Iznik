@@ -46,11 +46,11 @@ func TestReplyEligibleReach(t *testing.T) {
 		assert.Nil(t, msgs[0].ReplyEligible, "no reach row → eligible (omitted)")
 	}
 
-	// 2) Reach row whose grid does NOT contain the viewer → not eligible (false).
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+	// 2) Reach row whose label refuses the viewer → not eligible (false).
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, outer_bound, status) VALUES (?, 51.5, -0.1, "+
 		"ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells)", mid,
-		mustRasterize(t, "POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))"))
+		"ON DUPLICATE KEY UPDATE lat = VALUES(lat)", mid)
+	stubReachEvalMax(t, "out")
 	db.Exec("DELETE FROM rippling_event_metrics WHERE event = 'reply_blocked' AND day = CURDATE()")
 	msgs = message.GetMessagesByIds(viewerID, []string{idStr}, false)
 	if assert.Len(t, msgs, 1) && assert.NotNil(t, msgs[0].ReplyEligible, "outside reach → replyeligible set") {
@@ -61,11 +61,8 @@ func TestReplyEligibleReach(t *testing.T) {
 	db.Raw("SELECT count FROM rippling_event_metrics WHERE event = 'reply_blocked' AND day = CURDATE()").Scan(&blockedCount)
 	assert.GreaterOrEqual(t, blockedCount, 1, "reply-blocked-by-reach event counted")
 
-	// 3) Reach row containing the viewer → eligible (nil).
-	db.Exec("UPDATE rippling_reach SET polygon_cells = ?, "+
-		"outer_bound = ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), "+
-		"inner_bound = NULL WHERE msgid = ?",
-		mustRasterize(t, "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"), mid)
+	// 3) The label admits the viewer → eligible (nil).
+	stubReachEvalMax(t, "in")
 	msgs = message.GetMessagesByIds(viewerID, []string{idStr}, false)
 	if assert.Len(t, msgs, 1) {
 		assert.Nil(t, msgs[0].ReplyEligible, "inside reach → eligible (omitted)")

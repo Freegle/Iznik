@@ -36,23 +36,14 @@ class MaxReachCommand extends Command
 
     private function runGuarded(MaxReachService $service): int
     {
-        if (!$service->available()) {
-            $this->info('rippling_reach.max_polygon does not exist yet; nothing to do.');
-
-            return Command::SUCCESS;
-        }
-
         $stats = $service->populate(
             (int) $this->option('limit'),
             (int) $this->option('routing-budget')
         );
 
         $this->info(sprintf(
-            'max reach: scanned %d, filled %d (%d needed routing), skipped %d',
-            $stats['scanned'],
-            $stats['filled'],
-            $stats['routed'],
-            $stats['skipped']
+            'max reach: cumulative filled for %d labelled rows',
+            $stats['labelled_cumulative'] ?? 0
         ));
 
         // Same command because it is the same knowledge: this is the only place

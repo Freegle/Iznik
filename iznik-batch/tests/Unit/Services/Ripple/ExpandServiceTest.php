@@ -4021,4 +4021,36 @@ class ExpandServiceTest extends TestCase
             'the group-cells cache must retry after a transient failure, not stay poisoned for the rest of the run'
         );
     }
+
+
+    public function test_a_retired_grid_stays_drained_through_a_tick_advance(): void
+    {
+        // Once a post has its stored label and its home-area number, the
+        // per-tick writers stop materialising the square grid: the advance
+        // still moves the tick, but polygon_cells stays NULL - and the
+        // geometric home-area union is decided from the stored number, not
+        // recomputed.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $this->service()->process(false, 500);
+        $this->assertNotNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells'),
+            'premise: an unretired post materialises its grid at initialise'
+        );
+
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'reach_labels' => 'label-bytes',
+            'origin_union_secs' => -1,
+            'polygon_cells' => null,
+            'arrival' => now()->subHours(4),
+            'next_expansion_at' => now()->subMinute(),
+            'status' => 'expanding',
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertGreaterThan(1, (int) $row->tick, 'the tick still advances');
+        $this->assertNull($row->polygon_cells, 'a retired row never gets its grid re-materialised');
+    }
 }

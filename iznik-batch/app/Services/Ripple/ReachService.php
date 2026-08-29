@@ -593,6 +593,10 @@ class ReachService
                     'lat' => $lat,
                     'lng' => $lng,
                     'minutes' => $maxMinutes,
+                    // With the msgid the routing server also answers the
+                    // road-native origin-group union (origin_union_secs +
+                    // the group area's regions), stored alongside.
+                    'msgid' => $msgid,
                 ]);
         } catch (\Throwable $e) {
             Log::warning("ripple: reach-labels fetch failed: {$e->getMessage()}", ['msgid' => $msgid]);
@@ -614,16 +618,35 @@ class ReachService
             Log::warning('ripple: reach-labels response malformed', ['msgid' => $msgid]);
             return false;
         }
+        // Union-admitted regions ride along with the reached ones, so members
+        // the union admits DISCOVER the post; dedupe against the label's own.
+        foreach ($body['union_leaves'] ?? [] as $leaf) {
+            if (!in_array((int) $leaf, $leaves, false)) {
+                $leaves[] = (int) $leaf;
+            }
+        }
+        $update = ['reach_labels' => $labels];
+        if (array_key_exists('origin_union_secs', $body) && self::unionColumnsReady()) {
+            $update['origin_union_secs'] = (float) $body['origin_union_secs'];
+        }
+        $fp = self::unionColumnsReady() && !empty($body['fp']) ? (string) $body['fp'] : null;
         try {
             // One transaction: the blob and its leaves commit together. A blob
             // without its leaves would permanently hide the post from the leaf
             // prefilter, because every retry path keys off reach_labels IS NULL.
-            DB::transaction(function () use ($msgid, $labels, $leaves) {
-                DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => $labels]);
+            DB::transaction(function () use ($msgid, $update, $leaves, $fp) {
+                DB::table('rippling_reach')->where('msgid', $msgid)->update($update);
                 DB::table('rippling_reach_leaves')->where('msgid', $msgid)->delete();
                 foreach (array_chunk($leaves, 500) as $chunk) {
                     DB::table('rippling_reach_leaves')->insertOrIgnore(
-                        collect($chunk)->map(fn ($leaf) => ['msgid' => $msgid, 'leaf' => (int) $leaf])->all()
+                        collect($chunk)->map(function ($leaf) use ($msgid, $fp) {
+                            $row = ['msgid' => $msgid, 'leaf' => (int) $leaf];
+                            if ($fp !== null) {
+                                $row['fp'] = $fp;
+                            }
+
+                            return $row;
+                        })->all()
                     );
                 }
             });
@@ -631,6 +654,95 @@ class ReachService
             Log::warning("ripple: reach-labels store failed: {$e->getMessage()}", ['msgid' => $msgid]);
             return false;
         }
+        return true;
+    }
+
+    /** Deploy-before-migrate guard for the endgame columns; checked once. */
+    private static ?bool $unionColsReady = null;
+
+    private static function unionColumnsReady(): bool
+    {
+        if (self::$unionColsReady === null) {
+            try {
+                self::$unionColsReady = Schema::hasColumn('rippling_reach', 'origin_union_secs')
+                    && Schema::hasColumn('rippling_reach_leaves', 'fp');
+            } catch (\Throwable) {
+                self::$unionColsReady = false;
+            }
+        }
+
+        return self::$unionColsReady;
+    }
+
+    /**
+     * The backfill face of the union computation, for a post whose labels are
+     * ALREADY stored: one POST /v1/reach-union with the stored blob computes
+     * origin_union_secs + the group area's regions; the row is updated, the
+     * union regions merged into its leaves, and its existing leaves stamped
+     * with the build fingerprint the blob decoded on. False on any failure -
+     * the row keeps origin_union_secs NULL and the transitional behaviour.
+     */
+    public function storeUnionSecs(int $msgid): bool
+    {
+        if (!self::unionColumnsReady()) {
+            return false;
+        }
+        $row = DB::table('rippling_reach')->select('reach_labels')->where('msgid', $msgid)->first();
+        if ($row === null || $row->reach_labels === null) {
+            return false;
+        }
+        try {
+            $response = Http::timeout($this->requestTimeout)
+                ->post("{$this->url}/v1/reach-union", [
+                    'labels' => base64_encode((string) $row->reach_labels),
+                    'msgid' => $msgid,
+                ]);
+        } catch (\Throwable $e) {
+            Log::warning("ripple: reach-union fetch failed: {$e->getMessage()}", ['msgid' => $msgid]);
+
+            return false;
+        }
+        if (!$response->successful()) {
+            // 503/404 = not deployed yet; 422 = the blob belongs to a build
+            // the routing server no longer holds (re-run the label backfill).
+            if (!in_array($response->status(), [503, 404, 422], true)) {
+                Log::warning("ripple: reach-union HTTP {$response->status()}", ['msgid' => $msgid]);
+            }
+
+            return false;
+        }
+        $body = $response->json() ?? [];
+        if (!array_key_exists('origin_union_secs', $body)) {
+            return false;
+        }
+        $secs = (float) $body['origin_union_secs'];
+        $unionLeaves = array_map('intval', $body['union_leaves'] ?? []);
+        $fp = !empty($body['fp']) ? (string) $body['fp'] : null;
+        try {
+            DB::transaction(function () use ($msgid, $secs, $unionLeaves, $fp) {
+                DB::table('rippling_reach')->where('msgid', $msgid)->update(['origin_union_secs' => $secs]);
+                if ($fp !== null) {
+                    DB::table('rippling_reach_leaves')->where('msgid', $msgid)->whereNull('fp')->update(['fp' => $fp]);
+                }
+                foreach (array_chunk($unionLeaves, 500) as $chunk) {
+                    DB::table('rippling_reach_leaves')->insertOrIgnore(
+                        collect($chunk)->map(function ($leaf) use ($msgid, $fp) {
+                            $row = ['msgid' => $msgid, 'leaf' => (int) $leaf];
+                            if ($fp !== null) {
+                                $row['fp'] = $fp;
+                            }
+
+                            return $row;
+                        })->all()
+                    );
+                }
+            });
+        } catch (\Throwable $e) {
+            Log::warning("ripple: reach-union store failed: {$e->getMessage()}", ['msgid' => $msgid]);
+
+            return false;
+        }
+
         return true;
     }
 
@@ -649,6 +761,19 @@ class ReachService
      *  a digest run sends thousands of emails, and without a breaker a down
      *  routing server would cost the full HTTP timeout on every one. */
     private static float $driveMetricsDownUntil = 0.0;
+
+    /**
+     * Reach-eval circuit breaker, same shape as the drive-metrics one below:
+     * the digest/push loops call labelEval once per RECIPIENT, so without a
+     * breaker a down or browning-out routing server costs the full HTTP
+     * timeout on every one of thousands of sequential mails.
+     */
+    private static float $labelEvalDownUntil = 0.0;
+
+    public static function resetLabelEvalBreaker(): void
+    {
+        self::$labelEvalDownUntil = 0.0;
+    }
 
     /** Tests only: a tripped breaker must not leak into later tests. */
     public static function resetDriveMetricsBreaker(): void
@@ -697,6 +822,186 @@ class ReachService
         }
 
         return $out;
+    }
+
+    /**
+     * Stored-label membership verdicts from the routing server: msgid =>
+     * 'in'|'out' for every candidate whose stored label decided it exactly
+     * (at the post's CURRENT tick budget); candidates without labels are
+     * absent and keep their cell-grid verdict. Empty array on any failure -
+     * callers change nothing.
+     *
+     * @param  array<int, int|string>  $msgids
+     * @return array<int, string>
+     */
+    public function labelVerdicts(float $lat, float $lng, array $msgids, string $budget = ''): array
+    {
+        return $this->labelEval($lat, $lng, $msgids, $budget, false)['verdicts'];
+    }
+
+    /**
+     * As labelVerdicts, but also returns 'discovered': labelled posts NOT in
+     * $msgids whose stored labels admit this member - the band where the grid
+     * prefilter under-covers the true road reach. Both empty on any failure.
+     *
+     * @param  array<int, int|string>  $msgids
+     * @return array{verdicts: array<int, string>, discovered: array<int, int>}
+     */
+    public function labelVerdictsWithDiscover(float $lat, float $lng, array $msgids): array
+    {
+        return $this->labelEval($lat, $lng, $msgids, '', true);
+    }
+
+    /**
+     * @param  array<int, int|string>  $msgids
+     * @return array{verdicts: array<int, string>, discovered: array<int, int>}
+     */
+    private function labelEval(float $lat, float $lng, array $msgids, string $budget, bool $discover): array
+    {
+        $none = ['verdicts' => [], 'discovered' => []];
+        // An empty candidate list still discovers: a member covered by NO
+        // grid can still be admitted by a stored label.
+        if (($msgids === [] && !$discover) || ($lat === 0.0 && $lng === 0.0)) {
+            return $none;
+        }
+        if (microtime(true) < self::$labelEvalDownUntil) {
+            return $none;
+        }
+        $out = [];
+        $discovered = [];
+        $chunks = array_chunk(array_values($msgids), 1000) ?: [[]];
+        foreach ($chunks as $i => $chunk) {
+            try {
+                $response = Http::timeout(3)->post("{$this->url}/v1/reach-eval", [
+                    'lat' => $lat,
+                    'lng' => $lng,
+                    'msgids' => array_map('intval', $chunk),
+                    'budget' => $budget,
+                    // Only the first chunk discovers: the discovery set is a
+                    // property of the member, not of the candidate chunking.
+                    'discover' => $discover && $i === 0,
+                ]);
+            } catch (\Throwable $e) {
+                self::$labelEvalDownUntil = microtime(true) + 300;
+                Log::warning("ripple: reach-eval fetch failed: {$e->getMessage()}");
+
+                return $none;
+            }
+            if (!$response->successful()) {
+                // 503 (engine not configured yet) and 404 (routing server
+                // predates the endpoint) are expected states, not outages -
+                // they answer instantly, so no breaker for them either.
+                if (!in_array($response->status(), [503, 404], true)) {
+                    self::$labelEvalDownUntil = microtime(true) + 300;
+                    Log::warning("ripple: reach-eval HTTP {$response->status()}");
+                }
+
+                return $none;
+            }
+            foreach ($response->json('results') ?? [] as $r) {
+                if (!isset($r['msgid'], $r['verdict']) || !in_array($r['verdict'], ['in', 'out'], true)) {
+                    continue;
+                }
+                // out+origin_area = the member stands in the post's origin
+                // group's area, which the stored reach deliberately unions in
+                // (ExpandService::unionWithOriginGroupArea): treat as NO
+                // verdict, so the cell grid - which holds that union - decides.
+                if ($r['verdict'] === 'out' && !empty($r['origin_area'])) {
+                    continue;
+                }
+                $out[(int) $r['msgid']] = $r['verdict'];
+            }
+            foreach ($response->json('discovered') ?? [] as $r) {
+                if (isset($r['msgid'])) {
+                    $discovered[] = (int) $r['msgid'];
+                }
+            }
+        }
+
+        // A discovered id can also ride in a LATER chunk of the candidate
+        // list, where its own verdict may be 'out' (discover only sees the
+        // first chunk's asked set). The verdict wins: never re-admit what
+        // the labels narrowed away.
+        $discovered = array_values(array_filter(
+            $discovered,
+            fn ($id) => ($out[$id] ?? '') !== 'out'
+        ));
+
+        return ['verdicts' => $out, 'discovered' => $discovered];
+    }
+
+    /**
+     * Evaluate a stored label blob at many member points in one routing call
+     * (POST /v1/reach-arrival): returns per-point ['arrival' => ?float,
+     * 'in' => bool] at budget $tSecs (0 < t <= the label's own budget).
+     * Null on any failure - callers fall back to their cell tests.
+     *
+     * @param  array<int, array{0: float, 1: float}>  $points  [lat, lng]
+     * @return ?array<int, array{arrival: ?float, in: bool}>
+     */
+    public function reachArrivalBatch(string $labelBytes, float $tSecs, array $points): ?array
+    {
+        if ($labelBytes === '' || $points === []) {
+            return null;
+        }
+        $out = [];
+        foreach (array_chunk($points, 1000, true) as $chunk) {
+            try {
+                $response = Http::timeout(5)->post("{$this->url}/v1/reach-arrival", [
+                    'labels' => base64_encode($labelBytes),
+                    't' => $tSecs,
+                    'points' => array_map(
+                        fn ($p) => ['lat' => (float) $p[0], 'lng' => (float) $p[1]],
+                        array_values($chunk)
+                    ),
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning("ripple: reach-arrival fetch failed: {$e->getMessage()}");
+
+                return null;
+            }
+            if (!$response->successful()) {
+                if (!in_array($response->status(), [503, 404], true)) {
+                    Log::warning("ripple: reach-arrival HTTP {$response->status()}");
+                }
+
+                return null;
+            }
+            $results = $response->json('results');
+            if (!is_array($results) || count($results) !== count($chunk)) {
+                return null;
+            }
+            $keys = array_keys($chunk);
+            foreach ($results as $i => $r) {
+                $out[$keys[$i]] = [
+                    'arrival' => isset($r['arrival']) ? (float) $r['arrival'] : null,
+                    'in' => (bool) ($r['in'] ?? false),
+                ];
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * The post's CURRENT tick drive-time budget in seconds, from its stored
+     * schedule (falling back to the maximum when unparseable - a too-wide
+     * budget only re-admits what the maximum already contains).
+     */
+    public function currentBudgetSecs(int $tick, float $maxDriveMin, ?string $schedule): float
+    {
+        if ($schedule) {
+            $entries = json_decode($schedule, true);
+            if (is_array($entries)) {
+                foreach ($entries as $en) {
+                    if ((int) ($en['tick'] ?? 0) === $tick && (float) ($en['drive_min'] ?? 0) > 0) {
+                        return ((float) $en['drive_min']) * 60.0;
+                    }
+                }
+            }
+        }
+
+        return $maxDriveMin * 60.0;
     }
 
     /** Both label stores exist (deploy can precede the schema change). */
