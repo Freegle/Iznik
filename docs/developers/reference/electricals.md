@@ -71,6 +71,20 @@ counting it as "not electrical".
    deliberate manual step (`eee:classify-new --since=...` with a raised limit, run
    in tranches).
 
+## Estimates while coverage is partial
+
+The window's total OFFER volume is known exactly without any classification, so while
+the classifier is still working through the corpus the payload scales the rates it has
+measured to that full volume: `coverage` says how much of the window carries a verdict,
+`estimates` carries the scaled headline figures (electricals, tonnes, CO2, carbon
+value) plus a `firm` flag that flips at 98% coverage, and each `monthly_trend` month
+carries its own `total_offers` and a per-month `electrical_estimate` (published only at
+100+ verdicts in the month). The estimator converges on the direct count as coverage
+approaches 100%, so the page gets more accurate over time with no flag day; the page
+prefers the estimates, states the coverage while they are not firm, and drops the
+caveat when they are. The stated assumption is that the classified sample is seasonally
+representative - the coverage figure is published alongside so a reader can weigh that.
+
 ## Alerting
 
 The pipeline fails soft per item, and nothing routes Laravel logs to Sentry, so a

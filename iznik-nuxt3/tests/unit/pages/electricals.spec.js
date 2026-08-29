@@ -153,4 +153,61 @@ describe('pages/electricals.vue', () => {
 
     expect(wrapper.text()).not.toContain('null%')
   })
+
+  it('prefers scaled estimates and says so while coverage is partial', async () => {
+    statsPayload = payload()
+    statsPayload.coverage = { total_offers: 12000, classified: 1000, pct: 8.3 }
+    statsPayload.estimates = {
+      electrical_offers: 5100,
+      items_taken: 5100,
+      tonnes: 14.4,
+      tonnes_co2e: 22.8,
+      carbon_value_gbp: 1200,
+      scale_factor: 12,
+      firm: false,
+      basis: 'test',
+    }
+
+    const wrapper = await mountPage()
+
+    // The banner and the tonnage narrative both carry the scaled figures -
+    // the headline is the estimate, while the "we looked at" sample sentence
+    // deliberately keeps the measured number.
+    expect(wrapper.find('h3.purple').text()).toContain('5,100')
+    expect(wrapper.text()).toContain('14.4')
+    // ...and the reader is told they are estimates from partial coverage.
+    expect(wrapper.text()).toContain("we've analysed 8.3% of posts so far")
+    expect(wrapper.text()).toContain('an estimated 14.4 tonnes')
+  })
+
+  it('drops the estimate caveat once the payload marks the figures firm', async () => {
+    statsPayload = payload()
+    statsPayload.coverage = { total_offers: 1010, classified: 1000, pct: 99.0 }
+    statsPayload.estimates = {
+      electrical_offers: 429,
+      items_taken: 429,
+      tonnes: 1.2,
+      tonnes_co2e: 1.9,
+      carbon_value_gbp: 101,
+      scale_factor: 1.01,
+      firm: true,
+      basis: 'test',
+    }
+
+    const wrapper = await mountPage()
+
+    expect(wrapper.text()).toContain('429')
+    expect(wrapper.text()).not.toContain('analysed 99% of posts')
+    expect(wrapper.text()).not.toContain('an estimated')
+  })
+
+  it('renders measured figures unchanged when the payload has no estimates block', async () => {
+    statsPayload = payload()
+
+    const wrapper = await mountPage()
+
+    expect(wrapper.text()).toContain('425')
+    expect(wrapper.text()).not.toContain('analysed')
+    expect(wrapper.text()).not.toContain('an estimated')
+  })
 })

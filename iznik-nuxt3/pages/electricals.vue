@@ -28,7 +28,7 @@
               <b-col class="text-center">
                 <v-icon icon="gift" class="purple titleicon" />
                 <h3 class="purple">
-                  {{ stats.counts.electrical.toLocaleString() }}
+                  {{ headlineElectrical.toLocaleString() }}
                   <br />
                   ELECTRICALS
                 </h3>
@@ -44,21 +44,18 @@
                   OF ALL ITEMS
                 </h3>
               </b-col>
-              <b-col v-if="stats.impact.tonnes !== null" class="text-center">
+              <b-col v-if="headlineTonnes !== null" class="text-center">
                 <v-icon icon="balance-scale-left" class="gold titleicon" />
                 <h3 class="gold">
-                  {{ stats.impact.tonnes.toLocaleString() }}
+                  {{ headlineTonnes.toLocaleString() }}
                   <br />
                   TONNES
                 </h3>
               </b-col>
-              <b-col
-                v-if="stats.impact.tonnes_co2e !== null"
-                class="text-center"
-              >
+              <b-col v-if="headlineCo2e !== null" class="text-center">
                 <v-icon icon="cloud" class="green titleicon" />
                 <h3 class="green">
-                  {{ stats.impact.tonnes_co2e.toLocaleString() }}
+                  {{ headlineCo2e.toLocaleString() }}
                   <br />
                   TONNES CO2
                 </h3>
@@ -67,6 +64,10 @@
           </b-card-body>
           <b-card-body class="pt-0 text-center">
             <span class="text-muted small">{{ rangeLabel }}</span>
+            <span v-if="isEstimated && coveragePct !== null" class="text-muted small">
+              &mdash; estimates: we've analysed {{ coveragePct }}% of posts so
+              far, and these figures firm up as we work through the rest.
+            </span>
           </b-card-body>
         </b-card>
 
@@ -105,7 +106,7 @@
         </b-card>
 
         <b-card
-          v-if="stats.impact.tonnes !== null"
+          v-if="headlineTonnes !== null"
           variant="white"
           class="mt-2"
         >
@@ -113,11 +114,10 @@
             <h3>Weights</h3>
             <p>
               The electricals given away {{ rangeLabel }} weighed
-              {{ stats.impact.tonnes.toLocaleString() }} tonnes. That is
-              {{ stats.impact.tonnes_co2e.toLocaleString() }} tonnes of CO2 kept
-              out of the air, worth £{{
-                stats.impact.carbon_value_gbp.toLocaleString()
-              }}
+              <template v-if="isEstimated">an estimated</template>
+              {{ headlineTonnes.toLocaleString() }} tonnes. That is
+              {{ headlineCo2e.toLocaleString() }} tonnes of CO2 kept out of the
+              air, worth £{{ headlineCarbonValue.toLocaleString() }}
               at the government's carbon value of £{{
                 stats.impact.carbon_proxy_gbp_per_tonne
               }}
@@ -281,6 +281,30 @@ const {
 
 const windowMonths = computed(() => stats.value?.window?.months ?? 12)
 const rangeLabel = computed(() => `in the last ${windowMonths.value} months`)
+
+// While the classifier is still catching up on the window, the payload scales
+// what it has measured to the full known offer volume (estimates.*), and says
+// how much it has seen (coverage.pct). Prefer the estimates when present -
+// they converge on the measured figures as coverage reaches 100% - and tell
+// the reader they are estimates until the payload marks them firm.
+const estimates = computed(() => stats.value?.estimates ?? null)
+const isEstimated = computed(
+  () => !!estimates.value && estimates.value.firm !== true
+)
+const coveragePct = computed(() => stats.value?.coverage?.pct ?? null)
+
+const headlineElectrical = computed(
+  () => estimates.value?.electrical_offers ?? stats.value?.counts?.electrical
+)
+const headlineTonnes = computed(
+  () => estimates.value?.tonnes ?? stats.value?.impact?.tonnes
+)
+const headlineCo2e = computed(
+  () => estimates.value?.tonnes_co2e ?? stats.value?.impact?.tonnes_co2e
+)
+const headlineCarbonValue = computed(
+  () => estimates.value?.carbon_value_gbp ?? stats.value?.impact?.carbon_value_gbp
+)
 
 // The stored accuracy figures record which model they were measured on; when
 // that is not the model now running, the page must present them as a check

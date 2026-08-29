@@ -73,6 +73,19 @@ class ElectricalsStatsService
      */
     protected const LATEST_ROW = 'e.id = (SELECT MAX(e2.id) FROM messages_eee e2 WHERE e2.msgid = e.msgid AND e2.model = e.model)';
 
+    /**
+     * Estimates are marked firm once at least this share of the window's offers carry a
+     * verdict - past it the scale factor is within rounding of 1 and "estimated" would
+     * just be noise on the page.
+     */
+    protected const FIRM_COVERAGE_PCT = 98.0;
+
+    /**
+     * A trend month needs at least this many verdicts before its estimate is worth
+     * publishing; below it one misclassified post visibly moves the line.
+     */
+    protected const TREND_MIN_SAMPLE = 100;
+
     public function build(): array
     {
         $model  = $this->vision->getModelName();
@@ -80,12 +93,18 @@ class ElectricalsStatsService
         $to     = now()->toDateTimeString();
         $settle = now()->subDays(self::SETTLE_DAYS)->toDateTimeString();
 
+        $counts   = $this->buildCounts($model, $from, $to);
+        $impact   = $this->buildImpact($model, $from, $to);
+        $coverage = $this->buildCoverage($counts, $from, $to);
+
         return [
             'generated_at'  => now()->toIso8601String(),
             'window'        => ['from' => $from, 'to' => $to, 'months' => self::WINDOW_MONTHS],
             'model'         => $model,
-            'counts'        => $this->buildCounts($model, $from, $to),
-            'impact'        => $this->buildImpact($model, $from, $to),
+            'counts'        => $counts,
+            'coverage'      => $coverage,
+            'estimates'     => $this->buildEstimates($coverage, $counts, $impact),
+            'impact'        => $impact,
             'popular'       => $this->buildPopular($model, $from, $to),
             'unusual'       => $this->buildUnusual($model, $from, $to),
             'success'       => $this->buildSuccessRates($model, $from, $settle),
@@ -94,6 +113,86 @@ class ElectricalsStatsService
             'accuracy'      => $this->accuracyNotes(),
         ];
     }
+
+    /**
+     * How much of the window the classifier has actually seen.
+     *
+     * The denominator is every approved, undeleted OFFER in the window - the same
+     * population eee:classify-new is allowed to classify, so coverage genuinely reaches
+     * 100% once the backfill catches up. The numerator is posts with a usable verdict
+     * (counts.classified already excludes null is_eee).
+     */
+    protected function buildCoverage(array $counts, string $from, string $to): array
+    {
+        $total = DB::table('messages as m')
+            ->where('m.arrival', '>=', $from)
+            ->where('m.arrival', '<', $to)
+            ->where('m.type', 'Offer')
+            ->whereNull('m.deleted')
+            ->whereExists(function ($q) {
+                $q->select(DB::raw(1))
+                  ->from('messages_groups as mg')
+                  ->whereColumn('mg.msgid', 'm.id')
+                  ->where('mg.collection', 'Approved')
+                  ->where('mg.deleted', 0);
+            })
+            ->count();
+
+        $classified = (int) $counts['classified'];
+
+        return [
+            'total_offers' => $total,
+            'classified'   => $classified,
+            'pct'          => $total > 0 ? round(min(100, $classified * 100 / $total), 1) : null,
+        ];
+    }
+
+    /**
+     * Full-window estimates from partial coverage.
+     *
+     * The total OFFER volume for the window is known exactly without any classification;
+     * only each post's verdict is missing. So the estimate applies the rates measured on
+     * the classified sample to the full known volume - which converges on the direct
+     * count as coverage approaches 100% (scale factor -> 1), so the page becomes more
+     * accurate over time with no flag day. The stated assumption: the classified sample
+     * (initially the most recent posts) is representative of the whole window, which
+     * seasonality can bend - the coverage figure is published alongside so the reader can
+     * weigh that.
+     */
+    protected function buildEstimates(array $coverage, array $counts, array $impact): array
+    {
+        $total      = (int) $coverage['total_offers'];
+        $classified = (int) $counts['classified'];
+
+        if ($total <= 0 || $classified <= 0) {
+            return [
+                'electrical_offers' => null,
+                'items_taken'       => null,
+                'tonnes'            => null,
+                'tonnes_co2e'       => null,
+                'carbon_value_gbp'  => null,
+                'scale_factor'      => null,
+                'firm'              => false,
+                'basis'             => self::ESTIMATE_BASIS,
+            ];
+        }
+
+        $f = max(1.0, $total / $classified);
+
+        return [
+            'electrical_offers' => (int) round($counts['electrical'] * $f),
+            'items_taken'       => (int) round($impact['items_taken'] * $f),
+            'tonnes'            => $impact['tonnes'] !== null ? round($impact['tonnes'] * $f, 1) : null,
+            'tonnes_co2e'       => $impact['tonnes_co2e'] !== null ? round($impact['tonnes_co2e'] * $f, 1) : null,
+            'carbon_value_gbp'  => $impact['carbon_value_gbp'] !== null ? (int) round($impact['carbon_value_gbp'] * $f) : null,
+            'scale_factor'      => round($f, 2),
+            'firm'              => ($coverage['pct'] ?? 0) >= self::FIRM_COVERAGE_PCT,
+            'basis'             => self::ESTIMATE_BASIS,
+        ];
+    }
+
+    protected const ESTIMATE_BASIS = 'rates measured on the classified sample applied to the full offer volume for the '
+        . 'window; assumes the sample is seasonally representative, so treat as estimates until coverage is high';
 
     /**
      * Headline counts. `classified` is the denominator, not the total number of posts: an
@@ -412,15 +511,44 @@ class ElectricalsStatsService
             [$model, now()->subMonths($months)->startOfMonth()->toDateTimeString(), 'Offer']
         );
 
-        return array_map(function ($r) {
+        // Per-month offer totals for the same population, so each month can carry its own
+        // estimate: without this the trend line grows from zero purely as an artifact of
+        // where the backfill has reached, not of anything real.
+        $totals = DB::table('messages as m')
+            // keep-raw: DATE_FORMAT month bucketing; no builder form.
+            ->selectRaw('DATE_FORMAT(m.arrival, "%Y-%m") AS month, COUNT(*) AS total')
+            ->where('m.arrival', '>=', now()->subMonths($months)->startOfMonth()->toDateTimeString())
+            ->where('m.type', 'Offer')
+            ->whereNull('m.deleted')
+            ->whereExists(function ($q) {
+                $q->select(DB::raw(1))
+                  ->from('messages_groups as mg')
+                  ->whereColumn('mg.msgid', 'm.id')
+                  ->where('mg.collection', 'Approved')
+                  ->where('mg.deleted', 0);
+            })
+            ->groupBy('month')
+            ->pluck('total', 'month');
+
+        return array_map(function ($r) use ($totals) {
             $classified = (int) $r->classified;
             $electrical = (int) $r->electrical;
+            $total      = (int) ($totals[$r->month] ?? 0);
+            $pct        = $classified > 0 ? round($electrical * 100 / $classified, 1) : null;
+
+            // The month's own coverage scales its own estimate; a thin sample publishes
+            // no estimate rather than a jumpy one.
+            $estimate = ($total > 0 && $classified >= self::TREND_MIN_SAMPLE)
+                ? (int) round($total * $electrical / $classified)
+                : null;
 
             return [
-                'month'          => $r->month,
-                'classified'     => $classified,
-                'electrical'     => $electrical,
-                'electrical_pct' => $classified > 0 ? round($electrical * 100 / $classified, 1) : null,
+                'month'               => $r->month,
+                'classified'          => $classified,
+                'electrical'          => $electrical,
+                'electrical_pct'      => $pct,
+                'total_offers'        => $total,
+                'electrical_estimate' => $estimate,
             ];
         }, $rows);
     }

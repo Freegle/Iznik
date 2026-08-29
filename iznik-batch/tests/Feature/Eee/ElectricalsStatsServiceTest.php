@@ -370,4 +370,47 @@ class ElectricalsStatsServiceTest extends TestCase
             $impact['carbon_proxy_gbp_per_tonne']
         );
     }
+
+    public function test_estimates_scale_measured_rates_to_the_full_offer_volume(): void
+    {
+        // Two verdicted posts (one electrical) and two the model has produced no
+        // verdict for - the partial-coverage state the whole estimates block
+        // exists for. The full offer volume is known without classification, so
+        // one measured electrical at 50% coverage estimates to two.
+        $this->offer('Kettle', 1, $this->recent());
+        $this->offer('Wooden chair', 0, $this->recent());
+        $this->offer('Mystery A', null, $this->recent());
+        $this->offer('Mystery B', null, $this->recent());
+
+        $p = $this->stats->build();
+
+        $this->assertSame(4, $p['coverage']['total_offers']);
+        $this->assertSame(2, $p['coverage']['classified']);
+        $this->assertSame(50.0, $p['coverage']['pct']);
+        $this->assertSame(2, $p['estimates']['electrical_offers']);
+        $this->assertSame(2.0, $p['estimates']['scale_factor']);
+        $this->assertFalse($p['estimates']['firm'], 'half coverage must not present as firm');
+
+        // The trend carries each month's own offer total, but a thin sample
+        // (under TREND_MIN_SAMPLE verdicts) publishes no estimate rather than
+        // a jumpy one.
+        $month = collect($p['monthly_trend'])
+            ->firstWhere('month', now()->subDays(60)->format('Y-m'));
+        $this->assertSame(4, $month['total_offers']);
+        $this->assertNull($month['electrical_estimate']);
+    }
+
+    public function test_estimates_go_firm_at_full_coverage(): void
+    {
+        $this->offer('Kettle', 1, $this->recent());
+        $this->offer('Wooden chair', 0, $this->recent());
+
+        $p = $this->stats->build();
+
+        $this->assertSame(100.0, $p['coverage']['pct']);
+        $this->assertTrue($p['estimates']['firm']);
+        // At full coverage the estimate IS the measured count - no drift.
+        $this->assertSame($p['counts']['electrical'], $p['estimates']['electrical_offers']);
+        $this->assertSame(1.0, $p['estimates']['scale_factor']);
+    }
 }
