@@ -84,7 +84,18 @@ class MigrateConcernKeywordsCommand extends Command
         $count = 0;
 
         foreach ($rows as $sk) {
-            $category  = ($sk->action === 'Spam') ? 'scam' : 'review';
+            // spam_keywords.action is Spam, Review or Whitelist. Whitelist rows
+            // are the protective ones - place and shop names that would
+            // otherwise trip a shorter blocked word, such as Cock Lane against
+            // "cock" or Superdrug Pharmacy against "Pharmacy". They belong in
+            // the 'allowed' category, which ContentCheckService skips when
+            // flagging and strips from the text before scanning. Folding them
+            // into 'review' turned each protected name into a live flag word.
+            $category = match ($sk->action) {
+                'Spam'      => 'scam',
+                'Whitelist' => 'allowed',
+                default     => 'review',
+            };
             $matchMode = ($sk->type === 'Regex') ? 'regex' : 'literal';
             $action    = ($sk->action === 'Spam') ? 'block' : 'flag';
 
