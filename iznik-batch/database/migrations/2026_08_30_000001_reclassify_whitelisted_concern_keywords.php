@@ -22,8 +22,17 @@ use Illuminate\Support\Facades\Schema;
  *
  * Of the 19 whitelist words, five survived as 'allowed' only because they
  * also existed in worrywords as type 'Allowed' and were inserted first, which
- * is why the damage looked partial. One more, glass, reached concern_keywords
- * in neither category and is inserted below.
+ * is why the damage looked partial.
+ *
+ * 'grass' is the exception and is deleted rather than allowed. Under the old
+ * engine it needed protecting because matching was on substrings, so it caught
+ * the blocked word 'ass'. Matching is now anchored to word boundaries, so
+ * nothing fires inside 'grass' and it needs no entry. An 'allowed' entry would
+ * be worse than useless: allowed phrases are cut out of the text before
+ * scanning, so it would take the word out of four Schedule 9 plant keywords
+ * that end in it - crimson fountain grass, perennial veldt grass, purple
+ * pampas grass and purple veldt grass - all of which block rather than flag.
+ * 'glass' is left absent for the same reason.
  *
  * Driven off spam_keywords rather than a fixed list of ids, so it is
  * idempotent and matches whatever that table holds. The two tables use
@@ -48,20 +57,13 @@ return new class extends Migration
                AND ck.scope = 'global'
         ");
 
-        // A whitelist word that never reached concern_keywords at all is just
-        // as unprotected as one filed as 'review'.
-        DB::statement("
-            INSERT IGNORE INTO concern_keywords
-                (keyword, category, match_mode, scope, group_id, action, created_at, updated_at)
-            SELECT sk.word, 'allowed', IF(sk.type = 'Regex', 'regex', 'literal'),
-                   'global', 0, 'flag', NOW(), NOW()
-              FROM spam_keywords sk
-              LEFT JOIN concern_keywords ck
-                ON LOWER(ck.keyword) COLLATE utf8mb4_unicode_ci
-                 = LOWER(sk.word) COLLATE utf8mb4_unicode_ci
-             WHERE sk.action = 'Whitelist'
-               AND ck.id IS NULL
-        ");
+        // 'grass' protects nothing under word-boundary matching, and as an
+        // allowed phrase it would be cut out of the text before scanning,
+        // disabling the four Schedule 9 plant keywords that end in it.
+        DB::table('concern_keywords')
+            ->where('keyword', 'grass')
+            ->where('scope', 'global')
+            ->delete();
     }
 
     public function down(): void
