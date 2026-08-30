@@ -124,6 +124,17 @@ export default defineEventHandler(async (event) => {
       // orb's tail-limited failure report instead of being the part cut.
       ...(code === 0 ? {} : { logs: condenseCrashDumps(state.logs) }),
     })
+    if (code !== 0) {
+      // Belt and braces: the CI step's stdout is capped tiny by the runner
+      // and the orb's failure grep can filter the interesting lines away,
+      // but this container's docker logs are archived as an artifact on
+      // every failure. Print the condensed head there so the crash header
+      // is ALWAYS retrievable, whatever the step output does.
+      const condensed = condenseCrashDumps(state.logs)
+      console.log('=== ROUTING-CRASH-HEAD-BEGIN ===')
+      console.log(condensed.slice(0, 100_000))
+      console.log('=== ROUTING-CRASH-HEAD-END ===')
+    }
     console.log(`Routing server tests completed with code ${code}`)
   })
 

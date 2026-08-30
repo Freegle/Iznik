@@ -81,22 +81,37 @@ export function condenseCrashDumps(logs: string): string {
     (l) =>
       l.startsWith('panic:') ||
       l.startsWith('fatal error:') ||
-      l.includes('[signal SIG')
+      l.startsWith('fatal: ') ||
+      l.startsWith('race: ') ||
+      l.startsWith('runtime: ') ||
+      l.startsWith('WARNING: DATA RACE') ||
+      l.includes('[signal SIG') ||
+      // The dump itself, as the last resort: whatever preceded the first
+      // goroutine header is the crash reason, so cutting from here keeps it.
+      /^goroutine \d+ \[/.test(l)
   )
-  if (crashAt === -1) {
-    return logs
-  }
 
-  const keepAfter = 250 // panic header + the crashing goroutine, with room
+  const keepAfter = 250 // crash header + the crashing goroutine, with room
   const tail = 120 // the FAIL summary and anything printed after the dump
-  const cutFrom = crashAt + keepAfter
-  if (lines.length <= cutFrom + tail) {
-    return logs
+
+  if (crashAt !== -1 && lines.length > crashAt + keepAfter + tail) {
+    return [
+      ...lines.slice(0, crashAt + keepAfter),
+      `... [condenseCrashDumps: ${lines.length - crashAt - keepAfter - tail} dump lines elided] ...`,
+      ...lines.slice(lines.length - tail),
+    ].join('\n')
   }
 
-  return [
-    ...lines.slice(0, cutFrom),
-    `... [${lines.length - cutFrom - tail} goroutine-dump lines elided by condenseCrashDumps] ...`,
-    ...lines.slice(lines.length - tail),
-  ].join('\n')
+  // Generic safety net: no recognised crash marker but the output is still
+  // enormous (an unanticipated crash format would otherwise push the
+  // diagnostic head past every downstream truncation, which is exactly how
+  // the routing failure's panic header got lost twice).
+  const maxChars = 300_000
+  if (logs.length > maxChars) {
+    const head = logs.slice(0, 200_000)
+    const tailChars = logs.slice(-80_000)
+    return `${head}\n... [condenseCrashDumps: ${logs.length - 280_000} chars elided] ...\n${tailChars}`
+  }
+
+  return logs
 }
