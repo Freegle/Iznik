@@ -36,6 +36,10 @@ const mockUpdateMembership = vi.fn()
 const mockLeaveGroup = vi.fn()
 const mockJoinGroup = vi.fn()
 
+vi.mock('~/composables/useClientLog', () => ({
+  action: vi.fn(),
+}))
+
 vi.mock('~/api', () => ({
   default: () => ({
     session: {

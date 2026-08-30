@@ -7,6 +7,7 @@ import {
   enterLogoutMode,
   exitLogoutMode,
 } from '~/api/BaseAPI'
+import { action as clientAction } from '~/composables/useClientLog'
 import { useComposeStore } from '~/stores/compose'
 import { useGroupStore } from '~/stores/group'
 import api from '~/api'
@@ -83,18 +84,33 @@ export const useAuthStore = defineStore('auth', {
     // hold the session transferred from the user's previous Android device, before anything
     // is in localStorage. Returns whether we adopted one.
     async adoptRestoredSession() {
+      // Telemetry for the mod logout-wave investigation (Discourse #10072): the one
+      // question a cold start must answer is which layer lost the session - localStorage
+      // gone (WebView storage did not survive the update), Block Store empty/broken (the
+      // R8-runtime question), or the server rejecting stored creds (implicit_logout,
+      // logged in wipeAuth). One event per cold boot; joins in Loki via {source="client"}
+      // + action_name='session_restore'.
       if (this.auth.jwt || this.auth.persistent) {
+        // Client-only: bootSession also runs during SSR, and the client log
+        // channel is a browser batch.
+        if (import.meta.client) {
+          clientAction('session_restore', { outcome: 'had_credentials' })
+        }
         return false
       }
 
       const persistent = await restoreSessionFromDevice()
 
       if (!persistent) {
+        if (import.meta.client) {
+          clientAction('session_restore', { outcome: 'nothing_to_adopt' })
+        }
         return false
       }
 
       // No JWT: the persistent token alone authenticates, and GET /session mints a fresh JWT.
       this.setAuth(null, persistent)
+      clientAction('session_restore', { outcome: 'adopted_from_blockstore' })
 
       return true
     },
@@ -105,6 +121,12 @@ export const useAuthStore = defineStore('auth', {
     // evicted could keep re-adopting the same dead token, 401 again, and loop
     // back to the login screen indefinitely.
     wipeAuth() {
+      // The server rejected stored credentials - the third layer of the logout-wave
+      // telemetry (see adoptRestoredSession). Logged BEFORE the wipe so the event
+      // still carries the dying session's context in the batched client log.
+      if (import.meta.client) {
+        clientAction('implicit_logout', {})
+      }
       this.setAuth(null, null)
       this.setUser(null)
       // Deliberately not awaited, like saveSessionForRestore in setAuth: it

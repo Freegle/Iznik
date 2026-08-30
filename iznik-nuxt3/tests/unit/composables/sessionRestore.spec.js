@@ -8,6 +8,10 @@ const mockClearSession = vi.fn()
 // Which platform the code under test believes it is on. Mutable so each test can pick.
 let platform = 'android'
 
+vi.mock('~/composables/useClientLog', () => ({
+  action: vi.fn(),
+}))
+
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
     getPlatform: () => platform,
