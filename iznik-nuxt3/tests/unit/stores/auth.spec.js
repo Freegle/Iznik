@@ -1,4 +1,12 @@
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest'
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  beforeAll,
+  afterAll,
+} from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
 // Import with .js extension to bypass vitest.config alias that maps
@@ -485,6 +493,30 @@ describe('auth store', () => {
         expect(() => store.disableGoogleAutoselect()).not.toThrow()
       } finally {
         globalThis.window = originalWindow
+      }
+    })
+
+    it('stops retrying once Google has clearly not loaded', () => {
+      // Privacy extensions block the Google script outright, and the retry used
+      // to reschedule itself for ever: a timer plus a console line every 100ms
+      // for the life of the page. In the unit tests those logs outlive the test
+      // file and race the worker shutdown, which fails the whole run with
+      // "Closing rpc while onUserConsoleLog was pending" while every test
+      // passes. Drive the retries with fake timers and check they stop.
+      const originalGoogle = globalThis.window.google
+      delete globalThis.window.google
+
+      vi.useFakeTimers()
+      try {
+        store.disableGoogleAutoselect()
+
+        // Well past the five-second budget.
+        vi.advanceTimersByTime(30000)
+
+        expect(vi.getTimerCount()).toBe(0)
+      } finally {
+        vi.useRealTimers()
+        globalThis.window.google = originalGoogle
       }
     })
 
