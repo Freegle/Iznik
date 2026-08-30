@@ -301,6 +301,23 @@ describe('sortBrowseMessages', () => {
       expect(order(msgs, 'Newest')).toEqual(['mineOlder', 'newer'])
     })
 
+    it('does not pin the viewer own COMPLETED posts - they sort like any freegled card', () => {
+      // The mygroups feed carries freegled posts (spaced social-proof cards). Once `mine`
+      // reached that feed, a member's own Taken posts pinned above everything new; a
+      // completed post belongs in My Posts, not the top of browse.
+      const msgs = [
+        { id: 'newer', posted: '2024-06-01T00:00:00Z' },
+        {
+          id: 'mineTaken',
+          posted: '2024-01-01T00:00:00Z',
+          mine: true,
+          successful: true,
+        },
+        { id: 'mineOpen', posted: '2024-02-01T00:00:00Z', mine: true },
+      ]
+      expect(order(msgs, 'Newest')).toEqual(['mineOpen', 'newer', 'mineTaken'])
+    })
+
     it('keeps the viewer own post first under Nearby, ahead of a nearer non-own post', () => {
       const msgs = [
         { id: 'near', distance: 0.5 },

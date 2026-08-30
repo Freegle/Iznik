@@ -307,27 +307,17 @@ func ClearCount(c *fiber.Ctx) error {
 	})
 }
 
-// browseClearedWatermark is the messages_spatial.id this member has cleared their browse
-// count up to, or 0 if they never have - an absent row is the right state for everyone who
-// has not pressed the button.
+// browseClearedWatermark delegates to message.BrowseClearedWatermark - the definition moved
+// there so the mygroups feed (message.Groups) can apply the same watermark to its unseen
+// flags without an import cycle; this thin wrapper keeps the several existing call sites in
+// this package unchanged.
 //
-// Clearing moves this rather than writing a messages_likes View row per post: a View row is
-// an impression, feeding the view count posters see and the recommendation funnels, and the
-// ordinary member is sitting on ~1,000 unseen posts they have plainly not looked at.
-//
-// The axis is messages_spatial.id, not arrival and not msgid, because both of those are
-// stamped when the post was WRITTEN: a post Pending when the member cleared and approved
-// afterwards carries a backdated value, would fall under the watermark, and would never be
-// counted again. The spatial row is created when the post enters the feed.
+// Clearing moves the watermark rather than writing a messages_likes View row per post: a
+// View row is an impression, feeding the view count posters see and the recommendation
+// funnels, and the ordinary member is sitting on ~1,000 unseen posts they have plainly not
+// looked at.
 func browseClearedWatermark(db *gorm.DB, myid uint64) uint64 {
-	var cleared uint64
-
-	if myid > 0 {
-		// No row leaves cleared at its zero value, which is what "cleared nothing" means.
-		db.Table("browse_cleared").Select("spatialid").Where("userid = ?", myid).Row().Scan(&cleared)
-	}
-
-	return cleared
+	return message.BrowseClearedWatermark(db, myid)
 }
 
 // reachCandidateQuery composes the reach arm's FROM/JOINs/WHERE - the single definition of
@@ -806,22 +796,30 @@ func Count(c *fiber.Ctx) error {
 	browseView := effectiveBrowseView(c, db, myid)
 	maxDistance := resolveMaxDistance(c, db, myid)
 
+	// The drive-minutes budget only ever applies WITHIN an active distance limit, because
+	// that is when the client applies it too (filterMessagesByDistance returns everything
+	// unfiltered when the slider is unlimited).
+	var maxMinutes float64
+	if maxDistance < BrowseDistanceUnlimited {
+		maxMinutes = resolveMaxMinutes(c, db, myid)
+	}
+
 	// Reuse a recent answer where there is one. Marking posts seen clears it, so the badge
 	// still drops to zero the moment the viewer does that - see the browsecount package for
 	// why this is cached at all and what it deliberately does not delay.
-	if cached, ok := browsecount.Get(myid, browseView, maxDistance); ok {
+	if cached, ok := browsecount.Get(myid, browseView, maxDistance, maxMinutes); ok {
 		return c.JSON(fiber.Map{
 			"count": cached,
 		})
 	}
 
 	if browseView == "mygroups" {
-		count = myGroupsCount(db, myid, maxDistance)
+		count = myGroupsCount(db, myid, maxDistance, maxMinutes)
 	} else {
-		count = nearbyCount(myid, maxDistance)
+		count = nearbyCount(myid, maxDistance, maxMinutes)
 	}
 
-	browsecount.Put(myid, browseView, maxDistance, count)
+	browsecount.Put(myid, browseView, maxDistance, maxMinutes, count)
 
 	return c.JSON(fiber.Map{
 		"count": count,
@@ -854,7 +852,7 @@ func myGroupsCountUnfiltered(db *gorm.DB, myid uint64) uint64 {
 // feed exposes as `distance` (reachCandidateRow.blurredDistanceMiles), so the nav badge tracks the
 // distance-filtered list exactly. BrowseDistanceUnlimited (the common case — most members leave the
 // slider at "no limit") skips the per-post distance work and uses the fast unfiltered COUNT.
-func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64) uint64 {
+func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64, maxMinutes float64) uint64 {
 	if maxDistanceMiles >= BrowseDistanceUnlimited {
 		return myGroupsCountUnfiltered(db, myid)
 	}
@@ -882,15 +880,7 @@ func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64) uint64 {
 			"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid).
 		Scan(&candidates)
 
-	var count uint64 = 0
-	prewarmCandidateBlur(candidates)
-	for _, cand := range candidates {
-		_, _, distanceMiles := cand.blurredDistanceMiles(viewerLat, viewerLng)
-		if distanceMiles <= maxDistanceMiles {
-			count++
-		}
-	}
-	return count
+	return countWithinBudget(candidates, viewerLat, viewerLng, maxDistanceMiles, maxMinutes)
 }
 
 // resolveMaxDistance returns the viewer's effective nearby-feed distance limit in miles: an
@@ -943,6 +933,86 @@ func resolveMaxDistance(c *fiber.Ctx, db *gorm.DB, myid uint64) float64 {
 	return BrowseDistanceUnlimited
 }
 
+// resolveMaxMinutes returns the viewer's drive-time budget in minutes, or 0 when they have
+// none: an explicit ?maxMinutes= query param wins (so the browse page can force a fresh
+// value right after a slider change), otherwise settings.browseMaxMinutes — written by the
+// road-aware slider alongside browseMaxDistance. Count applies it exactly as the client's
+// filterMessagesByDistance (useDistance.js) does: only while a distance limit is active,
+// and minutes-first with crow miles as the fallback for posts the routing engine cannot
+// answer for. Without this the badge counted by crow miles alone while the page filtered
+// by drive time, so a rural member could stare at "You're up to date" under a badge that
+// never cleared (posts 8-11 crow miles away but 30+ minutes by road).
+func resolveMaxMinutes(c *fiber.Ctx, db *gorm.DB, myid uint64) float64 {
+	if q := c.Query("maxMinutes", ""); q != "" {
+		if v, err := strconv.ParseFloat(q, 64); err == nil {
+			return v
+		}
+	}
+
+	var raw string
+	// COALESCE to '' for the same reason as effectiveBrowseView: users who have never set
+	// the key scan cleanly instead of erroring on NULL.
+	db.Table("users").
+		Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxMinutes')), '')").
+		Where("id = ?", myid).
+		Scan(&raw)
+
+	if v, err := strconv.ParseFloat(raw, 64); err == nil && v > 0 {
+		return v
+	}
+
+	return 0
+}
+
+// countWithinBudget applies the client's slider rule to a candidate set — the same rule
+// filterMessagesByDistance + browseSliderMinuteCheck (useDistance.js) apply to the list —
+// so the badge and the page can never disagree about which posts are in range:
+//
+//   - with a drive-minutes budget (maxMinutes > 0), a post counts when the routing engine
+//     says it is within that many minutes of the viewer; the crow-miles limit is only the
+//     fallback for posts the engine has no answer for
+//   - with no budget, plain blurred-Haversine crow miles against maxDistanceMiles, as before.
+//
+// Distances are measured to each post's BLURRED point (the same coordinates the feed
+// exposes), and the drive times come in ONE batched /v1/drive-metrics call reusing the
+// feed's routing client and circuit breaker — a routing outage degrades every post to the
+// crow rule, never an error.
+func countWithinBudget(cands []reachCandidateRow, viewerLat, viewerLng, maxDistanceMiles, maxMinutes float64) uint64 {
+	prewarmCandidateBlur(cands)
+
+	type blurredPoint struct {
+		lat, lng, crow float64
+	}
+	pts := make([]blurredPoint, len(cands))
+	for ix, cand := range cands {
+		lat, lng, crow := cand.blurredDistanceMiles(viewerLat, viewerLng)
+		pts[ix] = blurredPoint{lat, lng, crow}
+	}
+
+	mins := map[int64]*float64{}
+	if maxMinutes > 0 {
+		targets := make([]driving.Target, 0, len(pts))
+		for ix, p := range pts {
+			targets = append(targets, driving.Target{ID: int64(ix), Lat: p.lat, Lng: p.lng})
+		}
+		for _, r := range driving.FetchDriveMetrics(roadblur.RoutingURL(), viewerLat, viewerLng, targets) {
+			mins[r.ID] = r.Mins
+		}
+	}
+
+	var count uint64
+	for ix := range pts {
+		if m := mins[int64(ix)]; m != nil {
+			if *m <= maxMinutes {
+				count++
+			}
+		} else if pts[ix].crow <= maxDistanceMiles {
+			count++
+		}
+	}
+	return count
+}
+
 // nearbyCount is the unseen-post count for the 'nearby' browse view. It mirrors the
 // reach-based feed in Messages — open posts whose rippling reach covers the viewer and
 // which they have not yet viewed — so the nav badge stays in lock-step with the list and
@@ -960,7 +1030,7 @@ func resolveMaxDistance(c *fiber.Ctx, db *gorm.DB, myid uint64) float64 {
 // two thirds of members now take the distance-limited path below. That path deliberately stays
 // in Go rather than SQL: the filter must use the BLURRED coordinates the feed exposes, or the
 // badge and the list would disagree at the boundary, which is the bug class this replaced.
-func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
+func nearbyCount(myid uint64, maxDistanceMiles float64, maxMinutes float64) uint64 {
 	db := database.DBConn
 
 	var count uint64 = 0
@@ -1051,15 +1121,7 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	}
 
 	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
-	prewarmCandidateBlur(cands)
-	for _, cand := range cands {
-		_, _, distanceMiles := cand.blurredDistanceMiles(viewerLat, viewerLng)
-		if distanceMiles <= maxDistanceMiles {
-			count++
-		}
-	}
-
-	return count
+	return countWithinBudget(cands, viewerLat, viewerLng, maxDistanceMiles, maxMinutes)
 }
 
 // prewarmCandidateBlur resolves every candidate's road-aware blur in one

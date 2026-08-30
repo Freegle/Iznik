@@ -25,6 +25,28 @@ import (
 // and the placeholder limit.
 const markSeenChunk = 100
 
+// BrowseClearedWatermark is the messages_spatial.id this member has cleared their browse
+// count up to ("Mark all seen"), or 0 if they never have - an absent row is the right state
+// for everyone who has not pressed the button. Lives here (rather than isochrone, which
+// consumes it for the badge and the nearby feed) so the mygroups feed can apply the same
+// watermark to its unseen flags without an import cycle: a member who cleared their browse
+// must not see every post they never individually opened come back as "New to you".
+//
+// The axis is messages_spatial.id, not arrival and not msgid, because both of those are
+// stamped when the post was WRITTEN: a post Pending when the member cleared and approved
+// afterwards carries a backdated value, would fall under the watermark, and would never be
+// counted again. The spatial row is created when the post enters the feed.
+func BrowseClearedWatermark(db *gorm.DB, myid uint64) uint64 {
+	var cleared uint64
+
+	if myid > 0 {
+		// No row leaves cleared at its zero value, which is what "cleared nothing" means.
+		db.Table("browse_cleared").Select("spatialid").Where("userid = ?", myid).Row().Scan(&cleared)
+	}
+
+	return cleared
+}
+
 // MarkSeenRequest is the request body for marking messages as seen.
 type MarkSeenRequest struct {
 	IDs []uint64 `json:"ids"`

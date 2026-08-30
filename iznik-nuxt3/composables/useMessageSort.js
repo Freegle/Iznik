@@ -84,8 +84,12 @@ export function sortBrowseMessages(messages, selectedSort, roadMiles = null) {
     // Closest), just below any paid pinned clearance - members otherwise lose track of their
     // own posts in the reach-ordered feed and assume they aren't showing (Discourse 9933). The
     // server flags them via `mine`. Among the member's own posts, show the most recent first.
-    const amine = a.m.mine ? 1 : 0
-    const bmine = b.m.mine ? 1 : 0
+    // Only OPEN own posts pin: the mygroups feed also carries freegled posts (they render as
+    // the spaced social-proof cards), and once `mine` reached that feed the member's own
+    // completed posts were being pinned over everything new. A completed post belongs in My
+    // Posts; here it takes its chances in the normal order like anyone else's freegled card.
+    const amine = a.m.mine && !a.m.successful ? 1 : 0
+    const bmine = b.m.mine && !b.m.successful ? 1 : 0
     if (amine !== bmine) {
       return bmine - amine
     }

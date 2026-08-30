@@ -25,6 +25,13 @@ func Groups(c *fiber.Ctx) error {
 
 	start := time.Now().AddDate(0, 0, -utils.OPEN_AGE).Format("2006-01-02")
 
+	// "Mark all seen" moves this watermark instead of writing a View row per post, so the
+	// spatial arm's unseen flag below must honour it - the badge (isochrone Count) already
+	// does, and without it a member who cleared their browse saw every post they never
+	// individually opened come back flagged "New to you" on the mygroups feed. Inlined (a
+	// uint from our own row) because the arm's args are positional.
+	watermark := strconv.FormatUint(BrowseClearedWatermark(db, myid), 10)
+
 	// Build the EXISTS fragment for the spatial arm to filter by group membership
 	// without relying on messages_spatial.groupid (which stores only ONE group for
 	// multi-group messages).
@@ -90,7 +97,7 @@ func Groups(c *fiber.Ctx) error {
 		// selected sort appeared not to be applied (Discourse 9844, mygroups variant).
 		// Mirrors the nearby/reach feed (isochrone/message.go).
 		"m.arrival AS posted, " +
-		"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen " +
+		"CASE WHEN messages_likes.msgid IS NULL AND messages_spatial.id > " + watermark + " THEN 1 ELSE 0 END AS unseen " +
 		"FROM messages_spatial " +
 		"INNER JOIN messages m ON m.id = messages_spatial.msgid " +
 		"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? " +
@@ -112,6 +119,13 @@ func Groups(c *fiber.Ctx) error {
 		"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? " +
 		"WHERE fromuser = ? AND messages_groups.arrival >= ? " +
 		"AND messages_outcomes.id IS NULL " +
+		// This arm exists for posts that are not in messages_spatial yet (Pending, or
+		// brand-new and awaiting the spatial insert). Once a post IS in spatial the arm
+		// above serves it, so admitting it here too handed the client duplicate rows
+		// (UNION only collapses identical rows, and the two arms disagree on arrival) -
+		// and kept showing posts spatial had PRUNED (expired/withdrawn), the exact class
+		// the nearby feed's own-posts arm filters the same way.
+		"AND NOT EXISTS (SELECT 1 FROM messages_spatial ms2 WHERE ms2.msgid = messages.id) " +
 		"GROUP BY messages.id" +
 		") t"
 
