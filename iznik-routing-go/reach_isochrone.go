@@ -59,6 +59,45 @@ func (e *ReachEngine) ReachedNodes(lbl *ReachLabels, limit float32) map[NodeID]f
 		}
 	}
 
+	// A STORED blob has no OriginArr - EncodeLabels leaves it out as far too big
+	// - so recover the same arrivals from the seeds it does keep. This is the
+	// seed path seedArrival already uses per point, which is what makes
+	// ArrivalFromStored exact on a stored blob; without it here, the origin's own
+	// region was served only by the route in through a region entry, which is
+	// never shorter and usually longer.
+	//
+	// The two answers disagreeing was a real inconsistency: asked about one place
+	// a stored blob said "in", but materialised into a reach the same blob left
+	// that place out. Measured on the Bristol fixture before this: ~5,462 places
+	// arriving up to 115s late, and at a 5-minute budget 374 of 1,471 missing
+	// altogether. After it, a stored blob materialises exactly like a live one.
+	if len(lbl.OriginArr) == 0 {
+		for seedOi, s := range lbl.Seeds {
+			leaf := e.Part.LeafOf[seedOi]
+			if leaf < 0 {
+				continue
+			}
+			row := e.tables.sourceRow(e, leaf, seedOi)
+			if row == nil {
+				continue
+			}
+			t := e.tables.get(e, leaf)
+			for li, d := range row {
+				if d == f32Inf {
+					continue
+				}
+				a := s + d
+				if a > limit {
+					continue
+				}
+				v := e.Ov.BaseNode[t.nodes[li]]
+				if cur, ok := out[v]; !ok || a < cur {
+					out[v] = a
+				}
+			}
+		}
+	}
+
 	// Chain interiors: every absorbed node's arrival is its best reachable
 	// end-junction arrival plus the contraction's stored end→node offset.
 	// One linear pass, no search.
