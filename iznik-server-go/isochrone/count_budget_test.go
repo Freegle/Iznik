@@ -142,3 +142,61 @@ func TestCountWithinBudgetRoutingDownFallsBackToCrow(t *testing.T) {
 	// routing calls.
 	roadblur.ResetRoutingBreaker()
 }
+
+// candDriveMetrics feeds the relevance score's reference close term and the
+// summaries' stamped roadmins/roadmiles, so its answer mapping must be exact:
+// index-aligned with the candidate slice, nil where the engine had no answer,
+// and zero-coordinate candidates never sent as targets.
+func TestCandDriveMetricsIndexAlignment(t *testing.T) {
+	roadblur.ResetRoutingBreaker()
+
+	viewerLat, viewerLng := 53.86, -2.62
+	cands := []reachCandidateRow{
+		{ID: 100, Lat: viewerLat, Lng: viewerLng - 0.1},
+		{ID: 101, Lat: 0, Lng: 0}, // no coordinates: never a target
+		{ID: 102, Lat: viewerLat, Lng: viewerLng + 0.1},
+	}
+
+	// Targets are numbered by candidate INDEX; index 1 is the zero-coord one,
+	// so only 0 and 2 reach the engine — and only 0 gets an answer, proving
+	// the unanswered slot stays nil rather than inheriting a neighbour's.
+	srv := stubRoutingServer(t, map[int64]float64{0: 12})
+	defer srv.Close()
+	os.Setenv("ROUTING_EVAL_URL", srv.URL)
+	defer os.Unsetenv("ROUTING_EVAL_URL")
+
+	mins, miles := candDriveMetrics(viewerLat, viewerLng, cands)
+
+	if mins[0] == nil || *mins[0] != 12 {
+		t.Fatalf("answered candidate: got %v, want 12 mins", mins[0])
+	}
+	if mins[1] != nil || miles[1] != nil {
+		t.Fatalf("zero-coord candidate must stay nil, got %v/%v", mins[1], miles[1])
+	}
+	if mins[2] != nil {
+		t.Fatalf("unanswered candidate must stay nil, got %v", mins[2])
+	}
+	if len(mins) != len(cands) || len(miles) != len(cands) {
+		t.Fatalf("results not index-aligned: %d/%d for %d cands", len(mins), len(miles), len(cands))
+	}
+}
+
+// A routing outage yields all-nil metrics — the summaries then score and
+// display by the crow fallback, and nothing errors.
+func TestCandDriveMetricsRoutingDownAllNil(t *testing.T) {
+	roadblur.ResetRoutingBreaker()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	os.Setenv("ROUTING_EVAL_URL", srv.URL)
+	defer os.Unsetenv("ROUTING_EVAL_URL")
+
+	cands := []reachCandidateRow{{ID: 100, Lat: 53.86, Lng: -2.72}}
+	mins, miles := candDriveMetrics(53.86, -2.62, cands)
+	if mins[0] != nil || miles[0] != nil {
+		t.Fatalf("outage must yield nil metrics, got %v/%v", mins[0], miles[0])
+	}
+	roadblur.ResetRoutingBreaker()
+}
