@@ -70,4 +70,34 @@ class DigestPostScorerTest extends TestCase
         $this->assertSame(0.0, $r['close']);
         $this->assertFalse(is_nan($r['total']));
     }
+
+    // --- Reference close term: 1 - driveMin/max_minutes (drive time known) ---
+
+    public function test_close_uses_drive_minutes_when_known(): void
+    {
+        $env = $this->env + ['max_minutes' => 30.0];
+        // 15 of 30 minutes: close = 0.5, regardless of the crow inputs.
+        $r = $this->scorer()->score(999999.0, 100.0, 5.0, 0, 0, false, $this->weights, $env, 15.0);
+        $this->assertEqualsWithDelta(0.5, $r['close'], 1e-9);
+        // Beyond the horizon clamps to zero.
+        $r = $this->scorer()->score(0.0, 100000.0, 5.0, 0, 0, false, $this->weights, $env, 45.0);
+        $this->assertSame(0.0, $r['close']);
+    }
+
+    public function test_unknown_drive_time_falls_back_to_the_crow_proxy(): void
+    {
+        // null driveMinutes means "unknown", never "score zero": the documented
+        // haversine approximation still applies, byte-identical to before.
+        $env = $this->env + ['max_minutes' => 30.0];
+        $r = $this->scorer()->score(15000.0, 30000.0, 5.0, 0, 0, false, $this->weights, $env, null);
+        $this->assertEqualsWithDelta(0.5, $r['close'], 1e-9);
+    }
+
+    public function test_missing_max_minutes_keeps_the_crow_proxy_even_with_minutes(): void
+    {
+        // An env without the horizon (older config) cannot apply the reference
+        // term; the proxy governs and nothing divides by zero.
+        $r = $this->scorer()->score(15000.0, 30000.0, 5.0, 0, 0, false, $this->weights, $this->env, 10.0);
+        $this->assertEqualsWithDelta(0.5, $r['close'], 1e-9);
+    }
 }

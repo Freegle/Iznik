@@ -2522,11 +2522,27 @@ class UnifiedDigestService
         $env = [
             'window_hours' => (float) config('freegle.ripple.score.window_hours', 24),
             'budget_decay' => (float) config('freegle.ripple.score.budget_decay', 25),
+            // The reference close term's horizon - the same tuned knob the
+            // /rippling digest preview defaults to (RIPPLE_MAX_MINUTES).
+            'max_minutes' => (float) config('freegle.ripple.score.max_minutes', config('freegle.ripple.max_minutes', 30)),
         ];
 
         // Load every candidate post's reach radius in ONE query rather than one
         // round-trip per post (the daily digest is DB-round-trip-bound).
         $this->primeReachRadiusCache($posts);
+
+        // Drive minutes for every candidate in ONE routing call. Scoring runs
+        // before the distance filter, so this prefetch also warms the memo the
+        // filter reads - the run pays one call per recipient for both.
+        $targets = [];
+        foreach ($posts as $p) {
+            if ($p->lat !== null && $p->lng !== null) {
+                $targets[] = [(float) $p->lat, (float) $p->lng];
+            }
+        }
+        if ($targets !== []) {
+            $this->driveMinutes()->prefetch($latlng[0], $latlng[1], $targets);
+        }
 
         $now = now();
         foreach ($posts as $post) {
@@ -2543,6 +2559,11 @@ class UnifiedDigestService
                 ? $post->arrival
                 : \Illuminate\Support\Carbon::parse($post->arrival);
             $ageH = max(0.0, $now->floatDiffInHours($arrival));
+            // Memo hit from the prefetch above; null (crow fallback in the
+            // scorer) when the engine had no answer for this post.
+            $driveMinutes = ($post->lat !== null && $post->lng !== null)
+                ? $this->driveMinutes()->minutesBetween($latlng[0], $latlng[1], (float) $post->lat, (float) $post->lng)
+                : null;
             $s = $scorer->score(
                 $dist,
                 $reach,
@@ -2551,7 +2572,8 @@ class UnifiedDigestService
                 (int) ($post->replies ?? 0),
                 false, // anchor/home-group not yet implemented; see /rippling (digest_simulator.go homeGroups). Default weight 0.
                 $weights,
-                $env
+                $env,
+                $driveMinutes
             );
             // Sink posts the recipient has already had a chance to see (in-app view
             // or an opened/clicked digest) so the digest leads with fresh posts.

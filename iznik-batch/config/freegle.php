@@ -796,6 +796,10 @@ return [
             ],
             'window_hours' => (float) env('RIPPLE_DIGEST_WINDOW_HOURS', 24),
             'budget_decay' => (float) env('RIPPLE_DIGEST_BUDGET_DECAY', 25),
+            // The reference close term's horizon (1 - driveMin/max_minutes):
+            // defaults to the ripple max_minutes knob, the same value the
+            // /rippling digest preview defaults to.
+            'max_minutes' => (float) env('RIPPLE_DIGEST_SCORE_MAX_MINUTES', env('RIPPLE_MAX_MINUTES', 30)),
             // ~30km, the 30-min drive-isochrone analogue. Used for posts with no
             // rippling_reach row (the dominant case while rippling is dark, and for
             // all backlog posts after go-live).

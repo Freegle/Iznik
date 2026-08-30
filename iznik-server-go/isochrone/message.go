@@ -113,7 +113,7 @@ func (r reachCandidateRow) blurredDistanceMiles(viewerLat, viewerLng float64) (b
 // blurred lat/lng already allow. distanceMiles (Distance) and the metres
 // figure fed into Score are the same underlying measurement, just converted,
 // so the client's distance slider and the server's ordering agree.
-func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeights, env ScoreEnv, myid uint64) message.MessageSummary {
+func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeights, env ScoreEnv, myid uint64, roadmins, roadmiles *float64) message.MessageSummary {
 	blurLat, blurLng, distanceMiles := r.blurredDistanceMiles(viewerLat, viewerLng)
 	distanceMetres := distanceMiles * milesToMetres
 
@@ -127,7 +127,13 @@ func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeight
 	// Home-group anchoring is not yet implemented (mirrors the digest and
 	// the /rippling preview, both of which pass homeGroup=false today; its
 	// weight defaults to 0 so it has no effect either way).
-	comps := Score(distanceMetres, reachMetres, ageHours, int(r.Views), int(r.Replies), false, w, env)
+	//
+	// The close term uses the member's actual drive time when the routing
+	// engine answered (the reference formula), the crow proxy otherwise -
+	// see ScoreT. The same roadmins/roadmiles are stamped on the summary,
+	// so the number the ranking used is the number the client filters and
+	// sorts by.
+	comps := ScoreT(roadmins, distanceMetres, reachMetres, ageHours, int(r.Views), int(r.Replies), false, w, env)
 
 	return message.MessageSummary{
 		ID:           r.ID,
@@ -144,7 +150,34 @@ func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeight
 		Distance:     distanceMiles,
 		Score:        comps.Total,
 		Mine:         r.Fromuser != 0 && r.Fromuser == myid,
+		Roadmins:     roadmins,
+		Roadmiles:    roadmiles,
 	}
+}
+
+// candDriveMetrics resolves each candidate's drive time/miles from the viewer
+// in ONE batched routing call, to the same blurred points the summaries will
+// expose. Index-aligned with cands; nil where the engine had no answer (the
+// caller's crow fallbacks then apply). Fetched BEFORE summarising because the
+// close term of the relevance score now uses it - the ranking, the filter and
+// the badges all read one number.
+func candDriveMetrics(viewerLat, viewerLng float64, cands []reachCandidateRow) ([]*float64, []*float64) {
+	mins := make([]*float64, len(cands))
+	miles := make([]*float64, len(cands))
+	targets := make([]driving.Target, 0, len(cands))
+	for ix, cand := range cands {
+		blurLat, blurLng, _ := cand.blurredDistanceMiles(viewerLat, viewerLng)
+		if blurLat != 0 || blurLng != 0 {
+			targets = append(targets, driving.Target{ID: int64(ix), Lat: blurLat, Lng: blurLng})
+		}
+	}
+	for _, r := range driving.FetchDriveMetrics(roadblur.RoutingURL(), viewerLat, viewerLng, targets) {
+		if r.Mins != nil && r.ID >= 0 && int(r.ID) < len(cands) {
+			mins[r.ID] = r.Mins
+			miles[r.ID] = r.Miles
+		}
+	}
+	return mins, miles
 }
 
 // fetchReachCandidates runs the reach-arm query — open posts whose rippling-out reach
@@ -477,14 +510,15 @@ func Messages(c *fiber.Ctx) error {
 			blurCoords = append(blurCoords, [2]float64{float64(cand.Lat), float64(cand.Lng)})
 		}
 		roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
-		for _, cand := range reachCands {
-			res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env, myid))
+		// Road drive metrics for the whole feed in ONE routing call, BEFORE
+		// summarising: the relevance score's close term uses the drive time
+		// (the reference formula), and the same values are stamped on each
+		// summary so "Closest" is road-ordered from the first paint with no
+		// client round trips and no later re-sort.
+		candMins, candMiles := candDriveMetrics(viewerLat, viewerLng, reachCands)
+		for ix, cand := range reachCands {
+			res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env, myid, candMins[ix], candMiles[ix]))
 		}
-		// Road drive metrics for the whole feed in ONE routing call, so
-		// "Closest" is road-ordered from the first paint with no client
-		// round trips and no later re-sort (the full records carry the
-		// same values for the same blurred points).
-		addSummaryRoadMetrics(viewerLat, viewerLng, res)
 
 		// Pre-warm the browse-search reach cache with the membership we just computed:
 		// the search's reach arm is this same predicate, and members search moments
@@ -557,7 +591,10 @@ func Messages(c *fiber.Ctx) error {
 		// own candidates to summaries, then drop the expired ones.
 		ownSummaries := make([]message.MessageSummary, 0, len(ownCandidates))
 		for _, cand := range ownCandidates {
-			ownSummaries = append(ownSummaries, cand.toSummary(viewerLat, viewerLng, weights, env, myid))
+			// Own posts pin client-side regardless of score and carried no
+			// road metrics before this refactor either; nil keeps them on
+			// the crow term exactly as they were.
+			ownSummaries = append(ownSummaries, cand.toSummary(viewerLat, viewerLng, weights, env, myid, nil, nil))
 		}
 		activeOwn := message.FilterExpiredSummaries(db, ownSummaries)
 
@@ -740,10 +777,13 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 				blurCoords = append(blurCoords, [2]float64{float64(cand.Lat), float64(cand.Lng)})
 			}
 			roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
-			for _, cand := range candidates {
-				res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env, myid))
+			// Metrics BEFORE summarising, exactly as the nearby arm: the close
+			// term scores by drive time when known, and the summaries carry the
+			// same numbers the client filters and sorts by.
+			candMins, candMiles := candDriveMetrics(viewerLat, viewerLng, candidates)
+			for ix, cand := range candidates {
+				res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env, myid, candMins[ix], candMiles[ix]))
 			}
-			addSummaryRoadMetrics(viewerLat, viewerLng, res)
 			// Rippling relevance order (score desc, arrival tie-break), mirroring the nearby
 			// arm, so the client's "New to you" sort has a meaningful score to rank on.
 			sort.SliceStable(res, func(i, j int) bool {
