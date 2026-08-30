@@ -3787,6 +3787,7 @@ type patchMessageRequest struct {
 	Messagetype        *string         `json:"messagetype"`
 	Item               *string         `json:"item"`
 	Availablenow       *int            `json:"availablenow"`
+	Availableinitially *int            `json:"availableinitially"`
 	Lat                *float64        `json:"lat"`
 	Lng                *float64        `json:"lng"`
 	Location           *string         `json:"location"`
@@ -3892,7 +3893,7 @@ func actAsOwnerCandidate(db *gorm.DB, primary uint64, candidates []uint64, msgID
 // via the retired ormharness's AssertGoldenFieldwise (all removed in
 // d22ba1d6c) - same n+2 cases, same golden SQL per
 // case, now rendered by GORM instead of by hand.
-func buildApplyPatchMessageCoreUpdateSet(subject, textbody, msgType, deadline *string, availablenow *int, locationid *uint64, effLat, effLng *float64) clause.Set {
+func buildApplyPatchMessageCoreUpdateSet(subject, textbody, msgType, deadline *string, availablenow, availableinitially *int, locationid *uint64, effLat, effLng *float64) clause.Set {
 	var set clause.Set
 
 	if subject != nil {
@@ -3906,6 +3907,22 @@ func buildApplyPatchMessageCoreUpdateSet(subject, textbody, msgType, deadline *s
 	}
 	if availablenow != nil {
 		set = append(set, clause.Assignment{Column: clause.Column{Name: "availablenow"}, Value: *availablenow})
+	}
+	// The owner editing "How many?" is telling us how many there are - they may
+	// have found a few more - so the edited quantity moves availableinitially
+	// too. Only an edit does: giving items away moves availablenow alone, which
+	// is what makes availableinitially the count to measure the give-away
+	// against. Leaving it behind broke both readers of that assumption -
+	// handleAddBy/handleRemoveBy clamp with LEAST(availableinitially, ...), so
+	// the first item taken from a post edited up from 1 to 5 collapsed it back
+	// to 1, and applyRepost resets availablenow to availableinitially, so a
+	// redraft did the same. 169 live offers in 90 days are in that state.
+	// MessageEditModal.vue sends both keys; a caller that sends only
+	// availablenow (TN partner edits) mirrors it, as handlePutMessage does.
+	if availableinitially != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "availableinitially"}, Value: *availableinitially})
+	} else if availablenow != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "availableinitially"}, Value: *availablenow})
 	}
 	if deadline != nil {
 		if *deadline == "" || *deadline == "null" {
@@ -4004,8 +4021,9 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	}
 	// Master's availablenow/deadline SET entries are not repeated here: this
 	// branch assembles the whole SET list in
-	// buildApplyPatchMessageCoreUpdateSet, which already covers both columns
-	// with the same NULL-on-empty rule. Master's deadlineDate() conversion is
+	// buildApplyPatchMessageCoreUpdateSet, which already covers those columns
+	// (and availableinitially alongside availablenow) with the same
+	// NULL-on-empty rule. Master's deadlineDate() conversion is
 	// applied there rather than at this call site.
 	// Resolve location name to locationid if provided.
 	if req.Location != nil && *req.Location != "" && (req.Locationid == nil || *req.Locationid == 0) {
@@ -4054,7 +4072,7 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		}
 	}
 
-	if set := buildApplyPatchMessageCoreUpdateSet(req.Subject, req.Textbody, req.Type, req.Deadline, req.Availablenow, req.Locationid, effLat, effLng); len(set) > 0 {
+	if set := buildApplyPatchMessageCoreUpdateSet(req.Subject, req.Textbody, req.Type, req.Deadline, req.Availablenow, req.Availableinitially, req.Locationid, effLat, effLng); len(set) > 0 {
 		db.Table("messages").Where("id = ?", req.ID).Clauses(set).Updates(map[string]interface{}{})
 	}
 
