@@ -10,7 +10,6 @@ use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 
 /**
  * Held external (email / TrashNothing) replies (#3 / PR C).
@@ -34,9 +33,6 @@ use Illuminate\Support\Facades\Schema;
  */
 class RippleReplyService
 {
-    /** Memoized rippling_held_replies.dueat column check, so a pre-migration deploy is safe. */
-    private static ?bool $dueAtColumn = null;
-
     private ?MaxReachService $maxReach;
 
     /**
@@ -201,11 +197,9 @@ class RippleReplyService
             'created_at' => $now,
         ];
 
-        // A hold is a delay, so it is stamped with when it comes off. Best-effort: an
-        // older schema (pre-migration) has no column to stamp, and that must not stop
-        // the hold - the sweep computes the due time from created_at either way.
+        // A hold is a delay, so it is stamped with when it comes off.
         $due = $this->dueAt($msgid, $now, $lat, $lng);
-        if ($due !== null && $this->dueAtAvailable()) {
+        if ($due !== null) {
             $row['dueat'] = $due;
         }
 
@@ -354,26 +348,6 @@ class RippleReplyService
         return ['lat' => (float) $row->lat, 'lng' => (float) $row->lng];
     }
 
-    /** Has the dueat migration run? Without it the sweep still works, off created_at. */
-    private function dueAtAvailable(): bool
-    {
-        if (self::$dueAtColumn === null) {
-            try {
-                self::$dueAtColumn = Schema::hasColumn('rippling_held_replies', 'dueat');
-            } catch (\Throwable) {
-                self::$dueAtColumn = false;
-            }
-        }
-
-        return self::$dueAtColumn;
-    }
-
-    /** Test-only: forget the memoized column check. */
-    public static function forgetDueAtAvailability(): void
-    {
-        self::$dueAtColumn = null;
-    }
-
     /**
      * Release every held reply for $msgid whose delay has run out, and stamp the due
      * time on any row that has not got one yet (the Go/web hold path does not compute
@@ -407,7 +381,6 @@ class RippleReplyService
         }
 
         $now = now();
-        $canStamp = $this->dueAtAvailable();
         $released = 0;
 
         foreach ($held as $row) {
@@ -421,12 +394,10 @@ class RippleReplyService
 
             // Keep the stamp in step with the policy, so changing the config re-dates
             // rows that have not come off hold rather than leaving a stale promise.
-            if ($canStamp) {
-                $stamped = $row->dueat === null ? null : Carbon::parse($row->dueat);
-                if ($stamped === null || !$stamped->equalTo($due)) {
-                    DB::table('rippling_held_replies')->where('id', $row->id)
-                        ->update(['dueat' => $due]);
-                }
+            $stamped = $row->dueat === null ? null : Carbon::parse($row->dueat);
+            if ($stamped === null || !$stamped->equalTo($due)) {
+                DB::table('rippling_held_replies')->where('id', $row->id)
+                    ->update(['dueat' => $due]);
             }
 
             if ($now->lt($due)) {

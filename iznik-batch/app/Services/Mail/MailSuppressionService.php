@@ -116,7 +116,7 @@ class MailSuppressionService
         }
 
         try {
-            if ($mailKey !== null && $this->hasLastKey()) {
+            if ($mailKey !== null) {
                 // Count MAILS, not attempts. The chat notifier skips a suppressed
                 // recipient without advancing chat_roster.lastmsgemailed, so the same
                 // unread messages are re-processed every run; counting each pass gave
@@ -192,27 +192,6 @@ class MailSuppressionService
     }
 
     /**
-     * Whether the dedupe column exists yet. Cached because this is called from
-     * inside the send loops, and checked at all because the schema change ships
-     * separately from the code - prod migrations are applied by hand, so the
-     * code has to work either side of that.
-     */
-    private ?bool $hasLastKey = null;
-
-    private function hasLastKey(): bool
-    {
-        if ($this->hasLastKey === null) {
-            try {
-                $this->hasLastKey = \Illuminate\Support\Facades\Schema::hasColumn('mail_suppressed_counts', 'lastkey');
-            } catch (\Throwable $e) {
-                $this->hasLastKey = false;
-            }
-        }
-
-        return $this->hasLastKey;
-    }
-
-    /**
      * Drop the in-process cache. Called by the scan after it changes the
      * suppression set, and by tests.
      */
@@ -220,7 +199,6 @@ class MailSuppressionService
     {
         $this->cache = null;
         $this->cacheLoadedAt = null;
-        $this->hasLastKey = null;
     }
 
     /**

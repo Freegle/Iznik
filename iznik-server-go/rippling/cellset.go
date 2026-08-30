@@ -275,7 +275,7 @@ var polygonCellsExists bool
 // naming the column goes through this (or MaxPolygonCellsReady), so the drop
 // breaks nothing - the cells probes simply always answer "cannot say" and
 // the label paths, which decide everything by then, carry on. Checked once
-// per process, same discipline as ReachBoundsReady.
+// per process.
 func PolygonCellsReady(db *gorm.DB) bool {
 	polygonCellsOnce.Do(func() {
 		var n int64

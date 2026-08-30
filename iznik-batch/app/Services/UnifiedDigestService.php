@@ -15,7 +15,6 @@ use App\Services\Ripple\RingIndex;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -54,9 +53,6 @@ class UnifiedDigestService
 
     /** Per-run cache of post reach radius in metres, keyed by msgid. */
     private array $reachRadiusCache = [];
-
-    /** Memoized once per run: whether the optional messages_pinned table exists. */
-    private ?bool $messagesPinnedTableExists = null;
 
     /**
      * Digest mode constants.
@@ -670,15 +666,6 @@ class UnifiedDigestService
      * haven't joined is not appropriate; non-members within reach discover the post via browse and
      * the daily digest. Do not "fix" the JOIN to include non-members.
      */
-    /** Memoized presence of rippling_reach.overflow_bounds. Null until first checked. */
-    private static ?bool $overflowColumn = null;
-
-    /** Test-only: forget the memoized overflow-column check. */
-    public static function forgetOverflowColumn(): void
-    {
-        self::$overflowColumn = null;
-    }
-
     /**
      * The ring's BOUNDING BOX as a widening of who this post's mail enumerates.
      *
@@ -711,10 +698,6 @@ class UnifiedDigestService
             // overflow_bounds lane keys by design and carries the bbox scalar
             // too (rows written before the drop lack it, and fall to the
             // widen-to-everyone branch, which is safe).
-            self::$overflowColumn ??= Schema::hasColumn('rippling_reach', 'overflow_cells');
-            if (! self::$overflowColumn) {
-                return $none;
-            }
             $raw = DB::table('rippling_reach')->where('msgid', $msgid)->value('overflow_cells');
             $bounds = is_string($raw) ? json_decode($raw, true) : null;
             if (! is_array($bounds)) {
@@ -2152,21 +2135,12 @@ class UnifiedDigestService
      *
      * "Open" mirrors getPostsForUser: Approved on the group, not deleted, an Offer/Wanted, and
      * with NO outcome (Taken/Received/Withdrawn/Expired). Deliberately NOT window-limited and NOT
-     * reach-gated, so a pinned post recurs in every daily digest until it closes. Inert (returns
-     * empty) until the messages_pinned table exists, so it can never break digests before the
-     * migration has run.
+     * reach-gated, so a pinned post recurs in every daily digest until it closes.
      *
      * @return Collection of Message (each with ->groupid, ->arrival, and has_outcome/has_success=0)
      */
     private function getPinnedOpenPostsForUser(User $user): Collection
     {
-        if ($this->messagesPinnedTableExists === null) {
-            $this->messagesPinnedTableExists = Schema::hasTable('messages_pinned');
-        }
-        if (!$this->messagesPinnedTableExists) {
-            return collect();
-        }
-
         $groupIds = $user->memberships()
             ->where('collection', Membership::COLLECTION_APPROVED)
             ->pluck('groupid');

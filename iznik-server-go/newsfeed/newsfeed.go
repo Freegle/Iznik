@@ -399,7 +399,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, minutes uint64, all
 	// pure radius behaviour.
 	leafSQL := ""
 	var leafArgs []interface{}
-	if gotLatLng && distance > 0 && minutes > 0 && hasLeafColumn() {
+	if gotLatLng && distance > 0 && minutes > 0 {
 		if leaves := memberReachableLeaves(myid, userLat, userLng, minutes); len(leaves) > 0 {
 			leafSQL = "AND (newsfeed.leaf IS NULL OR newsfeed.leaf IN (?)) "
 			leafArgs = []interface{}{leaves}
@@ -1515,9 +1515,7 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 	// Road-network region for the road-aware feed narrowing; NULL when the
 	// reach engine cannot answer (the backfill retries later). Only when the
 	// column exists - the code can deploy ahead of the migration.
-	if hasLeafColumn() {
-		row["leaf"] = leafFor(lat, lng)
-	}
+	row["leaf"] = leafFor(lat, lng)
 	if err := db.Table("newsfeed").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create newsfeed post")
 	}
@@ -1643,9 +1641,7 @@ func createRefer(db *gorm.DB, myid uint64, nfID uint64, referType string, msgid 
 		"msgid":    gorm.Expr("NULLIF(?, 0)", msgid),
 		"position": gorm.Expr("ST_GeomFromText(?, ?)", fmt.Sprintf("POINT(%f %f)", lng, lat), utils.SRID),
 	}
-	if hasLeafColumn() {
-		row["leaf"] = leafFor(lat, lng)
-	}
+	row["leaf"] = leafFor(lat, lng)
 	if err := db.Table("newsfeed").Create(row).Error; err != nil {
 		return
 	}

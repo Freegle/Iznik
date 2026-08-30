@@ -47,9 +47,8 @@ class ReachQueryService
             // Rings re-admit on top of the committed reach everywhere.
             return $this->isWithinOverflow($msgid, $lat, $lng, $band);
         } catch (\Throwable $e) {
-            // rippling_reach is created by the reach engine (PR A). Until that is
-            // deployed the table may be absent — fail open ("not within reach") so
-            // callers degrade safely instead of throwing.
+            // Fail closed ("not within reach") so a routing or DB failure degrades
+            // safely instead of throwing at a reply gate. The release cron re-asks.
             return false;
         }
     }

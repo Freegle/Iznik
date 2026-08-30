@@ -485,16 +485,6 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	tx848af7d73bfe.Statement.BuildClauses = []string{"SELECT"}
 	tx848af7d73bfe.Scan(&wasHome)
 
-	if !rippling.AttributionSchemaReady(db) {
-		db.Table("rippling_reply_attribution").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
-			"msgid":           refmsgid,
-			"userid":          myid,
-			"replied_at":      gorm.Expr("NOW()"),
-			"was_home_member": wasHome,
-		})
-		return
-	}
-
 	// Did we send this user the ripple "new post near you" mail for this post? Keyed lookup on
 	// the notified ledger - the strongest direct ripple-delivery evidence.
 	// Same

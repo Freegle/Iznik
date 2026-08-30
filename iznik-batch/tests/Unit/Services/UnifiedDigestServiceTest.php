@@ -3550,8 +3550,6 @@ class UnifiedDigestServiceTest extends TestCase
         string $ringKey = 'sparse'
     ): array {
         config(['freegle.digest.immediate_allowlist' => '*']);
-        UnifiedDigestService::forgetOverflowColumn();
-
         $group = $this->createTestGroup();
         $poster = $this->createTestUser();
         $this->createMembership($poster, $group);
@@ -3754,8 +3752,6 @@ class UnifiedDigestServiceTest extends TestCase
             'freegle.ripple.fairness.enabled' => true,
             'freegle.ripple.cluster.enabled' => true,
         ]);
-        UnifiedDigestService::forgetOverflowColumn();
-
         $group = $this->createTestGroup();
         $poster = $this->createTestUser();
         $this->createMembership($poster, $group);

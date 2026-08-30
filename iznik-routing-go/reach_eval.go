@@ -75,31 +75,6 @@ type evalRow struct {
 	unionSecs  float32
 }
 
-// Schema guards: the columns land by migration after this code deploys, so
-// the loaders must work both ways (the same deploy-before-migrate posture as
-// newsfeed.leaf). Checked once per process.
-var (
-	schemaOnce      sync.Once
-	hasUnionSecsCol bool
-	hasLeavesFPCol  bool
-)
-
-func checkEvalSchema() {
-	schemaOnce.Do(func() {
-		db := groupsDB
-		if db == nil {
-			return
-		}
-		var n int
-		if err := db.QueryRow("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'origin_union_secs'").Scan(&n); err == nil {
-			hasUnionSecsCol = n > 0
-		}
-		if err := db.QueryRow("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'rippling_reach_leaves' AND column_name = 'fp'").Scan(&n); err == nil {
-			hasLeavesFPCol = n > 0
-		}
-	})
-}
-
 // evalRowLoader fetches candidate rows; a var so tests can inject rows
 // without a database. The default reads the same MySQL the spatial loaders
 // use; nil db means "unavailable".
@@ -108,19 +83,14 @@ var evalRowLoader = func(ids []uint64) ([]evalRow, error) {
 	if db == nil {
 		return nil, errNoEvalDB
 	}
-	checkEvalSchema()
 	ph := make([]string, len(ids))
 	args := make([]interface{}, len(ids))
 	for i, id := range ids {
 		ph[i] = "?"
 		args[i] = id
 	}
-	unionSel := "NULL"
-	if hasUnionSecsCol {
-		unionSel = "rr.origin_union_secs"
-	}
 	rows, err := db.Query(
-		"SELECT rr.msgid, rr.reach_labels, rr.tick, rr.max_drive_min, rr.schedule, rr.rejected_groups, rr.status, "+unionSel+", "+
+		"SELECT rr.msgid, rr.reach_labels, rr.tick, rr.max_drive_min, rr.schedule, rr.rejected_groups, rr.status, rr.origin_union_secs, "+
 			"(SELECT mg.groupid FROM messages_groups mg WHERE mg.msgid = rr.msgid AND mg.deleted = 0 ORDER BY mg.arrival ASC LIMIT 1) "+
 			"FROM rippling_reach rr WHERE rr.msgid IN ("+
 			strings.Join(ph, ",")+")", args...)
@@ -553,10 +523,9 @@ var leafRowLoader = func(leaf int32) []uint64 {
 	if db == nil {
 		return nil
 	}
-	checkEvalSchema()
 	q := "SELECT msgid FROM rippling_reach_leaves WHERE leaf = ?"
 	args := []interface{}{leaf}
-	if hasLeavesFPCol && reachLive != nil {
+	if reachLive != nil {
 		if reachPrev != nil {
 			q += " AND (fp IS NULL OR fp IN (?, ?))"
 			args = append(args, reachLive.partFP, reachPrev.partFP)

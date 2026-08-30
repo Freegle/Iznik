@@ -5,7 +5,6 @@ namespace App\Services\Ripple;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 
 /**
  * §16 self-tuning loop (advisory mode).
@@ -225,12 +224,9 @@ class RippleTuneService
         return array_map('intval', $rows);
     }
 
-    /** @return array<int,float> groupid => mean reach drive-minutes (empty unless rippling_reach exists) */
+    /** @return array<int,float> groupid => mean reach drive-minutes */
     private function groupReachDriveMin(Carbon $start, Carbon $end): array
     {
-        if (!Schema::hasTable('rippling_reach')) {
-            return [];
-        }
         $rows = DB::table('rippling_reach as rr')
             ->join('messages_groups as mg', 'mg.msgid', '=', 'rr.msgid')
             ->whereBetween('rr.created_at', [$start, $end])
@@ -245,9 +241,6 @@ class RippleTuneService
     /** @return array<int,float> groupid => secondary-reject rate (rejected rippled-in / rippled-in) */
     private function groupSecondaryRejectRates(Carbon $start, Carbon $end): array
     {
-        if (!Schema::hasColumn('messages_groups', 'rippled_in')) {
-            return [];
-        }
         $rows = DB::table('messages_groups as mg')
             ->where('mg.rippled_in', 1)
             ->whereBetween('mg.arrival', [$start, $end])
@@ -262,14 +255,16 @@ class RippleTuneService
         return array_map('floatval', $rows);
     }
 
-    /** @return array<string,float> category => volume delta vs prior period (empty if no baseline) */
+    /**
+     * @return array<string,float> category => volume delta vs prior period
+     *
+     * Advisory stub: always empty, so proposeParams() proposes nothing. The baseline wiring
+     * lands once live-vs-baseline data accrues in rippling_algorithm_metrics. Tests override
+     * this to exercise the proposal logic.
+     */
     protected function categoryVolumeDeltas(string $periodStart): array
     {
-        // Uses the offline simulator's per-category figures if present; otherwise no proposals.
-        if (!Schema::hasTable('ripple_algorithm_metrics')) {
-            return [];
-        }
-        return []; // baseline wiring lands once live-vs-baseline data accrues (advisory stub)
+        return [];
     }
 
     private function groupNames(): array

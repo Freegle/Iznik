@@ -45,7 +45,11 @@ counting it as "not electrical".
   Approved group row), and a NOT EXISTS on `messages_eee` makes re-scanning the
   boundary safe. Results land in `messages_eee` via `EeeProductionStore` - the
   narrow production projection (verdict, reason, buckets), not the wide research
-  row, which stays in the dev-side SQLite store.
+  row, which stays in the dev-side SQLite store. Each classified attachment is
+  also recorded in `eee_classified_attachments`, an index for downstream serving.
+  That write is best-effort and its failure is logged rather than raised, so a
+  missing row there does not mean the classification failed - read
+  `messages_eee` to answer that.
 - **`electricals:stats`** (daily 05:10): builds the whole page payload as one JSON
   blob into `electricals_stats`. Rolling twelve-month window; only the newest row
   is served. Queries dedupe to the newest classification per message, since
