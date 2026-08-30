@@ -516,6 +516,7 @@ import { useLocationStore } from '~/stores/location'
 import { useGroupStore } from '~/stores/group'
 import { timeago } from '~/composables/useTimeFormat'
 import { milesAway } from '~/composables/useDistance'
+import { roadDistance } from '~/composables/useDriveDistance'
 import { onMounted, ref, computed, watch, useRouter, toRef } from '#imports'
 import { useMe } from '~/composables/useMe'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
@@ -684,9 +685,25 @@ const closestUser = computed(() => {
   if (replyusers.value?.length > 1 && me.value) {
     replyusers.value.forEach((u) => {
       if (u) {
-        const miles = milesAway(u.lat, u.lng, me.value.lat, me.value.lng)
-        if (dist === null || miles < dist) {
-          dist = miles
+        // Drive time decides who is genuinely closest - the same measure the
+        // rest of the site selects and ranks by - with crow miles only for a
+        // replier the routing engine has no answer for yet. Mixing the two
+        // units in one comparison would be meaningless, so crow only breaks
+        // ties among the unanswered: any replier with a known drive time
+        // outranks distance-only ones once answers land (they arrive in one
+        // batched, cached lookup; the tag is text on a row, so a settle does
+        // not move anything).
+        const road = roadDistance(u.lat, u.lng).value
+        const measure =
+          road?.mins != null
+            ? { known: 1, value: road.mins }
+            : { known: 0, value: milesAway(u.lat, u.lng, me.value.lat, me.value.lng) }
+        if (
+          dist === null ||
+          measure.known > dist.known ||
+          (measure.known === dist.known && measure.value < dist.value)
+        ) {
+          dist = measure
           ret = u.id
         }
       }
