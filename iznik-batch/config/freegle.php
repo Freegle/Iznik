@@ -608,6 +608,13 @@ return [
         // Maximum drive-time (minutes) the reach may grow to. This is the FLAT cap, used
         // when the density-conditional cap below is off or cannot measure.
         'max_minutes' => (float) env('RIPPLE_MAX_MINUTES', 30),
+
+        // How long one ripple:expand run may keep taking rows before it stops cleanly
+        // and lets the next tick resume. MUST stay below ExpandCommand's single-instance
+        // lock TTL (3600s) - a run that outlives the lock lets the every-minute schedule
+        // stack another run at each expiry, which is the 2026-08-30 gate-saturation
+        // collapse. 0 disables (tests / operator one-offs).
+        'expand_time_box_seconds' => (int) env('RIPPLE_EXPAND_TIME_BOX_SECONDS', 2700),
         // Density-conditional cap. Measured on 887 posts split by local freegler
         // density, the chance a replier goes on to collect collapses past ~20-25
         // minutes in dense areas and does not fall at all out to 45 in sparse ones, so

@@ -23,6 +23,23 @@ use Illuminate\Support\Facades\Log;
  */
 class ExpandService
 {
+    /**
+     * The wall-clock moment this run must stop taking new rows, or null when
+     * unboxed. Set per process() call from freegle.ripple.expand_time_box_seconds;
+     * see the comment there for why runs are bounded (the single-instance lock's
+     * TTL can never be tuned above an open-ended run length).
+     */
+    private ?Carbon $runDeadline = null;
+
+    /**
+     * Whether this run's time box has expired. Row loops call this at their row
+     * boundary: cheap, and a row in flight always completes (no partial writes).
+     */
+    private function pastRunDeadline(): bool
+    {
+        return $this->runDeadline !== null && now()->greaterThan($this->runDeadline);
+    }
+
     private const SRID = 3857;
 
     /** Metres to blur a poster's origin before it drives the reach (matches Utils::BLUR_USER). */
@@ -187,8 +204,21 @@ class ExpandService
             'initialized' => 0, 'expanded' => 0, 'completed' => 0,
             'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0, 'mailed' => 0,
             'memberships_added' => 0, 'pulled_on_leave' => 0,
-            'pulled_on_removal' => 0, 'memberships_removed' => 0,
+            'pulled_on_removal' => 0, 'memberships_removed' => 0, 'timeboxed' => 0,
         ];
+
+        // Time-box the run BELOW the command's single-instance lock TTL (3600s in
+        // ExpandCommand), or the guard defeats itself: a backlogged run is limit x one
+        // catchment each, late-tick catchments cost 4-6s plus compute-gate waits, and on
+        // 2026-08-30 a full run exceeded the hour - the lock expired mid-run, the
+        // every-minute schedule admitted another run at each expiry, and the stack grew to
+        // match the routing server's 8 gate slots (zero goodput, 7,300 rows overdue).
+        // TTL-chasing cannot win because run length is open-ended under backlog; bounding
+        // the RUN can. On expiry the row loops below exit at the next row boundary, the
+        // lock releases in the command's finally, and the next minute's tick resumes where
+        // this one stopped - unprocessed rows simply stay due. 0 disables (tests/one-offs).
+        $box = (int) config('freegle.ripple.expand_time_box_seconds', 2700);
+        $this->runDeadline = $box !== 0 ? now()->addSeconds($box) : null;
 
         // A scoped run ($onlyMsgid or $withinPolyWkt) targets a chosen subset of posts (controlled/area
         // testing): init, advance AND retraction are all restricted to the same subset, so the group
@@ -1254,6 +1284,15 @@ class ExpandService
         // DO NOT parallelise this loop: the rippling_reach / messages_groups / memberships
         // writes must stay single-writer and in order.
         foreach ($rows as $i => $row) {
+            if ($this->pastRunDeadline()) {
+                // Time box expired (see process()): stop at the row boundary; the
+                // unprocessed posts remain uninitialised and the next tick takes them.
+                $stats['timeboxed'] += 1;
+                Log::info('ripple:expand initialiseNew time-boxed; next tick resumes', [
+                    'initialized' => $stats['initialized'],
+                ]);
+                break;
+            }
             try {
                 if ($row->arrival === null) {
                     // Without arrival we cannot place the post on its hazard schedule.
@@ -1456,6 +1495,15 @@ class ExpandService
             ->get();
 
         foreach ($rows as $row) {
+            if ($this->pastRunDeadline()) {
+                // Time box expired: stop cleanly at the row boundary so the lock
+                // releases and the next tick resumes. The remaining rows stay due.
+                $stats['timeboxed'] += 1;
+                Log::info('ripple:expand advanceDue time-boxed; next tick resumes', [
+                    'processed' => $stats['expanded'] + $stats['completed'] + $stats['skipped'],
+                ]);
+                break;
+            }
             try {
                 $schedule = DB::table('rippling_reach')->where('msgid', $row->msgid)->value('schedule');
                 $ticks = json_decode($schedule, true);

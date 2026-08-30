@@ -4053,4 +4053,41 @@ class ExpandServiceTest extends TestCase
         $this->assertGreaterThan(1, (int) $row->tick, 'the tick still advances');
         $this->assertNull($row->polygon_cells, 'a retired row never gets its grid re-materialised');
     }
+
+    public function test_an_expired_time_box_stops_the_run_at_the_row_boundary(): void
+    {
+        // The single-instance lock's TTL cannot be tuned above an open-ended run
+        // length (2026-08-30: a backlogged run outlived the lock, the every-minute
+        // schedule stacked runs to the routing server's 8 gate slots, goodput hit
+        // zero). The run therefore bounds ITSELF: with the box already expired,
+        // it must take no rows and report that it stopped - the rows stay due for
+        // the next tick, nothing is half-processed.
+        config(['freegle.ripple.expand_time_box_seconds' => -1]);
+        $this->fakeDensity(400, 1.0);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertGreaterThanOrEqual(1, $stats['timeboxed'], 'the run must say it was time-boxed');
+        $this->assertSame(0, $stats['initialized']);
+        $this->assertNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->first(),
+            'a boxed run must leave unprocessed posts untouched for the next tick'
+        );
+    }
+
+    public function test_a_zero_time_box_disables_the_bound(): void
+    {
+        config(['freegle.ripple.expand_time_box_seconds' => 0]);
+        $this->fakeDensity(400, 1.0);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['timeboxed']);
+        $this->assertSame(1, $stats['initialized']);
+        $this->assertNotNull(DB::table('rippling_reach')->where('msgid', $msgid)->first());
+    }
 }
