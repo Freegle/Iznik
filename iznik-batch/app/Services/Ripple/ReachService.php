@@ -1006,9 +1006,6 @@ class ReachService
      */
     public function tickFromLabels(int $msgid, float $minutes, bool $wantGroups = true): ?array
     {
-        if (!$this->reachLabelsReady()) {
-            return null;
-        }
         $row = DB::table('rippling_reach')->select('reach_labels')->where('msgid', $msgid)->first();
         if ($row === null || $row->reach_labels === null) {
             return null;

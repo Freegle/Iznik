@@ -375,23 +375,33 @@ class ReachServiceTest extends TestCase
         });
     }
 
-    public function test_tick_from_labels_distinguishes_no_groups_from_no_answer(): void
+    /**
+     * The targeting gate treats these differently: an absent set means "fall back to the
+     * polygon", an empty one means "computed, and nobody". Flattening them would silently
+     * turn a routing server that cannot answer into a post that reaches no-one.
+     *
+     * One case per test run, because Http::fake() MERGES stubs and keeps the first - two
+     * fakes in one test would both answer with the first, and the second case would never
+     * be exercised.
+     */
+    public function test_tick_from_labels_reports_an_empty_group_set_as_empty(): void
     {
-        // The targeting gate treats these differently: an absent set means "fall back to
-        // the polygon", an empty one means "computed, and nobody". Flattening them would
-        // silently turn a routing server that cannot answer into a post that reaches
-        // no-one.
         $msgid = $this->seedReachRowWithLabels('somelabelbytes');
-
         Http::fake(['*reach-tick*' => Http::response([
             'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
             'reachable_group_ids' => [],
         ], 200)]);
-        $this->assertSame([], $this->service()->tickFromLabels($msgid, 12.5)['groups']);
 
+        $this->assertSame([], $this->service()->tickFromLabels($msgid, 12.5)['groups']);
+    }
+
+    public function test_tick_from_labels_reports_a_missing_group_set_as_null(): void
+    {
+        $msgid = $this->seedReachRowWithLabels('somelabelbytes');
         Http::fake(['*reach-tick*' => Http::response([
             'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
         ], 200)]);
+
         $this->assertNull($this->service()->tickFromLabels($msgid, 12.5)['groups']);
     }
 

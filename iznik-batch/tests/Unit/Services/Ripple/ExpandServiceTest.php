@@ -69,6 +69,21 @@ class ExpandServiceTest extends TestCase
 
         config(['freegle.ripple.tick_from_labels' => false]);
         $this->assertFalse((bool) $m->invoke($this->service()));
+
+        // And with the setting absent altogether - a stale config cache, or a deploy that
+        // missed the config file. The fallback has to agree with the documented default,
+        // or the slow path gets taken with nothing to show for it.
+        //
+        // Swapping in an empty repository rather than forgetting the key: forget leaves
+        // the path in place holding null, and config() then returns that null instead of
+        // the default, which is not what a missing setting looks like.
+        $original = config()->all();
+        app()->instance('config', new \Illuminate\Config\Repository([]));
+        try {
+            $this->assertTrue((bool) $m->invoke($this->service()));
+        } finally {
+            app()->instance('config', new \Illuminate\Config\Repository($original));
+        }
     }
 
     public function test_tick_geometry_falls_back_to_the_catchment_when_labels_cannot_answer(): void

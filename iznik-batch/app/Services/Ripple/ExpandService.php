@@ -2444,7 +2444,10 @@ class ExpandService
      */
     private function tickFromLabelsOk(): bool
     {
-        return (bool) config('freegle.ripple.tick_from_labels', false);
+        // The fallback matches the default in config/freegle.php on purpose. Two places
+        // naming different defaults is how a stale config cache silently takes the slow
+        // path with nothing to show for it.
+        return (bool) config('freegle.ripple.tick_from_labels', true);
     }
 
     /**
