@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { getTestState, setTestState, isTestRunning, appendTestLogs } from '../../utils/testState'
+import { getTestState, setTestState, isTestRunning, appendTestLogs, condenseCrashDumps } from '../../utils/testState'
 
 const prefix = process.env.COMPOSE_PROJECT_NAME || 'freegle'
 
@@ -119,6 +119,10 @@ export default defineEventHandler(async (event) => {
       message: code === 0
         ? `All tests passed (${p.passed}✓)`
         : `Tests failed (${p.passed}✓ ${p.failed}✗)`,
+      // A fatal crash dumps every goroutine; bound the dump so the panic
+      // header - the only part that names the crashing line - survives the
+      // orb's tail-limited failure report instead of being the part cut.
+      ...(code === 0 ? {} : { logs: condenseCrashDumps(state.logs) }),
     })
     console.log(`Routing server tests completed with code ${code}`)
   })
