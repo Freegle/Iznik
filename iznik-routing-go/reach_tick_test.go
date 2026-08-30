@@ -13,17 +13,9 @@ import (
 const tickOriginLat, tickOriginLng = 51.4545, -2.5879
 
 // TestReachTickReachedNodesMatchTheLiveSearch is the parity bar in its most direct form:
-// the set of places recovered from a stored blob is the set the full search finds, because
-// every answer this endpoint gives is derived from it.
-//
-// The SET is compared, not the arrival times. The tick path never reads an arrival: the
-// outline is traced from which places are in the set, and the group threshold is applied at
-// the same budget on both sides, so every place in either set is within the budget by
-// construction. The engine does overestimate some arrivals against the flat search at
-// larger budgets - about 12% of them at 900s, worst case ~115s, and identically so whether
-// the labels were stored at 900s or 1800s - which is a property of the engine rather than
-// of storing labels, and one nothing here depends on. compareReached, which does check
-// arrivals, is therefore the wrong bar for this path.
+// what a stored blob recovers is what the full search finds, because every answer this
+// endpoint gives is derived from it. Held to compareReached - the same bar the engine
+// applies to its own live expansion - so arrivals must match, not merely the set.
 func TestReachTickReachedNodesMatchTheLiveSearch(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short mode")
@@ -39,30 +31,12 @@ func TestReachTickReachedNodesMatchTheLiveSearch(t *testing.T) {
 		t.Fatalf("decode stored labels: %v", err)
 	}
 
-	// Every budget this endpoint will serve, up to the stored ceiling. Shorter ones are
-	// refused rather than answered approximately - see reachTickMinBudgetSeconds.
-	for _, secs := range []float32{reachTickMinBudgetSeconds, 20 * 60, stored} {
+	// Every budget the schedule could ask for, up to the stored ceiling.
+	for _, secs := range []float32{15 * 60, 20 * 60, stored} {
 		fromLabels := eng.ReachedNodes(lbl, secs)
 		fromSearch := Isochrone(g, tickOriginLat, tickOriginLng, secs, Drive).ReachedNodes
 
-		var absent, extra int
-		for id := range fromSearch {
-			if _, ok := fromLabels[id]; !ok {
-				absent++
-			}
-		}
-		for id := range fromLabels {
-			if _, ok := fromSearch[id]; !ok {
-				extra++
-			}
-		}
-		if absent > 0 || extra > 0 {
-			t.Fatalf("at %.0fs: %d places the search reaches are missing from the labels, %d are claimed that it does not (search %d, labels %d)",
-				secs, absent, extra, len(fromSearch), len(fromLabels))
-		}
-		if len(fromLabels) == 0 {
-			t.Fatalf("at %.0fs the labels reached nothing", secs)
-		}
+		compareReached(t, fromSearch, fromLabels, secs, "tick")
 	}
 }
 
@@ -82,7 +56,7 @@ func TestReachTickGeometryCoversTheLiveSearch(t *testing.T) {
 	}
 	g, eng := buildBristolEngine(t)
 
-	const secs = reachTickMinBudgetSeconds
+	const secs = float32(15 * 60)
 	const boundary = float32(1.0) // matches compareReached's own slack
 	blob := eng.EncodeLabels(eng.QueryLabels(tickOriginLat, tickOriginLng, 30*60))
 	lbl, err := eng.DecodeLabels(blob)
@@ -143,7 +117,7 @@ func TestReachTickGroupsMatchTheLiveSearch(t *testing.T) {
 	}
 	g, eng := buildBristolEngine(t)
 
-	const secs = reachTickMinBudgetSeconds
+	const secs = float32(15 * 60)
 	const boundary = float32(1.0) // matches compareReached's own slack
 	blob := eng.EncodeLabels(eng.QueryLabels(tickOriginLat, tickOriginLng, 30*60))
 	lbl, err := eng.DecodeLabels(blob)
@@ -205,39 +179,76 @@ func TestReachTickGroupsMatchTheLiveSearch(t *testing.T) {
 	}
 }
 
-// TestReachTickRefusesBudgetsItCannotAnswerExactly pins the floor and, more importantly,
-// the fact that it is needed: below it the label expansion under-reaches, and a reach that
-// is too small silently drops groups. The floor is measured, not guessed - the numbers are
-// in the comment on reachTickMinBudgetSeconds.
-func TestReachTickRefusesBudgetsItCannotAnswerExactly(t *testing.T) {
+// TestStoredBlobMaterialisesExactly is the property the whole design rests on: a tick
+// served from a post's stored labels is the same reach a full road-network search finds.
+//
+// It was not always so. EncodeLabels leaves out the origin region's interior arrivals, and
+// ReachedNodes used to have no way back to them, so the origin's own region was served only
+// by the longer route in through a region entry - 374 of 1,471 places missing at a
+// five-minute budget, and ~5,462 arriving up to 115s late at larger ones. The same blob
+// asked about one of those places directly said it was in, because ArrivalFromStored uses
+// the seed path. ReachedNodes now uses it too.
+func TestStoredBlobMaterialisesExactly(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
 
-	blob := eng.EncodeLabels(eng.QueryLabels(tickOriginLat, tickOriginLng, 45*60))
-	lbl, err := eng.DecodeLabels(blob)
+	live := eng.QueryLabels(tickOriginLat, tickOriginLng, 45*60)
+	stored, err := eng.DecodeLabels(eng.EncodeLabels(live))
 	if err != nil {
 		t.Fatalf("decode stored labels: %v", err)
 	}
 
-	// Below the floor the label path really does lose ground, which is why it is refused.
-	const short = float32(5 * 60)
-	flat := Isochrone(g, tickOriginLat, tickOriginLng, short, Drive).ReachedNodes
-	lab := eng.ReachedNodes(lbl, short)
-	if len(lab) >= len(flat) {
-		t.Fatalf("the floor assumes the label path under-reaches at %.0fs, but it reached %d against the search's %d - re-measure it",
-			short, len(lab), len(flat))
+	for _, secs := range []float32{5 * 60, 10 * 60, 15 * 60, 30 * 60, 45 * 60} {
+		flat := Isochrone(g, tickOriginLat, tickOriginLng, secs, Drive).ReachedNodes
+		compareReached(t, flat, eng.ReachedNodes(stored, secs), secs, "stored blob")
+	}
+}
+
+// TestStoredAndPointAnswersAgree pins the two faces of a stored blob against each other.
+// Materialising it into a reach and asking it about a single place are the same question,
+// and a blob that answered them differently is what this fixed.
+func TestStoredAndPointAnswersAgree(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	g, eng := buildBristolEngine(t)
+
+	live := eng.QueryLabels(tickOriginLat, tickOriginLng, 45*60)
+	stored, err := eng.DecodeLabels(eng.EncodeLabels(live))
+	if err != nil {
+		t.Fatalf("decode stored labels: %v", err)
 	}
 
-	// At the floor it does not.
-	atFloor := Isochrone(g, tickOriginLat, tickOriginLng, reachTickMinBudgetSeconds, Drive).ReachedNodes
-	labFloor := eng.ReachedNodes(lbl, reachTickMinBudgetSeconds)
-	for id := range atFloor {
-		if _, ok := labFloor[id]; !ok {
-			t.Fatalf("the label path misses a node the search reaches at the floor (%.0fs); the floor is too low",
-				reachTickMinBudgetSeconds)
+	const secs = float32(10 * 60)
+	reached := eng.ReachedNodes(stored, secs)
+
+	var checked, disagreed int
+	for id := range Isochrone(g, tickOriginLat, tickOriginLng, secs, Drive).ReachedNodes {
+		n := g.Nodes[id]
+		lat, lng := float64(n.Lat), float64(n.Lng)
+
+		// Only places the point query actually addresses. ArrivalFromStored takes
+		// coordinates and snaps them to its own nearest node, and for a node in a small
+		// severed fragment that snap lands somewhere else entirely - the graph build
+		// excludes thousands of such nodes from drive snapping. Comparing those would ask
+		// the two faces different questions rather than the same one twice.
+		if nearestNodeForMode(g, lat, lng, Drive) != id {
+			continue
 		}
+
+		checked++
+		if (eng.ArrivalFromStored(stored, lat, lng) <= secs) != mapHas(reached, id) {
+			disagreed++
+		}
+	}
+	if checked == 0 {
+		t.Fatal("nothing to check")
+	}
+	if disagreed > 0 {
+		t.Fatalf("%d of %d places are called in by one face of the blob and out by the other",
+			disagreed, checked)
 	}
 }
 
@@ -302,4 +313,11 @@ func TestReachTickClampsToTheStoredBudget(t *testing.T) {
 	if len(clamped) != len(atCeiling) {
 		t.Fatalf("clamped reach is %d nodes, want the stored ceiling's %d", len(clamped), len(atCeiling))
 	}
+}
+
+// mapHas reports membership without binding the value, for readability at the call site.
+func mapHas(m map[NodeID]float32, id NodeID) bool {
+	_, ok := m[id]
+
+	return ok
 }

@@ -2435,10 +2435,12 @@ class ExpandService
     /**
      * Whether to serve ticks from stored labels rather than a fresh catchment.
      *
-     * Off by default. The group set it returns decides who a post reaches, so it has to
-     * be shown to match the polygon path's on a production sample before it does - the
-     * fixture parity tests (TestReachTickGroupsMatchTheLiveSearch and its siblings) are
-     * necessary, not sufficient. RIPPLE_TICK_FROM_LABELS=true once that sample is clean.
+     * On by default, on the strength of a measurement against the live UK engine rather
+     * than a fixture: across 25 real posts and 2,323 sampled points, the stored labels
+     * never claimed a place was closer than a real road-time search says it is, and put
+     * nothing outside the budget at the range most first ticks sit in. See the note on
+     * freegle.ripple.tick_from_labels for the numbers, and reachGeometryMarginSeconds in
+     * the routing server for how the residual is covered.
      */
     private function tickFromLabelsOk(): bool
     {

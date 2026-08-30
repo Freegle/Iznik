@@ -58,17 +58,17 @@ class ExpandServiceTest extends TestCase
         return (bool) $m->invoke($this->service(), $entry);
     }
 
-    public function test_tick_from_labels_is_off_until_prod_parity_is_shown(): void
+    public function test_tick_from_labels_is_on_with_a_killswitch(): void
     {
-        // The group set from labels decides who a post reaches, so it stays off until it
-        // has been checked against the polygon path on real data. A default that shipped
-        // on would change targeting the moment this merged.
+        // On by default: measured against the live UK engine, the labels never claim a
+        // place is closer than it is, and lose nothing at the range most ticks sit in.
+        // The killswitch reverts to the catchment without a routing deploy.
         $m = new \ReflectionMethod($this->service(), 'tickFromLabelsOk');
         $m->setAccessible(true);
-        $this->assertFalse((bool) $m->invoke($this->service()));
-
-        config(['freegle.ripple.tick_from_labels' => true]);
         $this->assertTrue((bool) $m->invoke($this->service()));
+
+        config(['freegle.ripple.tick_from_labels' => false]);
+        $this->assertFalse((bool) $m->invoke($this->service()));
     }
 
     public function test_tick_geometry_falls_back_to_the_catchment_when_labels_cannot_answer(): void
