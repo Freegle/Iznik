@@ -2265,6 +2265,27 @@ class UnifiedDigestService
     {
         $latlng ??= $this->resolveUserLatLng($user);
 
+        // With a drive-minutes budget in play, resolve every candidate's drive
+        // time in ONE routing call up front — the per-post gate then reads the
+        // answers from the service's memo instead of paying an HTTP round trip
+        // per post. Only worth doing when the budget can actually apply (a
+        // limited miles slider AND a minutes budget, same as the gate).
+        $filter = app(DistancePreferenceFilter::class);
+        if ($latlng !== null
+            && config('freegle.ripple.distance_filter.enabled', true)
+            && $filter->maxDistanceMiles($user) < DistancePreferenceFilter::DISTANCE_UNLIMITED
+            && $filter->maxMinutes($user) > 0) {
+            $targets = [];
+            foreach ($posts as $p) {
+                if ($p->lat !== null && $p->lng !== null) {
+                    $targets[] = [(float) $p->lat, (float) $p->lng];
+                }
+            }
+            if ($targets !== []) {
+                $this->driveMinutes()->prefetch($latlng[0], $latlng[1], $targets);
+            }
+        }
+
         return $posts->filter(fn ($p) => $this->passesDistancePreference(
             $latlng,
             $p->lat,
@@ -2292,9 +2313,15 @@ class UnifiedDigestService
         }
 
         $filter = app(DistancePreferenceFilter::class);
-        // INBOUND cap: the recipient only wants posts within their chosen distance.
+        // INBOUND cap: the recipient only wants posts within their chosen distance —
+        // measured in drive MINUTES when they have a budget and the routing engine
+        // answers, crow miles otherwise, exactly the site's rule (roadMinuteVerdict /
+        // countWithinBudget), so a member's email and browse page can never disagree
+        // about the same post.
         // OUTBOUND cap: the post author only wants their post shown to people within
-        // their chosen distance of it (the same setting, read from the author).
+        // their chosen distance of it (the same setting, read from the author). Still
+        // crow miles, deliberately: apiv2's AuthorReachCapWhere is crow-miles SQL, and
+        // the two outbound surfaces must move together or not at all.
         $recipientMax = $filter->maxDistanceMiles($user);
         $authorMax = $authorMaxMiles ?? (float) DistancePreferenceFilter::DISTANCE_UNLIMITED;
         if ($recipientMax >= DistancePreferenceFilter::DISTANCE_UNLIMITED
@@ -2310,7 +2337,37 @@ class UnifiedDigestService
             (float) $lng
         );
 
-        return $filter->passesBothPreferences($distanceMiles, $recipientMax, $authorMax, false);
+        $driveMinutes = null;
+        $recipientMaxMinutes = 0.0;
+        if ($recipientMax < DistancePreferenceFilter::DISTANCE_UNLIMITED) {
+            $recipientMaxMinutes = $filter->maxMinutes($user);
+            if ($recipientMaxMinutes > 0) {
+                // Memo-served after filterByDistancePreference's prefetch; the
+                // immediate pipelines (one post at a time) pay one single-target
+                // call per new (recipient, post) pair. Null on any failure —
+                // the crow rule below takes over, which is the old behaviour.
+                $driveMinutes = $this->driveMinutes()->minutesBetween(
+                    $recipientLatLng[0],
+                    $recipientLatLng[1],
+                    (float) $lat,
+                    (float) $lng
+                );
+            }
+        }
+
+        return $filter->passesInbound($distanceMiles, $driveMinutes, $recipientMax, $recipientMaxMinutes, false)
+            && $filter->passes($distanceMiles, $authorMax, false);
+    }
+
+    /**
+     * The per-run drive-minutes client. A property, not app(), so its memo
+     * spans every (recipient, post) pair of the run.
+     */
+    private ?\App\Services\Ripple\DriveMinutesService $driveMinutesService = null;
+
+    private function driveMinutes(): \App\Services\Ripple\DriveMinutesService
+    {
+        return $this->driveMinutesService ??= new \App\Services\Ripple\DriveMinutesService();
     }
 
     /**

@@ -86,6 +86,65 @@ class DistancePreferenceFilter
     }
 
     /**
+     * A member's drive-time budget in minutes, or 0 when they have none.
+     *
+     * Mirrors apiv2's resolveMaxMinutes (isochrone/message.go) exactly: only the
+     * member's own settings.browseMaxMinutes counts (there is deliberately NO band
+     * default for minutes — the band defaults are miles, resolved by
+     * maxDistanceMiles above), and anything absent/non-numeric/<= 0 means "no
+     * budget". The budget only ever applies WITHIN an active miles limit, because
+     * that is when the site applies it too (the browse filter skips every check
+     * when the distance slider is unlimited) — callers enforce that by consulting
+     * this only after maxDistanceMiles() came back limited.
+     */
+    public function maxMinutes(User $user): float
+    {
+        $settings = $user->settings;
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true) ?: [];
+        }
+        if (!is_array($settings)) {
+            return 0.0;
+        }
+
+        $value = $settings['browseMaxMinutes'] ?? null;
+
+        return is_numeric($value) && (float) $value > 0 ? (float) $value : 0.0;
+    }
+
+    /**
+     * The recipient's INBOUND verdict for one post, applying the SAME rule the
+     * site applies (iznik-nuxt3 roadMinuteVerdict + apiv2 countWithinBudget):
+     * when the member has a drive-minutes budget and the routing engine
+     * answered for this post, the minutes decide — in BOTH directions (a
+     * 30-minute post 8 crow miles away is out; a 20-minute post 14 crow miles
+     * away is in). Crow miles decide only when there is no budget or no road
+     * answer (null $driveMinutes: routing outage, unroutable point), which is
+     * the pre-minutes behaviour. Without this the same member's email and
+     * browse page disagreed about the same post.
+     *
+     * Boundaries are inclusive on both measures, matching passes() and the
+     * client. Own posts always pass, matching passes().
+     */
+    public function passesInbound(
+        float $distanceMiles,
+        ?float $driveMinutes,
+        float $maxDistanceMiles,
+        float $maxMinutes,
+        bool $isOwnPost
+    ): bool {
+        if ($isOwnPost || $maxDistanceMiles >= self::DISTANCE_UNLIMITED) {
+            return true;
+        }
+
+        if ($maxMinutes > 0 && $driveMinutes !== null) {
+            return $driveMinutes <= $maxMinutes;
+        }
+
+        return $distanceMiles <= $maxDistanceMiles;
+    }
+
+    /**
      * A member's OUTBOUND cap in miles: how far away other people may see the posts they
      * write.
      *

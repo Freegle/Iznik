@@ -106,6 +106,12 @@ type SearchResult struct {
 	// reflect the member's "How far away" slider and "Closest" sort. 0 when the member has no
 	// known location (logged out).
 	Distance float64 `json:"distance" gorm:"-"`
+	// Roadmins/Roadmiles mirror the feed summaries' fields: drive time and road miles from
+	// the member, stamped in one batched routing call when their drive-minutes budget is in
+	// play, so the client's payload-only verdict and Closest sort see the same numbers the
+	// server filtered and ordered by. Nil when not fetched or the engine had no answer.
+	Roadmins  *float64 `json:"roadmins,omitempty" gorm:"-"`
+	Roadmiles *float64 `json:"roadmiles,omitempty" gorm:"-"`
 }
 
 func GetWords(search string) []string {

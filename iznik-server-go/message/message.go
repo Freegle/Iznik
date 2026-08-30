@@ -1879,6 +1879,7 @@ func Search(c *fiber.Ctx) error {
 	browseScoped := c.Query("browse", "") == "1" && myid > 0
 	var memberLat, memberLng float64
 	browseMaxMiles := float64(browseDistanceUnlimited)
+	var browseMaxMinutes float64
 	var browseSort string
 
 	if browseScoped {
@@ -1890,13 +1891,14 @@ func Search(c *fiber.Ctx) error {
 		// browse:backfill-max-distance). Browse-scoped search shares the feed's universe
 		// (Discourse 9933), so missing the fallback here would surface posts in search
 		// that the feed itself hides.
-		var rawDist, rawDefaultDist, rawSort string
+		var rawDist, rawDefaultDist, rawSort, rawMins string
 		db.Table("users").
 			Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxDistance')), ''), "+
 				"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseReachMaxDistance')), ''), "+
-				"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseSort')), '')").
+				"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseSort')), ''), "+
+				"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxMinutes')), '')").
 			Where("id = ?", myid).
-			Row().Scan(&rawDist, &rawDefaultDist, &rawSort)
+			Row().Scan(&rawDist, &rawDefaultDist, &rawSort, &rawMins)
 		for _, raw := range []string{rawDist, rawDefaultDist} {
 			if raw == "" {
 				continue
@@ -1910,6 +1912,12 @@ func Search(c *fiber.Ctx) error {
 
 				break
 			}
+		}
+		// The drive-minutes budget, resolved like isochrone.resolveMaxMinutes: the
+		// member's own setting only, applied below only while the miles slider is
+		// limited - the same precedence the feed, the badge and the digest use.
+		if v, err := strconv.ParseFloat(rawMins, 64); err == nil && v > 0 {
+			browseMaxMinutes = v
 		}
 		browseSort = rawSort
 	}
@@ -1938,8 +1946,10 @@ func Search(c *fiber.Ctx) error {
 	}
 
 	// applyBrowseFilters completes feed parity for browse-scoped searches: stamp each result's
-	// distance from the member, apply the "How far away" slider cap, and order by "Sort by".
-	// (The universe itself is enforced at candidate selection above.) Applied at every return.
+	// distance from the member, apply the "How far away" slider cap - drive MINUTES first when
+	// the member has a budget and the routing engine answers, crow miles otherwise, the same
+	// rule as the feed, the badge and the digest - and order by "Sort by". (The universe
+	// itself is enforced at candidate selection above.) Applied at every return.
 	applyBrowseFilters := func(rs []SearchResult) []SearchResult {
 		if !browseScoped || (memberLat == 0 && memberLng == 0) {
 			return rs
@@ -1948,8 +1958,32 @@ func Search(c *fiber.Ctx) error {
 			rs[i].Distance = utils.Haversine(memberLat, memberLng, rs[i].Lat, rs[i].Lng)
 		}
 		if browseMaxMiles < browseDistanceUnlimited {
+			// Road metrics in ONE batched call, stamped on the results so the client's
+			// payload-only verdict and Closest sort see the same numbers the filter
+			// used. Only fetched when the budget can apply; failures leave the fields
+			// nil and the crow rule below governs, stably.
+			if browseMaxMinutes > 0 {
+				targets := make([]driving.Target, 0, len(rs))
+				for i := range rs {
+					if rs[i].Lat != 0 || rs[i].Lng != 0 {
+						targets = append(targets, driving.Target{ID: int64(i), Lat: rs[i].Lat, Lng: rs[i].Lng})
+					}
+				}
+				for _, r := range driving.FetchDriveMetrics(roadblur.RoutingURL(), memberLat, memberLng, targets) {
+					if r.Mins != nil && r.ID >= 0 && int(r.ID) < len(rs) {
+						rs[r.ID].Roadmins = r.Mins
+						rs[r.ID].Roadmiles = r.Miles
+					}
+				}
+			}
 			kept := rs[:0]
 			for _, r := range rs {
+				if browseMaxMinutes > 0 && r.Roadmins != nil {
+					if *r.Roadmins <= browseMaxMinutes {
+						kept = append(kept, r)
+					}
+					continue
+				}
 				if r.Distance <= browseMaxMiles {
 					kept = append(kept, r)
 				}
@@ -1957,8 +1991,17 @@ func Search(c *fiber.Ctx) error {
 			rs = kept
 		}
 		switch browseSort {
-		case "Nearby": // the client's "Closest" option
-			sort.SliceStable(rs, func(i, j int) bool { return rs[i].Distance < rs[j].Distance })
+		case "Nearby": // the client's "Closest" option - road miles when stamped, like the feed
+			sort.SliceStable(rs, func(i, j int) bool {
+				di, dj := rs[i].Distance, rs[j].Distance
+				if rs[i].Roadmiles != nil {
+					di = *rs[i].Roadmiles
+				}
+				if rs[j].Roadmiles != nil {
+					dj = *rs[j].Roadmiles
+				}
+				return di < dj
+			})
 		case "Newest":
 			// Sort by ORIGINAL post time (messages.arrival), not SearchResult.Arrival, which is
 			// the ripple-bumped messages_spatial arrival - ordering by that floats days-old posts

@@ -346,4 +346,62 @@ class DistancePreferenceFilterTest extends TestCase
         $this->assertSame(4.8, $this->filter()->maxDistanceMiles($user));
         $this->assertSame(30.0, $this->filter()->authorMaxDistanceMiles($user));
     }
+
+    // --- Drive-minutes budget (browseMaxMinutes) — the site's rule, applied to mail ---
+
+    public function test_max_minutes_zero_when_settings_absent_or_invalid(): void
+    {
+        $this->assertSame(0.0, $this->filter()->maxMinutes($this->userWithSettings(null)));
+        $this->assertSame(0.0, $this->filter()->maxMinutes($this->userWithSettings([])));
+        $this->assertSame(0.0, $this->filter()->maxMinutes($this->userWithSettings(['browseMaxMinutes' => null])));
+        $this->assertSame(0.0, $this->filter()->maxMinutes($this->userWithSettings(['browseMaxMinutes' => 'soon'])));
+        $this->assertSame(0.0, $this->filter()->maxMinutes($this->userWithSettings(['browseMaxMinutes' => 0])));
+        $this->assertSame(0.0, $this->filter()->maxMinutes($this->userWithSettings(['browseMaxMinutes' => -5])));
+    }
+
+    public function test_max_minutes_returns_configured_budget(): void
+    {
+        $this->assertSame(25.0, $this->filter()->maxMinutes($this->userWithSettings(['browseMaxMinutes' => 25])));
+    }
+
+    public function test_max_minutes_ignores_the_band_default_on_purpose(): void
+    {
+        // Band defaults are MILES (browseReachMaxDistance); there is no minutes
+        // band default, matching apiv2 resolveMaxMinutes.
+        $user = $this->userWithSettings(['browseReachMaxDistance' => 4.8]);
+        $this->assertSame(0.0, $this->filter()->maxMinutes($user));
+    }
+
+    public function test_inbound_minutes_decide_in_both_directions_when_answered(): void
+    {
+        // The stuck-badge case: crow-near (8 <= 12.2) but a 30-minute drive over
+        // a 25-minute budget - OUT, where the crow rule alone kept it.
+        $this->assertFalse($this->filter()->passesInbound(8.0, 30.0, 12.2, 25.0, false));
+        // The rescue case: crow-far (14 > 12.2) but a 20-minute drive - IN.
+        $this->assertTrue($this->filter()->passesInbound(14.0, 20.0, 12.2, 25.0, false));
+        // Inclusive at the budget, matching the client.
+        $this->assertTrue($this->filter()->passesInbound(8.0, 25.0, 12.2, 25.0, false));
+    }
+
+    public function test_inbound_falls_back_to_crow_without_an_answer_or_budget(): void
+    {
+        // No road answer (routing outage / unroutable): the crow rule governs.
+        $this->assertTrue($this->filter()->passesInbound(8.0, null, 12.2, 25.0, false));
+        $this->assertFalse($this->filter()->passesInbound(14.0, null, 12.2, 25.0, false));
+        // No budget: pure crow, the pre-minutes behaviour.
+        $this->assertTrue($this->filter()->passesInbound(8.0, 30.0, 12.2, 0.0, false));
+    }
+
+    public function test_inbound_unlimited_slider_disables_everything(): void
+    {
+        // The site applies no checks at all when the miles slider is unlimited,
+        // even with a minutes budget stored - mail must match.
+        $unlimited = (float) DistancePreferenceFilter::DISTANCE_UNLIMITED;
+        $this->assertTrue($this->filter()->passesInbound(500.0, 400.0, $unlimited, 25.0, false));
+    }
+
+    public function test_inbound_own_posts_always_pass(): void
+    {
+        $this->assertTrue($this->filter()->passesInbound(500.0, 400.0, 12.2, 25.0, true));
+    }
 }
