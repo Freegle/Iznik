@@ -648,6 +648,10 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	v1.Get("/reach-labels", gated(handleReachLabels()))
 	v1.Post("/reach-arrival", handleReachArrival())
 	v1.Post("/reach-union", handleReachUnion())
+	// Ungated on purpose: it answers a ripple tick from the post's STORED labels, so
+	// there is no graph sweep to ration and expansion stops competing for the compute
+	// slots with the interactive consumers (see reach_tick.go).
+	v1.Post("/reach-tick", handleReachTick())
 	v1.Post("/drive-metrics", gated(handleDriveMetrics()))
 	v1.Get("/blur", handleBlur(g))
 	v1.Post("/blur-batch", handleBlurBatch(g))

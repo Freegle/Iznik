@@ -2,8 +2,10 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Models\Message;
 use App\Services\Ripple\ReachService;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -317,6 +319,100 @@ class ReachServiceTest extends TestCase
         $this->assertStringStartsWith('POLYGON((', $geom['inner']);
         $this->assertStringContainsString('-0.21 51.39', $geom['outer']);
         $this->assertStringContainsString('-0.19 51.41', $geom['inner']);
+    }
+
+    /**
+     * A message with a rippling_reach row carrying (or lacking) stored labels.
+     * rippling_reach.msgid is a foreign key, so the message has to be real.
+     */
+    private function seedReachRowWithLabels(?string $labels): int
+    {
+        $user = $this->createTestUser();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: tick from labels', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDay(), 'arrival' => now()->subDay(), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, outer_bound, arrival, mode, tick, total_ticks,
+                total_freeglers, max_drive_min, schedule, next_expansion_at, status,
+                reach_labels, created_at, updated_at)
+             VALUES (?, 51.5, -0.1,
+                     ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857),
+                     NOW(), 'drive', 1, 3, 0, 45, NULL, NULL, 'expanding', ?, NOW(), NOW())",
+            [$message->id, $labels]
+        );
+
+        return (int) $message->id;
+    }
+
+    public function test_tick_from_labels_posts_the_stored_blob_and_the_budget(): void
+    {
+        // The whole saving is that the routing server answers from labels the post
+        // already carries, so the request has to carry them - and the tick budget in
+        // seconds, since the stored labels cover the post's whole schedule.
+        $msgid = $this->seedReachRowWithLabels('somelabelbytes');
+        Http::fake(['*reach-tick*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+            'catchment_outer' => $this->geoSquare(-0.21, 51.39, 0.01, 51.61),
+            'reachable_group_ids' => [7, 9],
+        ], 200)]);
+
+        $tick = $this->service()->tickFromLabels($msgid, 12.5);
+
+        $this->assertNotNull($tick);
+        $this->assertStringStartsWith('POLYGON((', $tick['wkt']);
+        $this->assertStringStartsWith('POLYGON((', $tick['outer']);
+        $this->assertNull($tick['inner'], 'an eroded-to-nothing inner is simply absent');
+        $this->assertSame([7, 9], $tick['groups']);
+
+        Http::assertSent(function ($request) {
+            return base64_decode($request->data()['labels']) === 'somelabelbytes'
+                && (float) $request->data()['t'] === 750.0
+                && $request->data()['groups'] === true;
+        });
+    }
+
+    public function test_tick_from_labels_distinguishes_no_groups_from_no_answer(): void
+    {
+        // The targeting gate treats these differently: an absent set means "fall back to
+        // the polygon", an empty one means "computed, and nobody". Flattening them would
+        // silently turn a routing server that cannot answer into a post that reaches
+        // no-one.
+        $msgid = $this->seedReachRowWithLabels('somelabelbytes');
+
+        Http::fake(['*reach-tick*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+            'reachable_group_ids' => [],
+        ], 200)]);
+        $this->assertSame([], $this->service()->tickFromLabels($msgid, 12.5)['groups']);
+
+        Http::fake(['*reach-tick*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+        ], 200)]);
+        $this->assertNull($this->service()->tickFromLabels($msgid, 12.5)['groups']);
+    }
+
+    public function test_tick_from_labels_returns_null_when_it_cannot_answer(): void
+    {
+        // Every one of these is a reason the caller must fall back to the catchment
+        // rather than skip the tick: an old routing server, a blob from a partition build
+        // it no longer holds, or a post with no labels stored yet.
+        $msgid = $this->seedReachRowWithLabels('somelabelbytes');
+
+        foreach ([503, 404, 422, 400, 500] as $status) {
+            Http::fake(['*reach-tick*' => Http::response([], $status)]);
+            $this->assertNull(
+                $this->service()->tickFromLabels($msgid, 12.5),
+                "HTTP {$status} must fall back, not answer"
+            );
+        }
+
+        $noLabels = $this->seedReachRowWithLabels(null);
+        Http::fake(['*reach-tick*' => Http::response(['catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6)], 200)]);
+        $this->assertNull($this->service()->tickFromLabels($noLabels, 12.5));
+        Http::assertNothingSent();
     }
 
     public function test_catchment_geometry_asks_for_the_coarse_form_only_when_told(): void

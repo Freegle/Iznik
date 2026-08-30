@@ -672,6 +672,15 @@ return [
         // regardless (ExpandService::coarseTickGeometryOk). Default ON; set
         // RIPPLE_COARSE_TICK_GEOMETRY=false as the killswitch.
         'coarse_tick_geometry' => filter_var(env('RIPPLE_COARSE_TICK_GEOMETRY', true), FILTER_VALIDATE_BOOLEAN),
+        // tick_from_labels: answer each tick from the post's stored reach labels
+        // (/v1/reach-tick) instead of a fresh catchment. The labels already encode
+        // arrival times, so the routing server needs no search over the road network and
+        // the call takes none of the eight compute slots - which is what expansion
+        // saturated on 2026-08-29/30. Default OFF: the group set this returns decides who
+        // a post reaches, so it must be shown to match the polygon path's on a production
+        // sample first. Fixture parity tests are necessary, not sufficient. Falling back
+        // to the catchment is always safe, so turning this on and off is not a one-way door.
+        'tick_from_labels' => filter_var(env('RIPPLE_TICK_FROM_LABELS', false), FILTER_VALIDATE_BOOLEAN),
         'proximity_slow_ms' => (int) env('RIPPLE_PROXIMITY_SLOW_MS', 3000),
         // Reply-saturation stop (extent-governor design T1.1): a post with at least this many
         // DISTINCT repliers (distinct users with an Interested chat reply on the post,

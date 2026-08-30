@@ -313,7 +313,7 @@ class ExpandService
             }
 
             $entry = $this->entryForTick($ticks, (int) $row->tick);
-            $tickGeom = $this->resolveTickGeometry($entry, (float) $row->lat, (float) $row->lng);
+            $tickGeom = $this->resolveTickGeometry($entry, (float) $row->lat, (float) $row->lng, (int) $row->msgid);
             if ($tickGeom === null) {
                 $stats['skipped']++;
                 continue;
@@ -1313,7 +1313,7 @@ class ExpandService
                 $status = $next === null ? 'done' : 'expanding';
 
                 if (!$dryRun) {
-                    $tickGeom = $this->resolveTickGeometry($entry, (float) $lat, (float) $lng);
+                    $tickGeom = $this->resolveTickGeometry($entry, (float) $lat, (float) $lng, (int) $row->msgid);
                     if ($tickGeom === null) {
                         // Routing unreachable mid-run - leave the post for the next pass
                         // rather than storing a reach with no polygon.
@@ -1545,7 +1545,7 @@ class ExpandService
                 $status = $next === null ? 'done' : 'expanding';
 
                 if (!$dryRun) {
-                    $tickGeom = $this->resolveTickGeometry($entry, (float) $row->lat, (float) $row->lng);
+                    $tickGeom = $this->resolveTickGeometry($entry, (float) $row->lat, (float) $row->lng, (int) $row->msgid);
                     if ($tickGeom === null) {
                         // Routing unreachable - keep the previous polygon and retry this
                         // tick on the next run (next_expansion_at is already due).
@@ -2299,7 +2299,7 @@ class ExpandService
                 $ticks = $schedule['ticks'];
                 $tick = min(max((int) $row->tick, 1), count($ticks));
                 $entry = $this->entryForTick($ticks, $tick);
-                $tickGeom = $this->resolveTickGeometry($entry, (float) $row->lat, (float) $row->lng);
+                $tickGeom = $this->resolveTickGeometry($entry, (float) $row->lat, (float) $row->lng, (int) $row->msgid);
                 if ($tickGeom === null) {
                     $stats['skipped']++;
                     continue;
@@ -2390,7 +2390,7 @@ class ExpandService
      * is unusable or the routing server is unreachable - callers skip the row and
      * retry on a later run.
      */
-    private function resolveTickGeometry(?array $entry, float $lat, float $lng): ?array
+    private function resolveTickGeometry(?array $entry, float $lat, float $lng, ?int $msgid = null): ?array
     {
         if ($entry === null) {
             return null;
@@ -2402,7 +2402,36 @@ class ExpandService
         if ($driveMin <= 0) {
             return null;
         }
+
+        // Prefer the post's own stored labels. They already encode arrival times, so the
+        // routing server can answer the whole tick without a fresh search over the road
+        // network - the difference between a call that needs one of the eight compute
+        // slots and one that does not. Expansion is the workload that saturates those
+        // slots, so taking it off them is the point (see ReachService::tickFromLabels).
+        if ($msgid !== null && $this->tickFromLabelsOk()) {
+            $fromLabels = $this->reach->tickFromLabels($msgid, $driveMin);
+            if ($fromLabels !== null) {
+                return $fromLabels;
+            }
+        }
+
+        // No labels, or a routing server that cannot serve them yet: the gated catchment
+        // still answers, slower. Every reason tickFromLabels returns null is a reason
+        // this post has to keep working.
         return $this->reach->catchmentGeometry($lat, $lng, $driveMin, $this->coarseTickGeometryOk($entry));
+    }
+
+    /**
+     * Whether to serve ticks from stored labels rather than a fresh catchment.
+     *
+     * Off by default. The group set it returns decides who a post reaches, so it has to
+     * be shown to match the polygon path's on a production sample before it does - the
+     * fixture parity tests (TestReachTickGroupsMatchTheLiveSearch and its siblings) are
+     * necessary, not sufficient. RIPPLE_TICK_FROM_LABELS=true once that sample is clean.
+     */
+    private function tickFromLabelsOk(): bool
+    {
+        return (bool) config('freegle.ripple.tick_from_labels', false);
     }
 
     /**
