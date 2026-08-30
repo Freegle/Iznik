@@ -983,16 +983,29 @@ class ReachService
         return $maxDriveMin * 60.0;
     }
 
-    public function catchmentGeometry(float $lat, float $lng, float $minutes): ?array
+    /**
+     * The catchment for a point, as WKT plus its sandwich bounds.
+     *
+     * $coarse asks the routing server for the region-scale form: the same reach drawn
+     * on a grid sized to a fixed cell budget instead of to the road network, so the
+     * call stops costing more as the drive-time budget grows (a 45-minute catchment is
+     * 2.5MB and several seconds at full resolution, and the routing server only has
+     * eight compute slots to serve them from). Ask for it only where the answer is used
+     * at region scale - see ExpandService::resolveTickGeometry, which is careful about
+     * when that is true. An older routing server ignores the parameter and returns the
+     * exact form, so a half-deployed fleet is slow rather than wrong.
+     */
+    public function catchmentGeometry(float $lat, float $lng, float $minutes, bool $coarse = false): ?array
     {
         try {
             $response = Http::timeout($this->requestTimeout)
-                ->get("{$this->url}/v1/catchment", [
+                ->get("{$this->url}/v1/catchment", array_filter([
                     'lat' => $lat,
                     'lng' => $lng,
                     'minutes' => $minutes,
                     'mode' => $this->mode,
-                ]);
+                    'coarse' => $coarse ? '1' : null,
+                ], fn ($v) => $v !== null));
         } catch (\Throwable $e) {
             Log::warning("ripple: catchment fetch failed: {$e->getMessage()}", ['lat' => $lat, 'lng' => $lng]);
             return null;

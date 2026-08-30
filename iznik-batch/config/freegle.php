@@ -670,6 +670,15 @@ return [
         // retraction to polygon-overlap only). Independent of RIPPLE_ENABLED; an
         // empty/absent list falls back to polygon-only for that post.
         'reachable_gate' => filter_var(env('RIPPLE_REACHABLE_GATE', true), FILTER_VALIDATE_BOOLEAN),
+        // coarse_tick_geometry: fetch each tick's catchment in the routing server's
+        // region-scale form rather than at road resolution. Expansion only asks
+        // region-scale questions of it (sandwich bounds, origin-group union, which
+        // groups the reach touches), and the full-resolution form costs seconds and
+        // megabytes at the large budgets late ticks use - on eight shared compute
+        // slots. Only applied where the reachable gate makes the group answer exact
+        // regardless (ExpandService::coarseTickGeometryOk). Default ON; set
+        // RIPPLE_COARSE_TICK_GEOMETRY=false as the killswitch.
+        'coarse_tick_geometry' => filter_var(env('RIPPLE_COARSE_TICK_GEOMETRY', true), FILTER_VALIDATE_BOOLEAN),
         'proximity_slow_ms' => (int) env('RIPPLE_PROXIMITY_SLOW_MS', 3000),
         // Reply-saturation stop (extent-governor design T1.1): a post with at least this many
         // DISTINCT repliers (distinct users with an Interested chat reply on the post,
