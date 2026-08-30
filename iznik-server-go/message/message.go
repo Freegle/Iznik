@@ -477,6 +477,36 @@ func addRoadMetrics(myid uint64, messages []Message) {
 	}
 }
 
+// AddSummaryRoadMetrics fills Roadmins/Roadmiles on feed summaries with ONE routing call
+// from the viewer to every post's blurred point. Every feed a drive-minutes budget filters
+// must stamp these: the client's slider filter decides from the summary's roadmins on the
+// FIRST render, so a feed that omits them forces a per-post async road lookup whose late
+// answer flips the filter's verdict — the "posts flash up then collapse to You're up to
+// date" flicker. Best-effort: on any routing failure the fields stay nil and the client
+// falls back to crow-flies, which is stable (the async lookup fails the same way, so the
+// verdict never changes after paint).
+func AddSummaryRoadMetrics(viewerLat, viewerLng float64, res []MessageSummary) {
+	if len(res) == 0 {
+		return
+	}
+	targets := make([]driving.Target, 0, len(res))
+	for ix := range res {
+		if res[ix].Lat != 0 || res[ix].Lng != 0 {
+			targets = append(targets, driving.Target{
+				ID:  int64(ix),
+				Lat: res[ix].Lat,
+				Lng: res[ix].Lng,
+			})
+		}
+	}
+	for _, r := range driving.FetchDriveMetrics(roadblur.RoutingURL(), viewerLat, viewerLng, targets) {
+		if r.Mins != nil && r.ID >= 0 && int(r.ID) < len(res) {
+			res[r.ID].Roadmins = r.Mins
+			res[r.ID].Roadmiles = r.Miles
+		}
+	}
+}
+
 func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 	db := database.DBConn
 	archiveDomain := os.Getenv("IMAGE_ARCHIVED_DOMAIN")

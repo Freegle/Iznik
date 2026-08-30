@@ -1135,28 +1135,9 @@ func prewarmCandidateBlur(cands []reachCandidateRow) {
 	roadblur.RoadBlurPrewarm(coords, utils.BLUR_USER)
 }
 
-// addSummaryRoadMetrics fills Roadmins/Roadmiles on feed summaries with ONE
-// routing call from the viewer to every post's blurred point. Best-effort:
-// on any routing failure the fields stay nil and clients fall back to
-// crow-flies (and to their own batched lookup, which also fails soft).
+// addSummaryRoadMetrics delegates to message.AddSummaryRoadMetrics — the definition moved
+// there so the mygroups feed (message.Groups) can stamp the same road metrics without an
+// import cycle; this wrapper keeps this package's call sites unchanged.
 func addSummaryRoadMetrics(viewerLat, viewerLng float64, res []message.MessageSummary) {
-	if len(res) == 0 {
-		return
-	}
-	targets := make([]driving.Target, 0, len(res))
-	for ix := range res {
-		if res[ix].Lat != 0 || res[ix].Lng != 0 {
-			targets = append(targets, driving.Target{
-				ID:  int64(ix),
-				Lat: res[ix].Lat,
-				Lng: res[ix].Lng,
-			})
-		}
-	}
-	for _, r := range driving.FetchDriveMetrics(roadblur.RoutingURL(), viewerLat, viewerLng, targets) {
-		if r.Mins != nil && r.ID >= 0 && int(r.ID) < len(res) {
-			res[r.ID].Roadmins = r.Mins
-			res[r.ID].Roadmiles = r.Miles
-		}
-	}
+	message.AddSummaryRoadMetrics(viewerLat, viewerLng, res)
 }

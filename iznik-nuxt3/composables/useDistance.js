@@ -62,6 +62,22 @@ export function filterMessagesByDistance(
   })
 }
 
+// The per-message verdict for a drive-minutes budget. Pure so it can be unit tested.
+//
+// A summary that SHIPS roadmins (the feeds stamp them server-side in one batched routing
+// call) decides synchronously on the first render, and the decision can never change once
+// painted. The async per-post road lookup is only the fallback for payloads without the
+// field (older cached feeds) - its late answer used to flip the verdict after paint, which
+// is what made posts flash up and then collapse to "You're up to date" while the badge
+// still counted them. null means "no road answer": the caller falls back to the crow rule,
+// which is stable (a failed lookup stays failed, so that verdict doesn't change either).
+export function roadMinuteVerdict(m, maxMins, asyncRoad = roadDistance) {
+  if (typeof m?.roadmins === 'number') return m.roadmins <= maxMins
+  if (m?.lat == null || m?.lng == null) return null
+  const road = asyncRoad(m.lat, m.lng).value
+  return road?.mins == null ? null : road.mins <= maxMins
+}
+
 // The shared road-aware minuteCheck for the browse slider, reading the viewer's
 // travel-time budget from settings. Built HERE so PostMap and PostMapAndList
 // construct byte-identical logic and the map can never disagree with the list.
@@ -71,9 +87,5 @@ export function browseSliderMinuteCheck() {
   const authStore = useAuthStore()
   const maxMins = authStore.user?.settings?.browseMaxMinutes
   if (typeof maxMins !== 'number' || maxMins <= 0) return null
-  return (m) => {
-    if (m?.lat == null || m?.lng == null) return null
-    const road = roadDistance(m.lat, m.lng).value
-    return road?.mins == null ? null : road.mins <= maxMins
-  }
+  return (m) => roadMinuteVerdict(m, maxMins)
 }

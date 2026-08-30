@@ -173,5 +173,14 @@ func Groups(c *fiber.Ctx) error {
 		}
 	}
 
+	// Stamp drive minutes/miles on every summary (one batched routing call over the
+	// blurred points, exactly as the nearby feed does). The client's drive-minutes
+	// slider filter decides from these on the FIRST render; without them it fell back
+	// to a per-post async road lookup whose late answers flipped the verdict after
+	// paint - posts flashed up and then collapsed to "You're up to date".
+	if hasLoc {
+		AddSummaryRoadMetrics(viewerLat, viewerLng, msgs)
+	}
+
 	return c.JSON(msgs)
 }
