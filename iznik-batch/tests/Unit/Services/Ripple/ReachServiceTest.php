@@ -319,6 +319,31 @@ class ReachServiceTest extends TestCase
         $this->assertStringContainsString('-0.19 51.41', $geom['inner']);
     }
 
+    public function test_catchment_geometry_asks_for_the_coarse_form_only_when_told(): void
+    {
+        // The region-scale form is what stops a late tick costing seconds and megabytes
+        // on a shared compute slot, but it is opt-in per call: the ModTools reach map and
+        // the explorer's catchment tab want the real outline.
+        Http::fake(['*catchment*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+        ], 200)]);
+
+        $this->service()->catchmentGeometry(51.5, -0.1, 12.5, true);
+        Http::assertSent(fn ($request) => ($request->data()['coarse'] ?? null) === '1');
+    }
+
+    public function test_catchment_geometry_omits_the_coarse_parameter_by_default(): void
+    {
+        // Omitted rather than sent as 0, so the request an old routing server sees is
+        // byte-for-byte the one it saw before this existed.
+        Http::fake(['*catchment*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+        ], 200)]);
+
+        $this->service()->catchmentGeometry(51.5, -0.1, 12.5);
+        Http::assertSent(fn ($request) => !array_key_exists('coarse', $request->data()));
+    }
+
     public function test_catchment_geometry_tolerates_absent_bounds(): void
     {
         // Old routing servers (or an eroded-to-nothing inner) simply omit the bounds:

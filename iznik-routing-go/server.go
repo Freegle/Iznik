@@ -242,14 +242,37 @@ func handleCatchment(g *Graph) fiber.Handler {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
 		iso := engineOrFlatIsochrone(g, lat, lng, secs, mode)
-		res := NetworkResolution(g, iso.ReachedNodes, mode)
-		poly := IsochronePolygon(g, iso.ReachedNodes, res)
-		// Sandwich bounds for the reach containment queries (see bounds.go): derived on
-		// the same grid as the exact polygon, so the superset/subset guarantees hold by
-		// construction. Shipped only on the point form — it is what materialises
-		// rippling_reach tick polygons; the groupid form is a display view.
-		bounds := IsochroneBounds(g, iso.ReachedNodes, res)
+
+		// coarse=1 asks for the region-scale form: same reach, drawn on a grid sized to
+		// a fixed cell budget rather than to the road network, so the cost stops growing
+		// with the area (see catchment_coarse.go). Ripple expansion asks for it because
+		// the three things it does with the answer - group intersection, sandwich bounds,
+		// origin-group union - cannot see the difference, and it walks every post up a
+		// schedule of ever-larger budgets. An older server ignores the parameter and
+		// returns the exact form, which is a slower right answer rather than a wrong one.
+		var (
+			poly   GeoJSONPolygon
+			bounds IsochroneBoundsResult
+		)
+		coarse := c.Query("coarse") == "1"
+		if coarse {
+			poly, bounds, _ = CoarseCatchment(g, iso.ReachedNodes)
+		} else {
+			res := NetworkResolution(g, iso.ReachedNodes, mode)
+			poly = IsochronePolygon(g, iso.ReachedNodes, res)
+			// Sandwich bounds for the reach containment queries (see bounds.go): derived on
+			// the same grid as the exact polygon, so the superset/subset guarantees hold by
+			// construction. Shipped only on the point form — it is what materialises
+			// rippling_reach tick polygons; the groupid form is a display view.
+			bounds = IsochroneBounds(g, iso.ReachedNodes, res)
+		}
+
 		resp := fiber.Map{"catchment": poly}
+		if coarse {
+			// Say so, so a caller can tell a coarse outline from an exact one without
+			// having to infer it from the vertex count.
+			resp["coarse"] = true
+		}
 		if bounds.Outer != nil {
 			resp["catchment_outer"] = bounds.Outer
 		}

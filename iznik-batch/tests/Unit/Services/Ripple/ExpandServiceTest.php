@@ -49,6 +49,55 @@ class ExpandServiceTest extends TestCase
         return new ExpandService(new ReachService());
     }
 
+    /** Invoke coarseTickGeometryOk, which decides whether a tick can take the cheap catchment. */
+    private function coarseOk(array $entry): bool
+    {
+        $m = new \ReflectionMethod($this->service(), 'coarseTickGeometryOk');
+        $m->setAccessible(true);
+
+        return (bool) $m->invoke($this->service(), $entry);
+    }
+
+    public function test_coarse_tick_geometry_only_when_the_reachable_gate_makes_groups_exact(): void
+    {
+        // The cheap catchment is drawn on bigger cells, so its outline can sit a cell
+        // outside the exact one. That is harmless for the sandwich bounds and the
+        // origin-group union, but on its own it could hand ST_Intersects a group the
+        // exact outline would have missed. The reachable gate is what makes it safe: it
+        // ANDs the exact road-reachable set on top, and a superset prefilter intersected
+        // with an exact set is exact. No gate, or no per-tick set to gate on, and the
+        // outline IS the group answer - so we pay for the exact one.
+        config(['freegle.ripple.coarse_tick_geometry' => true]);
+
+        config(['freegle.ripple.reachable_gate' => true]);
+        $this->assertTrue(
+            $this->coarseOk(['drive_min' => 30, 'reachable_group_ids' => [1, 2]]),
+            'gate on and a per-tick set: the group answer is exact whatever the outline'
+        );
+        $this->assertFalse(
+            $this->coarseOk(['drive_min' => 30]),
+            'no per-tick set: rippleIntoNewGroups falls back to polygon-only, so the outline must be exact'
+        );
+        $this->assertFalse(
+            $this->coarseOk(['drive_min' => 30, 'reachable_group_ids' => []]),
+            'an empty set gates nothing, which is the same fallback'
+        );
+
+        config(['freegle.ripple.reachable_gate' => false]);
+        $this->assertFalse(
+            $this->coarseOk(['drive_min' => 30, 'reachable_group_ids' => [1, 2]]),
+            'gate off: the polygon alone decides the groups again'
+        );
+    }
+
+    public function test_coarse_tick_geometry_killswitch_forces_the_exact_catchment(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        config(['freegle.ripple.coarse_tick_geometry' => false]);
+
+        $this->assertFalse($this->coarseOk(['drive_min' => 30, 'reachable_group_ids' => [1, 2]]));
+    }
+
     /** Seed an approved OFFER present in messages_spatial; returns the message id. */
     private function seedSpatialPost(Carbon $arrival, float $lat = 51.5, float $lng = -0.1): int
     {

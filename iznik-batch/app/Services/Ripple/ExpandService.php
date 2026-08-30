@@ -2402,7 +2402,35 @@ class ExpandService
         if ($driveMin <= 0) {
             return null;
         }
-        return $this->reach->catchmentGeometry($lat, $lng, $driveMin);
+        return $this->reach->catchmentGeometry($lat, $lng, $driveMin, $this->coarseTickGeometryOk($entry));
+    }
+
+    /**
+     * Whether this tick can be served by the cheap region-scale catchment.
+     *
+     * Everything expansion does with the geometry is region-scale - the sandwich bounds,
+     * the union with the origin group's area, and the ST_Intersects that picks out the
+     * groups the reach now touches - with one caveat, which is what this decides.
+     *
+     * The coarse outline is drawn on cells at least as big as the finest the exact path
+     * would use, so it can sit outside the exact one by about a cell along the boundary.
+     * On its own that could hand a group to ST_Intersects that the exact outline would
+     * have missed. But when the reachable gate is on AND this tick carries its own set of
+     * road-reachable group ids, that ST_Intersects is only a spatial-index prefilter: the
+     * gate ANDs the exact set on top, and a superset prefilter intersected with an exact
+     * set is exact (see rippleIntoNewGroups). Without the gate the outline IS the answer,
+     * so we pay for the exact one - which is the same rule the gate itself follows, and
+     * keeps the groups a post reaches identical either way.
+     *
+     * @param  array<string, mixed>  $entry
+     */
+    private function coarseTickGeometryOk(array $entry): bool
+    {
+        if (!config('freegle.ripple.coarse_tick_geometry', true)) {
+            return false;
+        }
+
+        return $this->reachableGateEnabled() && !empty($entry['reachable_group_ids']);
     }
 
     /**
