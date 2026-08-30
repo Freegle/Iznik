@@ -157,7 +157,7 @@ class DesirabilityService
             return null;
         }
         try {
-            $response = Http::timeout(5)->post($url . '/embed', ['texts' => [$text]]);
+            $response = Http::timeout(5)->post($url.'/embed', ['texts' => [$text]]);
             if (! $response->successful()) {
                 Log::warning('Desirability embed failed', ['status' => $response->status()]);
 
@@ -188,7 +188,7 @@ class DesirabilityService
             ->get(['canonical', 'lift_replies', 'evidence', 'embedding']);
         $ref = ['canonicals' => [], 'lifts' => [], 'evidence' => [], 'vectors' => []];
         foreach ($rows as $r) {
-            $vec = array_values(unpack('g' . self::EMBEDDING_DIM, $r->embedding) ?: []);
+            $vec = array_values(unpack('g'.self::EMBEDDING_DIM, $r->embedding) ?: []);
             if (count($vec) !== self::EMBEDDING_DIM) {
                 continue;
             }

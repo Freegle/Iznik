@@ -57,7 +57,7 @@ class TitleCanonicalServiceTest extends TestCase
             }
         }
         $this->assertSame([], array_slice($failures, 0, 25),
-            count($failures) . ' golden mismatches (first 25 shown)');
+            count($failures).' golden mismatches (first 25 shown)');
     }
 
     #[Test]

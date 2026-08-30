@@ -18,6 +18,7 @@ namespace App\Services\Desirability;
 class TitleCanonicalService
 {
     private const PROTECT_OPEN = "\x01";
+
     private const PROTECT_CLOSE = "\x02";
 
     /** @var array<int, array{alias: string, canonical: string, is_plural: bool, quantity_only: bool, re: string, reEnd: string}> */
@@ -47,11 +48,11 @@ class TitleCanonicalService
     public function __construct()
     {
         $dir = resource_path('desirability');
-        $this->loadSynonyms($dir . '/synonyms.csv');
-        $this->loadBrands($dir . '/brands.csv');
-        $this->loadElectricalDigital($dir . '/electrical_digital.csv');
-        $this->loadPlaces($dir . '/places.csv');
-        $this->wordFreq = json_decode((string) file_get_contents($dir . '/wordfreq.json'), true) ?: [];
+        $this->loadSynonyms($dir.'/synonyms.csv');
+        $this->loadBrands($dir.'/brands.csv');
+        $this->loadElectricalDigital($dir.'/electrical_digital.csv');
+        $this->loadPlaces($dir.'/places.csv');
+        $this->wordFreq = json_decode((string) file_get_contents($dir.'/wordfreq.json'), true) ?: [];
     }
 
     /**
@@ -108,10 +109,10 @@ class TitleCanonicalService
             $s = $decoded;
         }
         $s = (string) preg_replace('~^[;:,.\-\s]+~', '', $s);
-        $pc2 = '(?:' . implode('|', self::PC_AREAS_2) . ')';
-        $pc1 = '(?:' . implode('|', self::PC_AREAS_1) . ')';
-        $s = (string) preg_replace('~\s*-?\s*(?:' . $pc2 . '|' . $pc1 . ')[0-9][A-Z0-9]?\s[0-9][A-Z]{2}\s*$~', '', $s);
-        $s = (string) preg_replace('~\s*-\s*' . $pc2 . '[0-9][A-Z0-9]?\s*$~', '', $s);
+        $pc2 = '(?:'.implode('|', self::PC_AREAS_2).')';
+        $pc1 = '(?:'.implode('|', self::PC_AREAS_1).')';
+        $s = (string) preg_replace('~\s*-?\s*(?:'.$pc2.'|'.$pc1.')[0-9][A-Z0-9]?\s[0-9][A-Z]{2}\s*$~', '', $s);
+        $s = (string) preg_replace('~\s*-\s*'.$pc2.'[0-9][A-Z0-9]?\s*$~', '', $s);
         $s = (string) preg_replace($this->placeDashPattern, '', $s);
         if (! strlen(trim($s))) {
             $s = $decoded;
@@ -188,8 +189,8 @@ class TitleCanonicalService
         }
 
         // bare trailing outward postcode (no dash needed)
-        $pc2 = '(?:' . implode('|', self::PC_AREAS_2) . ')';
-        $t = (string) preg_replace('~\s+' . $pc2 . '[0-9][A-Z0-9]?\s*$~i', '', $s);
+        $pc2 = '(?:'.implode('|', self::PC_AREAS_2).')';
+        $t = (string) preg_replace('~\s+'.$pc2.'[0-9][A-Z0-9]?\s*$~i', '', $s);
         if (mb_strlen($t) >= 3) {
             $s = self::squish($t);
         }
@@ -263,19 +264,19 @@ class TitleCanonicalService
     private static function pluraliseRegular(string $w): string
     {
         if (preg_match('~(?:s|x|z|ch|sh)$~', $w)) {
-            return $w . 'es';
+            return $w.'es';
         }
         if (preg_match('~[^aeiou]y$~', $w)) {
-            return substr($w, 0, -1) . 'ies';
+            return substr($w, 0, -1).'ies';
         }
         if (str_ends_with($w, 'fe')) {
-            return substr($w, 0, -2) . 'ves';
+            return substr($w, 0, -2).'ves';
         }
         if (preg_match('~[^f]f$~', $w)) {
-            return substr($w, 0, -1) . 'ves';
+            return substr($w, 0, -1).'ves';
         }
 
-        return $w . 's';
+        return $w.'s';
     }
 
     /** @return array{canonical: ?string, is_plural: ?bool} */
@@ -297,18 +298,18 @@ class TitleCanonicalService
             foreach ($this->synonyms as $syn) {
                 if ($syn['is_plural']) {
                     if (preg_match($syn['reEnd'], $text)) {
-                        $token = self::PROTECT_OPEN . (++$nextId) . self::PROTECT_CLOSE;
+                        $token = self::PROTECT_OPEN.(++$nextId).self::PROTECT_CLOSE;
                         $protected[$token] = $syn['canonical'];
                         $text = (string) preg_replace($syn['reEnd'], $token, $text, 1);
                         $isPlural = true;
                     }
                     if (preg_match($syn['re'], $text)) {
-                        $token = self::PROTECT_OPEN . (++$nextId) . self::PROTECT_CLOSE;
+                        $token = self::PROTECT_OPEN.(++$nextId).self::PROTECT_CLOSE;
                         $protected[$token] = self::pluraliseRegular($syn['canonical']);
                         $text = (string) preg_replace($syn['re'], $token, $text);
                     }
                 } elseif (preg_match($syn['re'], $text)) {
-                    $token = self::PROTECT_OPEN . (++$nextId) . self::PROTECT_CLOSE;
+                    $token = self::PROTECT_OPEN.(++$nextId).self::PROTECT_CLOSE;
                     $protected[$token] = $syn['canonical'];
                     $text = (string) preg_replace($syn['re'], $token, $text);
                 }
@@ -324,7 +325,7 @@ class TitleCanonicalService
             $cands[] = ['re' => '~\b\w*(?:s|x|z|ch|sh)es\s*$~u', 'stem' => $m[1]];
         }
         if (preg_match('~\b(\w*[^aeiou\s])ies\s*$~u', $text, $m)) {
-            $cands[] = ['re' => '~\b\w*[^aeiou\s]ies\s*$~u', 'stem' => $m[1] . 'y'];
+            $cands[] = ['re' => '~\b\w*[^aeiou\s]ies\s*$~u', 'stem' => $m[1].'y'];
         }
         if (preg_match('~\b(\w*[^s\s])(?<!ve)s\s*$~u', $text, $m)) {
             $cands[] = ['re' => '~\b\w*[^s\s](?<!ve)s\s*$~u', 'stem' => $m[1]];
@@ -452,8 +453,8 @@ class TitleCanonicalService
                 'canonical' => $r['canonical'],
                 'is_plural' => $r['is_plural'] === 'TRUE',
                 'quantity_only' => ($r['quantity_only'] ?? 'FALSE') === 'TRUE',
-                're' => '~\b' . $esc . '\b~',
-                'reEnd' => '~\b' . $esc . '\b\s*$~',
+                're' => '~\b'.$esc.'\b~',
+                'reEnd' => '~\b'.$esc.'\b\s*$~',
             ];
         }
     }
@@ -465,7 +466,7 @@ class TitleCanonicalService
         foreach ($rows as $r) {
             $this->brands[] = [
                 'slug' => $r['slug'],
-                'pattern' => '~' . $r['pattern'] . '~i',
+                'pattern' => '~'.$r['pattern'].'~i',
                 'strip' => ($r['strip'] ?? 'TRUE') !== 'FALSE',
             ];
         }
@@ -475,7 +476,7 @@ class TitleCanonicalService
     {
         foreach ($this->readCsv($path) as $r) {
             $this->electricalDigital[] = [
-                're' => '~' . $r['pattern'] . '~i',
+                're' => '~'.$r['pattern'].'~i',
                 'digital' => $r['is_digital'] === 'TRUE',
             ];
         }
@@ -491,6 +492,6 @@ class TitleCanonicalService
             }
         }
         $alts = array_map(fn ($p) => str_replace(' ', '\s+', preg_quote($p, '~')), $places);
-        $this->placeDashPattern = '~\s*-\s*(?:' . implode('|', $alts) . ')\s*$~i';
+        $this->placeDashPattern = '~\s*-\s*(?:'.implode('|', $alts).')\s*$~i';
     }
 }

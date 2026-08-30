@@ -46,7 +46,7 @@ class ScoreNewCommand extends Command
         if (! $this->desirability->artifactReady()) {
             // Not an alarm: absence of the artifact is the shipped default, not a
             // fault. The high-water mark defaults from now-24h once it exists.
-            $this->info('No desirability artifact imported for ' . $this->desirability->modelVersion() . ' - nothing to do.');
+            $this->info('No desirability artifact imported for '.$this->desirability->modelVersion().' - nothing to do.');
 
             return Command::SUCCESS;
         }
@@ -80,7 +80,7 @@ class ScoreNewCommand extends Command
             ->limit($limit)
             ->get();
 
-        $this->info(count($rows) . ' new messages to score.');
+        $this->info(count($rows).' new messages to score.');
 
         if ($dryRun || $rows->isEmpty()) {
             return Command::SUCCESS;

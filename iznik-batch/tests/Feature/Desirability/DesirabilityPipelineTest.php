@@ -3,7 +3,6 @@
 namespace Tests\Feature\Desirability;
 
 use App\Services\Desirability\DesirabilityService;
-use App\Services\Desirability\TitleCanonicalService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\Test;
@@ -33,7 +32,7 @@ class DesirabilityPipelineTest extends TestCase
             'textbody' => 'Test body',
         ]);
         $groupid = DB::table('groups')->insertGetId([
-            'nameshort' => 'TestGroup' . $msgid,
+            'nameshort' => 'TestGroup'.$msgid,
             'type' => 'Freegle',
             'polyofficial' => 'POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))',
         ]);
@@ -52,7 +51,7 @@ class DesirabilityPipelineTest extends TestCase
     private function importRows(array $rows): void
     {
         $path = tempnam(sys_get_temp_dir(), 'desir');
-        file_put_contents($path, implode("\n", array_map('json_encode', $rows)) . "\n");
+        file_put_contents($path, implode("\n", array_map('json_encode', $rows))."\n");
         $this->artisan('desirability:import-artifact', ['path' => $path, '--model-version' => $this->version])
             ->assertExitCode(0);
         unlink($path);
@@ -217,7 +216,7 @@ class DesirabilityPipelineTest extends TestCase
             'arrival' => now()->subHour(), 'date' => now()->subHour(), 'textbody' => 'x',
         ]);
         $groupid = DB::table('groups')->insertGetId([
-            'nameshort' => 'TestGroupP' . $pending, 'type' => 'Freegle',
+            'nameshort' => 'TestGroupP'.$pending, 'type' => 'Freegle',
             'polyofficial' => 'POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))',
         ]);
         DB::table('messages_groups')->insert([
