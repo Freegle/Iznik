@@ -34,7 +34,7 @@ class DesirabilityPipelineTest extends TestCase
         $groupid = DB::table('groups')->insertGetId([
             'nameshort' => 'TestGroup'.$msgid,
             'type' => 'Freegle',
-            'polyofficial' => 'POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))',
+            'polyindex' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
         ]);
         DB::table('messages_groups')->insert([
             'msgid' => $msgid,
@@ -131,14 +131,14 @@ class DesirabilityPipelineTest extends TestCase
         $query = array_fill(0, DesirabilityService::EMBEDDING_DIM, 0.0);
         $query[0] = 0.999;
         $query[1] = 0.0447;
-        putenv('EMBEDDING_SIDECAR_URL=http://fake-sidecar:3200');
+        config(['freegle.desirability.sidecar_url' => 'http://fake-sidecar:3200']);
         Http::fake(['fake-sidecar:3200/*' => Http::response(['embeddings' => [$query]], 200)]);
 
         try {
             $this->artisan('desirability:score-new', ['--since' => now()->subDay()->toDateTimeString()])
                 ->assertExitCode(0);
         } finally {
-            putenv('EMBEDDING_SIDECAR_URL=');
+            config(['freegle.desirability.sidecar_url' => '']);
         }
 
         $row = DB::table('messages_desirability')->where('msgid', $msgid)->first();
@@ -188,14 +188,14 @@ class DesirabilityPipelineTest extends TestCase
         $query = array_fill(0, DesirabilityService::EMBEDDING_DIM, 0.0);
         $query[0] = 0.9747;
         $query[1] = 0.2237;
-        putenv('EMBEDDING_SIDECAR_URL=http://fake-sidecar:3200');
+        config(['freegle.desirability.sidecar_url' => 'http://fake-sidecar:3200']);
         Http::fake(['fake-sidecar:3200/*' => Http::response(['embeddings' => [$query]], 200)]);
 
         try {
             $this->artisan('desirability:score-new', ['--since' => now()->subDay()->toDateTimeString()])
                 ->assertExitCode(0);
         } finally {
-            putenv('EMBEDDING_SIDECAR_URL=');
+            config(['freegle.desirability.sidecar_url' => '']);
         }
 
         $row = DB::table('messages_desirability')->where('msgid', $msgid)->first();
@@ -217,7 +217,7 @@ class DesirabilityPipelineTest extends TestCase
         ]);
         $groupid = DB::table('groups')->insertGetId([
             'nameshort' => 'TestGroupP'.$pending, 'type' => 'Freegle',
-            'polyofficial' => 'POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))',
+            'polyindex' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
         ]);
         DB::table('messages_groups')->insert([
             'msgid' => $pending, 'groupid' => $groupid, 'collection' => 'Pending',

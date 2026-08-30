@@ -152,7 +152,7 @@ class DesirabilityService
     /** @return ?array<int, float> */
     private function embed(string $text): ?array
     {
-        $url = rtrim((string) env('EMBEDDING_SIDECAR_URL', ''), '/');
+        $url = rtrim((string) config('freegle.desirability.sidecar_url', ''), '/');
         if (! $url) {
             return null;
         }

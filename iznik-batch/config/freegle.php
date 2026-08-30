@@ -1355,6 +1355,8 @@ return [
     */
     'desirability' => [
         'model_version'  => env('DESIRABILITY_MODEL_VERSION', 'desir-2026-08'),
+        // Same sidecar the batch container already has wired for moderation checks.
+        'sidecar_url'    => env('EMBEDDING_SIDECAR_URL', ''),
         // Cold-start kNN over the artifact's reference embeddings (query-space,
         // the sidecar's own space on both sides).
         'knn_k'          => env('DESIRABILITY_KNN_K', 10),
