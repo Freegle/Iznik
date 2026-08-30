@@ -993,6 +993,10 @@ class ReachService
      * sweeps, and expansion walking a backlog up its schedule is what saturated them on
      * 2026-08-29/30. A tick served from labels never queues for one.
      *
+     * $wantGroups asks for the reachable group ids as well. Off costs nothing; on makes
+     * the routing server run a member query against the groups database, so ask only when
+     * the tick does not already carry a set of its own.
+     *
      * Returns the same shape as catchmentGeometry plus the reachable group ids, or null
      * when the labels are missing, the routing server is too old to answer, or the blob
      * belongs to a partition build it no longer holds - in every case the caller falls
@@ -1000,7 +1004,7 @@ class ReachService
      *
      * @return array{wkt: string, outer: ?string, inner: ?string, groups: ?array<int>}|null
      */
-    public function tickFromLabels(int $msgid, float $minutes): ?array
+    public function tickFromLabels(int $msgid, float $minutes, bool $wantGroups = true): ?array
     {
         if (!$this->reachLabelsReady()) {
             return null;
@@ -1016,7 +1020,7 @@ class ReachService
                     'labels' => base64_encode((string) $row->reach_labels),
                     't' => $minutes * 60,
                     'mode' => $this->mode,
-                    'groups' => true,
+                    'groups' => $wantGroups,
                 ]);
         } catch (\Throwable $e) {
             Log::warning("ripple: reach-tick fetch failed: {$e->getMessage()}", ['msgid' => $msgid]);

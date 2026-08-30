@@ -7,6 +7,7 @@ use App\Services\Ripple\ReachService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class ReachServiceTest extends TestCase
@@ -394,25 +395,52 @@ class ReachServiceTest extends TestCase
         $this->assertNull($this->service()->tickFromLabels($msgid, 12.5)['groups']);
     }
 
-    public function test_tick_from_labels_returns_null_when_it_cannot_answer(): void
+    /**
+     * Every status here is a reason the caller must fall back to the catchment rather
+     * than skip the tick: a routing server too old for the endpoint, a blob from a map
+     * build it no longer holds, or an outright failure.
+     *
+     * One status per test run rather than a loop, because Http::fake() MERGES stubs and
+     * the first registered wins - a loop that re-fakes would keep answering with the
+     * first status and prove nothing about the rest.
+     */
+    #[DataProvider('unanswerableStatuses')]
+    public function test_tick_from_labels_returns_null_when_the_server_cannot_answer(int $status): void
     {
-        // Every one of these is a reason the caller must fall back to the catchment
-        // rather than skip the tick: an old routing server, a blob from a partition build
-        // it no longer holds, or a post with no labels stored yet.
         $msgid = $this->seedReachRowWithLabels('somelabelbytes');
+        Http::fake(['*reach-tick*' => Http::response([], $status)]);
 
-        foreach ([503, 404, 422, 400, 500] as $status) {
-            Http::fake(['*reach-tick*' => Http::response([], $status)]);
-            $this->assertNull(
-                $this->service()->tickFromLabels($msgid, 12.5),
-                "HTTP {$status} must fall back, not answer"
-            );
-        }
+        $this->assertNull($this->service()->tickFromLabels($msgid, 12.5));
+    }
 
+    public static function unanswerableStatuses(): array
+    {
+        return [[503], [404], [422], [400], [500]];
+    }
+
+    public function test_tick_from_labels_does_not_call_out_for_a_post_with_no_labels(): void
+    {
+        // Nothing to send, so nothing is sent - the caller falls straight through to the
+        // catchment instead of spending a round trip to be told there is no blob.
         $noLabels = $this->seedReachRowWithLabels(null);
         Http::fake(['*reach-tick*' => Http::response(['catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6)], 200)]);
+
         $this->assertNull($this->service()->tickFromLabels($noLabels, 12.5));
         Http::assertNothingSent();
+    }
+
+    public function test_tick_from_labels_can_skip_the_group_query(): void
+    {
+        // Asking for groups makes the routing server run a member query against the
+        // groups database, so a tick that already knows its groups must not ask.
+        $msgid = $this->seedReachRowWithLabels('somelabelbytes');
+        Http::fake(['*reach-tick*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+        ], 200)]);
+
+        $this->service()->tickFromLabels($msgid, 12.5, false);
+
+        Http::assertSent(fn ($request) => $request->data()['groups'] === false);
     }
 
     public function test_catchment_geometry_asks_for_the_coarse_form_only_when_told(): void

@@ -82,7 +82,7 @@ class ExpandServiceTest extends TestCase
         {
             public bool $catchmentCalled = false;
 
-            public function tickFromLabels(int $msgid, float $minutes): ?array
+            public function tickFromLabels(int $msgid, float $minutes, bool $wantGroups = true): ?array
             {
                 return null; // as when the routing server cannot serve labels
             }
@@ -112,8 +112,12 @@ class ExpandServiceTest extends TestCase
         {
             public bool $catchmentCalled = false;
 
-            public function tickFromLabels(int $msgid, float $minutes): ?array
+            public array $wantGroupsSeen = [];
+
+            public function tickFromLabels(int $msgid, float $minutes, bool $wantGroups = true): ?array
             {
+                $this->wantGroupsSeen[] = $wantGroups;
+
                 return ['wkt' => 'POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))', 'outer' => null, 'inner' => null, 'groups' => [4]];
             }
 
@@ -132,6 +136,34 @@ class ExpandServiceTest extends TestCase
 
         $this->assertSame('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))', $geom['wkt']);
         $this->assertFalse($reach->catchmentCalled, 'the gated catchment must not be called as well');
+        $this->assertSame([false], $reach->wantGroupsSeen,
+            'this tick already carries its groups, so it must not make the server compute them again');
+    }
+
+    public function test_tick_geometry_asks_for_groups_when_the_tick_has_none(): void
+    {
+        // A schedule stored before per-tick ids existed has nothing to gate on, so the
+        // labels path is where its group set comes from - it has to ask.
+        config(['freegle.ripple.tick_from_labels' => true]);
+
+        $reach = new class extends ReachService
+        {
+            public array $wantGroupsSeen = [];
+
+            public function tickFromLabels(int $msgid, float $minutes, bool $wantGroups = true): ?array
+            {
+                $this->wantGroupsSeen[] = $wantGroups;
+
+                return ['wkt' => 'POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))', 'outer' => null, 'inner' => null, 'groups' => [4]];
+            }
+        };
+
+        $service = new ExpandService($reach);
+        $resolve = new \ReflectionMethod($service, 'resolveTickGeometry');
+        $resolve->setAccessible(true);
+        $resolve->invoke($service, ['drive_min' => 30], 51.5, -0.1, 12345);
+
+        $this->assertSame([true], $reach->wantGroupsSeen);
     }
 
     public function test_coarse_tick_geometry_only_when_the_reachable_gate_makes_groups_exact(): void

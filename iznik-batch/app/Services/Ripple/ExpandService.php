@@ -1633,6 +1633,13 @@ class ExpandService
                             $raw = DB::table('rippling_reach')->where('msgid', $row->msgid)->value('reachable_group_ids');
                             $cachedReachable = $raw ? json_decode($raw, true) : null;
                         }
+                        // Last resort: the set the labels answered with, for a post whose
+                        // schedule predates per-tick ids. Without this the labels path
+                        // would fetch a group set and then drop it, leaving targeting on
+                        // the polygon alone for exactly the rows that have no stored set.
+                        if ($cachedReachable === null && is_array($tickGeom['groups'] ?? null)) {
+                            $cachedReachable = $tickGeom['groups'];
+                        }
                     }
                     $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats, $cachedReachable);
                     // Reach mail decoupled into `mail:digest:unified --mode=reach` — see
@@ -2409,7 +2416,11 @@ class ExpandService
         // slots and one that does not. Expansion is the workload that saturates those
         // slots, so taking it off them is the point (see ReachService::tickFromLabels).
         if ($msgid !== null && $this->tickFromLabelsOk()) {
-            $fromLabels = $this->reach->tickFromLabels($msgid, $driveMin);
+            // Ask for the group set only when this tick does not already carry one. The
+            // stored schedule usually does, and computing it again means a member query
+            // against the groups database on the routing server for an answer we hold.
+            $wantGroups = empty($entry['reachable_group_ids']);
+            $fromLabels = $this->reach->tickFromLabels($msgid, $driveMin, $wantGroups);
             if ($fromLabels !== null) {
                 return $fromLabels;
             }

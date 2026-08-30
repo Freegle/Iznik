@@ -47,14 +47,26 @@ type reachTickReq struct {
 	// were computed for - a tick can never ask for more reach than was stored.
 	T *float64 `json:"t"`
 
-	// Mode names the travel mode for snapping members to road nodes. Defaults to drive,
-	// which is what rippling uses.
+	// Mode names the travel mode for snapping members to road nodes. Empty means drive,
+	// which is what rippling uses - note parseMode's own default is walk, so this is
+	// resolved explicitly rather than handed to it blank.
 	Mode string `json:"mode"`
 
 	// Groups asks for the reachable group ids. Off by default because it needs the
 	// groups database and the active-member query, which a caller that only wants the
 	// geometry should not pay for.
 	Groups bool `json:"groups"`
+}
+
+// tickMode resolves the request's travel mode, defaulting to drive. parseMode defaults to
+// WALK, which would be wrong here: rippling is a drive-time model throughout, and snapping
+// members to walking nodes would quietly answer a different question.
+func tickMode(s string) Mode {
+	if s == "" {
+		return Drive
+	}
+
+	return parseMode(s)
 }
 
 // handleReachTick serves POST /v1/reach-tick. Ungated: no graph sweep, so it does not
@@ -114,7 +126,7 @@ func handleReachTick() fiber.Handler {
 				if db := ensureGroupsDB(); db != nil {
 					minLat, maxLat, minLng, maxLng := reachedBBox(e.G, reached)
 					if members, mErr := queryActiveMembersInBox(db, minLat, maxLat, minLng, maxLng); mErr == nil {
-						ids = groupIDsWithinSeconds(snapMembers(e.G, reached, members, parseMode(req.Mode)), effT)
+						ids = groupIDsWithinSeconds(snapMembers(e.G, reached, members, tickMode(req.Mode)), effT)
 					}
 				}
 			}

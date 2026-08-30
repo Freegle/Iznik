@@ -144,6 +144,25 @@ func TestReachTickGroupsMatchTheLiveSearch(t *testing.T) {
 	}
 }
 
+// TestReachTickModeDefaultsToDrive guards a silent wrong answer. parseMode's own default
+// is WALK, so a request that omits the mode would snap members to walking nodes and decide
+// a different, much smaller group set - with nothing in the response to say so. Rippling is
+// a drive-time model throughout.
+func TestReachTickModeDefaultsToDrive(t *testing.T) {
+	if got := tickMode(""); got != Drive {
+		t.Fatalf("an omitted mode resolved to %v, want Drive", got)
+	}
+	if got := tickMode("walk"); got != Walk {
+		t.Fatalf("an explicit walk resolved to %v", got)
+	}
+	if got := tickMode("cycle"); got != Cycle {
+		t.Fatalf("an explicit cycle resolved to %v", got)
+	}
+	if got := tickMode("drive"); got != Drive {
+		t.Fatalf("an explicit drive resolved to %v", got)
+	}
+}
+
 // TestReachTickClampsToTheStoredBudget guards the one way a caller could ask for reach
 // that was never computed: a tick budget beyond the ceiling the labels were stored at.
 // The answer is the stored ceiling, not an error and not a silent extrapolation.
