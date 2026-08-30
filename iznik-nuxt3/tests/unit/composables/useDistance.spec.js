@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import {
   milesAway,
   isWithinDistance,
@@ -168,33 +168,21 @@ describe('filterMessagesByDistance', () => {
 })
 
 describe('roadMinuteVerdict', () => {
-  // The flicker contract: a summary that ships roadmins decides on first paint and the
-  // async lookup is never consulted, so the verdict cannot change once rendered.
-  it('decides synchronously from a shipped roadmins, without the async lookup', () => {
-    const asyncRoad = vi.fn()
-
-    expect(roadMinuteVerdict({ roadmins: 20 }, 25, asyncRoad)).toBe(true)
-    expect(roadMinuteVerdict({ roadmins: 30 }, 25, asyncRoad)).toBe(false)
-    expect(roadMinuteVerdict({ roadmins: 25 }, 25, asyncRoad)).toBe(true)
-    expect(asyncRoad).not.toHaveBeenCalled()
+  // The flicker contract: the verdict comes ONLY from the payload the feed shipped, so it
+  // is decided at first paint and cannot change once rendered - there is no async lookup
+  // whose late answer could flip it.
+  it('decides from a shipped roadmins, inclusive at the budget', () => {
+    expect(roadMinuteVerdict({ roadmins: 20 }, 25)).toBe(true)
+    expect(roadMinuteVerdict({ roadmins: 30 }, 25)).toBe(false)
+    expect(roadMinuteVerdict({ roadmins: 25 }, 25)).toBe(true)
   })
 
-  it('falls back to the async lookup only when the payload has no roadmins', () => {
-    const asyncRoad = vi.fn(() => ({ value: { mins: 10 } }))
-    expect(roadMinuteVerdict({ lat: 53.8, lng: -2.6 }, 25, asyncRoad)).toBe(
-      true
-    )
-    expect(asyncRoad).toHaveBeenCalledWith(53.8, -2.6)
-  })
-
-  it('returns null (crow fallback) when no coords and no roadmins', () => {
-    const asyncRoad = vi.fn()
-    expect(roadMinuteVerdict({}, 25, asyncRoad)).toBeNull()
-    expect(asyncRoad).not.toHaveBeenCalled()
-  })
-
-  it('returns null (crow fallback) while the async lookup has no answer yet', () => {
-    const asyncRoad = () => ({ value: null })
-    expect(roadMinuteVerdict({ lat: 53.8, lng: -2.6 }, 25, asyncRoad)).toBeNull()
+  it('returns null (stable crow fallback) whenever the payload has no roadmins', () => {
+    // Routing outage, an unroutable point, or a stale cached feed: the crow rule applies
+    // and, being payload-derived too, is equally immovable after paint.
+    expect(roadMinuteVerdict({}, 25)).toBeNull()
+    expect(roadMinuteVerdict({ lat: 53.8, lng: -2.6 }, 25)).toBeNull()
+    expect(roadMinuteVerdict({ roadmins: null }, 25)).toBeNull()
+    expect(roadMinuteVerdict(null, 25)).toBeNull()
   })
 })

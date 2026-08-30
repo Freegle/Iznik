@@ -138,10 +138,6 @@ import {
   browseSliderMinuteCheck,
 } from '~/composables/useDistance'
 import { sortBrowseMessages } from '~/composables/useMessageSort'
-import {
-  roadDistance,
-  roadAnswersVersion,
-} from '~/composables/useDriveDistance'
 import { MAX_MAP_ZOOM, BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 import { useMessageStore } from '~/stores/message'
 import { useNearbyStore } from '~/stores/nearby'
@@ -460,16 +456,15 @@ function sortMessages(messages) {
   return sortBrowseMessages(
     enriched,
     props.selectedSort,
-    // Only the full record's coordinates: the summary carries a DIFFERENT
-    // blurred point, and ordering by its road miles would disagree with the
-    // badges (which print the full record's) and cause an extra visible
-    // reshuffle when the records load.
-    (m) => {
-      if (m?.roadmiles != null) return m.roadmiles
-      return m?.roadCoords
-        ? (roadDistance(m.lat, m.lng).value?.miles ?? null)
-        : null
-    }
+    // PAYLOAD-ONLY road miles: the feed stamps roadmiles on every summary
+    // server-side, so the very first sort already runs in road order, and the
+    // enrichment above upgrades to the full record's figure (the one the badge
+    // prints) for any later legitimate re-sort. No async lookup here - a late
+    // answer influencing the sort is exactly the post-render reshuffle the
+    // order lock exists to forbid. A message with no road answer at all sorts
+    // by its crow distance (sortBrowseMessages' own fallback), which is just
+    // as stable.
+    (m) => m?.roadmiles ?? null
   )
 }
 
@@ -564,18 +559,16 @@ const closestGroups = computed(() => {
 })
 
 // Watchers
-// Update the locked sort order when the set of message IDs changes, and ALSO
-// when a batch of road-distance answers arrives: the first sort of a fresh
-// feed runs before the (batched, async) road distances are back, so a lock
-// taken then has frozen crow-flies order under road-mile badges - "Closest"
-// showed 10 miles above 9 (the sort and the badges disagreed). Re-sorting on
-// roadAnswersVersion converges the order onto what the badges say, then goes
-// quiet: once answers are cached, re-sorting an unchanged set with unchanged
-// keys is a no-op (Array.sort is stable), so positions stay stable exactly
-// as the lock intends.
+// Update the locked sort order ONLY when the set of message IDs changes. The
+// order a member sees at first paint never changes underneath them: the feed
+// ships roadmins/roadmiles on every summary, so the very first sort already
+// runs in road order and there is nothing to "converge" later. (This watcher
+// used to also re-lock when async road answers arrived, because the first
+// sort once ran before they existed - that re-lock WAS a visible post-render
+// reshuffle, which is banned however mild.)
 watch(
-  [messagesOnMap, roadAnswersVersion],
-  ([newMessages], [oldMessages, oldVersion]) => {
+  messagesOnMap,
+  (newMessages) => {
     if (!newMessages?.length) {
       lockedSortOrder.value = null
       return
@@ -585,22 +578,19 @@ watch(
 
     const needsUpdate =
       !lockedSortOrder.value ||
-      // Road answers can only refine the DISTANCE order; under any other
-      // sort a re-lock would instead pick up unseen-flag changes and move
-      // posts the member has just read - the very reshuffle the lock exists
-      // to prevent.
-      (roadAnswersVersion.value !== oldVersion &&
-        props.selectedSort === 'Nearby') ||
+      // Only a change in WHICH posts are in the feed re-sorts. Never flag
+      // changes (unseen as the member reads) and never late data arrivals -
+      // both are the very reshuffle the lock exists to prevent.
       lockedSortOrder.value.length !== currentIds.size ||
       !lockedSortOrder.value.every((id) => currentIds.has(id))
 
     if (needsUpdate) {
       const sorted = sortMessages(newMessages)
       const ids = sorted.map((m) => m.id)
-      // Only replace the lock when the ORDER actually changed: each answered
-      // road-distance batch triggers this watcher, and blindly assigning a
-      // fresh array re-rendered the whole grid (flicker, scroll jumping to
-      // the top) even when every card was already in the right place.
+      // Only replace the lock when the ORDER actually changed: blindly
+      // assigning a fresh array re-rendered the whole grid (flicker, scroll
+      // jumping to the top) even when every card was already in the right
+      // place.
       const same =
         lockedSortOrder.value &&
         lockedSortOrder.value.length === ids.length &&
@@ -613,9 +603,7 @@ watch(
           '[browse] sort order re-locked:',
           !lockedSortOrder.value
             ? 'initial'
-            : lockedSortOrder.value.length !== ids.length
-              ? `set size ${lockedSortOrder.value.length} -> ${ids.length}`
-              : 'order changed (road answers arrived)'
+            : `set size ${lockedSortOrder.value.length} -> ${ids.length}`
         )
         lockedSortOrder.value = ids
       }

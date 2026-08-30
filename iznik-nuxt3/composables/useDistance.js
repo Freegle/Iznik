@@ -1,7 +1,6 @@
 import turfdistance from 'turf-distance'
 import turfpoint from 'turf-point'
 import { useAuthStore } from '~/stores/auth'
-import { roadDistance } from '~/composables/useDriveDistance'
 import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 
 export function milesAway(flat, flng, tlat, tlng) {
@@ -64,18 +63,17 @@ export function filterMessagesByDistance(
 
 // The per-message verdict for a drive-minutes budget. Pure so it can be unit tested.
 //
-// A summary that SHIPS roadmins (the feeds stamp them server-side in one batched routing
-// call) decides synchronously on the first render, and the decision can never change once
-// painted. The async per-post road lookup is only the fallback for payloads without the
-// field (older cached feeds) - its late answer used to flip the verdict after paint, which
-// is what made posts flash up and then collapse to "You're up to date" while the badge
-// still counted them. null means "no road answer": the caller falls back to the crow rule,
-// which is stable (a failed lookup stays failed, so that verdict doesn't change either).
-export function roadMinuteVerdict(m, maxMins, asyncRoad = roadDistance) {
+// PAYLOAD-ONLY by design: both browse feeds stamp roadmins on every summary server-side
+// (one batched routing call), so the verdict is decided synchronously on the first render
+// and can never change once painted. The old per-post ASYNC road lookup is deliberately
+// gone - its late answers flipped verdicts after paint, which is what made posts flash up
+// and then collapse to "You're up to date" while the badge still counted them. A summary
+// without roadmins (routing outage, an unroutable point, a stale cached feed) returns
+// null and the caller applies the crow rule - equally stable, since the payload never
+// changes under the render.
+export function roadMinuteVerdict(m, maxMins) {
   if (typeof m?.roadmins === 'number') return m.roadmins <= maxMins
-  if (m?.lat == null || m?.lng == null) return null
-  const road = asyncRoad(m.lat, m.lng).value
-  return road?.mins == null ? null : road.mins <= maxMins
+  return null
 }
 
 // The shared road-aware minuteCheck for the browse slider, reading the viewer's

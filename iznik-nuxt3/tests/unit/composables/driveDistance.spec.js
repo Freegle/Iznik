@@ -86,7 +86,7 @@ describe('useDriveDistance', () => {
     expect(a.value).toEqual({ mins: 5, miles: 1.5 })
   })
 
-  it('bumps roadAnswersVersion once per answered batch (locked-sort resort signal)', async () => {
+  it('bumps roadAnswersVersion once per answered batch (reactivity signal for per-card badges; the sort order deliberately no longer listens)', async () => {
     const { roadDistance, roadAnswersVersion } = await load()
     const v0 = roadAnswersVersion.value
     mockDistances.mockResolvedValue({
