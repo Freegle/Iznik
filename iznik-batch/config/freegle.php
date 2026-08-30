@@ -1340,4 +1340,30 @@ return [
         'publish_category'  => env('EEE_PUBLISH_CATEGORY', true),
         'publish_condition' => env('EEE_PUBLISH_CONDITION', true),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Item Desirability
+    |--------------------------------------------------------------------------
+    |
+    | Scoring of OFFER posts by expected demand for the item type, from the
+    | offline-built artifact in item_desirability (see desirability:import-artifact).
+    | The kNN settings govern cold-start scoring of never-seen titles via the
+    | embedding sidecar; thresholds are calibrated by the analysis, not tunable
+    | folklore - change them only alongside an artifact rebuild.
+    |
+    */
+    'desirability' => [
+        'model_version'  => env('DESIRABILITY_MODEL_VERSION', 'desir-2026-08'),
+        // Cold-start kNN over the artifact's reference embeddings (query-space,
+        // the sidecar's own space on both sides).
+        'knn_k'          => env('DESIRABILITY_KNN_K', 10),
+        'knn_min_cos'    => env('DESIRABILITY_KNN_MIN_COS', 0.80),
+        'knn_strong_cos' => env('DESIRABILITY_KNN_STRONG_COS', 0.90),
+        'knn_gamma'      => env('DESIRABILITY_KNN_GAMMA', 8),
+        // Bucket bounds for INFERRED (kNN) scores only; exact matches carry the
+        // posterior-derived bucket computed at artifact build time.
+        'bucket_low_max'  => env('DESIRABILITY_BUCKET_LOW_MAX', 0.6),
+        'bucket_high_min' => env('DESIRABILITY_BUCKET_HIGH_MIN', 1.6),
+    ],
 ];

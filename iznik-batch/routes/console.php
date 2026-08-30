@@ -271,6 +271,21 @@ Schedule::command('electricals:stats')
     ->sendOutputTo(cronLog('electricals:stats'))
     ->runInBackground();
 
+// Score newly-approved OFFERs for item desirability.
+//
+// A quiet no-op (single EXISTS query) until an operator imports an artifact with
+// desirability:import-artifact, so scheduling it is free on hosts without one.
+// Hourly like eee:classify-new and for the same reason: it tracks a high-water
+// mark over the approval clock, and ~65 distinct OFFERs arrive an hour, so
+// --limit=2000 only matters when catching up after an outage. Most posts score
+// with a single indexed lookup; only never-seen titles touch the embedding
+// sidecar (soft dependency - scoring falls back to 'default' without it).
+Schedule::command('desirability:score-new --limit=2000')
+    ->hourly()
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('desirability:score-new'))
+    ->runInBackground();
+
 // Recompute items.popularity from messages_items.
 //
 // ItemService maintains this forwards now, but a weekly reconciliation keeps it honest:
