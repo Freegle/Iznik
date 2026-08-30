@@ -2,9 +2,12 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Models\Message;
 use App\Services\Ripple\ReachService;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class ReachServiceTest extends TestCase
@@ -317,6 +320,137 @@ class ReachServiceTest extends TestCase
         $this->assertStringStartsWith('POLYGON((', $geom['inner']);
         $this->assertStringContainsString('-0.21 51.39', $geom['outer']);
         $this->assertStringContainsString('-0.19 51.41', $geom['inner']);
+    }
+
+    /**
+     * A message with a rippling_reach row carrying (or lacking) stored labels.
+     * rippling_reach.msgid is a foreign key, so the message has to be real.
+     */
+    private function seedReachRowWithLabels(?string $labels): int
+    {
+        $user = $this->createTestUser();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: tick from labels', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDay(), 'arrival' => now()->subDay(), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, outer_bound, arrival, mode, tick, total_ticks,
+                total_freeglers, max_drive_min, schedule, next_expansion_at, status,
+                reach_labels, created_at, updated_at)
+             VALUES (?, 51.5, -0.1,
+                     ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857),
+                     NOW(), 'drive', 1, 3, 0, 45, NULL, NULL, 'expanding', ?, NOW(), NOW())",
+            [$message->id, $labels]
+        );
+
+        return (int) $message->id;
+    }
+
+    public function test_tick_from_labels_posts_the_stored_blob_and_the_budget(): void
+    {
+        // The whole saving is that the routing server answers from labels the post
+        // already carries, so the request has to carry them - and the tick budget in
+        // seconds, since the stored labels cover the post's whole schedule.
+        $msgid = $this->seedReachRowWithLabels('somelabelbytes');
+        Http::fake(['*reach-tick*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+            'catchment_outer' => $this->geoSquare(-0.21, 51.39, 0.01, 51.61),
+            'reachable_group_ids' => [7, 9],
+        ], 200)]);
+
+        $tick = $this->service()->tickFromLabels($msgid, 12.5);
+
+        $this->assertNotNull($tick);
+        $this->assertStringStartsWith('POLYGON((', $tick['wkt']);
+        $this->assertStringStartsWith('POLYGON((', $tick['outer']);
+        $this->assertNull($tick['inner'], 'an eroded-to-nothing inner is simply absent');
+        $this->assertSame([7, 9], $tick['groups']);
+
+        Http::assertSent(function ($request) {
+            return base64_decode($request->data()['labels']) === 'somelabelbytes'
+                && (float) $request->data()['t'] === 750.0
+                && $request->data()['groups'] === true;
+        });
+    }
+
+    /**
+     * The targeting gate treats these differently: an absent set means "fall back to the
+     * polygon", an empty one means "computed, and nobody". Flattening them would silently
+     * turn a routing server that cannot answer into a post that reaches no-one.
+     *
+     * One case per test run, because Http::fake() MERGES stubs and keeps the first - two
+     * fakes in one test would both answer with the first, and the second case would never
+     * be exercised.
+     */
+    public function test_tick_from_labels_reports_an_empty_group_set_as_empty(): void
+    {
+        $msgid = $this->seedReachRowWithLabels('somelabelbytes');
+        Http::fake(['*reach-tick*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+            'reachable_group_ids' => [],
+        ], 200)]);
+
+        $this->assertSame([], $this->service()->tickFromLabels($msgid, 12.5)['groups']);
+    }
+
+    public function test_tick_from_labels_reports_a_missing_group_set_as_null(): void
+    {
+        $msgid = $this->seedReachRowWithLabels('somelabelbytes');
+        Http::fake(['*reach-tick*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+        ], 200)]);
+
+        $this->assertNull($this->service()->tickFromLabels($msgid, 12.5)['groups']);
+    }
+
+    /**
+     * Every status here is a reason the caller must fall back to the catchment rather
+     * than skip the tick: a routing server too old for the endpoint, a blob from a map
+     * build it no longer holds, or an outright failure.
+     *
+     * One status per test run rather than a loop, because Http::fake() MERGES stubs and
+     * the first registered wins - a loop that re-fakes would keep answering with the
+     * first status and prove nothing about the rest.
+     */
+    #[DataProvider('unanswerableStatuses')]
+    public function test_tick_from_labels_returns_null_when_the_server_cannot_answer(int $status): void
+    {
+        $msgid = $this->seedReachRowWithLabels('somelabelbytes');
+        Http::fake(['*reach-tick*' => Http::response([], $status)]);
+
+        $this->assertNull($this->service()->tickFromLabels($msgid, 12.5));
+    }
+
+    public static function unanswerableStatuses(): array
+    {
+        return [[503], [404], [422], [400], [500]];
+    }
+
+    public function test_tick_from_labels_does_not_call_out_for_a_post_with_no_labels(): void
+    {
+        // Nothing to send, so nothing is sent - the caller falls straight through to the
+        // catchment instead of spending a round trip to be told there is no blob.
+        $noLabels = $this->seedReachRowWithLabels(null);
+        Http::fake(['*reach-tick*' => Http::response(['catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6)], 200)]);
+
+        $this->assertNull($this->service()->tickFromLabels($noLabels, 12.5));
+        Http::assertNothingSent();
+    }
+
+    public function test_tick_from_labels_can_skip_the_group_query(): void
+    {
+        // Asking for groups makes the routing server run a member query against the
+        // groups database, so a tick that already knows its groups must not ask.
+        $msgid = $this->seedReachRowWithLabels('somelabelbytes');
+        Http::fake(['*reach-tick*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+        ], 200)]);
+
+        $this->service()->tickFromLabels($msgid, 12.5, false);
+
+        Http::assertSent(fn ($request) => $request->data()['groups'] === false);
     }
 
     public function test_catchment_geometry_asks_for_the_coarse_form_only_when_told(): void

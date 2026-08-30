@@ -984,6 +984,79 @@ class ReachService
     }
 
     /**
+     * A tick's geometry and group set from the post's STORED labels.
+     *
+     * The labels were computed once when the post was created and already encode arrival
+     * times, so "what does this post reach at budget t" needs no fresh search over the
+     * road network - which is what makes this call ungated on the routing server. That
+     * matters more than the milliseconds: the eight compute slots exist to ration graph
+     * sweeps, and expansion walking a backlog up its schedule is what saturated them on
+     * 2026-08-29/30. A tick served from labels never queues for one.
+     *
+     * $wantGroups asks for the reachable group ids as well. Off costs nothing; on makes
+     * the routing server run a member query against the groups database, so ask only when
+     * the tick does not already carry a set of its own.
+     *
+     * Returns the same shape as catchmentGeometry plus the reachable group ids, or null
+     * when the labels are missing, the routing server is too old to answer, or the blob
+     * belongs to a partition build it no longer holds - in every case the caller falls
+     * back to catchmentGeometry, which is slower but always available.
+     *
+     * @return array{wkt: string, outer: ?string, inner: ?string, groups: ?array<int>}|null
+     */
+    public function tickFromLabels(int $msgid, float $minutes, bool $wantGroups = true): ?array
+    {
+        $row = DB::table('rippling_reach')->select('reach_labels')->where('msgid', $msgid)->first();
+        if ($row === null || $row->reach_labels === null) {
+            return null;
+        }
+
+        try {
+            $response = Http::timeout($this->requestTimeout)
+                ->post("{$this->url}/v1/reach-tick", [
+                    'labels' => base64_encode((string) $row->reach_labels),
+                    't' => $minutes * 60,
+                    'mode' => $this->mode,
+                    'groups' => $wantGroups,
+                ]);
+        } catch (\Throwable $e) {
+            Log::warning("ripple: reach-tick fetch failed: {$e->getMessage()}", ['msgid' => $msgid]);
+
+            return null;
+        }
+        if (!$response->successful()) {
+            // 503/404 = not deployed yet; 422/400 = the blob belongs to a build the
+            // routing server no longer holds (re-run the label backfill). None of those
+            // are worth logging every tick of a backlog.
+            if (!in_array($response->status(), [503, 404, 422, 400], true)) {
+                Log::warning("ripple: reach-tick HTTP {$response->status()}", ['msgid' => $msgid]);
+            }
+
+            return null;
+        }
+
+        $body = $response->json() ?? [];
+        $wkt = $this->polygonToWkt($body['catchment'] ?? null);
+        if ($wkt === null) {
+            return null;
+        }
+
+        // An absent group set and an empty one mean different things to the targeting
+        // gate - "could not compute, fall back to the polygon" against "computed, nobody"
+        // - so the distinction is carried through rather than flattened to [].
+        $groups = array_key_exists('reachable_group_ids', $body) && is_array($body['reachable_group_ids'])
+            ? array_map('intval', $body['reachable_group_ids'])
+            : null;
+
+        return [
+            'wkt' => $wkt,
+            'outer' => $this->polygonToWkt($body['catchment_outer'] ?? null),
+            'inner' => $this->polygonToWkt($body['catchment_inner'] ?? null),
+            'groups' => $groups,
+        ];
+    }
+
+    /**
      * The catchment for a point, as WKT plus its sandwich bounds.
      *
      * $coarse asks the routing server for the region-scale form: the same reach drawn
