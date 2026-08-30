@@ -244,8 +244,18 @@ const labelCacheCap = 256
 func NewReachEngine(g *Graph, ov *Overlay, part *ReachPartition, rm *RegionMatrices) *ReachEngine {
 	return &ReachEngine{
 		G: g, Ov: ov, Part: part, RM: rm,
-		BI:         buildBoundaryIndex(rm, part),
-		tables:     newRegionTableCache(512),
+		BI: buildBoundaryIndex(rm, part),
+		// 4096 leaves, not 512: the UK partition has ~23,675 leaves averaging ~550
+		// overlay nodes (12.9M junctions), so a leaf's lazy table costs ~3-4ms to
+		// build and ~70-90KB to keep - 512 covered ~2% of the country and thrashed
+		// under mixed traffic, so browse-feed stamping kept re-paying seconds of
+		// table builds (measured: 1,000 spread targets = 2.6s cold, 83ms warm) and
+		// a member's first feed load could lose a whole chunk to the apiv2 3s
+		// timeout - whose crow fallback then made the NEXT refresh render a
+		// different order. 4096 ≈ 350MB worst case, sized against the ~7.3GB
+		// graph already resident; the populated leaves members actually query
+		// stay warm for everyone near them.
+		tables:     newRegionTableCache(4096),
 		labelCache: make(map[labelKey]*ReachLabels),
 		partFP:     partitionFingerprint(part),
 	}
