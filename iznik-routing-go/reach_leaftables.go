@@ -103,9 +103,15 @@ func LoadLeafTables(path string, wantFP uint64, leaves int) (*LeafTables, error)
 		return nil, err
 	}
 	lt := &LeafTables{data: data, mapped: mapped}
+	// Build the error BEFORE unmapping: the arguments can be views into the
+	// mapping (the bad-magic case formats data[:8]), and formatting them after
+	// Munmap reads unmapped memory - a SIGSEGV instead of the refusal, which
+	// on a server would turn a corrupt artifact into a boot crash rather than
+	// the intended fall-back to the lazy path.
 	fail := func(format string, args ...any) (*LeafTables, error) {
+		err := fmt.Errorf(format, args...)
 		lt.Close()
-		return nil, fmt.Errorf(format, args...)
+		return nil, err
 	}
 	if len(data) < leafTablesHdrLen {
 		return fail("leaftables: truncated header (%d bytes)", len(data))

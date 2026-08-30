@@ -22,14 +22,17 @@ func TestLeafTablesParityBristol(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short mode")
 	}
-	g, lazy := buildBristolEngine(t)
-
-	// A second engine over the same artifacts, served from the file the first
-	// one builds.
-	_, mapped := buildBristolEngine(t)
-	if lazy.partFP != mapped.partFP {
-		t.Fatal("fixture engines disagree on partition fingerprint")
-	}
+	// Two engines over the SAME graph/partition/matrices (PartitionOverlay is
+	// not deterministic across builds, so independently-built fixtures carry
+	// different partitions and can never share an artifact): one serves from
+	// its lazy Dijkstras, the other from the file the first one builds. The
+	// engines' caches are independent; the inputs are immutable.
+	g := loadBristol(t)
+	ov := BuildOverlay(g)
+	part := PartitionOverlay(g, ov, 3000, 0.25)
+	rm := BuildRegionMatrices(ov, part)
+	lazy := NewReachEngine(g, ov, part, rm)
+	mapped := NewReachEngine(g, ov, part, rm)
 
 	path := filepath.Join(t.TempDir(), leafTablesName)
 	if err := BuildLeafTablesFile(path, lazy, 4); err != nil {
