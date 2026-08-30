@@ -1,7 +1,6 @@
 package main
 
-// Coarse catchment: the same reach, drawn on a grid whose cost does not grow with
-// the area covered.
+// Coarse catchment: the same reach, drawn roughly rather than street by street.
 //
 // The exact path traces the isochrone on a grid whose cell size comes from the road
 // network (NetworkResolution), so the cell count - and with it the boundary trace and
@@ -15,9 +14,19 @@ package main
 // bounds are, and the union with the origin group's area - and none of them can see
 // the difference between a boundary traced at 30m and one traced at 300m.
 //
-// So a caller that only asks those questions can ask for the coarse form, and the
-// cost stops scaling: the grid is sized to a fixed cell budget, so a 45-minute reach
-// rasterises onto the same number of cells as a 5-minute one, just bigger ones.
+// So a caller that only asks those questions can ask for the coarse form. What that
+// buys, measured on the Bristol fixture at 5/15/30/45 minutes:
+//
+//	drawing time  1ms -> 61ms -> 148ms -> 153ms exact
+//	              0ms -> 23ms ->  54ms ->  45ms coarse
+//	outline size  309 -> 3,755 -> 5,377 -> 5,395 vertices exact
+//	              15 ->   115 ->   239 ->   261 vertices coarse
+//
+// About 20x less to serialise and send, and about 3x less time to draw. NOT a change
+// in how the cost scales: the grid is sized to a fixed cell budget, so the cell COUNT
+// stays put, but stamping it still walks every reached node and edge, and that grows
+// with the reach. The dominant saving is the payload, and neither saving touches the
+// search that finds the reach in the first place - which is the gated part.
 //
 // What the coarse form guarantees:
 //
