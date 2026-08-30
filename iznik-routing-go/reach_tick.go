@@ -58,6 +58,45 @@ type reachTickReq struct {
 	Groups bool `json:"groups"`
 }
 
+// reachTickMinBudgetSeconds is the shortest budget this endpoint will answer.
+//
+// Expanding stored labels reproduces the live search exactly at ordinary budgets, but not
+// at very short ones - it under-reaches, and a reach that is too SMALL is the unsafe
+// direction: it could drop a group the catchment would have found. Measured on the Bristol
+// fixture, nodes the live search reaches that the label expansion misses:
+//
+//	300s  25.4%      540s   2.5%      720s  0%
+//	420s  14.2%      600s   1.2%      900s  0%
+//
+// The gap is a property of the engine at short range, not of the stored budget: it is
+// identical whether the labels were computed for 300s, 900s or 1800s. 900s leaves clear
+// margin over the 720s where the fixture first agrees exactly.
+//
+// Refusing below it costs almost nothing. Short budgets are the cheap catchments - 0.99s at
+// 5 minutes against 6.33s at 45 - so the calls worth moving off the compute gate are all
+// comfortably above this floor. The caller falls back to /v1/catchment, as it does for any
+// other reason this endpoint cannot answer.
+const reachTickMinBudgetSeconds = float32(900)
+
+// tickBudget is the budget a tick is actually served at: the one asked for, capped at the
+// budget the labels were computed for.
+//
+// The cap is load-bearing, not tidiness. ReachedNodes does NOT clamp itself - hand it a
+// limit beyond the stored one and the region tables keep yielding arrivals that the
+// original query never relaxed, which on the Bristol fixture turns 15,648 reached nodes
+// into 61,254. That larger set is not a longer drive, it is an unvalidated one. A tick can
+// only ever ask for reach that was actually computed and stored.
+func tickBudget(lbl *ReachLabels, want *float64) float32 {
+	if want == nil {
+		return lbl.T
+	}
+	if w := float32(*want); w < lbl.T {
+		return w
+	}
+
+	return lbl.T
+}
+
 // tickMode resolves the request's travel mode, defaulting to drive. parseMode defaults to
 // WALK, which would be wrong here: rippling is a drive-time model throughout, and snapping
 // members to walking nodes would quietly answer a different question.
@@ -95,14 +134,15 @@ func handleReachTick() fiber.Handler {
 			return fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("labels: %v", err))
 		}
 
-		effT := lbl.T
-		if req.T != nil {
-			if *req.T < 0 {
-				return fiber.NewError(fiber.StatusBadRequest, "t must be >= 0")
-			}
-			if float32(*req.T) < effT {
-				effT = float32(*req.T)
-			}
+		if req.T != nil && *req.T < 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "t must be >= 0")
+		}
+		effT := tickBudget(lbl, req.T)
+		if effT < reachTickMinBudgetSeconds {
+			// Refused rather than answered approximately: an under-reaching tick would
+			// quietly drop groups, and the caller has a slower exact path to fall back on.
+			return fiber.NewError(fiber.StatusUnprocessableEntity,
+				fmt.Sprintf("budget %.0fs is below the %.0fs this endpoint answers exactly", effT, reachTickMinBudgetSeconds))
 		}
 
 		reached := e.ReachedNodes(lbl, effT)
