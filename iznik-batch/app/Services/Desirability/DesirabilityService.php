@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Scores a message's item desirability from the item_desirability artifact.
+ * Scores messages' item desirability from the item_desirability artifact.
  *
  * Resolution order for a canonicalised subject:
  *  1. exact  - the canonical key has a row (covers clustered variants too, since
@@ -19,6 +19,11 @@ use Illuminate\Support\Facades\Log;
  *              the configured cosine floor.
  *  3. default - score 1.0, bucket medium.
  *
+ * Scoring is batch-first: one exact-match query per chunk of subjects, and the
+ * sidecar is called with batches of texts rather than once per post, so a
+ * catch-up run of thousands of posts cannot stack thousands of sequential HTTP
+ * round-trips (the scheduler's overlap lock is finite).
+ *
  * kNN buckets are derived from the blended score with a conservatism rule: a
  * kNN score only earns low/high when the top neighbour is very close AND the
  * neighbours agree on the side; otherwise medium. Exact rows carry their
@@ -27,6 +32,8 @@ use Illuminate\Support\Facades\Log;
 class DesirabilityService
 {
     public const EMBEDDING_DIM = 256;
+
+    private const SIDECAR_BATCH = 64;
 
     private TitleCanonicalService $canonicaliser;
 
@@ -53,33 +60,88 @@ class DesirabilityService
      */
     public function scoreSubject(?string $subject): array
     {
-        $canon = $this->canonicaliser->canonicalise($subject);
-        $key = mb_substr((string) $canon['canonical'], 0, 191);
-        $default = ['score' => 1.0, 'bucket' => 'medium', 'source' => 'default', 'matched_canonical' => null, 'canonical' => $key];
-        if (! strlen($key)) {
-            return $default;
+        return $this->scoreSubjects([$subject])[0];
+    }
+
+    /**
+     * Scores many subjects with one exact-match query and batched sidecar calls.
+     * The result array preserves the input indices.
+     *
+     * @param  array<int, ?string>  $subjects
+     * @return array<int, array{score: float, bucket: string, source: string, matched_canonical: ?string, canonical: string}>
+     */
+    public function scoreSubjects(array $subjects): array
+    {
+        $results = [];
+        $keys = [];
+        foreach ($subjects as $i => $subject) {
+            $canon = $this->canonicaliser->canonicalise($subject);
+            $key = mb_substr((string) $canon['canonical'], 0, 191);
+            $keys[$i] = $key;
+            $results[$i] = ['score' => 1.0, 'bucket' => 'medium', 'source' => 'default', 'matched_canonical' => null, 'canonical' => $key];
         }
 
-        $row = DB::table('item_desirability')
-            ->where('model_version', $this->modelVersion())
-            ->where('canonical', $key)
-            ->first(['lift_replies', 'bucket']);
-        if ($row) {
-            return ['score' => (float) $row->lift_replies, 'bucket' => $row->bucket, 'source' => 'exact', 'matched_canonical' => $key, 'canonical' => $key];
+        $distinct = array_values(array_unique(array_filter($keys, fn ($k) => strlen($k) > 0)));
+        if (! count($distinct)) {
+            return $results;
         }
 
-        $knn = $this->scoreByNearestReference($key);
+        $exact = [];
+        foreach (array_chunk($distinct, 500) as $chunk) {
+            $rows = DB::table('item_desirability')
+                ->where('model_version', $this->modelVersion())
+                ->whereIn('canonical', $chunk)
+                ->get(['canonical', 'lift_replies', 'bucket']);
+            foreach ($rows as $row) {
+                $exact[$row->canonical] = $row;
+            }
+        }
 
-        return $knn ?? $default;
+        $misses = [];
+        foreach ($keys as $i => $key) {
+            if (! strlen($key)) {
+                continue;
+            }
+            if (isset($exact[$key])) {
+                $row = $exact[$key];
+                $results[$i] = ['score' => (float) $row->lift_replies, 'bucket' => $row->bucket, 'source' => 'exact', 'matched_canonical' => $key, 'canonical' => $key];
+            } else {
+                $misses[$key] = true;
+            }
+        }
+        if (! count($misses)) {
+            return $results;
+        }
+
+        // Cold-start: embed the distinct unseen canonicals in batches, then kNN.
+        $missKeys = array_keys($misses);
+        $knn = [];
+        foreach (array_chunk($missKeys, self::SIDECAR_BATCH) as $chunk) {
+            $vectors = $this->embedBatch($chunk);
+            if ($vectors === null) {
+                break; // sidecar unavailable: remaining misses stay default
+            }
+            foreach ($chunk as $j => $key) {
+                if (isset($vectors[$j])) {
+                    $scored = $this->scoreVector($key, $vectors[$j]);
+                    if ($scored !== null) {
+                        $knn[$key] = $scored;
+                    }
+                }
+            }
+        }
+        foreach ($keys as $i => $key) {
+            if (isset($knn[$key])) {
+                $results[$i] = $knn[$key];
+            }
+        }
+
+        return $results;
     }
 
     /** @return ?array{score: float, bucket: string, source: string, matched_canonical: string, canonical: string} */
-    private function scoreByNearestReference(string $canonical): ?array
+    private function scoreVector(string $canonical, array $vec): ?array
     {
-        $vec = $this->embed($canonical);
-        if (! $vec) {
-            return null;
-        }
         $ref = $this->loadReference();
         if (! $ref || ! count($ref['canonicals'])) {
             return null;
@@ -149,23 +211,39 @@ class DesirabilityService
         ];
     }
 
-    /** @return ?array<int, float> */
-    private function embed(string $text): ?array
+    /**
+     * Embeds a batch of texts via the sidecar. Returns null when the sidecar is
+     * unconfigured or unreachable (callers degrade to 'default'); individual
+     * malformed vectors come back as missing entries.
+     *
+     * @param  array<int, string>  $texts
+     * @return ?array<int, array<int, float>>
+     */
+    private function embedBatch(array $texts): ?array
     {
         $url = rtrim((string) config('freegle.desirability.sidecar_url', ''), '/');
         if (! $url) {
             return null;
         }
         try {
-            $response = Http::timeout(5)->post($url.'/embed', ['texts' => [$text]]);
+            $response = Http::timeout(15)->post($url.'/embed', ['texts' => array_values($texts)]);
             if (! $response->successful()) {
                 Log::warning('Desirability embed failed', ['status' => $response->status()]);
 
                 return null;
             }
-            $vec = $response->json('embeddings.0');
+            $out = [];
+            $embeddings = $response->json('embeddings');
+            if (! is_array($embeddings)) {
+                return null;
+            }
+            foreach ($embeddings as $j => $vec) {
+                if (is_array($vec) && count($vec) === self::EMBEDDING_DIM) {
+                    $out[$j] = array_map('floatval', $vec);
+                }
+            }
 
-            return is_array($vec) && count($vec) === self::EMBEDDING_DIM ? array_map('floatval', $vec) : null;
+            return $out;
         } catch (\Exception $e) {
             Log::warning('Desirability embed exception', ['error' => $e->getMessage()]);
 

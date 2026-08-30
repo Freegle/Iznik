@@ -90,24 +90,33 @@ class ScoreNewCommand extends Command
         $failures = 0;
         $bySource = ['exact' => 0, 'knn' => 0, 'default' => 0];
 
-        foreach ($rows as $row) {
+        // Chunked so each chunk costs one exact-match query plus batched sidecar
+        // calls, rather than per-message round trips.
+        foreach ($rows->chunk(250) as $chunk) {
+            $chunk = $chunk->values();
             try {
-                $result = $this->desirability->scoreSubject($row->subject);
-                DB::table('messages_desirability')->upsert([
-                    'msgid' => $row->id,
-                    'score' => $result['score'],
-                    'bucket' => $result['bucket'],
-                    'source' => $result['source'],
-                    'matched_canonical' => $result['matched_canonical'],
-                    'model_version' => $modelVersion,
-                ], ['msgid', 'model_version'], ['score', 'bucket', 'source', 'matched_canonical']);
-                $scored++;
-                $bySource[$result['source']]++;
+                $scores = $this->desirability->scoreSubjects($chunk->pluck('subject')->all());
+                $upserts = [];
+                foreach ($chunk as $i => $row) {
+                    $result = $scores[$i];
+                    $upserts[] = [
+                        'msgid' => $row->id,
+                        'score' => $result['score'],
+                        'bucket' => $result['bucket'],
+                        'source' => $result['source'],
+                        'matched_canonical' => $result['matched_canonical'],
+                        'model_version' => $modelVersion,
+                    ];
+                    $bySource[$result['source']]++;
+                }
+                DB::table('messages_desirability')->upsert($upserts, ['msgid', 'model_version'],
+                    ['score', 'bucket', 'source', 'matched_canonical']);
+                $scored += count($upserts);
             } catch (\Throwable $e) {
-                // One failing message must not stall the rest; it stores no row, so
-                // the NOT EXISTS retries it next run.
-                Log::error('desirability:score-new failed for message', ['msgid' => $row->id, 'error' => $e->getMessage()]);
-                $failures++;
+                // One failing chunk must not stall the rest; it stores no rows, so
+                // the NOT EXISTS retries those messages next run.
+                Log::error('desirability:score-new failed for chunk', ['first_msgid' => $chunk->first()->id ?? null, 'error' => $e->getMessage()]);
+                $failures += count($chunk);
             }
         }
 

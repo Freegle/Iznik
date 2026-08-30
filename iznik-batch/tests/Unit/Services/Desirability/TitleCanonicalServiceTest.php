@@ -33,24 +33,32 @@ class TitleCanonicalServiceTest extends TestCase
         $failures = [];
         foreach ($fixtures as $f) {
             $got = $this->svc->canonicalise($f['raw']);
+            // Strict, typed comparison: loose != would let '' pass as null and
+            // 0 pass as false, exactly the regressions this test exists to catch.
             $checks = [
-                'canonical' => [$f['canonical'], $got['canonical']],
-                'clean' => [$f['clean'], $got['clean']],
-                'brand' => [$f['brand'], $got['brand']],
-                'is_ikea' => [(bool) $f['is_ikea'], $got['is_ikea']],
-                'qty' => [$f['qty'], $got['qty']],
-                'is_multiple' => [(bool) $f['is_multiple'], $got['is_multiple']],
-                'is_plural' => [(bool) $f['is_plural'], $got['is_plural']],
-                'is_baby' => [(bool) $f['flags']['baby'], $got['is_baby']],
-                'is_kids' => [(bool) $f['flags']['kids'], $got['is_kids']],
-                'is_heavy' => [(bool) $f['flags']['heavy'], $got['is_heavy']],
-                'is_vintage' => [(bool) $f['flags']['vintage'], $got['is_vintage']],
-                'is_electrical' => [(bool) $f['flags']['electrical'], $got['is_electrical']],
-                'is_digital' => [(bool) $f['flags']['digital'], $got['is_digital']],
-                'screen_size' => [$f['flags']['screen_size'], $got['screen_size']],
+                'canonical' => ['str', $f['canonical'], $got['canonical']],
+                'clean' => ['str', $f['clean'], $got['clean']],
+                'brand' => ['str', $f['brand'], $got['brand']],
+                'is_ikea' => ['bool', $f['is_ikea'], $got['is_ikea']],
+                'qty' => ['int', $f['qty'], $got['qty']],
+                'is_multiple' => ['bool', $f['is_multiple'], $got['is_multiple']],
+                'is_plural' => ['bool', $f['is_plural'], $got['is_plural']],
+                'is_baby' => ['bool', $f['flags']['baby'], $got['is_baby']],
+                'is_kids' => ['bool', $f['flags']['kids'], $got['is_kids']],
+                'is_heavy' => ['bool', $f['flags']['heavy'], $got['is_heavy']],
+                'is_vintage' => ['bool', $f['flags']['vintage'], $got['is_vintage']],
+                'is_electrical' => ['bool', $f['flags']['electrical'], $got['is_electrical']],
+                'is_digital' => ['bool', $f['flags']['digital'], $got['is_digital']],
+                'screen_size' => ['float', $f['flags']['screen_size'], $got['screen_size']],
             ];
-            foreach ($checks as $field => [$want, $have]) {
-                if ($want != $have) {
+            foreach ($checks as $field => [$type, $want, $have]) {
+                $equal = match ($type) {
+                    'bool' => (bool) $want === (bool) $have,
+                    'int' => ($want === null) === ($have === null) && ($want === null || (int) $want === (int) $have),
+                    'float' => ($want === null) === ($have === null) && ($want === null || abs((float) $want - (float) $have) < 1e-9),
+                    default => ($want === null) === ($have === null) && ($want === null || (string) $want === (string) $have),
+                };
+                if (! $equal) {
                     $failures[] = sprintf('[%s] %s: want %s, got %s (raw: %s)',
                         $f['cat'], $field, json_encode($want), json_encode($have), $f['raw']);
                 }
@@ -77,5 +85,14 @@ class TitleCanonicalServiceTest extends TestCase
         $got = $this->svc->canonicalise('OFFER: Bosch washing machine (Headington OX3)');
         $this->assertSame('washing machine', $got['canonical']);
         $this->assertSame('bosch', $got['brand']);
+    }
+
+    #[Test]
+    public function invalid_utf8_is_scrubbed_not_silently_emptied(): void
+    {
+        // A subject truncated mid-multibyte used to make every /u preg_replace
+        // return null, emptying the whole canonicalisation for the post.
+        $got = $this->svc->canonicalise("OFFER: Wooden high chair \xE2\x82 (AB1)");
+        $this->assertSame('wooden high chair', $got['canonical']);
     }
 }

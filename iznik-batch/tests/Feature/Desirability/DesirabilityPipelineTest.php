@@ -205,6 +205,73 @@ class DesirabilityPipelineTest extends TestCase
     }
 
     #[Test]
+    public function an_empty_artifact_file_fails_without_touching_existing_rows(): void
+    {
+        $this->importRows([
+            ['canonical' => 'washing machine', 'lift_replies' => 2.1, 'evidence' => 500, 'bucket' => 'high'],
+        ]);
+        $path = tempnam(sys_get_temp_dir(), 'desir');
+        file_put_contents($path, '');
+        $this->artisan('desirability:import-artifact', ['path' => $path, '--model-version' => $this->version])
+            ->assertExitCode(1);
+        unlink($path);
+        // The previous artifact survives an empty upload.
+        $this->assertSame(1, DB::table('item_desirability')->where('model_version', $this->version)->count());
+    }
+
+    #[Test]
+    public function a_file_of_only_malformed_lines_fails_without_touching_existing_rows(): void
+    {
+        $this->importRows([
+            ['canonical' => 'washing machine', 'lift_replies' => 2.1, 'evidence' => 500, 'bucket' => 'high'],
+        ]);
+        $path = tempnam(sys_get_temp_dir(), 'desir');
+        file_put_contents($path, "not json at all\n{\"canonical\":\"x\"}\n");
+        $this->artisan('desirability:import-artifact', ['path' => $path, '--model-version' => $this->version])
+            ->assertExitCode(1);
+        unlink($path);
+        $this->assertSame(1, DB::table('item_desirability')->where('model_version', $this->version)->count());
+        $this->assertSame('washing machine', DB::table('item_desirability')->where('model_version', $this->version)->value('canonical'));
+    }
+
+    #[Test]
+    public function a_failing_sidecar_scores_default_not_an_error(): void
+    {
+        $this->importRows([
+            ['canonical' => 'mobility scooter', 'lift_replies' => 5.4, 'evidence' => 300, 'bucket' => 'high', 'embedding' => $this->vec(0)],
+        ]);
+        $msgid = $this->makeApprovedOffer('OFFER: Zorbulator flange bracket (ZE1)');
+
+        config(['freegle.desirability.sidecar_url' => 'http://fake-sidecar:3200']);
+        Http::fake(['fake-sidecar:3200/*' => Http::response('upstream error', 500)]);
+
+        try {
+            $this->artisan('desirability:score-new', ['--since' => now()->subDay()->toDateTimeString()])
+                ->assertExitCode(0);
+        } finally {
+            config(['freegle.desirability.sidecar_url' => '']);
+        }
+
+        $row = DB::table('messages_desirability')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row);
+        $this->assertSame('default', $row->source);
+        $this->assertSame('medium', $row->bucket);
+    }
+
+    #[Test]
+    public function null_and_uncanonicalisable_subjects_score_default(): void
+    {
+        $this->importRows([
+            ['canonical' => 'washing machine', 'lift_replies' => 2.1, 'evidence' => 500, 'bucket' => 'high'],
+        ]);
+        $svc = app(DesirabilityService::class);
+        $got = $svc->scoreSubject(null);
+        $this->assertSame('default', $got['source']);
+        $this->assertEquals(1.0, $got['score']);
+        $this->assertSame('medium', $got['bucket']);
+    }
+
+    #[Test]
     public function pending_and_deleted_posts_are_never_scored(): void
     {
         $this->importRows([

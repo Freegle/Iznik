@@ -101,6 +101,15 @@ class TitleCanonicalService
         if ($raw === null) {
             return null;
         }
+        // Scrub invalid UTF-8 first: every /u-flagged preg_replace below returns
+        // NULL on a malformed sequence (e.g. a subject truncated mid-multibyte),
+        // which would silently empty the whole canonicalisation for that post.
+        if (! mb_check_encoding($raw, 'UTF-8')) {
+            $prev = mb_substitute_character();
+            mb_substitute_character('none');
+            $raw = (string) mb_convert_encoding($raw, 'UTF-8', 'UTF-8');
+            mb_substitute_character($prev);
+        }
         $s = strtr($raw, ['&#39;' => "'", '&quot;' => '"', '&amp;' => '&', '&gt;' => '>', '&lt;' => '<', '&#92;' => '\\']);
         $decoded = $s;
         if (preg_match('~^.*?(?:offer(?:ed)?|taken)\s*[:\-]?\s*(.*?)\s*(?:\([^()]*\))?\s*(?:\[\d+\s?Attachment(?:s)?\])?\s*$~i', $s, $m)) {
