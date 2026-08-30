@@ -248,3 +248,15 @@ Everything derived is a file: the contracted graph (4.7GB, loads in ~5s versus
 tables (3.4MB). Partition and tables can also be derived at boot in ~3 minutes
 if storing them is undesirable. Monthly map refresh = rebuild the lot offline,
 under 6 minutes end to end.
+
+The per-region entry→node interior tables (the ones membership lookups read)
+are also an artifact now: `leaftables.snap` (~2GB for the UK, ~90s to build
+with `reach leaftables`, fingerprinted against the partition). It is
+memory-mapped, not heap-loaded — a cold region costs a page fault instead of
+the ~3-4ms lazy Dijkstra it used to, so per-target lookup latency is uniform
+across the country and the process heap does not grow with the file. A server
+that starts without the artifact serves on the lazy path and builds the file
+in the background once, then maps it (the same derive-at-boot convention as
+the partition and matrices). The lazy path also remains the permanent answer
+for the two reads the artifact cannot precompute: the origin's own seed
+region (an arbitrary-source Dijkstra) and stored-label seed rows.

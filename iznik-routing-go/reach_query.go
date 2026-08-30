@@ -23,6 +23,7 @@ package main
 import (
 	"container/heap"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -220,6 +221,13 @@ type ReachEngine struct {
 
 	tables *regionTableCache
 
+	// leafTabs, when set, is the precomputed leaf-tables artifact
+	// (leaftables.snap, mmap'd): every leaf's entry→node dist/met table served
+	// straight from page cache instead of built by a lazy Dijkstra. Atomic
+	// because the self-heal path attaches it while the engine is serving. nil
+	// = lazy builds, exactly the pre-artifact behaviour.
+	leafTabs atomic.Pointer[LeafTables]
+
 	// partFP identifies the partition build the engine is serving: leaf ids
 	// are bisection-order artifacts, so any stored label is only meaningful
 	// against the exact partition it was computed on. FNV-1a over LeafOf.
@@ -334,9 +342,15 @@ type srcKey struct {
 }
 
 type regionTable struct {
-	ls   *leafSubgraph
-	dist [][]float32 // per entry (aligned to rm.LeafEntries), len(ls.nodes)
-	met  [][]float32 // road metres along the same time-optimal paths
+	// ls is the leaf's CSR subgraph — needed only by the arbitrary-source
+	// Dijkstra paths (the origin's own seed leaf, and stored-label seed rows).
+	// nil when dist/met come from the precomputed artifact; built on demand
+	// via getWithSubgraph, never touched by the entry-table read paths.
+	ls      *leafSubgraph
+	nodes   []uint32           // == part.LeafNodes[leaf]: local index = position
+	localOf map[uint32]int32   // overlay index -> local index
+	dist    [][]float32        // per entry (aligned to rm.LeafEntries), len(nodes)
+	met     [][]float32        // road metres along the same time-optimal paths
 }
 
 func newRegionTableCache(cap int) *regionTableCache {
@@ -360,9 +374,34 @@ func (c *regionTableCache) getLocked(e *ReachEngine, leaf int32) *regionTable {
 		}
 		return t
 	}
-	ls := buildLeafSubgraph(e.Ov, e.Part, leaf)
+
+	nodes := e.Part.LeafNodes[leaf]
 	ents := e.RM.LeafEntries(leaf)
-	t := &regionTable{ls: ls, dist: make([][]float32, len(ents)), met: make([][]float32, len(ents))}
+	t := &regionTable{nodes: nodes, dist: make([][]float32, len(ents)), met: make([][]float32, len(ents))}
+
+	// Precomputed artifact first: the whole table is already on disk (mmap'd),
+	// so admitting a leaf costs only the localOf map and a few slice headers —
+	// microseconds and ~zero heap — instead of one Dijkstra per entry.
+	if lt := e.leafTabs.Load(); lt != nil {
+		if dist, met, en, nn, ok := lt.table(leaf); ok && en == len(ents) && nn == len(nodes) {
+			t.localOf = make(map[uint32]int32, len(nodes))
+			for i, oi := range nodes {
+				t.localOf[oi] = int32(i)
+			}
+			for i := range ents {
+				t.dist[i] = dist[i*nn : (i+1)*nn]
+				t.met[i] = met[i*nn : (i+1)*nn]
+			}
+			c.admitLocked(leaf, t)
+			return t
+		}
+	}
+
+	// Lazy fallback: no artifact (or a shape mismatch, which the fingerprint
+	// makes near-impossible) — build the subgraph and Dijkstra each entry.
+	ls := buildLeafSubgraph(e.Ov, e.Part, leaf)
+	t.ls = ls
+	t.localOf = ls.localOf
 	for i, ent := range ents {
 		d := make([]float32, len(ls.nodes))
 		m := make([]float32, len(ls.nodes))
@@ -370,12 +409,33 @@ func (c *regionTableCache) getLocked(e *ReachEngine, leaf int32) *regionTable {
 		t.dist[i] = d
 		t.met[i] = m
 	}
+	c.admitLocked(leaf, t)
+	return t
+}
+
+// admitLocked stores a freshly built table and applies the LRU cap. Callers
+// must hold mu.
+func (c *regionTableCache) admitLocked(leaf int32, t *regionTable) {
 	c.m[leaf] = t
 	c.order = append(c.order, leaf)
 	if len(c.order) > c.cap {
 		old := c.order[0]
 		c.order = c.order[1:]
 		delete(c.m, old)
+	}
+}
+
+// getWithSubgraph is get for the callers that need the leaf's CSR subgraph
+// (arbitrary-source Dijkstras: the origin's own seed leaf, stored-label seed
+// rows). An artifact-backed table has no subgraph until one of these asks;
+// it is built once under the lock and immutable after, so the plain get
+// path never synchronises on it.
+func (c *regionTableCache) getWithSubgraph(e *ReachEngine, leaf int32) *regionTable {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := c.getLocked(e, leaf)
+	if t.ls == nil {
+		t.ls = buildLeafSubgraph(e.Ov, e.Part, leaf)
 	}
 	return t
 }
@@ -390,6 +450,11 @@ func (c *regionTableCache) sourceRow(e *ReachEngine, leaf int32, srcOi uint32) [
 		return row
 	}
 	t := c.getLocked(e, leaf)
+	if t.ls == nil {
+		// Artifact-backed table: the arbitrary-source row still needs the CSR
+		// subgraph. Built once under mu (we hold it), immutable after.
+		t.ls = buildLeafSubgraph(e.Ov, e.Part, leaf)
+	}
 	li, in := t.ls.localOf[srcOi]
 	if !in {
 		return nil
@@ -461,7 +526,10 @@ func (e *ReachEngine) QueryLabelsFromNode(origin NodeID, limitSeconds float32) *
 			continue
 		}
 		seededLeaves[leaf] = struct{}{}
-		t := e.tables.get(e, leaf)
+		// The seed is an arbitrary junction, not a region entry, so this leaf
+		// needs its CSR subgraph for a fresh Dijkstra — the one table read the
+		// precomputed artifact cannot serve.
+		t := e.tables.getWithSubgraph(e, leaf)
 		dist := make([]float32, len(t.ls.nodes))
 		metd := make([]float32, len(t.ls.nodes))
 		t.ls.dijkstraFromM(t.ls.localOf[oi], dist, metd)
@@ -622,7 +690,7 @@ func (e *ReachEngine) junctionArrivalM(lbl *ReachLabels, j NodeID) (float32, flo
 		return best, bestM
 	}
 	t := e.tables.get(e, leaf)
-	li, in := t.ls.localOf[oi]
+	li, in := t.localOf[oi]
 	if !in {
 		return best, bestM
 	}

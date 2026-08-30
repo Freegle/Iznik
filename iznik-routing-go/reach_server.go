@@ -62,8 +62,23 @@ func decodeLabelsAnyBuild(b []byte) (*ReachLabels, *ReachEngine, error) {
 	return nil, nil, err
 }
 
-// loadReachEngineFromDir loads (or derives) the full artifact set.
+// loadReachEngineFromDir loads (or derives) the full artifact set, including
+// the leaf-tables attach/self-heal. loadReachEngineCore is the same minus the
+// leaf-tables step, for the CLI's explicit synchronous build.
 func loadReachEngineFromDir(dir string) (*ReachEngine, error) {
+	eng, err := loadReachEngineCore(dir)
+	if err != nil {
+		return nil, err
+	}
+	// Precomputed leaf tables: mmap when present and matching this partition;
+	// otherwise the lazy path serves while the artifact self-heals in the
+	// background (same derive-at-boot convention as partition/matrices, made
+	// asynchronous because the full build takes ~90s for the UK).
+	maybeLoadOrBuildLeafTables(dir, eng)
+	return eng, nil
+}
+
+func loadReachEngineCore(dir string) (*ReachEngine, error) {
 	g, ov, err := LoadReachSnapshot(filepath.Join(dir, "graph.snap"))
 	if err != nil {
 		return nil, fmt.Errorf("graph snapshot: %w", err)

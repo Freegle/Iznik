@@ -24,7 +24,7 @@ func (e *ReachEngine) ReachedNodes(lbl *ReachLabels, limit float32) map[NodeID]f
 	// intra-region distance). Regions are disjoint, so no cross-leaf clashes.
 	for leaf, rl := range lbl.Reached {
 		t := e.tables.get(e, leaf)
-		arr := make([]float32, len(t.ls.nodes))
+		arr := make([]float32, len(t.nodes))
 		for i := range arr {
 			arr[i] = f32Inf
 		}
@@ -39,7 +39,7 @@ func (e *ReachEngine) ReachedNodes(lbl *ReachLabels, limit float32) map[NodeID]f
 				}
 			}
 		}
-		for j, oi := range t.ls.nodes {
+		for j, oi := range t.nodes {
 			if a := arr[j]; a <= limit {
 				out[e.Ov.BaseNode[oi]] = a
 			}

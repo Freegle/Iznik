@@ -189,7 +189,7 @@ func (e *ReachEngine) seedArrival(lbl *ReachLabels, j NodeID) float32 {
 			continue
 		}
 		t := e.tables.get(e, leaf)
-		li, in := t.ls.localOf[oi]
+		li, in := t.localOf[oi]
 		if !in {
 			continue
 		}

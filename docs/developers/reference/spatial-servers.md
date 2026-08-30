@@ -128,6 +128,16 @@ answered exactly from those notes in microseconds, including the case the old
 drawn shape got wrong: the far bank of an unbridged river is *out*, because
 you cannot drive there.
 
+Each region's internal distances — "from this region's entrances, how long to
+every road inside it?" — used to be worked out the first time anyone asked
+about that region, which made the very first question about a cold corner of
+the country noticeably slower than the second. Those tables are now computed
+for the whole country when the artifacts are built (`leaftables.snap`,
+built automatically in the background the first time a server starts without
+it, or explicitly with `reach leaftables`) and memory-mapped, so the answer
+speed is the same everywhere, first question included, without the server
+holding the whole file in memory.
+
 The road network also fixed a small unfairness in privacy blurring: locations
 shown to other members are deliberately made approximate, and the old circular
 blur could accidentally move a point across a river it has no bridge over —

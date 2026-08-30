@@ -18,7 +18,7 @@ const reachSnapPath = "data/reach/graph.snap"
 
 func reachMain(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: reach <build|stats|partition|matrices|query|parity> [args]")
+		fmt.Fprintln(os.Stderr, "usage: reach <build|stats|partition|matrices|leaftables|query|parity> [args]")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -30,6 +30,8 @@ func reachMain(args []string) {
 		reachPartitionCmd(args[1:])
 	case "matrices":
 		reachMatricesCmd(args[1:])
+	case "leaftables":
+		reachLeafTablesCmd(args[1:])
 	case "query":
 		reachQueryCmd(args[1:])
 	case "leafcheck":
@@ -233,4 +235,21 @@ func reachGraphMemCmd() {
 	runtime.ReadMemStats(&ms)
 	fmt.Printf("base graph only: heap %.2fGB (sys %.2fGB); nodes %d edges %d\n",
 		float64(ms.HeapAlloc)/1e9, float64(ms.Sys)/1e9, g.NodeCount(), len(g.Edges))
+}
+
+// reachLeafTablesCmd builds the precomputed leaf-tables artifact for an
+// artifact directory — the explicit pipeline form of the server's background
+// self-heal, for building once on the artifact host and rsyncing to nodes.
+func reachLeafTablesCmd(args []string) {
+	fs := flag.NewFlagSet("leaftables", flag.ExitOnError)
+	dir := fs.String("dir", "data/reach", "artifact directory (graph/partition/matrices .snap)")
+	workers := fs.Int("workers", runtime.NumCPU(), "parallel leaf builders")
+	_ = fs.Parse(args)
+	eng, err := loadReachEngineCore(*dir)
+	if err != nil {
+		log.Fatalf("reach: leaftables: %v", err)
+	}
+	if err := BuildLeafTablesFile(filepath.Join(*dir, leafTablesName), eng, *workers); err != nil {
+		log.Fatalf("reach: leaftables: %v", err)
+	}
 }
