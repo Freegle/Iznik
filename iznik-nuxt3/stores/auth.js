@@ -199,19 +199,22 @@ export const useAuthStore = defineStore('auth', {
       }
 
       // Google may never arrive - the script is blocked outright by many
-      // privacy extensions. Retrying without end left a 100ms timer writing a
-      // line to the member's console for the life of the page, and in the unit
-      // tests those logs outlive the test file and race the worker shutdown,
-      // failing the run with "Closing rpc while onUserConsoleLog was pending"
-      // even though every test passed. Give it five seconds, then stop.
+      // privacy extensions - so give it five seconds and then stop. Retrying
+      // without end left a 100ms timer running for the life of the page.
       if (attempt >= DISABLE_AUTOSELECT_MAX_TRIES) {
-        console.log(
-          'Google never loaded, so stopping trying to disable autoselect'
-        )
         return
       }
 
-      console.log("Google not yet loaded so can't disable")
+      // Say it once, on the first attempt. Logging each retry put ~50 lines in
+      // the member's console for one logout, and in the unit tests those lines
+      // arrive over five seconds - long after the test that triggered them, and
+      // after the spec restores its console stub. Vitest forwards every console
+      // call to the main process, so one still in flight when the worker closes
+      // ends the run with "Closing rpc while onUserConsoleLog was pending": a
+      // failed build with every test passing (CircleCI 34211, 34230, 33421).
+      if (attempt === 0) {
+        console.log("Google not yet loaded so can't disable")
+      }
 
       // Arrow rather than a bare method reference: setTimeout passes no
       // arguments, so the attempt count would reset to 0 every time and never

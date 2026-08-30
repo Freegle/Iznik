@@ -520,6 +520,28 @@ describe('auth store', () => {
       }
     })
 
+    it('logs once, not on every retry', () => {
+      // The retries run for five seconds, long outliving the test that starts
+      // them and the console stub this spec restores in afterAll. A log still
+      // in flight when the vitest worker closes fails the whole run with
+      // "Closing rpc while onUserConsoleLog was pending" while every test
+      // passes, so the retry path has to stay silent.
+      const originalGoogle = globalThis.window.google
+      delete globalThis.window.google
+
+      vi.useFakeTimers()
+      try {
+        logSpy.mockClear()
+        store.disableGoogleAutoselect()
+        vi.advanceTimersByTime(30000)
+
+        expect(logSpy).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+        globalThis.window.google = originalGoogle
+      }
+    })
+
     it('calls disableAutoSelect when window.google.accounts.id is available', () => {
       const mockDisableAutoSelect = vi.fn()
       const originalGoogle = globalThis.window.google
