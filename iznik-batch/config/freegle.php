@@ -1263,6 +1263,15 @@ return [
         // within this many hours (tolerates the overnight gap + slow cold runs).
         'whatjobs_max_age_hours' => (int) env('FREEGLE_MONITORING_WHATJOBS_MAX_AGE_HOURS', 24),
 
+        // ripple:expand — alert when more than the threshold of 'expanding'
+        // rows are further than max_age past next_expansion_at. A day is far
+        // beyond the deliberate overnight pause plus the morning catch-up, so
+        // rows that late mean the expander is wedged (2026-08-31: ~10k rows
+        // sat days overdue for days, unnoticed). The threshold tolerates a few
+        // individually-stuck rows without masking a stalled pipeline.
+        'ripple_backlog_max_age_minutes' => (int) env('FREEGLE_MONITORING_RIPPLE_BACKLOG_MAX_AGE_MIN', 1440),
+        'ripple_backlog_threshold' => (int) env('FREEGLE_MONITORING_RIPPLE_BACKLOG_THRESHOLD', 50),
+
         // data:git-summary (weekly) — alert if its config timestamp is older
         // than this many days.
         'git_summary_max_age_days' => (int) env('FREEGLE_MONITORING_GIT_SUMMARY_MAX_AGE_DAYS', 10),
