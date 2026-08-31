@@ -2031,29 +2031,42 @@ class ExpandService
             // last joined manually/ordinarily and then left must NOT block rippling. (The post
             // itself is also pulled from such groups by pullRippledPostsFromLeftGroups; here we only
             // gate the membership.)
+            // The left-group gate is computed in PHP from ONE indexed pass over the
+            // poster's Group Joined/Left logs. Its previous form - correlated NOT
+            // EXISTS with two nested logs probes per candidate group - resolved every
+            // probe through the single-column `user` index, i.e. a rescan of the
+            // poster's ENTIRE log history per probe; a poster with a long history
+            // stalled the serial expand pipeline for minutes per post (2026-08-31:
+            // 4-minute stalls, engine idle, zero advances, Sentry BATCH-83 window).
+            $blocked = [];
+            $latestJoinText = [];
+            foreach (DB::select(
+                "SELECT groupid, subtype, text FROM logs
+                 WHERE user = ? AND type = 'Group' AND subtype IN ('Joined', 'Left')
+                 ORDER BY id",
+                [$posterId]
+            ) as $l) {
+                if ($l->subtype === 'Joined') {
+                    $latestJoinText[$l->groupid] = $l->text;
+                    // Any later join (manual or rippled) supersedes an earlier block:
+                    // "most recent join wins".
+                    unset($blocked[$l->groupid]);
+                } elseif (($latestJoinText[$l->groupid] ?? null) === 'Rippled') {
+                    // A Left whose most recent prior Joined was a ripple-join.
+                    $blocked[$l->groupid] = true;
+                }
+            }
+            $notBlockedSql = empty($blocked)
+                ? ''
+                : 'AND mg.groupid NOT IN (' . implode(',', array_map('intval', array_keys($blocked))) . ')';
+
             $targets = DB::select(
                 "SELECT mg.groupid
                  FROM messages_groups mg
                  WHERE mg.msgid = ? AND mg.rippled_in = 1
+                   {$notBlockedSql}
                    AND NOT EXISTS (
                        SELECT 1 FROM memberships m WHERE m.userid = ? AND m.groupid = mg.groupid
-                   )
-                   AND NOT EXISTS (
-                       SELECT 1 FROM logs lj
-                       WHERE lj.user = ? AND lj.groupid = mg.groupid
-                         AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled'
-                         AND NOT EXISTS (
-                             SELECT 1 FROM logs lj2
-                             WHERE lj2.user = lj.user AND lj2.groupid = lj.groupid
-                               AND lj2.type = 'Group' AND lj2.subtype = 'Joined'
-                               AND lj2.id > lj.id
-                         )
-                         AND EXISTS (
-                             SELECT 1 FROM logs ll
-                             WHERE ll.user = lj.user AND ll.groupid = lj.groupid
-                               AND ll.type = 'Group' AND ll.subtype = 'Left'
-                               AND ll.id > lj.id
-                         )
                    )
                    AND NOT EXISTS (
                        -- Never re-join a poster to a group they are banned from. A ban deletes
@@ -2063,7 +2076,7 @@ class ExpandService
                        SELECT 1 FROM users_banned ub
                        WHERE ub.userid = ? AND ub.groupid = mg.groupid
                    )",
-                [$msgid, $posterId, $posterId, $posterId]
+                [$msgid, $posterId, $posterId]
             );
 
             $addedThisCall = 0;
