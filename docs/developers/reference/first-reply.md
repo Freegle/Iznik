@@ -351,6 +351,12 @@ time. That is keyed on who was **actually mailed**, not who was picked, so a mem
 failed stays eligible for the reach mail rather than silently getting nothing. It is why
 `mailPostToUsers` returns the ids it sent to rather than a count.
 
+It reads that ledger as well as writing it, across every copy of the item rather than this
+one message. Scouting picks its own recipients, so the reach mailer's own check never saw
+them: without this, a member who had already been mailed one copy of an item could be
+scouted for another. The grouping is `UnifiedDigestService::itemSiblingMsgids()`, the same
+one the digest uses, and the check sits in `spoolPostToRecipients` so both paths get it.
+
 ### The mail is the ordinary digest mail
 
 A match mail is the immediate-digest layout for that one post, via the shared

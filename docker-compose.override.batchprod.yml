@@ -34,6 +34,25 @@ services:
 
   spatial:
     cgroup_parent: batch.slice
+    # No swap for the reach engine. Its ~6GB graph heap is the kernel's
+    # favourite eviction victim at the midday digest memory peak, and a
+    # swapped engine turns 2.7s coarse catchments into 65s ones (measured
+    # 2026-08-31: VmSwap 3.3-4.3GB, ~80 major faults/s, ripple expansion
+    # collapsed for ~4h; recurred 90 minutes after a restart). memswap_limit
+    # equal to mem_limit means zero swap; the limit is generous headroom over
+    # the measured 6.1GB working set, and an overrun OOM-kills just this
+    # container, which the restart policy heals in ~15s - strictly better
+    # than the silent daily collapse. Pressure now lands on swappable idle
+    # anon (photon's JVMs) instead. Durable form of the live cgroup
+    # memory.swap.max=0 applied during the incident.
+    #
+    # 12g, not a snug fit: the cgroup's healthy working set measured 9.98GiB -
+    # 6.1GB heap plus ~4GB of page cache holding the mmap'd leaf tables, which
+    # is precisely what makes warm catchments fast. A limit at the waterline
+    # would force perpetual internal cache reclaim and reintroduce the refault
+    # slowness inside the cgroup that this stanza exists to prevent.
+    mem_limit: 12g
+    memswap_limit: 12g
 
   spatial-knn:
     cgroup_parent: batch.slice
