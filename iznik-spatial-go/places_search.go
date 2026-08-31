@@ -89,32 +89,47 @@ func placeTokens(s string) []string {
 }
 
 // buildPlacesIndex computes per-entry search fields and the token postings.
+// Repeated strings (layers, counties, nations, OSM kinds) are interned so
+// 195k copies of "England" collapse to one, and the per-entry token bag is a
+// build-time scratch map, not a retained field.
 func buildPlacesIndex(entries []PlaceEntry) *placesIndex {
 	ix := &placesIndex{entries: entries, post: map[string][]int32{}}
+	interned := map[string]string{}
+	intern := func(s string) string {
+		if v, ok := interned[s]; ok {
+			return v
+		}
+		interned[s] = s
+		return s
+	}
+	bag := map[string]bool{}
 	for i := range ix.entries {
 		e := &ix.entries[i]
+		e.OsmType = intern(e.OsmType)
+		e.Key = intern(e.Key)
+		e.Value = intern(e.Value)
+		e.Layer = intern(e.Layer)
+		e.County = intern(e.County)
+		e.State = intern(e.State)
+
 		e.nameNorms = []string{normPlace(e.Name)}
 		for _, a := range e.Alt {
 			if n := normPlace(a); n != "" {
 				e.nameNorms = append(e.nameNorms, n)
 			}
 		}
-		e.bag = map[string]bool{}
-		seenName := map[string]bool{}
+		// Alt is only an input to nameNorms; the API responds with Name.
+		e.Alt = nil
+
+		clear(bag)
 		for _, n := range e.nameNorms {
 			for _, t := range strings.Fields(n) {
-				if !seenName[t] {
-					seenName[t] = true
-					e.nameTokens = append(e.nameTokens, t)
-				}
+				bag[t] = true
 			}
-		}
-		for _, t := range e.nameTokens {
-			e.bag[t] = true
 		}
 		for _, ctx := range []string{e.County, e.State} {
 			for _, t := range placeTokens(ctx) {
-				e.bag[t] = true
+				bag[t] = true
 			}
 		}
 		if len(e.Extent) == 4 {
@@ -124,8 +139,8 @@ func buildPlacesIndex(entries []PlaceEntry) *placesIndex {
 				e.areaKm2 = 0
 			}
 		}
-		for t := range e.bag {
-			ix.post[t] = append(ix.post[t], int32(i))
+		for t := range bag {
+			ix.post[intern(t)] = append(ix.post[t], int32(i))
 		}
 	}
 	ix.tokens = make([]string, 0, len(ix.post))
@@ -193,7 +208,7 @@ func (ix *placesIndex) search(qRaw string, opts searchOpts) []scoredPlace {
 				continue
 			}
 		}
-		sp := ix.score(e, qSet, matchedTokens, lastTok, headNorm, opts, fuzzy)
+		sp := ix.score(e, qSet, matchedTokens, effTokens, lastTok, headNorm, opts, fuzzy)
 		if sp.score <= 0 {
 			continue
 		}
@@ -216,11 +231,7 @@ func (ix *placesIndex) search(qRaw string, opts searchOpts) []scoredPlace {
 		}
 		return ra.e.ID < rb.e.ID
 	})
-	results = dedupeSameEntity(results)
-	if len(results) > opts.limit {
-		results = results[:opts.limit]
-	}
-	return results
+	return dedupeSameEntity(results, opts.limit)
 }
 
 // dedupeSameEntity collapses results that are the same real-world entity seen
@@ -228,7 +239,9 @@ func (ix *placesIndex) search(qRaw string, opts searchOpts) []scoredPlace {
 // boundary and a place node all called "Kent" — keeping the best-ranked.
 // Photon does the same (it overfetches specifically to have room to dedupe).
 // Same-name entries far apart (the two Miltons) are different places and stay.
-func dedupeSameEntity(results []scoredPlace) []scoredPlace {
+// Results arrive ranked, so it stops as soon as limit survivors are found —
+// broad prefix queries can carry thousands of ranked candidates.
+func dedupeSameEntity(results []scoredPlace, limit int) []scoredPlace {
 	out := results[:0]
 	for _, r := range results {
 		dup := false
@@ -243,6 +256,9 @@ func dedupeSameEntity(results []scoredPlace) []scoredPlace {
 		}
 		if !dup {
 			out = append(out, r)
+			if len(out) >= limit {
+				break
+			}
 		}
 	}
 	return out
@@ -457,7 +473,7 @@ var layerBase = map[string]float64{
 	"locality": 0.5,
 }
 
-func (ix *placesIndex) score(e *PlaceEntry, qSet, matchedTokens map[string]bool, lastTok, headNorm string, opts searchOpts, fuzzy bool) scoredPlace {
+func (ix *placesIndex) score(e *PlaceEntry, qSet, matchedTokens map[string]bool, effTokens []string, lastTok, headNorm string, opts searchOpts, fuzzy bool) scoredPlace {
 	exact := false
 	for _, n := range e.nameNorms {
 		if n == headNorm {
@@ -466,23 +482,59 @@ func (ix *placesIndex) score(e *PlaceEntry, qSet, matchedTokens map[string]bool,
 		}
 	}
 
-	// Coverage is judged against the best single name variant, not the union:
-	// an alt name ("Kirkby Kendal") must not dilute a full match on the
-	// primary name.
-	cov := 0.0
+	// Two coverages, judged against the best single name variant (an alt name
+	// like "Kirkby Kendal" must not dilute a full match on the primary name):
+	//
+	//   cov      — how much of the entry's name the query accounts for;
+	//   qNameCov — how much of the query the entry's NAME accounts for.
+	//
+	// The second is what stops "South West" resolving to a village called
+	// Westerleigh: its "West" is only a prefix and its "South" only its
+	// county, while the region has both words in the name outright. Match
+	// weights: exact word 1.0, last-word prefix 0.7, fuzzy variant 0.8.
+	// Walked without allocating token slices — this runs for every candidate
+	// of every query.
+	cov, qNameCov := 0.0, 0.0
 	for _, n := range e.nameNorms {
-		toks := strings.Fields(n)
-		if len(toks) == 0 {
-			continue
-		}
-		matched := 0
-		for _, nt := range toks {
-			if qSet[nt] || matchedTokens[nt] || strings.HasPrefix(nt, lastTok) {
-				matched++
+		matched, total := 0.0, 0
+		start := 0
+		for idx := 0; idx <= len(n); idx++ {
+			if idx == len(n) || n[idx] == ' ' {
+				if idx > start {
+					tok := n[start:idx]
+					total++
+					switch {
+					case qSet[tok]:
+						matched += 1
+					case strings.HasPrefix(tok, lastTok):
+						matched += 0.7
+					case matchedTokens[tok]:
+						matched += 0.8
+					}
+				}
+				start = idx + 1
 			}
 		}
-		if c := float64(matched) / float64(len(toks)); c > cov {
-			cov = c
+		if total == 0 {
+			continue
+		}
+		c := matched / float64(total)
+
+		var qc float64
+		if fuzzy {
+			// A fuzzy hit cannot be attributed to one query word; the entry
+			// coverage is the honest proxy and fuzzy is already discounted.
+			qc = c
+		} else {
+			qm := 0.0
+			for _, t := range effTokens {
+				qm += nameTokenMatch(n, t, t == lastTok)
+			}
+			qc = qm / float64(len(effTokens))
+		}
+
+		if c*qc > cov*qNameCov || (cov == 0 && c > 0) {
+			cov, qNameCov = c, qc
 		}
 	}
 	if cov == 0 && !exact {
@@ -490,7 +542,7 @@ func (ix *placesIndex) score(e *PlaceEntry, qSet, matchedTokens map[string]bool,
 		return scoredPlace{}
 	}
 
-	s := layerBase[e.Layer] * (0.25 + 0.75*cov)
+	s := layerBase[e.Layer] * (0.25 + 0.75*cov) * (0.4 + 0.6*qNameCov)
 	// Population separates the city from the hamlet of the same name, but
 	// only for places: boundary relations compete on footprint, not on
 	// whether someone tagged a population.
@@ -535,6 +587,29 @@ func (ix *placesIndex) score(e *PlaceEntry, qSet, matchedTokens map[string]bool,
 		}
 	}
 	return scoredPlace{e: e, exact: exact, score: s}
+}
+
+// nameTokenMatch reports how well one query word matches within a normalised
+// name: 1.0 for an exact word, 0.7 when the word is a prefix of a name word
+// (allowed for the query's last word only — as-you-type), else 0.
+func nameTokenMatch(n, t string, allowPrefix bool) float64 {
+	best := 0.0
+	start := 0
+	for idx := 0; idx <= len(n); idx++ {
+		if idx == len(n) || n[idx] == ' ' {
+			if idx > start {
+				tok := n[start:idx]
+				if tok == t {
+					return 1.0
+				}
+				if allowPrefix && strings.HasPrefix(tok, t) {
+					best = 0.7
+				}
+			}
+			start = idx + 1
+		}
+	}
+	return best
 }
 
 func placesDistKm(lat1, lng1, lat2, lng2 float64) float64 {

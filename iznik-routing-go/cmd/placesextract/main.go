@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 
 	"github.com/paulmach/osm"
@@ -95,7 +96,13 @@ func extractPlaces(pbfPath string) ([]Entry, error) {
 	}
 	defer f.Close()
 
-	procs := runtime.NumCPU()
+	// Fixed 4 decode procs, like the routing server's own PBF passes: this
+	// runs on the shared production batch host, where saturating all cores
+	// (and paying per-proc decode buffers) is worse than a slower build.
+	procs := 4
+	if n := runtime.NumCPU(); n < procs {
+		procs = n
+	}
 
 	// Pass 1: relations. Keep named place/boundary relations, remember which
 	// ways (and centre nodes) we need geometry for.
@@ -154,13 +161,16 @@ func extractPlaces(pbfPath string) ([]Entry, error) {
 	sc.Close()
 	log.Printf("placesextract: %d relations kept, %d member ways needed", len(rels), len(neededWay))
 
-	// Pass 2: ways. Node refs for relation members, plus place=* ways.
+	// Pass 2: ways. Node refs for relation members, plus place=* ways. Needed
+	// node ids go into a slice for a sorted-array coordinate store (the
+	// graph.go pattern) — ~14M ids as maps cost over a GB of peak heap, which
+	// the production batch host cannot spare.
 	if _, err := f.Seek(0, 0); err != nil {
 		return nil, err
 	}
 	wayRefs := map[int64][]int64{}
 	var placeWays []*wayInfo
-	neededNode := map[int64]bool{}
+	neededIDs := make([]int64, 0, 16_000_000)
 	sc = osmpbf.New(context.Background(), f, procs)
 	sc.SkipNodes = true
 	sc.SkipRelations = true
@@ -189,8 +199,8 @@ func extractPlaces(pbfPath string) ([]Entry, error) {
 		refs := make([]int64, 0, len(w.Nodes))
 		for _, n := range w.Nodes {
 			refs = append(refs, int64(n.ID))
-			neededNode[int64(n.ID)] = true
 		}
+		neededIDs = append(neededIDs, refs...)
 		if keep {
 			wayRefs[wid] = refs
 		}
@@ -205,17 +215,18 @@ func extractPlaces(pbfPath string) ([]Entry, error) {
 	sc.Close()
 	for _, ri := range rels {
 		if ri.centreNode != 0 {
-			neededNode[ri.centreNode] = true
+			neededIDs = append(neededIDs, ri.centreNode)
 		}
 	}
+	coords := newCoordStore(neededIDs)
+	neededIDs = nil
 	log.Printf("placesextract: %d member ways resolved, %d place ways, %d node coords needed",
-		len(wayRefs), len(placeWays), len(neededNode))
+		len(wayRefs), len(placeWays), coords.len())
 
 	// Pass 3: nodes. Coordinates for needed nodes, plus place=* node entries.
 	if _, err := f.Seek(0, 0); err != nil {
 		return nil, err
 	}
-	coords := make(map[int64][2]float64, len(neededNode))
 	var entries []Entry
 	sc = osmpbf.New(context.Background(), f, procs)
 	sc.SkipWays = true
@@ -226,9 +237,7 @@ func extractPlaces(pbfPath string) ([]Entry, error) {
 			continue
 		}
 		nid := int64(n.ID)
-		if neededNode[nid] {
-			coords[nid] = [2]float64{n.Lon, n.Lat}
-		}
+		coords.set(nid, n.Lon, n.Lat)
 		p := ""
 		for _, t := range n.Tags {
 			if t.Key == "place" {
@@ -258,11 +267,11 @@ func extractPlaces(pbfPath string) ([]Entry, error) {
 		return nil, fmt.Errorf("nodes pass: %w", err)
 	}
 	sc.Close()
-	log.Printf("placesextract: %d place nodes, %d coords resolved", len(entries), len(coords))
+	log.Printf("placesextract: %d place nodes, %d coords resolved", len(entries), coords.resolved())
 
 	// Way entries: bbox + centre from resolved coords.
 	for _, pw := range placeWays {
-		e, ok := boxEntry(pw.refs, coords)
+		e, ok := boxEntry(pw.refs, coords.get)
 		if !ok {
 			continue
 		}
@@ -275,12 +284,12 @@ func extractPlaces(pbfPath string) ([]Entry, error) {
 	// when present. Relations whose members fall outside the file (clipped
 	// extracts) are dropped.
 	getWay := func(id int64) ([]int64, bool) { r, ok := wayRefs[id]; return r, ok }
-	getCoord := func(id int64) ([2]float64, bool) { c, ok := coords[id]; return c, ok }
+	getCoord := coords.get
 	relEntries := make(map[int64]int) // relation id -> entries index
 	for _, ri := range rels {
 		for _, wid := range ri.wayRefs {
 			for _, ref := range wayRefs[wid] {
-				if c, ok := coords[ref]; ok {
+				if c, ok := coords.get(ref); ok {
 					ri.hasGeometry = true
 					if c[0] < ri.minX {
 						ri.minX = c[0]
@@ -302,7 +311,7 @@ func extractPlaces(pbfPath string) ([]Entry, error) {
 		}
 		lat := (ri.minY + ri.maxY) / 2
 		lng := (ri.minX + ri.maxX) / 2
-		if c, ok := coords[ri.centreNode]; ri.centreNode != 0 && ok {
+		if c, ok := coords.get(ri.centreNode); ri.centreNode != 0 && ok {
 			lng, lat = c[0], c[1]
 		}
 		relEntries[ri.id] = len(entries)
@@ -379,11 +388,11 @@ func extractPlaces(pbfPath string) ([]Entry, error) {
 }
 
 // boxEntry builds the positional part of an entry from a ring of node refs.
-func boxEntry(refs []int64, coords map[int64][2]float64) (Entry, bool) {
+func boxEntry(refs []int64, get func(int64) ([2]float64, bool)) (Entry, bool) {
 	minX, minY, maxX, maxY := 1e9, 1e9, -1e9, -1e9
 	found := false
 	for _, ref := range refs {
-		c, ok := coords[ref]
+		c, ok := get(ref)
 		if !ok {
 			continue
 		}
@@ -416,6 +425,10 @@ func main() {
 	out := flag.String("out", "-", "output path (.gz = gzipped; - = stdout)")
 	flag.Parse()
 	log.SetFlags(log.Ltime)
+
+	// Offline batch tool that runs on the shared production batch host: trade
+	// a little CPU for a much smaller peak footprint.
+	debug.SetGCPercent(50)
 
 	entries, err := extractPlaces(*pbf)
 	if err != nil {

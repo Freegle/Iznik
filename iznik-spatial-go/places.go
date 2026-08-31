@@ -42,11 +42,10 @@ type PlaceEntry struct {
 	State   string    `json:"state"`
 	Pop     int64     `json:"pop"`
 
-	// Computed at index build time.
-	nameNorms  []string
-	nameTokens []string
-	bag        map[string]bool
-	areaKm2    float64
+	// Computed at index build time. Token bags live only in the postings map
+	// on the index, not per entry — 195k retained maps cost ~100MB.
+	nameNorms []string
+	areaKm2   float64
 }
 
 // placesIdx is the currently-served index; nil until a file loads.

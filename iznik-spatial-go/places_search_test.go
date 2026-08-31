@@ -52,8 +52,25 @@ func testPlaces() *placesIndex {
 			Lat: 52.2053, Lng: 0.1218, County: "Cambridgeshire", State: "England", Pop: 145700},
 		{ID: 21, OsmType: "R", Name: "Cambridgeshire", Key: "boundary", Value: "administrative", Layer: "county",
 			Lat: 52.3, Lng: 0.1, Extent: []float64{-0.5, 52.75, 0.5, 52.0}, State: "England"},
+		{ID: 22, OsmType: "R", Name: "South West England", Key: "boundary", Value: "statistical", Layer: "other",
+			Lat: 50.9, Lng: -3.5, Extent: []float64{-6.5, 52.0, -1.5, 49.9}, State: "England"},
+		{ID: 23, OsmType: "N", Name: "Westerleigh", Key: "place", Value: "village", Layer: "city",
+			Lat: 51.52, Lng: -2.48, County: "South Gloucestershire", State: "England"},
 	}
 	return buildPlacesIndex(entries)
+}
+
+// The heaviest queries in the production log are bare region names ("South
+// West", 4,235 requests over five days). The region must not lose to a
+// village whose name merely starts with "West" and whose county supplies the
+// "South": query words matched only by context or by prefix cannot beat a
+// name that contains them outright.
+func TestRegionNameBeatsContextAndPrefix(t *testing.T) {
+	ix := testPlaces()
+	res := ix.search("South West", searchOpts{limit: 5})
+	if len(res) == 0 || res[0].e.ID != 22 {
+		t.Fatalf("South West should resolve to the region, got %v", firstNames(res, 5))
+	}
 }
 
 // Photon shows one Kent, not the administrative, ceremonial and place-node

@@ -3,11 +3,69 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// coordStore resolves node ids to coordinates via a sorted id array with
+// parallel coordinate arrays (the graph.go loading pattern): ~14M needed
+// nodes fit in ~330MB where the equivalent maps peak beyond a GB — the
+// production batch host swaps, so the build must stay lean.
+type coordStore struct {
+	ids []int64
+	lng []float64
+	lat []float64
+}
+
+func newCoordStore(rawIDs []int64) *coordStore {
+	sort.Slice(rawIDs, func(a, b int) bool { return rawIDs[a] < rawIDs[b] })
+	ids := rawIDs[:0]
+	var prev int64 = -1
+	for _, id := range rawIDs {
+		if id != prev {
+			ids = append(ids, id)
+			prev = id
+		}
+	}
+	c := &coordStore{ids: ids, lng: make([]float64, len(ids)), lat: make([]float64, len(ids))}
+	for i := range c.lat {
+		c.lat[i] = math.NaN()
+	}
+	return c
+}
+
+func (c *coordStore) idx(id int64) (int, bool) {
+	i := sort.Search(len(c.ids), func(i int) bool { return c.ids[i] >= id })
+	return i, i < len(c.ids) && c.ids[i] == id
+}
+
+func (c *coordStore) set(id int64, lng, lat float64) {
+	if i, ok := c.idx(id); ok {
+		c.lng[i], c.lat[i] = lng, lat
+	}
+}
+
+func (c *coordStore) get(id int64) ([2]float64, bool) {
+	if i, ok := c.idx(id); ok && !math.IsNaN(c.lat[i]) {
+		return [2]float64{c.lng[i], c.lat[i]}, true
+	}
+	return [2]float64{}, false
+}
+
+func (c *coordStore) len() int { return len(c.ids) }
+
+func (c *coordStore) resolved() int {
+	n := 0
+	for _, la := range c.lat {
+		if !math.IsNaN(la) {
+			n++
+		}
+	}
+	return n
+}
 
 // Entry is one searchable place in the artifact consumed by iznik-spatial-go's
 // photon-compatible /api. Extent order is [W,N,E,S] — the same order photon
