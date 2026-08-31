@@ -200,7 +200,14 @@ class ReachService
         $url = "{$this->url}/v1/ripple-schedule";
         try {
             $responses = Http::pool(fn ($pool) => array_map(
+                // Connection: close, because every Http::pool call builds a fresh
+                // Guzzle client whose keep-alive sockets are never reused by the
+                // NEXT pool call - they just accumulate as idle fds for the life
+                // of the process (observed: ~8 per chunk, marching toward the
+                // 1024 soft limit on a long drain run). A local handshake per
+                // request costs microseconds; leaking fds costs the run.
                 fn ($o) => $pool->timeout($this->requestTimeout)
+                    ->withHeaders(['Connection' => 'close'])
                     ->get($url, $this->scheduleParams(
                         (float) $o['lat'],
                         (float) $o['lng'],
@@ -1048,7 +1055,9 @@ class ReachService
         $url = "{$this->url}/v1/catchment";
         try {
             $responses = Http::pool(fn ($pool) => array_map(
+                // Connection: close - same fd-leak reasoning as computeSchedulesBatch.
                 fn ($j) => $pool->timeout($this->requestTimeout)
+                    ->withHeaders(['Connection' => 'close'])
                     ->get($url, array_filter([
                         'lat' => (float) $j['lat'],
                         'lng' => (float) $j['lng'],
