@@ -56,8 +56,27 @@ func testPlaces() *placesIndex {
 			Lat: 50.9, Lng: -3.5, Extent: []float64{-6.5, 52.0, -1.5, 49.9}, State: "England"},
 		{ID: 23, OsmType: "N", Name: "Westerleigh", Key: "place", Value: "village", Layer: "city",
 			Lat: 51.52, Lng: -2.48, County: "South Gloucestershire", State: "England"},
+		{ID: 24, OsmType: "N", Name: "Six Mile Bottom", Key: "place", Value: "village", Layer: "city",
+			Lat: 52.17, Lng: 0.32, County: "Cambridgeshire", State: "England"},
 	}
 	return buildPlacesIndex(entries)
+}
+
+// Photon's lenient retry lets up to a third of the query words go unmatched
+// (minimumShouldMatch "-34%"), which is how the feed's "two mile bottom"
+// resolves to Six Mile Bottom there. Reproduce it as the last resort, and
+// only for queries of three words or more: two-word queries must never drop
+// a word ("South West" stays the region, not anything west).
+func TestPartialMatchLastResort(t *testing.T) {
+	ix := testPlaces()
+	res := ix.search("two mile bottom", searchOpts{limit: 5})
+	if len(res) == 0 || res[0].e.ID != 24 {
+		t.Fatalf("dropping one of three words should find Six Mile Bottom, got %v", firstNames(res, 5))
+	}
+	res = ix.search("zzz bottom", searchOpts{limit: 5})
+	if len(res) != 0 {
+		t.Fatalf("two-word queries must not drop words, got %v", firstNames(res, 5))
+	}
 }
 
 // The heaviest queries in the production log are bare region names ("South

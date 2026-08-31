@@ -330,7 +330,44 @@ func (ix *placesIndex) gather(qTokens []string) (cands []int32, matchedTokens ma
 			return c, m, p.tokens, p.fuzzy
 		}
 	}
+
+	// Last resort, photon's lenient minimumShouldMatch("-34%"): up to a third
+	// of the words may go unmatched ("two mile bottom" finds Six Mile
+	// Bottom). Never for one- or two-word queries — those must match whole.
+	if len(qTokens) >= 3 {
+		if c, m := ix.gatherPartial(qTokens); len(c) > 0 {
+			return c, m, qTokens, false
+		}
+	}
 	return nil, nil, qTokens, false
+}
+
+// gatherPartial keeps entries matching at least two thirds of the query
+// words (the last as a prefix), photon's lenient floor.
+func (ix *placesIndex) gatherPartial(qTokens []string) ([]int32, map[string]bool) {
+	need := (2*len(qTokens) + 2) / 3
+	matchedTokens := map[string]bool{}
+	counts := map[int32]int{}
+	for i, tok := range qTokens {
+		set := map[int32]bool{}
+		for _, id := range ix.post[tok] {
+			set[id] = true
+		}
+		matchedTokens[tok] = true
+		if i == len(qTokens)-1 && len(tok) >= 2 {
+			ix.expandPrefix(tok, set, matchedTokens)
+		}
+		for id := range set {
+			counts[id]++
+		}
+	}
+	var out []int32
+	for id, n := range counts {
+		if n >= need {
+			out = append(out, id)
+		}
+	}
+	return out, matchedTokens
 }
 
 func (ix *placesIndex) gatherPass(qTokens []string, fuzzy bool) ([]int32, map[string]bool) {

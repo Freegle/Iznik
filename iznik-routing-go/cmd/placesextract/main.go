@@ -62,6 +62,7 @@ type wayInfo struct {
 	id    int64
 	name  string
 	alt   []string
+	key   string
 	value string
 	layer string
 	pop   int64
@@ -130,6 +131,13 @@ func extractPlaces(pbfPath string) ([]Entry, error) {
 			layer = classifyPlace(p)
 			key, value = "place", p
 		}
+		// Named landuse areas (farmyards, housing estates, industrial parks)
+		// sit in photon's locality layer, and the jobs feed's smallest "town"
+		// names often only exist in OSM as these.
+		if lu := r.Tags.Find("landuse"); layer == "" && lu != "" {
+			layer = "locality"
+			key, value = "landuse", lu
+		}
 		if layer == "" {
 			continue
 		}
@@ -182,14 +190,20 @@ func extractPlaces(pbfPath string) ([]Entry, error) {
 		wid := int64(w.ID)
 		keep := neededWay[wid]
 		var pw *wayInfo
-		if p := w.Tags.Find("place"); p != "" {
-			if name := w.Tags.Find("name"); name != "" {
+		if name := w.Tags.Find("name"); name != "" {
+			if p := w.Tags.Find("place"); p != "" {
 				if layer := classifyPlace(p); layer != "" {
 					pw = &wayInfo{
 						id: wid, name: name, alt: altNames(w.Tags),
-						value: p, layer: layer,
+						key: "place", value: p, layer: layer,
 						pop: parsePopulation(w.Tags.Find("population")),
 					}
+				}
+			}
+			if lu := w.Tags.Find("landuse"); pw == nil && lu != "" {
+				pw = &wayInfo{
+					id: wid, name: name, alt: altNames(w.Tags),
+					key: "landuse", value: lu, layer: "locality",
 				}
 			}
 		}
@@ -276,7 +290,7 @@ func extractPlaces(pbfPath string) ([]Entry, error) {
 			continue
 		}
 		e.ID, e.OsmType, e.Name, e.Alt = pw.id, "W", pw.name, pw.alt
-		e.Key, e.Value, e.Layer, e.Pop = "place", pw.value, pw.layer, pw.pop
+		e.Key, e.Value, e.Layer, e.Pop = pw.key, pw.value, pw.layer, pw.pop
 		entries = append(entries, e)
 	}
 

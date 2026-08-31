@@ -193,6 +193,36 @@ func TestMergeLinkedPlace(t *testing.T) {
 	}
 }
 
+// Photon serves named landuse areas (farmyards, industrial estates, housing
+// areas) in its locality layer, and the jobs feed's tiny "town" names often
+// only exist in OSM as those: they must be indexed.
+func TestBristolExtractIncludesNamedLanduse(t *testing.T) {
+	pbf := "../../testdata/bristol.osm.pbf"
+	if _, err := os.Stat(pbf); err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+	entries, err := extractPlaces(pbf)
+	if err != nil {
+		t.Fatalf("extractPlaces: %v", err)
+	}
+	landuse := 0
+	for i := range entries {
+		e := &entries[i]
+		if e.Key == "landuse" {
+			landuse++
+			if e.Layer != "locality" {
+				t.Fatalf("landuse entries belong to the locality layer, got %s for %s", e.Layer, e.Name)
+			}
+			if e.Name == "" || len(e.Extent) != 4 {
+				t.Fatalf("landuse entry must carry a name and an extent: %+v", e)
+			}
+		}
+	}
+	if landuse < 20 {
+		t.Fatalf("expected named landuse areas around Bristol, got %d", landuse)
+	}
+}
+
 // End-to-end against the committed Bristol extract. Structural assertions only:
 // the extract clips relations at its edges, so nation-level context is not
 // asserted here.
