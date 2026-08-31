@@ -40,6 +40,12 @@ return new class extends Migration
                 // accumulate FEWER views), so never rank by lift_views alone.
                 $table->decimal('lift_views', 8, 4)->nullable();
                 $table->decimal('taken_rate', 5, 4)->nullable();
+                // Median hours to the item's first reply (replied posts, TN
+                // excluded). Mostly the demand dial in disguise - double the
+                // lift, roughly half the wait - but with a real residual axis
+                // (project materials wait, gadgets fly). Good for
+                // expectation-setting copy; never rank by it alone.
+                $table->decimal('med_first_reply_hrs', 7, 2)->nullable();
                 $table->integer('n_posts')->default(0);
                 // Bucket comes from the gamma POSTERIOR, not the point estimate:
                 // high/low only when the posterior clears the boundary with the

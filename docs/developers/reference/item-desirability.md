@@ -39,8 +39,23 @@ Two findings shape how to read the companion columns:
   items end with *fewer* views. `lift_views` measures attention-while-open;
   rank by `lift_replies`.
 - **TrashNothing replies to TrashNothing posts never appear as platform
-  chats**, so raw reply counts under-read TN posts. The models carry a
-  platform term for this; the artifact lifts are platform-adjusted.
+  chats**, so raw reply counts under-read TN posts. TN posts are excluded
+  from the estimates entirely (historical TN posters identified by their
+  trashnothing.com login email; modern posts by source header) - the lifts
+  describe Freegle-side demand. TN posts still get scored like any other.
+- `med_first_reply_hrs` is the item's median hours to first reply. Speed is
+  mostly demand in disguise (double the lift, roughly half the wait - the
+  relationship has the slope pure arrival mechanics predict), but a residual
+  axis is real: project materials (bricks, topsoil, packing boxes) wait even
+  when demand is healthy, while gadgets fly. Use it for expectation-setting
+  copy; never rank by it alone.
+
+One known modelling caveat: rippling changed behaviour mid-2026 (the audience
+governor), so the modern model's rippled-post baseline does not carry across
+that boundary. The effect on the artifact is bounded and small - modern
+evidence is only ~14% of the pooled weight per item, and with-vs-without it
+the item scores correlate at 0.98 - but do not treat the modern layer's
+rippled-post predictions as calibrated on their own.
 
 ## Canonical titles
 

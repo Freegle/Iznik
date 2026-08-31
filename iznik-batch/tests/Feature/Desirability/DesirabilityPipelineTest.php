@@ -70,12 +70,14 @@ class DesirabilityPipelineTest extends TestCase
     public function import_replaces_rows_and_validates_embeddings(): void
     {
         $this->importRows([
-            ['canonical' => 'washing machine', 'lift_replies' => 2.1, 'evidence' => 500, 'bucket' => 'high', 'n_posts' => 700],
+            ['canonical' => 'washing machine', 'lift_replies' => 2.1, 'evidence' => 500, 'bucket' => 'high', 'n_posts' => 700, 'med_first_reply_hrs' => 2.4],
             ['canonical' => 'sofa', 'lift_replies' => 0.42, 'evidence' => 900, 'bucket' => 'low', 'embedding' => $this->vec(3)],
             ['canonical' => 'bad-embedding', 'lift_replies' => 1.0, 'evidence' => 5, 'bucket' => 'medium', 'embedding' => base64_encode('too short')],
         ]);
         $this->assertSame(2, DB::table('item_desirability')->where('model_version', $this->version)->count());
         $this->assertSame(1, DB::table('item_desirability')->whereNotNull('embedding')->count());
+        $this->assertEquals(2.4, (float) DB::table('item_desirability')->where('canonical', 'washing machine')->value('med_first_reply_hrs'));
+        $this->assertNull(DB::table('item_desirability')->where('canonical', 'sofa')->value('med_first_reply_hrs'));
 
         // Re-import replaces rather than duplicates.
         $this->importRows([

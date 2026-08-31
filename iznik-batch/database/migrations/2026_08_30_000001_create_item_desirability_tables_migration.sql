@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS item_desirability (
     evidence DECIMAL(10, 2) NOT NULL,
     lift_views DECIMAL(8, 4) NULL,
     taken_rate DECIMAL(5, 4) NULL,
+    med_first_reply_hrs DECIMAL(7, 2) NULL,
     n_posts INT NOT NULL DEFAULT 0,
     bucket ENUM('low', 'medium', 'high') NOT NULL DEFAULT 'medium',
     embedding BLOB NULL,
