@@ -174,7 +174,7 @@ class ImportArtifactCommand extends Command
             'taken_rate' => isset($row['taken_rate']) ? (float) $row['taken_rate'] : null,
             'med_first_reply_hrs' => isset($row['med_first_reply_hrs']) ? (float) $row['med_first_reply_hrs'] : null,
             'n_posts' => (int) ($row['n_posts'] ?? 0),
-            'bucket' => in_array($row['bucket'], ['low', 'medium', 'high'], true) ? $row['bucket'] : 'medium',
+            'bucket' => in_array($row['bucket'], ['low', 'medium', 'high', 'unknown'], true) ? $row['bucket'] : 'unknown',
             'embedding' => $embedding,
         ];
     }

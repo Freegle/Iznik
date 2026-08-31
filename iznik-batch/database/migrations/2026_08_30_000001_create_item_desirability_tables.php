@@ -49,9 +49,13 @@ return new class extends Migration
                 $table->integer('n_posts')->default(0);
                 // Bucket comes from the gamma POSTERIOR, not the point estimate:
                 // high/low only when the posterior clears the boundary with the
-                // configured confidence, else medium. A near-boundary or thin-evidence
-                // item is medium by construction - no knife-edge flips.
-                $table->enum('bucket', ['low', 'medium', 'high'])->default('medium');
+                // configured confidence. The unconfident residual splits by
+                // evidence: 'medium' means seen enough and looks average;
+                // 'unknown' means the item is too rarely offered to say -
+                // consumers show an explicit we-do-not-know message rather than
+                // pretending average. A near-boundary well-measured item is
+                // medium by construction - no knife-edge flips.
+                $table->enum('bucket', ['low', 'medium', 'high', 'unknown'])->default('unknown');
                 // 256 x little-endian float32 title embedding (same recipe as the
                 // embedding sidecar, query-space), present only for reference rows
                 // used by the cold-start kNN. Null for the long tail.
@@ -70,7 +74,7 @@ return new class extends Migration
                 $table->unsignedBigInteger('msgid');
                 // Predicted demand lift for this post's item (1.0 = average).
                 $table->decimal('score', 8, 4);
-                $table->enum('bucket', ['low', 'medium', 'high']);
+                $table->enum('bucket', ['low', 'medium', 'high', 'unknown']);
                 // How the score was obtained: exact canonical match, cluster member,
                 // embedding kNN over reference titles, or default (no information -
                 // score 1.0, medium). kNN and default rows are lower-trust.

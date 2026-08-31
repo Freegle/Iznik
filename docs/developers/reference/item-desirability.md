@@ -93,18 +93,22 @@ artifact does not contain and silently score `default`.
 
 ## Buckets without cliff edges
 
-`bucket` is low/medium/high, but derived from the **posterior**, not the point
-score: high means the gamma posterior puts >= 80% of its mass above the high
-bound, low the mirror image, medium everything else - including well-measured
-titles genuinely near a boundary and thinly-measured titles whose point score
-happens to be extreme. A title at lift 1.01 vs 0.99 cannot flip buckets on
-noise, and holdout outcome curves are smooth through both bounds (no cliff to
-exploit). Anything acting on buckets should still prefer `score` when it can:
-the buckets are descriptive slices of a continuum, deliberately conservative.
+`bucket` is low/medium/high/unknown, derived from the **posterior**, not the
+point score: high means the gamma posterior puts >= 80% of its mass above the
+high bound, low the mirror image. The unconfident residual splits by evidence:
+**medium** means we have seen enough (expected replies >= 10) and the item
+looks near-average; **unknown** means the item is too rarely offered to say -
+the product shows an explicit we-do-not-know message for it rather than
+pretending average. Confident calls survive at any evidence level (nine posts
+with zero replies is already confidently low). A title at lift 1.01 vs 0.99
+cannot flip buckets on noise, and holdout outcome curves are smooth through
+both bounds (no cliff to exploit). Anything acting on buckets should still
+prefer `score` when it can.
 
-kNN-scored posts are bucketed even more conservatively: medium unless the top
-neighbour is very close and every neighbour agrees which side of average the
-item sits.
+Posts scored with no information at all (no artifact row and no close-enough
+known title) also get bucket `unknown` with source `default`. kNN-scored posts
+are bucketed conservatively: medium unless the top neighbour is very close and
+every neighbour agrees which side of average the item sits.
 
 ## Deployment prerequisites
 

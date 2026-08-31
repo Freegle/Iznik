@@ -152,7 +152,7 @@ class DesirabilityPipelineTest extends TestCase
     }
 
     #[Test]
-    public function unseen_titles_without_a_sidecar_score_default_medium(): void
+    public function unseen_titles_without_a_sidecar_score_unknown(): void
     {
         $this->importRows([
             ['canonical' => 'washing machine', 'lift_replies' => 2.1, 'evidence' => 500, 'bucket' => 'high'],
@@ -165,7 +165,7 @@ class DesirabilityPipelineTest extends TestCase
         $row = DB::table('messages_desirability')->where('msgid', $msgid)->first();
         $this->assertNotNull($row);
         $this->assertSame('default', $row->source);
-        $this->assertSame('medium', $row->bucket);
+        $this->assertSame('unknown', $row->bucket);
         $this->assertEquals(1.0, (float) $row->score);
     }
 
@@ -257,7 +257,7 @@ class DesirabilityPipelineTest extends TestCase
         $row = DB::table('messages_desirability')->where('msgid', $msgid)->first();
         $this->assertNotNull($row);
         $this->assertSame('default', $row->source);
-        $this->assertSame('medium', $row->bucket);
+        $this->assertSame('unknown', $row->bucket);
     }
 
     #[Test]
@@ -270,7 +270,27 @@ class DesirabilityPipelineTest extends TestCase
         $got = $svc->scoreSubject(null);
         $this->assertSame('default', $got['source']);
         $this->assertEquals(1.0, $got['score']);
-        $this->assertSame('medium', $got['bucket']);
+        $this->assertSame('unknown', $got['bucket']);
+    }
+
+    #[Test]
+    public function rare_items_marked_unknown_in_the_artifact_stay_unknown(): void
+    {
+        // A rarely-offered item carries bucket 'unknown' in the artifact, and the
+        // score row passes that through so the UI can show an explicit message.
+        $this->importRows([
+            ['canonical' => 'antique orrery', 'lift_replies' => 1.3, 'evidence' => 4, 'bucket' => 'unknown'],
+        ]);
+        $msgid = $this->makeApprovedOffer('OFFER: Antique orrery (ZE1)');
+
+        $this->artisan('desirability:score-new', ['--since' => now()->subDay()->toDateTimeString()])
+            ->assertExitCode(0);
+
+        $row = DB::table('messages_desirability')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row);
+        $this->assertSame('exact', $row->source);
+        $this->assertSame('unknown', $row->bucket);
+        $this->assertEquals(1.3, (float) $row->score);
     }
 
     #[Test]

@@ -17,7 +17,8 @@ use Illuminate\Support\Facades\Log;
  *              take a similarity-weighted average of the nearest reference
  *              titles' log-lifts. Only trusted when the best neighbour clears
  *              the configured cosine floor.
- *  3. default - score 1.0, bucket medium.
+ *  3. default - score 1.0, bucket unknown (the item is too rarely offered, or
+ *              nothing close enough is known - consumers show an explicit message).
  *
  * Scoring is batch-first: one exact-match query per chunk of subjects, and the
  * sidecar is called with batches of texts rather than once per post, so a
@@ -78,7 +79,9 @@ class DesirabilityService
             $canon = $this->canonicaliser->canonicalise($subject);
             $key = mb_substr((string) $canon['canonical'], 0, 191);
             $keys[$i] = $key;
-            $results[$i] = ['score' => 1.0, 'bucket' => 'medium', 'source' => 'default', 'matched_canonical' => null, 'canonical' => $key];
+            // No information is 'unknown', never a pretend-average 'medium' -
+            // consumers show an explicit we-do-not-know message for it.
+            $results[$i] = ['score' => 1.0, 'bucket' => 'unknown', 'source' => 'default', 'matched_canonical' => null, 'canonical' => $key];
         }
 
         $distinct = array_values(array_unique(array_filter($keys, fn ($k) => strlen($k) > 0)));
