@@ -59,9 +59,10 @@ Photon layer mapping OBSERVED (probe 2026-08-31, differs from brief's guess):
 | 2 | Extraction CLI iznik-routing-go cmd/placesextract (TDD vs testdata/bristol.osm.pbf) | ✅ | b27875049; UK run 195,358 entries / 7.2MB / ~2.5min |
 | 3 | Serving iznik-spatial-go: /api + dataset (TDD) | ✅ | f31792d42; container 236MB RSS incl. SQLite datasets |
 | 4 | Local deploy: extractor on local PBF, rebuild spatial-knn, smoke | ✅ | Kendal/West Midlands answers match photon incl. extents |
-| 5 | Parity replay via tunnel + divergence report | 🔄 | full 85,573-query replay running |
+| 5 | Parity replay via tunnel + divergence report | ✅ | 5 runs drove 4 fix rounds; definitive: regions 82.4% / towns 86.5% / boxes 85.9% agree; report artifact 1d14d3ca-c733-4c78-a5a3-2555c84d4f39 |
 | 6 | Docs: spatial-servers.md, ops pages, geocoder-cutover runbook, READMEs | ✅ | 7c46ef073; freshness OK; orb untouched (suites unchanged) |
-| 7 | Full go suites via status API; PR | 🔄 | suites running on 12258; humans merge; cutover = Edward |
+| 7 | Full go suites via status API; PR | ✅ | routing 217 / spatial 144; **PR #1460 open**, body current; humans merge; cutover = Edward |
+| 8 | Perf/occupancy review (Edward) | ✅ | index 142->127MB despite 1.8x entries; container 251MB; worst query 101->19ms; extractor peak 1.6GB w/ 17M coords, 4 procs |
 
 ## Constraints
 
