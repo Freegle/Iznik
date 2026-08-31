@@ -342,12 +342,16 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, minutes uint64, all
 			if latlng.Lat != 0 && latlng.Lng != 0 {
 				userLat = float64(latlng.Lat)
 				userLng = float64(latlng.Lng)
-				// Get a bounding box for the distance.
+				// Get a bounding box for the distance, which arrives in METRES.
+				// The division has to be in floating point: rounding down to whole
+				// kilometres narrows every box, and anything under 1km becomes a
+				// zero-size box that matches nothing.
 				p := geo.NewPoint(userLat, userLng)
-				ne := p.PointAtDistanceAndBearing(float64(distance/1000), 45)
+				distKm := float64(distance) / 1000
+				ne := p.PointAtDistanceAndBearing(distKm, 45)
 				nelat = ne.Lat()
 				nelng = ne.Lng()
-				sw := p.PointAtDistanceAndBearing(float64(distance/1000), 225)
+				sw := p.PointAtDistanceAndBearing(distKm, 225)
 				swlat = sw.Lat()
 				swlng = sw.Lng()
 				gotLatLng = true
