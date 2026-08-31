@@ -61,7 +61,7 @@ _next_free_ports() {
 _share_gitignored_data() {
     local main_repo="$1" worktree_dir="$2"
     local rel
-    for rel in iznik-routing-go/data/uk-latest.osm.pbf; do
+    for rel in iznik-routing-go/data/uk-latest.osm.pbf iznik-routing-go/data/places.jsonl.gz; do
         local src="$main_repo/$rel" dst="$worktree_dir/$rel"
         [[ -f "$src" ]] || continue
         [[ -e "$dst" ]] && continue

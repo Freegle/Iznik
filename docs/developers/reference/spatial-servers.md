@@ -1,13 +1,17 @@
 ---
-last_reviewed: 2026-08-27
+last_reviewed: 2026-08-31
 covers:
   - iznik-routing-go/graph.go
   - iznik-routing-go/dijkstra.go
   - iznik-routing-go/cmd/calibrate/**
+  - iznik-routing-go/cmd/placesextract/**
   - iznik-routing-go/reach_overlay.go
   - iznik-routing-go/reach_partition.go
   - iznik-routing-go/reach_query.go
   - iznik-routing-go/reach_server.go
+  - iznik-spatial-go/places.go
+  - iznik-spatial-go/places_search.go
+  - iznik-spatial-go/places_api.go
 ---
 
 # Freegle's spatial servers — a plain-English overview
@@ -150,6 +154,45 @@ The full plain-English walkthrough, with the measurements and the
 multi-million-check verification against both a plain road search and
 production's stored answers, is in
 [`iznik-routing-go/REACH-ENGINE.md`](../../../iznik-routing-go/REACH-ENGINE.md).
+
+## Looking up place names (the geocoder)
+
+When a member types a town into the place box, or the jobs feed says a
+vacancy is in "Kendal", something has to turn that name into a spot on the
+map. That used to be a separate third-party program (Photon, with its own
+search database — two large Java services on the production host). It is now
+part of the finder.
+
+How it works: every time the map data for the travel-time mapper is
+refreshed, a small extraction tool (`cmd/placesextract` in
+`iznik-routing-go`) reads the same map file and writes out every named UK
+place — cities, towns, villages, hamlets, suburbs, counties and regions,
+about 200,000 in all — with its position, its bounding box where it has one,
+and which county and nation it sits in. The finder loads that file into
+memory (a second or so, a couple of hundred MB) and answers name searches
+from it directly: exact names first, then "starts with" for as-you-type
+searching, then a little typo tolerance. Searches can be limited to a box on
+the map, to certain kinds of place, or nudged towards the map's current
+centre, because that is what the website's search boxes ask for.
+
+The answers come out in exactly the format the old geocoder used, so nothing
+that asks the question — the member site's place search, the maps, the jobs
+feed import — needed to change. Instances without the places file (the
+database servers run a copy of the finder too) simply say "not available" if
+asked.
+
+Regenerating the file after a map refresh:
+
+```
+docker exec freegle-spatial go run ./cmd/placesextract \
+    -pbf /data/uk-latest.osm.pbf -out - | gzip > iznik-routing-go/data/places.jsonl.gz
+```
+
+(With `-out -` the tool streams plain JSONL to stdout — the container's data
+folder is mounted read-only, so the compressed file is written host-side; a
+direct `-out something.gz` compresses itself.) The finder notices the changed
+file within a minute and reloads it without a restart, and will not replace a
+working index with a truncated or unreadable file.
 
 ## What it does **not** do
 

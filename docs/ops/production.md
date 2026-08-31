@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-31
+last_reviewed: 2026-08-31
 owner: Freegle dev team
 covers:
   - docker-compose.override.edge.yml
@@ -19,7 +19,7 @@ below are role labels, not connection instructions.
 |---------|------|
 | **Load balancer** ("applb") | HAProxy. TLS termination and the public front door for everything that is not served by Netlify or directly by the Docker host. Chooses backends per hostname/path (table below), terminates the old-domain redirects, and applies per-user API rate limits. |
 | **Database nodes** ("db1", "db2", "db3") | A MariaDB **Galera multi-master cluster** — all three are equal masters; there is no primary/replica. Each node **also** runs, natively under monit: the **v2 Go API**, the **spatial (KNN)** server and the **routing** server. |
-| **Docker host** ("docker", the FreegleDocker host) | One machine running the production Docker Compose stack (profiles `backend,production,mail,edge`): the **batch** scheduler (Laravel jobs), **incoming mail** processing, **Loki** log aggregation, Redis, MJML email rendering, the embedding sidecar (semantic search), the AI support helper, the status monitor — plus the user-facing **edge tier** (below). Natively under monit: the **Photon geocoder** and a host nginx. |
+| **Docker host** ("docker", the FreegleDocker host) | One machine running the production Docker Compose stack (profiles `backend,production,mail,edge`): the **batch** scheduler (Laravel jobs), **incoming mail** processing, **Loki** log aggregation, Redis, MJML email rendering, the embedding sidecar (semantic search), the AI support helper, the status monitor — plus the user-facing **edge tier** (below). Natively under monit: the **Photon geocoder** (being replaced by the places index inside spatial-knn — see the [geocoder cutover runbook](runbooks/geocoder-cutover.md)) and a host nginx. |
 | **Outbound mail** ("bulk2") | Postfix relay that sends the bulk mail (digests, notifications) — of the order of 200k messages/day. |
 | **app1** (being retired) | The old frontend server. Carries **no live HTTP traffic**; it remains only as a warm backup backend behind the load balancer until decommissioned. |
 | **Netlify** (SaaS) | Builds and hosts the two static Nuxt frontends (member site and ModTools) from the `production` branch — see [Deployment and CI](02-deployment-and-ci.md). |
@@ -41,7 +41,9 @@ services under the `edge` profile (scale-in-place rather than separate machines)
 - **wiki** — MediaWiki with its own MySQL.
 
 There is **no separate edge machine**: `edge` names the Compose profile/role, not a
-host. The geocoder (Photon) serves alongside these natively on the same machine.
+host. The geocoder serves alongside these on the same machine (Photon natively,
+being replaced by spatial-knn's places index — see the
+[geocoder cutover runbook](runbooks/geocoder-cutover.md)).
 
 ## What routes where
 
@@ -56,7 +58,7 @@ host. The geocoder (Photon) serves alongside these natively on the same machine.
 | `images.ilovefreegle.org`, `users.ilovefreegle.org` (web) | Load balancer → edge front nginx on the Docker host (legacy image URLs resolve via the v2 API; `users` 302s to the member site). |
 | `spatial.ilovefreegle.org` | Load balancer → routing server on the database nodes (one active, one backup). |
 | `tiles.ilovefreegle.org` | **Direct DNS to the Docker host** → host nginx → tile server container. |
-| `geocode.ilovefreegle.org` | Direct DNS to the Docker host → Photon. |
+| `geocode.ilovefreegle.org` | Direct DNS to the Docker host → host nginx (10-day cache, rate limit) → Photon, cutting over to spatial-knn's places `/api` ([runbook](runbooks/geocoder-cutover.md)). |
 | `wiki.ilovefreegle.org` | Direct DNS to the Docker host → MediaWiki containers. |
 | Old domains (`freegle.org.uk`, `lovefreegle.org`, …) | 302 redirects issued at the load balancer. |
 | `…@users.ilovefreegle.org` (reply mail, MX) | Docker host → Postfix container → spam filtering → batch API. See [Domains, services and runbooks](04-domains-services-and-runbooks.md#mail-and-spam-filtering). |

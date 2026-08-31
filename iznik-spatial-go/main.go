@@ -59,6 +59,11 @@ func main() {
 		ReadBufferSize:        256 * 1024,
 	})
 
+	// Photon-compatible place search (file-backed; absent file = 503s, which
+	// is the normal state on instances without the artifact).
+	startPlaces()
+	registerPlacesRoutes(api)
+
 	api.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})

@@ -18,7 +18,7 @@ covers:
 | **modtools.org** | The moderator app (Nuxt build from the same repo, `modtools/`). |
 | **v2 API (Go)** | The application API. |
 | **uploads / delivery** | Image upload (tusd) and resizing/delivery (weserv) — the edge tier. |
-| **tiles / geocode / wiki** | Map tiles (OSM), the Photon geocoder, and the volunteer wiki. |
+| **tiles / geocode / wiki** | Map tiles (OSM), the geocoder (Photon, cutting over to the places index in spatial-knn — [runbook](runbooks/geocoder-cutover.md)), and the volunteer wiki. |
 
 Which machine serves each of these, and how requests are routed to them, is in
 [Production topology](production.md). The local development equivalents (the
