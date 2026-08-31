@@ -416,17 +416,29 @@ func (ix *placesIndex) score(e *PlaceEntry, qSet, matchedTokens map[string]bool,
 		}
 	}
 
-	matched := 0
-	for _, nt := range e.nameTokens {
-		if qSet[nt] || matchedTokens[nt] || strings.HasPrefix(nt, lastTok) {
-			matched++
+	// Coverage is judged against the best single name variant, not the union:
+	// an alt name ("Kirkby Kendal") must not dilute a full match on the
+	// primary name.
+	cov := 0.0
+	for _, n := range e.nameNorms {
+		toks := strings.Fields(n)
+		if len(toks) == 0 {
+			continue
+		}
+		matched := 0
+		for _, nt := range toks {
+			if qSet[nt] || matchedTokens[nt] || strings.HasPrefix(nt, lastTok) {
+				matched++
+			}
+		}
+		if c := float64(matched) / float64(len(toks)); c > cov {
+			cov = c
 		}
 	}
-	if matched == 0 && !exact {
+	if cov == 0 && !exact {
 		// Context-only matches (query hit just the county name) are noise.
 		return scoredPlace{}
 	}
-	cov := float64(matched) / float64(len(e.nameTokens))
 
 	s := layerBase[e.Layer] * (0.25 + 0.75*cov)
 	// Population separates the city from the hamlet of the same name, but
