@@ -22,10 +22,13 @@ stays exactly as it is; only its upstream changes.
    command from the spatial servers reference, writing `places.jsonl.gz` into
    the routing data folder. Confirm the spatial-knn container logs
    `places: loaded <n> entries` (n ≈ 200,000).
-2. **Expose the port.** The compose ports overlay publishes spatial-knn's API
-   on loopback (`PORT_SPATIAL_KNN`, default 8198) for nginx to reach —
-   `docker compose up -d spatial-knn` after pulling the change. Verify with a
-   local `curl 'http://127.0.0.1:8198/api?q=Kendal'`.
+2. **Expose the port.** On the Docker host the edge compose override
+   (`docker-compose.override.edge.yml`, already in its `COMPOSE_FILE`)
+   publishes spatial-knn's API on loopback (`PORT_SPATIAL_KNN`, default
+   8198) for nginx to reach — `docker compose up -d spatial-knn` after
+   pulling the change. Verify with a local
+   `curl 'http://127.0.0.1:8198/api?q=Kendal'`. (Local dev gets the same
+   port from `docker-compose.ports.yml`.)
 3. **Replay before flipping.** Fire a day of real queries from the nginx
    access log at both Photon and the new port and compare (the harness and
    the measured parity report live with the PR that introduced this). Do not
