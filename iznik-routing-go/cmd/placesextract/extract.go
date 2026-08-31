@@ -363,9 +363,25 @@ func writeJSONL(w io.Writer, entries []Entry, source string) error {
 		return entries[a].ID < entries[b].ID
 	})
 	for i := range entries {
+		// Round every coordinate to 4dp (~11m) before it hits the artifact.
+		// OSM's own grid is 7dp, but nothing consuming a PLACE needs better
+		// than a house-length: the centroid centres a map and the extent
+		// frames a town. Full float64 repr ("51.507445600000004") is pure
+		// noise costing ~12 bytes a coordinate in the artifact and every
+		// /api response body. 4dp per Edward 2026-08-31.
+		entries[i].Lat = round4(entries[i].Lat)
+		entries[i].Lng = round4(entries[i].Lng)
+		for j := range entries[i].Extent {
+			entries[i].Extent[j] = round4(entries[i].Extent[j])
+		}
 		if err := enc.Encode(&entries[i]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// round4 clamps a coordinate to a 4-decimal-place (~11m) grid.
+func round4(v float64) float64 {
+	return math.Round(v*1e4) / 1e4
 }
