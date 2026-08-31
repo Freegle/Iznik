@@ -14,7 +14,7 @@ import (
 func placesTestApp(ix *placesIndex) *fiber.App {
 	placesIdx.Store(ix)
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
-	registerPlacesRoutes(app)
+	registerPlacesRoutes(app, nil)
 	return app
 }
 
@@ -193,3 +193,40 @@ func TestApiLatLonBias(t *testing.T) {
 		t.Errorf("bias should prefer Portsmouth Milton, got county %v", props["county"])
 	}
 }
+
+// Full UK postcodes are answered from the locations table; everything the
+// canonicaliser accepts must normalise to the stored "OUT IN" form, and
+// anything else must fall through to the ordinary index search.
+func TestNormalizeUKPostcode(t *testing.T) {
+	for q, want := range map[string]string{
+		"B160LR":   "B16 0LR",
+		"b16 0lr":  "B16 0LR",
+		"S5  9fe":  "S5 9FE",
+		"SW1A 2DU": "SW1A 2DU",
+		"g76 0nh":  "G76 0NH",
+	} {
+		got, ok := normalizeUKPostcode(q)
+		if !ok || got != want {
+			t.Errorf("normalizeUKPostcode(%q) = %q, %v; want %q, true", q, got, ok, want)
+		}
+	}
+	for _, q := range []string{"Kendal", "B16", "SW1A", "123456", "B16 0L", "Milton Keynes"} {
+		if got, ok := normalizeUKPostcode(q); ok {
+			t.Errorf("normalizeUKPostcode(%q) = %q, true; want a fall-through", q, got)
+		}
+	}
+}
+
+// With no DB wired (nil), a postcode-shaped query must not error — it falls
+// through to the index and simply finds nothing.
+func TestPostcodeQueryFallsThroughWithoutDB(t *testing.T) {
+	app := placesTestApp(testPlaces())
+	resp, out := getJSON(t, app, "/api?q=B16%200LR")
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if feats, ok := out["features"].([]any); !ok || len(feats) != 0 {
+		t.Errorf("expected empty features without a DB, got %v", out["features"])
+	}
+}
+
