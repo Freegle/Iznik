@@ -1494,106 +1494,189 @@ class ExpandService
             ->limit($limit)
             ->get();
 
-        foreach ($rows as $row) {
-            if ($this->pastRunDeadline()) {
-                // Time box expired: stop cleanly at the row boundary so the lock
-                // releases and the next tick resumes. The remaining rows stay due.
-                $stats['timeboxed'] += 1;
-                Log::info('ripple:expand advanceDue time-boxed; next tick resumes', [
-                    'processed' => $stats['expanded'] + $stats['completed'] + $stats['skipped'],
-                ]);
+        // The expensive step per row is a single /v1/catchment round trip
+        // (~3-4s at late ticks), and issuing them one at a time from this
+        // single runner made the drain rate BE that round-trip time while the
+        // routing server's compute slots sat idle (observed after the rock36
+        // resize: 12 slots, ~8 advances/min). Each chunk therefore runs in
+        // three passes: plan every row serially (all the stop checks with
+        // their small writes, unchanged), fetch the planned catchments
+        // CONCURRENTLY (read-only; compute_concurrency at a time, deliberately
+        // below the routing gate's slot count so schedule computes and digest
+        // calls never queue behind a drain), then apply serially. The
+        // single-writer Galera discipline is untouched: nothing writes during
+        // the fan-out, and the apply pass writes in the same order and shape
+        // as the old single loop.
+        $chunkSize = max(1, (int) config('freegle.ripple.compute_concurrency', 8));
+        $deadlineHit = false;
+        foreach ($rows->chunk($chunkSize) as $chunkRows) {
+            if ($deadlineHit) {
                 break;
             }
-            try {
-                $schedule = DB::table('rippling_reach')->where('msgid', $row->msgid)->value('schedule');
-                $ticks = json_decode($schedule, true);
-                if (!is_array($ticks) || empty($ticks)) {
-                    $stats['skipped']++;
-                    continue;
-                }
 
-                if ($row->arrival === null) {
-                    $stats['skipped']++;
-                    continue;
+            // ── Pass A: plan serially. The stop/reschedule branches (with their
+            // small writes) complete here; a row that survives into $plans has
+            // had NO writes yet, so a deadline can drop planned rows safely -
+            // they simply stay due for the next run.
+            $plans = [];
+            foreach ($chunkRows as $row) {
+                if ($this->pastRunDeadline()) {
+                    // Time box expired: stop cleanly at the row boundary so the lock
+                    // releases and the next tick resumes. The remaining rows stay due,
+                    // including any planned-but-unapplied rows in this chunk.
+                    $stats['timeboxed'] += 1;
+                    Log::info('ripple:expand advanceDue time-boxed; next tick resumes', [
+                        'processed' => $stats['expanded'] + $stats['completed'] + $stats['skipped'],
+                    ]);
+                    $deadlineHit = true;
+                    break;
                 }
-                $arrival = Carbon::parse($row->arrival);
-
-                // Reply-saturation stop (extent-governor T1.1): once a post has enough distinct
-                // repliers it already has plenty of interest, so stop expanding - mark it done and
-                // do not fan out further. Type-agnostic; 0 disables.
-                $satStop = (int) config('freegle.ripple.reply_saturation_stop', 5);
-                if ($satStop > 0 && $this->distinctReplierCount((int) $row->msgid) >= $satStop) {
-                    if (!$dryRun) {
-                        DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
-                            'status' => 'done',
-                            'next_expansion_at' => null,
-                            'updated_at' => now(),
-                        ]);
+                try {
+                    $schedule = DB::table('rippling_reach')->where('msgid', $row->msgid)->value('schedule');
+                    $ticks = json_decode($schedule, true);
+                    if (!is_array($ticks) || empty($ticks)) {
+                        $stats['skipped']++;
+                        continue;
                     }
-                    $stats['completed']++;
-                    $this->logEvent($row->msgid, 'reply_saturated', (int) $row->tick, []);
-                    continue;
-                }
 
-                // Outcome stop: a post that has been taken/received/withdrawn has left the
-                // browsable set, so stop expanding and do not ripple it any further. Checked
-                // here against messages_outcomes (not just via removeStale) because removeStale
-                // runs on UNSCOPED runs only and keys off messages_spatial, which the separate
-                // messages:update-spatial-index cron lags - so without this an already-taken post
-                // keeps rippling into new groups for a tick or two after the outcome is recorded.
-                if ($this->hasTerminalOutcome((int) $row->msgid)) {
-                    if (!$dryRun) {
-                        DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
-                            'status' => 'done',
-                            'next_expansion_at' => null,
-                            'updated_at' => now(),
-                        ]);
+                    if ($row->arrival === null) {
+                        $stats['skipped']++;
+                        continue;
                     }
-                    $stats['completed']++;
-                    $this->logEvent($row->msgid, 'outcome_stop', (int) $row->tick, []);
-                    continue;
-                }
+                    $arrival = Carbon::parse($row->arrival);
 
-                $elapsedHours = $arrival->diffInMinutes(now()) / 60.0;
-                // The post's own hazard-schedule length (stored at init), used as the ceiling
-                // for both the target tick and the 'done' transition.
-                $total = (int) $row->total_ticks;
-                $target = min($this->reach->tickForElapsedHours($elapsedHours), $total);
-
-                // A floor set by something we have LEARNED, as opposed to the clock.
-                // A scout who replied was outside the reach at the time, so their
-                // reply is evidence the item is wanted that far out - and the people
-                // around them should get the same chance rather than waiting for the
-                // schedule to arrive. Never lowers the target, and never exceeds the
-                // post's own schedule length.
-                if ($row->min_tick !== null) {
-                    $target = min(max($target, (int) $row->min_tick), $total);
-                }
-
-                if ($target <= (int) $row->tick) {
-                    // Not actually due for a new tick yet — reschedule and move on.
-                    if (!$dryRun) {
-                        $next = $this->reach->nextExpansionAfter($arrival, (int) $row->tick, $total);
-                        DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
-                            'next_expansion_at' => $next,
-                            'status' => $next === null ? 'done' : 'expanding',
-                            'updated_at' => now(),
-                        ]);
+                    // Reply-saturation stop (extent-governor T1.1): once a post has enough distinct
+                    // repliers it already has plenty of interest, so stop expanding - mark it done and
+                    // do not fan out further. Type-agnostic; 0 disables.
+                    $satStop = (int) config('freegle.ripple.reply_saturation_stop', 5);
+                    if ($satStop > 0 && $this->distinctReplierCount((int) $row->msgid) >= $satStop) {
+                        if (!$dryRun) {
+                            DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                                'status' => 'done',
+                                'next_expansion_at' => null,
+                                'updated_at' => now(),
+                            ]);
+                        }
+                        $stats['completed']++;
+                        $this->logEvent($row->msgid, 'reply_saturated', (int) $row->tick, []);
+                        continue;
                     }
-                    $stats['skipped']++;
-                    continue;
-                }
 
-                $entry = $this->entryForTick($ticks, $target);
-                if ($entry === null) {
-                    $stats['skipped']++;
-                    continue;
-                }
-                $next = $this->reach->nextExpansionAfter($arrival, $target, $total);
-                $status = $next === null ? 'done' : 'expanding';
+                    // Outcome stop: a post that has been taken/received/withdrawn has left the
+                    // browsable set, so stop expanding and do not ripple it any further. Checked
+                    // here against messages_outcomes (not just via removeStale) because removeStale
+                    // runs on UNSCOPED runs only and keys off messages_spatial, which the separate
+                    // messages:update-spatial-index cron lags - so without this an already-taken post
+                    // keeps rippling into new groups for a tick or two after the outcome is recorded.
+                    if ($this->hasTerminalOutcome((int) $row->msgid)) {
+                        if (!$dryRun) {
+                            DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                                'status' => 'done',
+                                'next_expansion_at' => null,
+                                'updated_at' => now(),
+                            ]);
+                        }
+                        $stats['completed']++;
+                        $this->logEvent($row->msgid, 'outcome_stop', (int) $row->tick, []);
+                        continue;
+                    }
 
+                    $elapsedHours = $arrival->diffInMinutes(now()) / 60.0;
+                    // The post's own hazard-schedule length (stored at init), used as the ceiling
+                    // for both the target tick and the 'done' transition.
+                    $total = (int) $row->total_ticks;
+                    $target = min($this->reach->tickForElapsedHours($elapsedHours), $total);
+
+                    // A floor set by something we have LEARNED, as opposed to the clock.
+                    // A scout who replied was outside the reach at the time, so their
+                    // reply is evidence the item is wanted that far out - and the people
+                    // around them should get the same chance rather than waiting for the
+                    // schedule to arrive. Never lowers the target, and never exceeds the
+                    // post's own schedule length.
+                    if ($row->min_tick !== null) {
+                        $target = min(max($target, (int) $row->min_tick), $total);
+                    }
+
+                    if ($target <= (int) $row->tick) {
+                        // Not actually due for a new tick yet — reschedule and move on.
+                        if (!$dryRun) {
+                            $next = $this->reach->nextExpansionAfter($arrival, (int) $row->tick, $total);
+                            DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                                'next_expansion_at' => $next,
+                                'status' => $next === null ? 'done' : 'expanding',
+                                'updated_at' => now(),
+                            ]);
+                        }
+                        $stats['skipped']++;
+                        continue;
+                    }
+
+                    $entry = $this->entryForTick($ticks, $target);
+                    if ($entry === null) {
+                        $stats['skipped']++;
+                        continue;
+                    }
+                    $next = $this->reach->nextExpansionAfter($arrival, $target, $total);
+
+                    $plans[] = [
+                        'row' => $row,
+                        'entry' => $entry,
+                        'target' => $target,
+                        'next' => $next,
+                        'status' => $next === null ? 'done' : 'expanding',
+                    ];
+                } catch (\Throwable $e) {
+                    $stats['errors']++;
+                    Log::warning("ripple: advance failed for msg {$row->msgid}: {$e->getMessage()}");
+                }
+            }
+
+            if ($deadlineHit) {
+                break;
+            }
+
+            // ── Fan-out: fetch this chunk's catchments concurrently. Only the
+            // HTTP case prefetches; entries carrying a literal wkt (and the
+            // degenerate drive_min<=0 case) fall through to resolveTickGeometry
+            // in the apply pass. Dry runs never touch geometry at all. A null
+            // result is stored so the apply pass sees the same "routing
+            // unreachable - retry next sweep" signal the serial call gave.
+            if (!$dryRun) {
+                $jobs = [];
+                $jobPlanIdx = [];
+                foreach ($plans as $i => $plan) {
+                    $planEntry = $plan['entry'];
+                    if (empty($planEntry['wkt']) && (float) ($planEntry['drive_min'] ?? 0) > 0) {
+                        $jobs[] = [
+                            'lat' => (float) $plan['row']->lat,
+                            'lng' => (float) $plan['row']->lng,
+                            'minutes' => (float) $planEntry['drive_min'],
+                            'coarse' => $this->coarseTickGeometryOk($planEntry),
+                        ];
+                        $jobPlanIdx[] = $i;
+                    }
+                }
+                if (!empty($jobs)) {
+                    $geoms = $this->reach->catchmentGeometriesBatch($jobs);
+                    foreach ($jobPlanIdx as $j => $i) {
+                        $plans[$i]['geom'] = $geoms[$j] ?? null;
+                    }
+                }
+            }
+
+            // ── Pass B: apply serially - the one DB writer, same statements
+            // and per-row ordering as the old single loop.
+            foreach ($plans as $plan) {
+                $row = $plan['row'];
+                $entry = $plan['entry'];
+                $target = $plan['target'];
+                $next = $plan['next'];
+                $status = $plan['status'];
+                try {
                 if (!$dryRun) {
-                    $tickGeom = $this->resolveTickGeometry($entry, (float) $row->lat, (float) $row->lng);
+                    $tickGeom = array_key_exists('geom', $plan)
+                        ? $plan['geom']
+                        : $this->resolveTickGeometry($entry, (float) $row->lat, (float) $row->lng);
                     if ($tickGeom === null) {
                         // Routing unreachable - keep the previous polygon and retry this
                         // tick on the next run (next_expansion_at is already due).
@@ -1692,9 +1775,10 @@ class ExpandService
                     $stats['completed']++;
                 }
                 $this->logEvent($row->msgid, 'expand', $target, $entry);
-            } catch (\Throwable $e) {
-                $stats['errors']++;
-                Log::warning("ripple: advance failed for msg {$row->msgid}: {$e->getMessage()}");
+                } catch (\Throwable $e) {
+                    $stats['errors']++;
+                    Log::warning("ripple: advance failed for msg {$row->msgid}: {$e->getMessage()}");
+                }
             }
         }
     }

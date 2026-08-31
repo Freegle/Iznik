@@ -1028,6 +1028,68 @@ class ReachService
     }
 
     /**
+     * Fetch several catchment geometries CONCURRENTLY (one HTTP request per job,
+     * fanned out via Http::pool / curl_multi, same shape as computeSchedulesBatch),
+     * for callers holding a batch of independent rows that would otherwise pay one
+     * ~3-4s round trip each in series. Read-only: callers apply results to the DB
+     * serially afterwards. Returns one entry per input job, index-aligned, shaped
+     * exactly like catchmentGeometry()'s return, or null (unreachable / off-graph /
+     * failed - callers treat null as "retry next sweep", never as an empty reach).
+     *
+     * @param array<int,array{lat:float,lng:float,minutes:float,coarse?:bool}> $jobs
+     * @return array<int,?array{wkt:string,outer:?string,inner:?string}>
+     */
+    public function catchmentGeometriesBatch(array $jobs): array
+    {
+        if (empty($jobs)) {
+            return [];
+        }
+
+        $url = "{$this->url}/v1/catchment";
+        try {
+            $responses = Http::pool(fn ($pool) => array_map(
+                fn ($j) => $pool->timeout($this->requestTimeout)
+                    ->get($url, array_filter([
+                        'lat' => (float) $j['lat'],
+                        'lng' => (float) $j['lng'],
+                        'minutes' => (float) $j['minutes'],
+                        'mode' => $this->mode,
+                        'coarse' => !empty($j['coarse']) ? '1' : null,
+                    ], fn ($v) => $v !== null)),
+                array_values($jobs)
+            ));
+        } catch (\Throwable $e) {
+            Log::warning("ripple: catchment pool failed: {$e->getMessage()}");
+
+            return array_fill(0, count($jobs), null);
+        }
+
+        $out = [];
+        foreach (array_values($jobs) as $i => $j) {
+            $resp = $responses[$i] ?? null;
+            if ($resp instanceof \Throwable) {
+                Log::warning("ripple: catchment fetch failed: {$resp->getMessage()}", ['lat' => $j['lat'], 'lng' => $j['lng']]);
+                $out[$i] = null;
+                continue;
+            }
+            if ($resp === null || !$resp->successful()) {
+                Log::warning('ripple: catchment HTTP ' . ($resp ? $resp->status() : 'no-response'), ['lat' => $j['lat'], 'lng' => $j['lng']]);
+                $out[$i] = null;
+                continue;
+            }
+            $body = $resp->json() ?? [];
+            $wkt = $this->polygonToWkt($body['catchment'] ?? null);
+            $out[$i] = $wkt === null ? null : [
+                'wkt' => $wkt,
+                'outer' => $this->polygonToWkt($body['catchment_outer'] ?? null),
+                'inner' => $this->polygonToWkt($body['catchment_inner'] ?? null),
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
      * The box enclosing every ring in a parsed overflow set, as [minLng, minLat, maxLng, maxLat].
      *
      * Taken from the WKT actually stored rather than from the source geometry, so the box can
