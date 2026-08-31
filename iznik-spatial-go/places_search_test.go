@@ -46,8 +46,41 @@ func testPlaces() *placesIndex {
 			Lat: 51.44, Lng: -3.42, Extent: []float64{-3.65, 51.52, -3.16, 51.38}, State: "Wales"},
 		{ID: 18, OsmType: "R", Name: "Stoke-on-Trent", Key: "boundary", Value: "administrative", Layer: "county",
 			Lat: 53.0, Lng: -2.18, Extent: []float64{-2.24, 53.09, -2.08, 52.95}, State: "England"},
+		{ID: 19, OsmType: "R", Name: "Devon", Key: "boundary", Value: "administrative", Layer: "county",
+			Lat: 50.7, Lng: -3.8, Extent: []float64{-4.7, 51.2, -2.9, 50.2}, State: "England"},
+		{ID: 20, OsmType: "N", Name: "Cambridge", Key: "place", Value: "city", Layer: "city",
+			Lat: 52.2053, Lng: 0.1218, County: "Cambridgeshire", State: "England", Pop: 145700},
+		{ID: 21, OsmType: "R", Name: "Cambridgeshire", Key: "boundary", Value: "administrative", Layer: "county",
+			Lat: 52.3, Lng: 0.1, Extent: []float64{-0.5, 52.75, 0.5, 52.0}, State: "England"},
 	}
 	return buildPlacesIndex(entries)
+}
+
+// Photon shows one Kent, not the administrative, ceremonial and place-node
+// variants separately: near-identical same-name entries collapse to the best.
+func TestSameNameOverlapDedupe(t *testing.T) {
+	ix := testPlaces()
+	res := ix.search("Devon", searchOpts{limit: 10})
+	devons := 0
+	for _, r := range res {
+		if r.e.Name == "Devon" {
+			devons++
+		}
+	}
+	if devons != 1 {
+		t.Fatalf("identical-extent Devons should collapse to one, got %d: %v", devons, firstNames(res, 5))
+	}
+}
+
+// For as-you-type prefixes photon's importance puts the city above its county
+// (Cambridge over Cambridgeshire). The county footprint boost is an
+// exact-match disambiguator only.
+func TestPrefixPrefersCityOverCounty(t *testing.T) {
+	ix := testPlaces()
+	res := ix.search("Camb", searchOpts{limit: 5})
+	if len(res) == 0 || res[0].e.Name != "Cambridge" {
+		t.Fatalf("prefix should rank Cambridge first, got %v", firstNames(res, 5))
+	}
 }
 
 // Real WhatJobs feed spellings that photon's looser scoring absorbed: filler
@@ -186,7 +219,7 @@ func TestRegionBeatsCountySameName(t *testing.T) {
 func TestExactBeatsSuperstring(t *testing.T) {
 	ix := testPlaces()
 	res := ix.search("Devon", searchOpts{limit: 5})
-	if len(res) == 0 || res[0].e.ID != 5 {
+	if len(res) == 0 || res[0].e.Name != "Devon" {
 		t.Fatalf("exact 'Devon' should beat 'East Devon', got %v", firstNames(res, 5))
 	}
 }

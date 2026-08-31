@@ -216,10 +216,60 @@ func (ix *placesIndex) search(qRaw string, opts searchOpts) []scoredPlace {
 		}
 		return ra.e.ID < rb.e.ID
 	})
+	results = dedupeSameEntity(results)
 	if len(results) > opts.limit {
 		results = results[:opts.limit]
 	}
 	return results
+}
+
+// dedupeSameEntity collapses results that are the same real-world entity seen
+// through different OSM objects — an administrative boundary, a ceremonial
+// boundary and a place node all called "Kent" — keeping the best-ranked.
+// Photon does the same (it overfetches specifically to have room to dedupe).
+// Same-name entries far apart (the two Miltons) are different places and stay.
+func dedupeSameEntity(results []scoredPlace) []scoredPlace {
+	out := results[:0]
+	for _, r := range results {
+		dup := false
+		for _, kept := range out {
+			if len(kept.e.nameNorms) == 0 || len(r.e.nameNorms) == 0 || kept.e.nameNorms[0] != r.e.nameNorms[0] {
+				continue
+			}
+			if sameFootprint(kept.e, r.e) {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func sameFootprint(a, b *PlaceEntry) bool {
+	if len(a.Extent) == 4 && len(b.Extent) == 4 {
+		return extentIoU(a.Extent, b.Extent) > 0.5
+	}
+	return placesDistKm(a.Lat, a.Lng, b.Lat, b.Lng) < 10
+}
+
+// extentIoU computes intersection-over-union of two [W,N,E,S] extents.
+func extentIoU(a, b []float64) float64 {
+	iw := math.Min(a[2], b[2]) - math.Max(a[0], b[0])
+	ih := math.Min(a[1], b[1]) - math.Max(a[3], b[3])
+	if iw <= 0 || ih <= 0 {
+		return 0
+	}
+	inter := iw * ih
+	areaA := (a[2] - a[0]) * (a[1] - a[3])
+	areaB := (b[2] - b[0]) * (b[1] - b[3])
+	union := areaA + areaB - inter
+	if union <= 0 {
+		return 0
+	}
+	return inter / union
 }
 
 // placeStopwords are filler words a feed query may carry that the OSM name
@@ -447,7 +497,10 @@ func (ix *placesIndex) score(e *PlaceEntry, qSet, matchedTokens map[string]bool,
 	if e.Key == "place" && e.Pop > 0 {
 		s *= 1 + math.Log10(float64(e.Pop)+1)/8
 	}
-	if e.areaKm2 > 0 {
+	// Footprint disambiguates entities sharing the exact queried name (the
+	// "West Midlands" region over the metropolitan county). For as-you-type
+	// prefixes it must not push counties above their cities, so exact only.
+	if exact && e.areaKm2 > 0 {
 		s *= 1 + math.Log10(1+e.areaKm2)/5
 	}
 	if fuzzy {
