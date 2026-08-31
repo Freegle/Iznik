@@ -257,8 +257,17 @@ class SendDailyPostsPushCommand extends Command
             return 'no_posts';
         }
 
-        // Deduplicate cross-posted items.
+        // Deduplicate cross-posted items...
         $deduped = $digestService->deduplicatePosts($availablePosts);
+
+        // ...and drop the ones whose item was pushed in an earlier run, so a repost or a
+        // hand-made copy doesn't buzz the phone about the same thing twice. Same method as the
+        // email digest, so the inbox and the phone cannot disagree about what is new.
+        $deduped = $digestService->dropCardsAlreadyCovered(
+            $deduped,
+            $tracker->lastmsgdate,
+            $digestService->digestGroupIdsForUser($user, UnifiedDigestService::MODE_DAILY)
+        );
 
         if ($deduped->isEmpty()) {
             if (! $dryRun) {

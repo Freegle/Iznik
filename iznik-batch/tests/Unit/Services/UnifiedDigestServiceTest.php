@@ -1803,6 +1803,341 @@ class UnifiedDigestServiceTest extends TestCase
         );
     }
 
+    /**
+     * ONE ITEM, TWO MESSAGES. A hand cross-post, a TrashNothing copy or a repost puts the
+     * same thing in the database twice, under two msgids. The daily digest already collapses
+     * those into one card (deduplicatePosts); the immediate path must send the FIRST mail and
+     * then stay quiet, or the member gets the same item twice within minutes.
+     */
+    public function test_immediate_mails_a_member_once_for_one_item_posted_as_two_messages(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        // Poster on daily so only the recipient's mails are counted.
+        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($recipient, $group);
+        $this->seedImmediateCursor($group);
+
+        foreach (['a', 'b'] as $copy) {
+            $msg = $this->createTestMessage($poster, $group, [
+                'subject' => 'OFFER: Twice Posted Sofa (TestLocation)',
+                'textbody' => 'Same sofa, posted twice.',
+            ]);
+            $this->makeImmediateReady($msg);
+        }
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(
+            1,
+            $stats['emails_sent'],
+            'one item posted as two messages must produce one immediate mail, not two'
+        );
+    }
+
+    /**
+     * The duplicate usually arrives LATER - after the first mail went out and the cursor moved
+     * past it. In-batch dedup cannot see that, so the check has to read the sent ledger.
+     */
+    public function test_immediate_does_not_remail_a_duplicate_that_arrives_after_the_first_mail(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($recipient, $group);
+        $this->seedImmediateCursor($group);
+
+        $first = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Later Duplicate Lamp (TestLocation)',
+            'textbody' => 'A small lamp.',
+        ]);
+        $this->makeImmediateReady($first);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+        $this->assertEquals(1, $stats['emails_sent'], 'first copy mails normally');
+
+        $second = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Later Duplicate Lamp (TestLocation)',
+            'textbody' => 'A small lamp.',
+        ]);
+        $this->makeImmediateReady($second);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+        $this->assertEquals(
+            0,
+            $stats['emails_sent'],
+            'a duplicate arriving after the first mail must not be mailed again'
+        );
+    }
+
+    /**
+     * Cross-posted BY HAND to two groups as two separate messages, member in both. Each group
+     * is a separate pass, so this only works if the check outlives the batch.
+     */
+    public function test_immediate_mails_a_member_once_for_one_item_posted_to_two_groups_separately(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $this->createMembership($poster, $groupA, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($poster, $groupB, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($recipient, $groupA);
+        $this->createMembership($recipient, $groupB);
+        $this->seedImmediateCursor($groupA);
+        $this->seedImmediateCursor($groupB);
+
+        foreach ([$groupA, $groupB] as $group) {
+            $msg = $this->createTestMessage($poster, $group, [
+                'subject' => 'OFFER: Hand Crossposted Table (TestLocation)',
+                'textbody' => 'One table, two posts.',
+            ]);
+            $this->makeImmediateReady($msg);
+        }
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(
+            1,
+            $stats['emails_sent'],
+            'the same item posted separately to two of the member groups must mail them once'
+        );
+    }
+
+    /**
+     * The guard must not swallow genuinely different things. Same poster, same subject, same
+     * place, DIFFERENT body is two items - exactly the case bodiesMatch() keeps apart in the
+     * daily digest, so immediate must keep them apart too.
+     */
+    public function test_immediate_still_mails_two_different_items_that_share_a_subject(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($recipient, $group);
+        $this->seedImmediateCursor($group);
+
+        foreach (['A blue one, 3-seater.', 'A red armchair, quite worn.'] as $body) {
+            $msg = $this->createTestMessage($poster, $group, [
+                'subject' => 'OFFER: Chair (TestLocation)',
+                'textbody' => $body,
+            ]);
+            $this->makeImmediateReady($msg);
+        }
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(
+            2,
+            $stats['emails_sent'],
+            'two different items sharing a subject are two mails, as in the daily digest'
+        );
+    }
+
+    /**
+     * Location is part of the daily digest's dedup key, so the same wording at a different
+     * place is a different item there. Immediate follows the same rule - no more, no less.
+     */
+    public function test_immediate_still_mails_the_same_wording_from_a_different_location(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($recipient, $group);
+        $this->seedImmediateCursor($group);
+
+        $locA = DB::table('locations')->insertGetId([
+            'name' => 'DedupTestLocA', 'type' => 'Postcode', 'lat' => 51.5, 'lng' => -0.1,
+            'geometry' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
+        ]);
+        $locB = DB::table('locations')->insertGetId([
+            'name' => 'DedupTestLocB', 'type' => 'Postcode', 'lat' => 51.6, 'lng' => -0.2,
+            'geometry' => DB::raw("ST_GeomFromText('POINT(-0.2 51.6)', 3857)"),
+        ]);
+
+        foreach ([$locA, $locB] as $locid) {
+            $msg = $this->createTestMessage($poster, $group, [
+                'subject' => 'OFFER: Moving Boxes (TestLocation)',
+                'textbody' => 'Ten flat boxes.',
+                'locationid' => $locid,
+            ]);
+            $this->makeImmediateReady($msg);
+        }
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(
+            2,
+            $stats['emails_sent'],
+            'same wording at two different locations is two items, matching the daily key'
+        );
+    }
+
+    /**
+     * The reach mailer is the other immediate path (rippling posts go through it, not the
+     * cursor). A member already mailed about one copy must not be mailed about its twin when
+     * the twin's own reach grows over them.
+     */
+    public function test_reach_mailer_does_not_mail_a_duplicate_item_to_an_already_mailed_member(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+
+        $ids = [];
+        foreach (['c', 'd'] as $copy) {
+            $msg = $this->createTestMessage($poster, $group, [
+                'subject' => 'OFFER: Rippled Twice Bike (TestLocation)',
+                'textbody' => 'A bike, one owner.',
+            ]);
+            DB::table('messages_groups')->where('msgid', $msg->id)
+                ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+            DB::table('messages_attachments')->insert([
+                'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat($copy, 32),
+                'primary' => 1, 'archived' => 0,
+            ]);
+            $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+            $ids[] = (int) $msg->id;
+        }
+
+        $this->assertSame(1, $this->service->mailNewlyReachedForPost($ids[0]), 'first copy mails the member');
+        $this->assertSame(
+            0,
+            $this->service->mailNewlyReachedForPost($ids[1]),
+            'the duplicate must not mail a member who already had the first'
+        );
+    }
+
+    /**
+     * The grouping rule itself, in one place: copies of an item group, different items do not,
+     * and another member's identical post is never mine.
+     */
+    public function test_item_siblings_group_copies_and_keep_other_things_apart(): void
+    {
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $other = $this->createTestUser();
+
+        $copyOne = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sibling Kettle (TestLocation)', 'textbody' => 'A kettle.',
+        ]);
+        $copyTwo = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sibling Kettle (TestLocation)', 'textbody' => 'A kettle.',
+        ]);
+        $different = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sibling Kettle (TestLocation)', 'textbody' => 'Actually a toaster.',
+        ]);
+        $someoneElse = $this->createTestMessage($other, $group, [
+            'subject' => 'OFFER: Sibling Kettle (TestLocation)', 'textbody' => 'A kettle.',
+        ]);
+
+        $siblings = $this->service->itemSiblingMsgids([$copyOne->id]);
+
+        $this->assertContains((int) $copyTwo->id, $siblings[$copyOne->id], 'the identical copy is the same item');
+        $this->assertNotContains((int) $different->id, $siblings[$copyOne->id], 'a different body is a different item');
+        $this->assertNotContains((int) $someoneElse->id, $siblings[$copyOne->id], "another member's post is never mine");
+
+        $this->assertSame(
+            (int) $copyOne->id,
+            $this->service->itemIdsForMsgids([$copyTwo->id])[$copyTwo->id],
+            'both copies resolve to the same item id, whichever one is asked about'
+        );
+    }
+
+    /**
+     * The daily digest collapses copies that land in ONE digest. A copy that lands in the NEXT
+     * one is the same item to the member, and is how one thing reached people on four days
+     * running (Discourse 9808).
+     */
+    public function test_daily_digest_does_not_resend_an_item_sent_in_an_earlier_digest(): void
+    {
+        $poster = $this->createTestUser();
+        $member = $this->createTestUser();
+        $member->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $member->lastaccess = now();
+        $member->save();
+        $member->refresh();
+
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Repeated Shelf (TestLocation)',
+            'textbody' => 'A pine shelf.',
+            'arrival' => now()->subHours(2),
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $member->id);
+        $this->assertEquals(1, $stats['emails_sent'], 'the first digest carries the item');
+
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Repeated Shelf (TestLocation)',
+            'textbody' => 'A pine shelf.',
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $member->id);
+        $this->assertEquals(
+            0,
+            $stats['emails_sent'],
+            'a copy of something already sent is not a second digest'
+        );
+    }
+
+    /**
+     * ...but a member on their FIRST digest has been sent nothing, so nothing may be withheld
+     * from them on the grounds that an older copy exists.
+     */
+    public function test_daily_digest_first_run_withholds_nothing_on_a_null_cursor(): void
+    {
+        $poster = $this->createTestUser();
+        $member = $this->createTestUser();
+        $member->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $member->lastaccess = now();
+        $member->save();
+        $member->refresh();
+
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+
+        // Two copies, both inside the first-run 24h window. They collapse to one card, and the
+        // older one must not be read as "already sent".
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: First Run Bike (TestLocation)',
+            'textbody' => 'A bike.',
+            'arrival' => now()->subHours(3),
+        ]);
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: First Run Bike (TestLocation)',
+            'textbody' => 'A bike.',
+            'arrival' => now()->subHour(),
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $member->id);
+
+        $this->assertEquals(1, $stats['emails_sent'], 'a first digest still goes out');
+    }
+
     public function test_immediate_sends_one_email_per_new_post(): void
     {
         config(['freegle.digest.immediate_allowlist' => '*']);
