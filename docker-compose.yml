@@ -845,8 +845,13 @@ services:
       - SPATIAL_INDEX_DIR=/data
       - SPATIAL_PORT=8194
       - SPATIAL_ADMIN_PORT=8195
+      # Photon-compatible /api place search. The artifact is built by
+      # iznik-routing-go/cmd/placesextract; where the file is absent the
+      # dataset skips loading and /api answers 503.
+      - PLACES_FILE=/places/places.jsonl.gz
     volumes:
       - spatial_data:/data
+      - ${SPATIAL_DATA_DIR:-./iznik-routing-go/data}:/places:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8194/health || exit 1"]
       interval: 30s
