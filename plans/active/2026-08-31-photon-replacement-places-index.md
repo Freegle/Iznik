@@ -55,13 +55,13 @@ Photon layer mapping OBSERVED (probe 2026-08-31, differs from brief's guess):
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 1 | Recon: contracts, corpus, photon probes | ✅ | above |
-| 2 | Extraction CLI iznik-routing-go cmd/placesextract (TDD vs testdata/bristol.osm.pbf) | ⬜ | |
-| 3 | Serving iznik-spatial-go: /api + dataset (TDD) | ⬜ | |
-| 4 | Local deploy: run extractor on local PBF, rebuild spatial-knn, smoke | ⬜ | |
-| 5 | Parity replay via tunnel + divergence report | ⬜ | corpus at scratchpad/photon/corpus-raw.txt |
-| 6 | Docs spatial-servers.md + covers entries; orb if suites change | ⬜ | |
-| 7 | Full go suites via status API; PR | ⬜ | humans merge; cutover = Edward |
+| 1 | Recon: contracts, corpus, photon probes + photon 0.5.0 SOURCE review | ✅ | AddressType ranks, strict->lenient retry, zoom-decay bias all verified in source |
+| 2 | Extraction CLI iznik-routing-go cmd/placesextract (TDD vs testdata/bristol.osm.pbf) | ✅ | b27875049; UK run 195,358 entries / 7.2MB / ~2.5min |
+| 3 | Serving iznik-spatial-go: /api + dataset (TDD) | ✅ | f31792d42; container 236MB RSS incl. SQLite datasets |
+| 4 | Local deploy: extractor on local PBF, rebuild spatial-knn, smoke | ✅ | Kendal/West Midlands answers match photon incl. extents |
+| 5 | Parity replay via tunnel + divergence report | 🔄 | full 85,573-query replay running |
+| 6 | Docs: spatial-servers.md, ops pages, geocoder-cutover runbook, READMEs | ✅ | 7c46ef073; freshness OK; orb untouched (suites unchanged) |
+| 7 | Full go suites via status API; PR | 🔄 | suites running on 12258; humans merge; cutover = Edward |
 
 ## Constraints
 
