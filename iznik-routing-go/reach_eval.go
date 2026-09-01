@@ -178,10 +178,10 @@ func handleReachEval() fiber.Handler {
 		// the callers keep their cell-grid answers - the same graceful shape
 		// blur, leaf and drive-metrics use. A 4xx here would trip the
 		// callers' shared routing breaker on one member's ordinary location.
-		v := nearestNodeForMode(e.G, req.Lat, req.Lng, Drive)
+		v := nearestDriveNode(e.G, req.Lat, req.Lng)
 		vPrev := noNode
 		if reachPrev != nil {
-			vPrev = nearestNodeForMode(reachPrev.G, req.Lat, req.Lng, Drive)
+			vPrev = nearestDriveNode(reachPrev.G, req.Lat, req.Lng)
 		}
 		if v == noNode {
 			results := make([]reachEvalResult, 0, len(req.Msgids))

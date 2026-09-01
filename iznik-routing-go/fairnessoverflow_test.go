@@ -10,7 +10,7 @@ import (
 func TestFairnessOverflow_OffAtZeroWeight(t *testing.T) {
 	g := getTestGraph(t)
 	for _, w := range []float64{0, -1} {
-		if got := fairnessOverflowRings(g, 51.4545, -2.5879, Drive, 45, w, 1); got != nil {
+		if got := fairnessOverflowRings(g, 51.4545, -2.5879, 45, w, 1); got != nil {
 			t.Errorf("weight %g produced %d rings, expected none", w, len(got.Rings))
 		}
 	}
@@ -21,7 +21,7 @@ func TestFairnessOverflow_OffAtZeroWeight(t *testing.T) {
 // than four.
 func TestFairnessOverflow_DefaultsToQ1Only(t *testing.T) {
 	g := getTestGraph(t)
-	res := fairnessOverflowRings(g, 51.4545, -2.5879, Drive, 10, 1, 1)
+	res := fairnessOverflowRings(g, 51.4545, -2.5879, 10, 1, 1)
 	if res == nil {
 		t.Fatal("no rings at weight 1")
 	}
@@ -37,7 +37,7 @@ func TestFairnessOverflow_DefaultsToQ1Only(t *testing.T) {
 // member is admitted anywhere a Q4 member would be.
 func TestFairnessOverflow_GradientNestsByQuintile(t *testing.T) {
 	g := getTestGraph(t)
-	res := fairnessOverflowRings(g, 51.4545, -2.5879, Drive, 5, 1, 4)
+	res := fairnessOverflowRings(g, 51.4545, -2.5879, 5, 1, 4)
 	if res == nil {
 		t.Fatal("no rings")
 	}
@@ -63,7 +63,7 @@ func TestFairnessOverflow_GradientNestsByQuintile(t *testing.T) {
 // reach, which already covers it.
 func TestFairnessOverflow_Q5NeverEarnsARing(t *testing.T) {
 	g := getTestGraph(t)
-	res := fairnessOverflowRings(g, 51.4545, -2.5879, Drive, 5, 1, 5)
+	res := fairnessOverflowRings(g, 51.4545, -2.5879, 5, 1, 5)
 	if res == nil {
 		t.Fatal("no rings")
 	}
@@ -78,7 +78,7 @@ func TestFairnessOverflow_HigherWeightReachesFurther(t *testing.T) {
 	g := getTestGraph(t)
 	var last float64
 	for _, w := range []float64{0.25, 0.5, 1.0} {
-		res := fairnessOverflowRings(g, 51.4545, -2.5879, Drive, 5, w, 1)
+		res := fairnessOverflowRings(g, 51.4545, -2.5879, 5, w, 1)
 		if res == nil {
 			t.Fatalf("no rings at weight %g", w)
 		}
@@ -98,8 +98,8 @@ func TestFairnessOverflow_HigherWeightReachesFurther(t *testing.T) {
 // endpoint uses, so the two cannot drift apart.
 func TestFairnessOverflow_ClampsWeightAboveOne(t *testing.T) {
 	g := getTestGraph(t)
-	atOne := fairnessOverflowRings(g, 51.4545, -2.5879, Drive, 5, 1.0, 1)
-	way := fairnessOverflowRings(g, 51.4545, -2.5879, Drive, 5, 99.0, 1)
+	atOne := fairnessOverflowRings(g, 51.4545, -2.5879, 5, 1.0, 1)
+	way := fairnessOverflowRings(g, 51.4545, -2.5879, 5, 99.0, 1)
 	if atOne == nil || way == nil {
 		t.Fatal("expected rings at both weights")
 	}

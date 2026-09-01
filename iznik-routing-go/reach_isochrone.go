@@ -18,7 +18,24 @@ package main
 // entries×nodes pass per reached region); chain interiors from a single
 // linear pass over the chain table.
 func (e *ReachEngine) ReachedNodes(lbl *ReachLabels, limit float32) map[NodeID]float32 {
-	out := make(map[NodeID]float32, 1<<17)
+	// Size the hint to the reach actually being expanded, not to a nationwide
+	// one. The old unconditional 1<<17 hint built a 131,072-entry bucket
+	// skeleton (~2.6MB) on every call, including the 15-minute local
+	// catchments that are the common case. Go grows the map past any hint, so
+	// this changes nothing but the up-front allocation.
+	hint := 4096
+	if n := len(lbl.Reached); n > 0 {
+		// Leaves cap at 10,000 nodes, but a typical reached leaf contributes far
+		// fewer; 2,048 per leaf tracks the real distribution without over-sizing
+		// small reaches, and large reaches simply grow.
+		if want := n * 2048; want > hint {
+			hint = want
+		}
+		if hint > 1<<17 {
+			hint = 1 << 17
+		}
+	}
+	out := make(map[NodeID]float32, hint)
 
 	// Region interiors: min over reached entries of (entry arrival + stored
 	// intra-region distance). Regions are disjoint, so no cross-leaf clashes.
@@ -68,7 +85,7 @@ func (e *ReachEngine) ReachedNodes(lbl *ReachLabels, limit float32) map[NodeID]f
 			continue
 		}
 		best := f32Inf
-		if offA := e.Ov.OffFromA[v]; offA >= 0 {
+		if offA, okA := e.Ov.OffA(NodeID(v)); okA {
 			if ja, ok := out[a]; ok {
 				if c := ja + offA; c < best {
 					best = c
@@ -76,7 +93,7 @@ func (e *ReachEngine) ReachedNodes(lbl *ReachLabels, limit float32) map[NodeID]f
 			}
 		}
 		if b := e.Ov.ChainEndB[v]; b != 0 {
-			if offB := e.Ov.OffFromB[v]; offB >= 0 {
+			if offB, okB := e.Ov.OffB(NodeID(v)); okB {
 				if jb, ok := out[b]; ok {
 					if c := jb + offB; c < best {
 						best = c
@@ -118,10 +135,7 @@ func (e *ReachEngine) refineOriginChain(out map[NodeID]float32, origin NodeID, s
 	}
 	set(origin, seedBase)
 	for _, first := range e.G.EdgesFrom(origin) {
-		cost := seedBase + first.Seconds[Drive]
-		if first.Seconds[Drive] < 0 {
-			continue
-		}
+		cost := seedBase + first.Sec()
 		v := first.To
 		prev := origin
 		for e.Ov.Idx[v] == 0 && cost <= limit {
@@ -129,9 +143,9 @@ func (e *ReachEngine) refineOriginChain(out map[NodeID]float32, origin NodeID, s
 			next := noNode
 			var step float32
 			for _, ed := range e.G.EdgesFrom(v) {
-				if ed.To != prev && ed.Seconds[Drive] >= 0 {
+				if ed.To != prev {
 					next = ed.To
-					step = ed.Seconds[Drive]
+					step = ed.Sec()
 					break
 				}
 			}

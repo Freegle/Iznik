@@ -75,6 +75,10 @@ func reachLoadOrBuild() (*Graph, *Overlay) {
 		log.Fatalf("reach: BuildGraph: %v", err)
 	}
 	ov := BuildOverlay(g)
+	// The three-mode edges existed only to shape the contraction. Nothing
+	// serves from them and the snapshot does not store them, so let them go
+	// before the save rather than holding a second edge list through it.
+	g.releaseModalEdges()
 	if err := os.MkdirAll(filepath.Dir(reachSnapPath), 0o755); err != nil {
 		log.Fatalf("reach: mkdir: %v", err)
 	}
@@ -103,11 +107,9 @@ func printOverlayStats(g *Graph, ov *Overlay) {
 	driveEdges := 0
 	for oi := uint32(1); oi <= uint32(on); oi++ {
 		has := false
-		for _, e := range ov.EdgesFrom(oi) {
-			if e.Seconds[Drive] >= 0 {
-				driveEdges++
-				has = true
-			}
+		for range ov.EdgesFrom(oi) {
+			driveEdges++
+			has = true
 		}
 		if has {
 			driveJunctions++
@@ -124,8 +126,8 @@ func printOverlayStats(g *Graph, ov *Overlay) {
 	// Chain edge length distribution (drive seconds).
 	var secs []float64
 	for _, e := range ov.Edges {
-		if e.Seconds[Drive] >= 0 {
-			secs = append(secs, float64(e.Seconds[Drive]))
+		if true {
+			secs = append(secs, float64(e.Sec()))
 		}
 	}
 	sort.Float64s(secs)

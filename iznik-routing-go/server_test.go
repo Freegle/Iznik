@@ -154,26 +154,26 @@ func TestIsochroneEndpoint_AllThreeModes(t *testing.T) {
 	if err := json.Unmarshal(body, &r); err != nil {
 		t.Fatalf("invalid JSON: %v\nbody: %s", err, body)
 	}
-	for _, named := range []struct {
-		name string
-		poly GeoJSONPolygon
-	}{
-		{"walk", r.Walk},
-		{"cycle", r.Cycle},
-		{"drive", r.Drive},
-	} {
-		if named.poly.Geometry.Type != "Polygon" {
-			t.Errorf("%s: expected Polygon geometry, got %q", named.name, named.poly.Geometry.Type)
-		}
-		ring := named.poly.Geometry.Coordinates[0]
-		if len(ring) < 4 {
-			t.Errorf("%s: polygon has only %d points", named.name, len(ring))
+	// Drive is the only mode the endpoint serves. Walk and cycle were never
+	// consumed (apiv2 decodes only "drive") and cost two extra full-graph
+	// Dijkstras per call.
+	if r.Drive.Geometry.Type != "Polygon" {
+		t.Errorf("drive: expected Polygon geometry, got %q", r.Drive.Geometry.Type)
+	}
+	if ring := r.Drive.Geometry.Coordinates[0]; len(ring) < 4 {
+		t.Errorf("drive: polygon has only %d points", len(ring))
+	}
+	// The response must not carry walk/cycle members any more.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	for _, gone := range []string{"walk", "cycle"} {
+		if _, ok := raw[gone]; ok {
+			t.Errorf("response still carries a %q member", gone)
 		}
 	}
-	t.Logf("walk ring=%d cycle ring=%d drive ring=%d",
-		len(r.Walk.Geometry.Coordinates[0]),
-		len(r.Cycle.Geometry.Coordinates[0]),
-		len(r.Drive.Geometry.Coordinates[0]))
+	t.Logf("drive ring=%d", len(r.Drive.Geometry.Coordinates[0]))
 }
 
 func TestIsochroneEndpoint_MissingLat(t *testing.T) {

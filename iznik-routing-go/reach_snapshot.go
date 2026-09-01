@@ -18,7 +18,22 @@ import (
 )
 
 const graphSnapMagic = "FRGS2SNAP"
-const graphSnapVersion = uint32(1)
+
+// graphSnapVersion 2: drive-only, quantised, padding-free.
+//
+//	Node loses Quintile to a parallel slice (12B -> 8B)
+//	Edge loses walk/cycle and becomes {To uint32; Secs uint16} (16B -> 8B),
+//	  and edges no car can use are not stored at all
+//	OverlayEdge becomes {To uint32; Secs uint16; Metres uint16} (20B -> 8B),
+//	  likewise pruned to drive
+//	OffFromA/B become uint16 deciseconds (4B -> 2B per node)
+//	DriveSnappable is not stored: it is a pure function of the drive edges and
+//	  is recomputed at load by the same code the build uses
+//
+// A version mismatch is refused, which sends the caller down the rebuild path
+// rather than reading v1 bytes through v2 strides - every field after the first
+// changed one would be cascading garbage.
+const graphSnapVersion = uint32(2)
 
 func writeSlice[T any](w io.Writer, s []T) error {
 	var t T
@@ -50,30 +65,6 @@ func readSlice[T any](r io.Reader) ([]T, error) {
 	return s, err
 }
 
-func boolsToBytes(b []bool) []byte {
-	if b == nil {
-		return nil
-	}
-	out := make([]byte, len(b))
-	for i, v := range b {
-		if v {
-			out[i] = 1
-		}
-	}
-	return out
-}
-
-func bytesToBools(b []byte) []bool {
-	if len(b) == 0 {
-		return nil
-	}
-	out := make([]bool, len(b))
-	for i, v := range b {
-		out[i] = v != 0
-	}
-	return out
-}
-
 // SaveReachSnapshot writes the base graph + overlay to path.
 func SaveReachSnapshot(path string, g *Graph, ov *Overlay) error {
 	start := time.Now()
@@ -93,13 +84,13 @@ func SaveReachSnapshot(path string, g *Graph, ov *Overlay) error {
 	if err := writeSlice(w, g.Nodes); err != nil {
 		return err
 	}
+	if err := writeSlice(w, g.Quintile); err != nil {
+		return err
+	}
 	if err := writeSlice(w, g.EdgeStart); err != nil {
 		return err
 	}
 	if err := writeSlice(w, g.Edges); err != nil {
-		return err
-	}
-	if err := writeSlice(w, boolsToBytes(g.DriveSnappable)); err != nil {
 		return err
 	}
 	if err := writeSlice(w, ov.BaseNode); err != nil {
@@ -164,17 +155,15 @@ func LoadReachSnapshot(path string) (*Graph, *Overlay, error) {
 	if g.Nodes, err = readSlice[Node](r); err != nil {
 		return nil, nil, err
 	}
+	if g.Quintile, err = readSlice[Quintile](r); err != nil {
+		return nil, nil, err
+	}
 	if g.EdgeStart, err = readSlice[int32](r); err != nil {
 		return nil, nil, err
 	}
 	if g.Edges, err = readSlice[Edge](r); err != nil {
 		return nil, nil, err
 	}
-	var snap []byte
-	if snap, err = readSlice[byte](r); err != nil {
-		return nil, nil, err
-	}
-	g.DriveSnappable = bytesToBools(snap)
 	if ov.BaseNode, err = readSlice[NodeID](r); err != nil {
 		return nil, nil, err
 	}
@@ -193,22 +182,19 @@ func LoadReachSnapshot(path string) (*Graph, *Overlay, error) {
 	if ov.ChainEndB, err = readSlice[NodeID](r); err != nil {
 		return nil, nil, err
 	}
-	if ov.OffFromA, err = readSlice[float32](r); err != nil {
+	if ov.OffFromA, err = readSlice[uint16](r); err != nil {
 		return nil, nil, err
 	}
-	if ov.OffFromB, err = readSlice[float32](r); err != nil {
+	if ov.OffFromB, err = readSlice[uint16](r); err != nil {
 		return nil, nil, err
 	}
 
-	// Rebuild the spatial grid (fast, derived).
+	// Rebuild what is derived rather than storing it: the grid, and the
+	// drive-snappable set (a pure function of the drive edges, computed by the
+	// same code the build uses, so the two cannot drift).
 	n := g.NodeCount()
-	g.Grid = &Grid{cells: make(map[[2]int16][]NodeID, 600_000)}
-	for i := NodeID(1); i <= NodeID(n); i++ {
-		nd := g.Nodes[i]
-		if nd.Lat != 0 || nd.Lng != 0 {
-			g.Grid.add(float64(nd.Lat), float64(nd.Lng), i)
-		}
-	}
+	g.Grid = buildGrid(g.Nodes)
+	g.DriveSnappable = computeDriveSnappable(g)
 	log.Printf("reach: snapshot loaded from %s in %v (%d nodes, %d overlay junctions)",
 		path, time.Since(start).Round(time.Millisecond), n, ov.NodeCount())
 	return g, ov, nil

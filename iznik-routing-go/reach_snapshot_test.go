@@ -43,8 +43,8 @@ func TestReachSnapshotRoundTrip(t *testing.T) {
 	}
 
 	// The rebuilt grid must answer nearest-node queries identically.
-	want := nearestNodeForMode(g, 51.4545, -2.5879, Drive)
-	got := nearestNodeForMode(g2, 51.4545, -2.5879, Drive)
+	want := nearestDriveNode(g, 51.4545, -2.5879)
+	got := nearestDriveNode(g2, 51.4545, -2.5879)
 	if want != got {
 		t.Fatalf("nearest node after round trip: %d vs %d", got, want)
 	}

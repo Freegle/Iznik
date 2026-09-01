@@ -74,10 +74,7 @@ func chainDepartOffsets(g *Graph, ov *Overlay, v NodeID) (NodeID, float32, float
 	}
 	for i := range g.EdgesFrom(v) {
 		e := &g.Edges[g.EdgeStart[v]+int32(i)]
-		if usableBits(*e) == 0 || e.Seconds[Drive] < 0 {
-			continue
-		}
-		sum := e.Seconds[Drive]
+		sum := e.Sec()
 		msum := hop(v, e.To)
 		ok := true
 		prev, cur := v, e.To
@@ -90,11 +87,11 @@ func chainDepartOffsets(g *Graph, ov *Overlay, v NodeID) (NodeID, float32, float
 					break
 				}
 			}
-			if next == nil || next.Seconds[Drive] < 0 {
+			if next == nil {
 				ok = false
 				break
 			}
-			sum += next.Seconds[Drive]
+			sum += next.Sec()
 			msum += hop(cur, next.To)
 			prev, cur = cur, next.To
 		}
@@ -129,7 +126,7 @@ func chainMetresFromEnd(g *Graph, ov *Overlay, end, v NodeID) float32 {
 	}
 	for i := range g.EdgesFrom(end) {
 		e := &g.Edges[g.EdgeStart[end]+int32(i)]
-		if usableBits(*e) == 0 || ov.Idx[e.To] != 0 {
+		if ov.Idx[e.To] != 0 {
 			continue // direct junction-junction edge: not a chain walk
 		}
 		msum := hop(end, e.To)
@@ -292,7 +289,7 @@ func (e *ReachEngine) QueryLabelsCached(lat, lng float64, limitSeconds float32) 
 	if float32(mins*60) != limitSeconds {
 		return e.QueryLabels(lat, lng, limitSeconds) // fractional: no caching
 	}
-	origin := nearestNodeForMode(e.G, lat, lng, Drive)
+	origin := nearestDriveNode(e.G, lat, lng)
 	if origin == noNode {
 		return e.QueryLabels(lat, lng, limitSeconds)
 	}
@@ -334,7 +331,19 @@ type regionTableCache struct {
 	m        map[int32]*regionTable
 	srcOrder []srcKey
 	src      map[srcKey][]float32
+	// srcBytes tracks what the arbitrary-source rows actually hold. The bound
+	// used to be a row COUNT (4x the leaf-cache cap, so 16,384 rows), which is
+	// blind to leaf size: a row is one float32 per overlay node in the leaf,
+	// and leaves reach 10,000 nodes, so the old bound permitted a 655MB cache
+	// on a 12GiB budget. Bounding the bytes makes the ceiling mean something.
+	srcBytes int
 }
+
+// srcCacheMaxBytes caps the arbitrary-source row cache. 128MB holds a few
+// thousand of the largest rows, which is far more than the working set of
+// origin leaves and stored-label seeds a real query mix touches, and a miss
+// only costs a Dijkstra over an already-resident leaf subgraph.
+const srcCacheMaxBytes = 128 << 20
 
 type srcKey struct {
 	leaf int32
@@ -347,10 +356,10 @@ type regionTable struct {
 	// nil when dist/met come from the precomputed artifact; built on demand
 	// via getWithSubgraph, never touched by the entry-table read paths.
 	ls      *leafSubgraph
-	nodes   []uint32           // == part.LeafNodes[leaf]: local index = position
-	localOf map[uint32]int32   // overlay index -> local index
-	dist    [][]float32        // per entry (aligned to rm.LeafEntries), len(nodes)
-	met     [][]float32        // road metres along the same time-optimal paths
+	nodes   []uint32         // == part.LeafNodes[leaf]: local index = position
+	localOf map[uint32]int32 // overlay index -> local index
+	dist    [][]float32      // per entry (aligned to rm.LeafEntries), len(nodes)
+	met     [][]float32      // road metres along the same time-optimal paths
 }
 
 func newRegionTableCache(cap int) *regionTableCache {
@@ -463,17 +472,21 @@ func (c *regionTableCache) sourceRow(e *ReachEngine, leaf int32, srcOi uint32) [
 	t.ls.dijkstraFrom(li, row)
 	c.src[k] = row
 	c.srcOrder = append(c.srcOrder, k)
-	if len(c.srcOrder) > 4*c.cap {
+	c.srcBytes += 4 * len(row)
+	for c.srcBytes > srcCacheMaxBytes && len(c.srcOrder) > 1 {
 		old := c.srcOrder[0]
 		c.srcOrder = c.srcOrder[1:]
-		delete(c.src, old)
+		if prev, ok := c.src[old]; ok {
+			c.srcBytes -= 4 * len(prev)
+			delete(c.src, old)
+		}
 	}
 	return row
 }
 
 // QueryLabels computes the reach labeling from (lat,lng) within limitSeconds.
 func (e *ReachEngine) QueryLabels(lat, lng float64, limitSeconds float32) *ReachLabels {
-	return e.QueryLabelsFromNode(nearestNodeForMode(e.G, lat, lng, Drive), limitSeconds)
+	return e.QueryLabelsFromNode(nearestDriveNode(e.G, lat, lng), limitSeconds)
 }
 
 // QueryLabelsFromNode is QueryLabels with the origin given as a graph node -
@@ -491,7 +504,7 @@ func (e *ReachEngine) QueryLabelsFromNode(origin NodeID, limitSeconds float32) *
 	if origin == noNode {
 		return out
 	}
-	seed := initialCostFor(Drive)
+	seed := driveStartupSecs
 	out.seedBase = seed
 	if oi := e.Ov.Idx[origin]; oi != 0 {
 		out.Seeds[oi] = seed
@@ -712,7 +725,7 @@ func (e *ReachEngine) junctionArrivalM(lbl *ReachLabels, j NodeID) (float32, flo
 // Arrival returns the exact drive arrival seconds at (lat,lng), +Inf when out
 // of reach. Membership = Arrival(...) <= labels.T.
 func (e *ReachEngine) Arrival(lbl *ReachLabels, lat, lng float64) float32 {
-	v := nearestNodeForMode(e.G, lat, lng, Drive)
+	v := nearestDriveNode(e.G, lat, lng)
 	if v == noNode {
 		return f32Inf
 	}
@@ -732,9 +745,9 @@ func (e *ReachEngine) ArrivalAtBaseNodeM(lbl *ReachLabels, v NodeID) (float32, f
 		return e.junctionArrivalM(lbl, v)
 	}
 	best, bestM := f32Inf, f32Inf
-	if a := e.Ov.ChainEndA[v]; a != 0 && e.Ov.OffFromA[v] >= 0 {
-		if ja, jm := e.junctionArrivalM(lbl, a); ja+e.Ov.OffFromA[v] < best {
-			best = ja + e.Ov.OffFromA[v]
+	if a, offA, okA := e.Ov.ChainEndA[v], float32(0), false; func() bool { offA, okA = e.Ov.OffA(v); return a != 0 && okA }() {
+		if ja, jm := e.junctionArrivalM(lbl, a); ja+offA < best {
+			best = ja + offA
 			bestM = f32Inf
 			if jm != f32Inf {
 				if cm := chainMetresFromEnd(e.G, e.Ov, a, v); cm >= 0 {
@@ -743,9 +756,9 @@ func (e *ReachEngine) ArrivalAtBaseNodeM(lbl *ReachLabels, v NodeID) (float32, f
 			}
 		}
 	}
-	if b := e.Ov.ChainEndB[v]; b != 0 && e.Ov.OffFromB[v] >= 0 {
-		if jb, jm := e.junctionArrivalM(lbl, b); jb+e.Ov.OffFromB[v] < best {
-			best = jb + e.Ov.OffFromB[v]
+	if b, offB, okB := e.Ov.ChainEndB[v], float32(0), false; func() bool { offB, okB = e.Ov.OffB(v); return b != 0 && okB }() {
+		if jb, jm := e.junctionArrivalM(lbl, b); jb+offB < best {
+			best = jb + offB
 			bestM = f32Inf
 			if jm != f32Inf {
 				if cm := chainMetresFromEnd(e.G, e.Ov, b, v); cm >= 0 {
@@ -787,10 +800,7 @@ func sameChainDepartCostM(g *Graph, ov *Overlay, o, v NodeID) (float32, float32)
 	best, bestM := float32(-1), float32(-1)
 	for i := range g.EdgesFrom(o) {
 		e := &g.Edges[g.EdgeStart[o]+int32(i)]
-		if e.Seconds[Drive] < 0 {
-			continue
-		}
-		sum := e.Seconds[Drive]
+		sum := e.Sec()
 		msum := hop(o, e.To)
 		prev, cur := o, e.To
 		for ov.Idx[cur] == 0 {
@@ -809,10 +819,10 @@ func sameChainDepartCostM(g *Graph, ov *Overlay, o, v NodeID) (float32, float32)
 					break
 				}
 			}
-			if next == nil || next.Seconds[Drive] < 0 {
+			if next == nil {
 				break
 			}
-			sum += next.Seconds[Drive]
+			sum += next.Sec()
 			msum += hop(cur, next.To)
 			prev, cur = cur, next.To
 		}

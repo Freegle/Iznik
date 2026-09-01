@@ -21,6 +21,7 @@ package main
 
 import (
 	"log"
+	"math"
 	"sort"
 	"time"
 )
@@ -28,11 +29,39 @@ import (
 // OverlayEdge is a contracted chain (or a direct junction-junction edge) in
 // the overlay graph, directed, with per-mode summed travel seconds and the
 // summed great-circle hop metres (matching DistM accumulation in Isochrone).
+// OverlayEdge is a contracted chain between two junctions.
+//
+// It was {To uint32; Seconds [3]float32; Metres float32} = 20 bytes. Only drive
+// is served, and the reach engine's own leaf subgraph already discarded every
+// non-drive overlay edge before using one, so the artifact keeps drive alone and
+// drops the 10,321,375 UK overlay edges no car can use: 31,461,366 x 20B becomes
+// 21,139,991 x 8B.
+//
+// Note the alignment trap: narrowing Metres on its own would save nothing,
+// because 4 + 12 + 2 still rounds up to 20. The whole struct has to shrink
+// together, and 4 + 2 + 2 is exactly 8 with no padding.
+//
+// Secs is drive seconds x10 (measured max 963.96s over the UK, so uint16
+// deciseconds has 6.8x headroom) and Metres is whole metres (measured max
+// 23,261m against a 65,535 ceiling).
 type OverlayEdge struct {
-	To      uint32 // overlay index (1-based)
-	Seconds [3]float32
-	Metres  float32
+	To     uint32 // overlay index (1-based)
+	Secs   uint16
+	Metres uint16
 }
+
+// Sec returns the contracted chain's drive seconds.
+func (e OverlayEdge) Sec() float32 { return float32(e.Secs) / 10 }
+
+// Met returns the contracted chain's road metres.
+func (e OverlayEdge) Met() float32 { return float32(e.Metres) }
+
+// maxOverlayDeciseconds and maxOverlayMetres are the quantisation ceilings. The
+// build refuses anything above them rather than wrapping silently.
+const (
+	maxOverlayDeciseconds = 65534.0
+	maxOverlayMetres      = 65535.0
+)
 
 // Overlay is the junction-only contraction of a Graph, in CSR form, plus the
 // chain table mapping every absorbed base node back to its two chain ends.
@@ -51,8 +80,48 @@ type Overlay struct {
 	// (junction, isolated, or degree-0).
 	ChainEndA []NodeID
 	ChainEndB []NodeID
-	OffFromA  []float32
-	OffFromB  []float32
+	OffFromA  []uint16
+	OffFromB  []uint16
+}
+
+// offUnusable marks a chain direction that cannot be driven (the old -1).
+const offUnusable uint16 = 65535
+
+// maxOffDeciseconds is the quantisation ceiling for a chain offset. Measured
+// max over the UK graph is 961.20s, so this has 6.8x headroom.
+const maxOffDeciseconds = 65534.0
+
+// OffA returns the drive seconds from chain end A to absorbed node v, and
+// whether that direction is drivable at all.
+func (ov *Overlay) OffA(v NodeID) (float32, bool) {
+	o := ov.OffFromA[v]
+	if o == offUnusable {
+		return 0, false
+	}
+	return float32(o) / 10, true
+}
+
+// OffB is OffA for the other chain end.
+func (ov *Overlay) OffB(v NodeID) (float32, bool) {
+	o := ov.OffFromB[v]
+	if o == offUnusable {
+		return 0, false
+	}
+	return float32(o) / 10, true
+}
+
+// quantOff encodes a chain offset in deciseconds, or offUnusable for a
+// direction that is not drivable.
+func quantOff(secs float32, ok bool, from, to NodeID) uint16 {
+	if !ok || secs < 0 {
+		return offUnusable
+	}
+	d := math.Round(float64(secs) * 10)
+	if d > maxOffDeciseconds {
+		log.Fatalf("reach: chain offset %d->%d is %.1fs, over the %.1fs quantisation ceiling",
+			from, to, secs, maxOffDeciseconds/10)
+	}
+	return uint16(d)
 }
 
 // EdgesFrom returns the overlay edges outgoing from overlay index oi.
@@ -63,8 +132,11 @@ func (ov *Overlay) EdgesFrom(oi uint32) []OverlayEdge {
 // NodeCount returns the number of overlay (junction) nodes.
 func (ov *Overlay) NodeCount() int { return len(ov.BaseNode) - 1 }
 
-// usableBits returns a bitmask of the modes an edge is usable by.
-func usableBits(e Edge) uint8 {
+// usableBits returns a bitmask of the modes an edge is usable by. It runs on
+// the build-time three-mode edges: which modes can traverse an edge is what
+// decides whether a node is a junction or a chain interior, so contracting on
+// drive alone would reshape the overlay and change the partition fingerprint.
+func usableBits(e ModalEdge) uint8 {
 	var b uint8
 	for m := 0; m < 3; m++ {
 		if e.Seconds[m] >= 0 {
@@ -170,7 +242,7 @@ func BuildOverlay(g *Graph) *Overlay {
 	// ── Pass 1: per-node neighbour structure ─────────────────────────────────
 	info := make([]nbInfo, n+1)
 	for v := NodeID(1); v <= NodeID(n); v++ {
-		for _, e := range g.EdgesFrom(v) {
+		for _, e := range g.ModalEdgesFrom(v) {
 			bits := usableBits(e)
 			if bits == 0 {
 				continue
@@ -199,8 +271,8 @@ func BuildOverlay(g *Graph) *Overlay {
 		Idx:       make([]uint32, n+1),
 		ChainEndA: make([]NodeID, n+1),
 		ChainEndB: make([]NodeID, n+1),
-		OffFromA:  make([]float32, n+1),
-		OffFromB:  make([]float32, n+1),
+		OffFromA:  make([]uint16, n+1),
+		OffFromB:  make([]uint16, n+1),
 	}
 	ov.BaseNode = append(ov.BaseNode, 0) // sentinel
 
@@ -222,7 +294,7 @@ func BuildOverlay(g *Graph) *Overlay {
 	// ── Pass 3: walk chains from every junction out-edge ─────────────────────
 	type tempEdge struct {
 		from, to uint32
-		secs     [3]float32
+		secs     float32
 		metres   float32
 	}
 	var tempEdges []tempEdge
@@ -230,8 +302,8 @@ func BuildOverlay(g *Graph) *Overlay {
 	var chainNodes []NodeID
 
 	// findEdge returns the edge from→to (first match), or nil.
-	findEdge := func(from, to NodeID) *Edge {
-		es := g.EdgesFrom(from)
+	findEdge := func(from, to NodeID) *ModalEdge {
+		es := g.ModalEdgesFrom(from)
 		for i := range es {
 			if es[i].To == to {
 				return &es[i]
@@ -245,21 +317,25 @@ func BuildOverlay(g *Graph) *Overlay {
 		return float32(haversineM(float64(na.Lat), float64(na.Lng), float64(nb.Lat), float64(nb.Lng)))
 	}
 
-	sumInto := func(acc *[3]float32, e *Edge) {
-		for m := 0; m < 3; m++ {
-			if acc[m] < 0 || e.Seconds[m] < 0 {
-				acc[m] = -1
-			} else {
-				acc[m] += e.Seconds[m]
-			}
+	// Accumulate the QUANTISED drive time, so a contracted chain equals what a
+	// flat edge-by-edge search over the served graph adds up to. Walk and cycle
+	// are not summed any more: nothing stores or serves them, and their
+	// usability (which is what shapes the overlay) comes from usableBits on the
+	// individual edges, not from these sums.
+	sumInto := func(acc *float32, e *ModalEdge) {
+		q := e.DriveQuant()
+		if *acc < 0 || q < 0 {
+			*acc = -1
+		} else {
+			*acc += q
 		}
 	}
 
 	// walk follows the chain starting at junction a along edge a→first until
 	// the next junction, emitting the overlay edge and (on the claiming pass)
 	// the chain offsets for interior nodes.
-	walk := func(a NodeID, first *Edge) {
-		secs := [3]float32{}
+	walk := func(a NodeID, first *ModalEdge) {
+		secs := float32(0)
 		sumInto(&secs, first)
 		metres := hopMetres(a, first.To)
 		prev, cur := a, first.To
@@ -268,9 +344,9 @@ func BuildOverlay(g *Graph) *Overlay {
 			chainNodes = append(chainNodes, cur)
 			// The chain node has exactly two neighbours; step to the one that
 			// is not prev. Its out-edges carry the forward direction.
-			var next *Edge
-			for i := range g.EdgesFrom(cur) {
-				e := &g.Edges[g.EdgeStart[cur]+int32(i)]
+			var next *ModalEdge
+			for i := range g.ModalEdgesFrom(cur) {
+				e := &g.ModalEdges[g.ModalEdgeStart[cur]+int32(i)]
 				if e.To != prev {
 					next = e
 					break
@@ -306,19 +382,15 @@ func BuildOverlay(g *Graph) *Overlay {
 		prevN := a
 		for _, v := range chainNodes {
 			e := findEdge(prevN, v)
-			if e == nil || e.Seconds[Drive] < 0 {
+			if e == nil || e.DriveQuant() < 0 {
 				fok = false
 			}
 			if fok {
-				fsec += e.Seconds[Drive]
+				fsec += e.DriveQuant()
 			}
 			ov.ChainEndA[v] = a
 			ov.ChainEndB[v] = b
-			if fok {
-				ov.OffFromA[v] = fsec
-			} else {
-				ov.OffFromA[v] = -1
-			}
+			ov.OffFromA[v] = quantOff(fsec, fok, a, v)
 			prevN = v
 		}
 		// Backward offsets: seconds b→v along the reverse direction, if it exists.
@@ -328,25 +400,21 @@ func BuildOverlay(g *Graph) *Overlay {
 		for i := len(chainNodes) - 1; i >= 0; i-- {
 			v := chainNodes[i]
 			e := findEdge(prevN, v)
-			if e == nil || e.Seconds[Drive] < 0 {
+			if e == nil || e.DriveQuant() < 0 {
 				bok = false
 			}
 			if bok {
-				bsec += e.Seconds[Drive]
+				bsec += e.DriveQuant()
 			}
-			if bok {
-				ov.OffFromB[v] = bsec
-			} else {
-				ov.OffFromB[v] = -1
-			}
+			ov.OffFromB[v] = quantOff(bsec, bok, b, v)
 			prevN = v
 		}
 	}
 
 	for oi := uint32(1); oi < uint32(len(ov.BaseNode)); oi++ {
 		a := ov.BaseNode[oi]
-		for i := range g.EdgesFrom(a) {
-			e := &g.Edges[g.EdgeStart[a]+int32(i)]
+		for i := range g.ModalEdgesFrom(a) {
+			e := &g.ModalEdges[g.ModalEdgeStart[a]+int32(i)]
 			if usableBits(*e) == 0 {
 				continue
 			}
@@ -360,8 +428,8 @@ func BuildOverlay(g *Graph) *Overlay {
 		if isChain[v] && ov.ChainEndA[v] == 0 {
 			isChain[v] = false
 			assignJunction(v)
-			for i := range g.EdgesFrom(v) {
-				e := &g.Edges[g.EdgeStart[v]+int32(i)]
+			for i := range g.ModalEdgesFrom(v) {
+				e := &g.ModalEdges[g.ModalEdgeStart[v]+int32(i)]
 				if usableBits(*e) == 0 {
 					continue
 				}
@@ -374,16 +442,43 @@ func BuildOverlay(g *Graph) *Overlay {
 	sort.Slice(tempEdges, func(i, j int) bool { return tempEdges[i].from < tempEdges[j].from })
 	on := len(ov.BaseNode) - 1
 	ov.EdgeStart = make([]int32, on+2)
-	ov.Edges = make([]OverlayEdge, len(tempEdges))
-	pos := 0
-	for oi := 1; oi <= on; oi++ {
-		ov.EdgeStart[oi] = int32(pos)
-		for pos < len(tempEdges) && tempEdges[pos].from == uint32(oi) {
-			ov.Edges[pos] = OverlayEdge{To: tempEdges[pos].to, Seconds: tempEdges[pos].secs, Metres: tempEdges[pos].metres}
-			pos++
+	// Keep only the drive-usable chains, quantised. Every consumer of ov.Edges
+	// already skipped the rest (buildLeafSubgraph, BuildRegionMatrices and the
+	// partition builder all tested Seconds[Drive] < 0 first), so dropping them
+	// here removes work as well as bytes.
+	kept := 0
+	for _, te := range tempEdges {
+		if te.secs >= 0 {
+			kept++
 		}
 	}
-	ov.EdgeStart[on+1] = int32(pos)
+	ov.Edges = make([]OverlayEdge, 0, kept)
+	pos := 0
+	for oi := 1; oi <= on; oi++ {
+		ov.EdgeStart[oi] = int32(len(ov.Edges))
+		for pos < len(tempEdges) && tempEdges[pos].from == uint32(oi) {
+			te := tempEdges[pos]
+			pos++
+			if te.secs < 0 {
+				continue
+			}
+			d := math.Round(float64(te.secs) * 10)
+			if d > maxOverlayDeciseconds {
+				log.Fatalf("reach: overlay chain %d->%d drive time %.1fs exceeds the %.1fs quantisation ceiling",
+					oi, te.to, te.secs, maxOverlayDeciseconds/10)
+			}
+			m := math.Round(float64(te.metres))
+			if m > maxOverlayMetres {
+				log.Fatalf("reach: overlay chain %d->%d is %.0fm, over the %.0fm quantisation ceiling",
+					oi, te.to, te.metres, maxOverlayMetres)
+			}
+			if m < 0 {
+				m = 0
+			}
+			ov.Edges = append(ov.Edges, OverlayEdge{To: te.to, Secs: uint16(d), Metres: uint16(m)})
+		}
+	}
+	ov.EdgeStart[on+1] = int32(len(ov.Edges))
 
 	log.Printf("reach: overlay built in %v: %d junctions / %d chain edges (base %d nodes / %d edges)",
 		time.Since(start).Round(time.Millisecond), on, len(ov.Edges), n, len(g.Edges))

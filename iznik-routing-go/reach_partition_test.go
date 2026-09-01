@@ -107,7 +107,7 @@ func TestPartitionInvariantsBristol(t *testing.T) {
 	incident := make([]bool, ov.NodeCount()+1)
 	for oi := uint32(1); oi <= uint32(ov.NodeCount()); oi++ {
 		for _, e := range ov.EdgesFrom(oi) {
-			if e.Seconds[Drive] >= 0 && e.To != oi {
+			if e.To != oi {
 				incident[oi] = true
 				incident[e.To] = true
 			}

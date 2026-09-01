@@ -13,7 +13,7 @@ import (
 // coarseCase runs a point catchment on the Bristol fixture at the given budget.
 func coarseCase(t *testing.T, g *Graph, secs float32) (map[NodeID]float32, GeoJSONPolygon, IsochroneBoundsResult, float64) {
 	t.Helper()
-	iso := Isochrone(g, 51.4545, -2.5879, secs, Drive)
+	iso := Isochrone(g, 51.4545, -2.5879, secs)
 	poly, bounds, res := CoarseCatchment(g, iso.ReachedNodes)
 
 	return iso.ReachedNodes, poly, bounds, res
@@ -38,7 +38,7 @@ func TestCoarseResolutionIsNeverFinerThanTheExactCeiling(t *testing.T) {
 	g := loadBristol(t)
 
 	for _, secs := range []float32{5 * 60, 15 * 60, 30 * 60} {
-		iso := Isochrone(g, 51.4545, -2.5879, secs, Drive)
+		iso := Isochrone(g, 51.4545, -2.5879, secs)
 		if got := coarseResolution(g, iso.ReachedNodes); got < coarseFloorResolution {
 			t.Fatalf("at %.0fs coarse resolution %g is finer than the floor %g",
 				secs, got, coarseFloorResolution)
@@ -57,7 +57,7 @@ func TestCoarseGridStopsGrowingWithTheBudget(t *testing.T) {
 	g := loadBristol(t)
 
 	cells := func(secs float32) int {
-		iso := Isochrone(g, 51.4545, -2.5879, secs, Drive)
+		iso := Isochrone(g, 51.4545, -2.5879, secs)
 		res := coarseResolution(g, iso.ReachedNodes)
 		_, rows, cols, _, _, ok := buildIsochroneGrid(g, iso.ReachedNodes, res)
 		if !ok {

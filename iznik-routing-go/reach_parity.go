@@ -118,13 +118,13 @@ func reachParityRun(dir string, engine *ReachEngine) {
 		qDur := time.Since(qStart)
 
 		// (a) Exactness vs flat Dijkstra, sampled.
-		origin := nearestNodeForMode(g, p.Lat, p.Lng, Drive)
+		origin := nearestDriveNode(g, p.Lat, p.Lng)
 		if origin == noNode {
 			log.Printf("post %d: origin does not snap — skipped", p.Msgid)
 			continue
 		}
 		bStart := time.Now()
-		base := baseDriveDijkstra(g, origin, initialCostFor(Drive), T)
+		base := baseDriveDijkstra(g, origin, driveStartupSecs, T)
 		bDur := time.Since(bStart)
 		stride := 1
 		if len(base) > 40000 {
@@ -169,8 +169,8 @@ func reachParityRun(dir string, engine *ReachEngine) {
 			log.Printf("post %d: bad cells blob: %v — skipped", p.Msgid, err)
 			continue
 		}
-		iso := Isochrone(g, p.Lat, p.Lng, T, Drive)
-		pipePoly := IsochronePolygon(g, iso.ReachedNodes, NetworkResolution(g, iso.ReachedNodes, Drive))
+		iso := Isochrone(g, p.Lat, p.Lng, T)
+		pipePoly := IsochronePolygon(g, iso.ReachedNodes, NetworkResolution(g, iso.ReachedNodes))
 
 		cells := uint64(h.Cols) * uint64(h.Rows)
 		stridef := int32(1)
@@ -195,7 +195,7 @@ func reachParityRun(dir string, engine *ReachEngine) {
 					continue
 				}
 				pipeIn := pipInRow(crossings, lng)
-				v := nearestNodeForMode(g, lat, lng, Drive)
+				v := nearestDriveNode(g, lat, lng)
 				engIn := false
 				var arr float32 = f32Inf
 				snapM := math.Inf(1)
@@ -465,10 +465,7 @@ func baseDriveDijkstra(g *Graph, origin NodeID, seed float32, limit float32) map
 			continue
 		}
 		for _, e := range g.EdgesFrom(cur.id) {
-			if e.Seconds[Drive] < 0 {
-				continue
-			}
-			nc := cur.c + e.Seconds[Drive]
+			nc := cur.c + e.Sec()
 			if nc > limit {
 				continue
 			}
@@ -505,8 +502,8 @@ func reachExactDebugRun(jsonPath string, engine *ReachEngine) {
 	g, ov, part := engine.G, engine.Ov, engine.Part
 
 	lbl := engine.QueryLabels(p.Lat, p.Lng, T)
-	origin := nearestNodeForMode(g, p.Lat, p.Lng, Drive)
-	baseArr := baseDriveDijkstra(g, origin, initialCostFor(Drive), T)
+	origin := nearestDriveNode(g, p.Lat, p.Lng)
+	baseArr := baseDriveDijkstra(g, origin, driveStartupSecs, T)
 
 	shown := 0
 	for id, want := range baseArr {
@@ -545,8 +542,8 @@ func reachExactDebugRun(jsonPath string, engine *ReachEngine) {
 			a, b := ov.ChainEndA[id], ov.ChainEndB[id]
 			fmt.Printf("MISMATCH chain base=%d (%.5f,%.5f) got=%.2f want=%.2f ends=%d(leaf %d, arr %.2f, offA %.1f)/%d(leaf %d, arr %.2f, offB %.1f)\n",
 				id, nd.Lat, nd.Lng, got, want,
-				a, leafOfBase(engine, a), engine.junctionArrival(lbl, a), ov.OffFromA[id],
-				b, leafOfBase(engine, b), engine.junctionArrival(lbl, b), ov.OffFromB[id])
+				a, leafOfBase(engine, a), engine.junctionArrival(lbl, a), offOf(ov.OffFromA[id]),
+				b, leafOfBase(engine, b), engine.junctionArrival(lbl, b), offOf(ov.OffFromB[id]))
 		}
 	}
 	fmt.Printf("total mismatches shown %d (cap 12)\n", shown)
@@ -588,8 +585,8 @@ func reachBoundaryDebugRun(jsonPath string, engine *ReachEngine) {
 	g, ov := engine.G, engine.Ov
 
 	lbl := engine.QueryLabels(p.Lat, p.Lng, T)
-	origin := nearestNodeForMode(g, p.Lat, p.Lng, Drive)
-	base := baseDriveDijkstra(g, origin, initialCostFor(Drive), T)
+	origin := nearestDriveNode(g, p.Lat, p.Lng)
+	base := baseDriveDijkstra(g, origin, driveStartupSecs, T)
 
 	type div struct {
 		oi      uint32
@@ -634,10 +631,10 @@ func reachBoundaryDebugRun(jsonPath string, engine *ReachEngine) {
 		cnt := 0
 		for u := uint32(1); u <= uint32(ov.NodeCount()) && cnt < 6; u++ {
 			for _, e := range ov.EdgesFrom(u) {
-				if e.To == d.oi && e.Seconds[Drive] >= 0 {
+				if e.To == d.oi && e.Sec() >= 0 {
 					ub := ov.BaseNode[u]
 					uw, ur := base[ub]
-					if ur && uw+e.Seconds[Drive] <= d.trueArr+1 {
+					if ur && uw+e.Sec() <= d.trueArr+1 {
 						uleaf := int32(-9)
 						if engine.Ov.Idx[ub] != 0 {
 							uleaf = engine.Part.LeafOf[engine.Ov.Idx[ub]]
@@ -646,7 +643,7 @@ func reachBoundaryDebugRun(jsonPath string, engine *ReachEngine) {
 						_, uisEntry = engine.BI.entryIdx[u]
 						ud, uhas := lbl.BoundaryDist[u]
 						fmt.Printf("      pred u=%d (leaf %d, boundary=%v entry=%v engDist=%.2f has=%v) + edge %.2fs = %.2f\n",
-							u, uleaf, ue != 0 || uhas, uisEntry, ud, uhas, e.Seconds[Drive], uw+e.Seconds[Drive])
+							u, uleaf, ue != 0 || uhas, uisEntry, ud, uhas, e.Sec(), uw+e.Sec())
 						cnt++
 					}
 				}
@@ -705,10 +702,7 @@ func baseDriveDijkstraPrev(g *Graph, origin NodeID, seed float32, limit float32)
 			continue
 		}
 		for _, e := range g.EdgesFrom(cur.id) {
-			if e.Seconds[Drive] < 0 {
-				continue
-			}
-			nc := cur.c + e.Seconds[Drive]
+			nc := cur.c + e.Sec()
 			if nc > limit {
 				continue
 			}
@@ -739,8 +733,8 @@ func reachTracePathRun(jsonPath string, target NodeID, engine *ReachEngine) {
 	T := float32(driveMin * 60)
 	g, ov := engine.G, engine.Ov
 	lbl := engine.QueryLabels(p.Lat, p.Lng, T)
-	origin := nearestNodeForMode(g, p.Lat, p.Lng, Drive)
-	dist, prevMap := baseDriveDijkstraPrev(g, origin, initialCostFor(Drive), T)
+	origin := nearestDriveNode(g, p.Lat, p.Lng)
+	dist, prevMap := baseDriveDijkstraPrev(g, origin, driveStartupSecs, T)
 
 	var path []NodeID
 	for cur := target; ; {
@@ -780,8 +774,8 @@ func reachLeafCheckRun(jsonPath string, target NodeID, engine *ReachEngine) {
 	driveMin, _ := p.driveMinForTick()
 	T := float32(driveMin * 60)
 	g, ov := engine.G, engine.Ov
-	origin := nearestNodeForMode(g, p.Lat, p.Lng, Drive)
-	dist, prevMap := baseDriveDijkstraPrev(g, origin, initialCostFor(Drive), T)
+	origin := nearestDriveNode(g, p.Lat, p.Lng)
+	dist, prevMap := baseDriveDijkstraPrev(g, origin, driveStartupSecs, T)
 
 	// Full base path, then project to overlay junctions.
 	var path []NodeID
@@ -891,10 +885,7 @@ func baseDriveDijkstraM(g *Graph, origin NodeID, seed float32, limit float32) (m
 		}
 		cn := g.Nodes[cur.id]
 		for _, e := range g.EdgesFrom(cur.id) {
-			if e.Seconds[Drive] < 0 {
-				continue
-			}
-			nc := cur.c + e.Seconds[Drive]
+			nc := cur.c + e.Sec()
 			if nc > limit {
 				continue
 			}

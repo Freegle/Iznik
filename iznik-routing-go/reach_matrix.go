@@ -115,7 +115,7 @@ func buildLeafSubgraph(ov *Overlay, part *ReachPartition, leaf int32) *leafSubgr
 	deg := make([]int32, len(nodes)+1)
 	for i, oi := range nodes {
 		for _, e := range ov.EdgesFrom(oi) {
-			if e.Seconds[Drive] < 0 || e.To == oi {
+			if e.To == oi {
 				continue
 			}
 			if _, in := ls.localOf[e.To]; in {
@@ -134,14 +134,14 @@ func buildLeafSubgraph(ov *Overlay, part *ReachPartition, leaf int32) *leafSubgr
 	fill := make([]int32, len(nodes))
 	for i, oi := range nodes {
 		for _, e := range ov.EdgesFrom(oi) {
-			if e.Seconds[Drive] < 0 || e.To == oi {
+			if e.To == oi {
 				continue
 			}
 			if lv, in := ls.localOf[e.To]; in {
 				p := ls.start[i] + fill[i]
 				ls.to[p] = lv
-				ls.secs[p] = e.Seconds[Drive]
-				ls.mets[p] = e.Metres
+				ls.secs[p] = e.Sec()
+				ls.mets[p] = e.Met()
 				fill[i]++
 			}
 		}
@@ -211,7 +211,7 @@ func BuildRegionMatrices(ov *Overlay, part *ReachPartition) *RegionMatrices {
 			continue
 		}
 		for _, e := range ov.EdgesFrom(oi) {
-			if e.Seconds[Drive] < 0 || e.To == oi {
+			if e.To == oi {
 				continue
 			}
 			lt := part.LeafOf[e.To]
@@ -220,8 +220,8 @@ func BuildRegionMatrices(ov *Overlay, part *ReachPartition) *RegionMatrices {
 			}
 			rm.CrossFrom = append(rm.CrossFrom, oi)
 			rm.CrossTo = append(rm.CrossTo, e.To)
-			rm.CrossSecs = append(rm.CrossSecs, e.Seconds[Drive])
-			rm.CrossMet = append(rm.CrossMet, e.Metres)
+			rm.CrossSecs = append(rm.CrossSecs, e.Sec())
+			rm.CrossMet = append(rm.CrossMet, e.Met())
 			exitSets[lf][oi] = struct{}{}
 			entrySets[lt][e.To] = struct{}{}
 		}

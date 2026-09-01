@@ -51,7 +51,7 @@ func buildDriveUG(g *Graph, ov *Overlay) *ugraph {
 	seen := make(map[upair]uint8, len(ov.Edges)/2)
 	for oi := uint32(1); oi <= uint32(on); oi++ {
 		for _, e := range ov.EdgesFrom(oi) {
-			if e.Seconds[Drive] < 0 || e.To == oi {
+			if e.To == oi {
 				continue
 			}
 			u, v := oi, e.To

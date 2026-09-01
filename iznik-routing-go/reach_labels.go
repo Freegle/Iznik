@@ -204,7 +204,7 @@ func (e *ReachEngine) seedArrival(lbl *ReachLabels, j NodeID) float32 {
 // label blob previously produced by EncodeLabels. Equivalent to Arrival on
 // the live query result.
 func (e *ReachEngine) ArrivalFromStored(lbl *ReachLabels, lat, lng float64) float32 {
-	v := nearestNodeForMode(e.G, lat, lng, Drive)
+	v := nearestDriveNode(e.G, lat, lng)
 	if v == noNode {
 		return f32Inf
 	}
@@ -223,14 +223,18 @@ func (e *ReachEngine) arrivalAtBaseNodeStored(lbl *ReachLabels, v NodeID) float3
 		return junction(v)
 	}
 	best := f32Inf
-	if a := e.Ov.ChainEndA[v]; a != 0 && e.Ov.OffFromA[v] >= 0 {
-		if ja := junction(a); ja+e.Ov.OffFromA[v] < best {
-			best = ja + e.Ov.OffFromA[v]
+	if a := e.Ov.ChainEndA[v]; a != 0 {
+		if offA, ok := e.Ov.OffA(v); ok {
+			if ja := junction(a); ja+offA < best {
+				best = ja + offA
+			}
 		}
 	}
-	if b := e.Ov.ChainEndB[v]; b != 0 && e.Ov.OffFromB[v] >= 0 {
-		if jb := junction(b); jb+e.Ov.OffFromB[v] < best {
-			best = jb + e.Ov.OffFromB[v]
+	if b := e.Ov.ChainEndB[v]; b != 0 {
+		if offB, ok := e.Ov.OffB(v); ok {
+			if jb := junction(b); jb+offB < best {
+				best = jb + offB
+			}
 		}
 	}
 	if o := lbl.originChain; o != 0 && e.Ov.ChainEndA[o] == e.Ov.ChainEndA[v] && e.Ov.ChainEndB[o] == e.Ov.ChainEndB[v] {

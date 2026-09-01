@@ -36,7 +36,7 @@ func TestReachQueryExactnessBristol(t *testing.T) {
 		if eng.Ov.Idx[v] == 0 && eng.Ov.ChainEndA[v] != 0 && eng.Ov.OffFromA[v] > 0 && eng.Ov.OffFromB[v] > 0 {
 			nd := g.Nodes[v]
 			// Only use it if snapping from its own coords lands on it.
-			if nearestNodeForMode(g, float64(nd.Lat), float64(nd.Lng), Drive) == v {
+			if nearestDriveNode(g, float64(nd.Lat), float64(nd.Lng)) == v {
 				cases = append(cases, struct {
 					name     string
 					lat, lng float64
@@ -50,11 +50,11 @@ func TestReachQueryExactnessBristol(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			lbl := eng.QueryLabels(tc.lat, tc.lng, tc.T)
-			origin := nearestNodeForMode(g, tc.lat, tc.lng, Drive)
+			origin := nearestDriveNode(g, tc.lat, tc.lng)
 			if origin == noNode {
 				t.Fatal("no origin snap")
 			}
-			base := baseDriveDijkstra(g, origin, initialCostFor(Drive), tc.T)
+			base := baseDriveDijkstra(g, origin, driveStartupSecs, tc.T)
 
 			checked := 0
 			for id, want := range base {
@@ -117,8 +117,8 @@ func TestReachMetresBristol(t *testing.T) {
 	}
 	g, eng := buildBristolEngine(t)
 	lbl := eng.QueryLabels(51.4545, -2.5879, 900)
-	origin := nearestNodeForMode(g, 51.4545, -2.5879, Drive)
-	base, baseM := baseDriveDijkstraM(g, origin, initialCostFor(Drive), 900)
+	origin := nearestDriveNode(g, 51.4545, -2.5879)
+	base, baseM := baseDriveDijkstraM(g, origin, driveStartupSecs, 900)
 
 	checked, noMet, bigDev := 0, 0, 0
 	var worstFrac float64
@@ -143,7 +143,7 @@ func TestReachMetresBristol(t *testing.T) {
 					cma := chainMetresFromEnd(g, eng.Ov, a, id)
 					cmb := chainMetresFromEnd(g, eng.Ov, b, id)
 					t.Logf("noMet chain id=%d ends %d/%d endArr %.1f/%.1f endMet %.0f/%.0f chainMet %.0f/%.0f offs %.1f/%.1f secs=%.1f",
-						id, a, b, ja, jb, jma, jmb, cma, cmb, eng.Ov.OffFromA[id], eng.Ov.OffFromB[id], want)
+						id, a, b, ja, jb, jma, jmb, cma, cmb, offOf(eng.Ov.OffFromA[id]), offOf(eng.Ov.OffFromB[id]), want)
 				}
 			}
 			continue

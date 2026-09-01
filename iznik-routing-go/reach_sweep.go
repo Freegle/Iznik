@@ -96,7 +96,7 @@ func reachSweepRun(file string, maxSynthetic, fuzz int, engine *ReachEngine) {
 			mu.Unlock()
 			return
 		}
-		origin := nearestNodeForMode(g, o.Lat, o.Lng, Drive)
+		origin := nearestDriveNode(g, o.Lat, o.Lng)
 		if origin == noNode {
 			mu.Lock()
 			t.skipped++
@@ -112,7 +112,7 @@ func reachSweepRun(file string, maxSynthetic, fuzz int, engine *ReachEngine) {
 			log.Fatalf("sweep: decode round trip failed for %d: %v", o.Msgid, err)
 		}
 		b0 := time.Now()
-		base, baseMet := baseDriveDijkstraM(g, origin, initialCostFor(Drive), T)
+		base, baseMet := baseDriveDijkstraM(g, origin, driveStartupSecs, T)
 		bMs := float64(time.Since(b0).Microseconds()) / 1000
 
 		type mism struct {
@@ -354,8 +354,8 @@ func reachNodeDebugRun(lat, lng, minutes float64, target NodeID, engine *ReachEn
 	g, ov := engine.G, engine.Ov
 	T := float32(minutes * 60)
 	lbl := engine.QueryLabels(lat, lng, T)
-	origin := nearestNodeForMode(g, lat, lng, Drive)
-	dist, prevMap := baseDriveDijkstraPrev(g, origin, initialCostFor(Drive), T)
+	origin := nearestDriveNode(g, lat, lng)
+	dist, prevMap := baseDriveDijkstraPrev(g, origin, driveStartupSecs, T)
 
 	fmt.Printf("origin snap base=%d (junction=%v)", origin, ov.Idx[origin] != 0)
 	if ov.Idx[origin] == 0 {
@@ -373,17 +373,17 @@ func reachNodeDebugRun(lat, lng, minutes float64, target NodeID, engine *ReachEn
 		fmt.Printf("  junctionArrival=%.3f seedArrival(stored path)=%.3f\n", engine.junctionArrival(lbl, target), engine.seedArrival(lbl, target))
 	} else {
 		a, b := ov.ChainEndA[target], ov.ChainEndB[target]
-		fmt.Printf("  chain node: endA=%d offA=%.3f endB=%d offB=%.3f\n", a, ov.OffFromA[target], b, ov.OffFromB[target])
+		fmt.Printf("  chain node: endA=%d offA=%.3f endB=%d offB=%.3f\n", a, offOf(ov.OffFromA[target]), b, offOf(ov.OffFromB[target]))
 		if a != 0 {
-			fmt.Printf("  arr(endA)=%.3f (+offA=%.3f) trueA=%.3f\n", engine.junctionArrival(lbl, a), engine.junctionArrival(lbl, a)+ov.OffFromA[target], dist[a])
+			fmt.Printf("  arr(endA)=%.3f (+offA=%.3f) trueA=%.3f\n", engine.junctionArrival(lbl, a), engine.junctionArrival(lbl, a)+offOf(ov.OffFromA[target]), dist[a])
 		}
 		if b != 0 {
-			fmt.Printf("  arr(endB)=%.3f (+offB=%.3f) trueB=%.3f\n", engine.junctionArrival(lbl, b), engine.junctionArrival(lbl, b)+ov.OffFromB[target], dist[b])
+			fmt.Printf("  arr(endB)=%.3f (+offB=%.3f) trueB=%.3f\n", engine.junctionArrival(lbl, b), engine.junctionArrival(lbl, b)+offOf(ov.OffFromB[target]), dist[b])
 		}
 		if o := lbl.originChain; o != 0 {
 			fmt.Printf("  originChain=%d sameChain=%v oA=%.3f vA=%.3f oB=%.3f vB=%.3f\n", o,
 				ov.ChainEndA[o] == ov.ChainEndA[target] && ov.ChainEndB[o] == ov.ChainEndB[target],
-				ov.OffFromA[o], ov.OffFromA[target], ov.OffFromB[o], ov.OffFromB[target])
+				offOf(ov.OffFromA[o]), offOf(ov.OffFromA[target]), offOf(ov.OffFromB[o]), offOf(ov.OffFromB[target]))
 		}
 	}
 	fmt.Printf("  engine live=%.3f\n", engine.ArrivalAtBaseNode(lbl, target))
@@ -406,4 +406,13 @@ func reachNodeDebugRun(lat, lng, minutes float64, target NodeID, engine *ReachEn
 		v := path[i]
 		fmt.Printf("    base=%d oi=%d chainA/B=%d/%d true=%.3f\n", v, ov.Idx[v], ov.ChainEndA[v], ov.ChainEndB[v], dist[v])
 	}
+}
+
+// offOf renders a quantised chain offset for diagnostics, -1 for a direction
+// that is not drivable.
+func offOf(o uint16) float32 {
+	if o == offUnusable {
+		return -1
+	}
+	return float32(o) / 10
 }
