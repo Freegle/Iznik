@@ -12,6 +12,7 @@ package main
 // so subset membership is pos[v] ∈ [lo,hi) with zero per-call allocation.
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -138,9 +139,30 @@ type BisectStat struct {
 }
 
 // ReachPartition is the partition artifact.
+// leafNone marks an overlay node that is not drive-usable, and bounds how many
+// leaves the artifact can address.
+const leafNone uint16 = 65535
+
+// LeafAt returns the leaf holding overlay node oi, or -1 when it has none.
+func (p *ReachPartition) LeafAt(oi uint32) int32 {
+	if int(oi) >= len(p.LeafOf) {
+		return -1
+	}
+	if l := p.LeafOf[oi]; l != leafNone {
+		return int32(l)
+	}
+	return -1
+}
+
 type ReachPartition struct {
-	// LeafOf[overlayIdx] = leaf id, -1 if the overlay node is not drive-usable.
-	LeafOf []int32
+	// LeafOf[overlayIdx] is the leaf id, or leafNone when the overlay node is
+	// not drive-usable. Read it through LeafAt, which returns the -1 the callers
+	// expect. uint16 rather than int32 saves 25.9MB on the production
+	// partition; uint16 rather than int16 because the sentinel buys headroom to
+	// 65,534 leaves instead of 32,767, and the UK already has 23,675 - halving
+	// leafMax would overflow an int16 and this must not be a trap for whoever
+	// tunes it next.
+	LeafOf []uint16
 	// LeafNodes[leaf] = overlay indices in the leaf.
 	LeafNodes [][]uint32
 	Stats     []BisectStat
@@ -219,19 +241,22 @@ func PartitionOverlay(g *Graph, ov *Overlay, leafMax int, alpha float64) *ReachP
 	p.wg.Wait()
 
 	out := &ReachPartition{
-		LeafOf:    make([]int32, ov.NodeCount()+1),
+		LeafOf:    make([]uint16, ov.NodeCount()+1),
 		LeafNodes: make([][]uint32, len(p.leaves)),
 		Stats:     p.stats,
 	}
 	for i := range out.LeafOf {
-		out.LeafOf[i] = -1
+		out.LeafOf[i] = leafNone
 	}
 	for leaf, nodes := range p.leaves {
 		lst := make([]uint32, len(nodes))
 		for i, u := range nodes {
 			oi := ug.overlayOf[u]
 			lst[i] = oi
-			out.LeafOf[oi] = int32(leaf)
+			if leaf >= int(leafNone) {
+				log.Fatalf("reach: partition produced %d leaves, over the %d the artifact can address; raise leafMax", leaf+1, leafNone)
+			}
+			out.LeafOf[oi] = uint16(leaf)
 		}
 		out.LeafNodes[leaf] = lst
 	}
@@ -836,7 +861,7 @@ func reachPartitionRun(leafMax int, alpha float64) {
 	if err := os.MkdirAll("data/reach", 0o755); err != nil {
 		log.Fatal(err)
 	}
-	if err := savePartition("data/reach/partition.snap", part); err != nil {
+	if err := savePartition("data/reach/partition.snap", part, overlayFingerprint(ov)); err != nil {
 		log.Fatalf("reach: save partition: %v", err)
 	}
 	f, err := os.Create("data/reach/partition-stats.json")
@@ -852,10 +877,12 @@ func reachPartitionRun(leafMax int, alpha float64) {
 	log.Printf("reach: stats written to data/reach/partition-stats.json")
 }
 
-const partitionMagic = "FRGP1SNAP" // versioned independently of the graph snapshot
+// partitionMagic v2 adds an overlay fingerprint: a partition is only meaningful
+// against the overlay numbering it was built on, and nothing checked that.
+const partitionMagic = "FRGP2SNAP" // versioned independently of the graph snapshot
 
 // savePartition / loadPartition use the same raw-slice format as the graph snapshot.
-func savePartition(path string, part *ReachPartition) error {
+func savePartition(path string, part *ReachPartition, overlayFP uint64) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -870,6 +897,9 @@ func savePartition(path string, part *ReachPartition) error {
 	}
 	w := f
 	if _, err := w.WriteString(partitionMagic); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, overlayFP); err != nil {
 		return err
 	}
 	if err := writeSlice(w, part.LeafOf); err != nil {
@@ -888,7 +918,7 @@ func savePartition(path string, part *ReachPartition) error {
 	return writeSlice(w, blob)
 }
 
-func loadPartition(path string) (*ReachPartition, error) {
+func loadPartition(path string, wantOverlayFP uint64) (*ReachPartition, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -901,8 +931,15 @@ func loadPartition(path string) (*ReachPartition, error) {
 	if string(magic) != partitionMagic {
 		return nil, fmt.Errorf("partition artifact version mismatch (got %q)", magic)
 	}
+	var gotFP uint64
+	if err := binary.Read(f, binary.LittleEndian, &gotFP); err != nil {
+		return nil, err
+	}
+	if gotFP != wantOverlayFP {
+		return nil, fmt.Errorf("partition built on overlay %x, engine has %x", gotFP, wantOverlayFP)
+	}
 	part := &ReachPartition{}
-	if part.LeafOf, err = readSlice[int32](f); err != nil {
+	if part.LeafOf, err = readSlice[uint16](f); err != nil {
 		return nil, err
 	}
 	var offs []int64

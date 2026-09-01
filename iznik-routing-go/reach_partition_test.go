@@ -96,8 +96,8 @@ func TestPartitionInvariantsBristol(t *testing.T) {
 			t.Fatalf("leaf %d size %d exceeds leafMax", leaf, len(lst))
 		}
 		for _, oi := range lst {
-			if part.LeafOf[oi] != int32(leaf) {
-				t.Fatalf("LeafOf[%d]=%d, want %d", oi, part.LeafOf[oi], leaf)
+			if part.LeafAt(oi) != int32(leaf) {
+				t.Fatalf("LeafOf[%d]=%d, want %d", oi, part.LeafAt(oi), leaf)
 			}
 			seen++
 		}
@@ -127,12 +127,19 @@ func TestPartitionInvariantsBristol(t *testing.T) {
 
 	// Round-trip the artifact.
 	path := filepath.Join(t.TempDir(), "partition.snap")
-	if err := savePartition(path, part); err != nil {
+	ovFP := overlayFingerprint(ov)
+	if err := savePartition(path, part, ovFP); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	part2, err := loadPartition(path)
+	part2, err := loadPartition(path, ovFP)
 	if err != nil {
 		t.Fatalf("load: %v", err)
+	}
+
+	// A partition built on a different overlay must be refused, not read
+	// through against a numbering it was never built for.
+	if _, err := loadPartition(path, ovFP^1); err == nil {
+		t.Fatal("a partition from a different overlay was accepted")
 	}
 	if len(part2.LeafNodes) != len(part.LeafNodes) || len(part2.Stats) != len(part.Stats) {
 		t.Fatal("partition artifact round trip lost data")

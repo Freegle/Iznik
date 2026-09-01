@@ -266,6 +266,26 @@ func NewReachEngine(g *Graph, ov *Overlay, part *ReachPartition, rm *RegionMatri
 	}
 }
 
+// overlayFingerprint hashes the overlay numbering (FNV-1a over BaseNode).
+// partition.snap and matrices.snap are both derived from a specific overlay and
+// both used to validate only their own magic string, so a stale one from an
+// earlier build was read straight through against the new numbering. Nothing
+// detected it: reach_server only re-derives them when the load itself fails.
+// That matters more than it looks, because the partition is not deterministic -
+// buildDriveUG collects its edges by ranging a Go map, so two runs over the
+// identical graph give different leaf assignments.
+func overlayFingerprint(ov *Overlay) uint64 {
+	const offset64, prime64 = 0xcbf29ce484222325, 0x100000001b3
+	h := uint64(offset64)
+	for _, b := range ov.BaseNode {
+		for shift := 0; shift < 32; shift += 8 {
+			h ^= uint64(byte(b >> shift))
+			h *= prime64
+		}
+	}
+	return h
+}
+
 // partitionFingerprint hashes the leaf assignment itself (FNV-1a over LeafOf),
 // so two partition files that assign every overlay node the same region agree,
 // and any other pair differ.
@@ -556,7 +576,7 @@ func (e *ReachEngine) QueryLabelsFromNode(origin NodeID, limitSeconds float32) *
 	var exitArrs []exitArr
 	seededLeaves := map[int32]struct{}{}
 	for oi, s := range out.Seeds {
-		leaf := e.Part.LeafOf[oi]
+		leaf := e.Part.LeafAt(oi)
 		if leaf < 0 {
 			continue
 		}
@@ -716,7 +736,7 @@ func (e *ReachEngine) junctionArrivalM(lbl *ReachLabels, j NodeID) (float32, flo
 			bestM = m
 		}
 	}
-	leaf := e.Part.LeafOf[oi]
+	leaf := e.Part.LeafAt(oi)
 	if leaf < 0 {
 		return best, bestM
 	}

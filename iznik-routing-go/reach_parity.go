@@ -330,15 +330,17 @@ func nearStoredEdge(cells []byte, col, row, dist int32) bool {
 // reachLoadEngine loads all artifacts and builds the engine.
 func reachLoadEngine() *ReachEngine {
 	g, ov := reachLoadOrBuild()
-	part, err := loadPartition("data/reach/partition.snap")
+	ovFP := overlayFingerprint(ov)
+	part, err := loadPartition("data/reach/partition.snap", ovFP)
 	if err != nil {
 		log.Fatalf("reach: load partition (run `reach partition` first): %v", err)
 	}
+	partFP := partitionFingerprint(part)
 	var rm *RegionMatrices
-	if rm, err = loadMatrices("data/reach/matrices.snap"); err != nil {
+	if rm, err = loadMatrices("data/reach/matrices.snap", ovFP, partFP); err != nil {
 		log.Printf("reach: matrices not cached (%v), building", err)
 		rm = BuildRegionMatrices(ov, part)
-		if err := saveMatrices("data/reach/matrices.snap", rm); err != nil {
+		if err := saveMatrices("data/reach/matrices.snap", rm, ovFP, partFP); err != nil {
 			log.Fatalf("reach: save matrices: %v", err)
 		}
 	}
@@ -348,13 +350,14 @@ func reachLoadEngine() *ReachEngine {
 // reachMatricesRun builds and reports on the matrices artifact.
 func reachMatricesRun() {
 	g, ov := reachLoadOrBuild()
-	part, err := loadPartition("data/reach/partition.snap")
+	ovFP := overlayFingerprint(ov)
+	part, err := loadPartition("data/reach/partition.snap", ovFP)
 	if err != nil {
 		log.Fatalf("reach: load partition (run `reach partition` first): %v", err)
 	}
 	_ = g
 	rm := BuildRegionMatrices(ov, part)
-	if err := saveMatrices("data/reach/matrices.snap", rm); err != nil {
+	if err := saveMatrices("data/reach/matrices.snap", rm, ovFP, partitionFingerprint(part)); err != nil {
 		log.Fatalf("reach: save matrices: %v", err)
 	}
 
@@ -517,7 +520,7 @@ func reachExactDebugRun(jsonPath string, engine *ReachEngine) {
 		shown++
 		nd := g.Nodes[id]
 		if oi := ov.Idx[id]; oi != 0 {
-			leaf := part.LeafOf[oi]
+			leaf := part.LeafAt(oi)
 			var rl *RegionLabel
 			var entArr []float32
 			if leaf >= 0 {
@@ -560,7 +563,7 @@ func leafOfBase(e *ReachEngine, j NodeID) int32 {
 	if j == 0 || e.Ov.Idx[j] == 0 {
 		return -2
 	}
-	return e.Part.LeafOf[e.Ov.Idx[j]]
+	return e.Part.LeafAt(e.Ov.Idx[j])
 }
 
 // reachBoundaryDebugRun compares the engine's boundary-node arrivals with
@@ -637,7 +640,7 @@ func reachBoundaryDebugRun(jsonPath string, engine *ReachEngine) {
 					if ur && uw+e.Sec() <= d.trueArr+1 {
 						uleaf := int32(-9)
 						if engine.Ov.Idx[ub] != 0 {
-							uleaf = engine.Part.LeafOf[engine.Ov.Idx[ub]]
+							uleaf = engine.Part.LeafAt(engine.Ov.Idx[ub])
 						}
 						ue, uisEntry := engine.BI.leafOf[u], false
 						_, uisEntry = engine.BI.entryIdx[u]
@@ -752,7 +755,7 @@ func reachTracePathRun(jsonPath string, target NodeID, engine *ReachEngine) {
 		if oi == 0 {
 			continue
 		}
-		leaf := engine.Part.LeafOf[oi]
+		leaf := engine.Part.LeafAt(oi)
 		_, isEntry := engine.BI.entryIdx[oi]
 		_, isBnd := engine.BI.leafOf[oi]
 		bd, hasBd := lbl.BoundaryDist[oi]
@@ -794,15 +797,15 @@ func reachLeafCheckRun(jsonPath string, target NodeID, engine *ReachEngine) {
 			junctions = append(junctions, path[i])
 		}
 	}
-	leaf := engine.Part.LeafOf[ov.Idx[target]]
+	leaf := engine.Part.LeafAt(ov.Idx[target])
 	ls := buildLeafSubgraph(ov, engine.Part, leaf)
 	fmt.Printf("leaf %d: %d nodes; checking hops of the internal segment:\n", leaf, len(ls.nodes))
 	inSeg := false
 	for i := 0; i+1 < len(junctions); i++ {
 		u, v := junctions[i], junctions[i+1]
 		uoi, voi := ov.Idx[u], ov.Idx[v]
-		ul := engine.Part.LeafOf[uoi]
-		vl := engine.Part.LeafOf[voi]
+		ul := engine.Part.LeafAt(uoi)
+		vl := engine.Part.LeafAt(voi)
 		if ul != leaf || vl != leaf {
 			inSeg = false
 			continue

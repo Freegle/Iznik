@@ -83,19 +83,24 @@ func loadReachEngineCore(dir string) (*ReachEngine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("graph snapshot: %w", err)
 	}
-	part, err := loadPartition(filepath.Join(dir, "partition.snap"))
+	// Both artifacts are stamped with the overlay they were built on (and the
+	// matrices with the partition too), so a stale one is refused and rebuilt
+	// rather than read through against a numbering it never matched.
+	ovFP := overlayFingerprint(ov)
+	part, err := loadPartition(filepath.Join(dir, "partition.snap"), ovFP)
 	if err != nil {
-		log.Printf("reach: partition artifact missing (%v): deriving at boot", err)
+		log.Printf("reach: partition artifact unusable (%v): deriving at boot", err)
 		part = PartitionOverlay(g, ov, 10000, 0.25)
-		if err := savePartition(filepath.Join(dir, "partition.snap"), part); err != nil {
+		if err := savePartition(filepath.Join(dir, "partition.snap"), part, ovFP); err != nil {
 			log.Printf("reach: WARNING: could not save derived partition: %v", err)
 		}
 	}
-	rm, err := loadMatrices(filepath.Join(dir, "matrices.snap"))
+	partFP := partitionFingerprint(part)
+	rm, err := loadMatrices(filepath.Join(dir, "matrices.snap"), ovFP, partFP)
 	if err != nil {
-		log.Printf("reach: matrices artifact missing (%v): deriving at boot", err)
+		log.Printf("reach: matrices artifact unusable (%v): deriving at boot", err)
 		rm = BuildRegionMatrices(ov, part)
-		if err := saveMatrices(filepath.Join(dir, "matrices.snap"), rm); err != nil {
+		if err := saveMatrices(filepath.Join(dir, "matrices.snap"), rm, ovFP, partFP); err != nil {
 			log.Printf("reach: WARNING: could not save derived matrices: %v", err)
 		}
 	}
@@ -623,7 +628,7 @@ func handleLeaf() fiber.Handler {
 				return
 			}
 			if oi := e.Ov.Idx[j]; oi != 0 {
-				if l := e.Part.LeafOf[oi]; l >= 0 {
+				if l := e.Part.LeafAt(oi); l >= 0 {
 					for _, x := range leaves {
 						if x == l {
 							return

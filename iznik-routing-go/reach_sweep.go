@@ -364,12 +364,12 @@ func reachNodeDebugRun(lat, lng, minutes float64, target NodeID, engine *ReachEn
 	}
 	fmt.Println()
 	for oi, s := range lbl.Seeds {
-		fmt.Printf("seed oi=%d base=%d cost=%.2f leaf=%d\n", oi, ov.BaseNode[oi], s, engine.Part.LeafOf[oi])
+		fmt.Printf("seed oi=%d base=%d cost=%.2f leaf=%d\n", oi, ov.BaseNode[oi], s, engine.Part.LeafAt(oi))
 	}
 	want := dist[target]
 	fmt.Printf("target base=%d true=%.3f\n", target, want)
 	if oi := ov.Idx[target]; oi != 0 {
-		fmt.Printf("  junction oi=%d leaf=%d originArr=%v\n", oi, engine.Part.LeafOf[oi], lbl.OriginArr[oi])
+		fmt.Printf("  junction oi=%d leaf=%d originArr=%v\n", oi, engine.Part.LeafAt(oi), lbl.OriginArr[oi])
 		fmt.Printf("  junctionArrival=%.3f seedArrival(stored path)=%.3f\n", engine.junctionArrival(lbl, target), engine.seedArrival(lbl, target))
 	} else {
 		a, b := ov.ChainEndA[target], ov.ChainEndB[target]

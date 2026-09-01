@@ -114,7 +114,7 @@ func unionSecsForLabel(e *ReachEngine, lbl *ReachLabels, rings [][][2]float64) (
 	var leaves []int32
 	addLeaf := func(v NodeID) {
 		if oi := e.Ov.Idx[v]; oi != 0 {
-			if l := e.Part.LeafOf[oi]; l >= 0 && !leafSeen[l] {
+			if l := e.Part.LeafAt(oi); l >= 0 && !leafSeen[l] {
 				leafSeen[l] = true
 				leaves = append(leaves, l)
 			}
@@ -122,7 +122,7 @@ func unionSecsForLabel(e *ReachEngine, lbl *ReachLabels, rings [][][2]float64) (
 			for _, j := range [2]NodeID{e.Ov.ChainEndA[v], e.Ov.ChainEndB[v]} {
 				if j != 0 {
 					if oi := e.Ov.Idx[j]; oi != 0 {
-						if l := e.Part.LeafOf[oi]; l >= 0 && !leafSeen[l] {
+						if l := e.Part.LeafAt(oi); l >= 0 && !leafSeen[l] {
 							leafSeen[l] = true
 							leaves = append(leaves, l)
 						}

@@ -176,12 +176,12 @@ func (e *ReachEngine) seedArrival(lbl *ReachLabels, j NodeID) float32 {
 	if oi == 0 {
 		return best
 	}
-	leaf := e.Part.LeafOf[oi]
+	leaf := e.Part.LeafAt(oi)
 	if leaf < 0 {
 		return best
 	}
 	for seedOi, s := range lbl.Seeds {
-		if e.Part.LeafOf[seedOi] != leaf {
+		if e.Part.LeafAt(seedOi) != leaf {
 			continue
 		}
 		row := e.tables.sourceRow(e, leaf, seedOi)

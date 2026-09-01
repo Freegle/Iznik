@@ -15,6 +15,7 @@ package main
 
 import (
 	"container/heap"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"math"
@@ -206,7 +207,7 @@ func BuildRegionMatrices(ov *Overlay, part *ReachPartition) *RegionMatrices {
 		exitSets[i] = map[uint32]struct{}{}
 	}
 	for oi := uint32(1); oi <= uint32(ov.NodeCount()); oi++ {
-		lf := part.LeafOf[oi]
+		lf := part.LeafAt(oi)
 		if lf < 0 {
 			continue
 		}
@@ -214,7 +215,7 @@ func BuildRegionMatrices(ov *Overlay, part *ReachPartition) *RegionMatrices {
 			if e.To == oi {
 				continue
 			}
-			lt := part.LeafOf[e.To]
+			lt := part.LeafAt(e.To)
 			if lt < 0 || lt == lf {
 				continue
 			}
@@ -301,15 +302,24 @@ func BuildRegionMatrices(ov *Overlay, part *ReachPartition) *RegionMatrices {
 }
 
 // saveMatrices / loadMatrices: raw-slice artifact like the graph snapshot.
-const matricesMagic = "FRGM2SNAP" // v2: adds MatM (road metres)
+// matricesMagic v3 adds the overlay and partition fingerprints: matrices are
+// derived from both, and validating only the magic let a stale file be read
+// against a numbering it was never built for.
+const matricesMagic = "FRGM3SNAP"
 
-func saveMatrices(path string, rm *RegionMatrices) error {
+func saveMatrices(path string, rm *RegionMatrices, overlayFP, partFP uint64) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 	if _, err := f.WriteString(matricesMagic); err != nil {
+		return err
+	}
+	if err := binary.Write(f, binary.LittleEndian, overlayFP); err != nil {
+		return err
+	}
+	if err := binary.Write(f, binary.LittleEndian, partFP); err != nil {
 		return err
 	}
 	for _, s := range [][]int32{rm.EntryOff, rm.ExitOff, rm.BndOff} {
@@ -350,7 +360,7 @@ func saveMatrices(path string, rm *RegionMatrices) error {
 	return writeSlice(f, rm.CrossMet)
 }
 
-func loadMatrices(path string) (*RegionMatrices, error) {
+func loadMatrices(path string, wantOverlayFP, wantPartFP uint64) (*RegionMatrices, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -362,6 +372,19 @@ func loadMatrices(path string) (*RegionMatrices, error) {
 	}
 	if string(magic) != matricesMagic {
 		return nil, fmt.Errorf("matrices artifact version mismatch (got %q)", magic)
+	}
+	var gotOverlayFP, gotPartFP uint64
+	if err := binary.Read(f, binary.LittleEndian, &gotOverlayFP); err != nil {
+		return nil, err
+	}
+	if err := binary.Read(f, binary.LittleEndian, &gotPartFP); err != nil {
+		return nil, err
+	}
+	if gotOverlayFP != wantOverlayFP {
+		return nil, fmt.Errorf("matrices built on overlay %x, engine has %x", gotOverlayFP, wantOverlayFP)
+	}
+	if gotPartFP != wantPartFP {
+		return nil, fmt.Errorf("matrices built on partition %x, engine has %x", gotPartFP, wantPartFP)
 	}
 	rm := &RegionMatrices{}
 	if rm.EntryOff, err = readSlice[int32](f); err != nil {

@@ -132,7 +132,7 @@ func TestReachMetresBristol(t *testing.T) {
 			noMet++
 			if noMet <= 5 {
 				if oi := eng.Ov.Idx[id]; oi != 0 {
-					leaf := eng.Part.LeafOf[oi]
+					leaf := eng.Part.LeafAt(oi)
 					rl := lbl.Reached[leaf]
 					_, hasOA := lbl.OriginArr[oi]
 					t.Logf("noMet junction id=%d leaf=%d label=%v entryMet=%v originArr=%v secs=%.1f", id, leaf, rl != nil, rl != nil && rl.EntryMet != nil, hasOA, want)
