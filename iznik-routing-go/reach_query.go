@@ -359,7 +359,13 @@ type regionTable struct {
 	nodes   []uint32         // == part.LeafNodes[leaf]: local index = position
 	localOf map[uint32]int32 // overlay index -> local index
 	dist    [][]float32      // per entry (aligned to rm.LeafEntries), len(nodes)
-	met     [][]float32      // road metres along the same time-optimal paths
+	// met is the lazy path's road metres, in metres. metQ is the artifact
+	// path's, quantised into per-leaf units of metUnit metres and viewed in
+	// place in the mapping rather than copied to the heap. Exactly one of the
+	// two is set; metAt reads whichever it is.
+	met     [][]float32
+	metQ    [][]uint16
+	metUnit float32
 }
 
 func newRegionTableCache(cap int) *regionTableCache {
@@ -392,14 +398,16 @@ func (c *regionTableCache) getLocked(e *ReachEngine, leaf int32) *regionTable {
 	// so admitting a leaf costs only the localOf map and a few slice headers —
 	// microseconds and ~zero heap — instead of one Dijkstra per entry.
 	if lt := e.leafTabs.Load(); lt != nil {
-		if dist, met, en, nn, ok := lt.table(leaf); ok && en == len(ents) && nn == len(nodes) {
+		if dist, met, metUnit, en, nn, ok := lt.table(leaf); ok && en == len(ents) && nn == len(nodes) {
 			t.localOf = make(map[uint32]int32, len(nodes))
 			for i, oi := range nodes {
 				t.localOf[oi] = int32(i)
 			}
+			t.metQ = make([][]uint16, len(ents))
+			t.metUnit = metUnit
 			for i := range ents {
 				t.dist[i] = dist[i*nn : (i+1)*nn]
-				t.met[i] = met[i*nn : (i+1)*nn]
+				t.metQ[i] = met[i*nn : (i+1)*nn]
 			}
 			c.admitLocked(leaf, t)
 			return t
@@ -420,6 +428,20 @@ func (c *regionTableCache) getLocked(e *ReachEngine, leaf int32) *regionTable {
 	}
 	c.admitLocked(leaf, t)
 	return t
+}
+
+// metAt returns the road metres for entry i to local node li, +Inf when that
+// cell is unreachable. It hides which backing the table has: the artifact's
+// quantised uint16 view, or the lazy path's float32 slice.
+func (t *regionTable) metAt(i int, li int32) float32 {
+	if t.metQ != nil {
+		q := t.metQ[i][li]
+		if q == metUnreachable {
+			return f32Inf
+		}
+		return float32(q) * t.metUnit
+	}
+	return t.met[i][li]
 }
 
 // admitLocked stores a freshly built table and applies the LRU cap. Callers
@@ -715,7 +737,7 @@ func (e *ReachEngine) junctionArrivalM(lbl *ReachLabels, j NodeID) (float32, flo
 			best = arr + d
 			bestM = f32Inf
 			if rl.EntryMet != nil {
-				bestM = rl.EntryMet[i] + t.met[i][li]
+				bestM = rl.EntryMet[i] + t.metAt(i, li)
 			}
 		}
 	}
