@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-27
+last_reviewed: 2026-09-01
 owner: Freegle dev team
 covers:
   - docs/ops/reference/database-read-write-split.md
@@ -38,6 +38,28 @@ operational facts (from their component READMEs and
 - Rippling, the daily digest and browse depend on them being up.
 
 Plan restarts of these services with that warm-up time in mind.
+
+The routing container is memory-bound rather than CPU-bound, and it is the container
+most likely to be the one in trouble when the host is. Two things follow.
+
+First, its Go heap is bounded by `GOMEMLIMIT` (and `GOGC`) in `docker-compose.yml`,
+overridable per host with `SPATIAL_GOMEMLIMIT` and `SPATIAL_GOGC`. Both are read once
+at process start, so changing them needs the container recreated, not restarted. Set
+the limit below the container ceiling with room left over: the leaf-table artifact is
+memory-mapped, and if the heap fills the container there is nowhere for the kernel to
+keep those pages and the service pays for re-reading them constantly.
+
+Second, the container exposes `/debug/pprof` and a one-line `/debug/memsummary` on
+loopback only, so a memory question can be answered from inside the container rather
+than inferred:
+
+```bash
+docker exec <routing-container> curl -s 127.0.0.1:6060/debug/memsummary
+docker exec <routing-container> curl -s -o /tmp/heap.out 127.0.0.1:6060/debug/pprof/heap
+```
+
+It binds to 127.0.0.1 deliberately and its port is not published, so it is reachable
+only through `docker exec`. Set `ROUTING_DEBUG_PORT=off` to disable it.
 
 ## Database
 
