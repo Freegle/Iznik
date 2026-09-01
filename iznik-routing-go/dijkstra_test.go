@@ -18,7 +18,7 @@ func getTestGraph(t *testing.T) *Graph {
 
 func TestIsochrone_Walk15min(t *testing.T) {
 	g := getTestGraph(t)
-	result := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
+	result := Isochrone(g, 51.4545, -2.5879, 15*60)
 
 	if len(result.ReachedNodes) < 100 {
 		t.Errorf("15-min walk from Bristol centre: expected ≥100 nodes, got %d", len(result.ReachedNodes))
@@ -33,44 +33,17 @@ func TestIsochrone_Walk15min(t *testing.T) {
 	}
 }
 
-func TestIsochrone_Drive15min_LargerThanWalk(t *testing.T) {
+func TestIsochrone_LongerBudgetReachesMore(t *testing.T) {
 	g := getTestGraph(t)
-	walk := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
-	drive := Isochrone(g, 51.4545, -2.5879, 15*60, Drive)
+	// A car crosses the whole 3.5km fixture grid in well under 15 minutes, so
+	// the budgets have to be small enough that the reach is still growing.
+	rShort := Isochrone(g, 51.4545, -2.5879, 60)
+	rLong := Isochrone(g, 51.4545, -2.5879, 120)
 
-	t.Logf("15-min walk=%d nodes, drive=%d nodes", len(walk.ReachedNodes), len(drive.ReachedNodes))
-	if len(drive.ReachedNodes) <= len(walk.ReachedNodes) {
-		t.Errorf("drive should reach more nodes than walk in same time; walk=%d drive=%d",
-			len(walk.ReachedNodes), len(drive.ReachedNodes))
-	}
-}
-
-func TestIsochrone_30min_LargerThan15min(t *testing.T) {
-	g := getTestGraph(t)
-	r15 := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
-	r30 := Isochrone(g, 51.4545, -2.5879, 30*60, Walk)
-
-	t.Logf("walk 15min=%d 30min=%d", len(r15.ReachedNodes), len(r30.ReachedNodes))
-	if len(r30.ReachedNodes) <= len(r15.ReachedNodes) {
-		t.Errorf("30-min should reach more than 15-min; 15=%d 30=%d",
-			len(r15.ReachedNodes), len(r30.ReachedNodes))
-	}
-}
-
-func TestIsochrone_Cycle_BetweenWalkAndDrive(t *testing.T) {
-	g := getTestGraph(t)
-	walk := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
-	cycle := Isochrone(g, 51.4545, -2.5879, 15*60, Cycle)
-	drive := Isochrone(g, 51.4545, -2.5879, 15*60, Drive)
-
-	t.Logf("15-min walk=%d cycle=%d drive=%d", len(walk.ReachedNodes), len(cycle.ReachedNodes), len(drive.ReachedNodes))
-	if len(cycle.ReachedNodes) <= len(walk.ReachedNodes) {
-		t.Errorf("cycle should reach more than walk; walk=%d cycle=%d",
-			len(walk.ReachedNodes), len(cycle.ReachedNodes))
-	}
-	if len(drive.ReachedNodes) <= len(cycle.ReachedNodes) {
-		t.Errorf("drive should reach more than cycle; cycle=%d drive=%d",
-			len(cycle.ReachedNodes), len(drive.ReachedNodes))
+	t.Logf("drive 60s=%d 120s=%d", len(rShort.ReachedNodes), len(rLong.ReachedNodes))
+	if len(rLong.ReachedNodes) <= len(rShort.ReachedNodes) {
+		t.Errorf("a longer budget should reach more; 60s=%d 120s=%d",
+			len(rShort.ReachedNodes), len(rLong.ReachedNodes))
 	}
 }
 
@@ -79,7 +52,7 @@ func TestNearestNode_CloseToGridCentre(t *testing.T) {
 	// Query at the test grid's centre (row 24, col 25 ≈ lat 51.454, lng −2.588).
 	// The nearest node should be within one grid cell (≈100 m).
 	queryLat, queryLng := 51.4545, -2.5879
-	id := nearestNodeForMode(g, queryLat, queryLng, Walk)
+	id := nearestDriveNode(g, queryLat, queryLng)
 	if id == noNode {
 		t.Fatal("nearestNode returned noNode")
 	}

@@ -83,19 +83,24 @@ func loadReachEngineCore(dir string) (*ReachEngine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("graph snapshot: %w", err)
 	}
-	part, err := loadPartition(filepath.Join(dir, "partition.snap"))
+	// Both artifacts are stamped with the overlay they were built on (and the
+	// matrices with the partition too), so a stale one is refused and rebuilt
+	// rather than read through against a numbering it never matched.
+	ovFP := overlayFingerprint(ov)
+	part, err := loadPartition(filepath.Join(dir, "partition.snap"), ovFP)
 	if err != nil {
-		log.Printf("reach: partition artifact missing (%v): deriving at boot", err)
+		log.Printf("reach: partition artifact unusable (%v): deriving at boot", err)
 		part = PartitionOverlay(g, ov, 10000, 0.25)
-		if err := savePartition(filepath.Join(dir, "partition.snap"), part); err != nil {
+		if err := savePartition(filepath.Join(dir, "partition.snap"), part, ovFP); err != nil {
 			log.Printf("reach: WARNING: could not save derived partition: %v", err)
 		}
 	}
-	rm, err := loadMatrices(filepath.Join(dir, "matrices.snap"))
+	partFP := partitionFingerprint(part)
+	rm, err := loadMatrices(filepath.Join(dir, "matrices.snap"), ovFP, partFP)
 	if err != nil {
-		log.Printf("reach: matrices artifact missing (%v): deriving at boot", err)
+		log.Printf("reach: matrices artifact unusable (%v): deriving at boot", err)
 		rm = BuildRegionMatrices(ov, part)
-		if err := saveMatrices(filepath.Join(dir, "matrices.snap"), rm); err != nil {
+		if err := saveMatrices(filepath.Join(dir, "matrices.snap"), rm, ovFP, partFP); err != nil {
 			log.Printf("reach: WARNING: could not save derived matrices: %v", err)
 		}
 	}
@@ -352,7 +357,7 @@ func handleDriveMetrics() fiber.Handler {
 		out := make([]res, len(req.Targets))
 		for i, tg := range req.Targets {
 			out[i] = res{ID: tg.ID}
-			v := nearestNodeForMode(e.G, tg.Lat, tg.Lng, Drive)
+			v := nearestDriveNode(e.G, tg.Lat, tg.Lng)
 			if v == noNode {
 				continue
 			}
@@ -375,14 +380,14 @@ func handleDriveMetrics() fiber.Handler {
 }
 
 // engineDriveTime is the fast path for /v1/drive-time when the reach engine
-// is live and the mode is drive: exact, and milliseconds instead of a bounded
-// sweep. Returns handled=false to fall through to the sweep.
-func engineDriveTime(lat, lng, toLat, toLng, minutes float64, mode Mode) (fiber.Map, bool) {
+// is live: exact, and milliseconds instead of a bounded sweep. Returns
+// handled=false to fall through to the sweep.
+func engineDriveTime(lat, lng, toLat, toLng, minutes float64) (fiber.Map, bool) {
 	e := reachLive
-	if e == nil || mode != Drive {
+	if e == nil {
 		return nil, false
 	}
-	dest := nearestNodeForMode(e.G, toLat, toLng, Drive)
+	dest := nearestDriveNode(e.G, toLat, toLng)
 	if dest == noNode {
 		return fiber.Map{"reachable": false}, true
 	}
@@ -417,7 +422,7 @@ func engineDriveTime(lat, lng, toLat, toLng, minutes float64, mode Mode) (fiber.
 // metres/4. Returns the input unchanged (roadm 0) when there is no road
 // nearby or no candidate satisfies the floors.
 func roadBlurPoint(g *Graph, lat, lng, metres float64) (float64, float64, float64) {
-	origin := nearestNodeForMode(g, lat, lng, Drive)
+	origin := nearestDriveNode(g, lat, lng)
 	if origin == noNode {
 		return lat, lng, 0
 	}
@@ -446,9 +451,6 @@ func roadBlurPoint(g *Graph, lat, lng, metres float64) (float64, float64, float6
 		}
 		cn := g.Nodes[id]
 		for _, e := range g.EdgesFrom(id) {
-			if e.Seconds[Drive] < 0 {
-				continue
-			}
 			tn := g.Nodes[e.To]
 			nm := cur.c + float32(haversineM(float64(cn.Lat), float64(cn.Lng), float64(tn.Lat), float64(tn.Lng)))
 			if d, seen := dist[e.To]; !seen || nm < d {
@@ -555,12 +557,11 @@ func handleBlurBatch(g *Graph) fiber.Handler {
 }
 
 // engineGroupProximity is groupProximity answered from the reach engine when
-// it is live (drive mode): two label queries replace two bounded full-graph
-// sweeps. Returns handled=false to fall through to the sweep (engine off, or
-// a non-drive mode).
-func engineGroupProximity(lat, lng float64, seeds []NodeID, mode Mode, maxSecs float32) (ProxPoint, ProxPoint, bool, bool) {
+// it is live: two label queries replace two bounded full-graph sweeps.
+// Returns handled=false to fall through to the sweep when the engine is off.
+func engineGroupProximity(lat, lng float64, seeds []NodeID, maxSecs float32) (ProxPoint, ProxPoint, bool, bool) {
 	e := reachLive
-	if e == nil || mode != Drive || len(seeds) == 0 {
+	if e == nil || len(seeds) == 0 {
 		return ProxPoint{}, ProxPoint{}, false, false
 	}
 
@@ -617,7 +618,7 @@ func handleLeaf() fiber.Handler {
 		if lat == 0 || lng == 0 || math.IsNaN(lat) || math.IsNaN(lng) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat and lng required")
 		}
-		v := nearestNodeForMode(e.G, lat, lng, Drive)
+		v := nearestDriveNode(e.G, lat, lng)
 		if v == noNode {
 			return c.JSON(fiber.Map{"leaves": []int32{}})
 		}
@@ -626,8 +627,8 @@ func handleLeaf() fiber.Handler {
 			if j == 0 {
 				return
 			}
-			if oi := e.Ov.Idx[j]; oi != 0 {
-				if l := e.Part.LeafOf[oi]; l >= 0 {
+			if oi := e.Ov.IdxOf(j); oi != 0 {
+				if l := e.Part.LeafAt(oi); l >= 0 {
 					for _, x := range leaves {
 						if x == l {
 							return
@@ -637,10 +638,10 @@ func handleLeaf() fiber.Handler {
 				}
 			}
 		}
-		if e.Ov.Idx[v] != 0 {
+		if e.Ov.IdxOf(v) != 0 {
 			add(v)
 		} else {
-			add(e.Ov.ChainEndA[v])
+			add(e.Ov.ChainA(v))
 			add(e.Ov.ChainEndB[v])
 		}
 		if leaves == nil {
@@ -652,23 +653,23 @@ func handleLeaf() fiber.Handler {
 
 // engineOrFlatIsochrone serves a drive isochrone from the reach engine when
 // it is live (label query + table expansion, no full-graph sweep), and the
-// classic Dijkstra otherwise or for other modes. Same reached-nodes contract
-// either way, so polygons/bands/bounds downstream are unchanged.
-func engineOrFlatIsochrone(g *Graph, lat, lng float64, secs float32, mode Mode) IsochroneResult {
-	if e := reachLive; e != nil && mode == Drive {
+// classic Dijkstra otherwise. Same reached-nodes contract either way, so
+// polygons/bands/bounds downstream are unchanged.
+func engineOrFlatIsochrone(g *Graph, lat, lng float64, secs float32) IsochroneResult {
+	if e := reachLive; e != nil {
 		lbl := e.QueryLabelsCached(lat, lng, secs)
 		return IsochroneResult{ReachedNodes: e.ReachedNodes(lbl, secs)}
 	}
-	return Isochrone(g, lat, lng, secs, mode)
+	return Isochrone(g, lat, lng, secs)
 }
 
 // engineOrFlatMultiSource is the group-boundary form: one label query per
 // seed, min-merged at the LABEL level (a few KB each), then one expansion -
 // instead of one full-graph multi-source sweep.
-func engineOrFlatMultiSource(g *Graph, seeds []NodeID, secs float32, mode Mode) IsochroneResult {
+func engineOrFlatMultiSource(g *Graph, seeds []NodeID, secs float32) IsochroneResult {
 	e := reachLive
-	if e == nil || mode != Drive || len(seeds) == 0 {
-		return multiSourceIsochrone(g, seeds, secs, mode)
+	if e == nil || len(seeds) == 0 {
+		return multiSourceIsochrone(g, seeds, secs)
 	}
 	var merged *ReachLabels
 	type chainSeed struct {

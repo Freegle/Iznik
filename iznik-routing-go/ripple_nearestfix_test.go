@@ -56,7 +56,6 @@ func TestUKNearestFix(t *testing.T) {
 		t.Skip("set RUN_UK_PROFILE=1")
 	}
 	g := ukLoad(t)
-	mode := Drive
 	secs := float32(30 * 60)
 
 	for _, o := range []struct {
@@ -67,7 +66,7 @@ func TestUKNearestFix(t *testing.T) {
 		{"Birmingham", 52.4862, -1.8904},
 		{"Reading-suburb", 51.4543, -0.9781},
 	} {
-		iso := Isochrone(g, o.lat, o.lng, secs, mode)
+		iso := Isochrone(g, o.lat, o.lng, secs)
 		reached := len(iso.ReachedNodes)
 		if reached == 0 {
 			continue
@@ -90,7 +89,7 @@ func TestUKNearestFix(t *testing.T) {
 		ref := make([]float32, N)
 		refResolved := 0
 		for i, p := range pts {
-			nid := nearestNodeForMode(g, p.lat, p.lng, mode)
+			nid := nearestDriveNode(g, p.lat, p.lng)
 			if nid != noNode {
 				if tt, ok := iso.ReachedNodes[nid]; ok {
 					ref[i] = tt

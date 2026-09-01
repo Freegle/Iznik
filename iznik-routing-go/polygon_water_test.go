@@ -30,7 +30,7 @@ func buildTwoBanksGraph(gapKm float64) (*Graph, map[NodeID]float32) {
 // (the river is sub-cell and gets bridged) and passes at the finer resolution.
 func TestIsochronePolygon_DoesNotBridgeRiver(t *testing.T) {
 	const gapKm = 0.8
-	res := AutoResolution(30*60, Drive)
+	res := AutoResolution(30 * 60)
 	g, reached := buildTwoBanksGraph(gapKm)
 	poly := IsochronePolygon(g, reached, res)
 	if len(poly.Geometry.Coordinates) == 0 {
@@ -46,7 +46,7 @@ func TestIsochronePolygon_DoesNotBridgeRiver(t *testing.T) {
 // A ~0.8km river must span >=2 grid cells so the one-cell closing cannot bridge it,
 // i.e. cell size <= ~0.4km ~ 0.0036 deg for a typical 30-minute drive reach.
 func TestAutoResolution_DriveResolvesSubKmRiver(t *testing.T) {
-	res := AutoResolution(30*60, Drive)
+	res := AutoResolution(30 * 60)
 	if res > 0.0036 {
 		t.Errorf("drive resolution %.4f deg (~%.2f km/cell) too coarse to resolve a 0.8km river; want <= 0.0036", res, res*111)
 	}

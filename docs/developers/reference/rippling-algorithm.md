@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-29
+last_reviewed: 2026-09-01
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**

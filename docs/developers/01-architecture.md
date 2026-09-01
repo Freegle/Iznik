@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-29
+last_reviewed: 2026-09-01
 owner: Freegle dev team
 covers:
   - docs/developers/reference/architecture.md

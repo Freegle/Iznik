@@ -881,6 +881,16 @@ services:
         required: false
     restart: "no"
     environment:
+      # Bound the GC pacer by the container, not by GOGC's default doubling.
+      # With neither set, Go sizes the heap at ~2x the live set and the
+      # scavenger returns pages lazily, so anon RSS sat at 11.6GB against a
+      # 12GiB cgroup while the artifacts account for ~5.2GB of it, squeezing
+      # the mmap'd leaf tables down to 868MB resident and costing 93M file
+      # refaults. GOMEMLIMIT is a SOFT target: Go keeps serving above it, it
+      # only collects harder. Leave headroom below the cgroup ceiling for the
+      # leaf-table page cache, and tune with a load test rather than by feel.
+      - GOMEMLIMIT=${SPATIAL_GOMEMLIMIT:-9GiB}
+      - GOGC=${SPATIAL_GOGC:-50}
       - SPATIAL_PORT=8196
       - SPATIAL_INTERNAL_PORT=8194
       - SPATIAL_KNN_URL=http://spatial-knn:8194
@@ -1076,6 +1086,16 @@ services:
         required: false
     restart: "no"
     environment:
+      # Bound the GC pacer by the container, not by GOGC's default doubling.
+      # With neither set, Go sizes the heap at ~2x the live set and the
+      # scavenger returns pages lazily, so anon RSS sat at 11.6GB against a
+      # 12GiB cgroup while the artifacts account for ~5.2GB of it, squeezing
+      # the mmap'd leaf tables down to 868MB resident and costing 93M file
+      # refaults. GOMEMLIMIT is a SOFT target: Go keeps serving above it, it
+      # only collects harder. Leave headroom below the cgroup ceiling for the
+      # leaf-table page cache, and tune with a load test rather than by feel.
+      - GOMEMLIMIT=${SPATIAL_GOMEMLIMIT:-9GiB}
+      - GOGC=${SPATIAL_GOGC:-50}
       - SPATIAL_PORT=8196
       - SPATIAL_INTERNAL_PORT=8194
       - SPATIAL_KNN_URL=http://spatial-knn-live:8194

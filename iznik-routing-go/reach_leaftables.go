@@ -24,15 +24,32 @@ package main
 // Layout (little-endian; every offset 4-aligned by construction):
 //
 //	0   8  magic "FRGLTAB1"
-//	8   4  version (1)
+//	8   4  version (2)
 //	12  4  leaf count
 //	16  8  partition fingerprint
 //	24  8  reserved
-//	32  leafCount × 16: {data offset u64, entries u32, nodes u32}
-//	...   per leaf, in leaf order: dist f32[entries×nodes], met f32[entries×nodes]
+//	32  leafCount × 24: {data offset u64, entries u32, nodes u32,
+//	                     metShift u32, reserved u32}
+//	...   per leaf, in leaf order: dist f32[entries×nodes],
+//	                              met  u16[entries×nodes], padded to 4 bytes
 //
 // Entry order matches rm.LeafEntries(leaf); node order matches
 // part.LeafNodes[leaf] ("local index = position"), so no id lists are stored.
+//
+// Version 2 halves the metres. Metres were f32 alongside f32 seconds, 8 bytes
+// per cell over 188,266,103 cells on the UK artifact; storing them as uint16 in
+// per-leaf units of 1<<metShift metres takes that to 6 bytes, about 376MB off a
+// mmap'd file that production could only keep 868MB of resident.
+//
+// SECONDS ARE DELIBERATELY STILL f32. The engine is checked against a flat
+// Dijkstra to within 0.01s, and metres are not: the metres test already allows
+// divergence, because metres follow whichever path won on time and equal-time
+// ties can take different roads. Quantising seconds to anything that fits a
+// uint16 across the real leaf-size distribution costs more than that gate
+// allows - the census found 1,477 of 23,675 leaves exceeding 655.34s, so most
+// CELLS would need 0.1s units, five times the tolerance. The gate is worth more
+// than the remaining 376MB, especially now the anon heap that was starving this
+// file has itself halved.
 
 import (
 	"encoding/binary"
@@ -45,18 +62,51 @@ import (
 
 const (
 	leafTablesMagic   = "FRGLTAB1"
-	leafTablesVersion = uint32(1)
+	leafTablesVersion = uint32(2)
 	leafTablesHdrLen  = 32
-	leafTablesIdxLen  = 16
+	leafTablesIdxLen  = 24
 	leafTablesName    = "leaftables.snap"
 )
 
-// ltIdx mirrors one index record. Fixed 16-byte layout (u64 + 2×u32) so the
-// index region can be viewed in place.
+// metUnreachable is the metres sentinel for a cell the entry cannot reach. It
+// pairs with +Inf in the seconds block, which dijkstraFromM writes.
+const metUnreachable uint16 = 65535
+
+// maxMetShift bounds the per-leaf metre unit at 1<<8 = 256m, which covers a
+// 16,776km intra-leaf road distance. Anything beyond that is not a leaf.
+const maxMetShift = 8
+
+// ltIdx mirrors one index record. Fixed 24-byte layout so the index region can
+// be viewed in place. Entries/Nodes stay uint32 rather than being squeezed into
+// uint16 to make room for metShift: the partition's leaf size is a tunable, and
+// a format that silently truncates when someone raises it is not worth 2 bytes
+// per leaf.
 type ltIdx struct {
-	Off     uint64
-	Entries uint32
-	Nodes   uint32
+	Off      uint64
+	Entries  uint32
+	Nodes    uint32
+	MetShift uint32
+	_        uint32
+}
+
+// metUnit is the metres one stored unit represents for this leaf.
+func (ix ltIdx) metUnit() float32 { return float32(uint32(1) << ix.MetShift) }
+
+// metShiftFor picks the smallest per-leaf unit that fits every metre value into
+// a uint16 short of the sentinel.
+func metShiftFor(maxMetres float32) uint32 {
+	for s := uint32(0); s < maxMetShift; s++ {
+		if float64(maxMetres)/float64(uint32(1)<<s) <= float64(metUnreachable-1) {
+			return s
+		}
+	}
+	return maxMetShift
+}
+
+// blockBytes is the on-disk size of one leaf's block: f32 seconds then u16
+// metres, rounded up so the next leaf's seconds stay 4-aligned.
+func blockBytes(n int) int {
+	return 4*n + (2*n+3)/4*4
 }
 
 // LeafTables is a loaded (preferably mmap'd) leaf-tables artifact.
@@ -75,24 +125,25 @@ func (lt *LeafTables) Close() {
 
 // table returns the flat dist/met blocks for leaf, or ok=false when the
 // artifact has no usable entry for it (zero-node leaves store nothing).
-func (lt *LeafTables) table(leaf int32) (dist, met []float32, entries, nodes int, ok bool) {
+func (lt *LeafTables) table(leaf int32) (dist []float32, met []uint16, metUnit float32, entries, nodes int, ok bool) {
 	if lt == nil || leaf < 0 || int(leaf) >= len(lt.idx) {
-		return nil, nil, 0, 0, false
+		return nil, nil, 0, 0, 0, false
 	}
 	ix := lt.idx[leaf]
 	n := int(ix.Entries) * int(ix.Nodes)
 	if n == 0 {
 		// A leaf with no entries still has a valid (empty) table: callers get
 		// entries=0 and fall through to "unreached", same as the lazy build.
-		return nil, nil, int(ix.Entries), int(ix.Nodes), true
+		return nil, nil, ix.metUnit(), int(ix.Entries), int(ix.Nodes), true
 	}
 	off := int(ix.Off)
-	end := off + 8*n
+	end := off + blockBytes(n)
 	if off < leafTablesHdrLen || end > len(lt.data) || off%4 != 0 {
-		return nil, nil, 0, 0, false
+		return nil, nil, 0, 0, 0, false
 	}
-	flat := unsafe.Slice((*float32)(unsafe.Pointer(&lt.data[off])), 2*n)
-	return flat[:n], flat[n:], int(ix.Entries), int(ix.Nodes), true
+	dist = unsafe.Slice((*float32)(unsafe.Pointer(&lt.data[off])), n)
+	met = unsafe.Slice((*uint16)(unsafe.Pointer(&lt.data[off+4*n])), n)
+	return dist, met, ix.metUnit(), int(ix.Entries), int(ix.Nodes), true
 }
 
 // LoadLeafTables opens and validates path against the expected partition
@@ -143,7 +194,7 @@ func LoadLeafTables(path string, wantFP uint64, leaves int) (*LeafTables, error)
 		if n == 0 {
 			continue
 		}
-		if int(ix.Off) < idxEnd || int(ix.Off)+8*n > len(data) || ix.Off%4 != 0 {
+		if int(ix.Off) < idxEnd || int(ix.Off)+blockBytes(n) > len(data) || ix.Off%4 != 0 {
 			return fail("leaftables: leaf %d block out of range", leaf)
 		}
 	}
@@ -170,7 +221,7 @@ func BuildLeafTablesFile(path string, e *ReachEngine, workers int) error {
 		ents := len(e.RM.LeafEntries(int32(leaf)))
 		nodes := len(e.Part.LeafNodes[int32(leaf)])
 		idx[leaf] = ltIdx{Off: off, Entries: uint32(ents), Nodes: uint32(nodes)}
-		off += uint64(8 * ents * nodes)
+		off += uint64(blockBytes(ents * nodes))
 	}
 
 	// Per-process temp name: two builders (a server self-heal racing an
@@ -194,6 +245,9 @@ func BuildLeafTablesFile(path string, e *ReachEngine, workers int) error {
 	if _, err := f.Write(hdr); err != nil {
 		return err
 	}
+	// The index goes down as a placeholder and is rewritten at the end: a
+	// leaf's metre unit is only known once its block has been built, and
+	// building every block twice to learn it would double a 90s job.
 	idxBytes := unsafe.Slice((*byte)(unsafe.Pointer(&idx[0])), nLeaves*leafTablesIdxLen)
 	if _, err := f.Write(idxBytes); err != nil {
 		return err
@@ -204,6 +258,7 @@ func BuildLeafTablesFile(path string, e *ReachEngine, workers int) error {
 	// case a few hundred KB per leaf in flight).
 	const chunk = 256
 	blocks := make([][]byte, chunk)
+	shifts := make([]uint32, chunk)
 	for base := 0; base < nLeaves; base += chunk {
 		end := base + chunk
 		if end > nLeaves {
@@ -215,7 +270,7 @@ func BuildLeafTablesFile(path string, e *ReachEngine, workers int) error {
 			sem <- struct{}{}
 			go func(leaf int) {
 				defer func() { <-sem }()
-				blocks[leaf-base] = buildLeafBlock(e, int32(leaf))
+				blocks[leaf-base], shifts[leaf-base] = buildLeafBlock(e, int32(leaf))
 				done <- nil
 			}(leaf)
 		}
@@ -224,7 +279,8 @@ func BuildLeafTablesFile(path string, e *ReachEngine, workers int) error {
 		}
 		for leaf := base; leaf < end; leaf++ {
 			b := blocks[leaf-base]
-			if want := 8 * int(idx[leaf].Entries) * int(idx[leaf].Nodes); len(b) != want {
+			idx[leaf].MetShift = shifts[leaf-base]
+			if want := blockBytes(int(idx[leaf].Entries) * int(idx[leaf].Nodes)); len(b) != want {
 				return fmt.Errorf("leaftables: leaf %d block %d bytes, want %d", leaf, len(b), want)
 			}
 			if len(b) > 0 {
@@ -234,6 +290,14 @@ func BuildLeafTablesFile(path string, e *ReachEngine, workers int) error {
 			}
 			blocks[leaf-base] = nil
 		}
+	}
+
+	// Rewrite the index now every leaf's metre unit is known.
+	if _, err := f.Seek(int64(leafTablesHdrLen), 0); err != nil {
+		return err
+	}
+	if _, err := f.Write(idxBytes); err != nil {
+		return err
 	}
 
 	if err := f.Sync(); err != nil {
@@ -257,21 +321,51 @@ func BuildLeafTablesFile(path string, e *ReachEngine, workers int) error {
 
 // buildLeafBlock computes one leaf's dist+met block, in file layout, using
 // the same primitives as the lazy path so answers are bit-identical.
-func buildLeafBlock(e *ReachEngine, leaf int32) []byte {
+func buildLeafBlock(e *ReachEngine, leaf int32) ([]byte, uint32) {
 	ents := e.RM.LeafEntries(leaf)
 	nodes := e.Part.LeafNodes[leaf]
 	n := len(ents) * len(nodes)
 	if n == 0 {
-		return nil
+		return nil, 0
 	}
-	flat := make([]float32, 2*n)
+	dist := make([]float32, n)
+	metF := make([]float32, n)
 	ls := buildLeafSubgraph(e.Ov, e.Part, leaf)
 	for i, ent := range ents {
-		d := flat[i*len(nodes) : (i+1)*len(nodes)]
-		m := flat[n+i*len(nodes) : n+(i+1)*len(nodes)]
-		ls.dijkstraFromM(ls.localOf[ent], d, m)
+		lo, hi := i*len(nodes), (i+1)*len(nodes)
+		ls.dijkstraFromM(ls.localOf[ent], dist[lo:hi], metF[lo:hi])
 	}
-	return unsafe.Slice((*byte)(unsafe.Pointer(&flat[0])), 4*len(flat))
+
+	// Pick the per-leaf metre unit from what this leaf actually holds, then
+	// quantise. Unreachable cells are +Inf in both blocks and become the
+	// sentinel here.
+	var maxMet float32
+	for _, v := range metF {
+		if v != f32Inf && v > maxMet {
+			maxMet = v
+		}
+	}
+	shift := metShiftFor(maxMet)
+	unit := float64(uint32(1) << shift)
+
+	out := make([]byte, blockBytes(n))
+	copy(out, unsafe.Slice((*byte)(unsafe.Pointer(&dist[0])), 4*n))
+	met := unsafe.Slice((*uint16)(unsafe.Pointer(&out[4*n])), n)
+	for i, v := range metF {
+		if v == f32Inf {
+			met[i] = metUnreachable
+			continue
+		}
+		q := int64(float64(v)/unit + 0.5)
+		if q < 0 {
+			q = 0
+		}
+		if q >= int64(metUnreachable) {
+			q = int64(metUnreachable) - 1
+		}
+		met[i] = uint16(q)
+	}
+	return out, shift
 }
 
 // maybeLoadOrBuildLeafTables attaches the artifact when present and valid;

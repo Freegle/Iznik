@@ -370,7 +370,7 @@ func handleNearbyGroups() fiber.Handler {
 // (not just the centroid) is what lets the catchment capture corridor reach into the group's
 // edges (e.g. an M62 offer clipping HullFreegle's western strip). ok=false when the group or
 // its polygon is missing.
-func groupSeedNodes(g *Graph, groupID int64, mode Mode) ([]NodeID, bool) {
+func groupSeedNodes(g *Graph, groupID int64) ([]NodeID, bool) {
 	db := ensureGroupsDB()
 	if db == nil {
 		return nil, false
@@ -390,7 +390,7 @@ func groupSeedNodes(g *Graph, groupID int64, mode Mode) ([]NodeID, bool) {
 	seen := make(map[NodeID]bool)
 	var seeds []NodeID
 	add := func(lat, lng float64) {
-		n := nearestNodeForMode(g, lat, lng, mode)
+		n := nearestDriveNode(g, lat, lng)
 		if n != noNode && !seen[n] {
 			seen[n] = true
 			seeds = append(seeds, n)
