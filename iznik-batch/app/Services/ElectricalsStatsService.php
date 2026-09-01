@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Services\Electricals\ItemClusterService;
+use App\Support\ReuseBenefit;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -47,20 +49,16 @@ class ElectricalsStatsService
      */
     public const CARBON_VALUE_PER_TONNE_GBP = 244.63;
 
-    /**
-     * kg CO2e avoided per kg of goods reused. Deliberately a single conservative factor
-     * rather than per-category factors: per-category numbers imply a precision the
-     * underlying weight data does not support.
-     */
-    public const CO2E_KG_PER_KG_REUSED = 1.0;
-
     /** Unusual-items guard. All must hold, see buildUnusual(). */
     protected const UNUSUAL_MIN_USERS  = 3;
     protected const UNUSUAL_MIN_GROUPS = 2;
     protected const UNUSUAL_MAX_WORDS  = 4;
     protected const UNUSUAL_MAX_CHARS  = 30;
 
-    public function __construct(protected EeeVisionService $vision) {}
+    public function __construct(
+        protected EeeVisionService $vision,
+        protected ItemClusterService $clusters,
+    ) {}
 
     /**
      * One row per message: the newest classification under the model wins.
@@ -93,6 +91,8 @@ class ElectricalsStatsService
         $to     = now()->toDateTimeString();
         $settle = now()->subDays(self::SETTLE_DAYS)->toDateTimeString();
 
+        $clusters = $this->clusters->cluster($this->itemRows($model, $from, $to));
+
         $counts   = $this->buildCounts($model, $from, $to);
         $impact   = $this->buildImpact($model, $from, $to);
         $coverage = $this->buildCoverage($counts, $from, $to);
@@ -105,8 +105,8 @@ class ElectricalsStatsService
             'coverage'      => $coverage,
             'estimates'     => $this->buildEstimates($coverage, $counts, $impact),
             'impact'        => $impact,
-            'popular'       => $this->buildPopular($model, $from, $to),
-            'unusual'       => $this->buildUnusual($model, $from, $to),
+            'popular'       => $this->buildPopular($clusters),
+            'unusual'       => $this->buildUnusual($clusters),
             'success'       => $this->buildSuccessRates($model, $from, $settle),
             'condition'     => $this->buildCondition($model, $from, $to),
             'monthly_trend' => $this->buildMonthlyTrend($model),
@@ -263,7 +263,11 @@ class ElectricalsStatsService
 
         $items  = (int) ($row->items ?? 0);
         $kg     = (float) ($row->total_kg ?? 0);
-        $co2e   = $kg * self::CO2E_KG_PER_KG_REUSED / 1000;
+        $tonnes = $kg / 1000;
+        // WRAP "Benefits of Reuse": 0.51 tonnes of CO2e avoided per tonne reused. The same
+        // factor the rest of the site publishes (App\Support\ReuseBenefit, the Go item
+        // impact endpoint, useReuseBenefit), so this page cannot quote a different one.
+        $co2e   = $tonnes * ReuseBenefit::CO2_PER_TONNE;
 
         // No weight basis at all means we do not know the tonnage, which is not the same as
         // knowing it to be zero. Report null so the page can omit the claim rather than
@@ -272,7 +276,7 @@ class ElectricalsStatsService
 
         return [
             'items_taken'                => $items,
-            'tonnes'                     => $haveWeights ? round($kg / 1000, 1) : null,
+            'tonnes'                     => $haveWeights ? round($tonnes, 1) : null,
             'tonnes_co2e'                => $haveWeights ? round($co2e, 1) : null,
             'carbon_value_gbp'           => $haveWeights ? round($co2e * self::CARBON_VALUE_PER_TONNE_GBP) : null,
             'mean_item_kg'               => ($haveWeights && $items > 0) ? round($kg / $items, 1) : null,
@@ -313,30 +317,50 @@ class ElectricalsStatsService
         return (float) ($plain ?? 0);
     }
 
-    /** Most-offered electrical item types in the window. */
-    protected function buildPopular(string $model, string $from, string $to, int $limit = 20): array
+    /**
+     * Every item mention in the window: one row per post, item and group.
+     *
+     * Most offered and more unusual are two views of the same fold, so they share one
+     * fetch and one clustering pass rather than each scanning separately and each
+     * arriving at its own idea of what an item is.
+     */
+    protected function itemRows(string $model, string $from, string $to): array
     {
-        $rows = DB::table('messages_eee as e')
-            ->join('messages as m', 'm.id', '=', 'e.msgid')
-            ->join('messages_items as mi', 'mi.msgid', '=', 'm.id')
-            ->join('items as i', 'i.id', '=', 'mi.itemid')
-            ->where('e.model', $model)
-            ->where('e.is_eee', 1)
-            // keep-raw: correlated MAX subquery (see LATEST_ROW); no builder form.
-            ->whereRaw(self::LATEST_ROW)
-            ->where('m.arrival', '>=', $from)
-            ->where('m.arrival', '<', $to)
-            ->where('m.type', 'Offer')
-            ->whereNull('m.deleted')
-            ->groupBy('i.id', 'i.name')
-            ->orderByDesc('n')
-            ->limit($limit)
-            // keep-raw: COUNT(DISTINCT ...) aliased for both the select and the ordering;
-            // the builder has no first-class distinct-count aggregate.
-            ->select('i.name', DB::raw('COUNT(DISTINCT m.id) AS n'))
-            ->get();
+        // keep-raw: the LATEST_ROW correlated MAX subquery has no builder form, and the
+        // statement reads better whole than as a chain wrapped round a raw fragment.
+        return DB::select(
+            'SELECT i.name, m.id AS msgid, m.fromuser, mg.groupid
+             FROM messages_eee e
+             INNER JOIN messages m ON m.id = e.msgid
+             INNER JOIN messages_items mi ON mi.msgid = m.id
+             INNER JOIN items i ON i.id = mi.itemid
+             INNER JOIN messages_groups mg ON mg.msgid = m.id AND mg.rippled_in = 0
+             WHERE e.model = ? AND e.is_eee = 1
+               AND ' . self::LATEST_ROW . '
+               AND m.arrival >= ? AND m.arrival < ?
+               AND m.type = ? AND m.deleted IS NULL',
+            [$model, $from, $to, 'Offer']
+        );
+    }
 
-        return $rows->map(fn($r) => ['name' => $r->name, 'count' => (int) $r->n])->all();
+    /**
+     * Most-offered electrical item types in the window.
+     *
+     * Counts item types rather than the words members typed, so "Beko Fridge Freezer",
+     * "Bosch fridge freezer" and "Fridge/Freezer" are one entry. Grouping on the raw name
+     * split every common item across its brands and spellings and understated all of them:
+     * on live there are 5,180 distinct names behind 7,065 electrical posts.
+     */
+    protected function buildPopular(array $clusters, int $limit = 20): array
+    {
+        $ranked = array_values($clusters);
+
+        usort($ranked, fn($a, $b) => [$b['count'], $a['name']] <=> [$a['count'], $b['name']]);
+
+        return array_map(
+            fn($c) => ['name' => $c['name'], 'count' => $c['count']],
+            array_slice($ranked, 0, $limit)
+        );
     }
 
     /**
@@ -347,52 +371,32 @@ class ElectricalsStatsService
      * recurring item before it is allowed to be called rare - offered by several different
      * people, in more than one community, with a name shaped like an item rather than a
      * sentence. That loses some true one-offs, which is the right trade for a public page.
+     *
+     * The guard runs on the item type, which matters both ways round: three people
+     * offering a Beko, a Bosch and a plain fridge freezer are one common item and not
+     * three rare ones, and a name too long to print still counts towards the type it
+     * belongs to. What survives is then checked against the common items, because a
+     * qualified version of something popular is not unusual either - a table lamp is not a
+     * curiosity when lamps are among the most offered things on the site. See
+     * ItemClusterService::suppressVariantsOfPopular().
      */
-    protected function buildUnusual(string $model, string $from, string $to, int $limit = 20): array
+    protected function buildUnusual(array $clusters, int $limit = 20): array
     {
-        // keep-raw: three distinct-count aggregates, a HAVING over their aliases, and a
-        // word count done as CHAR_LENGTH minus CHAR_LENGTH(REPLACE(...)). None of that is
-        // expressible in the builder without raw fragments throughout, at which point the
-        // statement reads better whole.
-        $rows = DB::select(
-            'SELECT i.name,
-                    COUNT(DISTINCT m.id)        AS n,
-                    COUNT(DISTINCT m.fromuser)  AS users,
-                    COUNT(DISTINCT mg.groupid)  AS groupcount
-             FROM messages_eee e
-             INNER JOIN messages m ON m.id = e.msgid
-             INNER JOIN messages_items mi ON mi.msgid = m.id
-             INNER JOIN items i ON i.id = mi.itemid
-             INNER JOIN messages_groups mg ON mg.msgid = m.id AND mg.rippled_in = 0
-             WHERE e.model = ? AND e.is_eee = 1
-               AND ' . self::LATEST_ROW . '
-               AND m.arrival >= ? AND m.arrival < ?
-               AND m.type = ? AND m.deleted IS NULL
-               AND CHAR_LENGTH(i.name) <= ?
-               AND (CHAR_LENGTH(i.name) - CHAR_LENGTH(REPLACE(i.name, " ", ""))) < ?
-             GROUP BY i.id, i.name
-             HAVING users >= ? AND groupcount >= ?
-             ORDER BY n ASC, i.name ASC
-             LIMIT ?',
-            [
-                $model, $from, $to, 'Offer',
-                self::UNUSUAL_MAX_CHARS,
-                self::UNUSUAL_MAX_WORDS,
-                self::UNUSUAL_MIN_USERS,
-                self::UNUSUAL_MIN_GROUPS,
-                $limit,
-            ]
-        );
+        $candidates = array_filter($clusters, fn($c) => $this->qualifiesAsUnusual($c));
+
+        $ranked = array_values($this->clusters->suppressVariantsOfPopular($candidates, $clusters));
+
+        usort($ranked, fn($a, $b) => [$a['count'], $a['name']] <=> [$b['count'], $b['name']]);
 
         return [
             'items' => array_map(
-                fn($r) => [
-                    'name'   => $r->name,
-                    'count'  => (int) $r->n,
-                    'users'  => (int) $r->users,
-                    'groups' => (int) $r->groupcount,
+                fn($c) => [
+                    'name'   => $c['name'],
+                    'count'  => $c['count'],
+                    'users'  => $c['users'],
+                    'groups' => $c['groups'],
                 ],
-                $rows
+                array_slice($ranked, 0, $limit)
             ),
             'guard' => [
                 'min_users'  => self::UNUSUAL_MIN_USERS,
@@ -401,9 +405,31 @@ class ElectricalsStatsService
                 'max_chars'  => self::UNUSUAL_MAX_CHARS,
                 'note'       => 'An item only counts as rare once several different people in more '
                                 . 'than one community have offered one, so a single odd listing '
-                                . 'cannot appear here.',
+                                . 'cannot appear here. Items are counted by type, and types that '
+                                . 'are versions of a common item are left out.',
             ],
         ];
+    }
+
+    /**
+     * The rarity guard, applied to the item type rather than to what somebody typed.
+     *
+     * Length and word count are tests of whether a name reads as an item or as a sentence,
+     * so they belong on the canonical form. Applying them in the query instead would drop
+     * long names before they were folded in, and the type they belong to would lose the
+     * posts along with them.
+     */
+    protected function qualifiesAsUnusual(array $cluster): bool
+    {
+        if ($cluster['users'] < self::UNUSUAL_MIN_USERS || $cluster['groups'] < self::UNUSUAL_MIN_GROUPS) {
+            return false;
+        }
+
+        $canonical = trim($cluster['canonical']);
+
+        return $canonical !== ''
+            && mb_strlen($canonical) <= self::UNUSUAL_MAX_CHARS
+            && count(preg_split('/\s+/', $canonical)) <= self::UNUSUAL_MAX_WORDS;
     }
 
     /**
