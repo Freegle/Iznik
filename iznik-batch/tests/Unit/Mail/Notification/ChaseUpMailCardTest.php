@@ -273,26 +273,58 @@ class ChaseUpMailCardTest extends TestCase
         $this->assertStringContainsString('border-radius="50%"', $html);
     }
 
+    /**
+     * The brand band carries the Freegle logo, so an absent avatar cannot be
+     * checked by looking for any image at all. The round mask is the thing that
+     * only an avatar has.
+     */
     public function test_card_omits_the_avatar_when_there_is_none(): void
     {
         $html = $this->renderCards([$this->makeNotification(['fromimage' => null])]);
 
-        $this->assertStringNotContainsString('<mj-image', $html);
+        $this->assertStringNotContainsString('border-radius="50%"', $html);
         $this->assertStringContainsString('commented on your post', $html);
+    }
+
+    public function test_brand_band_carries_the_logo(): void
+    {
+        $html = $this->renderCards([$this->makeNotification()]);
+
+        $this->assertStringContainsString(config('freegle.branding.logo_url'), $html);
+        $this->assertStringContainsString('Your notifications', $html);
     }
 
     /**
      * MJML gives a column with no width an equal share of the section, not the
      * leftover next to a fixed-width sibling, so an unsized text column here
      * would render at 300px and wrap after a few words. Both columns must
-     * therefore say how wide they are.
+     * therefore say how wide they are, and together they must fill the 600px
+     * body rather than overflow it.
      */
     public function test_both_card_columns_are_sized_explicitly(): void
     {
         $html = $this->renderCards([$this->makeNotification()]);
 
-        $this->assertStringContainsString('width="70px"', $html);
-        $this->assertStringContainsString('width="530px"', $html);
+        preg_match_all('/<mj-column width="(\d+)px"/', $html, $matches);
+
+        $this->assertCount(2, $matches[1], 'Both card columns should carry a pixel width');
+        $this->assertSame(600, array_sum(array_map('intval', $matches[1])));
+    }
+
+    /**
+     * The avatar column has to be wider than the picture it holds, or the text
+     * next to it starts the moment the picture ends and the card looks cramped.
+     */
+    public function test_avatar_column_leaves_space_before_the_text(): void
+    {
+        $html = $this->renderCards([$this->makeNotification()]);
+
+        preg_match('/<mj-column width="(\d+)px" vertical-align="top">\s*<mj-image[^>]*width="(\d+)px"[^>]*padding="0 0 0 (\d+)px"/s', $html, $m);
+
+        $this->assertNotEmpty($m, 'Avatar column and image should be measurable');
+
+        $gap = (int) $m[1] - (int) $m[2] - (int) $m[3];
+        $this->assertGreaterThanOrEqual(12, $gap, 'Avatar needs clear space before the text column');
     }
 
     public function test_card_shows_the_timestamp(): void

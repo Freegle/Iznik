@@ -50,8 +50,14 @@ member's own post. Two different mails, similar class names.
 ## What the email looks like
 
 `emails/mjml/notification/chaseup.blade.php`, in the house style shared with
-Community News: pale intro card, then one white card per notification separated
-by background gaps.
+Community News: a green brand band with the headline on the left and the Freegle
+logo on the right, a pale intro card, then one white card per notification
+separated by background gaps.
+
+The band is built inline rather than through `partials/header.blade.php`, which
+has no logo. Its vertical padding sits on the `<mj-section>`, because
+`vertical-align="middle"` on a column has nothing to centre within if the
+padding is on the text instead.
 
 Each card carries the sender's avatar, a one-line statement of what happened, the
 timestamp, the message text quoted behind a light green rule, and an inline link.
@@ -84,8 +90,11 @@ Two traps the tests pin:
 
 - **Both card columns need an explicit width.** An `<mj-column>` with no `width`
   gets `containerWidth / numberOfColumns`, not what is left over beside a
-  fixed-width sibling, so the text column next to the 70px avatar column renders
-  at 300px unless it says `width="530px"`.
+  fixed-width sibling, so the text column next to the avatar column renders at
+  300px unless it says how wide it is. The two widths are 84px and 516px, which
+  add up to the 600px body. The avatar column is 84px for a 44px picture with
+  25px of padding on its left, which leaves 15px of clear space before the text
+  starts.
 - **The template may only use the variables `ChaseUpMail` passes.** They are
   pinned by `ChaseUpMailPreheaderTest::renderChaseUpView()`; adding a variable
   to the view without adding it to the mailable renders in a test and throws in

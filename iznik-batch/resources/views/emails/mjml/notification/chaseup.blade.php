@@ -26,7 +26,20 @@
 
   <mj-body background-color="#f0f0eb">
 
-    @include('emails.mjml.partials.header', ['title' => config('freegle.branding.name')])
+    {{-- Brand band: headline left, logo right, as the other modern mails do.
+         Vertical padding is on the SECTION, not the text, or vertical-align
+         has nothing to align within. --}}
+    <mj-section mj-class="bg-success" padding="20px 0">
+      <mj-column width="65%" vertical-align="middle">
+        <mj-text font-size="22px" font-weight="bold" color="#ffffff" padding="0 0 0 25px">
+          Your notifications
+        </mj-text>
+      </mj-column>
+      <mj-column width="35%" vertical-align="middle">
+        <mj-image width="80px" src="{{ config('freegle.branding.logo_url') }}"
+                  alt="{{ config('freegle.branding.name') }}" align="right" padding="0 25px 0 0" />
+      </mj-column>
+    </mj-section>
 
     {{-- Intro card --}}
     <mj-section mj-class="bg-green-light" padding="24px 0 20px">
@@ -104,13 +117,13 @@
     </mj-section>
 
     <mj-section background-color="#ffffff" padding="18px 0 16px">
-      <mj-column width="70px" vertical-align="top">
+      <mj-column width="84px" vertical-align="top">
         @if (!empty($notif['fromimage']))
         <mj-image src="{{ $notif['fromimage'] }}" alt="" width="44px" height="44px"
                   border-radius="50%" align="left" padding="0 0 0 25px" />
         @endif
       </mj-column>
-      <mj-column width="530px" vertical-align="top">
+      <mj-column width="516px" vertical-align="top">
         <mj-text font-size="16px" color="#333333" line-height="1.45" padding="0 25px 2px 0">
           @if ($actor)<strong>{{ $actor }}</strong> @endif{!! $statement !!}
         </mj-text>
