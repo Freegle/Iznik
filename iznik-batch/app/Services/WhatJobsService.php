@@ -1055,6 +1055,13 @@ class WhatJobsService
         array &$cache,
         string $zip = ''
     ): ?array {
+        // The feed decorates some city names with a qualifier suffix -
+        // "bloomsbury (neighbourhood)", "smithfield (area)". Photon's fuzzy
+        // matching tolerated those; the places geocoder is exact-then-prefix,
+        // so they surfaced as city_no_match after the 2026-08-31 cutover.
+        // Strip the qualifier before anything keys or queries on the city.
+        $city = trim(preg_replace('/\s*\([^)]*\)\s*$/', '', $city));
+
         if ($country === 'Guernsey') {
             $this->recordGeocodeFail('country_guernsey', $city, $state, $country);
             return null;
