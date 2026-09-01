@@ -10,7 +10,7 @@
 #
 # Fires on: gh pr create / gh pr edit / gh api ... /pulls/N (PATCH or POST).
 #
-# Four independent checks:
+# Six independent checks:
 #   1. BODY IS READABLE   -> no override. See the note below; this one is the
 #      reason the other three are worth anything.
 #   2. PLAIN ENGLISH      -> override with PR_PLAIN_ENGLISH_OK=1
@@ -20,6 +20,10 @@
 #      re-derived each of these numbers from the branch as it is now". Stale
 #      counts are the specific failure this catches: a description written when
 #      the branch had 15 gates and 1 manifest, still saying so after it grew.
+#   5. AI ATTRIBUTION    -> no override.
+#   6. COMPLEXITY        -> no override. Reading grade, sentence length and
+#      invented hyphenated adjectives, measured rather than listed, so writing
+#      nobody predicted still gets caught.
 #
 # ON FAILING CLOSED (check 1). This hook used to read the body only from a
 # literal --body-file path. Two extremely common shapes defeated that and it
@@ -34,6 +38,8 @@
 # which is worse than having no hook at all - it looks like it passed. So when a
 # body-bearing flag is present and the text cannot be resolved, this now blocks
 # and asks for a form it can read.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
@@ -68,6 +74,11 @@ echo "$TRIGGER" | grep -qE '\bgh[[:space:]]+pr[[:space:]]+view\b' && exit 0
 # Resolve the body text
 # --------------------------------------------------------------------------
 TEXT="$COMMAND"
+# The body on its own, without the command that carries it. Checks 2-5 match
+# terms, so a little shell scaffolding in with the prose costs them nothing;
+# check 6 measures sentences, and a file path or a branch name scored as
+# writing is just noise.
+BODY_TEXT=""
 BODY_RESOLVED=0
 UNREADABLE=""
 
@@ -78,6 +89,8 @@ add_file() {
   [ -z "$f" ] && return
   if [ -f "$f" ]; then
     TEXT="$TEXT
+$(cat "$f")"
+    BODY_TEXT="$BODY_TEXT
 $(cat "$f")"
     BODY_RESOLVED=1
   else
@@ -184,6 +197,31 @@ declare -a JARGON_TERMS=(
   '\bincrements?\b'       'the count going up'
   'primary[- ]key range'  'a short run of consecutive rows'
   'cron move'             'running it at a different time'
+
+  # Freegle's own vocabulary. These are the ones that keep getting through,
+  # because they read as ordinary words to whoever wrote the branch and as
+  # nothing at all to whoever reviews it. Same rule as above: if the term is
+  # genuinely the clearest thing to say, say it in plain words once and then
+  # use it. Backticked spans, code fences and tables are already exempt, so
+  # naming a function or a column is unaffected.
+  'catchment'             'the area you can drive to in a given time'
+  'isochrone'             'the area you can reach in a given time'
+  'materiali[sz](e|ed|es|ing|ation)' 'work the full answer out'
+  'rasteri[sz](e|ed|es|ing|ation)'   'mark it on a grid of squares'
+  '\bticks?\b'            'a step in how far a post has spread'
+  '\breach labels?\b'     "the travel times stored on a post"
+  '\blabel blobs?\b'      "the travel times stored on a post"
+  'sandwich bounds'       'the two shapes stored either side of the area'
+  'compute slots?'        'one of the few searches the map server runs at once'
+  '\bprefilter\b'         'a quick first sift'
+  '\bcontainment\b'       'whether a place falls inside'
+  'origin region'         'the area immediately around the post'
+  '\bpartition\b'         'how the map is cut into pieces'
+  'retired rows?'         'posts already moved to the newer storage'
+  '\btargeting\b'         'choosing which communities get the post'
+  '\bthe gate\b'          'the limit on parallel searches'
+  '\bgated\b'             'queued behind that limit'
+  'crosspost'             'the same post appearing in another community'
 )
 JARGON_HITS=""
 for ((i=0; i<${#JARGON_TERMS[@]}; i+=2)); do
@@ -316,6 +354,41 @@ if echo "$TEXT" | grep -qiE 'Generated with \[?Claude Code|🤖 Generated with';
     echo "a separate thing and are fine.)"
   } >&2
   FAILED=1
+fi
+
+# --- Check 6: computed complexity -------------------------------------------
+# Checks 2 and 3 can only catch terms somebody thought of in advance. This one
+# measures the writing instead: reading grade, sentence length, and made-up
+# hyphenated adjectives. Fails open when node is absent, so a missing tool
+# never blocks a PR.
+if command -v node >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/pr-complexity.mjs" ]; then
+  if [ -n "$BODY_TEXT" ]; then
+    COMPLEXITY_SRC="$BODY_TEXT"
+  else
+    # Inline body: drop option flags and anything with a slash in it, so
+    # --body-file /tmp/pr-claude-tooling.md is not read as a sentence.
+    COMPLEXITY_SRC=$(echo "$PROSE" | sed -E 's#[^[:space:]]*/[^[:space:]]*##g; s/(^|[[:space:]])--?[A-Za-z][A-Za-z-]*//g')
+  fi
+
+  COMPLEXITY_SRC=$(echo "$COMPLEXITY_SRC" | awk '
+    /^[[:space:]]*```/ { infence = !infence; next }
+    infence { next }
+    /^[[:space:]]*\|/ { next }
+    { print }
+  ' | sed -E 's/`[^`]*`//g')
+
+  COMPLEXITY=$(echo "$COMPLEXITY_SRC" | node "$SCRIPT_DIR/pr-complexity.mjs" 2>/dev/null)
+
+  if [ -n "$COMPLEXITY" ]; then
+    {
+      echo "STOP. This PR text is harder to read than it needs to be."
+      echo ""
+      echo "$COMPLEXITY"
+      echo ""
+      echo "Say the same thing in shorter sentences and ordinary words."
+    } >&2
+    FAILED=1
+  fi
 fi
 
 [ "$FAILED" = "1" ] && exit 2
