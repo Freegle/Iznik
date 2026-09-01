@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-31
+last_reviewed: 2026-09-01
 covers:
   - iznik-routing-go/graph.go
   - iznik-routing-go/dijkstra.go
@@ -64,9 +64,15 @@ for answering "which freeglers are inside this area?".
 ### 2. The "travel-time mapper" — how far can you reach
 
 Give it a spot and a number of minutes and it draws the area you could actually
-reach in that time on foot, by bike, or by car — following real roads and paths,
-not just a circle on a map. (That reachable-area shape is called an
-**isochrone**.)
+drive in that time — following real roads, not just a circle on a map. (That
+reachable-area shape is called an **isochrone**.)
+
+It used to answer for walking and cycling too, and worked all three out on every
+single call. Nothing asked for them: rippling is a drive-time model, the Rippling
+Explorer only ever requests drive, and the API that fetches an isochrone reads
+only the drive answer. Carrying them cost two extra searches per call and, more
+expensively, a third of the road network in memory — footpaths, steps and
+cycleways that no car can use. The mapper is drive-only now.
 
 This is what lets Freegle think in terms of "20 minutes away" instead of "in the
 same group", which is much closer to how people actually decide whether to go and
@@ -75,7 +81,8 @@ collect something.
 It also has a **fairness** setting. Members in more deprived areas are less likely
 to have a car, so the mapper can stretch the reachable area for them — a small,
 deliberate thumb on the scale so the service works for people who rely on walking
-and public transport, not just drivers.
+and public transport, not just drivers. (That stretch is applied to the drive-time
+budget; it is not a walking route.)
 
 ### How accurate are the travel times?
 
@@ -141,6 +148,27 @@ built automatically in the background the first time a server starts without
 it, or explicitly with `reach leaftables`) and memory-mapped, so the answer
 speed is the same everywhere, first question included, without the server
 holding the whole file in memory.
+
+### What the artifacts cost, and why they are small
+
+The mapper holds the whole road network in memory, so the shape of that data is
+the difference between a server that fits and one that does not. Every number in
+the artifacts is stored at the precision that is actually used and no more: travel
+times to a tenth of a second, road distances to the metre, and one array rather
+than two wherever two facts can never both apply to the same road junction. Roads
+no car can use are not stored at all.
+
+Together those took the artifact set on the test extract from 17.7MB to 9.1MB, a
+48.8% cut, with the same reduction expected on the real one. The travel times
+themselves are unchanged: the search still adds up in full precision, and the
+engine is still checked against a plain, slow, exhaustive search for agreement to
+within a hundredth of a second.
+
+Each artifact records which build it came from. The region layout is not
+deterministic — building it twice from the same road network gives two different
+but equally valid layouts — so a file left over from an earlier build has to be
+detected rather than assumed compatible, and is rebuilt instead of being read
+against a layout it never matched.
 
 The road network also fixed a small unfairness in privacy blurring: locations
 shown to other members are deliberately made approximate, and the old circular
