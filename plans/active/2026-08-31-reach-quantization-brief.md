@@ -17,6 +17,21 @@ Measured on the committed Bristol extract, master against the branch:
 | matrices.snap | 10,557 | 10,573 | -0.2% |
 | **total** | **17,676,573** | **9,057,260** | **48.8%** |
 
+Projected on the live artifacts, from the exact census counts (both "before" figures
+reconstruct the real file sizes to the byte, so the "after" figures rest on the same
+arithmetic):
+
+| artifact | before | after | saved |
+|---|---|---|---|
+| graph.snap | 4,711.5MB | 2,249.7MB | 52.3% |
+| leaftables.snap | 1,506.5MB | 1,130.2MB | 25.0% |
+| partition.snap | 92.1MB | 66.2MB | 28.1% |
+| **total** | **6.32GB** | **3.45GB** | **45.3%** |
+
+graph.snap and partition.snap are heap-loaded, so 2,488MB comes off the unreclaimable
+side; the leaf tables are mmap'd, so their 376MB is 376MB more room for the pages that
+were being refaulted.
+
 Done: the drive-only graph, every quantisation below, the Grid rewrite, the
 Idx/ChainEndA merge, the leaf-table metres, the LeafOf narrowing, the artifact
 fingerprints, the loopback pprof listener, the GC limits, the cache bounds, and the
