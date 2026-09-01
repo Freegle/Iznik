@@ -519,7 +519,7 @@ func reachExactDebugRun(jsonPath string, engine *ReachEngine) {
 		}
 		shown++
 		nd := g.Nodes[id]
-		if oi := ov.Idx[id]; oi != 0 {
+		if oi := ov.IdxOf(id); oi != 0 {
 			leaf := part.LeafAt(oi)
 			var rl *RegionLabel
 			var entArr []float32
@@ -542,7 +542,7 @@ func reachExactDebugRun(jsonPath string, engine *ReachEngine) {
 			fmt.Printf("MISMATCH junction base=%d oi=%d (%.5f,%.5f) leaf=%d leafSize=%d got=%.2f want=%.2f label=%v entriesReached=%d minEntryArr=%.2f originArr=%v\n",
 				id, oi, nd.Lat, nd.Lng, leaf, leafSizeOf(part, leaf), got, want, rl != nil, nEnt, minEnt, hasOrigin)
 		} else {
-			a, b := ov.ChainEndA[id], ov.ChainEndB[id]
+			a, b := ov.ChainA(id), ov.ChainEndB[id]
 			fmt.Printf("MISMATCH chain base=%d (%.5f,%.5f) got=%.2f want=%.2f ends=%d(leaf %d, arr %.2f, offA %.1f)/%d(leaf %d, arr %.2f, offB %.1f)\n",
 				id, nd.Lat, nd.Lng, got, want,
 				a, leafOfBase(engine, a), engine.junctionArrival(lbl, a), offOf(ov.OffFromA[id]),
@@ -560,10 +560,10 @@ func leafSizeOf(part *ReachPartition, leaf int32) int {
 }
 
 func leafOfBase(e *ReachEngine, j NodeID) int32 {
-	if j == 0 || e.Ov.Idx[j] == 0 {
+	if j == 0 || e.Ov.IdxOf(j) == 0 {
 		return -2
 	}
-	return e.Part.LeafAt(e.Ov.Idx[j])
+	return e.Part.LeafAt(e.Ov.IdxOf(j))
 }
 
 // reachBoundaryDebugRun compares the engine's boundary-node arrivals with
@@ -639,8 +639,8 @@ func reachBoundaryDebugRun(jsonPath string, engine *ReachEngine) {
 					uw, ur := base[ub]
 					if ur && uw+e.Sec() <= d.trueArr+1 {
 						uleaf := int32(-9)
-						if engine.Ov.Idx[ub] != 0 {
-							uleaf = engine.Part.LeafAt(engine.Ov.Idx[ub])
+						if engine.Ov.IdxOf(ub) != 0 {
+							uleaf = engine.Part.LeafAt(engine.Ov.IdxOf(ub))
 						}
 						ue, uisEntry := engine.BI.leafOf[u], false
 						_, uisEntry = engine.BI.entryIdx[u]
@@ -751,7 +751,7 @@ func reachTracePathRun(jsonPath string, target NodeID, engine *ReachEngine) {
 	fmt.Printf("true path to base=%d (%d hops), overlay junctions only:\n", target, len(path))
 	for i := len(path) - 1; i >= 0; i-- {
 		v := path[i]
-		oi := ov.Idx[v]
+		oi := ov.IdxOf(v)
 		if oi == 0 {
 			continue
 		}
@@ -793,17 +793,17 @@ func reachLeafCheckRun(jsonPath string, target NodeID, engine *ReachEngine) {
 	// Reverse to origin->target and keep junctions.
 	var junctions []NodeID
 	for i := len(path) - 1; i >= 0; i-- {
-		if ov.Idx[path[i]] != 0 {
+		if ov.IdxOf(path[i]) != 0 {
 			junctions = append(junctions, path[i])
 		}
 	}
-	leaf := engine.Part.LeafAt(ov.Idx[target])
+	leaf := engine.Part.LeafAt(ov.IdxOf(target))
 	ls := buildLeafSubgraph(ov, engine.Part, leaf)
 	fmt.Printf("leaf %d: %d nodes; checking hops of the internal segment:\n", leaf, len(ls.nodes))
 	inSeg := false
 	for i := 0; i+1 < len(junctions); i++ {
 		u, v := junctions[i], junctions[i+1]
-		uoi, voi := ov.Idx[u], ov.Idx[v]
+		uoi, voi := ov.IdxOf(u), ov.IdxOf(v)
 		ul := engine.Part.LeafAt(uoi)
 		vl := engine.Part.LeafAt(voi)
 		if ul != leaf || vl != leaf {

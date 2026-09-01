@@ -172,7 +172,7 @@ func le16(b []byte, v uint16) []byte {
 // stored-form replacement for the live query's OriginArr.
 func (e *ReachEngine) seedArrival(lbl *ReachLabels, j NodeID) float32 {
 	best := f32Inf
-	oi := e.Ov.Idx[j]
+	oi := e.Ov.IdxOf(j)
 	if oi == 0 {
 		return best
 	}
@@ -219,11 +219,11 @@ func (e *ReachEngine) arrivalAtBaseNodeStored(lbl *ReachLabels, v NodeID) float3
 		}
 		return best
 	}
-	if e.Ov.Idx[v] != 0 {
+	if e.Ov.IdxOf(v) != 0 {
 		return junction(v)
 	}
 	best := f32Inf
-	if a := e.Ov.ChainEndA[v]; a != 0 {
+	if a := e.Ov.ChainA(v); a != 0 {
 		if offA, ok := e.Ov.OffA(v); ok {
 			if ja := junction(a); ja+offA < best {
 				best = ja + offA
@@ -237,7 +237,7 @@ func (e *ReachEngine) arrivalAtBaseNodeStored(lbl *ReachLabels, v NodeID) float3
 			}
 		}
 	}
-	if o := lbl.originChain; o != 0 && e.Ov.ChainEndA[o] == e.Ov.ChainEndA[v] && e.Ov.ChainEndB[o] == e.Ov.ChainEndB[v] {
+	if o := lbl.originChain; o != 0 && e.Ov.ChainA(o) == e.Ov.ChainA(v) && e.Ov.ChainEndB[o] == e.Ov.ChainEndB[v] {
 		// Walk-verified: see sameChainDepartCost — end-pair equality alone
 		// wrongly matches parallel chains between the same junctions.
 		if c := sameChainDepartCost(e.G, e.Ov, o, v); c >= 0 && lbl.seedBase+c < best {

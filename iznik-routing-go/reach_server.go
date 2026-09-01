@@ -627,7 +627,7 @@ func handleLeaf() fiber.Handler {
 			if j == 0 {
 				return
 			}
-			if oi := e.Ov.Idx[j]; oi != 0 {
+			if oi := e.Ov.IdxOf(j); oi != 0 {
 				if l := e.Part.LeafAt(oi); l >= 0 {
 					for _, x := range leaves {
 						if x == l {
@@ -638,10 +638,10 @@ func handleLeaf() fiber.Handler {
 				}
 			}
 		}
-		if e.Ov.Idx[v] != 0 {
+		if e.Ov.IdxOf(v) != 0 {
 			add(v)
 		} else {
-			add(e.Ov.ChainEndA[v])
+			add(e.Ov.ChainA(v))
 			add(e.Ov.ChainEndB[v])
 		}
 		if leaves == nil {

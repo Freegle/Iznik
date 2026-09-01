@@ -417,7 +417,7 @@ func TestGroupProximityEngineMatchesSweep(t *testing.T) {
 	// Synthetic "group": a spread of drive-snappable junctions east of centre.
 	var seeds []NodeID
 	for v := NodeID(1); v <= NodeID(g.NodeCount()) && len(seeds) < 120; v += 211 {
-		if eng.Ov.Idx[v] != 0 && (g.DriveSnappable == nil || g.DriveSnappable.Get(int(v))) {
+		if eng.Ov.IdxOf(v) != 0 && (g.DriveSnappable == nil || g.DriveSnappable.Get(int(v))) {
 			nd := g.Nodes[v]
 			if nd.Lng > -2.58 && nd.Lat > 51.43 && nd.Lat < 51.49 {
 				seeds = append(seeds, v)

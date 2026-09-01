@@ -78,7 +78,7 @@ func chainDepartOffsets(g *Graph, ov *Overlay, v NodeID) (NodeID, float32, float
 		msum := hop(v, e.To)
 		ok := true
 		prev, cur := v, e.To
-		for ov.Idx[cur] == 0 {
+		for ov.IdxOf(cur) == 0 {
 			var next *Edge
 			for j := range g.EdgesFrom(cur) {
 				e2 := &g.Edges[g.EdgeStart[cur]+int32(j)]
@@ -95,7 +95,7 @@ func chainDepartOffsets(g *Graph, ov *Overlay, v NodeID) (NodeID, float32, float
 			msum += hop(cur, next.To)
 			prev, cur = cur, next.To
 		}
-		if !ok || ov.Idx[cur] == 0 {
+		if !ok || ov.IdxOf(cur) == 0 {
 			continue
 		}
 		if found < 2 {
@@ -126,12 +126,12 @@ func chainMetresFromEnd(g *Graph, ov *Overlay, end, v NodeID) float32 {
 	}
 	for i := range g.EdgesFrom(end) {
 		e := &g.Edges[g.EdgeStart[end]+int32(i)]
-		if ov.Idx[e.To] != 0 {
+		if ov.IdxOf(e.To) != 0 {
 			continue // direct junction-junction edge: not a chain walk
 		}
 		msum := hop(end, e.To)
 		prev, cur := end, e.To
-		for ov.Idx[cur] == 0 {
+		for ov.IdxOf(cur) == 0 {
 			if cur == v {
 				return msum
 			}
@@ -548,18 +548,18 @@ func (e *ReachEngine) QueryLabelsFromNode(origin NodeID, limitSeconds float32) *
 	}
 	seed := driveStartupSecs
 	out.seedBase = seed
-	if oi := e.Ov.Idx[origin]; oi != 0 {
+	if oi := e.Ov.IdxOf(origin); oi != 0 {
 		out.Seeds[oi] = seed
 		out.SeedMet[oi] = 0
 	} else {
 		out.originChain = origin
 		a, sa, ma, b, sb, mb := chainDepartOffsets(e.G, e.Ov, origin)
 		if sa >= 0 {
-			out.Seeds[e.Ov.Idx[a]] = seed + sa
-			out.SeedMet[e.Ov.Idx[a]] = ma
+			out.Seeds[e.Ov.IdxOf(a)] = seed + sa
+			out.SeedMet[e.Ov.IdxOf(a)] = ma
 		}
 		if sb >= 0 {
-			boi := e.Ov.Idx[b]
+			boi := e.Ov.IdxOf(b)
 			if cur, ok := out.Seeds[boi]; !ok || seed+sb < cur {
 				out.Seeds[boi] = seed + sb
 				out.SeedMet[boi] = mb
@@ -724,7 +724,7 @@ func (e *ReachEngine) junctionArrival(lbl *ReachLabels, j NodeID) float32 {
 // junctionArrivalM also returns the road metres along the winning path (+Inf
 // when metres are unavailable, e.g. decoded stored labels).
 func (e *ReachEngine) junctionArrivalM(lbl *ReachLabels, j NodeID) (float32, float32) {
-	oi := e.Ov.Idx[j]
+	oi := e.Ov.IdxOf(j)
 	if oi == 0 {
 		return f32Inf, f32Inf
 	}
@@ -783,11 +783,11 @@ func (e *ReachEngine) ArrivalAtBaseNode(lbl *ReachLabels, v NodeID) float32 {
 // ArrivalAtBaseNodeM also returns road metres along the winning path (+Inf
 // when unavailable).
 func (e *ReachEngine) ArrivalAtBaseNodeM(lbl *ReachLabels, v NodeID) (float32, float32) {
-	if e.Ov.Idx[v] != 0 {
+	if e.Ov.IdxOf(v) != 0 {
 		return e.junctionArrivalM(lbl, v)
 	}
 	best, bestM := f32Inf, f32Inf
-	if a, offA, okA := e.Ov.ChainEndA[v], float32(0), false; func() bool { offA, okA = e.Ov.OffA(v); return a != 0 && okA }() {
+	if a, offA, okA := e.Ov.ChainA(v), float32(0), false; func() bool { offA, okA = e.Ov.OffA(v); return a != 0 && okA }() {
 		if ja, jm := e.junctionArrivalM(lbl, a); ja+offA < best {
 			best = ja + offA
 			bestM = f32Inf
@@ -814,7 +814,7 @@ func (e *ReachEngine) ArrivalAtBaseNodeM(lbl *ReachLabels, v NodeID) (float32, f
 	// join the same junction pair (found by the UK sweep: a circular lane in
 	// Aberdeenshire) — so walk the origin's actual chain to confirm v is on
 	// it and price the hop-exact departure cost.
-	if o := lbl.originChain; o != 0 && e.Ov.ChainEndA[o] == e.Ov.ChainEndA[v] && e.Ov.ChainEndB[o] == e.Ov.ChainEndB[v] {
+	if o := lbl.originChain; o != 0 && e.Ov.ChainA(o) == e.Ov.ChainA(v) && e.Ov.ChainEndB[o] == e.Ov.ChainEndB[v] {
 		if c, cm := sameChainDepartCostM(e.G, e.Ov, o, v); c >= 0 && lbl.seedBase+c < best {
 			best = lbl.seedBase + c
 			bestM = cm
@@ -845,7 +845,7 @@ func sameChainDepartCostM(g *Graph, ov *Overlay, o, v NodeID) (float32, float32)
 		sum := e.Sec()
 		msum := hop(o, e.To)
 		prev, cur := o, e.To
-		for ov.Idx[cur] == 0 {
+		for ov.IdxOf(cur) == 0 {
 			if cur == v {
 				if best < 0 || sum < best {
 					best = sum

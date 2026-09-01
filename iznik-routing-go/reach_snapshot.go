@@ -27,6 +27,7 @@ const graphSnapMagic = "FRGS2SNAP"
 //	OverlayEdge becomes {To uint32; Secs uint16; Metres uint16} (20B -> 8B),
 //	  likewise pruned to drive
 //	OffFromA/B become uint16 deciseconds (4B -> 2B per node)
+//	Idx and ChainEndA merge into one Ref array, being mutually exclusive
 //	DriveSnappable is not stored: it is a pure function of the drive edges and
 //	  is recomputed at load by the same code the build uses
 //
@@ -96,16 +97,13 @@ func SaveReachSnapshot(path string, g *Graph, ov *Overlay) error {
 	if err := writeSlice(w, ov.BaseNode); err != nil {
 		return err
 	}
-	if err := writeSlice(w, ov.Idx); err != nil {
+	if err := writeSlice(w, ov.Ref); err != nil {
 		return err
 	}
 	if err := writeSlice(w, ov.EdgeStart); err != nil {
 		return err
 	}
 	if err := writeSlice(w, ov.Edges); err != nil {
-		return err
-	}
-	if err := writeSlice(w, ov.ChainEndA); err != nil {
 		return err
 	}
 	if err := writeSlice(w, ov.ChainEndB); err != nil {
@@ -167,16 +165,13 @@ func LoadReachSnapshot(path string) (*Graph, *Overlay, error) {
 	if ov.BaseNode, err = readSlice[NodeID](r); err != nil {
 		return nil, nil, err
 	}
-	if ov.Idx, err = readSlice[uint32](r); err != nil {
+	if ov.Ref, err = readSlice[uint32](r); err != nil {
 		return nil, nil, err
 	}
 	if ov.EdgeStart, err = readSlice[int32](r); err != nil {
 		return nil, nil, err
 	}
 	if ov.Edges, err = readSlice[OverlayEdge](r); err != nil {
-		return nil, nil, err
-	}
-	if ov.ChainEndA, err = readSlice[NodeID](r); err != nil {
 		return nil, nil, err
 	}
 	if ov.ChainEndB, err = readSlice[NodeID](r); err != nil {

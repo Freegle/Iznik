@@ -25,7 +25,7 @@ func osmIDs(specs []RawNodeSpec) []int64 {
 // overlayIdxOf fails the test unless base node (by build order, 1-based) is a junction.
 func overlayIdxOf(t *testing.T, ov *Overlay, base NodeID) uint32 {
 	t.Helper()
-	oi := ov.Idx[base]
+	oi := ov.IdxOf(base)
 	if oi == 0 {
 		t.Fatalf("base node %d expected to be an overlay junction, is absorbed", base)
 	}
@@ -91,8 +91,8 @@ func TestOverlayContractsTwoWayChain(t *testing.T) {
 	a, d := NodeID(1), NodeID(4)
 	b, c := NodeID(2), NodeID(3)
 	oa, od := overlayIdxOf(t, ov, a), overlayIdxOf(t, ov, d)
-	if ov.Idx[b] != 0 || ov.Idx[c] != 0 {
-		t.Fatalf("interior nodes B/C should be absorbed, got Idx %d/%d", ov.Idx[b], ov.Idx[c])
+	if ov.IdxOf(b) != 0 || ov.IdxOf(c) != 0 {
+		t.Fatalf("interior nodes B/C should be absorbed, got Idx %d/%d", ov.IdxOf(b), ov.IdxOf(c))
 	}
 
 	fwd := findOverlayEdge(t, ov, oa, od)
@@ -107,11 +107,11 @@ func TestOverlayContractsTwoWayChain(t *testing.T) {
 	}
 
 	// Chain offsets: arrival at C from A side and from D side.
-	if ov.ChainEndA[c] == 0 {
+	if ov.ChainA(c) == 0 {
 		t.Fatal("C has no chain entry")
 	}
 	// Ends may be recorded either way round depending on which walk claimed.
-	endA, endB := ov.ChainEndA[c], ov.ChainEndB[c]
+	endA, endB := ov.ChainA(c), ov.ChainEndB[c]
 	offA, okA := ov.OffA(c)
 	offB, okB := ov.OffB(c)
 	if !okA || !okB {
@@ -151,7 +151,7 @@ func TestOverlayOnewayChain(t *testing.T) {
 
 	a, d := NodeID(1), NodeID(4)
 	oa, od := overlayIdxOf(t, ov, a), overlayIdxOf(t, ov, d)
-	if ov.Idx[2] != 0 || ov.Idx[3] != 0 {
+	if ov.IdxOf(2) != 0 || ov.IdxOf(3) != 0 {
 		t.Fatalf("oneway interior nodes should be absorbed")
 	}
 	findOverlayEdge(t, ov, oa, od)
@@ -162,7 +162,7 @@ func TestOverlayOnewayChain(t *testing.T) {
 	}
 	// Offsets: reachable from A side only.
 	c := NodeID(3)
-	endA := ov.ChainEndA[c]
+	endA := ov.ChainA(c)
 	offA, okA := ov.OffA(c)
 	_, okB := ov.OffB(c)
 	if endA != a {
@@ -193,7 +193,7 @@ func TestOverlayPerModeBranchPointStaysJunction(t *testing.T) {
 	}
 	g := BuildGraphFromRaw(nodes, ways, nil)
 	ov := BuildOverlay(g)
-	if ov.Idx[2] == 0 {
+	if ov.IdxOf(2) == 0 {
 		t.Fatal("per-mode branch point was wrongly absorbed")
 	}
 }
@@ -207,7 +207,7 @@ func TestOverlayTJunctionStays(t *testing.T) {
 	}
 	g := BuildGraphFromRaw(nodes, ways, nil)
 	ov := BuildOverlay(g)
-	if ov.Idx[2] == 0 {
+	if ov.IdxOf(2) == 0 {
 		t.Fatal("T-junction was wrongly absorbed")
 	}
 }
@@ -339,18 +339,18 @@ func compareOverlayVsBase(t *testing.T, g *Graph, ov *Overlay, lat, lng float64,
 	if origin == noNode {
 		t.Fatal("no drive origin")
 	}
-	if ov.Idx[origin] == 0 {
+	if ov.IdxOf(origin) == 0 {
 		t.Fatalf("origin %d is not a junction; test expects a junction origin", origin)
 	}
 
 	// Base ground truth WITHOUT the haversine prune: plain bounded Dijkstra.
 	base := baseDriveDijkstra(g, origin, driveStartupSecs, limit)
-	over := overlayDriveDijkstra(ov, ov.Idx[origin], driveStartupSecs, limit)
+	over := overlayDriveDijkstra(ov, ov.IdxOf(origin), driveStartupSecs, limit)
 
 	// 1. Every junction the base reached must match exactly (within float noise).
 	checkedJ := 0
 	for id, want := range base {
-		oi := ov.Idx[id]
+		oi := ov.IdxOf(id)
 		if oi == 0 {
 			continue
 		}
@@ -375,20 +375,20 @@ func compareOverlayVsBase(t *testing.T, g *Graph, ov *Overlay, lat, lng float64,
 	// 2. Absorbed nodes: offset reconstruction must match base arrival.
 	checkedC := 0
 	for id, want := range base {
-		if ov.Idx[id] != 0 || ov.ChainEndA[id] == 0 {
+		if ov.IdxOf(id) != 0 || ov.ChainA(id) == 0 {
 			continue
 		}
 		got := float32(math.Inf(1))
-		if a := ov.ChainEndA[id]; a != 0 {
+		if a := ov.ChainA(id); a != 0 {
 			if off, okOff := ov.OffA(id); okOff {
-				if av, ok := over[ov.Idx[a]]; ok && av+off < got {
+				if av, ok := over[ov.IdxOf(a)]; ok && av+off < got {
 					got = av + off
 				}
 			}
 		}
 		if b := ov.ChainEndB[id]; b != 0 {
 			if off, okOff := ov.OffB(id); okOff {
-				if bv, ok := over[ov.Idx[b]]; ok && bv+off < got {
+				if bv, ok := over[ov.IdxOf(b)]; ok && bv+off < got {
 					got = bv + off
 				}
 			}
@@ -399,7 +399,7 @@ func compareOverlayVsBase(t *testing.T, g *Graph, ov *Overlay, lat, lng float64,
 		// first, so the end must have been reached at a smaller cost.
 		if math.Abs(float64(got-want)) > 1e-2 {
 			t.Fatalf("absorbed node base=%d arrival mismatch: reconstructed %.4f vs base %.4f (ends %d/%d off %.3f/%.3f)",
-				id, got, want, ov.ChainEndA[id], ov.ChainEndB[id], offOf(ov.OffFromA[id]), offOf(ov.OffFromB[id]))
+				id, got, want, ov.ChainA(id), ov.ChainEndB[id], offOf(ov.OffFromA[id]), offOf(ov.OffFromB[id]))
 		}
 		checkedC++
 	}
@@ -424,13 +424,13 @@ func TestOverlayModeDisjointParallelStaysJunction(t *testing.T) {
 	}
 	g := BuildGraphFromRaw(nodes, ways, nil)
 	ov := BuildOverlay(g)
-	if ov.Idx[2] == 0 || ov.Idx[3] == 0 {
-		t.Fatalf("mode-disjoint parallel endpoints must stay junctions (Idx B=%d C=%d)", ov.Idx[2], ov.Idx[3])
+	if ov.IdxOf(2) == 0 || ov.IdxOf(3) == 0 {
+		t.Fatalf("mode-disjoint parallel endpoints must stay junctions (Idx B=%d C=%d)", ov.IdxOf(2), ov.IdxOf(3))
 	}
 	// The overlay must retain a DRIVABLE B->C edge.
 	found := false
-	for _, e := range ov.EdgesFrom(ov.Idx[2]) {
-		if e.To == ov.Idx[3] && e.Sec() >= 0 {
+	for _, e := range ov.EdgesFrom(ov.IdxOf(2)) {
+		if e.To == ov.IdxOf(3) && e.Sec() >= 0 {
 			found = true
 		}
 	}

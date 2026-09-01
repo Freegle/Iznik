@@ -68,20 +68,74 @@ const (
 type Overlay struct {
 	// BaseNode[oi] = base-graph NodeID for overlay index oi (1-based; [0] sentinel).
 	BaseNode []NodeID
-	// Idx[baseID] = overlay index (1-based), 0 if the base node is absorbed or isolated.
-	Idx []uint32
+	// Ref[baseID] packs two facts that are mutually exclusive by construction,
+	// into the one array that used to be two.
+	//
+	//	0                      neither: isolated, or degree-0
+	//	high bit clear, != 0   a junction; the value is its overlay index
+	//	high bit set           an absorbed chain node; the low bits are the base
+	//	                       NodeID of chain end A
+	//
+	// A node is a junction exactly when assignJunction gave it an overlay index,
+	// and an absorbed chain node exactly when walk() claimed it, and the pass-2
+	// isChain classification those two read is disjoint (pass 4 clears isChain
+	// before promoting a cycle anchor). Two arrays of 56,874,452 uint32 each was
+	// 227.5MB to say one thing per node. Read through IdxOf and ChainA; write
+	// only through setJunction and setChainA, which assert the exclusivity so a
+	// later change to the builder cannot quietly corrupt it.
+	Ref []uint32
 	// CSR over overlay indices.
 	EdgeStart []int32
 	Edges     []OverlayEdge
-	// Chain table, indexed by base NodeID. For absorbed nodes: the junction at
-	// each end of the chain and the DRIVE seconds from that end to the node,
-	// measured along the chain direction end→node; -1 if not traversable from
-	// that end (oneway). Zero ChainEndA means "not an absorbed chain node"
-	// (junction, isolated, or degree-0).
-	ChainEndA []NodeID
+	// ChainEndB, OffFromA and OffFromB are indexed by base NodeID and are
+	// meaningful only for absorbed chain nodes: the junction at the far end of
+	// the chain, and the DRIVE seconds from each end to the node measured along
+	// the chain direction end->node (offUnusable if that direction is oneway
+	// against you).
 	ChainEndB []NodeID
 	OffFromA  []uint16
 	OffFromB  []uint16
+}
+
+// refAbsorbed is the high bit marking an absorbed chain node in Ref. Both
+// payloads fit under it: the largest overlay index is the junction count
+// (12,927,438 on the UK) and the largest base NodeID is the node count
+// (56,874,437), each far below 2^31.
+const refAbsorbed uint32 = 1 << 31
+
+// IdxOf returns the overlay index of a base node, or 0 when it is not a junction.
+func (ov *Overlay) IdxOf(v NodeID) uint32 {
+	r := ov.Ref[v]
+	if r&refAbsorbed != 0 {
+		return 0
+	}
+	return r
+}
+
+// ChainA returns the base NodeID of chain end A for an absorbed node, or 0 when
+// the node is not an absorbed chain node.
+func (ov *Overlay) ChainA(v NodeID) NodeID {
+	r := ov.Ref[v]
+	if r&refAbsorbed == 0 {
+		return 0
+	}
+	return r &^ refAbsorbed
+}
+
+// setJunction records a base node as a junction with the given overlay index.
+func (ov *Overlay) setJunction(v NodeID, oi uint32) {
+	if ov.Ref[v]&refAbsorbed != 0 {
+		log.Fatalf("reach: node %d is both a junction and an absorbed chain node", v)
+	}
+	ov.Ref[v] = oi
+}
+
+// setChainA records a base node as absorbed, with a as its chain end A.
+func (ov *Overlay) setChainA(v, a NodeID) {
+	if r := ov.Ref[v]; r != 0 && r&refAbsorbed == 0 {
+		log.Fatalf("reach: node %d is both a junction and an absorbed chain node", v)
+	}
+	ov.Ref[v] = uint32(a) | refAbsorbed
 }
 
 // offUnusable marks a chain direction that cannot be driven (the old -1).
@@ -268,8 +322,7 @@ func BuildOverlay(g *Graph) *Overlay {
 	info = nil
 
 	ov := &Overlay{
-		Idx:       make([]uint32, n+1),
-		ChainEndA: make([]NodeID, n+1),
+		Ref:       make([]uint32, n+1),
 		ChainEndB: make([]NodeID, n+1),
 		OffFromA:  make([]uint16, n+1),
 		OffFromB:  make([]uint16, n+1),
@@ -277,12 +330,12 @@ func BuildOverlay(g *Graph) *Overlay {
 	ov.BaseNode = append(ov.BaseNode, 0) // sentinel
 
 	assignJunction := func(v NodeID) uint32 {
-		if ov.Idx[v] != 0 {
-			return ov.Idx[v]
+		if oi := ov.IdxOf(v); oi != 0 {
+			return oi
 		}
 		ov.BaseNode = append(ov.BaseNode, v)
 		oi := uint32(len(ov.BaseNode) - 1)
-		ov.Idx[v] = oi
+		ov.setJunction(v, oi)
 		return oi
 	}
 	for v := NodeID(1); v <= NodeID(n); v++ {
@@ -364,7 +417,7 @@ func BuildOverlay(g *Graph) *Overlay {
 			prev, cur = cur, next.To
 		}
 		b := cur
-		tempEdges = append(tempEdges, tempEdge{from: ov.Idx[a], to: assignJunction(b), secs: secs, metres: metres})
+		tempEdges = append(tempEdges, tempEdge{from: ov.IdxOf(a), to: assignJunction(b), secs: secs, metres: metres})
 
 		if len(chainNodes) == 0 {
 			return
@@ -373,7 +426,7 @@ func BuildOverlay(g *Graph) *Overlay {
 		// for both ends; the opposite walk (if the chain is two-way) only adds
 		// its overlay edge. A chain is claimed iff its first interior node has
 		// ChainEndA set.
-		if ov.ChainEndA[chainNodes[0]] != 0 {
+		if ov.ChainA(chainNodes[0]) != 0 {
 			return
 		}
 		// Forward offsets: seconds a→v along out-edges (drive).
@@ -388,7 +441,7 @@ func BuildOverlay(g *Graph) *Overlay {
 			if fok {
 				fsec += e.DriveQuant()
 			}
-			ov.ChainEndA[v] = a
+			ov.setChainA(v, a)
 			ov.ChainEndB[v] = b
 			ov.OffFromA[v] = quantOff(fsec, fok, a, v)
 			prevN = v
@@ -425,7 +478,7 @@ func BuildOverlay(g *Graph) *Overlay {
 	// ── Pass 4: pure chain cycles (no junction anywhere on the loop) ─────────
 	// Promote one node per unclaimed cycle to junction and walk it.
 	for v := NodeID(1); v <= NodeID(n); v++ {
-		if isChain[v] && ov.ChainEndA[v] == 0 {
+		if isChain[v] && ov.ChainA(v) == 0 {
 			isChain[v] = false
 			assignJunction(v)
 			for i := range g.ModalEdgesFrom(v) {

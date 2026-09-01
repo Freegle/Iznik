@@ -33,7 +33,7 @@ func TestReachQueryExactnessBristol(t *testing.T) {
 
 	// Add a chain-node origin: find an absorbed node with a drive chain.
 	for v := NodeID(1); v <= NodeID(g.NodeCount()); v++ {
-		if eng.Ov.Idx[v] == 0 && eng.Ov.ChainEndA[v] != 0 && eng.Ov.OffFromA[v] > 0 && eng.Ov.OffFromB[v] > 0 {
+		if eng.Ov.IdxOf(v) == 0 && eng.Ov.ChainA(v) != 0 && eng.Ov.OffFromA[v] > 0 && eng.Ov.OffFromB[v] > 0 {
 			nd := g.Nodes[v]
 			// Only use it if snapping from its own coords lands on it.
 			if nearestDriveNode(g, float64(nd.Lat), float64(nd.Lng)) == v {
@@ -61,7 +61,7 @@ func TestReachQueryExactnessBristol(t *testing.T) {
 				got := eng.ArrivalAtBaseNode(lbl, id)
 				if math.Abs(float64(got-want)) > 0.01 {
 					t.Fatalf("node %d arrival mismatch: engine %.4f vs base %.4f (junction=%v)",
-						id, got, want, eng.Ov.Idx[id] != 0)
+						id, got, want, eng.Ov.IdxOf(id) != 0)
 				}
 				checked++
 			}
@@ -76,7 +76,7 @@ func TestReachQueryExactnessBristol(t *testing.T) {
 					continue
 				}
 				// Only drive-relevant nodes are meaningful probes.
-				if eng.Ov.Idx[id] == 0 && eng.Ov.ChainEndA[id] == 0 {
+				if eng.Ov.IdxOf(id) == 0 && eng.Ov.ChainA(id) == 0 {
 					continue
 				}
 				probes++
@@ -131,13 +131,13 @@ func TestReachMetresBristol(t *testing.T) {
 		if m == f32Inf {
 			noMet++
 			if noMet <= 5 {
-				if oi := eng.Ov.Idx[id]; oi != 0 {
+				if oi := eng.Ov.IdxOf(id); oi != 0 {
 					leaf := eng.Part.LeafAt(oi)
 					rl := lbl.Reached[leaf]
 					_, hasOA := lbl.OriginArr[oi]
 					t.Logf("noMet junction id=%d leaf=%d label=%v entryMet=%v originArr=%v secs=%.1f", id, leaf, rl != nil, rl != nil && rl.EntryMet != nil, hasOA, want)
 				} else {
-					a, b := eng.Ov.ChainEndA[id], eng.Ov.ChainEndB[id]
+					a, b := eng.Ov.ChainA(id), eng.Ov.ChainEndB[id]
 					ja, jma := eng.junctionArrivalM(lbl, a)
 					jb, jmb := eng.junctionArrivalM(lbl, b)
 					cma := chainMetresFromEnd(g, eng.Ov, a, id)

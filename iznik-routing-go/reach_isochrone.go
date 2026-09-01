@@ -79,8 +79,9 @@ func (e *ReachEngine) ReachedNodes(lbl *ReachLabels, limit float32) map[NodeID]f
 	// Chain interiors: every absorbed node's arrival is its best reachable
 	// end-junction arrival plus the contraction's stored end→node offset.
 	// One linear pass, no search.
-	for v := 1; v < len(e.Ov.ChainEndA); v++ {
-		a := e.Ov.ChainEndA[v]
+	for vi := 1; vi < len(e.Ov.Ref); vi++ {
+		v := NodeID(vi)
+		a := e.Ov.ChainA(v)
 		if a == 0 {
 			continue
 		}
@@ -138,7 +139,7 @@ func (e *ReachEngine) refineOriginChain(out map[NodeID]float32, origin NodeID, s
 		cost := seedBase + first.Sec()
 		v := first.To
 		prev := origin
-		for e.Ov.Idx[v] == 0 && cost <= limit {
+		for e.Ov.IdxOf(v) == 0 && cost <= limit {
 			set(v, cost)
 			next := noNode
 			var step float32

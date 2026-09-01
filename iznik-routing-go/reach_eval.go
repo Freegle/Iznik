@@ -559,7 +559,7 @@ func leafCandidates(v, vPrev NodeID, e *ReachEngine) []uint64 {
 		if j == 0 {
 			return
 		}
-		if oi := eng.Ov.Idx[j]; oi != 0 {
+		if oi := eng.Ov.IdxOf(j); oi != 0 {
 			if l := eng.Part.LeafAt(oi); l >= 0 {
 				for _, x := range leaves {
 					if x == l {
@@ -574,10 +574,10 @@ func leafCandidates(v, vPrev NodeID, e *ReachEngine) []uint64 {
 		if eng == nil || node == noNode {
 			return
 		}
-		if eng.Ov.Idx[node] != 0 {
+		if eng.Ov.IdxOf(node) != 0 {
 			addOn(eng, node)
 		} else {
-			addOn(eng, eng.Ov.ChainEndA[node])
+			addOn(eng, eng.Ov.ChainA(node))
 			addOn(eng, eng.Ov.ChainEndB[node])
 		}
 	}
