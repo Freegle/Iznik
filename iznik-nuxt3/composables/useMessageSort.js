@@ -7,6 +7,8 @@
 //
 //   messages     - array of feed summary objects
 //   selectedSort - 'Unseen' | 'Nearby' | anything else (treated as Newest-first)
+//                  'Unseen' puts unseen posts first (in rippling relevance order) and then
+//                  the already-seen ones NEWEST-FIRST.
 //   roadMiles    - optional (m) => miles|null accessor. When the badge shows ROAD
 //                  miles, "Closest" must order by the same number, or the list reads
 //                  10, 9, 9 and looks unsorted. Falls back to the server's crow
@@ -29,9 +31,9 @@ export function sortBrowseMessages(messages, selectedSort, roadMiles = null) {
   // last (Infinity) and then fall through to the recency tie-break.
   const isNearby = selectedSort === 'Nearby'
 
-  // 'Unseen' orders by unseen-bucket then relevance score and never consults arrival, so
-  // only pay for Date parsing when a recency tiebreak/order is actually needed.
-  const needsRecency = selectedSort !== 'Unseen'
+  // Every sort now needs a recency key. 'Unseen' used to skip it (bucket then score, never
+  // a date), but its SEEN block is ordered by date - see the comparator below - so the
+  // Schwartzian pass always pays for one Date parse per message.
 
   // "Newest posted" (and the recency tiebreak) means ORIGINAL post time - `m.posted`,
   // which the server exposes as the stable messages.arrival. We must NOT use `m.arrival`
@@ -53,12 +55,13 @@ export function sortBrowseMessages(messages, selectedSort, roadMiles = null) {
     if (Number.isFinite(visible) && visible > 0) return visible
     const posted = m.posted ? new Date(m.posted).getTime() : NaN
     if (Number.isFinite(posted) && posted > 0) return posted
-    return new Date(m.arrival).getTime()
+    const arrived = new Date(m.arrival).getTime()
+    // A message with no usable date at all must yield a NUMBER, not NaN: `b.ts - a.ts` on
+    // NaN is NaN, which is not a valid comparator result and leaves the order arbitrary.
+    // 0 makes them tie, so they keep the order they arrived in.
+    return Number.isFinite(arrived) ? arrived : 0
   }
 
-  // The viewer's own posts pin to the top (below), newest-first, so compute their timestamp
-  // even in 'Unseen' mode (which otherwise skips recency) - otherwise own posts would tie and
-  // fall back to arbitrary DB order rather than most-recent-first.
   const decorated = list.map((m) => ({
     m,
     dist: !isNearby
@@ -68,7 +71,7 @@ export function sortBrowseMessages(messages, selectedSort, roadMiles = null) {
           if (Number.isFinite(road)) return road
           return Number.isFinite(m.distance) ? m.distance : Infinity
         })(),
-    ts: needsRecency || m.mine ? recencyTs(m) : 0,
+    ts: recencyTs(m),
   }))
 
   decorated.sort((a, b) => {
@@ -97,20 +100,36 @@ export function sortBrowseMessages(messages, selectedSort, roadMiles = null) {
       return b.ts - a.ts
     }
     if (selectedSort === 'Unseen') {
-      // Unseen first, then by descending rippling relevance score. Successful posts are
-      // not treated as unseen so they don't bob to the top. Missing score -> 0.
+      // Unseen first, then seen. The unseen test is plain `m.unseen`, exactly what
+      // MessageList splits its two grids on: when the two disagreed, an unseen successful
+      // post was rendered in the unseen grid but ordered as if it were seen, so it landed
+      // in the wrong place within its own block. Successful posts are wanted here (they are
+      // the social-proof cards); what stops them dominating is upstream, where the feed
+      // already drops any freegled post over a week old and spaces the rest out.
       const am = a.m
       const bm = b.m
-      const aunseen = am.unseen && !am.successful
-      const bunseen = bm.unseen && !bm.successful
+      // Coerced: the feed's own split is truthiness (`filter(m => m.unseen)`), and an
+      // absent `unseen` must compare equal to an explicit false, not differ from it.
+      const aunseen = !!am.unseen
+      const bunseen = !!bm.unseen
 
-      if (aunseen && !bunseen) {
-        return -1
-      } else if (!aunseen && bunseen) {
-        return 1
-      } else {
+      if (aunseen !== bunseen) {
+        return aunseen ? -1 : 1
+      }
+
+      if (aunseen) {
+        // Within the unseen block, the rippling relevance order. Missing score -> 0.
         return (bm.score ?? 0) - (am.score ?? 0)
       }
+
+      // Within the SEEN block, newest first - NOT by score. Score decides what is worth
+      // surfacing as new; once you have seen a post that judgement is spent, and date is
+      // the only order a member can predict. Ordering it by score is what made a caught-up
+      // feed look stuck: RIPPLE_BROWSE_W_FRESH is 0, so score carries no recency at all,
+      // and its budget term - exp(-(views + 3*replies) / ageHours / k) - climbs towards its
+      // maximum as an unengaged post ages. The top card was therefore the nearest thing
+      // nobody had ever wanted, which is usually weeks old.
+      return b.ts - a.ts
     } else if (isNearby) {
       // Nearby: nearest-first by server distance (posts with no distance sort last via
       // Infinity), then recency as a tiebreak. When no post has a server distance this

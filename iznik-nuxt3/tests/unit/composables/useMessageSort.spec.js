@@ -31,14 +31,37 @@ describe('sortBrowseMessages', () => {
       expect(order(msgs, 'Unseen')).toEqual([2, 1])
     })
 
-    it('treats successful posts as not-unseen so they do not bob to the top', () => {
+    it('buckets an unseen successful post with the unseen ones, matching the feed split', () => {
+      // MessageList splits its two grids on plain `m.unseen`. The sort used to require
+      // `unseen && !successful`, so a freegled post the member had not seen was RENDERED in
+      // the unseen grid while being ORDERED as if it were seen, landing in the wrong place
+      // within its own block. Both now agree. Keeping freegled posts out of the way is done
+      // upstream instead (over-a-week-old ones are dropped, the rest spaced out).
       const msgs = [
-        { id: 1, unseen: false, score: 1 },
-        { id: 2, unseen: true, successful: true, score: 9 },
+        { id: 'seen', unseen: false, score: 5, posted: '2024-06-01T00:00:00Z' },
+        {
+          id: 'unseenFreegled',
+          unseen: true,
+          successful: true,
+          score: 1,
+          posted: '2024-01-01T00:00:00Z',
+        },
       ]
-      // 2 is unseen but successful -> treated as seen -> ordered by score within the
-      // seen bucket. Both are seen; higher score first.
-      expect(order(msgs, 'Unseen')).toEqual([2, 1])
+      expect(order(msgs, 'Unseen')).toEqual(['unseenFreegled', 'seen'])
+    })
+
+    it('treats an absent unseen flag the same as an explicit false', () => {
+      const msgs = [
+        { id: 'noFlag', score: 1, posted: '2024-01-01T00:00:00Z' },
+        {
+          id: 'explicit',
+          unseen: false,
+          score: 9,
+          posted: '2024-06-01T00:00:00Z',
+        },
+      ]
+      // Both seen -> newest first, rather than the missing flag being read as a difference.
+      expect(order(msgs, 'Unseen')).toEqual(['explicit', 'noFlag'])
     })
 
     it('orders within a bucket by descending score', () => {
@@ -66,6 +89,100 @@ describe('sortBrowseMessages', () => {
         { id: 12, unseen: true, score: 4 },
       ]
       expect(order(msgs, 'Unseen')).toEqual([10, 11, 12])
+    })
+
+    // Once a member has seen everything, the SEEN block is the whole feed. Ordering it by
+    // score put a very old post at the top and made the feed look stuck: the browse score's
+    // freshness weight is 0 by default (RIPPLE_BROWSE_W_FRESH) and its budget term is
+    // exp(-(views + 3*replies) / ageHours / k), which climbs towards its maximum as an
+    // unengaged post ages. So the highest-scoring post is the nearest thing nobody ever
+    // wanted. Score decides what is worth surfacing as NEW; once you have seen a post that
+    // judgement is spent, and the only order a member can predict is by date.
+    describe('the seen block (member is caught up)', () => {
+      it('orders seen posts newest-first, not by score', () => {
+        const msgs = [
+          {
+            id: 'oldHighScore',
+            unseen: false,
+            score: 9,
+            posted: '2024-01-01T00:00:00Z',
+          },
+          {
+            id: 'newLowScore',
+            unseen: false,
+            score: 1,
+            posted: '2024-06-01T00:00:00Z',
+          },
+        ]
+        expect(order(msgs, 'Unseen')).toEqual(['newLowScore', 'oldHighScore'])
+      })
+
+      it('still orders the unseen block by score', () => {
+        // Only the seen block changes; the unseen block keeps the rippling relevance order.
+        const msgs = [
+          {
+            id: 'newLowScore',
+            unseen: true,
+            score: 1,
+            posted: '2024-06-01T00:00:00Z',
+          },
+          {
+            id: 'oldHighScore',
+            unseen: true,
+            score: 9,
+            posted: '2024-01-01T00:00:00Z',
+          },
+        ]
+        expect(order(msgs, 'Unseen')).toEqual(['oldHighScore', 'newLowScore'])
+      })
+
+      it('keeps every unseen post above every seen post regardless of date', () => {
+        const msgs = [
+          {
+            id: 'seenNew',
+            unseen: false,
+            score: 0,
+            posted: '2024-06-01T00:00:00Z',
+          },
+          {
+            id: 'unseenOld',
+            unseen: true,
+            score: 0,
+            posted: '2024-01-01T00:00:00Z',
+          },
+        ]
+        expect(order(msgs, 'Unseen')).toEqual(['unseenOld', 'seenNew'])
+      })
+
+      it('uses visibleSince so a repost lifts a seen post back up', () => {
+        // Same clock as the card's age badge: a repost bumps visibleSince, which is what a
+        // repost is for. posted never moves, so ordering by it would strand the repost.
+        const msgs = [
+          {
+            id: 'reposted',
+            unseen: false,
+            posted: '2024-01-01T00:00:00Z',
+            visibleSince: '2024-09-01T00:00:00Z',
+          },
+          {
+            id: 'newerPost',
+            unseen: false,
+            posted: '2024-06-01T00:00:00Z',
+            visibleSince: '2024-06-01T00:00:00Z',
+          },
+        ]
+        expect(order(msgs, 'Unseen')).toEqual(['reposted', 'newerPost'])
+      })
+
+      it('keeps input order for seen posts with no usable date', () => {
+        // No posted/visibleSince/arrival at all must not produce a NaN comparator and an
+        // arbitrary order; they tie and stay as they came.
+        const msgs = [
+          { id: 'a', unseen: false, score: 1 },
+          { id: 'b', unseen: false, score: 9 },
+        ]
+        expect(order(msgs, 'Unseen')).toEqual(['a', 'b'])
+      })
     })
   })
 
