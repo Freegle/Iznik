@@ -47,7 +47,7 @@ function payload({ measuredForCurrent = true, months = 12, pct = 42.5 } = {}) {
     counts: { classified: 1000, electrical: 425, electrical_pct: pct },
     impact: {
       tonnes: 1.2,
-      tonnes_co2e: 1.9,
+      tonnes_co2e: 0.6,
       carbon_value_gbp: 100,
       carbon_proxy_gbp_per_tonne: 273,
       mean_item_kg: 2.8,
@@ -161,7 +161,7 @@ describe('pages/electricals.vue', () => {
       electrical_offers: 5100,
       items_taken: 5100,
       tonnes: 14.4,
-      tonnes_co2e: 22.8,
+      tonnes_co2e: 7.3,
       carbon_value_gbp: 1200,
       scale_factor: 12,
       firm: false,
@@ -187,7 +187,7 @@ describe('pages/electricals.vue', () => {
       electrical_offers: 429,
       items_taken: 429,
       tonnes: 1.2,
-      tonnes_co2e: 1.9,
+      tonnes_co2e: 0.6,
       carbon_value_gbp: 101,
       scale_factor: 1.01,
       firm: true,
@@ -199,6 +199,25 @@ describe('pages/electricals.vue', () => {
     expect(wrapper.text()).toContain('429')
     expect(wrapper.text()).not.toContain('analysed 99% of posts')
     expect(wrapper.text()).not.toContain('an estimated')
+  })
+
+  // Weight and CO2 are different quantities. They rendered as the same number,
+  // which is not physically possible for anything but a factor of one, so the
+  // tiles are pinned to their own fields here.
+  it('takes the CO2 tile from the CO2 field, not from the tonnage', async () => {
+    statsPayload = payload()
+    statsPayload.impact.tonnes = 12.4
+    statsPayload.impact.tonnes_co2e = 6.3
+
+    const wrapper = await mountPage()
+    const tiles = wrapper.findAll('h3')
+    const tonnes = tiles.find(
+      (t) => t.text().includes('TONNES') && !t.text().includes('CO2')
+    )
+    const co2 = tiles.find((t) => t.text().includes('TONNES CO2'))
+
+    expect(tonnes.text()).toContain('12.4')
+    expect(co2.text()).toContain('6.3')
   })
 
   it('renders measured figures unchanged when the payload has no estimates block', async () => {

@@ -1365,4 +1365,29 @@ return [
         'publish_category'  => env('EEE_PUBLISH_CATEGORY', true),
         'publish_condition' => env('EEE_PUBLISH_CONDITION', true),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Electricals page
+    |--------------------------------------------------------------------------
+    |
+    | Grouping for the item lists on /electricals. Item names are folded to a
+    | canonical type so brands and spellings of the same thing count once, and a
+    | rare item is dropped when it is really a version of a common one.
+    |
+    | The near-identity threshold is high on purpose. Measured on live titles,
+    | similarity scores "fridge freezer" against "freezer" at 0.93 and "cd
+    | player" against "dvd player" at 0.85, so anything looser stops meaning
+    | "the same item with an extra word" and starts meaning "a related thing".
+    |
+    */
+    'electricals' => [
+        // Same sidecar as everything else; empty means the word test runs alone.
+        'sidecar_url'                => env('EMBEDDING_SIDECAR_URL', ''),
+        'variant_identical_cos'      => env('ELECTRICALS_VARIANT_IDENTICAL_COS', 0.90),
+        // How much commoner a rival has to be before a rare item counts as a
+        // version of it, and the floor below which nothing counts as common.
+        'variant_popularity_ratio'   => env('ELECTRICALS_VARIANT_POPULARITY_RATIO', 3),
+        'variant_min_popular_count'  => env('ELECTRICALS_VARIANT_MIN_POPULAR_COUNT', 10),
+    ],
 ];
