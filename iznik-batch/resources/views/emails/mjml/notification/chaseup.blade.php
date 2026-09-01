@@ -1,153 +1,155 @@
 <mjml>
   @include('emails.mjml.partials.head', [
     'preview' => (function() use ($notifications, $count) {
-        $n = $notifications[0] ?? null;
-        if (!$n) { return 'You have a notification'; }
-        $type = $n['type'] ?? '';
-        $from = $n['fromname'] ?? 'Someone';
-        $msg = \Illuminate\Support\Str::limit(strip_tags($n['newsfeed']['message'] ?? ''), 40);
-        if ($type === 'CommentOnCommented') { $first = $from . ' replied: ' . $msg; }
-        elseif ($type === 'CommentOnYourPost') { $first = $from . ' commented: ' . $msg; }
-        elseif ($type === 'LovedPost') { $first = $from . ' loved your post' . ($msg ? ': ' . $msg : ''); }
-        elseif ($type === 'LovedComment') { $first = $from . ' loved your comment' . ($msg ? ': ' . $msg : ''); }
-        elseif ($type === 'Exhort') { $first = $n['title'] ?? 'You have a notification'; }
-        else { $first = 'You have a notification from ' . $from; }
+        // Preheader: what the first (newest) notification actually says, so the
+        // inbox line is useful rather than repeating the subject.
+        $first = 'You have a notification';
+
+        if (!empty($notifications)) {
+            $n = $notifications[0];
+            $from = $n['fromname'] ?? 'Someone';
+            $msg = \Illuminate\Support\Str::limit(strip_tags($n['newsfeed']['message'] ?? ''), 40);
+
+            $first = match ($n['type'] ?? '') {
+                'CommentOnCommented' => $from . ' replied: ' . $msg,
+                'CommentOnYourPost' => $from . ' commented: ' . $msg,
+                'LovedPost' => $from . ' loved your post' . ($msg ? ': ' . $msg : ''),
+                'LovedComment' => $from . ' loved your comment' . ($msg ? ': ' . $msg : ''),
+                'Exhort' => $n['title'] ?? $first,
+                default => 'You have a notification from ' . $from,
+            };
+        }
+
         return \Illuminate\Support\Str::limit($first, 80) . ($count > 1 ? ' (and ' . ($count - 1) . ' more)' : '');
     })()
   ])
-  <mj-body background-color="#ffffff">
 
-    {{-- Header --}}
-    <mj-section mj-class="bg-success" padding="20px 0">
-      <mj-column width="65%" vertical-align="middle">
-        <mj-text font-size="18px" font-weight="bold" color="#ffffff" padding="0 0 0 25px">
+  <mj-body background-color="#f0f0eb">
+
+    @include('emails.mjml.partials.header', ['title' => config('freegle.branding.name')])
+
+    {{-- Intro card --}}
+    <mj-section mj-class="bg-green-light" padding="24px 0 20px">
+      <mj-column>
+        <mj-text font-size="22px" font-weight="bold" mj-class="text-header" line-height="1.3" padding="0 25px 12px">
           You have {{ $count }} notification{{ $count === 1 ? '' : 's' }}
         </mj-text>
-      </mj-column>
-      <mj-column width="35%" vertical-align="middle">
-        <mj-image
-          width="80px"
-          src="{{ config('freegle.logo_url', 'https://www.ilovefreegle.org/icon.png') }}"
-          alt="Freegle"
-          align="right"
-          padding="0 20px"
-        />
+        <mj-text font-size="15px" color="#333333" line-height="1.7" padding="0 25px 0">
+          Here&rsquo;s what happened on Freegle while you were away.
+        </mj-text>
       </mj-column>
     </mj-section>
 
-    {{-- Notification rows --}}
     @foreach ($notifications as $notif)
-    <mj-section background-color="#F7F6EC" padding="20px 0 0 0">
 
-      {{-- Avatar: uploaded photo or server-generated boring-avatar matching the frontend --}}
-      <mj-column width="60px" vertical-align="middle">
-        <mj-image
-          width="48px"
-          height="48px"
-          src="{{ $notif['fromimage'] }}"
-          alt="{{ $notif['fromname'] }}"
-          border-radius="50%"
-          align="center"
-          padding="0 0 0 15px"
-          container-background-color="#F7F6EC"
-        />
+    @php
+      // Wording for this card. Two shapes: an actor line ("Alice commented on
+      // your post") for the social notifications, and a plain statement for the
+      // ones Freegle itself raises. Worked out here so the layout below stays
+      // flat instead of repeating the card markup per type.
+      $type = $notif['type'] ?? '';
+      $from = $notif['fromname'] ?? 'Someone';
+      $feed = $notif['newsfeed'] ?? null;
+      $group = $notif['url'] ?? '';
+      $actor = null;
+      $quote = null;
+      $cta = 'View thread';
+
+      if ($type === 'CommentOnCommented') {
+          $actor = $from;
+          $statement = 'replied on &ldquo;' . e($feed['replyto']['message'] ?? 'your thread') . '&rdquo;';
+          $quote = $feed['message'] ?? null;
+      } elseif ($type === 'CommentOnYourPost') {
+          $actor = $from;
+          $statement = 'commented on your post';
+          $quote = $feed['message'] ?? null;
+      } elseif ($type === 'LovedPost') {
+          $actor = $from;
+
+          if (($feed['type'] ?? '') === 'Noticeboard') {
+              // Noticeboard loves carry no text to quote.
+              $statement = 'loved your noticeboard post';
+          } else {
+              $statement = 'loved your post';
+              $quote = $feed['message'] ?? null;
+          }
+      } elseif ($type === 'LovedComment') {
+          $actor = $from;
+          $statement = 'loved your comment';
+          $quote = $feed['message'] ?? null;
+      } elseif ($type === 'Exhort') {
+          $statement = '<strong>' . e($notif['title'] ?? 'You have a notification') . '</strong>';
+          $quote = $notif['text'] ?? null;
+          $cta = 'Take a look';
+      } elseif ($type === 'MembershipPending') {
+          $statement = 'Your application to ' . e($group) . ' needs approval. We&rsquo;ll let you know as soon as we hear.';
+          $cta = 'Go to Freegle';
+      } elseif ($type === 'MembershipApproved') {
+          $statement = 'You&rsquo;re in! Your application to ' . e($group) . ' has been approved.';
+          $cta = 'Go to Freegle';
+      } elseif ($type === 'MembershipRejected') {
+          $statement = 'Sorry, your application to ' . e($group) . ' wasn&rsquo;t approved.';
+          $cta = 'Go to Freegle';
+      } else {
+          // Anything we have no wording for yet still gets a usable card rather
+          // than an empty one.
+          $statement = 'You have a notification from ' . e($from);
+          $cta = 'Go to Freegle';
+      }
+    @endphp
+
+    {{-- Gap before each card --}}
+    <mj-section background-color="#f0f0eb" padding="0">
+      <mj-column><mj-text padding="6px 0" color="#f0f0eb">&nbsp;</mj-text></mj-column>
+    </mj-section>
+
+    <mj-section background-color="#ffffff" padding="18px 0 16px">
+      <mj-column width="70px" vertical-align="top">
+        @if (!empty($notif['fromimage']))
+        <mj-image src="{{ $notif['fromimage'] }}" alt="" width="44px" height="44px"
+                  border-radius="50%" align="left" padding="0 0 0 25px" />
+        @endif
       </mj-column>
-
-      <mj-column vertical-align="middle">
-
-        {{-- Notification text --}}
-        @if ($notif['type'] === 'CommentOnCommented')
-        <mj-text font-size="13px" padding="10px 10px 2px">
-          <strong>{{ $notif['fromname'] }}</strong>
-          <span style="color: grey;"> commented on &ldquo;{{ $notif['newsfeed']['replyto']['message'] ?? '' }}&rdquo;:</span>
-          <br/><br/><em>{{ $notif['newsfeed']['message'] ?? '' }}</em>
+      <mj-column width="530px" vertical-align="top">
+        <mj-text font-size="16px" color="#333333" line-height="1.45" padding="0 25px 2px 0">
+          @if ($actor)<strong>{{ $actor }}</strong> @endif{!! $statement !!}
         </mj-text>
-
-        @elseif ($notif['type'] === 'CommentOnYourPost')
-        <mj-text font-size="13px" padding="10px 10px 2px">
-          <strong>{{ $notif['fromname'] }}</strong>
-          <span style="color: grey;"> commented on your post:</span>
-          <br/><br/><em>{{ $notif['newsfeed']['message'] ?? '' }}</em>
+        <mj-text font-size="12px" color="#999999" line-height="1.4" padding="0 25px 0 0">
+          {{ $notif['timestamp'] ?? '' }}
         </mj-text>
-
-        @elseif ($notif['type'] === 'LovedPost')
-        <mj-text font-size="13px" padding="10px 10px 2px">
-          <strong>{{ $notif['fromname'] }}</strong>
-          @if (($notif['newsfeed']['type'] ?? '') === 'Noticeboard')
-          <span style="color: grey;"> loved your noticeboard post</span>
-          @else
-          <span style="color: grey;"> loved your post:</span>
-          <br/><br/><em>{{ $notif['newsfeed']['message'] ?? '' }}</em>
-          @endif
-        </mj-text>
-
-        @elseif ($notif['type'] === 'LovedComment')
-        <mj-text font-size="13px" padding="10px 10px 2px">
-          <strong>{{ $notif['fromname'] }}</strong>
-          <span style="color: grey;"> loved your comment:</span>
-          <br/><br/><em>{{ $notif['newsfeed']['message'] ?? '' }}</em>
-        </mj-text>
-
-        @elseif ($notif['type'] === 'Exhort')
-        <mj-text font-size="13px" padding="10px 10px 2px">
-          <strong>{{ $notif['title'] ?? '' }}</strong>
-          @if ($notif['text'])
-          <br/><br/><em>{{ $notif['text'] }}</em>
-          @endif
-        </mj-text>
-
-        @elseif ($notif['type'] === 'MembershipPending')
-        <mj-text font-size="13px" padding="10px 10px 2px">
-          <strong>Your application to {{ $notif['url'] ?? '' }} requires approval. We&rsquo;ll let you know soon.</strong>
-        </mj-text>
-
-        @elseif ($notif['type'] === 'MembershipApproved')
-        <mj-text font-size="13px" padding="10px 10px 2px">
-          <strong>Your application to {{ $notif['url'] ?? '' }} has been approved!</strong>
-        </mj-text>
-
-        @elseif ($notif['type'] === 'MembershipRejected')
-        <mj-text font-size="13px" padding="10px 10px 2px">
-          <strong>Sorry, your application to {{ $notif['url'] ?? '' }} was rejected</strong>
+        @if (!empty($quote))
+        <mj-text font-size="15px" color="#555555" line-height="1.65" padding="10px 25px 0 0">
+          <span style="display:block; border-left:3px solid #cde3b4; padding-left:12px; font-style:italic;">{{ $quote }}</span>
         </mj-text>
         @endif
-
-        {{-- Timestamp --}}
-        <mj-text font-size="11px" color="#707070" padding="0 10px 10px">
-          {{ $notif['timestamp'] }}
+        <mj-text font-size="14px" line-height="1.5" padding="10px 25px 0 0">
+          <a href="{{ $notif['trackedUrl'] }}">{{ $cta }} &rarr;</a>
         </mj-text>
-
       </mj-column>
+    </mj-section>
 
-      {{-- CTA button --}}
-      <mj-column width="130px" vertical-align="middle">
-        <mj-button
-          mj-class="btn-success"
-          href="{{ $notif['trackedUrl'] }}"
-          align="center"
-          padding="10px 10px"
-        >
-          @if ($notif['type'] === 'Exhort')
-          Click here!
-          @else
-          View thread
-          @endif
+    @endforeach
+
+    {{-- Closing CTA --}}
+    <mj-section background-color="#f0f0eb" padding="0">
+      <mj-column><mj-text padding="6px 0" color="#f0f0eb">&nbsp;</mj-text></mj-column>
+    </mj-section>
+
+    <mj-section background-color="#ffffff" padding="22px 0">
+      <mj-column>
+        <mj-text font-size="14px" color="#555555" line-height="1.7" padding="0 25px 16px" align="center">
+          Replies, loves and nudges all live on Freegle. Pop in to catch up on the lot.
+        </mj-text>
+        <mj-button href="{{ $chitchatUrl }}" mj-class="btn-success" font-size="14px" border-radius="4px" align="center">
+          See what&rsquo;s happening
         </mj-button>
       </mj-column>
     </mj-section>
 
-    <mj-section padding="0">
-      <mj-column>
-        <mj-divider border-color="#e0e0e0" border-width="1px" padding="0" />
-      </mj-column>
-    </mj-section>
-    @endforeach
-
-    {{-- Footer --}}
     @include('emails.mjml.partials.footer', [
-      'settingsUrl'    => $settingsUrl,
+      'settingsUrl' => $settingsUrl,
       'unsubscribeUrl' => $unsubscribeUrl,
-      'email' => $email,
+      'email' => $email
     ])
 
   </mj-body>
