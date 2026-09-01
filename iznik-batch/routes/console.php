@@ -1273,6 +1273,21 @@ Schedule::command('integrations:sync-whatjobs')
     ->sendOutputTo(cronLog('integrations:sync-whatjobs'))
     ->runInBackground();
 
+// Weekly full re-geocode of the jobs feed. Each sync seeds its geocoding from
+// the previous run's jobs table, so a tuple that was ever resolved wrongly
+// stays wrong forever (measured 2026-08-31: 2,341 jobs pinned on Glasgow
+// under a Belfast district name; 7.9% of the table >25km from its own city's
+// best match). The in-sync UK-bbox guard rejects out-of-UK poison at write
+// time; this clears the in-UK kind by re-resolving every tuple from scratch
+// against our own places geocoder (local, ~20ms a lookup). Sunday small
+// hours, clear of the 05:00 digest-prep sync; the command's own lock
+// serialises any overlap.
+Schedule::command('integrations:sync-whatjobs', ['--refresh-geocode'])
+    ->timezone(config('freegle.timezone'))
+    ->weeklyOn(0, '02:30')
+    ->sendOutputTo(cronLog('integrations:sync-whatjobs.refresh'))
+    ->runInBackground();
+
 // Sync Freegle offers with LoveJunk - runs every minute.
 // V1: cron/lovejunk.php
 Schedule::command('integrations:sync-lovejunk')
