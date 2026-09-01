@@ -5,6 +5,47 @@ is a full scan of the live production artifacts, not an estimate. The brief's th
 targets survive; two of them are worth roughly twice what it thought, its third target
 is already done, and the two largest levers were not in it at all.
 
+## Status: built, on branch feature/reach-occupancy
+
+Measured on the committed Bristol extract, master against the branch:
+
+| artifact | master | branch | saved |
+|---|---|---|---|
+| graph.snap | 13,933,275 | 6,257,653 | 55.1% |
+| partition.snap | 335,837 | 240,214 | 28.5% |
+| leaftables.snap | 3,396,904 | 2,548,820 | 25.0% |
+| matrices.snap | 10,557 | 10,573 | -0.2% |
+| **total** | **17,676,573** | **9,057,260** | **48.8%** |
+
+Done: the drive-only graph, every quantisation below, the Grid rewrite, the
+Idx/ChainEndA merge, the leaf-table metres, the LeafOf narrowing, the artifact
+fingerprints, the loopback pprof listener, the GC limits, the cache bounds, and the
+`isochrones.source` enum fix.
+
+Not done, and why:
+
+- **Leaf-table SECONDS stay float32.** Quantising them to anything that fits a uint16
+  across the real leaf-size distribution costs more error than the engine's 0.01s
+  exactness gate allows: 1,477 of 23,675 leaves exceed 655.34s, so most cells would
+  need 0.1s units, five times the tolerance. That would have been another 376MB. The
+  gate is worth more, especially now the anon heap that was starving the mapping has
+  itself halved.
+- **Node pruning (Track B2 below) is a separate change.** It renumbers nodes, which
+  changes the partition, which invalidates every stored reach label. Everything shipped
+  here leaves the overlay numbering byte-identical to master's, verified by decoding
+  both artifacts and comparing.
+- **mmapping graph.snap** stays a follow-on, for the reasons in the last section.
+
+Two things turned up while building it that are worth knowing independently:
+
+1. **The partition is not deterministic.** `buildDriveUG` collects its undirected edges
+   by ranging a Go map, so two runs over the identical graph give different leaf
+   assignments. Verified by building it three times from one graph: all three differ.
+   Every rebuild therefore invalidates stored labels, whatever else changes.
+2. **`isochrones.source` could not hold the value the code writes.** Proven against a
+   real MySQL: the insert fails with "Data truncated for column 'source'" before the
+   migration and succeeds after.
+
 ## Why
 
 The morning of 2026-08-31 the reach engine's working set collided with the batch.slice
