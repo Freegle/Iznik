@@ -375,17 +375,28 @@ shards run back-to-back continuously.
 That is why this query holds 46-68% of db2 at every hour sampled: while reach is active its load is
 a steady ~2.6-3.0 threads rather than something that ebbs with traffic.
 
-**It is not 24/7, though — corrected.** An earlier draft said "constant, 24/7". Sampling only ran
-07:15-19:12; `rippling_reach.updated_at` by hour over 24 h shows reach activity stops overnight:
+**Overnight it is reduced, not stopped — and the first attempt to measure this was wrong.**
 
-| hour UTC | 20 | 21 | 22 | **23-05** | 06 | 07 | 12 | 16 | 17 | 18 | 19 |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| updates | 221 | 160 | 87 | **zero rows** | 256 | 319 | 439 | 758 | **766** | 710 | 341 |
+A `GROUP BY HOUR(updated_at)` appeared to show zero rows for hours 23-05, which read as a hard
+overnight pause. **That was an artefact.** `updated_at` holds *current* state, not an event log: a
+row touched overnight is touched again in the morning and moves to the later hour, erasing the
+overnight evidence. The same query run an hour apart gave hour 16 as 758 then 567, and hour 17 as
+766 then 677 — history rewriting itself as rows are re-updated.
 
-So there is a ~7-hour overnight lull (23:00-05:59 UTC) when the window empties and the mailer has
-nothing to do, and the true peak is **16:00-18:00**, not the morning. The saving from proposal A
-therefore applies across roughly 17 active hours a day, not 24 — still the dominant load whenever
-reach is running, but a daily total about 70% of what a 24/7 assumption implies.
+The sound measurement is `next_expansion_at`, which is scheduled forward and cannot be rewritten by
+later activity:
+
+| hour UTC | 20 | 21 | 22 | 23 | 00 | 01 | **02** | **03** | **04** | 05 | 06 | 07 | 08 | 11 | 13 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| scheduled expansions | 237 | 417 | 394 | 199 | 130 | 119 | **47** | **6** | **20** | 73 | 109 | 221 | 332 | 407 | 407 |
+
+So there is a **deep overnight trough, not a pause**: hours 00-05 total 395 scheduled expansions
+against roughly 2,400 if they ran at the evening rate — about **16% of daytime**, bottoming at 6 in
+the 03:00 hour. Reach never stops.
+
+Proposal A's saving therefore applies essentially round the clock, at reduced volume for ~6 hours
+overnight. An earlier draft downgraded the daily total to ~70% of a 24/7 assumption on the strength
+of the artefact; ~85-90% is closer.
 
 **Saturation is a cost problem, not a correctness one — checked.** A post only goes unmailed if a
 sweep outlasts the 60-minute window. Window size measured at 435 (07:45), 754 (17:57) and 730
