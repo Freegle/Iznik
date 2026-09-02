@@ -296,16 +296,35 @@ The member-side feed is small enough to make this cheap — measured:
 So roughly **1-2 member changes per minute**, against 435 posts currently re-scanned per minute.
 Indexes exist for both feeds: `memberships.added_groupid (added, groupid)` and `users.lastupdated`.
 
-**Two things to settle before implementing:**
+**The member-side feed was investigated and mostly does not exist. Revised recommendation below.**
 
-- **What actually bumps `users.lastupdated`?** 29/hour looks low for the site's activity, so it
-  may not capture a location or settings change. If it doesn't, the member-side feed needs another
-  signal for "member moved". Verify before relying on it.
-- **Returning-after-90-days members.** Eligibility is `lastaccess IS NULL OR lastaccess >
-  now()-90 days`. Someone inactive for over 90 days who comes back becomes newly eligible, but
-  `lastaccess > watermark` matches *every* active member (thousands/minute), so it is too broad to
-  use as the trigger. Either store an "was eligible" flag to detect the crossing, or accept that
-  these members are picked up on the post's next expansion. This is the one gap in the design.
+| signal | covers | granularity | volume |
+|---|---|---|---|
+| `memberships.added` | new joins | real-time, indexed (`added_groupid`) | ~1/min |
+| `users_approxlocs.timestamp` | location changes | **daily** — `users:update-approx-locs` is `dailyAt('04:45')` (`routes/console.php:1105`) | 4,562/day, 0 in any given hour |
+| `users.lastupdated` | **nothing useful** | — | plain `timestamp NULL`, **no `ON UPDATE`**; set only in user-merge flows (`User.php:1449`, `user.go:1792`) |
+| returning after 90 days idle | **no signal at all** | — | `lastaccess > watermark` matches every active member, thousands/min |
+
+So a dual-feed design would keep new joins (real-time, better than today), **delay location changes
+to once a day** (worse than today's ≤1 h), and **lose returning members entirely**. Two of the three
+eligibility routes regress.
+
+**Revised proposal A: shorten the window rather than replace it.** `reach_mail_window_minutes`
+60 → 5:
+
+| window | posts per pass |
+|---|---|
+| 60 (today) | **435** |
+| 5 | **27** |
+
+- **~16× fewer executions** — 224/min down to roughly 14/min
+- **No eligibility route is lost.** Every signal the 60-minute window catches is still caught, just
+  within 5 minutes instead of 60 — including returning members, for which no event feed exists
+- One config value, no new tables, no new feeds, no DDL, and it composes with a later dual-feed
+  design if a real "member changed" signal is ever added
+
+The 5-minute window keeps 5× headroom over the 1-minute cron, which is what the current window's
+comment says it is there for.
 
 Expected effect: removes most of the 47-51% of db2 that this query represents, while preserving
 the late-joiner behaviour the current window provides.
