@@ -121,6 +121,21 @@ Most posts are re-processed 3-4 times per 10 minutes — a sweep every ~2.5-3 mi
 executions per post per hour** in the window. (An earlier draft inferred 26× from the window size
 and throughput; the measured figure is 18×.)
 
+**The cost is spread evenly across posts — there is no fat tail to trim.** From the same 10-minute
+sample (observations ≈ DB time):
+
+| slice | share of the query's DB time |
+|---|---|
+| top 1% of msgids (7) | 3.8% |
+| top 10% (75) | 24.6% |
+| top 25% (189) | 48.5% |
+| top 50% (378) | 75.9% |
+
+The heaviest single post is 0.62%; median 209 observations against a mean of 248. That is close to
+uniform, and it rules out a whole class of fixes — there is no "cap the worst offenders",
+no giant-group or giant-polygon outlier to special-case. Combined with the per-query rewrites
+already tested and found ineffective, the *only* lever on this query is how often it runs.
+
 Against ~10 posts genuinely changing per minute, that means **roughly 95% of executions re-do
 unchanged work**. Proposal A takes ~224/min down to ~12/min — an **~18× reduction**, or in DB-time
 terms **2.99 concurrent threads → ~0.2**.
