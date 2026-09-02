@@ -40,7 +40,7 @@ Categorised sample, 61,080 active-thread observations over 90 s (08:58-09:00 UTC
 | item | share | proposal |
 |---|---|---|
 | reach recipient query | 47.0% | A |
-| daily digest scan | 17.9% | C + D |
+| daily digest scan | 17.9% | D (C was tested and rejected) |
 | illustrations cleanup | 6.3% | B |
 | active-user scan | 4.1% | D |
 | reach labels/cells | 1.9% | — |
@@ -300,23 +300,38 @@ WHERE ma_real.id > :watermark          -- PRIMARY key range scan, not a full sca
 Store `:watermark` (max `messages_attachments.id` seen) in cache between runs. Turns a 33 M-row
 full scan into a range scan over rows added since the last pass.
 
-### C. Daily digest — sargable shard predicate
+### C. Daily digest — sargable shard predicate — **TESTED, DOES NOT WORK AS WRITTEN**
 
-`users.id` spans 15 - 45,091,925. Replace the non-sargable `CRC32(users.id) % 8 = :shard` with a
-PK range per shard:
+An earlier draft proposed replacing `CRC32(users.id) % 8 = :shard` with an equal-width PK range
+per shard, claiming each shard would then walk an eighth of the table. `EXPLAIN` on db2 says
+otherwise, in two separate ways:
 
-```php
-$span = intdiv($maxId - $minId, $shards);
-$lo = $minId + $shard * $span;
-$hi = ($shard === $shards - 1) ? $maxId : $lo + $span - 1;
-// ... ->whereBetween('users.id', [$lo, $hi])
-```
+**1. The optimizer ignores the range.** Plans are identical with and without it:
 
-Composes with the existing keyset pagination (`users.id > :watermark ORDER BY users.id LIMIT 500`),
-so each shard walks its own eighth of the PK instead of all 8 walking the whole table.
+| variant | type | key | rows | filtered |
+|---|---|---|---|---|
+| `CRC32(users.id) % 8 = 0` | ref | `tnuserid` | 1,386,104 | 0.17% |
+| `users.id BETWEEN 15 AND 5636502` | ref | `tnuserid` | 1,386,104 | 0.14% |
 
-Distribution is slightly less even than CRC32, which does not matter — the shards are independent
-and the work rebalances across the 07:00-12:00 window.
+It prefers the `tnuserid IS NULL` ref lookup over a PK range and keeps walking the same rows.
+
+**2. Even forced onto the PK, equal id-widths give wildly uneven shards.** With
+`FORCE INDEX (PRIMARY)` the plan becomes `type=range key=PRIMARY rows=1,192,136` — only ~1.6×
+better, not 8×, because user ids are not uniformly distributed:
+
+| | rows |
+|---|---|
+| eligible pool the query actually serves | **104,075** |
+| `tnuserid IS NULL` rows (what it walks today) | 1,845,185 |
+| shard 0's equal-width id range (15 - 5,636,502) | **850,131** — 30% of users, not 12.5% |
+
+To make this approach work at all you would need **quantile-based** shard boundaries (real id
+percentiles, not equal widths) *and* an index hint to stop the optimizer reverting to `tnuserid`.
+That is a lot of machinery for ~1.6×.
+
+**Do D instead.** The index gives a selective path straight to the 104,075-row pool without hints,
+shard rework, or uneven partitions, and it fixes the active-user scan at the same time. Keep
+`CRC32` sharding as it is.
 
 ### D. Operator-only: index on `users (deleted, lastaccess)`
 
@@ -334,8 +349,10 @@ ALTER TABLE users ADD INDEX deleted_lastaccess (deleted, lastaccess);
 | daily digest scan (finding 2) | `tnuserid` index, filtered 0.17% | 17.9% |
 | active-user scan (finding 4) | `deleted` index (cardinality 15), filtered 16.66% | 4.1% |
 
-`users` is 2.85 M rows. Worth doing even with C, because C only splits the daily-digest walk across
-shards — it does not give either query a usable access path.
+`users` is 2.85 M rows. **This is now the only working fix for the daily digest scan**, since C was
+tested and does not change the plan. Today the query walks **1,845,185** `tnuserid IS NULL` rows to
+serve a pool of **104,075** — the index should cut rows examined by roughly 13×, and it needs no
+hints, no shard rework and no uneven partitions.
 
 ### E. Reduce digest worker concurrency
 
@@ -367,6 +384,9 @@ happening now. Thread closed — do not re-open it on the cumulative figure alon
 
 ## Expected outcome
 
-A + B + C + D address **75.3%** of measured load, and there is no longer a spread-the-load option
-to fall back on, so the halving has to come from them. A alone is worth 47-51% if the member-side
-feed works as measured.
+A + B + D address **75.3%** of measured load (C was tested and dropped). There is no
+spread-the-load option to fall back on, so the halving has to come from them.
+
+**A alone clears the target**: the reach recipient query is 47% of db2 at peak and 68% off-peak,
+runs 224×/min at 0.71 s for 2.99 threads continuously, and ~95% of those executions re-do unchanged
+work. Everything else is secondary to it.
