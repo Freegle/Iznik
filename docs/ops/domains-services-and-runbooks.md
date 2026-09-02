@@ -76,8 +76,8 @@ At an architecture level:
 
   This design means the backup and the restore test are the same job. A backup that
   cannot be restored shows up as a Yesterday environment that will not come up, rather
-  than as a nasty surprise during a real incident. That is the main reason Yesterday
-  exists; being able to look at yesterday's data is a bonus.
+  than during a real incident. That is the main reason Yesterday exists; being able to
+  look at yesterday's data is a bonus.
 
   Two things to know before you rely on it:
 

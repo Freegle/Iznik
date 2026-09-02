@@ -1,5 +1,0 @@
-check process photon matching "photon.*jar"
-   start program = "/etc/photon"
-   stop program = "/bin/bash -c 'kill $(pgrep -f photon.*jar)'"
-   if failed port 2322 type tcp then restart
-

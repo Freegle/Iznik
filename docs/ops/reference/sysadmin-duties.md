@@ -86,7 +86,7 @@ Two monit traps from that page, repeated here because they bite:
 | Restore drill | Switch the Yesterday environment to an older day and confirm the site comes up | Proves the whole chain, not just last night's link |
 | Mail reputation review | Deferral rates by provider on the relay; feedback-loop report counts | See the measured detail in [`ops/hosts/SERVICES.md`](../../../ops/hosts/SERVICES.md) - this is where the evidence for "volume, not complaints" lives |
 | Index hygiene | [database-index-hygiene.md](database-index-hygiene.md) | Read counters must be **summed across all three nodes**; one node alone makes almost every index look unused |
-| Host config drift | Compare the live files against [`ops/hosts/`](../../../ops/hosts/) | Anything that exists on only one machine is one rebuild away from being lost |
+| Host config drift | `diff` each file in `/etc/monit/conf.d/` on the machine against its copy in [`ops/hosts/`](../../../ops/hosts/), in both directions | Anything that exists on only one machine is one rebuild away from being lost. A check present on the host but absent from the repo is the common direction, because adding a check is the moment nobody thinks about git |
 
 ## What alerts you, and what does not
 

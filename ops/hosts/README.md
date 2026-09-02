@@ -32,10 +32,6 @@ monit/
   db-node/             db1, db2, db3 - byte-identical on all three
     monitrc.settings
     conf.d/
-batch-host/
-  photon/              RETIRED. The Java geocoder's launcher (/etc/photon) and the
-                       systemd drop-in it needed. Place search moved into spatial-knn;
-                       kept only until the packages come off the host
 ```
 
 `monitrc.settings` holds only the lines that differ from the stock Debian
@@ -43,11 +39,11 @@ batch-host/
 file, not by replacing it.
 
 **A monit check is not enough on its own.** If a check names a start program
-outside `/etc/monit`, capture that program here too. The retired photon check is
-the worked example: it named `/etc/photon`, which needed both a launcher and a
-systemd drop-in on `monit.service`. Restoring the check without those gave a
-monit that watched the service, failed to start it, and retried every 2 minutes
-forever.
+outside `/etc/monit`, capture that program here too. The photon geocoder, since
+retired, was the worked example: its check named `/etc/photon`, which needed
+both a launcher and a systemd drop-in on `monit.service`. Restoring the check
+without those gave a monit that watched the service, failed to start it, and
+retried every 2 minutes forever.
 
 ## Restoring onto a rebuilt host
 
