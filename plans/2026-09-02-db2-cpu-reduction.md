@@ -325,7 +325,9 @@ Measured twice, ten hours apart, so the saving is not an artefact of one moment:
 754 posts — evening reach activity is higher, so this query's load is worse later in the day than
 the morning figures elsewhere in this document suggest.
 
-- **~16× fewer executions** — 224/min down to roughly 14/min
+- **~5.6× fewer executions** — 225/min down to roughly 40/min. **Not 16×**: an earlier draft
+  divided the window sizes (754/43), but that is the per-*pass* count, and a pass does not take one
+  minute. See the correction below.
 - **No eligibility route is lost.** Every signal the 60-minute window catches is still caught, just
   within 5 minutes instead of 60 — including returning members, for which no event feed exists
 - One config value, no new tables, no new feeds, no DDL, and it composes with a later dual-feed
@@ -333,6 +335,37 @@ the morning figures elsewhere in this document suggest.
 
 The 5-minute window keeps 5× headroom over the 1-minute cron, which is what the current window's
 comment says it is there for.
+
+### Correction: the shards are capacity-limited, so the saving is ~5.6×, not ~16×
+
+Measured twice, four hours apart:
+
+| | 13:57 | 18:12 |
+|---|---|---|
+| window size | 435 posts | **754 posts** |
+| concurrency | 2.99 in flight | 2.64 |
+| **throughput** | **254/min** | **225/min** |
+| mean duration | 0.71 s | 0.70 s |
+
+The window grew 73% while throughput *fell*. The four reach shards are saturated at ~225-254
+executions/min, so the window does not set the execution rate — it sets how long a sweep takes.
+754 posts at 225/min is a **3.35-minute sweep**, which independently matches the directly measured
+repeat rate of 2.96 executions per post per 10 minutes.
+
+The correct arithmetic for a 5-minute window: posts enter at ~8/min (the 1-minute window count) and
+each is re-checked once per 1-minute tick while it remains in the window, so demand is
+**8 × 5 ≈ 40/min** — comfortably under the ~225/min the shards can serve, so that becomes the
+actual rate.
+
+| | today | 5-min window |
+|---|---|---|
+| executions/min | 225 | **~40** |
+| DB time (threads in flight) | 2.64 | **~0.5** |
+| re-checks per post | ~18 | **5** |
+
+**~5.6× fewer executions, ~81% off this query's DB time.** Still the single largest lever on db2,
+but three times smaller than the earlier draft claimed. A 2-minute window would give ~16/min
+(~14×) with correspondingly less tick-overlap headroom.
 
 Expected effect: removes most of the 47-51% of db2 that this query represents, while preserving
 the late-joiner behaviour the current window provides.
