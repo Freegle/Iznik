@@ -73,6 +73,17 @@ Operational notes worth knowing:
   Versions are immutable and first-come, so a branch can take the number another
   branch was about to use, and the second change then goes out under no version at
   all. Publish, confirm with `circleci orb info freegle/tests`, then bump the pin.
+- **The runner keeps its working copy between builds, so a green build is only worth
+  as much as its checkout.** The checkout step fetches, checks the branch out, and
+  then compares HEAD with `CIRCLE_SHA1`. That last comparison is not belt and braces:
+  a fetch that failed silently used to leave the previous build's refs in place, and
+  the branch checked out against them, so master reported success having tested its
+  own parent commit. If a build fails saying the checked-out commit is not the one it
+  was triggered for, the fetch is the thing to look at, not the workspace.
+- **The fetch authenticates with `GITHUB_TOKEN` when it is set.** The repository is
+  public, so this is about rate limiting rather than access: an anonymous fetch that
+  github.com throttles reaches git as a credentials prompt and a protocol error, not
+  as a clear refusal.
 - A pin published from a branch carries that branch's orb changes. Master must not
   adopt it until the branch merges, or master's jobs run steps for code it does not
   have.
