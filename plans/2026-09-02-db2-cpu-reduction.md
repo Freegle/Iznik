@@ -306,10 +306,35 @@ work-per-execution and total row examinations; use sampling to rank CPU.** Neith
 sees the whole picture — proposal H (the jobs count) was lost for a full day by trusting sampling
 alone.
 
-**`volunteering` returns nothing, ever.** 826,573 executions × 15,898 rows examined = **~13 billion
-row examinations for an average of 0.00 rows returned**. The wall-clock cost is small because each
-run is quick, but nothing is being found. Either the predicate can never match or a caller is
-asking a question it does not need answered — worth a look on correctness grounds rather than CPU.
+**`volunteering` returns nothing, ever — and the reason is that the feature is empty.** The query is
+an anti-join for *ungrouped* ("nationwide") opportunities:
+
+```sql
+LEFT JOIN volunteering_groups g ON volunteering.id = g.volunteeringid
+WHERE g.groupid IS NULL AND (applyby IS NULL OR applyby >= ?) AND (end IS NULL OR end >= ?)
+  AND volunteering.deleted = ? AND expired = ? AND (pending = ? OR volunteering.userid = ?)
+```
+
+Peeling the predicates back shows exactly where it collapses:
+
+| | rows |
+|---|---|
+| all volunteering opportunities | 15,599 |
+| **ungrouped** | 245 |
+| …and not deleted | **5** |
+| …and not expired | **0** |
+| …and not pending (the final answer) | **0** |
+
+All five surviving ungrouped opportunities are expired, so the result is empty and has been for as
+long as the counters cover: **826,573 executions × 15,898 rows = ~13 billion row examinations for
+an average of 0.00 rows returned.**
+
+Nothing is broken — the query is correct and the data set it looks for is simply empty. But it must
+scan `volunteering` in full to discover that, every time, because no index supports
+`deleted/expired/pending` and the anti-join forces the join to materialise. An index on
+`volunteering (deleted, expired, pending)` would let it reject almost everything before the join.
+At ~1.4% of db2 that is not a CPU priority; the more interesting question is a product one — whether
+"nationwide volunteering opportunities" is meant to be an empty feature.
 
 ### 8. Server configuration
 
