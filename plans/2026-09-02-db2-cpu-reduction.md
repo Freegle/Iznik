@@ -349,6 +349,16 @@ Measured twice, four hours apart:
 
 The window grew 73% while throughput *fell*. The four reach shards are saturated at ~225-254
 executions/min, so the window does not set the execution rate — it sets how long a sweep takes.
+
+**Saturation confirmed directly** (18:27): all four shard logs read `Already running, exiting.`,
+i.e. every one-minute cron tick bounces off the previous pass's flock, and the four live workers
+were aged 127 s, 127 s, 67 s, 67 s. The same was true at 07:50, so this is the steady state, not a
+peak-hour effect. `routes/console.php:821` says "Each invocation drains the whole window in one
+pass, so no --max-iterations" — in practice a pass cannot drain the window inside a minute, so the
+shards run back-to-back continuously.
+
+That is why this query holds 46-68% of db2 at every hour sampled: its load is a constant ~2.6-3.0
+threads, 24/7, rather than something that ebbs with traffic.
 754 posts at 225/min is a **3.35-minute sweep**, which independently matches the directly measured
 repeat rate of 2.96 executions per post per 10 minutes.
 
