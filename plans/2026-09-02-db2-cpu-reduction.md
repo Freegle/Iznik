@@ -232,10 +232,20 @@ haproxy failed over to its backup backends.
 So anything db1's apiv2 serves lands on db2 — the node with the least headroom — while db3, which
 has 12 cores and is the only *active* haproxy backend, reads from itself.
 
-Measured after the deploy settled (63,859 samples, 16:57): batch **70.7%**, **db1-internal 27.8%**,
-localhost 1.4%. Before the deploy db2 was **99.8% batch**, so it is now carrying roughly 40% more
-work than its usual baseline, and this persisted well past the failover (haproxy's last state
-transition was 16:32:22; db1 still held 9 of 29 API connections at 17:11).
+Measured repeatedly through the evening — db1's share of db2's active queries:
+
+| 16:57 | 17:27 | 18:57 | 19:27 | 19:57 |
+|---|---|---|---|---|
+| 27.8% | 27.8% | 22.6% | 31.6% | **48.8%** |
+
+Before the deploy db2 was **99.8% batch**, so all of this is new load. It persisted well past the
+failover that first exposed it (haproxy's last state transition was 16:32:22).
+
+**The share rises as batch falls, because db1's absolute contribution is roughly steady.** At 19:57
+db1 held only **7 of 55** API connections (13%) yet produced **48.8%** of db2's active queries —
+db3's reads go to db3, so db2 only ever sees db1's slice, and the queries in that slice are the
+expensive ones. So proposal G removes a broadly constant absolute load that is worth **~23% of db2
+when batch is heavy and ~49% when batch is light**, rather than a flat 28%.
 
 The queries db1 sends are the expensive ones — `chat_rooms` unread counts (the single largest entry
 in the digest table: 168,959 s cumulative, 85.7 ms average, 68% of executions using no index) and
