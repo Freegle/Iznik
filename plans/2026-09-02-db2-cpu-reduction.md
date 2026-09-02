@@ -234,9 +234,15 @@ has 12 cores and is the only *active* haproxy backend, reads from itself.
 
 Measured repeatedly through the evening — db1's share of db2's active queries:
 
-| 16:57 | 17:27 | 18:57 | 19:27 | 19:57 |
-|---|---|---|---|---|
-| 27.8% | 27.8% | 22.6% | 31.6% | **48.8%** |
+| 16:57 | 17:27 | 18:57 | 19:27 | 19:57 | 21:11 | 22:41 |
+|---|---|---|---|---|---|---|
+| 27.8% | 27.8% | 22.6% | 31.6% | **48.8%** | 20.2% | **0.9%** |
+
+**G is a daytime win only.** By 22:41 db1's contribution had collapsed to 3 samples in 321 — db2 is
+nearly pure batch again overnight, as it was before the deploy exposed this. So G removes 23-49%
+during waking hours and essentially nothing at night, whereas A helps in every hour reach is
+running. If only one is done, A is the broader fix; G is the cheaper one and targets the daytime
+peak, which is when db2 actually saturates.
 
 Before the deploy db2 was **99.8% batch**, so all of this is new load. It persisted well past the
 failover that first exposed it (haproxy's last state transition was 16:32:22).
