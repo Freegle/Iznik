@@ -82,6 +82,31 @@ the last **60 minutes**; the cron fires **every minute** (`routes/console.php:82
 Each pass re-processes 435 posts when ~10 changed. 8,224 posts sit in `expanding`, with
 `next_expansion_at` spread ~3-9 per minute.
 
+**Measured execution rate and duration.** Two samples of `information_schema.processlist`; the
+second polled 7,840 times in 74 s (~106 polls/s) so concurrency is measured, not estimated:
+
+| | 13:42 (119 s) | 13:57 (74 s) |
+|---|---|---|
+| distinct executions | 370 | 313 |
+| throughput λ | 187/min | **254/min** |
+| mean concurrency L | — | **2.99 in flight** |
+| mean duration L/λ | — | **0.71 s** |
+
+`processlist.time` corroborates the duration: 13,198 observations at 0 s, 9,643 at 1 s, 525 at 2 s,
+99 at 3 s.
+
+**The same query measured 65 ms on an idle node** (msgid 121725017, 4 KB polygon, 976 candidates).
+Under load on db2 it averages 0.71 s — **~11× slower purely from contention**, so cutting the count
+pays back more than proportionally: fewer queries means the survivors get faster too.
+
+No msgid repeated inside either sampling window, so what is being observed is one sweep in
+progress, not churn within a sweep. 435 window posts at this rate puts a sweep at ~2 minutes, so a
+post is re-processed roughly **26 times** during its hour in the window.
+
+Proposal A takes ~254/min down to ~10-15/min (the ~10 posts that genuinely change per minute plus
+1-2 member-side changes). In DB-time terms that is **2.99 concurrent threads → ~0.2**, a ~94% cut
+on the largest item on the node.
+
 **The waste is not empty results.** 20 sampled window msgids all returned candidates (1-37 each).
 The SQL returns the **outer-bound superset**; PHP then refines against routing labels
 (`UnifiedDigestService.php:1003-1010`). The anti-join excludes only users in
