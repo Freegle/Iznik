@@ -359,6 +359,12 @@ shards run back-to-back continuously.
 
 That is why this query holds 46-68% of db2 at every hour sampled: its load is a constant ~2.6-3.0
 threads, 24/7, rather than something that ebbs with traffic.
+
+**Saturation is a cost problem, not a correctness one — checked.** A post only goes unmailed if a
+sweep outlasts the 60-minute window. Window size measured at 435 (07:45), 754 (17:57) and 730
+(18:42), so it plateaus rather than growing; at 730 posts and ~225/min the sweep is **3.2 minutes**,
+against the 60 minutes a post spends in the window — roughly **18× headroom**. Posts would have to
+reach ~13,500 in the window before any aged out. Nothing is being dropped today.
 754 posts at 225/min is a **3.35-minute sweep**, which independently matches the directly measured
 repeat rate of 2.96 executions per post per 10 minutes.
 
