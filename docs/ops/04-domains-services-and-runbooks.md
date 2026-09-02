@@ -91,7 +91,7 @@ At an architecture level:
   The mechanics - the snapshot scheme, the sizing, and the scripts - are documented in
   [`yesterday/README.md`](../../yesterday/README.md). Credentials for the VM and the cloud
   project are in the ops password vault; see
-  [../handover/04-accounts-and-access.md](../handover/04-accounts-and-access.md).
+  [../getting-started/04-accounts-and-access.md](../getting-started/04-accounts-and-access.md).
 
 ## Runbooks
 

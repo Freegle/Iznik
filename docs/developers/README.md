@@ -12,9 +12,10 @@ date.
 
 If a page here ever disagrees with the code, the code wins - and the page is a bug to fix.
 
-**Just joined?** Read [../handover/README.md](../handover/README.md) first. It covers what
-Freegle is, why the architecture is the way it is, who the human teams are, and what to do
-in your first day, week and month. Come back here once you have the stack running.
+**Just joined?** Read [../getting-started/README.md](../getting-started/README.md)
+first. It covers what Freegle is, why the architecture is the way it is, who the human
+teams are, and what to do in your first day, week and month. Come back here once you
+have the stack running.
 
 ## Start here
 

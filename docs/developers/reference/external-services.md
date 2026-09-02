@@ -16,10 +16,10 @@ Two rules apply throughout:
 
 - **No key, id or secret is ever written in code or in these docs.** They come from
   environment variables. Where they are actually held is in
-  [../../handover/04-accounts-and-access.md](../../handover/04-accounts-and-access.md).
+  [../../getting-started/04-accounts-and-access.md](../../getting-started/04-accounts-and-access.md).
 - **We prefer to self-host** where a dependency is heavily used, for cost and for control.
   The reasoning is in
-  [../../handover/06-decisions-and-rationale.md](../../handover/06-decisions-and-rationale.md).
+  [../../getting-started/06-decisions-and-rationale.md](../../getting-started/06-decisions-and-rationale.md).
 
 ## What would break the site
 

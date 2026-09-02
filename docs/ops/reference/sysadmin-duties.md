@@ -16,7 +16,7 @@ This is the routine-work companion to [../production.md](../production.md) (what
 machines are) and [../04-domains-services-and-runbooks.md](../04-domains-services-and-runbooks.md)
 (what each service is for).
 
-New to the role? Read [../../handover/03-sysadmin-track.md](../../handover/03-sysadmin-track.md)
+New to the role? Read [../../getting-started/03-sysadmin-track.md](../../getting-started/03-sysadmin-track.md)
 first - it puts this page in order as a first day, first week and first month.
 
 ## The shape of the job
@@ -165,5 +165,5 @@ If you improve one thing in your first month, make it one of these.
 | Finding out what happened | [../03-monitoring-and-logging.md](../03-monitoring-and-logging.md), [logging.md](logging.md) |
 | Per-event procedures | [../runbooks/README.md](../runbooks/README.md) |
 | Spam and abuse handling | [spam-and-abuse.md](spam-and-abuse.md) |
-| Accounts, credentials and who holds them | [../../handover/04-accounts-and-access.md](../../handover/04-accounts-and-access.md) |
+| Accounts, credentials and who holds them | [../../getting-started/04-accounts-and-access.md](../../getting-started/04-accounts-and-access.md) |
 | Backup mechanics in detail | [`yesterday/README.md`](../../../yesterday/README.md) |

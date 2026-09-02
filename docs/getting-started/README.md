@@ -3,10 +3,11 @@ last_reviewed: 2026-09-02
 owner: Freegle dev team
 ---
 
-# Handover
+# Getting started
 
-This section exists for one situation: **someone new is taking over, and the people who
-built the thing may not be around to ask.**
+This section is for someone new to the technical side of Freegle, including someone
+picking it up from whoever had it before. It assumes nobody is sitting beside you to
+answer questions, because often nobody is.
 
 Everything here is written for a competent technical person who knows nothing about
 Freegle. Jargon is explained the first time it is used. Where a decision looks strange,
@@ -43,7 +44,7 @@ know what the service is trying to do.
 
 Three things, in order, based on what actually works when people join a project:
 
-1. **Follow the getting-started steps and fix what is wrong.** The
+1. **Follow the setup steps and fix what is wrong.** The
    [root README](../../README.md) should take you from nothing to a running local system.
    If a step is wrong, out of date, or missing, **fix it as you go**. You are the last
    person who will ever see this documentation with fresh eyes, and that view is worth
@@ -69,7 +70,7 @@ detail lives in the audience sections:
 
 ## Coverage
 
-If you were handed this section and asked "is everything covered?", this is the map.
+To check that a topic is written down somewhere, this is the map.
 
 | Topic | Where |
 |---|---|

@@ -150,7 +150,7 @@ Deliberately not automatic.
 
 ## When someone leaves
 
-The uncomfortable but necessary list. Handover is exactly when this gets forgotten.
+The uncomfortable but necessary list, and exactly what gets forgotten when people move on.
 
 1. Remove them from 1Password, and **rotate anything they could have copied** - a
    credential someone once held is not secured by removing their access to the vault.

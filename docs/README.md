@@ -9,16 +9,17 @@ Pick the section that fits you:
 |---------|--------------|
 | **[Using Freegle](members/README.md)** | You use Freegle to give away and pick up things for free. |
 | **[Running a community](moderators/README.md)** | You are a volunteer moderator looking after a local Freegle community. |
+| **[Getting started](getting-started/README.md)** | You are new to the technical side, or picking it up from someone else. Start here. |
 | **[Building Freegle](developers/README.md)** | You write the software behind Freegle. |
 | **[Running the service](ops/README.md)** | You keep Freegle's computers and systems running. |
-| **[Taking over](handover/README.md)** | You are new, and taking on the development or the system administration. Start here. |
 
 The first two are plain how-to guides with pictures. The rest are for the technical
 team, so they use more technical language.
 
-**New to the technical side?** Read **[Taking over](handover/README.md)** before the
-developer or operations sections. It explains what Freegle is, what the pieces are, why
-they were built that way, and what to do on your first day, first week and first month.
+**New to the technical side?** Read **[Getting started](getting-started/README.md)**
+before the developer or operations sections. It explains what Freegle is, what the
+pieces are, why they were built that way, and what to do on your first day, first week
+and first month.
 
 ## What is here (and what is not)
 

@@ -43,8 +43,8 @@ process level**.
 | Runbooks | [runbooks/README.md](runbooks/README.md) |
 
 New to the role? Read
-[../handover/03-sysadmin-track.md](../handover/03-sysadmin-track.md) first - it puts these
-pages in order as a first day, first week and first month.
+[../getting-started/03-sysadmin-track.md](../getting-started/03-sysadmin-track.md)
+first - it puts these pages in order as a first day, first week and first month.
 
 The single best technical reference for the container and environment architecture is
 [../developers/reference/architecture.md](../developers/reference/architecture.md). These pages summarise the operational shape

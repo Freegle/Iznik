@@ -5,7 +5,8 @@ owner: Freegle dev team
 
 # Developer: day 1, week 1, month 1
 
-You are taking over writing and reviewing the code. This page is the order to do things in.
+You are the person who now writes and reviews the code. This page is the order to do
+things in.
 It stands on its own - you do not need the sysadmin track to do this job, though reading it
 at some point will make you better at this one.
 

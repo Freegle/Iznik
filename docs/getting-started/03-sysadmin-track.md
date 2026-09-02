@@ -5,7 +5,8 @@ owner: Freegle dev team
 
 # Sysadmin: day 1, week 1, month 1
 
-You are taking over keeping Freegle running. This page is the order to do things in.
+You are the person who now keeps Freegle running. This page is the order to do things
+in.
 It stands on its own - you do not need the developer track to do this job, though you will
 end up reading parts of it, because the line between the two roles is thin here.
 
