@@ -421,6 +421,25 @@ actual rate.
 but three times smaller than the earlier draft claimed. A 2-minute window would give ~16/min
 (~14×) with correspondingly less tick-overlap headroom.
 
+**The model was then confirmed by a natural experiment**, not just asserted. Between 18:12 and
+21:45 the window fell from 754 to 459 (-39%) on its own as evening reach activity declined —
+and throughput did not move:
+
+| | window | throughput | in flight | duration |
+|---|---|---|---|---|
+| 13:57 | ~435 | 254/min | 2.99 | 0.71 s |
+| 18:12 | 754 | 225/min | 2.64 | 0.70 s |
+| 19:42 | ~700 | 266/min | 2.73 | 0.62 s |
+| **21:45** | **459** | **224/min** | 2.25 | 0.60 s |
+
+Exactly what a capacity-limited system predicts: at 7 arrivals/min a 60-minute window still demands
+7 × 60 = 420/min against ~225/min of shard capacity, so the shards stay pinned and a smaller window
+changes nothing. **Shrinking the window only pays once `arrivals × window_minutes` drops below
+capacity** — at 5 minutes that is 7 × 5 = 35/min, comfortably under, so throughput becomes ~35/min.
+
+This also makes the saving arrival-rate dependent: ~6.4× at 7 arrivals/min, ~4.5× at 10. The
+~5.6× quoted above sits in the middle of the observed range.
+
 Expected effect: removes most of the 47-51% of db2 that this query represents, while preserving
 the late-joiner behaviour the current window provides.
 
