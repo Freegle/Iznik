@@ -453,8 +453,17 @@ This also makes the saving arrival-rate dependent: ~6.4× at 7 arrivals/min, ~4.
 
 That is precisely the mechanism proposal A exploits, demonstrating itself without any change from
 us: once demand falls below shard capacity the passes complete inside their interval, throughput
-tracks demand rather than capacity, and the DB load falls with it. A 5-minute window produces the
-same state deliberately, at every hour rather than only after 22:00.
+tracks demand rather than capacity, and the DB load falls with it.
+
+**It was transient, though — 15 minutes later it had reverted.** At 22:27 arrivals had recovered
+from 5/min to 8.2/min (demand ~492/min), throughput was back to **247/min**, in flight 2.28, and
+only 1 of 4 shards was still starting fresh. So this was a brief dip below capacity, not the
+overnight transition settling in. The mechanism is demonstrated; the state is not yet sustained.
+
+That is the point of proposal A rather than an argument against it: left alone, the system sits
+below capacity only during accidental troughs, and reverts as soon as arrivals tick up. A 5-minute
+window puts it below capacity **by construction**, at every hour, instead of waiting for traffic to
+oblige.
 
 Expected effect: removes most of the 47-51% of db2 that this query represents, while preserving
 the late-joiner behaviour the current window provides.
