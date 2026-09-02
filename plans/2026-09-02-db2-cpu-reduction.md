@@ -434,6 +434,26 @@ Takes ~28% off db2 immediately (finding 5). **This is not the "use db1 as a read
 was ruled out** — it sends no new traffic to db1; it stops db2 absorbing traffic db1 generates, and
 moves it to the 12-core node that already serves the active API backend.
 
+**db3's headroom verified before proposing this** (17:29), rather than assumed:
+
+| | db2 (current read target) | db3 (proposed) |
+|---|---|---|
+| cores | 8 | **12** |
+| CPU idle | ~5-25% | **80.2%** |
+| mysqld | 573% of 800% | **137.5% of 1200%** |
+| RAM | 24 GB | **36 GB** |
+| innodb buffer pool | 6 GB | **16 GB** |
+| swap in use | 8.7 GB | 3.95 GB |
+| active queries | ~9 | **2** |
+
+db3 is the write node, so this does add read load to the node taking writes — but it has 1.5× the
+cores, 2.7× the buffer pool and is 80% idle, while db2 is the saturated one. The bigger buffer pool
+also suits these queries: `chat_rooms` is 6.6 M rows and the browse path touches `messages_spatial`.
+
+db1's share was measured **twice, 30 minutes apart, at 27.8% both times** (63,859 and 44,808
+observations), so this is db2's steady state and not a deploy artefact — my first reading of it was
+during a failover and I wrongly predicted it would drain.
+
 ### F. my.cnf
 
 **Swap is not causing the slowness — checked, and it is a negative result.** It would have been
