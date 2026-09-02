@@ -48,6 +48,20 @@ Categorised sample, 61,080 active-thread observations over 90 s (08:58-09:00 UTC
 
 Concurrency: **20 digest workers** in 18 of 40 samples (mean ≈ 14, peak 20) against **8 cores**.
 
+**Off-peak the reach query is even more dominant.** Second sample at 13:27 UTC, after the
+07:00-12:00 BST daily-digest window closed (46,881 observations; db2 load 3.88, mysqld 200%,
+8 workers):
+
+| item | peak (08:58) | off-peak (13:27) |
+|---|---|---|
+| reach recipient query | 47.0% | **68.0%** |
+| daily digest scan | 17.9% | — (window closed) |
+| illustrations cleanup | 6.3% | 4.9% |
+| active-user scan | 4.1% | 2.2% |
+
+The reach recipient query is the only item that tops both regimes. **Proposal A alone clears the
+halving target off-peak**, and is the largest single item at peak too.
+
 ## Findings
 
 ### 1. Reach recipient query — 47-51% of db2
