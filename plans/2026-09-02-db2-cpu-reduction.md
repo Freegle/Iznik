@@ -443,6 +443,20 @@ Exactly what a capacity-limited system predicts: at 7 arrivals/min a 60-minute w
 changes nothing. **Shrinking the window only pays once `arrivals × window_minutes` drops below
 capacity** — at 5 minutes that is 7 × 5 = 35/min, comfortably under, so throughput becomes ~35/min.
 
+**That formula is the STEADY STATE, and the window lags arrivals by up to a full window period.**
+Observed 23:12: arrivals had collapsed to **0.5/min** — far below the 3.75/min that `arrivals × 60
+< 225` implies — yet throughput was still **198/min** with 2 of 4 shards self-bouncing, because the
+window still held **339** posts banked from the earlier, busier hour. Posts leave the window only by
+ageing out 60 minutes after their last update, so what the shards actually process is
+`window_size / sweep_time`, and `window_size` only converges on `arrivals × window_minutes` after a
+full window has elapsed.
+
+Two consequences. First, an arrival-rate threshold predicts the *eventual* state, not the current
+one — do not expect load to track arrivals minute by minute. Second, and more usefully: because
+window size is proportional to the window setting, **cutting the window from 60 to 5 minutes shrinks
+the backlog within one window period rather than gradually** — the benefit lands in about five
+minutes, not over an hour.
+
 This also makes the saving arrival-rate dependent: ~6.4× at 7 arrivals/min, ~4.5× at 10. The
 ~5.6× quoted above sits in the middle of the observed range.
 
