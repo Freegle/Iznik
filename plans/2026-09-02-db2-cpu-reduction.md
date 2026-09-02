@@ -283,7 +283,35 @@ range scan over the 19.8% that match `cpc >= ?`, roughly **5× fewer rows examin
 `geometry IS NOT NULL` applied as a filter afterwards. Modest next to A/D/G, but the table is
 growing by ~300 k rows a day, so the scan gets steadily worse while an index does not.
 
-### 7. Server configuration
+### 7. Three high-frequency queries sampling under-weights — ~2% combined, but one is pure waste
+
+The digest table flagged these on the first pass; processlist sampling never showed them, so they
+were dropped. Re-checked at 23:42 — all three are **live**, `LAST_SEEN` to the second, with counts
+grown during the day:
+
+| query | executions | total s | rows examined/exec | rows sent/exec |
+|---|---|---|---|---|
+| `MAX(t.search)` chat search | 2,368,419 | 17,017 | 83 | 40.25 |
+| **`volunteering` DISTINCTROW** | 826,573 | 14,402 | **15,898** | **0.00** |
+| `messages_outcomes ⋈ messages_groups` | 184,769 | 23,420 | 34,782 | 1.00 |
+
+**Magnitude, honestly: ~2% of db2's query time combined** (0.016 + 0.014 + 0.023 ≈ 0.05 threads
+against the reach query's ~2.8). Not priorities. But two things are worth recording:
+
+**Why sampling missed them, and when that matters.** Processlist sampling ranks by *time in flight*,
+which is the correct metric for CPU — and by that measure these are correctly ranked as negligible.
+But it systematically under-weights high-frequency short queries: `volunteering` at 17.4 ms is
+almost never caught mid-flight, yet runs 826,573 times. **Use the digest table to catch
+work-per-execution and total row examinations; use sampling to rank CPU.** Neither instrument alone
+sees the whole picture — proposal H (the jobs count) was lost for a full day by trusting sampling
+alone.
+
+**`volunteering` returns nothing, ever.** 826,573 executions × 15,898 rows examined = **~13 billion
+row examinations for an average of 0.00 rows returned**. The wall-clock cost is small because each
+run is quick, but nothing is being found. Either the predicate can never match or a caller is
+asking a question it does not need answered — worth a look on correctness grounds rather than CPU.
+
+### 8. Server configuration
 
 - `sort_buffer_size = 256000000` (244 MB; default 256 KB), per-connection. **8.5 G of 10 G swap in
   use, 3.37 G of it mysqld's own pages.** Oversized sort buffers are also slower, not faster.
