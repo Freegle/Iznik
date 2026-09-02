@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-19
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - docs/ops/reference/circleci.md
@@ -13,6 +13,19 @@ This describes how code reaches production. The CI reference is
 [./reference/circleci.md](./reference/circleci.md).
 
 ## The web pipeline
+
+```mermaid
+flowchart LR
+    PR["Pull request"] --> M["push to master"]
+    M --> CI["CircleCI<br/>Go, Laravel, Vitest, Playwright"]
+    CI -->|all green| PROD["auto-merge to<br/>production branch"]
+    CI -->|red| STOP["stops here"]
+    PROD --> N1["Netlify:<br/>member site"]
+    PROD --> N2["Netlify:<br/>ModTools"]
+    PROD --> APP["Fastlane:<br/>Android + iOS builds"]
+    BE["Backend services<br/>Go API, batch"] -.->|separate path,<br/>deploy first| N1
+```
+
 
 1. **Push to `master`.** CircleCI runs the full test suite (Go, PHPUnit, Laravel, Vitest,
    Playwright) via a shared reusable orb. New raw SQL is kept out at authoring time by the

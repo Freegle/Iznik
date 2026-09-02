@@ -1,131 +1,117 @@
-# Freegle Mobile App
+---
+last_reviewed: 2026-09-02
+owner: Freegle dev team
+covers:
+  - iznik-nuxt3/capacitor.config.ts
+  - iznik-nuxt3/fastlane/Fastfile
+  - iznik-nuxt3/README-APP.md
+  - freegle-app
+---
 
-Native mobile app for Freegle using Kotlin Multiplatform (KMP) shared logic with platform-native UI.
+# Mobile apps
 
-## Architecture
+There are **two** strands of mobile work in this repository, and only one of them ships.
+Getting this wrong wastes days, so it is the first thing on the page.
 
-- **Shared module** (`freegle-app/shared/`): Kotlin Multiplatform code containing data models, API client (Ktor), repositories, and business logic. Consumed by both Android and iOS apps.
-- **Android app** (`freegle-app/androidApp/`): Jetpack Compose UI with Material 3 theming.
-- **iOS app** (`freegle-app/iosApp/`): SwiftUI (deferred - not yet implemented).
+| | Ships to members | Where |
+|---|---|---|
+| **Capacitor build of the Nuxt site** | **Yes** - this is the Freegle app | `iznik-nuxt3/` (`capacitor.config.ts`, `android/`, `ios/`, `fastlane/`) |
+| Kotlin Multiplatform native app | No - an experiment | `freegle-app/` |
 
-## Building
+There is also a `freegle-mobile/` directory on some machines. It is **not in git** and is
+local scratch. Ignore it.
 
-### Prerequisites
+## The app that ships
 
-- Java 17+ (OpenJDK recommended)
-- Android SDK with platform 35 and build-tools 35.0.0
+Capacitor wraps the same Nuxt code that runs the website into native Android and iOS apps.
+There is no separate app codebase: a fix to a Vue component fixes the website and both
+apps.
 
-### Build Debug APK
+**The manual is [`iznik-nuxt3/README-APP.md`](../../../iznik-nuxt3/README-APP.md)** - 1,200
+lines covering build configuration, native plugins, push notifications, photo handling,
+signing and release. This page is orientation only; go there to do the work.
+
+Facts worth carrying in your head:
+
+- Built from the **`production` branch**, the same branch Netlify deploys, so web and app
+  ship the same code.
+- `ISAPP=true` switches the build to static generation instead of server rendering.
+- **Four store listings**, not two: Freegle and ModTools, each on Android and iOS.
+  The member app is `org.ilovefreegle.direct` on Android; the iOS bundle id differs
+  (`org.ilovefreegle.iphone`), selected in `capacitor.config.ts` by the `USE_COOKIES`
+  environment variable.
+- **Minimum OS** is Android 8.0 and iOS 15.0.
+- Native plugins are on a **per-platform allowlist** (`includePlugins`) in
+  `capacitor.config.ts`. A plugin that is installed but not listed is silently absent at
+  runtime.
+- The Android build **throws at config time** unless the four keystore variables are set
+  (`FREEGLE_NUXT3_KEYSTORE_PATH`, `..._PASSWORD`, `..._ALIAS`, `FREEGLE_NUXT3_KEYALIAS_PASSWORD`).
+  That is deliberate: an unsigned build is worse than no build.
+
+## Releasing
+
+Releases are automated with **fastlane** (`iznik-nuxt3/fastlane/Fastfile`), driven by
+CircleCI jobs (`build-android`, `build-ios`, and the ModTools and debug variants). Android
+builds run only on the `production` branch.
+
+```mermaid
+flowchart LR
+    A[master tests pass] --> B[auto-merge to production]
+    B --> C[CircleCI builds Android + iOS]
+    C --> D[beta / TestFlight]
+    D -->|auto_promote after 24h| E[Play production]
+    D -->|auto_submit then auto_release| F[App Store]
+```
+
+Lanes you will meet: `beta`, `promote_beta`, `auto_promote` (waits 24 hours before
+promoting), `auto_submit` and `auto_release` for iOS review, `expire_test_versions` (the
+99.x.x test builds), and `check_release_divergence`, which alerts when the live Play and
+App Store versions have been different for over a week.
+
+Two traps that have bitten before:
+
+- **Google Play's target-API requirement spans every track.** A stale build sitting in the
+  test track can block a production release. Expire old test versions.
+- **The orb version is pinned deliberately.** In August 2026 it was rolled back because a
+  newer version moved the Android executor to a machine size that is not in our plan. Check
+  the comments in `.circleci/continue-config.yml` before bumping it.
+
+App JavaScript is baked into the package at build time, so when a member reports an old
+bug, check the build date in the app rather than assuming they have the current code.
+
+## The Kotlin Multiplatform experiment
+
+`freegle-app/` is a native app built with Kotlin Multiplatform (shared Kotlin logic,
+Jetpack Compose UI on Android; the iOS side was never implemented). It was written to test
+a different, more app-like experience: a "Daily 5" of curated items, a swipeable discovery
+deck, streaks, and automatic device-based accounts with no sign-in step.
+
+It is **not released and not on a path to release**. Treat it as a prototype and confirm
+the current direction with the team before spending time on it. The design work, including
+the competitor research behind it, is in `plans/active/freegle-mobile-app.md`.
+
+To build and run it:
 
 ```bash
 cd freegle-app
-export ANDROID_HOME=/path/to/android-sdk
+export ANDROID_HOME=/path/to/android-sdk   # needs Java 17+, platform 35
 ./gradlew assembleDebug
+# APK at androidApp/build/outputs/apk/debug/androidApp-debug.apk
 ```
 
-The APK will be at `androidApp/build/outputs/apk/debug/androidApp-debug.apk`.
-
-### API Configuration
-
-The app connects to the Freegle V2 API (Go). (The legacy V1 PHP API has been retired.)
-
-Default URL in `androidApp/build.gradle.kts`:
-- **V2**: `https://api.ilovefreegle.org/apiv2` (production Go API)
-
-To use a local API for development:
-```kotlin
-buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:18193/api\"")
-```
-
-### V2 API Response Format
-
-The Go V2 API returns **bare JSON arrays and objects** (not wrapped in `{ret: 0, status: "", ...}` envelopes, as the retired V1 PHP API used to be). For example, `GET /api/message/inbounds` returns `[{...}, {...}]` directly, and `GET /api/user/{id}` returns `{...}` directly.
-
-## Features
-
-### UI Design - Daily 5 + Discovery Deck
-- **Daily 5 curated picks (Home)**: 5 items picked for you each day across categories: Just Listed, Near You, Needs a Home, Popular, Surprise Find. Deterministic per-day selection (reopening shows same 5). Category badges on each card. Progress dots (coloured by category) replace numeric counter. Completion celebration screen with streak display after viewing all 5.
-- **Streak tracking**: Duolingo-style consecutive-day streaks. Flame icon badge shows current streak count. Best streak tracked. Streak increments automatically when all 5 daily picks are viewed.
-- **Sharing**: Share button on every card (Home, Explore, PostDetail). Uses Android share sheet with Freegle link. "Share via" any messaging app.
-- **Activity level masking**: Raw reply counts replaced with qualitative text: "No interest yet", "A few people interested", "Popular item". No raw numbers exposed.
-- **Discovery Deck feed (Home)**: Tinder-style swipeable cards showing one item at a time. Full-bleed photos fill the card with a gradient overlay at the bottom showing item title, distance, giver info, and qualitative interest. Swipe right = interested (opens detail), swipe left = skip, tap = view detail. Spring physics animations for card movement with rotation on drag.
-- **Explore browse (Explore tab)**: Traditional searchable/filterable list for deliberate browsing. Thumbnail + detail rows with distances, search bar, filter chips, and share button per item. Complements the Daily 5 with intentional search.
-- **Walking-time distances**: Distances shown with Haversine formula for distance calculation.
-- **Swipe direction indicators**: Green heart overlay appears on swipe right (interested), red X on swipe left (skip). Opacity proportional to swipe distance.
-- **Card stack effect**: Next card visible behind current card at 95% scale for depth.
-- **Other items from poster**: PostDetailScreen shows horizontally scrollable thumbnails of other items from the same person.
-- **Camera-first Post flow**: Progressive disclosure one question at a time with slide transitions
-- **Story circles chat list**: Horizontal avatar carousel for active chats with gradient activity rings
-- **Immersive post detail**: Full-screen photos with BottomSheetScaffold, pinch-to-zoom, parallax paging
-- **Impact dashboard profile**: Animated counters, achievements/milestones, environmental impact stats
-- **Pulsing Post button**: Custom Freegle heart-arrows motif in nav bar with infinite pulse animation
-- **Shimmer skeleton loading**: Animated single-card skeleton matching deck layout while feed loads
-- **AI illustrations**: Automatic fallback to AI-generated line drawings for items without photos
-- **NEW badge**: Orange badge on items posted in the last 24 hours
-
-### Core Functionality
-- **5-tab navigation**: Daily 5 (curated picks), Explore (search/browse list), Post, Chat, Me
-- **Search**: Search bar on Explore screen with debounced live results and loading indicator
-- **In-chat item context**: Persistent header showing which item is being discussed
-- **Message sending**: User types their own message to express interest (no auto-send)
-- **Error handling**: Visible error states with retry actions on all screens (Home, Chat, ChatList)
-- **Pull-to-refresh**: On Explore list and chat list
-- **Location**: GPS auto-detection with manual postcode fallback, saved to DataStore
-- **Onboarding**: 4-page intro with real Freegle community photos + feature tour overlay
-- **WCAG AA colours**: Green darkened to #008040 (5:1 contrast with white), blue for Wanted items
-- **Material 3**: Freegle brand colour scheme, light and dark theme support
-- **Progress tracking**: Coloured progress dots show position in daily 5 picks (filled = seen, empty = remaining)
-
-### Authentication
-- **Auto-login**: Device-based anonymous account creation via the V2 API on first launch
-- **Persistent credentials**: JWT + persistent token stored in DataStore, restored on app restart
-- **Email verification**: Optional email linking in profile settings (two-step verification flow)
-- **No explicit sign-in**: Users can browse, chat, and post without manual login
-
-### Help & Settings
-- **Help menu**: Accessible from profile screen with replay welcome tour option
-- **Account settings**: Email management, notifications, about page
-- **Welcome carousel**: Replayable from help menu at any time
-
-### Test Data
-The seeded local database already contains test data (FreeglePlayground, around Edinburgh).
-The old `create-mobile-test-data.php` script ran in the now-retired V1 PHP container and no
-longer applies.
-
-## Testing with Android Emulator
-
-### Setup
+It talks to the same v2 Go API as everything else, configured in
+`androidApp/build.gradle.kts`. Running it on a headless emulator:
 
 ```bash
-# Install emulator and system image
-ANDROID_HOME=/home/edward/android-sdk
+ANDROID_HOME=~/android-sdk
 $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "emulator" "system-images;android-35;google_apis;x86_64"
-
-# Ensure KVM access (for hardware acceleration)
-sudo gpasswd -a $USER kvm
-
-# Create AVD
+sudo gpasswd -a $USER kvm            # hardware acceleration
 echo "no" | $ANDROID_HOME/cmdline-tools/latest/bin/avdmanager create avd \
   -n freegle_test -k "system-images;android-35;google_apis;x86_64" -d pixel_6 --force
-
-# Launch emulator (headless)
 sg kvm -c "$ANDROID_HOME/emulator/emulator -avd freegle_test -no-window -no-audio -gpu swiftshader_indirect"
-
-# Install APK
 $ANDROID_HOME/platform-tools/adb install androidApp/build/outputs/apk/debug/androidApp-debug.apk
-
-# Launch app
 $ANDROID_HOME/platform-tools/adb shell am start -n org.freegle.app/.android.MainActivity
-
-# Take screenshot
 $ANDROID_HOME/platform-tools/adb exec-out screencap -p > screenshot.png
 ```
 
-## Design Decisions
-
-See `plans/active/freegle-mobile-app.md` for the full design document including:
-- V2 API endpoint mapping
-- UX research findings from competitor apps (Olio, Geev, TGTG, Buy Nothing, Depop, Vinted, OfferUp, Nextdoor, FB Marketplace)
-- Technology stack decision rationale (KMP + native UI)
-- Screen architecture and user flows
-- Discovery Deck design rationale (Tinder-style vs grid vs social feed)
+The seeded local database already has test data (FreeglePlayground, around Edinburgh).

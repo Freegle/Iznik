@@ -1,10 +1,11 @@
 ---
-last_reviewed: 2026-09-01
+last_reviewed: 2026-08-27
 owner: Freegle dev team
 covers:
   - docs/ops/reference/database-read-write-split.md
   - docs/ops/reference/database-index-hygiene.md
-  - docs/RSPAMD.md
+  - docs/ops/reference/spam-and-abuse.md
+  - docs/ops/reference/sysadmin-duties.md
   - docs/developers/reference/spatial-servers.md
 ---
 
@@ -18,7 +19,7 @@ covers:
 | **modtools.org** | The moderator app (Nuxt build from the same repo, `modtools/`). |
 | **v2 API (Go)** | The application API. |
 | **uploads / delivery** | Image upload (tusd) and resizing/delivery (weserv) — the edge tier. |
-| **tiles / geocode / wiki** | Map tiles (OSM), the geocoder (Photon, cutting over to the places index in spatial-knn — [runbook](runbooks/geocoder-cutover.md)), and the volunteer wiki. |
+| **tiles / geocode / wiki** | Map tiles (OSM), the Photon geocoder, and the volunteer wiki. |
 
 Which machine serves each of these, and how requests are routed to them, is in
 [Production topology](production.md). The local development equivalents (the
@@ -39,28 +40,6 @@ operational facts (from their component READMEs and
 
 Plan restarts of these services with that warm-up time in mind.
 
-The routing container is memory-bound rather than CPU-bound, and it is the container
-most likely to be the one in trouble when the host is. Two things follow.
-
-First, its Go heap is bounded by `GOMEMLIMIT` (and `GOGC`) in `docker-compose.yml`,
-overridable per host with `SPATIAL_GOMEMLIMIT` and `SPATIAL_GOGC`. Both are read once
-at process start, so changing them needs the container recreated, not restarted. Set
-the limit below the container ceiling with room left over: the leaf-table artifact is
-memory-mapped, and if the heap fills the container there is nowhere for the kernel to
-keep those pages and the service pays for re-reading them constantly.
-
-Second, the container exposes `/debug/pprof` and a one-line `/debug/memsummary` on
-loopback only, so a memory question can be answered from inside the container rather
-than inferred:
-
-```bash
-docker exec <routing-container> curl -s 127.0.0.1:6060/debug/memsummary
-docker exec <routing-container> curl -s -o /tmp/heap.out 127.0.0.1:6060/debug/pprof/heap
-```
-
-It binds to 127.0.0.1 deliberately and its port is not published, so it is reachable
-only through `docker exec`. Set `ROUTING_DEBUG_PORT=off` to disable it.
-
 ## Database
 
 Production splits database **reads and writes** across hosts; the application routes
@@ -78,9 +57,9 @@ look unused.
 
 Incoming mail is processed through a filtering stack: a milter-based spam check at SMTP
 time plus an application-layer content check running in parallel, with mail then routed to
-the batch processor. The technical detail is in [../RSPAMD.md](../RSPAMD.md). (Any default
-credential shown in that document is for local development only and must never be used in
-production.)
+the batch processor. The layers, the thresholds and where to tune them are in
+[./reference/spam-and-abuse.md](./reference/spam-and-abuse.md), along with the
+application-layer content checks and the reasons there is no AI moderator.
 
 ## Backups
 
@@ -89,9 +68,30 @@ At an architecture level:
 - **Logs** are backed up from Loki to cloud storage with cross-region replication and
   daily snapshots, under tiered retention (short, medium and long term for different log
   categories). See [./reference/logging.md](./reference/logging.md).
-- **Database** backup strategy is operational and maintained by the ops team; it is not
-  documented in these public docs. If you find it undocumented internally, that is a gap
-  worth closing.
+- **Database** backups are the "Yesterday" system. A nightly job takes a physical backup
+  of the production database (Percona XtraBackup), streams it to a dedicated cloud VM,
+  prepares it, and snapshots it. The same VM then **restores that snapshot into a
+  complete, running copy of the site**, which volunteers can browse to see what the
+  service looked like yesterday.
+
+  This design means the backup and the restore test are the same job. A backup that
+  cannot be restored shows up as a Yesterday environment that will not come up, rather
+  than as a nasty surprise during a real incident. That is the main reason Yesterday
+  exists; being able to look at yesterday's data is a bonus.
+
+  Two things to know before you rely on it:
+
+  - **Nothing alerts when the nightly restore fails.** It has previously failed for six
+    nights running without anyone noticing. Until that is fixed, check the restore status
+    file on the Yesterday VM as part of the routine checks in
+    [./reference/sysadmin-duties.md](./reference/sysadmin-duties.md).
+  - **The useful log is the restore monitor service journal**, not the cron log. The cron
+    log reports a bare failure with no cause; the service journal shows which stage broke.
+
+  The mechanics - the snapshot scheme, the sizing, and the scripts - are documented in
+  [`yesterday/README.md`](../../yesterday/README.md). Credentials for the VM and the cloud
+  project are in the ops password vault; see
+  [../handover/04-accounts-and-access.md](../handover/04-accounts-and-access.md).
 
 ## Runbooks
 

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 ---
 
@@ -11,6 +11,10 @@ the right file, README or reference, rather than restating things that would dri
 date.
 
 If a page here ever disagrees with the code, the code wins - and the page is a bug to fix.
+
+**Just joined?** Read [../handover/README.md](../handover/README.md) first. It covers what
+Freegle is, why the architecture is the way it is, who the human teams are, and what to do
+in your first day, week and month. Come back here once you have the stack running.
 
 ## Start here
 
@@ -36,6 +40,13 @@ Read these directly; the pages above link into them rather than copy them:
 | Logging and observability | [../ops/reference/logging.md](../ops/reference/logging.md) |
 | Spatial services (plain English) | [./reference/spatial-servers.md](./reference/spatial-servers.md) |
 | Rippling out algorithm | [./reference/rippling-algorithm.md](./reference/rippling-algorithm.md) |
+| Third-party services we depend on | [./reference/external-services.md](./reference/external-services.md) |
+| Partner integrations (TrashNothing, LoveJunk, and others) | [./reference/partner-integrations.md](./reference/partner-integrations.md) |
+| Advertising | [./reference/ads.md](./reference/ads.md) |
+| Donations and Gift Aid | [./reference/donations-and-gift-aid.md](./reference/donations-and-gift-aid.md) |
+| The mobile apps | [./reference/mobile-app.md](./reference/mobile-app.md) |
+| Electricals and reuse reporting | [./reference/electricals.md](./reference/electricals.md) |
+| Matched-posts email | [./reference/matched-posts-email.md](./reference/matched-posts-email.md) |
 | Getting a first reply in | [./reference/first-reply.md](./reference/first-reply.md) |
 | Unsubscribing from email (List-Unsubscribe) | [./reference/unsubscribe.md](./reference/unsubscribe.md) |
 | Mail deferrals and suppression | [./reference/mail-deferrals.md](./reference/mail-deferrals.md) |

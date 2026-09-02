@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-01
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - docs/developers/reference/architecture.md
@@ -15,6 +15,33 @@ page will not repeat it.
 
 ## The components
 
+```mermaid
+flowchart TD
+    subgraph FE["iznik-nuxt3 - one Nuxt codebase"]
+        SITE["member site<br/>ilovefreegle.org"]
+        MT["ModTools layer<br/>modtools.org"]
+        APPS["Capacitor apps<br/>Android + iOS"]
+    end
+    GO["iznik-server-go<br/>the v2 API"]
+    BATCH["iznik-batch - Laravel<br/>owns the schema,<br/>digests, notifications"]
+    DB[("Database")]
+    ROUTE["iznik-routing-go<br/>drive times, reach"]
+    SPAT["iznik-spatial-go<br/>which area covers a point"]
+    STATUS["status-nuxt<br/>dev dashboard + test runner"]
+
+    SITE --> GO
+    MT --> GO
+    APPS --> GO
+    GO --> DB
+    GO --> ROUTE
+    GO --> SPAT
+    BATCH --> DB
+    BATCH --> ROUTE
+    BATCH --> SPAT
+    STATUS -.->|development only| GO
+```
+
+
 Freegle (internally "Iznik") is a monorepo. The main pieces:
 
 | Directory | What it is | README |
@@ -25,12 +52,14 @@ Freegle (internally "Iznik") is a monorepo. The main pieces:
 | `iznik-routing-go/` | Go service for drive-time routing, used by rippling and browse; includes the reach engine (region labels instead of repeated searches — see `iznik-routing-go/REACH-ENGINE.md`). | `iznik-routing-go/README.md` |
 | `iznik-spatial-go/` | Go service for spatial lookups (which community covers a point, etc). | `iznik-spatial-go/README.md` |
 | `status-nuxt/` | Development status dashboard and test runner. | - |
-| `freegle-mobile/` | Capacitor mobile app wrapper around the Nuxt frontend. See [./reference/mobile-app.md](./reference/mobile-app.md). | - |
+| `freegle-app/` | A Kotlin Multiplatform native app. An experiment; it does not ship. See [./reference/mobile-app.md](./reference/mobile-app.md). | - |
 
-There is more than one strand of mobile work in the tree (a Capacitor build of the Nuxt
-app, plus native app assets). If you are touching mobile, start from
-[./reference/mobile-app.md](./reference/mobile-app.md) and confirm the current direction rather than
-assuming.
+The mobile apps that members install are **Capacitor builds of `iznik-nuxt3/`** - the same
+Vue code as the website, wrapped natively (`iznik-nuxt3/capacitor.config.ts`, `android/`,
+`ios/`, `fastlane/`). There is no separate app codebase. `freegle-app/` is a separate
+native experiment that does not ship, and any `freegle-mobile/` directory you find is local
+scratch that is not in git. Start from
+[./reference/mobile-app.md](./reference/mobile-app.md).
 
 ## How the frontend is put together
 

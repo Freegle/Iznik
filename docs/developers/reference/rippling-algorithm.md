@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-01
+last_reviewed: 2026-08-28
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -1381,8 +1381,14 @@ inclusion-exclusion - `|A| + |B| - ST_Area(ST_Union(A, B))` - rather than by
 `ST_Area` rejects those outright with `ERROR 3516 ... unexpected type GEOMCOLLECTION`;
 real group boundaries follow shared edges, so on production data that is the common case,
 not a corner. `ST_Union` of two areal geometries is always areal, so the arithmetic is
-always defined - see
-[`VerifyCellsParityCommand`](../../../iznik-batch/app/Console/Commands/Ripple/VerifyCellsParityCommand.php).
+always defined.
+
+That one-off parity command has since been removed. The same `ERROR 3516` hazard is
+guarded in the live code by a different route: `unionWithOriginGroupArea()` in
+[`ExpandService.php`](../../../iznik-batch/app/Services/Ripple/ExpandService.php) wraps
+the coverage fraction in a `CASE WHEN ST_GeometryType(inter) IN ('POLYGON',
+'MULTIPOLYGON')` guard, so `ST_Area` only ever sees polygonal input and a
+`GEOMETRYCOLLECTION` yields a NULL fraction instead of an exception.
 
 Measured on eight real isochrones (2026-08-25): 640 containment probes, 88 differences -
 87 boundary probes at *exactly* 0.000m from the edge and one interior probe at 7.98m, none

@@ -1,3 +1,8 @@
+---
+last_reviewed: 2026-09-02
+owner: Freegle dev team
+---
+
 # FreegleDocker Architecture
 
 This document describes the architecture of the FreegleDocker compose environment.
