@@ -357,8 +357,20 @@ peak-hour effect. `routes/console.php:821` says "Each invocation drains the whol
 pass, so no --max-iterations" — in practice a pass cannot drain the window inside a minute, so the
 shards run back-to-back continuously.
 
-That is why this query holds 46-68% of db2 at every hour sampled: its load is a constant ~2.6-3.0
-threads, 24/7, rather than something that ebbs with traffic.
+That is why this query holds 46-68% of db2 at every hour sampled: while reach is active its load is
+a steady ~2.6-3.0 threads rather than something that ebbs with traffic.
+
+**It is not 24/7, though — corrected.** An earlier draft said "constant, 24/7". Sampling only ran
+07:15-19:12; `rippling_reach.updated_at` by hour over 24 h shows reach activity stops overnight:
+
+| hour UTC | 20 | 21 | 22 | **23-05** | 06 | 07 | 12 | 16 | 17 | 18 | 19 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| updates | 221 | 160 | 87 | **zero rows** | 256 | 319 | 439 | 758 | **766** | 710 | 341 |
+
+So there is a ~7-hour overnight lull (23:00-05:59 UTC) when the window empties and the mailer has
+nothing to do, and the true peak is **16:00-18:00**, not the morning. The saving from proposal A
+therefore applies across roughly 17 active hours a day, not 24 — still the dominant load whenever
+reach is running, but a daily total about 70% of what a 24/7 assumption implies.
 
 **Saturation is a cost problem, not a correctness one — checked.** A post only goes unmailed if a
 sweep outlasts the 60-minute window. Window size measured at 435 (07:45), 754 (17:57) and 730
