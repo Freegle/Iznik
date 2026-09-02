@@ -362,9 +362,25 @@ ALTER TABLE users ADD INDEX deleted_lastaccess (deleted, lastaccess);
 | active-user scan (finding 4) | `deleted` index (cardinality 15), filtered 16.66% | 4.1% |
 
 `users` is 2.85 M rows. **This is now the only working fix for the daily digest scan**, since C was
-tested and does not change the plan. Today the query walks **1,845,185** `tnuserid IS NULL` rows to
-serve a pool of **104,075** — the index should cut rows examined by roughly 13×, and it needs no
-hints, no shard rework and no uneven partitions.
+tested and does not change the plan.
+
+**Measured selectivity** (an earlier draft estimated 13× from the final pool size; the accurate
+figure is 10×, because the index applies only `deleted` and `lastaccess` — `tnuserid` and
+`bouncing` remain post-filters):
+
+| | rows |
+|---|---|
+| walked today via `tnuserid` | **1,845,193** |
+| what `(deleted, lastaccess)` would return | **184,832** |
+| final pool after `tnuserid`/`bouncing` filters | 104,082 |
+
+So **10.0× fewer rows examined**, with no hints, no shard rework and no uneven partitions.
+
+A four-column `(deleted, bouncing, tnuserid, lastaccess)` would reach the 104,082 pool exactly
+(~17.7×), but with `lastaccess` in the fourth position it would **not** serve the active-user scan
+in finding 4, which constrains only `deleted` and `lastaccess`. One two-column index serving both
+queries is the better trade on a 2.85 M-row table in a Galera cluster, where every extra index also
+costs write overhead on all three nodes.
 
 ### E. Reduce digest worker concurrency
 
