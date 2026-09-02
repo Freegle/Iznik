@@ -750,17 +750,17 @@ rows, its latest row states its outcome.
   the wider ripple would reach a city member with everything inside 45 minutes of a post.
 
   The same pass records the band NAME in `settings.browseDensityBand`, because the budget it
-  derives cannot be read backwards to recover it: an explicit choice is rescaled *within* the
-  band, so 20 minutes means either a dense member on their cap or a sparse member who asked
-  for less, and afterwards the two are the same number. Anything that has to admit a member
+  derives cannot be read backwards to recover it: 20 minutes means either a dense member on
+  their cap or a sparse member who asked for less, and the two are the same number. Anything
+  that has to admit a member
   against something chosen per band - the rural overflow lane, when enabled, picks one ring
   per band - needs the band itself. It is stamped for members whose budget needs no correction as well,
   which is most of them: a value written only alongside a correction would be missing for the
   bulk of the membership, which is the same shape of silent near-inertness as the two failure
   modes below.
 
-  **That pass is the single writer of `browseReachMaxDistance`, and it has two failure modes
-  worth knowing, because both were live for weeks and neither was visible.**
+  **That pass is the single writer of `browseReachMaxDistance`, and it has three failure modes
+  worth knowing, because each was live for weeks and none was visible.**
 
   *It can be pointed nowhere.* The radius comes from a `/town/near` call, and a member whose
   lookup fails is deliberately left alone rather than given a wrong cap - which means left with
@@ -774,12 +774,29 @@ rows, its latest row states its outcome.
   is loud. `batch-prod` must set `BROWSE_TOWN_NEAR_URL`; the compose default is unreachable
   from its network.
 
+  *It can be silenced by the towns table.* `/town/near` sizes a candidate box off the travel
+  time asked for - about 12 miles at the narrow end of the slider - and the towns table holds
+  only ~234 major places, so for much of the country that box is empty. The town names are
+  display material for the "Near: ..." hint, but the same response carries
+  `reach_radius_miles` (the isochrone road frontier) and `reach_polygon` (its shape), and the
+  handler used to return before its routing call when the box came back empty. A member whose
+  nearest curated town lay outside the box therefore got no radius at all, and both readers
+  treat a missing radius as a failed derivation: the backfill leaves them with no band limit,
+  and the slider stores the "no limit" sentinel - so dragging to "Nearer" switched every
+  distance filter off, on browse, on the unread-count badge, in search and in post emails.
+  Measured 2026-09-02: 91 members held the sentinel beside a budget below their own cap, 16%
+  of everyone sitting on the 5-minute stop; the reporter (Hastings, nearest curated town Lewes
+  at 27 miles) was being mailed Eastbourne posts 16 miles away. The routing call now runs
+  whether or not there are candidate towns, and `useReachDistance.loadCap` repairs the stored
+  pair on sight - the sentinel below a member's own cap cannot be a choice, because only the
+  top stop means "no limit" and only at the ceiling does it store the sentinel.
+
   *It decays.* Nothing else writes the key, so a member who joins after a run has no band
-  limit, ever. Two scheduled passes close that: `--missing-only` daily (members with nothing
-  recorded, which after a full pass is just new joiners) and the full pass monthly, which also
-  RECONCILES existing values - the narrow one never revisits anyone, so it cannot follow a
-  member who moves from a village to a city, nor an area that has grown denser since its
-  members were measured.
+  limit, ever - and a member who moves, or an area that grows denser, drifts away from the band
+  they are held to. The full pass runs NIGHTLY (02:40) and closes both: it gives new joiners a
+  default and reconciles everyone else. Measured on live 2026-09-01 it scanned 132,228 members
+  in 2h33m, which is what makes a nightly schedule affordable; a separate cheap `--missing-only`
+  pass is no longer scheduled, because a nightly full pass already covers what it covered.
 
   **`browseReachMaxDistance` is a separate key from `browseMaxDistance`, and the split is
   load-bearing.** `browseMaxDistance` is the member's own choice and applies in BOTH
@@ -823,12 +840,21 @@ rows, its latest row states its outcome.
   `NULLIF`/`COALESCE` chain, and the cast is `DECIMAL(30,6)` because the 16-digit sentinel does
   not fit in `DECIMAL(20,6)`.
 
-  The command also RESCALES an explicit choice rather than carrying it across. The old slider
-  was a fixed 5-30, so a stored value said what FRACTION of the range the member wanted, not an
-  absolute travel time: 15 was two fifths of the way up, and two fifths of a rural member's 5-45
-  is 20. It rescales proportionally and snaps to the slider's 5-minute step, and at or above the
-  old top stop the member lands on their new cap. No location, or a failed density or routing
+  An explicit choice is carried across as the travel time it says, clamped to the member's band
+  cap; only the derived radius is recomputed. No location, or a failed density or routing
   lookup, means the member is skipped and left untouched.
+
+  **Everything the pass does has to be idempotent, because it runs over the whole membership
+  on a schedule.** It used to read a stored budget as a FRACTION of the old fixed 5-30 slider
+  and stretch it onto the member's 5-45 band range. That is the right thing to do exactly once,
+  on the day the slider changes. Re-applied on every run it is a ratchet: the pass reads its own
+  output as if it were still an old-scale value, so each run walks the member's chosen travel
+  time further in whichever direction their band points - a sparse member goes 15 → 20 → 30 →
+  45, and 45 for a band that earns the ceiling is the "no limit" sentinel, while a dense member
+  goes 20 → 15 → 10 down onto the narrowest stop. The 2026-09-01 run put 1,185 members on the
+  sentinel in one night, and the standing shape of the data is the same story: 31,916 sparse
+  members piled on 45 and 7,747 dense members on 10. A future scale change belongs in a one-off
+  command, not in the reconciler.
 
   **The unlimited sentinel is no longer safe below the ceiling.** It means "defer to the
   server's own reach", and the server's own reach is now the ceiling - so it only says "as far

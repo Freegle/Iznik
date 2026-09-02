@@ -283,19 +283,27 @@ class BackfillBrowseMaxDistanceCommandTest extends TestCase
     }
 
     /**
-     * The case that started this: a rural member at the old top stop. Their band
-     * earns 45 minutes, so the top stop now means 45 - and still means "no limit",
-     * deferring to the server's own reach rather than a radius that would narrow it.
+     * A rural member who has chosen 30 minutes keeps 30 minutes, and the "no limit" sentinel
+     * they were left on is replaced by the radius 30 minutes actually reaches. Below the top
+     * stop "no limit" is not an answer their choice can mean, so leaving it there is what has
+     * members mailed posts from towns they would never travel to (Discourse 10096).
+     *
+     * This pass used to WIDEN them instead, to 45 - reading 30 as the top stop of the old
+     * fixed 5-30 slider. That reading is true on the day the slider's range changes and on no
+     * other day: as a standing rule it widens the same member again on every run, and for a
+     * band that earns the ceiling the widest stop stores the sentinel. On live 2026-09-01 that
+     * put 1,185 members on "no limit" in a single night. Widening is a one-off migration's job,
+     * not a reconciler's.
      */
-    public function testARuralMemberAtTheOldTopStopMovesUpToTheirBandCap(): void
+    public function testARuralMemberKeepsTheirChoiceAndLosesTheSentinel(): void
     {
-        $this->fakeLookups(400, 16.1);
+        $this->fakeLookups(400, 16.1, 17.5);
         $id = $this->userWith(['browseMaxMinutes' => 30, 'browseMaxDistance' => self::UNLIMITED]);
 
         $this->artisan('browse:backfill-max-distance')->assertSuccessful();
 
-        $this->assertSame(45, $this->minutesOf($id));
-        $this->assertSame(self::UNLIMITED, $this->distanceOf($id));
+        $this->assertSame(30, $this->minutesOf($id));
+        $this->assertSame(17.5, $this->distanceOf($id));
     }
 
     /**
@@ -350,43 +358,75 @@ class BackfillBrowseMaxDistanceCommandTest extends TestCase
     }
 
     /**
-     * An explicit narrower choice is a fraction of the range the member was shown, not
-     * an absolute travel time they would recognise. 15 was two fifths of the way up the
-     * old 5-30; two fifths of a rural 5-45 is 20. Carrying 15 across unchanged would
-     * quietly narrow them at the moment the reach engine got wider.
+     * An explicit choice is the travel time the member asked for, and it survives the pass.
+     * Only the derived radius is recomputed.
      */
-    public function testRescalesAnExplicitChoiceOntoTheNewRange(): void
+    public function testKeepsAnExplicitChoiceAndOnlyRecomputesTheRadius(): void
     {
         $this->fakeLookups(400, 16.1, 12.4);
         $id = $this->userWith(['browseMaxMinutes' => 15, 'browseMaxDistance' => 6]);
 
         $this->artisan('browse:backfill-max-distance')->assertSuccessful();
 
-        $this->assertSame(20, $this->minutesOf($id));
+        $this->assertSame(15, $this->minutesOf($id));
         $this->assertSame(12.4, $this->distanceOf($id));
     }
 
-    public function testRescalingSnapsToTheSlidersStep(): void
+    /**
+     * The pass runs monthly over the whole membership, so its budget rule has to be a
+     * fixed point: whatever it writes, reading it again must give the same answer.
+     *
+     * It was not. The rule read a stored value as a FRACTION of the old fixed 5-30 slider
+     * and stretched it onto the member's 5-45 band range - right once, when the slider
+     * changed, but re-applied every month it walked each member's chosen travel time away
+     * from them, in whichever direction their band pointed. Live, from the 2026-09-01 run:
+     * 1,185 members were pushed onto the "no limit" sentinel, and the ratchet is visible in
+     * the standing data as 31,916 sparse members piled on 45 and 7,747 dense members on 10.
+     */
+    public function testTheBudgetRuleIsAFixedPoint(): void
     {
         $command = app(\App\Console\Commands\Browse\BackfillBrowseMaxDistanceCommand::class);
 
-        // Rural range 5-45: the ends pin, the interior snaps to fives.
-        $this->assertSame(5, $command->rescale(5, 45));
-        $this->assertSame(45, $command->rescale(30, 45));
-        $this->assertSame(20, $command->rescale(15, 45));
-        $this->assertSame(30, $command->rescale(20, 45));
+        // Rural range 5-45: a chosen travel time is exactly what it says, run after run.
+        foreach ([5, 15, 20, 30, 35, 45] as $chosen) {
+            $this->assertSame($chosen, $command->budgetFor($chosen, 45));
+            $this->assertSame(
+                $chosen,
+                $command->budgetFor($command->budgetFor($chosen, 45), 45),
+                'a second pass must not move a member who has already been reconciled'
+            );
+        }
 
-        // City range 5-20: every position lands at or below the cap.
-        $this->assertSame(5, $command->rescale(5, 20));
-        $this->assertSame(15, $command->rescale(20, 20));
-        $this->assertSame(20, $command->rescale(30, 20));
+        // City range 5-20: a position the reach engine will not honour comes down onto the
+        // cap, and stays there.
+        $this->assertSame(5, $command->budgetFor(5, 20));
+        $this->assertSame(20, $command->budgetFor(20, 20));
+        $this->assertSame(20, $command->budgetFor(30, 20));
+        $this->assertSame(20, $command->budgetFor($command->budgetFor(30, 20), 20));
 
-        // A stored value past the old top (an older bundle, a hand-edited setting)
-        // is still just "as far as I can".
-        $this->assertSame(45, $command->rescale(60, 45));
+        // Below the bottom stop is not a position the slider can express.
+        $this->assertSame(5, $command->budgetFor(1, 45));
 
         // No stored value at all means the top stop.
-        $this->assertSame(45, $command->rescale(null, 45));
+        $this->assertSame(45, $command->budgetFor(null, 45));
+    }
+
+    /**
+     * The same fixed point, end to end: a full pass over an already-reconciled member must
+     * leave their budget where it is. A sparse member on 30 minutes used to come out on 45,
+     * which for a band that earns the ceiling means the "no limit" sentinel - so the pass
+     * itself was switching off the distance filtering it exists to apply.
+     */
+    public function testASecondFullPassLeavesTheBudgetAlone(): void
+    {
+        $this->fakeLookups(400, 16.1, 17.5);
+        $id = $this->userWith(['browseMaxMinutes' => 30, 'browseMaxDistance' => 17.5]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame(30, $this->minutesOf($id));
+        $this->assertSame(17.5, $this->distanceOf($id));
     }
 
     /**
@@ -704,10 +744,9 @@ class BackfillBrowseMaxDistanceCommandTest extends TestCase
 
     /**
      * The measured band is recorded, not just the budget derived from it. Nothing downstream
-     * can recover it afterwards: the budget is rescaled within the band, so a member on 20
-     * minutes is either a city member on their cap or a rural member who asked for less, and
-     * the two are the same number. The rural overflow lane admits a member against the ring
-     * for THEIR band, so it needs the band itself.
+     * can recover it afterwards: a member on 20 minutes is either a city member on their cap
+     * or a rural member who asked for less, and the two are the same number. The rural
+     * overflow lane admits a member against the ring for THEIR band, so it needs the band.
      */
     public function testRecordsTheMeasuredDensityBand(): void
     {

@@ -224,6 +224,31 @@ export function useReachDistance(
       return
     }
 
+    // Heal a pair nobody could have chosen: the "no limit" sentinel stored beside a budget
+    // BELOW this member's cap. Only the top stop means no limit, and only at the ceiling does
+    // it store the sentinel, so this pair is what a failed radius derivation leaves behind -
+    // and it reads as "filter nothing" on browse, the unread-count badge, search and post
+    // emails while the slider still shows the narrow position the member set. Now that the cap
+    // is known and the derivation can be retried, store the radius they actually asked for. A
+    // still-failing lookup writes nothing rather than replacing one wrong answer with another;
+    // the next visit tries again.
+    const settings = me.value?.settings
+    if (
+      settings &&
+      typeof saved === 'number' &&
+      saved < maxMinutes.value &&
+      settings[milesKey] === BROWSE_DISTANCE_UNLIMITED &&
+      (me.value?.lat || me.value?.lng)
+    ) {
+      const radius = await reachRadiusFor(saved)
+      if (radius !== null) {
+        settings[milesKey] = radius
+        if (metresKey) settings[metresKey] = Math.round(radius * 1609.344)
+        await authStore.saveAndGet({ settings })
+        if (onPersisted) onPersisted(radius)
+      }
+    }
+
     // The handle was placed before we knew the cap, so positionFor() measured it against
     // the flat fallback and clamped anything above that down onto it: a sparse-band member
     // who chose 45 was shown 30 - just past the middle of the range, about 19 miles - for

@@ -707,4 +707,85 @@ describe('PostFilters', () => {
       expect(wrapper.emitted('update:selectedType')[0]).toEqual(['Wanted'])
     })
   })
+
+  // "Show posts from" used to forget a single community on reload: only the two whole-feed
+  // views were stored, so the dropdown sprang back to Nearby every visit (Discourse 10096).
+  describe('community stickiness', () => {
+    function pickGroup(wrapper, val) {
+      return wrapper
+        .findComponent('.group-select')
+        .vm.$emit('update:modelValue', val)
+    }
+
+    it('remembers a single community and emits it', async () => {
+      const wrapper = createWrapper({ forceShowFilters: true })
+
+      pickGroup(wrapper, 1)
+      await flushPromises()
+
+      expect(mockAuthStore.saveAndGet).toHaveBeenCalledWith({
+        settings: expect.objectContaining({
+          browseGroup: 1,
+          // Naming a community narrows the feed it is already showing; it is not a third
+          // whole-feed view, so browseView is left where it was.
+          browseView: 'nearby',
+        }),
+      })
+      expect(wrapper.emitted('update:selectedGroup')[0]).toEqual([1])
+    })
+
+    it('opens on the community the page restored, not on Nearby', () => {
+      // The panel is lazily mounted, so it can appear after the page has already restored a
+      // saved community. Saying "-- Nearby --" over a feed filtered to one is the same
+      // mismatch, wearing the other face.
+      mockMe.value.settings.browseGroup = 1
+      const wrapper = createWrapper({ forceShowFilters: true, selectedGroup: 1 })
+
+      expect(wrapper.findComponent('.group-select').props('modelValue')).toBe(1)
+    })
+
+    it('clears the remembered community when the member goes back to Nearby', async () => {
+      mockMe.value.settings.browseGroup = 1
+      const wrapper = createWrapper({ forceShowFilters: true, selectedGroup: 1 })
+
+      pickGroup(wrapper, -1)
+      await flushPromises()
+
+      expect(mockAuthStore.saveAndGet).toHaveBeenCalledWith({
+        settings: expect.objectContaining({
+          browseGroup: null,
+          browseView: 'nearby',
+        }),
+      })
+      expect(wrapper.emitted('update:selectedGroup')[0]).toEqual([0])
+    })
+
+    it('clears it for all my communities too', async () => {
+      mockMe.value.settings.browseGroup = 1
+      const wrapper = createWrapper({ forceShowFilters: true, selectedGroup: 1 })
+
+      pickGroup(wrapper, 0)
+      await flushPromises()
+
+      expect(mockAuthStore.saveAndGet).toHaveBeenCalledWith({
+        settings: expect.objectContaining({
+          browseGroup: null,
+          browseView: 'mygroups',
+        }),
+      })
+    })
+
+    it('does not write the saved community back when the page restores it', async () => {
+      // The restore arrives as a selectedGroup prop change, which lands in the same watcher.
+      // Writing there would spend a save on every visit to Browse putting back what is stored.
+      mockMe.value.settings.browseGroup = 1
+      const wrapper = createWrapper({ forceShowFilters: true })
+
+      await wrapper.setProps({ selectedGroup: 1 })
+      await flushPromises()
+      expect(wrapper.emitted('update:selectedGroup')[0]).toEqual([1])
+
+      expect(mockAuthStore.saveAndGet).not.toHaveBeenCalled()
+    })
+  })
 })
