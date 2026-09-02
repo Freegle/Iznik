@@ -99,13 +99,31 @@ second polled 7,840 times in 74 s (~106 polls/s) so concurrency is measured, not
 Under load on db2 it averages 0.71 s — **~11× slower purely from contention**, so cutting the count
 pays back more than proportionally: fewer queries means the survivors get faster too.
 
-No msgid repeated inside either sampling window, so what is being observed is one sweep in
-progress, not churn within a sweep. 435 window posts at this rate puts a sweep at ~2 minutes, so a
-post is re-processed roughly **26 times** during its hour in the window.
+**Repeat rate measured directly**, not inferred. The samples above were shorter than one sweep, so
+no msgid could repeat inside them. A 10-minute sample (599 s, 188,038 observations, executions
+separated by a >5 s gap in the same msgid):
 
-Proposal A takes ~254/min down to ~10-15/min (the ~10 posts that genuinely change per minute plus
-1-2 member-side changes). In DB-time terms that is **2.99 concurrent threads → ~0.2**, a ~94% cut
-on the largest item on the node.
+| | |
+|---|---|
+| distinct msgids | 757 |
+| total executions | 2,238 |
+| throughput | **224/min** |
+| mean executions per msgid | **2.96 per 10 min** |
+
+| repeats in 10 min | msgids |
+|---|---|
+| 1× | 78 |
+| 2× | 75 |
+| 3× | **406** |
+| 4× | 198 |
+
+Most posts are re-processed 3-4 times per 10 minutes — a sweep every ~2.5-3 min, so **~18
+executions per post per hour** in the window. (An earlier draft inferred 26× from the window size
+and throughput; the measured figure is 18×.)
+
+Against ~10 posts genuinely changing per minute, that means **roughly 95% of executions re-do
+unchanged work**. Proposal A takes ~224/min down to ~12/min — an **~18× reduction**, or in DB-time
+terms **2.99 concurrent threads → ~0.2**.
 
 **The waste is not empty results.** 20 sampled window msgids all returned candidates (1-37 each).
 The SQL returns the **outer-bound superset**; PHP then refines against routing labels
@@ -313,7 +331,20 @@ reasoning in `routes/console.php:644-651`, which measured the wrong box.
 
 ### F. my.cnf
 
-- `sort_buffer_size`: 256 MB → 2 MB. Should reclaim most of the 3.37 G mysqld has swapped out.
+**Swap is not causing the slowness — checked, and it is a negative result.** It would have been
+the tidy explanation for the 65 ms → 0.71 s gap, but `vmstat` over 10 s shows swap-in of
+**23, 0, 2, 2, 0 pages/s** and iowait of 5, 0, 1, 1, 1% while `us` sits at 57-77%. mysqld's
+3.47 GB of swapped-out pages are cold and staying out. db2 is CPU-saturated, not thrashing.
+
+So treat F as memory hygiene and headroom, **not** a latency fix — the latency lever is cutting the
+execution count (proposal A), not tuning memory.
+
+mysqld's **371 M cumulative major faults** look alarming but are a 12-day accumulation, not a live
+problem: measured over 60 s, mysqld's `maj_flt` rose 2,617 (**43/s**) while system-wide
+`pgmajfault` rose only **71** and `pswpin` only **16**. There is no disk-backed memory pressure
+happening now. Thread closed — do not re-open it on the cumulative figure alone.
+
+- `sort_buffer_size`: 256 MB → 2 MB. Reclaims most of the 3.47 G mysqld has swapped out.
 - `table_open_cache`: 3177 → 8000+, to stop the 1.77 M overflow evictions.
 - Consider `innodb_flush_method = O_DIRECT` (stops double buffering) and raising
   `innodb_io_capacity` from 200 if the volume is SSD-backed. Both need a restart, so they belong in
