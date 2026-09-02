@@ -440,6 +440,22 @@ capacity** — at 5 minutes that is 7 × 5 = 35/min, comfortably under, so throu
 This also makes the saving arrival-rate dependent: ~6.4× at 7 arrivals/min, ~4.5× at 10. The
 ~5.6× quoted above sits in the middle of the observed range.
 
+**And the crossover itself was then observed live, unprompted.** As overnight arrivals fell to
+5/min the system crossed out of saturation on its own:
+
+| | 18:27 (saturated) | 22:12 (crossing) |
+|---|---|---|
+| shard logs | **all four** `Already running, exiting.` | **three of four** `Sending unified digests…` (starting fresh) |
+| worker ages | 127 s, 127 s, 67 s, 67 s | all **32 s** — inside the 60 s tick |
+| throughput | 225/min | **180/min** — first reading below the plateau |
+| in flight | 2.64 | **1.66** |
+| duration | 0.70 s | 0.55 s |
+
+That is precisely the mechanism proposal A exploits, demonstrating itself without any change from
+us: once demand falls below shard capacity the passes complete inside their interval, throughput
+tracks demand rather than capacity, and the DB load falls with it. A 5-minute window produces the
+same state deliberately, at every hour rather than only after 22:00.
+
 Expected effect: removes most of the 47-51% of db2 that this query represents, while preserving
 the late-joiner behaviour the current window provides.
 
