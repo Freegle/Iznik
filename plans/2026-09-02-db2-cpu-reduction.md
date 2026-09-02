@@ -211,7 +211,36 @@ select id from users where deleted is null and lastaccess >= ? and added <= ?
 Same root cause as finding 2 — no index on `lastaccess`. Both queries report the identical
 1,422,686-row estimate.
 
-### 5. Server configuration
+### 5. apiv2 read routing sends db1's API load to db2 — ~28% of db2
+
+Found 2026-09-02 afternoon, when a production deploy restarted services on all three nodes and
+haproxy failed over to its backup backends.
+
+`MYSQL_HOST_READ` per node:
+
+| node | reads from |
+|---|---|
+| db1 | **db2** (10.220.0.150) |
+| db2 | **db2** (itself) |
+| db3 | db3 (itself) |
+
+So anything db1's apiv2 serves lands on db2 — the node with the least headroom — while db3, which
+has 12 cores and is the only *active* haproxy backend, reads from itself.
+
+Measured after the deploy settled (63,859 samples, 16:57): batch **70.7%**, **db1-internal 27.8%**,
+localhost 1.4%. Before the deploy db2 was **99.8% batch**, so it is now carrying roughly 40% more
+work than its usual baseline, and this persisted well past the failover (haproxy's last state
+transition was 16:32:22; db1 still held 9 of 29 API connections at 17:11).
+
+The queries db1 sends are the expensive ones — `chat_rooms` unread counts (the single largest entry
+in the digest table: 168,959 s cumulative, 85.7 ms average, 68% of executions using no index) and
+spatial browse.
+
+**See proposal G.** Also note the failure mode this exposed: a db3 outage puts the **whole** API
+read load onto a db2 already saturated with batch — the fallback concentrates load on the weakest
+node.
+
+### 6. Server configuration
 
 - `sort_buffer_size = 256000000` (244 MB; default 256 KB), per-connection. **8.5 G of 10 G swap in
   use, 3.37 G of it mysqld's own pages.** Oversized sort buffers are also slower, not faster.
@@ -389,6 +418,22 @@ rather than the database's. With A, C and D landed the per-query cost drops shar
 counts should be re-derived from db2's CPU — not raised further on the "embarrassingly parallel"
 reasoning in `routes/console.php:644-651`, which measured the wrong box.
 
+### G. Point db1's apiv2 reads at db3
+
+One line in `/var/www/iznik-server-go/.env` on db1:
+
+```sh
+export MYSQL_HOST_READ=10.220.0.47   # db3, matching what db3 already does for itself
+```
+
+then `monit restart iznik-server-go` on db1 — no rebuild needed, monit's start program sources
+`./.env`. Verify by the boot line `Connecting to database ...` and by db2's client mix losing its
+`db1-internal` share.
+
+Takes ~28% off db2 immediately (finding 5). **This is not the "use db1 as a read target" idea that
+was ruled out** — it sends no new traffic to db1; it stops db2 absorbing traffic db1 generates, and
+moves it to the 12-core node that already serves the active API backend.
+
 ### F. my.cnf
 
 **Swap is not causing the slowness — checked, and it is a negative result.** It would have been
@@ -410,10 +455,26 @@ happening now. Thread closed — do not re-open it on the cumulative figure alon
   `innodb_io_capacity` from 200 if the volume is SSD-backed. Both need a restart, so they belong in
   a planned maintenance window.
 
+## Post-deploy re-baseline (2026-09-02 16:57)
+
+A production deploy that afternoon rebuilt apiv2 and routing on all three nodes (31 non-test files
+in `iznik-routing-go`). Routing is what the reach digest calls to refine candidates, so the profile
+was re-measured rather than assumed unchanged:
+
+| batch-only profile | pre-deploy 13:27 | post-deploy 16:57 |
+|---|---|---|
+| **reach recipient query** | **68.0%** | **67.2%** |
+| illustrations cleanup | 4.9% | 5.9% |
+| `messages.*` variant | 3.7% | 3.4% |
+| users lastaccess scan | 2.2% | 3.3% |
+
+Unchanged within sampling noise — every measurement below still holds.
+
 ## Expected outcome
 
-A + B + D address **75.3%** of measured load (C was tested and dropped). There is no
-spread-the-load option to fall back on, so the halving has to come from them.
+A + B + D address **75.3%** of measured load (C was tested and dropped), and G removes a further
+~28% that arrives from db1. There is no spread-the-load option to fall back on, so the halving has
+to come from them.
 
 **A alone clears the target**: the reach recipient query is 47% of db2 at peak and 68% off-peak,
 runs 224×/min at 0.71 s for 2.99 threads continuously, and ~95% of those executions re-do unchanged
