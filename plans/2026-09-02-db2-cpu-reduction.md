@@ -312,10 +312,18 @@ eligibility routes regress.
 **Revised proposal A: shorten the window rather than replace it.** `reach_mail_window_minutes`
 60 → 5:
 
-| window | posts per pass |
-|---|---|
-| 60 (today) | **435** |
-| 5 | **27** |
+| window | posts per pass, 07:45 | posts per pass, 17:57 |
+|---|---|---|
+| 1 min | 10 | 8 |
+| 3 min | 14 | 23 |
+| **5 min** | **27** | **43** |
+| 10 min | — | 92 |
+| **60 min (today)** | **435** | **754** |
+
+Measured twice, ten hours apart, so the saving is not an artefact of one moment: the 60/5 ratio is
+**16.1× in the morning and 17.5× in the evening**. Note the absolute window has grown from 435 to
+754 posts — evening reach activity is higher, so this query's load is worse later in the day than
+the morning figures elsewhere in this document suggest.
 
 - **~16× fewer executions** — 224/min down to roughly 14/min
 - **No eligibility route is lost.** Every signal the 60-minute window catches is still caught, just
