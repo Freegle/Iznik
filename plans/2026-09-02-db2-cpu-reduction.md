@@ -261,7 +261,29 @@ spatial browse.
 read load onto a db2 already saturated with batch — the fallback concentrates load on the weakest
 node.
 
-### 6. Server configuration
+### 6. Jobs count — full scan of 1.3 M rows, 3.0% of db2
+
+```sql
+SELECT COUNT(*) FROM jobs WHERE visible = ? AND cpc >= ? AND geometry IS NOT NULL
+```
+
+Spotted in the digest table on the first pass (18,165 s cumulative, 832,709 rows examined per
+execution) but absent from processlist sampling all day; it surfaced live at **3.0%** at 23:27.
+
+| | |
+|---|---|
+| `EXPLAIN` | **type=ALL, key=NULL, 1,293,822 rows** |
+| table | 1,316,545 rows — **up from 1,021,296 the same morning** (+295 k in 16 h) |
+| rows matching | 260,514 (19.8%) |
+| `visible = 1` | true for **every row** — the predicate contributes nothing |
+| indexes | `bodyhash`, `canonical_title`, `city`, `geometry` (SPATIAL), `job_reference`, `PRIMARY`, `seenat` — **none on `cpc`** |
+
+**Proposal H (operator DDL): `ALTER TABLE jobs ADD INDEX cpc (cpc);`** — turns the full scan into a
+range scan over the 19.8% that match `cpc >= ?`, roughly **5× fewer rows examined**, with
+`geometry IS NOT NULL` applied as a filter afterwards. Modest next to A/D/G, but the table is
+growing by ~300 k rows a day, so the scan gets steadily worse while an index does not.
+
+### 7. Server configuration
 
 - `sort_buffer_size = 256000000` (244 MB; default 256 KB), per-connection. **8.5 G of 10 G swap in
   use, 3.37 G of it mysqld's own pages.** Oversized sort buffers are also slower, not faster.
