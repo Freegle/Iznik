@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-19
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -129,5 +129,5 @@ Removing or banning is a last resort. A friendly word usually solves the problem
 
 ## Next steps
 
-- The queues these members' posts flow through: [Moderating posts](02-moderating-posts.md).
-- Community-level configuration: [Running your community](04-running-your-community.md).
+- The queues these members' posts flow through: [Moderating posts](moderating-posts.md).
+- Community-level configuration: [Running your community](running-your-community.md).

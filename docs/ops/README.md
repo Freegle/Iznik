@@ -19,13 +19,13 @@ process level**.
 
 ## Contents
 
-1. **[Overview and environments](01-overview-and-environments.md)** - the environments
+1. **[Overview and environments](overview-and-environments.md)** - the environments
    Freegle runs in and how they relate.
-2. **[Deployment and CI](02-deployment-and-ci.md)** - how code gets from a commit to
+2. **[Deployment and CI](deployment-and-ci.md)** - how code gets from a commit to
    production, including the mobile apps.
-3. **[Monitoring and logging](03-monitoring-and-logging.md)** - how we see what is
+3. **[Monitoring and logging](monitoring-and-logging.md)** - how we see what is
    happening and find problems.
-4. **[Domains, services and runbooks](04-domains-services-and-runbooks.md)** - the
+4. **[Domains, services and runbooks](domains-services-and-runbooks.md)** - the
    public services, the spatial and mail stacks, backups, and operational runbooks.
 5. **[Production topology](production.md)** - the live deployment: what the machines
    are, their roles, and what routes where.
@@ -43,7 +43,7 @@ process level**.
 | Runbooks | [runbooks/README.md](runbooks/README.md) |
 
 New to the role? Read
-[../getting-started/03-sysadmin-track.md](../getting-started/03-sysadmin-track.md)
+[../getting-started/sysadmin-track.md](../getting-started/sysadmin-track.md)
 first - it puts these pages in order as a first day, first week and first month.
 
 The single best technical reference for the container and environment architecture is

@@ -15,9 +15,8 @@ Freegle does not stand alone. Other reuse and volunteering organisations either 
 content, take our content, or both. This page is the inventory: who they are, which
 direction the data flows, and what breaks.
 
-Every one of these is **someone else's system**. That is the single most useful thing to
-remember when one stops working: the first question is not "what did we change" but "what
-did they change".
+Every one of these is **someone else's system**. When one stops working, the first question
+is not "what did we change" but "what did they change".
 
 ```mermaid
 flowchart LR

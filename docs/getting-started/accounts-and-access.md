@@ -89,10 +89,10 @@ Most of these are keys rather than logins, and most are in one Google Cloud proj
 | **Google Cloud project** | OAuth sign-in, Maps and Places, Cloud Vision, Perspective, Gemini, Firebase push |
 | **Google Play Console** | The two Android app listings, releases, target-API compliance |
 | **Apple Developer / App Store Connect** | The two iOS app listings, plus the signing certificates and provisioning profiles |
-| **Mapbox** | Map imagery and the isochrones production still buys |
 | **MaxMind** | IP-to-location data used in anti-abuse |
-| **Playwire, Google AdSense** | Advert delivery |
-| **Facebook, Yahoo, Apple developer apps** | The social sign-in routes |
+| **Playwire** | Advert delivery |
+| **WhatJobs** | The job listings shown in some advert slots |
+| **Facebook and Apple developer apps** | The other two social sign-in routes |
 | **CookieYes, Google Tag Manager, Trustpilot** | Consent banner, analytics, reviews |
 
 The full list of what each one does and how badly it matters is
@@ -102,7 +102,7 @@ The full list of what each one does and how badly it matters is
 
 | Account | What it gives you |
 |---|---|
-| **Google Workspace** | Staff and team `@ilovefreegle.org` mail, and the team addresses in [05-who-does-what.md](05-who-does-what.md) |
+| **Google Workspace** | Staff and team `@ilovefreegle.org` mail, and the team addresses in [who-does-what.md](who-does-what.md) |
 | **Discourse admin** | The volunteers' forum, and the API key the batch tier posts with |
 | **The support mailbox** | Member support mail, read over IMAP by the support tooling |
 
@@ -141,7 +141,7 @@ Deliberately not automatic.
 - **Ask for it when a task needs it**, not before. Most development, including most bug
   fixing, needs no production access at all.
 - **Read-only database access to production exists** and is the right tool for
-  investigating live data. It is genuinely read-only, so you cannot break anything with it.
+  investigating live data. It is read-only, so you cannot break anything with it.
 - **Writes to production data happen through code and migrations**, reviewed like anything
   else - not by hand at a prompt.
 - Be aware that **production containers must not be recreated or restarted without
@@ -150,7 +150,7 @@ Deliberately not automatic.
 
 ## When someone leaves
 
-The uncomfortable but necessary list, and exactly what gets forgotten when people move on.
+Do all of this, in this order. Item 4 is the one that gets forgotten.
 
 1. Remove them from 1Password, and **rotate anything they could have copied** - a
    credential someone once held is not secured by removing their access to the vault.
@@ -160,7 +160,7 @@ The uncomfortable but necessary list, and exactly what gets forgotten when peopl
 4. Check for anything under a **personal** account rather than a Freegle one: a domain, an
    API key, a cloud project, a store listing, a mailing list. This is the item that
    actually causes outages years later.
-5. Reassign the team addresses in [05-who-does-what.md](05-who-does-what.md) that they
+5. Reassign the team addresses in [who-does-what.md](who-does-what.md) that they
    received.
 6. Update the `owner:` front matter on any documentation page they owned.
 

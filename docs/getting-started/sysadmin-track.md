@@ -10,7 +10,7 @@ in.
 It stands on its own - you do not need the developer track to do this job, though you will
 end up reading parts of it, because the line between the two roles is thin here.
 
-**Read [01-what-freegle-is.md](01-what-freegle-is.md) first if you have not.** It is short,
+**Read [what-freegle-is.md](what-freegle-is.md) first if you have not.** It is short,
 and it defines the words used below.
 
 Two facts to set expectations before anything else:
@@ -29,7 +29,7 @@ Three things.
 
 1Password first, because everything else is inside it. Then GitHub, the volunteers' forum
 and a normal member account on the live site. The list, and who to ask, is
-[04-accounts-and-access.md](04-accounts-and-access.md).
+[accounts-and-access.md](accounts-and-access.md).
 
 You do **not** need production server access on day one, and you should not rush it. Ask
 for it when you have a task that needs it.
@@ -37,7 +37,7 @@ for it when you have a task that needs it.
 ### 2. Learn the shape of production
 
 Read [../ops/production.md](../ops/production.md) and
-[../ops/01-overview-and-environments.md](../ops/01-overview-and-environments.md).
+[../ops/overview-and-environments.md](../ops/overview-and-environments.md).
 
 The map in one paragraph. A load balancer takes public traffic. Three database machines run
 a **multi-master cluster** - each holds a full copy, any of them can serve reads, and
@@ -48,12 +48,12 @@ image-upload and image-delivery services. The two websites are not on our server
 they are static builds served from a hosting provider.
 
 If that sounds like the database machines are doing too much, see
-[06-decisions-and-rationale.md](06-decisions-and-rationale.md) for why it is deliberate.
+[decisions-and-rationale.md](decisions-and-rationale.md) for why it is deliberate.
 
 ### 3. Understand what supervises what
 
-This is the single most useful thing to learn early, because it determines *how you
-restart something*, and getting it wrong wastes an hour during an incident.
+Learn this early. It decides *how you restart something*, and getting it wrong wastes an
+hour during an incident.
 
 There are four different supervision mechanisms in play, and the right command depends on
 which one owns the process. The table is in
@@ -76,6 +76,15 @@ checks". Do them manually this week even though it feels mechanical. You are cal
 after five days you will know what normal looks like, and that is what lets you spot
 abnormal later.
 
+### Get ModTools open in a tab
+
+Two of the checks live there and need nothing but a ModTools login: the **status dot** in
+the navigation bar, which is green when the scheduled jobs actually did their work and
+lists what is wrong when they did not, and the **Yesterday panel** on the home page, which
+flags a failed nightly database restore. Both are described in
+[../ops/monitoring-and-logging.md](../ops/monitoring-and-logging.md). Amber and red only
+show to accounts with support or admin rights, so make sure yours has them.
+
 ### Learn what does *not* alert you
 
 This is the part that catches people out, so it has its own section in
@@ -84,8 +93,8 @@ you, and what does not".
 
 The headline gaps, all of which have bitten us:
 
-- **A failed nightly database restore is silent.** It once failed six nights running with
-  nobody noticing.
+- **A failed nightly database restore is only visible if you look.** ModTools flags it on
+  the home page, but nothing pushes it at anyone.
 - **Mail deferrals building up for one provider** look like nothing until delivery to that
   provider has been dead for days.
 - **A monitoring config that fails to load** looks exactly like nothing being wrong,
@@ -108,13 +117,13 @@ during a real emergency.
 
 Two operational facts:
 
-- **Nothing alerts when that restore fails**, so checking it is part of your routine until
-  that is fixed.
+- **When a restore fails, ModTools says so** on its home page - stale copy, failed restore,
+  or machine unreachable. Nothing pushes that at anyone, so looking is part of your routine.
 - **The useful log is the restore monitor's service journal**, not the cron log. The cron
   log tells you it failed; the journal tells you why.
 
 Architecture in
-[../ops/04-domains-services-and-runbooks.md](../ops/04-domains-services-and-runbooks.md),
+[../ops/domains-services-and-runbooks.md](../ops/domains-services-and-runbooks.md),
 mechanics in [`yesterday/README.md`](../../yesterday/README.md).
 
 ### Find out where logs and errors go
@@ -125,7 +134,7 @@ mechanics in [`yesterday/README.md`](../../yesterday/README.md).
 - Sign-in and sign-out are **not** in Loki; they are rows in a database table, which is
   what to reach for when someone reports being logged out unexpectedly.
 
-[../ops/03-monitoring-and-logging.md](../ops/03-monitoring-and-logging.md).
+[../ops/monitoring-and-logging.md](../ops/monitoring-and-logging.md).
 
 ### Learn the triage order before you need it
 
@@ -159,7 +168,7 @@ websites. The mobile apps build from the same branch.
 The consequence for you: **a frontend change reaching members is not something you do, it
 is something that happens.** Your involvement is when it does not happen, or when a
 backend service it depends on has not been deployed first. Read
-[../ops/02-deployment-and-ci.md](../ops/02-deployment-and-ci.md), including the rollback
+[../ops/deployment-and-ci.md](../ops/deployment-and-ci.md), including the rollback
 section, before you need it.
 
 ### Learn the mail system properly
@@ -203,7 +212,7 @@ validate the monitoring config before reloading, because a syntax error leaves t
 watching nothing at all.
 
 If you find something during your first month that exists on one box and nowhere in git,
-capturing it there is the single most valuable thing you can do that week.
+put it in git.
 
 ### Things not to do
 
@@ -230,9 +239,9 @@ monitoring or the host-config record that was previously only in somebody's head
 |---|---|
 | The full duties reference | [../ops/reference/sysadmin-duties.md](../ops/reference/sysadmin-duties.md) |
 | Production topology | [../ops/production.md](../ops/production.md) |
-| Domains, services, backups | [../ops/04-domains-services-and-runbooks.md](../ops/04-domains-services-and-runbooks.md) |
-| Deployment and CI | [../ops/02-deployment-and-ci.md](../ops/02-deployment-and-ci.md) |
-| Monitoring and logging | [../ops/03-monitoring-and-logging.md](../ops/03-monitoring-and-logging.md) |
+| Domains, services, backups | [../ops/domains-services-and-runbooks.md](../ops/domains-services-and-runbooks.md) |
+| Deployment and CI | [../ops/deployment-and-ci.md](../ops/deployment-and-ci.md) |
+| Monitoring and logging | [../ops/monitoring-and-logging.md](../ops/monitoring-and-logging.md) |
 | Third parties we depend on | [../developers/reference/external-services.md](../developers/reference/external-services.md) |
-| Why the architecture is like this | [06-decisions-and-rationale.md](06-decisions-and-rationale.md) |
+| Why the architecture is like this | [decisions-and-rationale.md](decisions-and-rationale.md) |
 | Everything else, by subject | [../ops/README.md](../ops/README.md) |

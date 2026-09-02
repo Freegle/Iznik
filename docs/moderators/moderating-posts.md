@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-28
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -94,7 +94,7 @@ ModTools tells you *why* a post needs a look, right on the post:
 
 Most actions send a **standard message** - a canned, editable reply for a common
 situation (approve, reject, hold, and so on). You configure your sets under Settings (see
-[running your community](04-running-your-community.md)). Each action can be marked:
+[running your community](running-your-community.md)). Each action can be marked:
 
 - **rarely used**, so it hides behind a "more" expander, and
 - **autosend**, so one click sends it, versus opening it for editing first. You can flip
@@ -140,7 +140,7 @@ live, search by id, subject or member, and mark OFFERs and WANTEDs as **Taken**,
 If a post really is spam, use **Delete as Spam** rather than a plain delete. Marking it as
 spam feeds Freegle's spam filters so similar posts are caught in future; a plain delete
 does not. You can also **Report Spammer** straight from a post - see
-[managing members](03-managing-members.md).
+[managing members](managing-members.md).
 
 ## Reports and "Back to Pending" across communities
 
@@ -167,6 +167,6 @@ not work.
 
 ## Next steps
 
-- Looking after the people behind the posts: [Managing members](03-managing-members.md).
+- Looking after the people behind the posts: [Managing members](managing-members.md).
 - Configuring queues, rules and standard messages:
-  [Running your community](04-running-your-community.md).
+  [Running your community](running-your-community.md).

@@ -120,8 +120,8 @@ the outcome is "hold for a moderator", not "delete".
 Volunteer moderators are the last and most important layer, and for many categories the
 only one that can work - "duplicate", "out of area" and "posted too soon" all need context
 no filter has. What they see and do is documented for them in
-[../../moderators/02-moderating-posts.md](../../moderators/02-moderating-posts.md) and
-[../../moderators/03-managing-members.md](../../moderators/03-managing-members.md).
+[../../moderators/moderating-posts.md](../../moderators/moderating-posts.md) and
+[../../moderators/managing-members.md](../../moderators/managing-members.md).
 
 ## Why there is no AI moderator
 

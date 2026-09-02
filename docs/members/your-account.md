@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-17
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/settings/**
@@ -95,7 +95,7 @@ You can change any of it, or turn everything off, on the Settings page.
 
 **My Posts** (`/myposts`) is the home for everything you have offered or asked for, active
 and old. From here you edit, repost, promise, and mark items TAKEN or RECEIVED. See
-[Giving something away](02-giving.md) and [Getting something](03-getting.md).
+[Giving something away](giving.md) and [Getting something](getting.md).
 
 Note that old posts stay in your history and cannot be deleted. They are kept for
 community statistics and so you always have a record of what you gave or received.
@@ -136,6 +136,6 @@ community statistics and so you always have a record of what you gave or receive
 
 ## Next steps
 
-- New here? Start with [Getting started](01-getting-started.md).
+- New here? Start with [Getting started](getting-started.md).
 - The moderators who run your community have their own guide under
   [../moderators/](../moderators/README.md).

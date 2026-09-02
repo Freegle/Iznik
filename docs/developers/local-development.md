@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-03
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - README.md
@@ -19,7 +19,7 @@ Measured on a working dev machine (August 2026), rounded up for headroom:
 
 - **RAM**: a full stack is ~29 containers using **15-19 GiB** when warm. 32 GB is a
   realistic minimum for one stack; each extra worktree stack costs a similar amount
-  while running. On WSL2, raise the memory limit in `.wslconfig` — Docker Desktop's
+  while running. On WSL2, raise the memory limit in `.wslconfig` - Docker Desktop's
   default allocation is not enough.
 - **Disk**: allow **~100 GB free** for a first build (images plus volumes plus build
   cache). This grows over time: build cache and superseded image layers accumulate, and
@@ -36,7 +36,7 @@ Freegle runs as a Docker Compose stack. On Windows, use WSL2 (Docker Desktop is 
 
 1. Clone the repo into a WSL2 path.
 2. Copy `.env.example` to `.env`. The basic system works without extra configuration; some
-   features need API keys (Google OAuth, Mapbox and so on).
+   features need API keys (Google OAuth and so on).
 3. Add the `*.localhost` entries to your hosts file (listed in the README).
 4. `docker-compose up -d`.
 5. Watch startup at the status dashboard, `http://status.localhost:8081`. The stack builds
@@ -102,5 +102,5 @@ for the Bootstrap breakpoints, is in [./reference/browser-testing.md](./referenc
 
 ## Next
 
-- Running the tests: [Testing](03-testing.md).
-- The APIs and the data model: [APIs and data](04-apis-and-data.md).
+- Running the tests: [Testing](testing.md).
+- The APIs and the data model: [APIs and data](apis-and-data.md).

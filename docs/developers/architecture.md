@@ -49,7 +49,7 @@ Freegle (internally "Iznik") is a monorepo. The main pieces:
 | `iznik-nuxt3/` | Nuxt 4 frontend (the directory name predates the upgrade). Serves **both** the member site (ilovefreegle.org) and, from the `modtools/` subfolder, the moderator app (modtools.org). | `iznik-nuxt3/README.md` |
 | `iznik-server-go/` | Go API, **version 2** - the primary API. | `iznik-server-go/README.md` |
 | `iznik-batch/` | Laravel batch processing: digests, notifications, scheduled jobs. Owns the database schema (migrations). | `iznik-batch/README.md` |
-| `iznik-routing-go/` | Go service for drive-time routing, used by rippling and browse; includes the reach engine (region labels instead of repeated searches — see `iznik-routing-go/REACH-ENGINE.md`). | `iznik-routing-go/README.md` |
+| `iznik-routing-go/` | Go service for drive-time routing, used by rippling and browse; includes the reach engine (region labels instead of repeated searches - see `iznik-routing-go/REACH-ENGINE.md`). | `iznik-routing-go/README.md` |
 | `iznik-spatial-go/` | Go service for spatial lookups (which community covers a point, etc). | `iznik-spatial-go/README.md` |
 | `status-nuxt/` | Development status dashboard and test runner. | - |
 | `freegle-app/` | A Kotlin Multiplatform native app. An experiment; it does not ship. See [./reference/mobile-app.md](./reference/mobile-app.md). | - |
@@ -76,7 +76,7 @@ and per-group membership and roles are the ones you will meet first.
 
 - The frontend calls the **Go v2 API**; its api-client layer speaks v2 only. The legacy
   **PHP v1 API** (`iznik-server/`) has been retired and removed from the repo. See
-  [APIs and data](04-apis-and-data.md).
+  [APIs and data](apis-and-data.md).
 - **Batch** (Laravel) runs the scheduled and background work (digests, notification
   emails, reposts) against the database.
 - **Routing and spatial** Go services answer "how far / which area" questions that
@@ -130,7 +130,7 @@ and per-group membership and roles are the ones you will meet first.
 - **TrashNothing / LoveJunk** is a partner integration where external users post into
   Freegle communities. See [./reference/trashnothing.md](./reference/trashnothing.md).
 - **Logging and observability** run through Loki, with client-side tracing. See
-  [../ops/reference/logging.md](../ops/reference/logging.md) and [APIs and data](04-apis-and-data.md).
+  [../ops/reference/logging.md](../ops/reference/logging.md) and [APIs and data](apis-and-data.md).
 
 ## Finding your way around
 

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-28
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - iznik-server-go/API-GUIDE.md
@@ -60,7 +60,7 @@ Logs go to **Loki** (`localhost:3100` in development). Query with LogQL; user-fa
 client-side tracing carry trace and session ids so you can follow a request across
 services. The developer-facing parts (local setup and querying) are in
 [../ops/reference/logging.md](../ops/reference/logging.md); the production and backup side is covered under
-[../ops/03-monitoring-and-logging.md](../ops/03-monitoring-and-logging.md).
+[../ops/monitoring-and-logging.md](../ops/monitoring-and-logging.md).
 
 ## Recipes: how do I add ...?
 
@@ -75,7 +75,7 @@ Short pointers; each ends at the real pattern to copy.
   `eslint --fix` on changed files and verify visually per
   [./reference/browser-testing.md](./reference/browser-testing.md).
 - **A Playwright test** - reuse the helpers in `iznik-nuxt3/tests/e2e/utils/`; see
-  [Testing](03-testing.md).
+  [Testing](testing.md).
 - **A scheduled job or email** - add it in `iznik-batch/`; follow the email and template
   rules in `iznik-batch/CLAUDE.md`.
 

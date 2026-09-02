@@ -107,7 +107,7 @@ this means:
 - **Nobody is on call in a formal sense.** Alerts go to a mailing list and to whoever is
   awake. This is why the monitoring is tuned to be quiet and why a silent failure is the
   worst kind of bug we ship - see the Yahoo mail example in
-  [01-what-freegle-is.md](01-what-freegle-is.md).
+  [what-freegle-is.md](what-freegle-is.md).
 - **Discussion happens on Discourse**, the volunteers' own forum, not in issue trackers.
   There is a weekly automated summary of code changes posted there
   (`FREEGLE_DISCOURSE_TECH_EMAIL`), which is how non-technical volunteers see what changed.
@@ -136,4 +136,4 @@ Three habits that keep the human side working:
 
 Names, who holds which account, and who to escalate to are in the credential vault and the
 volunteers' forum, not in git. See
-[04-accounts-and-access.md](04-accounts-and-access.md).
+[accounts-and-access.md](accounts-and-access.md).

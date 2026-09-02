@@ -16,10 +16,10 @@ Two rules apply throughout:
 
 - **No key, id or secret is ever written in code or in these docs.** They come from
   environment variables. Where they are actually held is in
-  [../../getting-started/04-accounts-and-access.md](../../getting-started/04-accounts-and-access.md).
+  [../../getting-started/accounts-and-access.md](../../getting-started/accounts-and-access.md).
 - **We prefer to self-host** where a dependency is heavily used, for cost and for control.
   The reasoning is in
-  [../../getting-started/06-decisions-and-rationale.md](../../getting-started/06-decisions-and-rationale.md).
+  [../../getting-started/decisions-and-rationale.md](../../getting-started/decisions-and-rationale.md).
 
 ## What would break the site
 
@@ -30,7 +30,7 @@ These are load-bearing. A failure here is visible to members within minutes.
 | **Netlify** | Hosts and deploys the two frontends (ilovefreegle.org, modtools.org) | The websites go down; the API and mail keep running |
 | **Our own servers** | Database cluster, API, batch, mail, spatial, routing | See [../../ops/production.md](../../ops/production.md) |
 | **Google OAuth** | "Sign in with Google", the most used sign-in route | Those members cannot sign in; email/password still works |
-| **Facebook, Yahoo, Apple sign-in** | The other social sign-in routes (`LoginModal.vue`) | As above, per provider |
+| **Facebook and Apple sign-in** | The other two social sign-in routes (`LoginModal.vue`) | As above, per provider |
 | **Stripe** | Card donations | Donations stop; ads stay on ([donations-and-gift-aid.md](donations-and-gift-aid.md)) |
 | **PayPal** | The other donation route | As above |
 
@@ -40,14 +40,14 @@ Visible, annoying, not fatal.
 
 | Service | What it does |
 |---|---|
-| **Mapbox** | Some map imagery and isochrones. We generate travel times ourselves where we can, but production still buys some from Mapbox |
 | **Google Maps / Places** | Address and place lookup in parts of the frontend |
 | **Google Cloud Vision** | Checks uploaded photos for unsuitable images |
 | **Google Perspective** | Scores text for abuse, feeding moderation |
 | **Google Gemini** | The AI features (support helper, classification experiments) |
 | **Firebase Cloud Messaging** | Push notifications to the apps (`GOOGLE_PUSH_KEY`) |
 | **MaxMind** | Turns an IP address into a rough location, used in anti-abuse |
-| **Playwire, Google AdSense** | Advert delivery ([ads.md](ads.md)) |
+| **Playwire** | Advert delivery ([ads.md](ads.md)) |
+| **WhatJobs** | The job listings that fill some advert slots ([ads.md](ads.md)) |
 | **CookieYes** | The cookie consent banner |
 | **Google Tag Manager** | Analytics tags, only when `GTM_ID` is set |
 | **Trustpilot** | Review link |
@@ -58,18 +58,29 @@ These look like external services on other sites. We run them.
 
 | Service | Instead of | Where |
 |---|---|---|
-| **Photon** | A paid geocoding API | Batch host, native under monit. 6.3 GB index, rebuilt not backed up |
-| **OSM tile server** | Mapbox/Google tiles | Edge tier (`tile-server` container) |
+| **Place search** | A paid geocoding API | Part of the spatial service. An index of named UK places built from OpenStreetMap data, held in memory and reloaded without a restart |
+| **OSM tile server** | A paid map tile service | Edge tier (`tile-server` container) |
 | **tusd** | An upload service | Edge tier. Uploads are resumable; identifiers look like `freegletusd-*` |
 | **weserv** | Cloudinary or similar | Image resizing and delivery (`IMAGE_DELIVERY`) |
-| **Loki + Grafana** | A hosted log service | [../../ops/03-monitoring-and-logging.md](../../ops/03-monitoring-and-logging.md) |
+| **Loki + Grafana** | A hosted log service | [../../ops/monitoring-and-logging.md](../../ops/monitoring-and-logging.md) |
 | **Discourse** | A hosted forum | `discourse.ilovefreegle.org`, the volunteers' forum |
 | **Postfix** | A bulk mail provider | About 200,000 messages a day; see [../../ops/production.md](../../ops/production.md) |
 
-Uploadcare was retired; image handling is now purely tusd plus weserv. If you find an
-Uploadcare branch in the code it is dead.
+## In the code but not in use
+
+These have not been removed from the tree, so their presence proves nothing. Do not read
+a key in `.env.example`, or a component that still compiles, as evidence that we pay for
+something or that a route works.
+
+| Thing | Status |
+|---|---|
+| **Mapbox** | Not used. Travel times and isochrones are computed in-house and map tiles come from our own tile server. The code and `MAPBOX_KEY` remain |
+| **Google AdSense** | Not used. `OurGoogleDa.vue` is still in the tree and `GOOGLE_ADSENSE_ID` is still read, but the AdSense module is commented out in `nuxt.config.ts`, so the component cannot render |
+| **Yahoo sign-in** | Not used. Sign-in is Google, Facebook, Apple, or email and password |
+| **Uploadcare** | Retired. Image handling is purely tusd plus weserv; any Uploadcare branch you find is dead |
 
 ## Development and delivery
+
 
 | Service | What it does |
 |---|---|
@@ -90,6 +101,6 @@ subject: [partner-integrations.md](partner-integrations.md).
 Frontend values that reach the browser are declared in `runtimeConfig.public` in
 `iznik-nuxt3/nuxt.config.ts`. Anything there is **public by definition** - it is served to
 every visitor - so only publishable keys belong in it (a Stripe *publishable* key, an
-AdSense id). Server-side secrets go in `.env` (development, see `.env.example`) and
+advert publisher id). Server-side secrets go in `.env` (development, see `.env.example`) and
 `.env.background` (production batch, see `.env.background.example`), and in the batch tier
 are read through `iznik-batch/config/freegle.php` rather than `env()` at the point of use.

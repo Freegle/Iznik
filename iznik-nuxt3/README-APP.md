@@ -917,7 +917,6 @@ From `capacitor.config.ts` comments:
 
 - [ ] Status bar shows correctly on Android pre-A15, A15+ and iOS
 - [ ] Camera: take photo and select one or more photos
-- [ ] Yahoo login works
 - [ ] Google login works (Android & iOS)
 - [ ] Facebook login works (Android & iOS)
 - [ ] Apple login works (iOS only)

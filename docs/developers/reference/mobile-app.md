@@ -10,6 +10,10 @@ covers:
 
 # Mobile apps
 
+New to this and taking it on? Start with
+[../../getting-started/mobile-track.md](../../getting-started/mobile-track.md), which is
+the day 1, week 1, month 1 version of this page.
+
 There are **two** strands of mobile work in this repository, and only one of them ships.
 Getting this wrong wastes days, so it is the first thing on the page.
 

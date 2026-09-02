@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-19
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
@@ -93,9 +93,9 @@ automatically reposts it ("Will Repost: ..."), and later checks in to ask what h
 if it has rippled out to several communities. Whatever you choose - taken, withdrawn, or
 promised - applies everywhere the post has reached.
 
-You can turn auto-reposting on or off in [your account settings](04-your-account.md).
+You can turn auto-reposting on or off in [your account settings](your-account.md).
 
 ## Next steps
 
-- Looking for something yourself? See [Getting something](03-getting.md).
-- Manage your emails, communities and profile in [Your account](04-your-account.md).
+- Looking for something yourself? See [Getting something](getting.md).
+- Manage your emails, communities and profile in [Your account](your-account.md).

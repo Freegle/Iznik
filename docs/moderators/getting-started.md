@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-17
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/index.vue
@@ -58,7 +58,7 @@ Freegle has two independent kinds of role. It helps to know which is which.
 
 - **User**, then **Moderator**, then **Support**, then **Admin**. Support and Admin unlock
   the support and sysadmin tools (see
-  [running your community](04-running-your-community.md)).
+  [running your community](running-your-community.md)).
 
 On top of that, some features are gated by specific **permissions** (for example
 Newsletter, Spam admin, Gift Aid, Clearance), granted independently of your role. If you
@@ -85,7 +85,7 @@ a link to exactly the view you want.
 Under **Settings** there is a **Personal** tab for your own preferences as a moderator:
 for example whether to get ChitChat email, and your notification and beep preferences.
 This is separate from a community's settings, which are covered in
-[running your community](04-running-your-community.md).
+[running your community](running-your-community.md).
 
 ## Talking to other moderators
 
@@ -95,6 +95,6 @@ urgent, `mentors@ilovefreegle.org` reaches experienced volunteers who can help.
 
 ## Next steps
 
-- The core of the job: [Moderating posts](02-moderating-posts.md).
-- Looking after people: [Managing members](03-managing-members.md).
-- Configuring things: [Running your community](04-running-your-community.md).
+- The core of the job: [Moderating posts](moderating-posts.md).
+- Looking after people: [Managing members](managing-members.md).
+- Configuring things: [Running your community](running-your-community.md).

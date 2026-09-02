@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-17
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/settings/**
@@ -53,7 +53,7 @@ no-shows, too many emails, safety, reselling). Adapt them to your own voice.
 
 A message can mark part of its wording as something you must fill in each time, or as
 something optional, using `<editthis>` and `<optional>` tags. See
-[fill-in boxes and optional bits](02-moderating-posts.md#fill-in-boxes-and-optional-bits)
+[fill-in boxes and optional bits](moderating-posts.md#fill-in-boxes-and-optional-bits)
 for what a moderator then sees when they send it.
 
 **Export PDF** produces the whole set as one document: the general settings, the BCC
@@ -138,6 +138,6 @@ There is technical detail for the curious in [../developers/reference/trashnothi
 
 ## Next steps
 
-- Back to the daily work: [Moderating posts](02-moderating-posts.md) and
-  [Managing members](03-managing-members.md).
-- New to ModTools? Start with [Getting started](01-getting-started.md).
+- Back to the daily work: [Moderating posts](moderating-posts.md) and
+  [Managing members](managing-members.md).
+- New to ModTools? Start with [Getting started](getting-started.md).

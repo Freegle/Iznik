@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-27
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - docs/ops/reference/database-read-write-split.md
@@ -18,8 +18,8 @@ covers:
 | **ilovefreegle.org** | The member site (Nuxt build, served from Netlify). |
 | **modtools.org** | The moderator app (Nuxt build from the same repo, `modtools/`). |
 | **v2 API (Go)** | The application API. |
-| **uploads / delivery** | Image upload (tusd) and resizing/delivery (weserv) — the edge tier. |
-| **tiles / geocode / wiki** | Map tiles (OSM), the Photon geocoder, and the volunteer wiki. |
+| **uploads / delivery** | Image upload (tusd) and resizing/delivery (weserv) - the edge tier. |
+| **tiles / geocode / wiki** | Map tiles (OSM), place search (geocoding), and the volunteer wiki. |
 
 Which machine serves each of these, and how requests are routed to them, is in
 [Production topology](production.md). The local development equivalents (the
@@ -45,7 +45,7 @@ Plan restarts of these services with that warm-up time in mind.
 Production splits database **reads and writes** across hosts; the application routes
 queries accordingly. The reference is
 [./reference/database-read-write-split.md](./reference/database-read-write-split.md). The schema is
-owned by Laravel migrations (see [../developers/04-apis-and-data.md](../developers/04-apis-and-data.md)).
+owned by Laravel migrations (see [../developers/apis-and-data.md](../developers/apis-and-data.md)).
 
 Before adding or removing an index, and to check the migrations still describe the schema
 production actually has, see
@@ -81,9 +81,10 @@ At an architecture level:
 
   Two things to know before you rely on it:
 
-  - **Nothing alerts when the nightly restore fails.** It has previously failed for six
-    nights running without anyone noticing. Until that is fixed, check the restore status
-    file on the Yesterday VM as part of the routine checks in
+  - **ModTools shows a failed restore, but nothing pushes it at anyone.** The ModTools home
+    page carries a Yesterday panel that turns to a warning when the copy is stale, the
+    restore failed, or the machine cannot be reached. Somebody has to look, which is why it
+    is on the daily list in
     [./reference/sysadmin-duties.md](./reference/sysadmin-duties.md).
   - **The useful log is the restore monitor service journal**, not the cron log. The cron
     log reports a bare failure with no cause; the service journal shows which stage broke.
@@ -91,7 +92,7 @@ At an architecture level:
   The mechanics - the snapshot scheme, the sizing, and the scripts - are documented in
   [`yesterday/README.md`](../../yesterday/README.md). Credentials for the VM and the cloud
   project are in the ops password vault; see
-  [../getting-started/04-accounts-and-access.md](../getting-started/04-accounts-and-access.md).
+  [../getting-started/accounts-and-access.md](../getting-started/accounts-and-access.md).
 
 ## Runbooks
 

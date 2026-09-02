@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - docs/developers/reference/coding-standards.md
@@ -55,7 +55,7 @@ The documentation screenshots reuse this same setup - see
 ## Test data and databases
 
 The test database is built from committed fixtures via the setup scripts (schema comes
-from Laravel migrations - see [APIs and data](04-apis-and-data.md)). After adding a
+from Laravel migrations - see [APIs and data](apis-and-data.md)). After adding a
 migration, rerun the test-database setup so the test schema matches. The seeded data is
 FreeglePlayground around Edinburgh (postcode EH3 6SS).
 
@@ -63,5 +63,5 @@ FreeglePlayground around Edinburgh (postcode EH3 6SS).
 
 CircleCI runs the full suite on every push to master, via a shared reusable orb. When you
 change tests, remember to update the orb too. The operational view of CI is in
-[../ops/02-deployment-and-ci.md](../ops/02-deployment-and-ci.md), and the reference is
+[../ops/deployment-and-ci.md](../ops/deployment-and-ci.md), and the reference is
 [../ops/reference/circleci.md](../ops/reference/circleci.md).

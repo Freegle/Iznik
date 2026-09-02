@@ -143,24 +143,26 @@ This allows the container to reach external production services while remaining 
 ## Data Flow
 
 ### Email Sending (batch-prod)
-```
-batch-prod → mail-host (bulk2-internal) → External Recipients
-                    ↓
-            SPF/DKIM signed by bulk2
+```mermaid
+flowchart LR
+    B[batch-prod] --> M["mail-host<br/>SPF and DKIM signed here"] --> R[Recipients]
 ```
 
 ### Log Aggregation
-```
-All containers → Loki (port 3100) → Grafana (optional)
-                      ↓
-              GCS Backup (daily)
+```mermaid
+flowchart LR
+    C[All containers] --> L[Loki] --> G["Grafana (optional)"]
+    L --> B["Cloud storage backup (daily)"]
 ```
 
+The full picture, including how logs reach Loki on live servers, is in
+[../../ops/reference/logging.md](../../ops/reference/logging.md).
+
 ### API Request Flow (Local Dev)
-```
-Browser → Traefik → freegle-dev-local → apiv2 → percona
-                           ↓
-                      delivery (images)
+```mermaid
+flowchart LR
+    BR[Browser] --> T[Traefik] --> F[freegle-dev-local] --> A[apiv2] --> P[(percona)]
+    F --> D["delivery (images)"]
 ```
 
 ## Configuration Files

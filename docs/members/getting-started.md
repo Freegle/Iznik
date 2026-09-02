@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-30
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/index.vue
@@ -88,6 +88,6 @@ There is a fuller explanation for members in
 
 ## Next steps
 
-- Ready to give something away? See [Giving something away](02-giving.md).
-- Looking for something? See [Getting something](03-getting.md).
-- Want to control your emails and communities? See [Your account](04-your-account.md).
+- Ready to give something away? See [Giving something away](giving.md).
+- Looking for something? See [Getting something](getting.md).
+- Want to control your emails and communities? See [Your account](your-account.md).

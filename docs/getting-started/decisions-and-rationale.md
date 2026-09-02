@@ -18,8 +18,12 @@ Two constraints shape almost all of it:
 
 ## Why one database cluster, multi-master
 
-Production runs **MariaDB with Galera**, three nodes, all of which can accept writes.
+Production runs **Percona XtraDB Cluster**, three nodes, all of which can accept writes.
 
+- **Maintenance without downtime.** This is the biggest day-to-day benefit. Schema changes,
+  database upgrades and operating system patching can be done one node at a time while the
+  other two keep serving. Without a cluster, every one of those is an outage the whole site
+  feels.
 - **Availability without a managed database.** A hosted database would cost more per month
   than the entire rest of the hosting. Three cheap machines that can each lose one and keep
   going gives us the availability we need for the money we have.
@@ -30,10 +34,10 @@ Production runs **MariaDB with Galera**, three nodes, all of which can accept wr
   close to the data, and the machines have spare memory and cores that would otherwise be
   idle.
 
-The catch, and you must know this: **all writes go to one nominated node.** Galera is
-multi-master but it resolves write conflicts by aborting transactions, so writing to
-several nodes at once produces mysterious deadlocks under load. So the cluster is
-multi-master for resilience, not for write throughput.
+The catch, and you must know this: **all writes go to one nominated node.** The cluster is
+multi-master, but it resolves write conflicts by aborting transactions, so writing to
+several nodes at once produces mysterious deadlocks under load. So it is multi-master for
+resilience and maintenance, not for write throughput.
 
 Two follow-on facts that cost people days:
 
@@ -52,7 +56,7 @@ The API was PHP. It is now Go (`iznik-server-go/`), and the PHP API has been ret
 
 - **Memory and process model.** PHP needed a process per concurrent request. Go handles
   thousands of concurrent requests in one process with a small footprint, which is what
-  lets the API run *on the database nodes* alongside MariaDB instead of needing its own
+  lets the API run *on the database nodes* alongside the database instead of needing its own
   machines.
 - **A single static binary.** Deployment is copy a file and restart. No runtime, no
   extensions, no package drift across three machines. For a team that cannot babysit
@@ -65,6 +69,10 @@ services. Scheduled work stayed in PHP, on purpose - see the next section.
 
 ## Why Laravel for the batch tier
 
+- **It is the standard PHP framework, and it suits this work better than Go.** Batch work is
+  scheduled jobs, mail templates and database chores: the value is in how fast a small team
+  can write and change them, not in raw speed. Laravel is what a PHP developer already knows,
+  which matters when the next person to touch it may be a volunteer.
 - **The schema lives in migrations.** `iznik-batch/database/migrations/` is the single
   source of truth for the database. That was the biggest win of the Laravel move: before
   it, the schema was a checked-in SQL dump that drifted from reality.
@@ -78,7 +86,7 @@ services. Scheduled work stayed in PHP, on purpose - see the next section.
 So the split is: **Go where latency and memory matter, PHP where developer time matters.**
 That is the whole rule.
 
-## Why we self-host the geocoder (Photon)
+## Why we run our own geocoder
 
 Geocoding is turning an address or place name into a location. Freegle does it constantly:
 every post, every search, every member setting their location.
@@ -87,24 +95,38 @@ every post, every search, every member setting their location.
   billed per request and rate limited. At our volume it would be one of the largest costs
   in the charity.
 - **Member addresses are personal data.** A member's home address should not be sent to a
-  third party to be logged. Self-hosting keeps it inside our own infrastructure.
+  third party to be logged. Doing it ourselves keeps it inside our own infrastructure.
 - **We need UK-specific behaviour**, including postcode handling and matching how members
   actually write addresses.
 
-The price we pay is a **6.3 GB search index** that must be rebuilt rather than restored,
-and a service that must be started properly. Photon runs natively on the batch host under
-monit, and the launcher plus a systemd override are captured in `ops/hosts/`, because a
-monit check without them produces a service that is watched, never starts, and retries
-forever - which is exactly what happened on 21 August 2026.
+For years that meant running **Photon**, an open-source geocoder written in Java. It did the
+job, but it took a lot of machine to do it: a Java virtual machine capped at 4 GB of memory,
+plus an embedded Elasticsearch search index of about 6.3 GB that had to stay in the file
+cache to be quick, plus a service of its own to supervise on the batch host. The index could
+only be rebuilt, never restored from a backup, and starting it needed a launcher script and
+a systemd override as well as the monit check, because the check on its own gave a service
+that was watched, never started, and retried forever.
+
+Place search now lives inside the spatial service (`iznik-spatial-go`) and answers the same
+shape of API on the same address, so nothing that calls it had to change. The gain is
+**occupancy** - how much of a machine it sits on:
+
+- **No Java and no Elasticsearch.** The whole dataset is one compressed file,
+  `places.jsonl.gz`, holding roughly 200,000 named UK places, built from the OpenStreetMap
+  extract we already download for routing (`iznik-routing-go/cmd/placesextract`).
+- **No extra service.** It loads into a process we already run, so there is one less thing
+  to start, watch and restart, and the 4 GB of Java memory and the 6.3 GB index are gone
+  from the batch host entirely.
+- **Updates without a restart.** The file is checked every minute and swapped in place, and
+  a corrupt or empty replacement never displaces a working index. Photon needed a rebuild
+  and a restart.
+
+Mentions of Photon left in old configuration and comments are archaeology.
 
 The same reasoning covers the self-hosted map tile server, image upload and resizing, and
 log aggregation. See
 [../developers/reference/external-services.md](../developers/reference/external-services.md)
 for the full self-hosted-versus-bought list.
-
-Honest exception: **production still buys some isochrones from Mapbox**, because our own
-routing has not fully replaced them. Do not assume everything travel-time related is
-in-house.
 
 ## Why travel time instead of distance
 
@@ -114,7 +136,11 @@ someone collecting a sofa.
 
 This is why there is a routing service holding a road graph in memory, and why that service
 takes minutes to warm up after a restart. Plan restarts accordingly
-([../ops/04-domains-services-and-runbooks.md](../ops/04-domains-services-and-runbooks.md)).
+([../ops/domains-services-and-runbooks.md](../ops/domains-services-and-runbooks.md)).
+
+Travel times and isochrones used to be bought from Mapbox. They are computed in-house now.
+The Mapbox code and key are still in the tree, unused; do not take their presence as
+evidence that we pay for them.
 
 ## Why rippling out instead of letting people choose a radius
 
@@ -171,10 +197,11 @@ of production, streams it to a separate cloud machine, restores it, and brings u
 complete working copy of Freegle from yesterday's data, which volunteers can browse. A
 backup that cannot be restored shows up as a Yesterday site that will not come up.
 
-The known weakness, stated plainly: **nothing alerts when that restore fails.** It once
-failed six nights running unnoticed. Checking it is a routine duty
-([../ops/reference/sysadmin-duties.md](../ops/reference/sysadmin-duties.md)) until it is
-fixed.
+When a restore fails, ModTools shows it: the home page carries a Yesterday panel that turns
+to a warning when the copy is stale, the restore failed, or the machine cannot be reached.
+Nothing pushes that at anyone, though, so somebody has to look - which is why it is on the
+routine list in
+([../ops/reference/sysadmin-duties.md](../ops/reference/sysadmin-duties.md)).
 
 ## Why two spam layers, and no AI moderator
 
@@ -194,7 +221,7 @@ Locally, Docker Compose gives a new developer the whole stack - databases, mail,
 frontends, spatial services - from one command, on any machine.
 
 In production, some services run in containers and some run natively under monit
-(the Go services on the database nodes, Photon and nginx on the batch host). Native won
+(the Go services on the database nodes, nginx and the mail stack on the batch host). Native won
 where the service needs to be close to the data or to host resources. That means
 **production supervision is split across monit, systemd, Docker Compose and HAProxy**, and
 knowing which one owns a given service is most of the job

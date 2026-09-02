@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-19
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/ask/**
@@ -56,7 +56,7 @@ Everything after the first reply happens in the **chat** (`/chats`).
 
 - **Agree a time and place** to collect, in your own words.
 - **Share an address** privately using the address button, so the other person knows
-  where to come. You can save addresses in your [account settings](04-your-account.md) for
+  where to come. You can save addresses in your [account settings](your-account.md) for
   next time.
 - Send photos in the chat if you need to.
 - Freegle may nudge the person offering to check whether they have had a reply, and to
@@ -95,5 +95,5 @@ TAKEN. You do not need to do anything, though a thank-you in the chat is always 
 
 ## Next steps
 
-- Want to give something back? See [Giving something away](02-giving.md).
-- Manage your emails, communities and profile in [Your account](04-your-account.md).
+- Want to give something back? See [Giving something away](giving.md).
+- Manage your emails, communities and profile in [Your account](your-account.md).

@@ -19,12 +19,12 @@ have the stack running.
 
 ## Start here
 
-1. **[Architecture and codebase map](01-architecture.md)** - the components, how they fit
+1. **[Architecture and codebase map](architecture.md)** - the components, how they fit
    together, and where things live.
-2. **[Local development](02-local-development.md)** - getting a working environment,
+2. **[Local development](local-development.md)** - getting a working environment,
    running the stack, and worktrees for parallel work.
-3. **[Testing](03-testing.md)** - the four test suites and how to run them.
-4. **[APIs and data](04-apis-and-data.md)** - the v2 API, how the frontend talks to
+3. **[Testing](testing.md)** - the four test suites and how to run them.
+4. **[APIs and data](apis-and-data.md)** - the v2 API, how the frontend talks to
    it, the data model, and recipes for common changes.
 
 ## The authoritative reference docs

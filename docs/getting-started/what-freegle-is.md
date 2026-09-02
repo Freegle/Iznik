@@ -35,12 +35,12 @@ Two consequences of that shape run through everything:
 | **Central volunteers** | ModTools plus their own tools, working across all communities rather than one |
 | **Staff** | A very small paid team |
 
-Almost everyone who runs Freegle is a **volunteer**. This is the single most important
-cultural fact about the platform, and it shows up in the software: moderation is designed
-to be quick and forgiving, email is the main way volunteers are reached, and a change that
-increases moderator workload is a change that costs the charity real volunteer goodwill.
+Almost everyone who runs Freegle is a **volunteer**. That shows up throughout the software:
+moderation is designed to be quick and forgiving, email is the main way volunteers are
+reached, and a change that increases moderator workload is a change that costs the charity
+real volunteer goodwill.
 
-The people, and who to ask about what, are in [05-who-does-what.md](05-who-does-what.md).
+The people, and who to ask about what, are in [who-does-what.md](who-does-what.md).
 
 ## The words we use
 
@@ -76,7 +76,7 @@ flowchart TD
     N --> API[Go API v2<br/>the only API]
     EM[Incoming email] --> MAIL[Postfix + spam filtering]
     MAIL --> B
-    API --> DB[(MariaDB Galera<br/>cluster)]
+    API --> DB[(Percona XtraDB<br/>Cluster)]
     B[Laravel batch<br/>digests, notifications,<br/>scheduled jobs] --> DB
     API --> SP[Spatial + routing<br/>Go services]
     B --> SP
@@ -95,14 +95,15 @@ In one sentence each:
   covers a point, how long it takes to drive somewhere, and how far a post should reach.
 - **Mail** - both directions. A large amount of Freegle happens over email, including all
   TrashNothing traffic.
-- **Database** - one MariaDB Galera cluster, with reads and writes routed differently.
+- **Database** - one Percona XtraDB Cluster (three nodes), with reads and writes routed
+  differently.
 
 It is a **monorepo**: all of those live in this one repository, versioned together.
 
 The full component map is in
-[../developers/01-architecture.md](../developers/01-architecture.md); the production
+[../developers/architecture.md](../developers/architecture.md); the production
 picture is in [../ops/production.md](../ops/production.md); why it is arranged this way is
-in [06-decisions-and-rationale.md](06-decisions-and-rationale.md).
+in [decisions-and-rationale.md](decisions-and-rationale.md).
 
 ## How money works
 

@@ -10,7 +10,7 @@ things in.
 It stands on its own - you do not need the sysadmin track to do this job, though reading it
 at some point will make you better at this one.
 
-**Read [01-what-freegle-is.md](01-what-freegle-is.md) first if you have not.** It is short,
+**Read [what-freegle-is.md](what-freegle-is.md) first if you have not.** It is short,
 and it defines the words used below.
 
 ## Day 1
@@ -21,7 +21,7 @@ Four things. Nothing else.
 
 1Password first, because everything else is inside it, then GitHub, the volunteers' forum
 and a normal member account on the live site. The list and how to get invited is
-[04-accounts-and-access.md](04-accounts-and-access.md).
+[accounts-and-access.md](accounts-and-access.md).
 
 ### 2. Use the live site as a member
 
@@ -34,7 +34,7 @@ get rid of a sofa.
 
 Follow the Installation and Running sections of the [root README](../../README.md), and
 then the fast path in
-[../developers/02-local-development.md](../developers/02-local-development.md).
+[../developers/local-development.md](../developers/local-development.md).
 
 Set expectations honestly: it is a large stack. About 29 containers, 15-19 GiB of RAM when
 warm, and roughly 100 GB of disk for a first build. On Windows you want WSL2, not Docker
@@ -57,7 +57,7 @@ Four suites - Go, Laravel, Vitest, Playwright - all launched from the status das
 curl -X POST http://localhost:8081/api/tests/go
 ```
 
-See [../developers/03-testing.md](../developers/03-testing.md). Getting all four green
+See [../developers/testing.md](../developers/testing.md). Getting all four green
 locally is the real end of day 1, because from here on a red suite means *you*.
 
 Two things to know about the seeded data: there is exactly one community,
@@ -101,7 +101,7 @@ restating it; screenshots are generated, never pasted. Full conventions in
 ### Learn the shape of the codebase
 
 One repository, a handful of components. Read
-[../developers/01-architecture.md](../developers/01-architecture.md) and then the deeper
+[../developers/architecture.md](../developers/architecture.md) and then the deeper
 [../developers/reference/architecture.md](../developers/reference/architecture.md).
 
 The short version:
@@ -133,15 +133,15 @@ prose - but the facts in them are current, because they get used.
 
 ### Understand rippling out
 
-This is the piece of Freegle that is genuinely unlike other systems and the source of the
-most subtle bugs. A post starts local and reaches further over time if nobody nearby takes
-it, and distance is measured in **minutes of driving, not miles**.
+This is the piece of Freegle that is unlike other systems, and the source of the most subtle
+bugs. A post starts local and reaches further over time if nobody nearby takes it, and
+distance is measured in **minutes of driving, not miles**.
 
 The rule to burn in: **the reach limit belongs to the receiving community, not to the
 post.** Read [../members/rippling-out.md](../members/rippling-out.md) for what members see,
 then [../developers/reference/rippling-algorithm.md](../developers/reference/rippling-algorithm.md)
 for how it works, then the reasoning in
-[06-decisions-and-rationale.md](06-decisions-and-rationale.md).
+[decisions-and-rationale.md](decisions-and-rationale.md).
 
 ### Read the code paths behind the money
 
@@ -192,12 +192,12 @@ working as designed and being confusing about it. The fix is often the wording.
 
 | Subject | Page |
 |---|---|
-| The v2 API and data model | [../developers/04-apis-and-data.md](../developers/04-apis-and-data.md) |
+| The v2 API and data model | [../developers/apis-and-data.md](../developers/apis-and-data.md) |
 | Adding an API endpoint | [`iznik-server-go/API-GUIDE.md`](../../iznik-server-go/API-GUIDE.md) |
 | Coding standards | [../developers/reference/coding-standards.md](../developers/reference/coding-standards.md) |
 | Everything else, by subject | [../developers/README.md](../developers/README.md) |
-| Why the architecture is like this | [06-decisions-and-rationale.md](06-decisions-and-rationale.md) |
-| The human teams you will be emailing | [05-who-does-what.md](05-who-does-what.md) |
+| Why the architecture is like this | [decisions-and-rationale.md](decisions-and-rationale.md) |
+| The human teams you will be emailing | [who-does-what.md](who-does-what.md) |
 
 ### What "good" looks like after a month
 

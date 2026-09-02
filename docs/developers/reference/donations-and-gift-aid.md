@@ -74,7 +74,7 @@ driven by `donations:giftaid-claim` and `donations:update-giftaid`.
   were added so a corrected split can be stored.
 
 Claims are submitted to HMRC by a person, not by this code. Who does that is in
-[../../getting-started/05-who-does-what.md](../../getting-started/05-who-does-what.md).
+[../../getting-started/who-does-what.md](../../getting-started/who-does-what.md).
 
 ## Thanking donors
 

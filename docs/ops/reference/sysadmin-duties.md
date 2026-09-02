@@ -13,10 +13,10 @@ covers:
 
 What the person looking after the live service actually has to do, how often, and why.
 This is the routine-work companion to [../production.md](../production.md) (what the
-machines are) and [../04-domains-services-and-runbooks.md](../04-domains-services-and-runbooks.md)
+machines are) and [../domains-services-and-runbooks.md](../domains-services-and-runbooks.md)
 (what each service is for).
 
-New to the role? Read [../../getting-started/03-sysadmin-track.md](../../getting-started/03-sysadmin-track.md)
+New to the role? Read [../../getting-started/sysadmin-track.md](../../getting-started/sysadmin-track.md)
 first - it puts this page in order as a first day, first week and first month.
 
 ## The shape of the job
@@ -29,8 +29,8 @@ outbound mail relay - carrying a service used by a few million people. There is 
    moderator tools, the API and the database survive the Docker host being down. See
    "Failure behaviour worth knowing" in [../production.md](../production.md).
 2. **The failures that hurt are the silent ones.** Not "the site is down" - somebody
-   tells you that within minutes. It is a backup that has not restored for six nights,
-   a monit check that is watching nothing because of a typo, a mail relay quietly
+   tells you that within minutes. It is a backup that has not restored for nights on end because nobody
+   looked at the panel that says so, a monit check that is watching nothing because of a typo, a mail relay quietly
    deferring a provider's worth of members. Your routine checks exist to catch the
    second kind.
 
@@ -40,7 +40,7 @@ Three different mechanisms, and it matters which one owns a given service:
 
 | Mechanism | What it supervises | Where the config is recorded |
 |---|---|---|
-| **monit** | Services running natively on the machines: MySQL/Galera, the v2 API, spatial and routing, nginx, Redis, beanstalkd, Photon, plus disk-space and mail-spool alarms | [`ops/hosts/monit/`](../../../ops/hosts/monit/) |
+| **monit** | Services running natively on the machines: MySQL/Galera, the v2 API, spatial and routing, nginx, Redis, beanstalkd, plus disk-space and mail-spool alarms | [`ops/hosts/monit/`](../../../ops/hosts/monit/) |
 | **systemd** | Starts the Docker Compose stack on the Docker host at boot | on the host |
 | **Docker Compose** | Restart policies for the containers within the stack | `docker-compose*.yml` in this repo |
 | **HAProxy** | Which backend is active; failover between database nodes and to the standby frontend | [`ops/hosts/haproxy/haproxy.cfg.template`](../../../ops/hosts/haproxy/haproxy.cfg.template) |
@@ -64,8 +64,9 @@ Two monit traps from that page, repeated here because they bite:
 
 | Check | How | Why |
 |---|---|---|
+| Is the platform status dot green? | The coloured dot in the **ModTools navigation bar**; click it for the list of what is wrong. Amber and red are only visible to moderators with support or admin rights | It is the fastest check there is, needs no credentials beyond ModTools, and it reports whether scheduled work actually happened rather than whether jobs ran. See [Monitoring and logging](../monitoring-and-logging.md#production-status-at-a-glance-the-modtools-status-dot) |
 | Anything new and loud in error tracking | Sentry | New exception classes after a deploy are the earliest signal that a release broke something the tests did not cover |
-| Did the nightly Yesterday restore succeed? | Restore status file on the Yesterday VM; if it failed, read the **restore monitor service journal**, not the cron log | **Nothing alerts on this.** It has failed for six nights running unnoticed. See [Backups](../04-domains-services-and-runbooks.md#backups) |
+| Did the nightly Yesterday restore succeed? | The **Yesterday panel on the ModTools home page** turns to a warning if the copy is stale, the restore failed, or the machine is unreachable. If it failed, read the **restore monitor service journal**, not the cron log | **Nothing pushes this at you** - the panel only helps if somebody looks. See [Backups](../domains-services-and-runbooks.md#backups) |
 | Outbound mail is moving | Queue depth and delivery counts on the mail relay | A provider throttle shows as a growing queue long before a member reports a missing digest |
 
 ### Every week
@@ -73,7 +74,7 @@ Two monit traps from that page, repeated here because they bite:
 | Check | How | Why |
 |---|---|---|
 | `monit summary` on each machine | every service should read OK | A check that has been failing for days is invisible unless you look |
-| Disk headroom on all machines | monit `disk.conf` alarms plus your own eyes | The Photon index alone is ~6.3G and the Yesterday pool grows by 10-20G a day; disk is the most common slow-motion outage |
+| Disk headroom on all machines | monit `disk.conf` alarms plus your own eyes | The Yesterday pool grows by 10-20G a day; disk is the most common slow-motion outage |
 | Galera cluster health | `SHOW STATUS LIKE 'wsrep_%'` - cluster size 3, all nodes Synced | A node can drop out and the site stays up, so nothing tells you until the second one goes |
 | CI is green on master | [CircleCI](circleci.md) | A red master blocks the auto-merge to `production`, which silently stops all frontend deploys |
 | Certificate expiry | whatever your reminder mechanism is | TLS certs are referenced by path in the HAProxy config and are **not** captured in this repo; nothing renews them for you |
@@ -89,17 +90,19 @@ Two monit traps from that page, repeated here because they bite:
 
 ## What alerts you, and what does not
 
-Be clear-eyed about this. The gaps are the job.
-
 **You will be told about:** monit service failures and disk alarms (by email to the ops
 alert address), application exceptions (Sentry), CI failures (CircleCI), and members
 complaining, which is a real and fast monitoring channel.
 
 **Nothing currently tells you about:**
 
-- A failed nightly backup restore. Check it daily by hand until this is fixed.
+- A failed nightly backup restore, other than the ModTools panel. Nobody is notified;
+  looking is the check.
 - Mail deferrals building up for one provider. The adaptive shaper reacts on its own,
   but nobody is notified that it did.
+- A warning-level outcome breach. Error-level ones raise a Sentry alert; warning-level
+  ones only colour the ModTools status dot amber, deliberately, so a machine that has
+  needed a reboot for a fortnight does not page somebody every ten minutes.
 - A monit configuration that fails to load.
 - Certificates approaching expiry.
 - A single Galera node leaving the cluster.
@@ -111,10 +114,9 @@ If you improve one thing in your first month, make it one of these.
 - **Deploys of anything that is not the frontend.** Netlify deploys the two static sites
   automatically from the `production` branch. The v2 API, the spatial and routing
   services and the batch stack are separate, and **the backend goes first** - see
-  [../02-deployment-and-ci.md](../02-deployment-and-ci.md).
+  [../deployment-and-ci.md](../deployment-and-ci.md).
 - **Restarts that are not cheap.** The spatial and routing services rebuild large
-  in-memory graphs at start, so a restart is minutes, not seconds. Photon takes about 40
-  seconds to load its index. Plan accordingly rather than discovering it mid-incident.
+  in-memory graphs at start, so a restart is minutes, not seconds. Plan accordingly rather than discovering it mid-incident.
 - **Mail reputation.** Not a "set it and forget it" area; it is an ongoing relationship
   with the large mailbox providers. The accumulated measurements in
   [`ops/hosts/SERVICES.md`](../../../ops/hosts/SERVICES.md) will save you days.
@@ -161,9 +163,9 @@ If you improve one thing in your first month, make it one of these.
 | Need | Page |
 |---|---|
 | What the machines are and what routes where | [../production.md](../production.md) |
-| Getting code to production | [../02-deployment-and-ci.md](../02-deployment-and-ci.md) |
-| Finding out what happened | [../03-monitoring-and-logging.md](../03-monitoring-and-logging.md), [logging.md](logging.md) |
+| Getting code to production | [../deployment-and-ci.md](../deployment-and-ci.md) |
+| Finding out what happened | [../monitoring-and-logging.md](../monitoring-and-logging.md), [logging.md](logging.md) |
 | Per-event procedures | [../runbooks/README.md](../runbooks/README.md) |
 | Spam and abuse handling | [spam-and-abuse.md](spam-and-abuse.md) |
-| Accounts, credentials and who holds them | [../../getting-started/04-accounts-and-access.md](../../getting-started/04-accounts-and-access.md) |
+| Accounts, credentials and who holds them | [../../getting-started/accounts-and-access.md](../../getting-started/accounts-and-access.md) |
 | Backup mechanics in detail | [`yesterday/README.md`](../../../yesterday/README.md) |

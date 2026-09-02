@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-31
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - docs/developers/reference/architecture.md
@@ -29,21 +29,21 @@ At an architecture level:
 
 - The **member site** and **ModTools** are static Nuxt builds served from a CDN/host
   (Netlify), one site each, built from the same repository. See
-  [Deployment and CI](02-deployment-and-ci.md).
+  [Deployment and CI](deployment-and-ci.md).
 - The **v2 (Go) API** serves application requests. The legacy PHP v1 API has been retired
   and removed.
 - **Batch** (Laravel) runs scheduled and background jobs against the production database.
 - **Routing** and **spatial** Go services back rippling, browse and digests.
 - **Loki** aggregates logs; **Sentry** tracks errors. See
-  [Monitoring and logging](03-monitoring-and-logging.md).
+  [Monitoring and logging](monitoring-and-logging.md).
 
-The machine-level view — which physical roles exist and what routes where — is in
+The machine-level view - which physical roles exist and what routes where - is in
 [Production topology](production.md).
 
 ## The "edge" tier
 
 The production-facing "edge" services (map tiles, the wiki, image uploads and delivery)
-have been consolidated onto the same Compose stack as batch processing — a Compose
+have been consolidated onto the same Compose stack as batch processing - a Compose
 profile on one host rather than separate frontend machines. The old frontend server
 remains only as a warm backup pending decommission. See
 [Production topology](production.md); host-specific detail stays in the ops team's
