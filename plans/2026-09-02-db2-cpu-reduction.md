@@ -82,15 +82,20 @@ the last **60 minutes**; the cron fires **every minute** (`routes/console.php:82
 Each pass re-processes 435 posts when ~10 changed. 8,224 posts sit in `expanding`, with
 `next_expansion_at` spread ~3-9 per minute.
 
-**Measured execution rate and duration.** Two samples of `information_schema.processlist`; the
-second polled 7,840 times in 74 s (~106 polls/s) so concurrency is measured, not estimated:
+**Measured execution rate and duration.** Four samples of `information_schema.processlist`, polled
+~106 times/s, so concurrency is measured rather than estimated:
 
-| | 13:42 (119 s) | 13:57 (74 s) |
-|---|---|---|
-| distinct executions | 370 | 313 |
-| throughput λ | 187/min | **254/min** |
-| mean concurrency L | — | **2.99 in flight** |
-| mean duration L/λ | — | **0.71 s** |
+| | 13:42 | 13:57 | 18:12 | 19:42 |
+|---|---|---|---|---|
+| distinct executions | 370 | 313 | 278 | 328 |
+| throughput λ | 187/min | 254/min | 225/min | **266/min** |
+| mean concurrency L | — | 2.99 | 2.64 | **2.73** |
+| mean duration L/λ | — | 0.71 s | 0.70 s | **0.62 s** |
+
+Four measurements across six hours converge tightly: **~250/min, ~2.8 threads in flight, ~0.65 s
+each**. The query's cost on db2 is a stable property, not something that swings with the hour —
+which is what makes the 10× gap against the 65 ms idle-node timing a contention effect rather than
+a measurement artefact.
 
 `processlist.time` corroborates the duration: 13,198 observations at 0 s, 9,643 at 1 s, 525 at 2 s,
 99 at 3 s.
