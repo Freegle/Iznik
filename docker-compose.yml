@@ -1695,7 +1695,7 @@ services:
       # all callers (no searchmode param) to the legacy keyword cascade. Default
       # (unset) = vector-hybrid search. Removed once keyword search is retired.
       - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
-      - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api/avatar
+      - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/avatar
       - SPATIAL_KNN_URL=http://spatial-knn:8194
       - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter,Reengage,CommunityNews
       # CI=true skips supervisor startup to prevent Laravel bootstrap race conditions.
