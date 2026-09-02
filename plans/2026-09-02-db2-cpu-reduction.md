@@ -297,8 +297,20 @@ WHERE ma_real.id > :watermark          -- PRIMARY key range scan, not a full sca
   AND JSON_EXTRACT(ma_ai.externalmods,'$.ai') = TRUE
 ```
 
-Store `:watermark` (max `messages_attachments.id` seen) in cache between runs. Turns a 33 M-row
-full scan into a range scan over rows added since the last pass.
+Store `:watermark` (max `messages_attachments.id` seen) in cache between runs.
+
+**Verified on db2 by `EXPLAIN` and by running it** (unlike proposal C, which failed this test):
+
+| | driving table | type | key | rows examined |
+|---|---|---|---|---|
+| current | `ma_ai` | **ALL** | NULL | **39,668,257** |
+| proposed | `ma_real` | **range** | **PRIMARY** | **13,644** |
+
+then `ma_ai` by `incomingid` ref, 7 rows. **2,900× fewer rows examined.**
+
+Timed with a 20,000-id watermark: **0.072 s, 0 rows** — same answer as the current form's
+**15.93 s**, and the 0.072 s was measured on db2 *under load* while the 15.93 s was on an idle
+node, so the real gap is wider still.
 
 ### C. Daily digest — sargable shard predicate — **TESTED, DOES NOT WORK AS WRITTEN**
 
