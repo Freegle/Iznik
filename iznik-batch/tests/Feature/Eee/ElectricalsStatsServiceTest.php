@@ -4,7 +4,9 @@ namespace Tests\Feature\Eee;
 
 use App\Services\ElectricalsStatsService;
 use App\Services\EeeVisionService;
+use App\Services\Electricals\ItemClusterService;
 use App\Services\ItemService;
+use App\Support\ReuseBenefit;
 use Illuminate\Support\Facades\DB;
 use ReflectionMethod;
 use Tests\TestCase;
@@ -33,7 +35,12 @@ class ElectricalsStatsServiceTest extends TestCase
         $vision = $this->createMock(EeeVisionService::class);
         $vision->method('getModelName')->willReturn($this->model);
 
-        $this->stats = new ElectricalsStatsService($vision);
+        // No sidecar: the word test runs alone, so nothing here reaches the network
+        // and the fold is measured on what the names say. The embedding arm has its own
+        // unit test.
+        config(['freegle.electricals.sidecar_url' => '']);
+
+        $this->stats = new ElectricalsStatsService($vision, app(ItemClusterService::class));
         $this->items = new ItemService();
 
         // The coverage denominators count raw `messages` rows, so this suite
@@ -421,5 +428,71 @@ class ElectricalsStatsServiceTest extends TestCase
         // At full coverage the estimate IS the measured count - no drift.
         $this->assertSame($p['counts']['electrical'], $p['estimates']['electrical_offers']);
         $this->assertSame(1.0, $p['estimates']['scale_factor']);
+    }
+
+    /**
+     * Weight and CO2 are different quantities, and the page prints both.
+     *
+     * They were the same number, because the CO2 factor was 1. WRAP's "Benefits of
+     * Reuse" figure is 0.51 tonnes of CO2e per tonne reused, which is what the rest of
+     * the site publishes, so a tonne reused must not read as a tonne of CO2 saved.
+     */
+    public function test_impact_co2_uses_the_wrap_reuse_factor(): void
+    {
+        $heavy = $this->offer('Washing Machine', 1, $this->recent(), 'Taken');
+        $light = $this->offer('Kettle Deluxe', 1, $this->recent(), 'Taken');
+
+        DB::table('items')
+            ->whereIn('id', DB::table('messages_items')->where('msgid', $heavy)->pluck('itemid'))
+            ->update(['weight' => 600]);
+        DB::table('items')
+            ->whereIn('id', DB::table('messages_items')->where('msgid', $light)->pluck('itemid'))
+            ->update(['weight' => 400]);
+
+        $impact = $this->stats->build()['impact'];
+
+        $this->assertSame(1.0, $impact['tonnes']);
+        $this->assertSame(round(ReuseBenefit::CO2_PER_TONNE, 1), $impact['tonnes_co2e']);
+        $this->assertNotSame($impact['tonnes'], $impact['tonnes_co2e'], 'a tonne reused is not a tonne of CO2');
+    }
+
+    /**
+     * The reported bug: brands split one common item into several rare ones.
+     *
+     * Members type the brand, so a fridge freezer arrives as a dozen different names.
+     * Counting the names understated every common item and filled the rare list with
+     * things that are not rare at all.
+     */
+    public function test_popular_folds_brand_variants_into_one_item_type(): void
+    {
+        $this->offer('Beko Fridge Freezer', 1, $this->recent());
+        $this->offer('Bosch fridge freezer', 1, $this->recent());
+        $this->offer('Fridge/Freezer', 1, $this->recent());
+
+        $popular = $this->stats->build()['popular'];
+
+        $this->assertCount(1, $popular, 'three spellings of one appliance are one item');
+        $this->assertSame(3, $popular[0]['count']);
+        $this->assertSame('Fridge/Freezer', $popular[0]['name'], 'the label should carry no brand');
+    }
+
+    /**
+     * A table lamp is not a curiosity on a site where lamps are everywhere. An item that
+     * is a common one with a word in front of it belongs with the common one.
+     */
+    public function test_unusual_drops_a_qualified_version_of_a_common_item(): void
+    {
+        foreach (range(1, 10) as $ignored) {
+            $this->offer('Lamp', 1, $this->recent());
+        }
+
+        foreach (range(1, 3) as $ignored) {
+            $this->offer('Table Lamp', 1, $this->recent());
+        }
+
+        $names = array_column($this->stats->build()['unusual']['items'], 'name');
+
+        $this->assertNotContains('Table Lamp', $names);
+        $this->assertContains('Lamp', $names, 'the guard itself let it through, so suppression is what removed the variant');
     }
 }

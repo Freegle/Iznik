@@ -1,10 +1,13 @@
 ---
-last_reviewed: 2026-08-29
+last_reviewed: 2026-09-02
 covers:
   - iznik-batch/app/Services/EeeClassificationService.php
   - iznik-batch/app/Services/EeeComponentService.php
   - iznik-batch/app/Services/EeeProductionStore.php
   - iznik-batch/app/Services/ElectricalsStatsService.php
+  - iznik-batch/app/Services/Electricals/ItemClusterService.php
+  - iznik-batch/app/Services/Desirability/TitleCanonicalService.php
+  - iznik-batch/resources/desirability/**
   - iznik-batch/app/Console/Commands/Eee/EeeClassifyNewCommand.php
   - iznik-batch/app/Console/Commands/ElectricalsStatsCommand.php
   - iznik-server-go/electricals/**
@@ -74,6 +77,61 @@ counting it as "not electrical".
    automatically - classifying the existing corpus is a spend decision and a
    deliberate manual step (`eee:classify-new --since=...` with a raised limit, run
    in tranches).
+
+## Weight and carbon
+
+Weights come from the `items` catalogue, not from the photo: each post is matched to
+an item type, and the type carries a weight. Posts whose type has no weight fall back
+to the population average, so the tonnage is a modelled figure rather than a measured
+one, and the page says so.
+
+Carbon is a **separate quantity from weight** and must never equal it. The factor is
+WRAP's "Benefits of Reuse" figure, 0.51 tonnes CO2e saved per tonne reused, held once
+in `App\Support\ReuseBenefit::CO2_PER_TONNE` and shared with the rest of the site.
+It is a physical rate, so unlike the pounds-per-tonne benefit in the same class it is
+not up-rated for inflation. The cash value on the page is the National TOMs NT31
+carbon proxy applied to the CO2 tonnage, not to the weight.
+
+The whole weight block is published only when some weight is actually known. With no
+weights the tonnage, the CO2 figure, the cash value and the mean item weight are all
+absent from the payload, and the page drops the tiles rather than printing zeroes.
+
+## The item lists
+
+Members type whatever they like, so one appliance arrives under dozens of names: the
+catalogue holds around five thousand distinct names for seven thousand electrical
+posts. Counting names understates every common item and fills the rare list with
+things that are not rare, which is how "Beko Fridge Freezer" came to be listed as
+unusual on a site where fridge freezers are among the commonest things offered.
+
+`ItemClusterService` folds the rows before either list is built:
+
+- **Grouping is by canonical title**, from
+  `App\Services\Desirability\TitleCanonicalService` - a port of Clement Lee's
+  desirability research pipeline, which strips brands, un-pluralises and applies the
+  synonym tables in `iznik-batch/resources/desirability/`. Its behaviour is pinned by
+  `tests/fixtures/desirability/golden-titles.json`, so a change here has to be paired
+  with a regenerated fixture. Cosine similarity is deliberately **not** used to
+  group, because it measures topical relatedness rather than sameness: "fridge
+  freezer" and "freezer" score 0.93 and "cd player" and "dvd player" 0.85, both
+  above the 0.78 of a pair that genuinely should merge. No threshold separates the
+  right merges from the wrong ones, so published counts are never merged on an
+  embedding.
+- **Counts are of distinct posts, members and communities**, taken from the id sets,
+  because a rippled post arrives once per group and summing would multiply it.
+- **The label is a name carrying no brand** where the cluster has one, even if a
+  branded spelling is commoner.
+
+The rare list then drops anything that is a **version of a common item**. A rival
+qualifies as common at ten or more offers and at least three times the candidate's
+count, and vetoes the candidate when either its words are all contained in the
+candidate's canonical form and strictly shorter ("lamp" against "table lamp"), or the
+embedding sidecar scores the pair at 0.90 or above. The second arm exists only for
+re-phrasings words cannot see, such as "breadmaker" against "bread maker"; on live
+data it fired twice against forty-four word vetoes. Cosine is safe here because it
+only ever removes an entry from a curiosity list, never merges a published count. A
+sidecar that cannot answer leaves the list untouched. The thresholds are config
+(`freegle.electricals.variant_*`), and the sidecar URL is `EMBEDDING_SIDECAR_URL`.
 
 ## Estimates while coverage is partial
 

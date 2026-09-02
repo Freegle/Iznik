@@ -64,7 +64,10 @@
           </b-card-body>
           <b-card-body class="pt-0 text-center">
             <span class="text-muted small">{{ rangeLabel }}</span>
-            <span v-if="isEstimated && coveragePct !== null" class="text-muted small">
+            <span
+              v-if="isEstimated && coveragePct !== null"
+              class="text-muted small"
+            >
               &mdash; estimates: we've analysed {{ coveragePct }}% of posts so
               far, and these figures firm up as we work through the rest.
             </span>
@@ -95,21 +98,17 @@
                 {{ stats.accuracy.is_electrical.pct }}% of the time.
               </template>
               <template v-else>
-                When we last checked this approach against items sorted by
-                hand it was right
-                {{ stats.accuracy.is_electrical.pct }}% of the time; that
-                check used an earlier version of the software and has not yet
-                been repeated on the current one.
+                When we last checked this approach against items sorted by hand
+                it was right
+                {{ stats.accuracy.is_electrical.pct }}% of the time; that check
+                used an earlier version of the software and has not yet been
+                repeated on the current one.
               </template>
             </p>
           </b-card-text>
         </b-card>
 
-        <b-card
-          v-if="headlineTonnes !== null"
-          variant="white"
-          class="mt-2"
-        >
+        <b-card v-if="headlineTonnes !== null" variant="white" class="mt-2">
           <b-card-text>
             <h3>Weights</h3>
             <p>
@@ -117,8 +116,8 @@
               <template v-if="isEstimated">an estimated</template>
               {{ headlineTonnes.toLocaleString() }} tonnes. That is
               {{ headlineCo2e.toLocaleString() }} tonnes of CO2 kept out of the
-              air, worth £{{ headlineCarbonValue.toLocaleString() }}
-              at the government's carbon value of £{{
+              air, worth £{{ headlineCarbonValue.toLocaleString() }} at the
+              government's carbon value of £{{
                 stats.impact.carbon_proxy_gbp_per_tonne
               }}
               a tonne. The average electrical item weighs
@@ -182,16 +181,16 @@
             </b-table-simple>
             <p class="text-muted small mb-0">
               <template v-if="accuracyIsCurrent">
-                Condition comes from the photo, and matches what our
-                volunteers said
+                Condition comes from the photo, and matches what our volunteers
+                said
                 {{ stats.accuracy.condition.pct }}% of the time.
               </template>
               <template v-else>
                 Condition comes from the photo. When we last checked this
                 approach it matched what our volunteers said
-                {{ stats.accuracy.condition.pct }}% of the time; that check
-                used an earlier version of the software and has not yet been
-                repeated on the current one.
+                {{ stats.accuracy.condition.pct }}% of the time; that check used
+                an earlier version of the software and has not yet been repeated
+                on the current one.
               </template>
             </p>
           </b-card-text>
@@ -202,6 +201,10 @@
             <b-card variant="white" class="h-100">
               <b-card-text>
                 <h3>Most offered</h3>
+                <p>
+                  Counted by the kind of item, so the brand somebody typed in
+                  doesn't split one thing into several.
+                </p>
                 <b-list-group flush>
                   <b-list-group-item
                     v-for="item in stats.popular"
@@ -222,9 +225,13 @@
               <b-card-text>
                 <h3>More unusual</h3>
                 <p>
-                  Rarer things people have passed on. An item appears here only
-                  once several different people in more than one community have
-                  offered one, so a single odd listing can't get in.
+                  Rarer things people have passed on. We count by the kind of
+                  item, not by what somebody typed, so a Beko fridge freezer and
+                  a Bosch one are both just fridge freezers. An item appears
+                  here only once several different people in more than one
+                  community have offered one, and a version of something common
+                  is left out, so a table lamp doesn't count as unusual on a
+                  site full of lamps.
                 </p>
                 <b-list-group v-if="stats.unusual.items.length" flush>
                   <b-list-group-item
@@ -315,7 +322,8 @@ const headlineCo2e = computed(
   () => estimates.value?.tonnes_co2e ?? stats.value?.impact?.tonnes_co2e
 )
 const headlineCarbonValue = computed(
-  () => estimates.value?.carbon_value_gbp ?? stats.value?.impact?.carbon_value_gbp
+  () =>
+    estimates.value?.carbon_value_gbp ?? stats.value?.impact?.carbon_value_gbp
 )
 
 // The stored accuracy figures record which model they were measured on; when

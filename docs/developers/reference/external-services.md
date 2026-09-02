@@ -65,6 +65,7 @@ These look like external services on other sites. We run them.
 | **Loki + Grafana** | A hosted log service | [../../ops/monitoring-and-logging.md](../../ops/monitoring-and-logging.md) |
 | **Discourse** | A hosted forum | `discourse.ilovefreegle.org`, the volunteers' forum |
 | **Postfix** | A bulk mail provider | About 200,000 messages a day; see [../../ops/production.md](../../ops/production.md) |
+| **Embedding sidecar** | A paid embeddings API | `embedding-sidecar` container (`EMBEDDING_SIDECAR_URL`). Turns text into vectors for moderation checks and for the item grouping on [electricals.md](electricals.md). Every caller treats it as optional and falls back when it is absent |
 
 ## In the code but not in use
 
