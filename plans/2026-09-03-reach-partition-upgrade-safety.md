@@ -149,22 +149,25 @@ collides with a v1 `(msgid, leaf)` pair is silently dropped and the v1 row keeps
 After cutover that post is invisible to browse discovery. Leaf ids are region numbers, the two
 partitions' ranges overlap (v2 has 23,675 regions), so collisions would be routine — and silent.
 
-The leaves table is small (1.67 M rows, 0.29 GB), so the clean answer *there* is the rename swap
-that was wrong for the big table:
+Edward chose to **widen the unique key to include `fp`** rather than stage into a twin table:
 
 ```sql
-CREATE TABLE rippling_reach_leaves_next LIKE rippling_reach_leaves;   -- exact twin, new table
+ALTER TABLE rippling_reach_leaves
+  ADD UNIQUE INDEX msgid_leaf_fp (msgid, leaf, fp),
+  DROP INDEX msgid_leaf,
+  ALGORITHM=INPLACE, LOCK=NONE;
 ```
 
-Stage v2 leaf rows into it (nothing reads it), then at cutover:
+Adding a secondary index INPLACE builds the index without rebuilding the table (~50 MB over 1.7 M
+rows; the drop is metadata), and only `ripple:expand` writes the table — ~2 posts/min, at the top of
+each minute, because labels and their leaf rows are stored **once at initialisation and never
+recomputed as reach grows** (`ExpandService.php:1435`). So staged rows are not disturbed by ongoing
+expansion, and the ALTER's concurrent-DML exposure is as small as it can be. With `fp` in the key
+both partitions' rows coexist and the loader's existing `fp IS NULL OR fp IN (live[, prev])` filter
+picks — no rename, ever. Old-partition rows are housekeeping after cutover.
 
-```sql
-RENAME TABLE rippling_reach_leaves TO rippling_reach_leaves_v1,
-             rippling_reach_leaves_next TO rippling_reach_leaves;     -- atomic, metadata-only
-```
-
-Readers query the table by name, so the swap is atomic for them and needs no code change.
-`labels-apply` refuses `--leaves-table rippling_reach_leaves` outright.
+`labels-apply` decides from `information_schema`, not the table's name: it refuses any table
+without a UNIQUE `(msgid, leaf, fp)` key. Proven against the live table before the widening: refused.
 
 ### The apply command
 
@@ -193,21 +196,25 @@ Everything before step 4 can be done, redone and left for days. Steps 4-6 are th
 in one sitting, with the deploy gate watching.
 
 1. **Top-up:** re-run `labels-export` against `data/reach.v2` (~11 min, offline), then `labels-apply`
-   with `--leaves-table rippling_reach_leaves_next` (pays only for the delta).
-2. **Readers prefer `reach_labels_next` when `reach_labels_next_fp` equals the live engine's
-   partition** — batch and apiv2. *Still to build.* Safe to deploy ahead of time: with the v1 engine
-   live the stamp never matches, so behaviour is unchanged until the switch.
-3. `deploy-prod.sh` compares the engine's fingerprint with `config.reach_partition_fp` and fails on
-   mismatch, not just on 503. *Still to build.*
-4. `INSERT INTO config ... ('reach_partition_fp', '<v2 partFP>')` — the pairing record.
-5. Swap artifacts (`data/reach` → v2), deploy the v2 binary, monit-restart routing per node. On
-   boot `reachPublish` sees the config row match and serves; the readers see the stamp match and
-   switch — every post at once.
-6. `RENAME TABLE` the leaves (above). The gap between 5 and 6 is seconds and degrades only
-   *discovery* (browse-nearby prefilter), never a verdict.
-7. **Afterwards, at leisure:** copy `reach_labels_next` → `reach_labels` one row at a time, refresh
-   `origin_union_secs` from the export, drop `rippling_reach_leaves_v1`. Housekeeping — correctness
-   never depended on it.
+   with `--leaves-table rippling_reach_leaves` (pays only for the delta).
+2. **Deploy the readers** (`76c291a96`, on master): routing's row loader picks
+   `reach_labels_next` when its stamp is *its own* partition; the three batch blob readers pick by
+   `config.reach_partition_fp` (`ReachService::liveLabelsSql` / `pickLabels`, memoised 60 s). Safe
+   ahead of time — with no pairing record every path reduces to the live column (proven live on
+   batch-prod, whose source is the bind-mounted checkout). Also ships the no-permanent-503 retry, the
+   boot-time fingerprint guard, `/health.reach_partition_fp`, and the deploy gate that tells
+   REFUSED (wrong partition for these labels) from NOT LOADED.
+3. `INSERT INTO config ... ('reach_partition_fp', '<v2 partFP>')` — the pairing record. From this
+   moment the batch readers send v2 blobs; until step 4 completes on the routing instance they call,
+   those decode as "different partition" and the batch paths fail closed and retry — so do 3 and 4
+   back to back.
+4. Swap artifacts (`data/reach` → v2), monit-restart routing per node **and the FD-host routing
+   container batch calls**. On boot `reachPublish` sees the pairing record match and serves; that
+   node's loader flips to the staged column at the same instant — every post at once. Discovery
+   flips with it: the leaf loader filters by the engine's own `fp`.
+5. **Afterwards, at leisure:** copy `reach_labels_next` → `reach_labels` one row at a time, refresh
+   `origin_union_secs` from the export, delete the old-partition leaf rows in batches. Housekeeping —
+   correctness never depended on it.
 
 ## Keep until proven
 
@@ -238,7 +245,11 @@ Verified from the database, on db1 (i.e. replicated):
 | reach-union, all three nodes | 400 (engine up) |
 
 - All three nodes: v1 binary, v1 artifacts, reach healthy. Nothing about the live path has changed.
-- `rippling_reach_leaves_next`: **waiting on Edward to create it**; the leaves half of the apply runs
-  once it exists (labels are skipped as already staged, only leaf rows go in).
+- **Leaves: waiting on Edward to run the key-widening ALTER above.** `run-leaves.sh` (detached,
+  log `leaves-apply.log`) polls `information_schema` for `msgid_leaf_fp` and starts the leaves
+  apply the moment it appears — labels skipped as already staged, ~1.46 M leaf rows in, ~30 min.
+- Code on master, not deployed: `3dfc9e967` guards, `ce9b8e6d3` export v2 + apply, `3a6685242`
+  apply accepts the live leaves table once keyed by fp, `76c291a96` readers + health + gate +
+  migration + tests, `8506d6979` docs.
 - Code: `ce9b8e6d3` (export v2 + apply), `3dfc9e967` (no-permanent-503 + fingerprint guard) on master,
   not deployed.
