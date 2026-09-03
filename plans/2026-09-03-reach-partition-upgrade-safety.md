@@ -215,14 +215,30 @@ The v1 binary and a complete v1 artifact set on every node. The 09-03 rollback w
 because `data/reach.v1old` had been preserved on db3; db1 and db2 had already been overwritten and
 had to be restored from it.
 
-## State at 13:40, 2026-09-03
+## Labels staging — DONE 14:10, 2026-09-03
 
-- All three nodes: v1 binary, v1 artifacts, reach healthy, monit 3/3 OK. Stored labels match the
-  loaded partition. Nothing about the live path has changed.
-- `rippling_reach.reach_labels_next` / `_fp` exist (INSTANT, row version 3, replicated).
-- v2 export running to `/var/www/reach-export/labels-v2-partFP-1259147727407222857.bin`; the labels
-  apply is chained to start on completion (`run-apply.sh`, log `apply-v2.log`).
+Full v2 export 13:36–13:47 (54,006 posts, 102 MB labels, 1,458,485 leaf rows). Labels apply
+13:47–14:10 on the write node at `--sleep-ms 20`: **51,988 written, 1,999 already staged (from the
+timing sample), 19 missing** — posts retracted by `ripple:expand` (15 Withdrawn, outcomes timestamped
+inside the run) before their UPDATE ran.
+
+The command exited 2 on a one-row shortfall (database 53,986 vs 53,987 predicted). Traced, not
+accepted: the 20th retraction landed *after* that post's UPDATE succeeded and *before* the final
+count. Retractions run at ~0.6/min; the export-to-verify span was 35 min.
+
+Verified from the database, on db1 (i.e. replicated):
+
+| | |
+|---|---|
+| export population (`max_drive_min > 0`) | 54,057 |
+| **staged with partition 1259147727407222857** | **53,986** |
+| unstaged | 71 — **all created after the export's population query** (top-up at cutover) |
+| wrong fingerprint / blob without stamp | **0 / 0** |
+| live `reach_labels` missing | **0** — the live column was not touched |
+| reach-union, all three nodes | 400 (engine up) |
+
+- All three nodes: v1 binary, v1 artifacts, reach healthy. Nothing about the live path has changed.
 - `rippling_reach_leaves_next`: **waiting on Edward to create it**; the leaves half of the apply runs
-  once it exists.
+  once it exists (labels are skipped as already staged, only leaf rows go in).
 - Code: `ce9b8e6d3` (export v2 + apply), `3dfc9e967` (no-permanent-503 + fingerprint guard) on master,
   not deployed.
