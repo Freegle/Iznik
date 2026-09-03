@@ -502,6 +502,26 @@ emits backticks, so `lastaccess >=` misses what `` `lastaccess` >= `` matches; a
 reported 40% "unmapped" purely from that. And percentages are of the *current* profile: reach is
 3.6% at 01:57 and 46-68% by day, so a single sample ranks the hour, not the system.)*
 
+## Attribution: every item verified against its source
+
+After misclassifying the jobs count three times, every profile item was re-checked by locating its
+literal SQL in the issuing service's source rather than inferring from client host or process list:
+
+| item | source | issuer |
+|---|---|---|
+| reach recipient (A) | `UnifiedDigestService.php:973` | batch |
+| illustrations (B) | `MessageIllustrationsService.php:34` | batch |
+| users lastaccess scan (D) | `NotificationExhortService.php:44` + daily digest | batch |
+| leave-check (I) | `ExpandService.php:2221` | batch |
+| mod2mod chaseup (J) | `ChatChaseupModsService.php:33` | batch |
+| `chat_rooms` unread count (G) | `iznik-server-go/chat/chatroom.go:1170` | **apiv2** |
+| spatial browse (G) | `iznik-server-go/isochrone/message.go`, `message/postmatches.go` | **apiv2** |
+| `messages_outcomes` pair (G) | `session.go:1498`, `groupWork.go:356` | **apiv2** |
+| jobs count (H) | `iznik-spatial-go/dataset_jobs.go:252` | **spatial KNN** |
+
+This matters because the fix differs by issuer: batch items need code or config changes, apiv2 items
+are relocated wholesale by G, and the spatial item is moved by neither.
+
 ## Checked and found healthy — not targets
 
 - **Ripple expand candidate scan** (`ripple:expand`, ~507 groups per pass): `range` on
