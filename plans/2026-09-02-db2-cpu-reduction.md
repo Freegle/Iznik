@@ -196,7 +196,7 @@ Two hypotheses tested and **rejected**:
 Individual queries are not pathological — live msgid 121725017 (4 KB polygon, 217 vertices,
 976 candidates) runs in **65 ms**. The volume is the problem.
 
-### 2. Daily digest recipient scan — 17.9% of db2
+### 2. Daily digest recipient scan — 17.9% of db2 at one moment, 0% at another
 
 ```sql
 select users.* from users
@@ -213,6 +213,13 @@ where deleted is null and lastaccess is not null and lastaccess > ?
 - `EXPLAIN`: driving table `users` via **`tnuserid`**, **1,422,677 rows examined**, filtered 0.17%
 - Eligible pool is only **103,931 users** — ~14× the whole pool examined per call
 - Measured: **3.00 s cold, 1.63 s warm**, per call, × 8 shards, `->everyMinute()` 07:00-12:00 BST
+
+**Its share within the morning window is highly variable — 17.9% at 08:58, but 0 of 47,120 samples
+at 06:57 the next day**, with all four daily shards logging `Already running, exiting.` The workers
+run for most of the window, but the recipient scan is one query per pass followed by a long
+per-user send loop, so it is only visible while a pass is cycling. **Treat the 17.9% as an upper
+bound observed once, not a steady share.** The per-call cost (1.63-3.00 s over 1,422,677 rows) is
+the solid number, and it is what proposal D addresses.
 - `users` has no usable index: no `bouncing`, no standalone `lastaccess` (only `added,lastaccess`,
   wrong leading column)
 
