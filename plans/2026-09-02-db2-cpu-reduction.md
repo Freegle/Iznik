@@ -295,9 +295,15 @@ execution) but absent from processlist sampling all day; it surfaced live at **3
 | `visible = 1` | true for **every row** — the predicate contributes nothing |
 | indexes | `bodyhash`, `canonical_title`, `city`, `geometry` (SPATIAL), `job_reference`, `PRIMARY`, `seenat` — **none on `cpc`** |
 
-**It is an apiv2 query — `iznik-server-go/job/job.go:153` — so proposal G moves it off db2.** Like
-the `messages_outcomes` pair, it reaches db2 only via db1's apiv2. *(Code location; the client
-attribution sample could not catch it — it fires intermittently.)*
+**It is an apiv2 query — `iznik-server-go/job/job.go:153` — but it arrives from `localhost`, i.e.
+db2's OWN apiv2, not db1's.** Client attribution at 02:57 puts it at 0.0% from `docker-internal`
+(batch) and 0.0% from `db1-internal`; the local database connections on db2 are held by
+`iznik-server-go` and `iznik-spatial-go`. So **proposal G as originally written — changing db1's
+read target — would NOT move this.** See the widened form of G.
+
+*(I reclassified this twice: first as batch, then as db1-apiv2 on the strength of the code location
+alone. The client split is what settled it. Code location tells you which service issues a query,
+not which node it lands on.)*
 
 Its share **rises** as the night deepens — 6.5% at 01:57, 9.1% at 02:42 — while its absolute count
 holds steady (917 then 941 samples as the total fell from 14,104 to 10,342). So it runs at a fixed
@@ -306,10 +312,9 @@ feature.
 
 **Proposal H (operator DDL): `ALTER TABLE jobs ADD INDEX cpc (cpc);`** — turns the full scan into a
 range scan over the 19.8% that match `cpc >= ?`, roughly **5× fewer rows examined**, with
-`geometry IS NOT NULL` applied as a filter afterwards. **Reclassified: this is not a db2 fix.** Once
-G lands, the query runs on db3, so H improves db3 and the jobs feature generally rather than helping
-db2. Still worth doing — the table grows ~300 k rows a day, so the scan degrades continuously while
-an index does not — but it should not be counted toward halving db2.
+`geometry IS NOT NULL` applied as a filter afterwards. It **is** a db2 fix — the query runs on db2's own apiv2 — unless the widened form of G moves it
+first. Worth doing either way: the table grows ~300 k rows a day, so the scan degrades continuously
+while an index does not.
 
 ### 7. Three high-frequency queries sampling under-weights — ~2% combined, but one is pure waste
 
@@ -863,16 +868,24 @@ rather than the database's. With A, C and D landed the per-query cost drops shar
 counts should be re-derived from db2's CPU — not raised further on the "embarrassingly parallel"
 reasoning in `routes/console.php:644-651`, which measured the wrong box.
 
-### G. Point db1's apiv2 reads at db3
+### G. Point db1's AND db2's apiv2 reads at db3
 
-One line in `/var/www/iznik-server-go/.env` on db1:
+One line in `/var/www/iznik-server-go/.env` on **db1 and db2**:
 
 ```sh
 export MYSQL_HOST_READ=10.220.0.47   # db3, matching what db3 already does for itself
 ```
 
-then `monit restart iznik-server-go` on db1 — no rebuild needed, monit's start program sources
-`./.env`. Verify by the boot line `Connecting to database ...` and by db2's client mix losing its
+then `monit restart iznik-server-go` on each — no rebuild needed, monit's start program sources
+`./.env`.
+
+**Widened 2026-09-03 after client attribution.** The original form changed db1 only. But db2's own
+apiv2 also reads db2, and it is not idle: the jobs count (finding 6) arrives entirely from
+`localhost`, and local database connections on db2 are held by `iznik-server-go`. Measured at 02:57,
+apiv2 traffic on db2 totalled ~**39%** — `chat_rooms` 10.4%, `messages_outcomes` 6.5%, spatial
+browse 6.0%, jobs 6.8%, plus ~9.8% of the mixed long tail. Pointing **both** nodes' apiv2 at db3
+leaves db2 serving batch only, which is what it was before this investigation started
+(99.8% batch). Verify by the boot line `Connecting to database ...` and by db2's client mix losing its
 `db1-internal` share.
 
 Takes ~28% off db2 immediately (finding 5). **This is not the "use db1 as a read target" idea that
