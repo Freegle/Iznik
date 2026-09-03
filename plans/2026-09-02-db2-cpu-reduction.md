@@ -193,13 +193,17 @@ That tuning measured the **batch host's** CPU, not the database's. "58% waiting 
 signal that db2 was already the constraint. The same file records the symptom: *"The daily
 population (~79k, ~tripled by rippling) can't fully clear in 4h at current throughput."*
 
-### 3. Illustrations cleanup — 6.3% of db2, returns nothing
+### 3. Illustrations cleanup — 6.3% of db2 by day, **20.1% overnight**, returns nothing
 
 `MessageIllustrationsService.php:34-44`, scheduled `->everyMinute()` (`routes/console.php:1227`).
 
 - `EXPLAIN`: `ma_ai` → **type ALL, 33,224,660 rows, Using temporary**
 - Measured: **15.93 s, 0 rows returned**
 - ~960 s of DB time per hour to find nothing
+- **Its share rises as everything else quietens, because the cost is fixed**: 4.9% at 13:27, 6.3%
+  at the morning peak, 7.4% at 23:00, **13.1%** in the overnight floor, **20.1%** at 01:27 — by the
+  small hours it is the single largest consumer on db2. Not "5-7% of a busy node": ~16 s of
+  pointless full-table scanning every minute, for ever, on a table that keeps growing
 - `messages_attachments` indexes are `PRIMARY(id)`, `incomingid(msgid)`, `hash`, `externaluid` —
   nothing serves `JSON_EXTRACT(externalmods,'$.ai')`
 
