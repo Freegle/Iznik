@@ -295,10 +295,21 @@ execution) but absent from processlist sampling all day; it surfaced live at **3
 | `visible = 1` | true for **every row** — the predicate contributes nothing |
 | indexes | `bodyhash`, `canonical_title`, `city`, `geometry` (SPATIAL), `job_reference`, `PRIMARY`, `seenat` — **none on `cpc`** |
 
+**It is an apiv2 query — `iznik-server-go/job/job.go:153` — so proposal G moves it off db2.** Like
+the `messages_outcomes` pair, it reaches db2 only via db1's apiv2. *(Code location; the client
+attribution sample could not catch it — it fires intermittently.)*
+
+Its share **rises** as the night deepens — 6.5% at 01:57, 9.1% at 02:42 — while its absolute count
+holds steady (917 then 941 samples as the total fell from 14,104 to 10,342). So it runs at a fixed
+rate rather than in proportion to user traffic, which is worth knowing for whoever owns the jobs
+feature.
+
 **Proposal H (operator DDL): `ALTER TABLE jobs ADD INDEX cpc (cpc);`** — turns the full scan into a
 range scan over the 19.8% that match `cpc >= ?`, roughly **5× fewer rows examined**, with
-`geometry IS NOT NULL` applied as a filter afterwards. Modest next to A/D/G, but the table is
-growing by ~300 k rows a day, so the scan gets steadily worse while an index does not.
+`geometry IS NOT NULL` applied as a filter afterwards. **Reclassified: this is not a db2 fix.** Once
+G lands, the query runs on db3, so H improves db3 and the jobs feature generally rather than helping
+db2. Still worth doing — the table grows ~300 k rows a day, so the scan degrades continuously while
+an index does not — but it should not be counted toward halving db2.
 
 ### 7. Three high-frequency queries sampling under-weights — ~2% combined, but one is pure waste
 
