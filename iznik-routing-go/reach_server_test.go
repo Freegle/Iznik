@@ -17,9 +17,9 @@ func TestReachEndpoints(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := reachLive
-	reachLive = eng
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
 
 	app := newApp(g, "", false)
 
@@ -117,9 +117,9 @@ func TestReachEndpoints(t *testing.T) {
 
 func TestReachEndpointsUnconfigured(t *testing.T) {
 	g := makeTestGrid(nil)
-	prev := reachLive
-	reachLive = nil
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	setReachLive(nil)
+	defer func() { setReachLive(prev) }()
 	app := newApp(g, "", false)
 	req := httptest.NewRequest("GET", "/v1/reach-labels?lat=51&lng=-2&minutes=10", nil)
 	resp, err := app.Test(req, 10000)
@@ -133,9 +133,9 @@ func TestDriveMetricsEndpoint(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := reachLive
-	reachLive = eng
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
 	app := newApp(g, "", false)
 
 	targets := []map[string]any{
@@ -190,8 +190,8 @@ func TestDriveTimeEngineFastPath(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := reachLive
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	defer func() { setReachLive(prev) }()
 	app := newApp(g, "", false)
 
 	url := "/v1/drive-time?lat=51.4545&lng=-2.5879&tolat=51.4700&tolng=-2.6000&max_minutes=30"
@@ -212,9 +212,9 @@ func TestDriveTimeEngineFastPath(t *testing.T) {
 		return r.Reachable, r.DriveMin, r.DriveMiles
 	}
 
-	reachLive = nil
+	setReachLive(nil)
 	okSweep, minSweep, _ := fetch()
-	reachLive = eng
+	setReachLive(eng)
 	okEng, minEng, milesEng := fetch()
 
 	if !okSweep || !okEng {
@@ -410,9 +410,9 @@ func TestGroupProximityEngineMatchesSweep(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := reachLive
-	reachLive = eng
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
 
 	// Synthetic "group": a spread of drive-snappable junctions east of centre.
 	var seeds []NodeID
@@ -461,9 +461,9 @@ func TestLeafEndpointAndBudgetOverride(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := reachLive
-	reachLive = eng
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
 	app := newApp(g, "", false)
 
 	// Leaf lookup for a junction point.

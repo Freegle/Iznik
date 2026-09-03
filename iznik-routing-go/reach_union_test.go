@@ -18,9 +18,9 @@ func TestReachUnionEndgame(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := reachLive
-	reachLive = eng
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
 	resetReachEvalForTest()
 
 	const postLat, postLng = 51.4545, -2.5879
@@ -168,9 +168,10 @@ func TestReachEvalDualBuild(t *testing.T) {
 		t.Fatalf("test premise broken: builds share a fingerprint")
 	}
 
-	prevLive, prevPrev := reachLive, reachPrev
-	reachLive, reachPrev = engA, engB
-	defer func() { reachLive, reachPrev = prevLive, prevPrev; resetReachEvalForTest() }()
+	prevLive, prevPrev := reachEngine(), reachPrevEngine()
+	setReachLive(engA)
+	setReachPrev(engB)
+	defer func() { setReachLive(prevLive); setReachPrev(prevPrev); resetReachEvalForTest() }()
 	resetReachEvalForTest()
 
 	const postLat, postLng = 51.4545, -2.5879
@@ -203,7 +204,7 @@ func TestReachEvalDualBuild(t *testing.T) {
 
 	// Without the previous build loaded, the same blob is nolabels - the
 	// pre-dual behaviour this test exists to improve on.
-	reachPrev = nil
+	setReachPrev(nil)
 	resetReachEvalForTest()
 	req2 := httptest.NewRequest("POST", "/v1/reach-eval", bytes.NewReader(body))
 	req2.Header.Set("Content-Type", "application/json")

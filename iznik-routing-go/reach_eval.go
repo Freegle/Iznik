@@ -156,7 +156,7 @@ type reachEvalResult struct {
 // handleReachEval handles POST /v1/reach-eval.
 func handleReachEval() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		e := reachLive
+		e := reachEngine()
 		if e == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
 		}
@@ -180,8 +180,8 @@ func handleReachEval() fiber.Handler {
 		// callers' shared routing breaker on one member's ordinary location.
 		v := nearestDriveNode(e.G, req.Lat, req.Lng)
 		vPrev := noNode
-		if reachPrev != nil {
-			vPrev = nearestDriveNode(reachPrev.G, req.Lat, req.Lng)
+		if prev := reachPrevEngine(); prev != nil {
+			vPrev = nearestDriveNode(prev.G, req.Lat, req.Lng)
 		}
 		if v == noNode {
 			results := make([]reachEvalResult, 0, len(req.Msgids))
@@ -525,13 +525,13 @@ var leafRowLoader = func(leaf int32) []uint64 {
 	}
 	q := "SELECT msgid FROM rippling_reach_leaves WHERE leaf = ?"
 	args := []interface{}{leaf}
-	if reachLive != nil {
-		if reachPrev != nil {
+	if live := reachEngine(); live != nil {
+		if prev := reachPrevEngine(); prev != nil {
 			q += " AND (fp IS NULL OR fp IN (?, ?))"
-			args = append(args, reachLive.partFP, reachPrev.partFP)
+			args = append(args, live.partFP, prev.partFP)
 		} else {
 			q += " AND (fp IS NULL OR fp = ?)"
-			args = append(args, reachLive.partFP)
+			args = append(args, live.partFP)
 		}
 	}
 	var ids []uint64
@@ -582,7 +582,7 @@ func leafCandidates(v, vPrev NodeID, e *ReachEngine) []uint64 {
 		}
 	}
 	forEngine(e, v)
-	forEngine(reachPrev, vPrev)
+	forEngine(reachPrevEngine(), vPrev)
 
 	now := time.Now()
 	var out []uint64

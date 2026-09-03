@@ -18,9 +18,9 @@ func TestReachEvalVerdicts(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := reachLive
-	reachLive = eng
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
 	resetReachEvalForTest()
 
 	// Post at Bristol centre with a 30-minute maximum label.
@@ -106,9 +106,9 @@ func TestReachEvalMaxRejectedDiscover(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := reachLive
-	reachLive = eng
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
 	resetReachEvalForTest()
 
 	const postLat, postLng = 51.4545, -2.5879

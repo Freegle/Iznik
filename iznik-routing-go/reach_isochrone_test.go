@@ -50,9 +50,9 @@ func TestEngineMultiSourceMatchesFlat(t *testing.T) {
 
 	flat := multiSourceIsochrone(g, seeds, secs)
 
-	prev := reachLive
-	reachLive = eng
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
 	engineIso := engineOrFlatMultiSource(g, seeds, secs)
 
 	compareReached(t, flat.ReachedNodes, engineIso.ReachedNodes, secs, "multi")

@@ -20,6 +20,8 @@ package main
 
 import (
 	"container/heap"
+	"context"
+	"database/sql"
 	"encoding/base64"
 	"fmt"
 	"log"
@@ -27,37 +29,56 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
 
-// reachLive is the engine serving the reach endpoints; nil = not configured.
-// Set once at boot before the server starts (or by tests).
-var reachLive *ReachEngine
+// reachLivePtr holds the engine serving the reach endpoints; nil = not configured.
+//
+// Atomic because it is no longer written only at boot: when the artifacts are
+// not loadable the server keeps retrying in the background (reachRetryLoop),
+// so a publish can land while handlers are reading. Before that, a failed boot
+// meant every /v1/reach-* answered 503 for the LIFETIME OF THE PROCESS and the
+// only cure was a restart - which is how the 2026-09-02 deploy lost reach for
+// ~16 hours. "Unavailable" must never be a permanent answer.
+var reachLivePtr atomic.Pointer[ReachEngine]
 
-// reachPrev is the PREVIOUS partition build (REACH_DIR_PREV), held so a map
+func reachEngine() *ReachEngine { return reachLivePtr.Load() }
+
+func setReachLive(e *ReachEngine) { reachLivePtr.Store(e) }
+
+// reachPrevPtr holds the PREVIOUS partition build (REACH_DIR_PREV), held so a map
 // refresh stops being a cliff: stored labels embed their build's fingerprint,
 // and every evaluator routes each blob to the build that can read it. The
 // re-backfill after a rebuild then becomes a rolling migration - old labels
 // keep answering until each post's new one lands - instead of a site-wide
 // "nolabels" window. nil = single-build operation, exactly as before.
-var reachPrev *ReachEngine
+var reachPrevPtr atomic.Pointer[ReachEngine]
+
+func reachPrevEngine() *ReachEngine { return reachPrevPtr.Load() }
+
+func setReachPrev(e *ReachEngine) { reachPrevPtr.Store(e) }
 
 // decodeLabelsAnyBuild decodes a stored blob against whichever loaded build
 // matches its embedded fingerprint, returning the engine that must evaluate
 // it (arrivals are only meaningful on the build that decoded the blob).
 func decodeLabelsAnyBuild(b []byte) (*ReachLabels, *ReachEngine, error) {
-	if reachLive == nil {
+	// Load each pointer ONCE: a background republish must not be able to hand
+	// back a label decoded by one engine and an engine that did not decode it.
+	live := reachEngine()
+	if live == nil {
 		return nil, nil, fmt.Errorf("reach engine not configured")
 	}
-	lbl, err := reachLive.DecodeLabels(b)
+	lbl, err := live.DecodeLabels(b)
 	if err == nil {
-		return lbl, reachLive, nil
+		return lbl, live, nil
 	}
-	if reachPrev != nil {
-		if lbl, perr := reachPrev.DecodeLabels(b); perr == nil {
-			return lbl, reachPrev, nil
+	if prev := reachPrevEngine(); prev != nil {
+		if lbl, perr := prev.DecodeLabels(b); perr == nil {
+			return lbl, prev, nil
 		}
 	}
 	return nil, nil, err
@@ -140,6 +161,113 @@ func rebuildReachSnapshot(dir string) error {
 	return nil
 }
 
+// reachPartFPConfigKey names the config row holding the partition fingerprint
+// that the STORED reach_labels blobs were computed against. The blobs and the
+// artifacts are one versioned pair: a partition rebuild renumbers the regions
+// every stored blob refers to, so loading new artifacts against old labels
+// silently empties every member's feed. It lives in `config` rather than on
+// rippling_reach because that table is 7.39 GB and DDL on it took a node down
+// on 2026-09-02.
+const reachPartFPConfigKey = "reach_partition_fp"
+
+// reachExpectedPartFP reads the fingerprint the stored labels were built
+// against. Opens its own connection: initGroupsDB runs inside startServer,
+// which is AFTER this. Returns ok=false when the row is absent or the database
+// cannot be reached - the guard then stays out of the way, so a deployment
+// that has never recorded a fingerprint behaves exactly as it does today.
+func reachExpectedPartFP() (uint64, bool) {
+	dsn := groupsDSN()
+	if dsn == "" {
+		return 0, false
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		log.Printf("reach: cannot open db to read %s: %v", reachPartFPConfigKey, err)
+		return 0, false
+	}
+	defer db.Close()
+	// Bounded: this runs before the listener starts, so an unreachable database
+	// must not be able to hold the whole server down. Timing out means "no
+	// fingerprint recorded", which leaves the guard out of the way.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var raw string
+	if err := db.QueryRowContext(ctx, "SELECT `value` FROM config WHERE `key` = ?", reachPartFPConfigKey).Scan(&raw); err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("reach: cannot read %s: %v", reachPartFPConfigKey, err)
+		}
+		return 0, false
+	}
+	fp, perr := strconv.ParseUint(raw, 10, 64)
+	if perr != nil {
+		log.Printf("reach: %s = %q is not a fingerprint: %v", reachPartFPConfigKey, raw, perr)
+		return 0, false
+	}
+	return fp, true
+}
+
+// reachPublish makes eng the live engine, unless its partition disagrees with
+// the fingerprint the stored labels were built against.
+//
+// This is the guard that was missing on 2026-09-02. Rebuilding the artifacts
+// produced a new partition (92 MB -> 66 MB, new fingerprint) and every one of
+// the 53,680 stored labels became meaningless the moment it loaded - not with
+// an error, but by quietly answering "not in reach" for everybody. Refusing to
+// publish turns that into a 503, which is loud, which the deploy gate already
+// fails on, and which the background retry can still heal from once the
+// matching labels are applied.
+func reachPublish(eng *ReachEngine, why string) bool {
+	if want, ok := reachExpectedPartFP(); ok && want != eng.partFP {
+		log.Printf("reach: REFUSING to serve %s: artifacts are partition %d but the stored labels "+
+			"were built against %d. Serving this engine would answer \"not in reach\" for every "+
+			"member. Apply labels for partition %d and set config[%s], or restore the matching "+
+			"artifacts.", why, eng.partFP, want, eng.partFP, reachPartFPConfigKey)
+		return false
+	}
+	setReachLive(eng)
+	return true
+}
+
+// reachRetryLoop keeps trying to load the engine after a failed boot.
+//
+// Without it, "reach unavailable" is cached for the lifetime of the process:
+// reachLivePtr was written once at boot, so a bad boot meant every /v1/reach-*
+// answered 503 until someone restarted the service - which is exactly how the
+// 2026-09-02 deploy lost reach for ~16 hours. With it, artifacts that land
+// late (an rsync still in flight, a fingerprint recorded after the fact) heal
+// on their own.
+//
+// It deliberately does NOT rebuild anything. The boot path may rebuild once,
+// under the reachPublish guard; a background rebuild would renumber the
+// partition unattended, which is the failure this whole mechanism exists to
+// prevent.
+func reachRetryLoop(dir string) {
+	const (
+		first = 30 * time.Second
+		max   = 10 * time.Minute
+	)
+	delay := first
+	for {
+		time.Sleep(delay)
+		if reachEngine() != nil {
+			return
+		}
+		eng, err := loadReachEngineFromDir(dir)
+		if err != nil {
+			log.Printf("reach: retry: still cannot load from %s (%v); next attempt in %v", dir, err, delay)
+		} else if reachPublish(eng, "on retry") {
+			log.Printf("reach: retry SUCCEEDED - engine now live (%d regions, partition %d)",
+				len(eng.Part.LeafNodes), eng.partFP)
+			return
+		}
+		if delay < max {
+			if delay *= 2; delay > max {
+				delay = max
+			}
+		}
+	}
+}
+
 // reachBootFromEnv loads the engine when REACH_DIR is set. Returns the
 // engine's graph so main can skip the PBF build, or nil to fall back.
 func reachBootFromEnv() *Graph {
@@ -158,19 +286,33 @@ func reachBootFromEnv() *Graph {
 		// the deploy reported clean. Rebuild and save instead, then retry: the
 		// cost is one slow boot (~7 min, inside monit's 15-cycle grace) rather
 		// than silently losing reach until someone notices.
+		//
+		// The rebuild is safe to attempt ONLY because reachPublish below now
+		// refuses to serve a partition the stored labels do not match: on
+		// 2026-09-02 this same rebuild renumbered the regions and emptied every
+		// member's feed.
 		log.Printf("reach: boot from %s failed (%v); rebuilding artifacts", dir, err)
 		if rebuildErr := rebuildReachSnapshot(dir); rebuildErr != nil {
 			log.Printf("reach: rebuild failed (%v); falling back to PBF build", rebuildErr)
+			go reachRetryLoop(dir)
 			return nil
 		}
 		if eng, err = loadReachEngineFromDir(dir); err != nil {
 			log.Printf("reach: boot still failing after rebuild (%v); falling back to PBF build", err)
+			go reachRetryLoop(dir)
 			return nil
 		}
 	}
-	reachLive = eng
-	log.Printf("reach: engine ready in %v (%d regions, %d boundary nodes)",
-		time.Since(start).Round(time.Millisecond), len(eng.Part.LeafNodes), len(eng.BI.leafOf))
+	if !reachPublish(eng, "at boot") {
+		// The graph itself is fine - only the region numbering disagrees - so
+		// serve every non-reach route from it rather than spending ~7 minutes
+		// rebuilding from the PBF. Reach stays 503 until the pairing is fixed,
+		// and the deploy gate fails the node on exactly that.
+		go reachRetryLoop(dir)
+		return eng.G
+	}
+	log.Printf("reach: engine ready in %v (%d regions, %d boundary nodes, partition %d)",
+		time.Since(start).Round(time.Millisecond), len(eng.Part.LeafNodes), len(eng.BI.leafOf), eng.partFP)
 	if prevDir := getenv("REACH_DIR_PREV", ""); prevDir != "" {
 		pstart := time.Now()
 		if prev, err := loadReachEngineFromDir(prevDir); err != nil {
@@ -178,7 +320,7 @@ func reachBootFromEnv() *Graph {
 		} else if prev.partFP == eng.partFP {
 			log.Printf("reach: previous build %s is the same partition; ignoring", prevDir)
 		} else {
-			reachPrev = prev
+			setReachPrev(prev)
 			log.Printf("reach: previous build ready in %v (%d regions) - rolling label migration active",
 				time.Since(pstart).Round(time.Millisecond), len(prev.Part.LeafNodes))
 		}
@@ -188,7 +330,7 @@ func reachBootFromEnv() *Graph {
 
 func handleReachLabels() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		e := reachLive
+		e := reachEngine()
 		if e == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
 		}
@@ -264,7 +406,7 @@ func unionForMsgid(e *ReachEngine, lbl *ReachLabels, msgid uint64) (float32, []i
 // blob, compute origin_union_secs + union leaves, no label refetch.
 func handleReachUnion() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		e := reachLive
+		e := reachEngine()
 		if e == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
 		}
@@ -311,7 +453,7 @@ type reachArrivalReq struct {
 
 func handleReachArrival() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		e := reachLive
+		e := reachEngine()
 		if e == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
 		}
@@ -377,7 +519,7 @@ type driveMetricsReq struct {
 // "N miles by road" instead of crow-flies on post lists, chat and profiles.
 func handleDriveMetrics() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		e := reachLive
+		e := reachEngine()
 		if e == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
 		}
@@ -431,7 +573,7 @@ func handleDriveMetrics() fiber.Handler {
 // is live: exact, and milliseconds instead of a bounded sweep. Returns
 // handled=false to fall through to the sweep.
 func engineDriveTime(lat, lng, toLat, toLng, minutes float64) (fiber.Map, bool) {
-	e := reachLive
+	e := reachEngine()
 	if e == nil {
 		return nil, false
 	}
@@ -608,7 +750,7 @@ func handleBlurBatch(g *Graph) fiber.Handler {
 // it is live: two label queries replace two bounded full-graph sweeps.
 // Returns handled=false to fall through to the sweep when the engine is off.
 func engineGroupProximity(lat, lng float64, seeds []NodeID, maxSecs float32) (ProxPoint, ProxPoint, bool, bool) {
-	e := reachLive
+	e := reachEngine()
 	if e == nil || len(seeds) == 0 {
 		return ProxPoint{}, ProxPoint{}, false, false
 	}
@@ -657,7 +799,7 @@ func engineGroupProximity(lat, lng float64, seeds []NodeID, maxSecs float32) (Pr
 // tag members/posts so feeds can prefilter road-aware with an IN clause.
 func handleLeaf() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		e := reachLive
+		e := reachEngine()
 		if e == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
 		}
@@ -704,7 +846,7 @@ func handleLeaf() fiber.Handler {
 // classic Dijkstra otherwise. Same reached-nodes contract either way, so
 // polygons/bands/bounds downstream are unchanged.
 func engineOrFlatIsochrone(g *Graph, lat, lng float64, secs float32) IsochroneResult {
-	if e := reachLive; e != nil {
+	if e := reachEngine(); e != nil {
 		lbl := e.QueryLabelsCached(lat, lng, secs)
 		return IsochroneResult{ReachedNodes: e.ReachedNodes(lbl, secs)}
 	}
@@ -715,7 +857,7 @@ func engineOrFlatIsochrone(g *Graph, lat, lng float64, secs float32) IsochroneRe
 // seed, min-merged at the LABEL level (a few KB each), then one expansion -
 // instead of one full-graph multi-source sweep.
 func engineOrFlatMultiSource(g *Graph, seeds []NodeID, secs float32) IsochroneResult {
-	e := reachLive
+	e := reachEngine()
 	if e == nil || len(seeds) == 0 {
 		return multiSourceIsochrone(g, seeds, secs)
 	}

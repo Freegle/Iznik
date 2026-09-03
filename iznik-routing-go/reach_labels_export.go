@@ -48,9 +48,9 @@ const labelsExportMagic = "FRLX"
 const labelsExportVersion = uint32(1)
 
 type labelExportRow struct {
-	msgid   uint64
-	lat     float64
-	lng     float64
+	msgid    uint64
+	lat      float64
+	lng      float64
 	driveMin float64
 }
 

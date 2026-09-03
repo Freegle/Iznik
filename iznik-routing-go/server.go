@@ -151,7 +151,7 @@ func handleFairness(g *Graph) fiber.Handler {
 		// Reach-engine fast path (drive): the label query + table expansion
 		// replaces the bounded full-graph sweep; the quintile weighting and
 		// polygons run unchanged on the same reached set.
-		if e := reachLive; e != nil {
+		if e := reachEngine(); e != nil {
 			limitSecs := float32(minutes * 60)
 			maxLimit := limitSecs * (1 + float32(clampFairnessWeight(fairness)))
 			origin := nearestDriveNode(g, lat, lng)
