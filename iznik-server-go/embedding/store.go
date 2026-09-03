@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 )
 
 // EmbeddingDim is 256-dim Matryoshka truncation of nomic-embed-text-v1.5.
@@ -17,7 +18,8 @@ const EmbeddingDim = 256
 type Entry struct {
 	Msgid      uint64
 	Fromuser   uint64
-	Groupid    uint64
+	Groupid    uint64   // messages_spatial.groupid - only ever ONE group, even for a rippled/multi-group message
+	GroupIDs   []uint64 // every group the message is Approved on (origin + rippled-in copies) - used for group-scoped search
 	Msgtype    string
 	Lat        float64
 	Lng        float64
@@ -101,13 +103,43 @@ func fetchEntries(extraWhere string, args ...interface{}) ([]Entry, error) {
 	}
 
 	entries := make([]Entry, 0, len(rows))
+	msgids := make([]uint64, 0, len(rows))
 	for _, r := range rows {
 		e, err := decodeEntry(r.Msgid, r.Fromuser, r.Groupid, r.Msgtype, r.Lat, r.Lng, r.Subject, r.Arrival, r.SubjectEmbedding, r.BodyEmbedding)
 		if err != nil {
 			continue // wrong-sized subject blob: skip
 		}
 		entries = append(entries, e)
+		msgids = append(msgids, e.Msgid)
 	}
+
+	if len(msgids) > 0 {
+		type groupRow struct {
+			Msgid   uint64 `gorm:"column:msgid"`
+			Groupid uint64 `gorm:"column:groupid"`
+		}
+		var groupRows []groupRow
+		// ms.groupid above only ever names ONE group per message, even when the
+		// message is Approved on several (rippling adds a messages_groups row per
+		// receiving group) - see message/groups.go's spatialGroupFilter comment.
+		// Fetch every Approved group per msgid so Search can match a mod's group
+		// against any of them, not just the one messages_spatial happened to store
+		// (Discourse 9808/751: a rippled-in post was invisible to ModTools search
+		// scoped to the receiving group).
+		if err := db.Table("messages_groups").
+			Select("msgid, groupid").
+			Where("msgid IN (?) AND collection = ? AND deleted = 0", msgids, utils.COLLECTION_APPROVED).
+			Scan(&groupRows).Error; err == nil {
+			groupIDs := make(map[uint64][]uint64, len(entries))
+			for _, gr := range groupRows {
+				groupIDs[gr.Msgid] = append(groupIDs[gr.Msgid], gr.Groupid)
+			}
+			for i := range entries {
+				entries[i].GroupIDs = groupIDs[entries[i].Msgid]
+			}
+		}
+	}
+
 	return entries, nil
 }
 
@@ -305,6 +337,23 @@ type VectorSearchResult struct {
 	Arrival    time.Time `json:"-"`
 }
 
+// entryInAnyGroup reports whether e is Approved on any of the requested groups.
+// Groupid alone (messages_spatial's single column) only ever names the origin
+// group, so a message rippled into another group would otherwise be invisible
+// to a search scoped to the receiving group (Discourse 9808/751) - GroupIDs
+// carries every group the message is actually Approved on.
+func entryInAnyGroup(e *Entry, groupSet map[uint64]bool) bool {
+	if groupSet[e.Groupid] {
+		return true
+	}
+	for _, g := range e.GroupIDs {
+		if groupSet[g] {
+			return true
+		}
+	}
+	return false
+}
+
 // Search performs brute-force cosine similarity on every entry and returns the
 // top-K by max(subjectCos, bodyCos). Returning both cosines separately lets the
 // caller order subject-matches ahead of body-matches (what users expect:
@@ -346,7 +395,7 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 		if msgtype == "Wanted" && e.Msgtype != "Wanted" {
 			continue
 		}
-		if hasGroupFilter && !groupSet[e.Groupid] {
+		if hasGroupFilter && !entryInAnyGroup(e, groupSet) {
 			continue
 		}
 		if allowedIDs != nil && !allowedIDs[e.Msgid] {
