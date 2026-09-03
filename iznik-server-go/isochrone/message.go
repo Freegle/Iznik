@@ -716,7 +716,8 @@ func myGroupsMsgIDs(db *gorm.DB, myid uint64) []uint64 {
 			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
 			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
 			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
-			"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid).
+			"AND mg.collection = 'Approved' AND mg.deleted = 0)"+
+			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), myid).
 		Scan(&ids)
 	return ids
 }
@@ -880,7 +881,8 @@ func myGroupsCountUnfiltered(db *gorm.DB, myid uint64) uint64 {
 			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
 			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
 			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
-			"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid).
+			"AND mg.collection = 'Approved' AND mg.deleted = 0)"+
+			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), myid).
 		Scan(&count)
 	return count
 }
@@ -915,7 +917,8 @@ func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64, maxMinute
 			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
 			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
 			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
-			"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid).
+			"AND mg.collection = 'Approved' AND mg.deleted = 0)"+
+			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), myid).
 		Scan(&candidates)
 
 	return countWithinBudget(candidates, viewerLat, viewerLng, maxDistanceMiles, maxMinutes)

@@ -845,9 +845,40 @@ class ReachService
      */
     private static float $labelEvalDownUntil = 0.0;
 
+    /** When this process last reported that reach evaluation was unavailable. */
+    private static float $labelEvalAlertedAt = 0.0;
+
+    /**
+     * Raise a Sentry alert when the routing server cannot answer a reach
+     * question, at most once a minute per process.
+     *
+     * This is the only thing that shows a reach outage while it is happening.
+     * Every gate on a member's path now fails open on an undecided verdict,
+     * deliberately: the reply goes through, no "hasn't reached you yet" notice
+     * is shown, and the site therefore looks entirely well to the people using
+     * it. On 2026-09-02 the engine was down for 16 hours behind gates that
+     * failed closed instead, and the way we found out was a member asking why
+     * a post three miles away had not reached her.
+     */
+    private static function reportEvalUnavailable(string $reason): void
+    {
+        $now = microtime(true);
+        if ($now - self::$labelEvalAlertedAt < 60.0) {
+            return;
+        }
+        self::$labelEvalAlertedAt = $now;
+
+        $msg = 'ripple: reach evaluation unavailable: ' . $reason;
+        Log::warning($msg);
+        if (function_exists('\Sentry\captureMessage')) {
+            \Sentry\captureMessage($msg);
+        }
+    }
+
     public static function resetLabelEvalBreaker(): void
     {
         self::$labelEvalDownUntil = 0.0;
+        self::$labelEvalAlertedAt = 0.0;
     }
 
     /** Tests only: a tripped breaker must not leak into later tests. */
@@ -940,6 +971,11 @@ class ReachService
             return $none;
         }
         if (microtime(true) < self::$labelEvalDownUntil) {
+            // Nothing is asked while the breaker holds, and everything on a
+            // member's path fails open on the silence. Keep reporting it: an
+            // outage lasts hours and this is the only alert during all of them.
+            self::reportEvalUnavailable('breaker open after an earlier failure');
+
             return $none;
         }
         $out = [];
@@ -958,18 +994,18 @@ class ReachService
                 ]);
             } catch (\Throwable $e) {
                 self::$labelEvalDownUntil = microtime(true) + 300;
-                Log::warning("ripple: reach-eval fetch failed: {$e->getMessage()}");
+                self::reportEvalUnavailable("routing server unreachable: {$e->getMessage()}");
 
                 return $none;
             }
             if (!$response->successful()) {
-                // 503 (engine not configured yet) and 404 (routing server
-                // predates the endpoint) are expected states, not outages -
-                // they answer instantly, so no breaker for them either.
+                // 404 (routing server predates the endpoint) answers instantly,
+                // so no breaker for it - but a 503 is the shape a stopped reach
+                // engine takes, which is the outage worth waking up for.
                 if (!in_array($response->status(), [503, 404], true)) {
                     self::$labelEvalDownUntil = microtime(true) + 300;
-                    Log::warning("ripple: reach-eval HTTP {$response->status()}");
                 }
+                self::reportEvalUnavailable("routing server returned HTTP {$response->status()}");
 
                 return $none;
             }

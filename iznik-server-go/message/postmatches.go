@@ -156,8 +156,10 @@ func PostMatches(c *fiber.Ctx) error {
 
 	// Reach-filter against the post's location (the owner is the recipient): drop
 	// opposite posts that haven't rippled out to where the post is, so we never
-	// email a match the owner couldn't reply to. Fail-open (no reach row → kept).
-	blocked := ReachBlockedSet(0, candidateMsgids(candidates), srcLat, srcLng)
+	// email a match the owner couldn't reply to. No reach row at all still means
+	// kept, but a row the routing server cannot decide means dropped: mail is the
+	// surface where sending wrongly costs more than sending nothing.
+	blocked := ReachBlockedSetForMail(candidateMsgids(candidates), srcLat, srcLng)
 
 	out := make([]SimilarResult, 0, limit)
 	for _, cnd := range candidates {

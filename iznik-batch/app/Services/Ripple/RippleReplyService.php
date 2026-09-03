@@ -73,9 +73,11 @@ class RippleReplyService
 
     /**
      * Should an external reply to post $msgid from (lat,lng) be held? Only when the
-     * post is actively rippling (has a reach row) AND the replier is outside the
-     * current reach. No reach row → not rippling → deliver normally. Unknown
-     * location → cannot test → deliver normally.
+     * post is actively rippling (has a reach row) AND the replier is decidedly
+     * outside the current reach. No reach row → not rippling → deliver normally.
+     * Unknown location → cannot test → deliver normally. Reach undecided → nothing
+     * has refused this reply → deliver normally, and count it, so the size of a
+     * reach outage can be read off afterwards as well as alerted at the time.
      *
      * One exception, the first-reply passthrough: a post that has no replies at all
      * yet does not hold its first one, provided the replier is inside the reach the
@@ -94,7 +96,13 @@ class RippleReplyService
         if (!$this->hasReach($msgid)) {
             return false;
         }
-        if ($this->reach->isWithinReach($msgid, $lat, $lng, $band)) {
+        $verdict = $this->reach->reachVerdict($msgid, $lat, $lng, $band);
+        if ($verdict === ReachQueryService::VERDICT_IN) {
+            return false;
+        }
+        if ($verdict !== ReachQueryService::VERDICT_OUT) {
+            $this->recordEvent('reply_undecided_passthrough');
+
             return false;
         }
 

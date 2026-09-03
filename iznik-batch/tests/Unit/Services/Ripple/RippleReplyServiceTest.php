@@ -20,6 +20,15 @@ class RippleReplyServiceTest extends TestCase
     private const INSIDE = [51.5, -0.1];   // [lat, lng]
     private const OUTSIDE = [52.0, 1.0];
 
+    /**
+     * When set, every reach-eval answer is a 503 - the routing server up but
+     * unable to decide, which is what a reach outage looks like from here.
+     *
+     * A flag rather than a second Http::fake because fakes merge first-stub-wins,
+     * so re-faking inside a test would leave the setUp answer in place.
+     */
+    private bool $reachEvalDown = false;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -35,6 +44,9 @@ class RippleReplyServiceTest extends TestCase
         \Illuminate\Support\Facades\Http::fake(function ($request) {
             if (!str_contains($request->url(), 'reach-eval')) {
                 return null;
+            }
+            if ($this->reachEvalDown) {
+                return \Illuminate\Support\Facades\Http::response('', 503);
             }
             $lat = (float) ($request['lat'] ?? 0);
             $lng = (float) ($request['lng'] ?? 0);
@@ -96,6 +108,52 @@ class RippleReplyServiceTest extends TestCase
         $svc = $this->service();
         $this->assertTrue($svc->shouldHold($msgid, self::OUTSIDE[0], self::OUTSIDE[1]));
         $this->assertFalse($svc->shouldHold($msgid, self::INSIDE[0], self::INSIDE[1]));
+    }
+
+
+    /**
+     * A reach outage must not hold anybody's reply.
+     *
+     * The gate used to read "no verdict" as "outside", so when the reach
+     * engine went down on 2026-09-02 every emailed reply from a member the
+     * labels could not decide was held for sixteen hours. Nothing said so:
+     * holding is silent to the replier, and the site looked well.
+     */
+    public function test_should_not_hold_when_the_reach_service_cannot_answer(): void
+    {
+        $msgid = $this->seedReachedPost();
+        $this->reachEvalDown = true;
+
+        $this->assertFalse($this->service()->shouldHold($msgid, self::OUTSIDE[0], self::OUTSIDE[1]));
+    }
+
+    /** An outage is not invisible: every reply it lets through is counted. */
+    public function test_passing_a_reply_through_an_outage_is_counted(): void
+    {
+        $msgid = $this->seedReachedPost();
+        DB::table('rippling_event_metrics')->where('event', 'reply_undecided_passthrough')->delete();
+        $this->reachEvalDown = true;
+
+        $this->service()->shouldHold($msgid, self::OUTSIDE[0], self::OUTSIDE[1]);
+
+        $this->assertSame(1, (int) DB::table('rippling_event_metrics')
+            ->where('event', 'reply_undecided_passthrough')->sum('count'));
+    }
+
+    /**
+     * Failing open is only for the undecided. A replier the labels actually
+     * refuse is still held, and is not counted as a passthrough - otherwise
+     * the counter would measure ordinary traffic and show nothing during the
+     * outage it exists to reveal.
+     */
+    public function test_a_refused_replier_is_still_held_and_not_counted_as_a_passthrough(): void
+    {
+        $msgid = $this->seedReachedPost();
+        DB::table('rippling_event_metrics')->where('event', 'reply_undecided_passthrough')->delete();
+
+        $this->assertTrue($this->service()->shouldHold($msgid, self::OUTSIDE[0], self::OUTSIDE[1]));
+        $this->assertSame(0, (int) DB::table('rippling_event_metrics')
+            ->where('event', 'reply_undecided_passthrough')->sum('count'));
     }
 
     public function test_should_not_hold_when_post_has_no_reach(): void

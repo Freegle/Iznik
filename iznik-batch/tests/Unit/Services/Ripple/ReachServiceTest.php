@@ -5,6 +5,7 @@ namespace Tests\Unit\Services\Ripple;
 use App\Services\Ripple\ReachService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
 class ReachServiceTest extends TestCase
@@ -664,6 +665,60 @@ class ReachServiceTest extends TestCase
         $this->assertSame([7], $eval['discovered']);
     }
 
+
+
+    /**
+     * An outage has to be visible from outside the site.
+     *
+     * Every gate in front of these verdicts now fails open on purpose - a
+     * reply goes through, no "hasn't reached you yet" notice is shown - so
+     * nothing a member sees says anything is wrong. On 2026-09-02 the engine
+     * was down sixteen hours and the way we found out was a member asking why
+     * a post three miles away had not reached her.
+     */
+    public function test_an_unanswerable_reach_call_is_reported(): void
+    {
+        Log::spy();
+        Http::fake(['*reach-eval*' => Http::response(null, 503)]);
+
+        app(ReachService::class)->labelVerdicts(51.5, -0.1, [1]);
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($msg) => str_contains((string) $msg, 'reach evaluation unavailable'))
+            ->once();
+    }
+
+    /**
+     * One report a minute per process, no matter how many calls fail. These
+     * calls sit on the feed's hot path, so an outage would otherwise post
+     * thousands of identical alerts a minute and bury everything else.
+     */
+    public function test_repeated_failures_report_once_a_minute(): void
+    {
+        Log::spy();
+        Http::fake(['*reach-eval*' => Http::response(null, 503)]);
+
+        $svc = app(ReachService::class);
+        $svc->labelVerdicts(51.5, -0.1, [1]);
+        $svc->labelVerdicts(51.5, -0.1, [2]);
+        $svc->labelVerdicts(51.5, -0.1, [3]);
+
+        Http::assertSentCount(3);
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($msg) => str_contains((string) $msg, 'reach evaluation unavailable'))
+            ->once();
+    }
+
+    /** A working routing server reports nothing. */
+    public function test_a_successful_reach_call_reports_nothing(): void
+    {
+        Log::spy();
+        Http::fake(['*reach-eval*' => Http::response(['results' => [['msgid' => 1, 'verdict' => 'in']]])]);
+
+        app(ReachService::class)->labelVerdicts(51.5, -0.1, [1]);
+
+        Log::shouldNotHaveReceived('warning');
+    }
 
     public function test_label_eval_breaker_stops_calls_after_a_server_fault(): void
     {

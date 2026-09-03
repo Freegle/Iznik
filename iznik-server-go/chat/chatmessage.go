@@ -758,18 +758,23 @@ func CreateChatMessage(c *fiber.Ctx) error {
 						break
 					}
 				}
-				// Containment from the stored cell grid by primary key
-				// (rippling.ReachMembership): a ~23KB blob fetch plus a
-				// run-stream probe, replacing the ST_Contains against a
-				// megabyte polygon this gate used to pay per reply. Rows the
-				// cells backfill has not reached fall back inside the helper
-				// to the legacy sandwich/exact SQL while those columns exist;
-				// afterwards an undecidable row holds the reply (fail closed),
-				// which the release cron resolves exactly as it does for any
-				// held reply.
+				// Containment is the routing server's answer about the stored
+				// label (rippling.ReachMembership), one batched call in place of
+				// the ST_Contains against a megabyte polygon this gate used to
+				// pay per reply.
+				//
+				// A row it could not answer for - no label stored yet, or the
+				// routing server down - does NOT hold the reply. Only a
+				// refusal does. On 2026-09-02 the reach engine was down for 16
+				// hours and every undecided row read as "out", so members were
+				// told a post three miles away had not reached them and their
+				// replies were held; the notice even carried an arrival time in
+				// the past, because the drive-time estimate behind that text
+				// was still working. An outage now costs ordering, not replies.
 				membership, gateErr := rippling.ReachMembership(db, []uint64{*payload.Refmsgid}, reach.lng, reach.lat)
 				rc.ReachRows = len(membership)
-				if info, ok := membership[*payload.Refmsgid]; ok && info.InReach {
+				info, haveInfo := membership[*payload.Refmsgid]
+				if haveInfo && info.InReach {
 					rc.InReach = 1
 				}
 				if gateErr == nil {
@@ -786,11 +791,24 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					// ripple:release-replies cron then delivers it (or 'taken-gone' if the post goes
 					// first). Mirrors IncomingMailService::holdReplyIfOutsideReach for the web path.
 					//
-					// Unless this is the post's FIRST reply and the replier is inside the reach the
-					// post will eventually have (see firstreply.ShouldPassThrough). Holding that
-					// reply delays a poster who currently has nothing, to protect an ordering the
-					// replier was going to be allowed to cross anyway.
-					if rc.ReachRows > 0 && rc.InReach == 0 {
+					// Undecided is not a refusal: let the reply through and
+					// count it, so the size of an outage is visible after the
+					// fact as well as in the Sentry alert the routing call
+					// raises at the time.
+					if rc.ReachRows > 0 && rc.InReach == 0 && !info.Decided && !ringAdmits {
+						db.Table("rippling_event_metrics").Clauses(clause.OnConflict{
+							DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
+						}).Create(map[string]interface{}{
+							"day":   gorm.Expr("CURDATE()"),
+							"event": gorm.Expr("'reply_undecided_passthrough'"),
+							"count": gorm.Expr("1"),
+						})
+					} else if rc.ReachRows > 0 && rc.InReach == 0 {
+						// Unless this is the post's FIRST reply and the replier is
+						// inside the reach the post will eventually have (see
+						// firstreply.ShouldPassThrough). Holding that reply delays a
+						// poster who currently has nothing, to protect an ordering the
+						// replier was going to be allowed to cross anyway.
 						holdReply = !firstreply.ShouldPassThrough(db, *payload.Refmsgid, reach.lng, reach.lat)
 						if !holdReply {
 							db.Table("firstreply_event_metrics").Clauses(clause.OnConflict{
