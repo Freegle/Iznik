@@ -370,7 +370,39 @@ Modest at 4.8% of the overnight floor, but it is the second instance of the same
 suggests looking for others: a per-tick job with a lookback measured in days is worth checking
 wherever it appears.
 
-### 9. Server configuration
+### 9. Audit: over-generous lookbacks on per-minute jobs
+
+Having hit the pattern twice (findings 1 and 8), all **25** `everyMinute()` commands in
+`routes/console.php` were audited rather than waiting to trip over a third.
+
+**Most multi-day windows are legitimate and must not be touched** — they are business semantics, not
+scan bounds: the 90-day activity threshold in `UnifiedDigestService:997` and
+`MatchMailService:730`, the 7-day spam window in `ChatSpamService:41`, `COOLDOWN_DAYS` in
+`NotificationExhortService:42`, `SUBJECT_REPEAT_WINDOW` in `ContentCheckService:1571`. Narrowing any
+of these would change behaviour.
+
+**The anti-pattern is specifically:** a per-minute job using a multi-day lookback to *find work that
+arrives continuously*, with no watermark — so it re-processes the same backlog every tick.
+
+**The codebase already contains the correct pattern.** `SendPendingWelcomeMailsCommand:102-107` uses
+`id > $lastProcessedId` as the primary filter with `added >= $cutoffDate` as an explicit backstop —
+its own comment says "backstop to avoid processing very old users". That is exactly what proposal A
+recommends, already in production. Copy it.
+
+**Three instances found:**
+
+| job | schedule | lookback | re-fetched per tick | genuinely new |
+|---|---|---|---|---|
+| reach mail (finding 1) | everyMinute | 60 min | 435-754 posts | ~8/min |
+| leave-check (finding 8) | everyMinute | 2 days | 1,195 log rows | ~1/hour |
+| **mod2mod chaseup** | everyMinute | 2 days | **153 rooms** | **0 in the last hour** |
+
+**Proposal J: `ChatChaseupModsService:33`** — `chat_rooms` joined to `chat_messages` on
+`date >= now()->subDays(2)`, then a per-room loop. 153 rooms re-fetched and re-looped every minute;
+6 hours would be 14, one hour 0. Either narrow the window or add a watermark on the last message id
+processed, per the welcome-mail precedent.
+
+### 10. Server configuration
 
 - `sort_buffer_size = 256000000` (244 MB; default 256 KB), per-connection. **8.5 G of 10 G swap in
   use, 3.37 G of it mysqld's own pages.** Oversized sort buffers are also slower, not faster.
