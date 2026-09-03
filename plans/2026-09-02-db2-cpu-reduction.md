@@ -31,8 +31,7 @@ alternative was investigated and does not exist in the schema — see proposal A
 **What this does NOT cover:** the 00:30-05:00 nightly block, sampled only opportunistically. It
 contains 15+ unexamined jobs, and the two that have been examined (`purge:logs`, `purge:chats`)
 both turned out to be defective. See "The nightly window". A 48-minute full-text capture of
-05:12-06:01 is the deepest look taken; one item in it (8.5%, `select distinct messages.id, lat, lng
-… left join messages_outcomes … and not exists …`) remains untraced to a job.
+05:12-06:01 is the deepest look taken and every item in it is now traced.
 
 ## Baseline
 
@@ -746,6 +745,14 @@ are relocated wholesale by G, and the spatial item is moved by neither.
   9.0% of the overnight floor: `EXPLAIN` gives `mg` type=**range**, key=`groupid`, **rows=2**,
   "Backward index scan", with `messages` by PRIMARY eq_ref; **6-9 ms** per call. Well indexed. Like
   the expand scan, its share is frequency — once per group across 507 groups — not cost.
+
+- **Spatial index refresh** (`MessageSpatialService.php:207-216`), **8.5% of the nightly window**:
+  finds messages whose `messages_spatial` row is missing or stale. Legitimate sync work, but the
+  staleness test is six `OR`ed predicates including
+  `ST_X(messages_spatial.point) != messages.lng` and `ST_Y(...) != messages.lat` — **function calls
+  on a spatial column, evaluated per row and unindexable**. Same class as the reach query's per-row
+  spatial functions. Not investigated further at 8.5% of a quiet window, but the shape means its
+  cost scales with candidate volume rather than with how many rows are actually stale.
 
 - **Per-group member query** (`SELECT DISTINCT memberships.userid … users.lastaccess >= 31 DAY AND
   users.trustlevel IN (…)`), **7.3% of the nightly window**: `memberships` ref on `groupid_2`
