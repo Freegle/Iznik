@@ -336,7 +336,41 @@ scan `volunteering` in full to discover that, every time, because no index suppo
 At ~1.4% of db2 that is not a CPU priority; the more interesting question is a product one — whether
 "nationwide volunteering opportunities" is meant to be an empty feature.
 
-### 8. Server configuration
+### 8. Rippling leave-check — the same over-generous lookback as finding 1, 4.8% of the floor
+
+`ExpandService.php:2221`, run per `ripple:expand` tick (every minute). Already optimised once — the
+code comment records "~3s vs the unbounded original's 80s+, which hung every tick" — but it kept a
+**2-day** lookback for what the comment itself describes as "leaves since the last successful run
+(seconds ago)… a generous safety margin".
+
+| lookback | Group/Left records |
+|---|---|
+| **2 days (current)** | **1,195** |
+| 6 hours | 62 |
+| 1 hour | **1** |
+| 10 minutes | **0** |
+
+So the driving set is ~1,195 rows where a 30-minute window would carry 0-1. Each of those then
+drives two nested `EXISTS` subqueries against `logs` (42.6 M rows) plus joins to `messages_groups`
+and `messages`.
+
+`EXPLAIN` also shows the access path is loose: `type=range key=timestamp_2 rows=202,860` — the index
+is on `timestamp` alone, so it walks ~200 k entries of *all* log types across the 2 days to find the
+1,195 that are Group/Left.
+
+**Proposal I, two independent parts:**
+1. **Narrow the lookback** to ~30 minutes (config or constant). Driving set 1,195 → ~0-1. Exactly
+   the fix proposal A applies to the reach window, and the same reasoning: a per-minute job does not
+   need a multi-day backstop.
+2. **Operator DDL:** `ALTER TABLE logs ADD INDEX type_subtype_timestamp (type, subtype, timestamp);`
+   — seek straight to Group/Left instead of scanning 202,860 timestamp entries. `logs` is 42.6 M
+   rows, so this is a large index to add; part 1 alone may make it unnecessary.
+
+Modest at 4.8% of the overnight floor, but it is the second instance of the same anti-pattern, which
+suggests looking for others: a per-tick job with a lookback measured in days is worth checking
+wherever it appears.
+
+### 9. Server configuration
 
 - `sort_buffer_size = 256000000` (244 MB; default 256 KB), per-connection. **8.5 G of 10 G swap in
   use, 3.37 G of it mysqld's own pages.** Oversized sort buffers are also slower, not faster.
