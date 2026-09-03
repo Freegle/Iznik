@@ -1654,3 +1654,45 @@ the overnight window, where the ripple crons behave differently) before anyone s
 The member-side design still needs the dormancy-return hook described at 12:30 — the
 "active in the last hour" feed (1,536/hr) is a superset, and narrowing it needs a hook where
 `lastaccess` is written and the previous value is still available.
+
+## 2026-09-03 13:00 — the post-side rate confirmed by two independent methods
+
+Tenth window (12:57): db2 mysqld **420%**, total **3.80 mean threads**, **A = 3.00 threads — 79% of
+db2's active work.** Everything else quietened; the digest did not. That is the clearest single
+statement of where db2's CPU goes.
+
+The 12:45 entry flagged that 12.1/min rested on one hour of `updated_at`. Two things now address it.
+
+**Nested windows** (valid because each counts *distinct rows last changed* within the window, which
+is exactly what a watermark processes — unlike the historical hourly buckets that misled twice
+before):
+
+| window | rows | per min |
+|---|---|---|
+| 5 min | 41 | **8.2** |
+| 15 min | 156 | **10.4** |
+| 60 min | 706 | **11.8** |
+| 180 min | 1,989 | **11.1** |
+
+**A forward-looking cross-check from the other side of the mechanism** — `next_expansion_at` says
+what *will* change, `updated_at` says what *did*:
+
+| | |
+|---|---|
+| expanding rows | 8,233 |
+| due now | 19 |
+| due within 1 min | 28 |
+| **due within 60 min** | **681** |
+
+**681 forward vs 706 backward — agreement within 4%, by two methods with no shared failure mode.**
+The post-side watermark rate is ~11-12 distinct rows/min, so the 20× post-side reduction stands. Only
+8.3% of the 8,233 expanding rows are due in any given hour, which is why re-scanning a 60-minute
+window every pass wastes what it does.
+
+**Incidental:** the sizing comment at `console.php:120-124` says the reach population "generates ~185
+due-advances per tick" and sets `--limit 500` from it. Actual is **28 due within a minute** — the
+comment is stale by ~6×. The limit is harmlessly generous, but anyone tuning from that comment would
+start from the wrong number.
+
+**Still same-day.** Two methods agreeing removes the single-measurement risk, not the time-of-day
+risk; the overnight window still needs its own check before a job is sized.
