@@ -443,6 +443,31 @@ query — check `information_schema.processlist` and `KILL QUERY` explicitly.)*
   on a 24 G box.
 - `innodb_io_capacity = 200`, `innodb_adaptive_hash_index = OFF`.
 
+## Coverage check (01:57, 14,104 samples)
+
+Every item above 1% of db2's profile maps to a documented finding — there is no unexplained
+consumer left to find:
+
+| item | share | disposition |
+|---|---|---|
+| illustrations cleanup | 18.7% | proposal **B** |
+| users lastaccess scan | 10.2% | proposal **D** |
+| ripple expand scan | 10.1% | checked healthy |
+| `chat_rooms` (db1 API) | 7.6% | proposal **G** |
+| per-group newest-post probe | 7.4% | checked healthy |
+| jobs count | 6.5% | proposal **H** |
+| leave-check | 6.0% | proposal **I** |
+| spatial browse (db1 API) | 4.0% | proposal **G** |
+| reach recipient | 3.6% | proposal **A** (overnight; 46-68% by day) |
+| `messages_outcomes` pair | 3.9% | finding 7 — ~2% by day, not a priority |
+| held-replies, users_emails, volunteering | 6.1% | documented |
+| unmapped long tail | 19.7% | nothing above 3.89% |
+
+*(Two cautions for anyone repeating this. Classifier patterns must match the literal SQL — Laravel
+emits backticks, so `lastaccess >=` misses what `` `lastaccess` >= `` matches; a first pass here
+reported 40% "unmapped" purely from that. And percentages are of the *current* profile: reach is
+3.6% at 01:57 and 46-68% by day, so a single sample ranks the hour, not the system.)*
+
 ## Checked and found healthy — not targets
 
 - **Ripple expand candidate scan** (`ripple:expand`, ~507 groups per pass): `range` on
