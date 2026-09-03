@@ -581,6 +581,45 @@ where the driving scan is expensive:
 So **proposal K applies to both anti-join loops**, not just the logs one. The empty-chat-rooms purge
 runs under `purge:chats` (`dailyAt('02:00')`); orphan logs under `purge:logs` (`dailyAt('03:30')`).
 
+### 11. Microvolunteering notify — an anti-join correlated by `LIKE CONCAT(...)`
+
+`MicrovolunteeringNotifyService.php:69-89`, scheduled **`everyFiveMinutes()`**
+(`routes/console.php:1133`). Caught only by the timestamped nightly capture; absent from every
+daytime sample.
+
+```sql
+LEFT JOIN users_notifications
+    ON users_notifications.timestamp >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+   AND users_notifications.url LIKE CONCAT('/microvolunteering/message/', messages.id)
+   AND users_notifications.type = ?
+WHERE ... AND users_notifications.id IS NULL
+```
+
+The only thing correlating `users_notifications` to the message is a **computed string match on
+`url`**. The `LIKE` has no wildcard, so it is really an equality — but the pattern is built per row
+and **`users_notifications` has no index on `url`** (`fromuser`, `newsfeedid`, `PRIMARY`, `touser`,
+`touser_2(timestamp,seen,mailed)`, `userid(touser,id,seen)`).
+
+`EXPLAIN`:
+
+| table | type | key | rows |
+|---|---|---|---|
+| `groups` | ALL | NULL | 442 |
+| `messages_groups` | ref | `groupid` | 8,014 |
+| `messages` | eq_ref | PRIMARY | 1 |
+| **`users_notifications`** | **range** | `touser_2` | **3,461** — scanned and string-matched per candidate message |
+
+**Proposal L**, cheapest first:
+1. `LIKE` with no wildcard is `=` — change it, then add a prefix index on `users_notifications (url)`
+   so the correlation becomes a ref lookup instead of a 3,461-row scan per message.
+2. Better structurally: the url is carrying a foreign key as text. A `msgid` column on
+   `users_notifications` would make this an ordinary indexed anti-join — larger change, worth
+   considering if this recurs elsewhere.
+
+Magnitude is modest — ~5% of a quiet node — but it is a clear structural defect on a five-minutely
+job, and it demonstrates the value of the timestamped capture: a burst-shaped job that no
+90-second spot sample caught in 22 hours.
+
 ## The fixed-cost class — B and H are a third of db2 at its quietest
 
 Two items do **identical work whether or not there is anything to do**, so their share rises as
