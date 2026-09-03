@@ -42,33 +42,44 @@ func TestLabelVerdictsDecideMembership(t *testing.T) {
 	prevURL := os.Getenv("ROUTING_EVAL_URL")
 	defer os.Setenv("ROUTING_EVAL_URL", prevURL)
 
-	check := func() bool {
+	// Both halves of the answer: whether the point is in reach, and whether the
+	// routing server actually DECIDED it. Undecided is not "out" - the reply
+	// gate and the "hasn't reached you yet" notice fail OPEN on it.
+	check := func() rippling.ReachRowInfo {
 		m, err := rippling.ReachMembership(db, []uint64{msgID}, -0.1, 51.5)
 		assert.NoError(t, err)
-		return m[msgID].InReach
+		return m[msgID]
 	}
 
 	srv := stub("in")
 	os.Setenv("ROUTING_EVAL_URL", srv.URL)
 	roadblur.ResetRoutingBreaker()
-	assert.True(t, check(), "an IN verdict admits")
+	inInfo := check()
+	assert.True(t, inInfo.InReach, "an IN verdict admits")
+	assert.True(t, inInfo.Decided, "an IN verdict is a decision")
 	srv.Close()
 
 	srv = stub("out")
 	os.Setenv("ROUTING_EVAL_URL", srv.URL)
 	roadblur.ResetRoutingBreaker()
-	assert.False(t, check(), "an OUT verdict refuses")
+	outInfo := check()
+	assert.False(t, outInfo.InReach, "an OUT verdict refuses")
+	assert.True(t, outInfo.Decided, "an OUT verdict is a decision, and still holds a reply")
 	srv.Close()
 
 	srv = stub("nolabels")
 	os.Setenv("ROUTING_EVAL_URL", srv.URL)
 	roadblur.ResetRoutingBreaker()
-	assert.False(t, check(), "no stored label = not in reach; there is no grid to fall back to")
+	noneInfo := check()
+	assert.False(t, noneInfo.InReach, "no stored label = not in reach; there is no grid to fall back to")
+	assert.False(t, noneInfo.Decided, "no stored label is not a decision - callers must fail open")
 	srv.Close()
 
 	roadblur.ResetRoutingBreaker()
 	os.Setenv("ROUTING_EVAL_URL", "http://127.0.0.1:1")
-	assert.False(t, check(), "routing unreachable = not in reach; routing is a dependency")
+	downInfo := check()
+	assert.False(t, downInfo.InReach, "routing unreachable = not in reach; routing is a dependency")
+	assert.False(t, downInfo.Decided, "routing unreachable is not a decision - callers must fail open")
 	roadblur.ResetRoutingBreaker()
 }
 

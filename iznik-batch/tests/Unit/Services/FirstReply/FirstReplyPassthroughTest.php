@@ -46,19 +46,24 @@ class FirstReplyPassthroughTest extends TestCase
         // post will eventually reach and refuses NEVER_REACHED. The gate is
         // under test, not the geometry - that is proven routing-side.
         // Http::fake merges first-stub-wins, so tests needing a different
-        // answer set $this->verdictOverride instead of re-faking.
-        $this->verdictOverride = null;
+        // answer set the properties below instead of re-faking.
+        $this->maxVerdictOverride = null;
+        $this->reachEvalDown = false;
         \Illuminate\Support\Facades\Http::fake(function ($request) {
             if (!str_contains($request->url(), 'reach-eval')) {
                 return null;
             }
             $lat = (float) ($request['lat'] ?? 0);
             $lng = (float) ($request['lng'] ?? 0);
-            if ($this->verdictOverride !== null) {
-                $verdict = $this->verdictOverride;
-            } elseif (($request['budget'] ?? '') === 'max') {
+            if ($this->reachEvalDown) {
+                // The routing server up but unable to decide, which is the
+                // shape a stopped reach engine takes.
+                return \Illuminate\Support\Facades\Http::response('', 503);
+            }
+            if (($request['budget'] ?? '') === 'max') {
                 // The eventual reach: everywhere except NEVER_REACHED.
-                $verdict = abs($lat - self::NEVER_REACHED[0]) < 0.01 ? 'out' : 'in';
+                $verdict = $this->maxVerdictOverride
+                    ?? (abs($lat - self::NEVER_REACHED[0]) < 0.01 ? 'out' : 'in');
             } else {
                 // The current reach: only INSIDE_NOW.
                 $in = abs($lat - self::INSIDE_NOW[0]) < 0.01 && abs($lng - self::INSIDE_NOW[1]) < 0.01;
@@ -73,8 +78,16 @@ class FirstReplyPassthroughTest extends TestCase
         });
     }
 
-    /** When set, every reach-eval answer uses this verdict. */
-    private ?string $verdictOverride = null;
+    /**
+     * When set, the max-budget answer uses this verdict. The current-tick
+     * answer is deliberately left alone: the two are questions about different
+     * reaches, and blanking both makes a missing label indistinguishable from
+     * an outage - which the two now behave differently on.
+     */
+    private ?string $maxVerdictOverride = null;
+
+    /** When true, every reach-eval answer is a 503: the reach engine is down. */
+    private bool $reachEvalDown = false;
 
     private function service(): RippleReplyService
     {
@@ -196,13 +209,29 @@ class FirstReplyPassthroughTest extends TestCase
 
     public function test_no_stored_label_leaves_the_hold_in_place(): void
     {
-        // A post whose label has not been stored yet must change nothing:
-        // no verdict means "no wider reach known", and the hold stands.
+        // A post whose label has not been stored yet must change nothing: the
+        // passthrough has no eventual reach to work from, so the hold stands on
+        // the current tick's own refusal, which is still answered.
         [$msgid] = $this->seedRipplingPost();
-        $this->verdictOverride = 'nolabels';
+        $this->maxVerdictOverride = 'nolabels';
 
         $this->assertTrue(
             $this->service()->shouldHold($msgid, self::REACHED_LATER[0], self::REACHED_LATER[1])
+        );
+    }
+
+    public function test_reply_passes_through_when_the_reach_engine_cannot_answer(): void
+    {
+        // Nothing could be asked, so nothing has been refused. A second reply
+        // from somewhere the post never reaches is the strictest case there is,
+        // and even that goes through while the engine is silent.
+        [$msgid, $poster] = $this->seedRipplingPost();
+        $this->addReplier($msgid, $poster);
+        $this->reachEvalDown = true;
+
+        $this->assertFalse(
+            $this->service()->shouldHold($msgid, self::NEVER_REACHED[0], self::NEVER_REACHED[1]),
+            'an unanswerable reach question must not hold a reply'
         );
     }
 }

@@ -351,8 +351,25 @@ treat out+origin_area as NO verdict and let the cell grid - which holds the unio
 A member point that does not snap to the road network answers all-`nolabels` (200), and the
 Go client trips the shared routing breaker only on 5xx faults (404/503 are expected states);
 the PHP client carries the same 5-minute breaker the drive-metrics path uses, because the
-digest asks once per recipient. NO VERDICT MEANS NOT IN REACH on every deciding gate -
-there is no cell fallback anywhere.
+digest asks once per recipient.
+
+**No verdict is not a refusal.** A gate only refuses somebody the labels have actually
+ruled `out`. `nolabels`, a routing server that cannot be reached, a 503, a 4xx or an
+unreadable body all leave the row UNDECIDED, and every gate lets an undecided row through:
+the reply is sent rather than held, and no "hasn't reached your area yet" notice is shown.
+`rippling.ReachRowInfo.Decided` carries that distinction in Go, `ReachQueryService::reachVerdict`
+in PHP. Mail is the one exception (see below).
+
+That direction was chosen after 2026-09-02, when the reach engine was down for sixteen hours
+and the gates failed the other way. A member 13 minutes' drive from a post, in the post's own
+community since 2009, was told it had not reached her - beside an ETA, computed on a lane
+that still worked, saying she had been in reach from the first tick. Nothing else showed the
+outage, so it ran overnight.
+
+Failing open means an outage is now invisible from the outside, so it has to be visible from
+the inside instead: `reportEvalUnavailable` (Go `rippling/labelverdicts.go`, PHP
+`ReachService`) raises a Sentry event, at most one a minute per process, carrying the reason.
+That alert is the only sign of a reach outage while it is happening. Treat it as one.
 
 Client wiring: apiv2 `rippling/labelverdicts.go` (`LabelVerdicts`,
 `LabelVerdictsWithDiscover`, `DropLabelOut`) feeds `rippling.ReachMembership` (reply gate)
@@ -364,6 +381,32 @@ through, so they cannot disagree - plus `message/search.go` (same narrowing and 
 feed the daily digest's containment universe (same narrowing + union),
 `MaxReachService::isWithinMaxReach` and `MatchMailService::applyCellBand` (one
 reach-arrival call bands every candidate by seconds past the current edge).
+
+### A post is not live until its reach exists
+
+A post reaches the browse feeds the moment it is approved, but its `rippling_reach` row is
+written a beat later. In that gap the feeds have no reach to consult, so the post shows to
+everybody within the raw distance search - the wide audience the ripple exists to avoid.
+On live the gap is short: of 1,347 posts in a day, 788 had their row inside a minute and
+1,204 inside two, but 41 took longer than ten minutes.
+
+So the feeds hide a post that has no `rippling_reach` row for the first
+`rippling.ReachPendingGraceMinutes` (10) after `messages.arrival`, and show it regardless
+afterwards. The grace period is not a requirement because 132 browsable posts have no row
+and never will - their origin cannot snap to the road graph, the Isle of Man being the
+clearest case - and those posts must still be seen.
+
+- One shared SQL fragment, `rippling.ReachPendingFilter`, so no surface can drift: the
+  my-communities feed and its two counts (`isochrone/message.go`), the map-bounds feed
+  (`message/bounds.go`) and the groups feed (`message/groups.go`). Nearby and both search
+  arms already INNER JOIN `rippling_reach`, so they were never affected.
+- The clock is `messages.arrival`, NOT `messages_spatial.arrival`, which the reach engine
+  bumps on every tick - a post gated on that would keep restarting its own grace period.
+- A member always sees their own post, whatever its reach says.
+- `RIPPLE_HIDE_PENDING=0` turns the whole thing off without a deploy.
+
+Read-side, not write-side: `messages_spatial` has four writers, and a gate in each of them
+is four chances to disagree.
 
 ### The grid-removal endgame
 
@@ -395,9 +438,13 @@ evaluator answers everything the current-reach grid did, and the grid retires pe
   rolling label migration instead of a site-wide nolabels window.
 - **Routing is a dependency**: reach verdicts come from the stored labels and nowhere
   else - the cell fallbacks were removed (2026-08-28, "assume availability is fine...
-  remove any fallback code"). Routing down means reach-gated posts are hidden, replies to
-  them held, and reach mail skipped until it returns; breakers stop the callers paying
-  timeouts meanwhile. The grids' one remaining role is the candidate prefilter (the
+  remove any fallback code"). Routing down therefore decides nothing, and since 2026-09-03
+  deciding nothing lets members through: replies send, no not-reached notice appears, and
+  browse keeps serving whatever the prefilter found. Reach MAIL still skips, because a held
+  reply arrives late while a wrong email cannot be recalled (`ReachBlockedSetForMail`,
+  and PHP's `isWithinReach`, both stay strict). Breakers stop the callers paying timeouts
+  meanwhile, and Sentry carries the outage.
+ The grids' one remaining role is the candidate prefilter (the
   spatial containment index) until each post's discover arm replaces it. The moderator
   reach-map overlay draws the engine's drive isochrone for drained rows.
 
@@ -955,6 +1002,10 @@ post went. Measured on live, **three in four held repliers live somewhere the ri
 reach**, so for them the only exit was the backstop - days later, by which time a quarter to a
 third of items have already gone. In practice their reply was not delayed, it was discarded.
 
+Only a decided `out` holds anything. If the routing server cannot answer, the reply is sent,
+and the pass-through is counted as `reply_undecided_passthrough` in `rippling_event_metrics`
+so the cost of an outage can be read afterwards.
+
 So every hold now carries a due time, computed at hold time from how far the replier is from
 the item:
 
@@ -1113,6 +1164,8 @@ about travel time, so the reach wins wherever we have it.
   `max_minutes`) - how long an out-of-reach reply waits (§7a). Off reverts to release on
   coverage or backstop alone.
 - `reply_saturation_stop` (5), `hazard_hours`, `rippled_in_pending_hours` (0).
+- `RIPPLE_HIDE_PENDING` (apiv2 env, on by default) - hide a post that has no
+  `rippling_reach` row yet for its first ten minutes. Set to `0` to show every post at once.
 
 Per-community rather than config: `groups.settings.rippling.{out,in}` switches rippling off for
 one community in either direction (§4a), set only via `php artisan ripple:opt-out`.

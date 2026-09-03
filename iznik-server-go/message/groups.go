@@ -2,6 +2,7 @@ package message
 
 import (
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -102,6 +103,10 @@ func Groups(c *fiber.Ctx) error {
 		"INNER JOIN messages m ON m.id = messages_spatial.msgid " +
 		"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? " +
 		"WHERE 1=1 " + spatialGroupFilter +
+		// A post is not live until its reach exists - see rippling.ReachPendingFilter.
+		// It exempts the viewer's own posts, which this arm has to serve: the
+		// own-posts arm below only covers posts not yet in messages_spatial.
+		" AND " + rippling.ReachPendingFilter("messages_spatial.msgid", myid) + " " +
 		"UNION " +
 		"SELECT lat, lng, messages.id, " +
 		"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, " +

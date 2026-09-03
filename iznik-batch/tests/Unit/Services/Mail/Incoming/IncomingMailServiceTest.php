@@ -1308,6 +1308,23 @@ class IncomingMailServiceTest extends TestCase
             [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))'), 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))']
         );
 
+        // The routing server refuses this replier. Being out of reach has to be
+        // a decided refusal here: an unanswerable question is no longer read as
+        // one, so without this the reply would pass through and the test would
+        // be proving the outage behaviour instead of the gate.
+        \Illuminate\Support\Facades\Http::fake(function ($request) {
+            if (!str_contains($request->url(), 'reach-eval')) {
+                return null;
+            }
+
+            return \Illuminate\Support\Facades\Http::response([
+                'results' => array_map(
+                    fn ($id) => ['msgid' => (int) $id, 'verdict' => 'out'],
+                    $request['msgids'] ?? []
+                ),
+            ]);
+        });
+
         $replierEmail = $replier->emails->first()->email;
         $posterSlugAddr = "someslug-{$poster->id}@users.ilovefreegle.org";
         $emailRaw = $this->createMinimalEmail([

@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
@@ -469,4 +470,107 @@ func TestCreateChatMessage_RippleJoinedMemberIsNotHome(t *testing.T) {
 		assert.Equal(t, "home", *row.Attribution,
 			"one ordinary origin membership is enough for home, whatever else they hold")
 	}
+}
+
+// TestCreateChatMessage_ReachUndecidedReplyPassesThrough is the outage case: the
+// post has a reach row, but the routing server cannot say whether the replier is
+// inside it.
+//
+// No verdict is not a refusal. On 2026-09-02 the reach engine was down for 16
+// hours and this gate read every undecided row as a refusal, so a member 13
+// minutes' drive from a post - in the post's own group since 2009 - had her
+// reply held and was shown a notice saying the post had not reached her yet.
+// The notice even carried an arrival time in the past, because the drive-time
+// estimate behind that text was still working.
+//
+// The reply now goes through, and the passthrough is counted, so the size of
+// the next outage is measurable afterwards as well as alerted at the time.
+func TestCreateChatMessage_ReachUndecidedReplyPassesThrough(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("reachundecided")
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
+		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
+		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_held_replies (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		chatid BIGINT UNSIGNED NOT NULL, chatmsgid BIGINT UNSIGNED NOT NULL,
+		msgid BIGINT UNSIGNED NOT NULL, replieruserid BIGINT UNSIGNED NOT NULL,
+		source ENUM('email','tn','web') NOT NULL DEFAULT 'email',
+		lat DOUBLE, lng DOUBLE,
+		status ENUM('held','released','dropped','taken-gone') NOT NULL DEFAULT 'held',
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, releasedat TIMESTAMP NULL,
+		INDEX (msgid), INDEX (chatid), INDEX (status)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, replierID, groupID, "Member")
+	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, replierID)
+
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reach undecided test item", 51.5, -0.1)
+
+	// The same row the hold test uses: a reach that does not cover the replier.
+	// What differs is only that nothing can be asked about it.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound) VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText("+
+		"'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))', 3857)))", msgID, mustRasterize(t, "POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))"))
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM rippling_held_replies WHERE msgid = ?", msgID)
+
+	// The routing server is unreachable, so there is no verdict at all.
+	t.Setenv("ROUTING_EVAL_URL", "http://127.0.0.1:1")
+	roadblur.ResetRoutingBreaker()
+	t.Cleanup(roadblur.ResetRoutingBreaker)
+
+	db.Exec("DELETE FROM rippling_event_metrics WHERE event = 'reply_undecided_passthrough' AND day = CURDATE()")
+	defer db.Exec("DELETE FROM rippling_event_metrics WHERE event = 'reply_undecided_passthrough' AND day = CURDATE()")
+
+	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	_, token := CreateTestSession(t, replierID)
+
+	var payload chat.ChatMessage
+	payload.Message = "I'd like this please"
+	payload.Refmsgid = &msgID
+	s, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatID, token), bytes.NewBuffer(s))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode, "the reply is accepted while reach cannot be evaluated")
+
+	var heldCount int
+	db.Raw("SELECT COUNT(*) FROM rippling_held_replies WHERE msgid = ? AND replieruserid = ?",
+		msgID, replierID).Scan(&heldCount)
+	assert.Equal(t, 0, heldCount, "an undecided reach must not hold the reply - only a refusal does")
+
+	var passthroughs int
+	db.Raw("SELECT count FROM rippling_event_metrics WHERE day = CURDATE() AND event = 'reply_undecided_passthrough'").Scan(&passthroughs)
+	assert.Equal(t, 1, passthroughs, "the passthrough is counted, so an outage can be sized afterwards")
+
+	// A passed-through reply is an ordinary reply: it reaches the poster once
+	// chats:process-incoming flips processingsuccessful, which is where a HELD
+	// reply is still filtered out and this one is not.
+	var chatMsgID uint64
+	db.Raw("SELECT id FROM chat_messages WHERE chatid = ? AND userid = ? ORDER BY id DESC LIMIT 1",
+		chatID, replierID).Scan(&chatMsgID)
+	assert.NotZero(t, chatMsgID, "the reply was written to the chat")
+	db.Exec("UPDATE chat_messages SET processingsuccessful = 1 WHERE id = ?", chatMsgID)
+
+	_, posterToken := CreateTestSession(t, posterID)
+	greq := httptest.NewRequest("GET", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatID, posterToken), nil)
+	gresp, _ := getApp().Test(greq)
+	var posterMsgs []chat.ChatMessage
+	json.Unmarshal(rsp(gresp), &posterMsgs)
+	seen := false
+	for _, m := range posterMsgs {
+		if m.ID == chatMsgID {
+			seen = true
+		}
+	}
+	assert.True(t, seen, "the poster sees the reply that was let through")
 }

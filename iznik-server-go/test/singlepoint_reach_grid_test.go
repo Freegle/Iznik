@@ -20,8 +20,9 @@ import (
 // (rippling.ReachMembership). The sandwich bounds are a browse-narrowing
 // device and must NOT decide these gates, so the fixtures here are
 // ADVERSARIAL — bounds contradicting the label — to prove the label, not
-// the bounds, was trusted. No verdict (no label, or routing down) means
-// NOT in reach: there is no grid fallback.
+// the bounds, was trusted. No verdict (no label, or routing down) is not a
+// refusal: these gates fail open, so a reach outage never tells a member a
+// post beside them has not reached them. Sentry carries the outage instead.
 
 // TestReplyEligibleGridGate: the message-list reach probe (replyeligible).
 func TestReplyEligibleGridGate(t *testing.T) {
@@ -62,12 +63,12 @@ func TestReplyEligibleGridGate(t *testing.T) {
 		assert.False(t, *e, "a viewer the label refuses is reach-blocked whatever the bounds say")
 	}
 
-	// No label stored: not in reach - there is no grid to fall back to.
+	// No stored label, or a routing server that cannot answer: no verdict,
+	// and no verdict is not a refusal. Nobody is told a post has not reached
+	// them on the strength of an outage, so replyeligible stays unset.
 	stubReachEvalMax(t, "nolabels")
 	degradeBounds(mid)
-	if e := eligibility(); assert.NotNil(t, e, "no verdict → replyeligible set") {
-		assert.False(t, *e, "no stored label means not in reach, by design")
-	}
+	assert.Nil(t, eligibility(), "an undecided verdict does not block: the gate fails open")
 }
 
 // TestChatReplyGateGridGate: the write-path reply hold answers from the grid too.
