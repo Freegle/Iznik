@@ -9,7 +9,7 @@ Goal: halve db2's CPU.
 | | change | worth to db2 | type | evidence |
 |---|---|---|---|---|
 | **A** | reach mail window 60 → 5 min | **46-68% by day** | one config value | window/throughput measured across 190× range; crossover observed live |
-| **G** | db1's **and db2's** apiv2 reads → db3 | **23-49% by day**, ~32% overnight | env line ×2 + monit restart | share measured 7×; db3 verified 80-95% idle |
+| **G** | db1's **and db2's** apiv2 reads → db3 | **~0 in steady state; 23-49% after any db3 disruption** | env line ×2 + monit restart | see the correction below — this is insurance, not a standing saving |
 | **K** | keyset watermark on the two anti-join purge loops | **47% of db2 while `purge:logs` runs** | code | 2.9 M rows read per row deleted; 640 s chunk observed |
 | **D** | index `users (deleted, lastaccess)` | 8-22%, two callers | **operator DDL** | 1,845,193 → 184,832 rows (10.0×) |
 | **B** | illustrations watermark | 5% by day, **22% overnight** | code | 39,668,257 → 13,644 rows; 15.93 s → 0.072 s |
@@ -21,7 +21,8 @@ Goal: halve db2's CPU.
 | **E** | digest shard counts | re-derive after the above | config | tuned against the batch host's CPU, not db2's |
 | ~~C~~ | ~~sargable shard predicate~~ | **rejected** | — | `EXPLAIN` unchanged; ~1.6× even when forced |
 
-**A and G alone exceed the halving target and need no schema change.** K is the biggest single
+**A alone exceeds the halving target and needs no schema change.** G is insurance rather than a
+standing saving (see below); K is the biggest overnight win. K is the biggest single
 overnight win. B, D and H are the cheapest and carry no product tradeoff.
 
 **The one open decision** is in A: shortening the window means members who become eligible *after* a
@@ -303,7 +304,19 @@ peak, which is when db2 actually saturates.
 Before the deploy db2 was **99.8% batch**, so all of this is new load. It persisted well past the
 failover that first exposed it (haproxy's last state transition was 16:32:22).
 
-**The share rises as batch falls, because db1's absolute contribution is roughly steady.** At 19:57
+**CORRECTION (2026-09-03 07:12): this was a deploy artefact, not steady state.** Measured the next
+morning, db1 held **0** inbound API connections (db3 held all 98) and contributed **0 of 1,020**
+samples on db2. Before the deploy, db2 was **99.8% batch**. So db1's 22.6-48.8% share existed only
+in the ~12 hours after the deploy failover, as reused connections slowly drained — far slower than
+the 15 minutes predicted at the time, which is why it looked like steady state for six samples.
+
+**What that means for G.** Its standing value is close to zero: haproxy sends API traffic to db3,
+which reads itself. Its real value is **insurance** — during any db3 disruption, haproxy fails over
+to db1 and db2, whose apiv2 reads land on db2, exactly when db2 can least afford it. The deploy
+demonstrated the failure mode and its cost (up to 49% of db2, persisting for hours). Worth doing for
+that reason, but it should not be counted toward halving db2 day-to-day.
+
+The original observation, retained because the mechanism is real: At 19:57
 db1 held only **7 of 55** API connections (13%) yet produced **48.8%** of db2's active queries —
 db3's reads go to db3, so db2 only ever sees db1's slice, and the queries in that slice are the
 expensive ones. So proposal G removes a broadly constant absolute load that is worth **~23% of db2
