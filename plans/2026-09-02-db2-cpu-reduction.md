@@ -76,6 +76,9 @@ Categorised sample, 61,080 active-thread observations over 90 s (08:58-09:00 UTC
 | long tail (nothing above 3.9%) | 22.8% | — |
 
 Concurrency: **20 digest workers** in 18 of 40 samples (mean ≈ 14, peak 20) against **8 cores**.
+A later sample during the morning daily-digest window caught **33** — generations overlapping, a new
+tick starting before the previous had exited. So the configured 20 is a floor on the peak, not a
+cap: at 33 the node is oversubscribed 4:1 on cores.
 
 **Off-peak the reach query is even more dominant.** Second sample at 13:27 UTC, after the
 07:00-12:00 BST daily-digest window closed (46,881 observations; db2 load 3.88, mysqld 200%,
