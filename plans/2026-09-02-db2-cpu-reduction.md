@@ -581,6 +581,35 @@ where the driving scan is expensive:
 So **proposal K applies to both anti-join loops**, not just the logs one. The empty-chat-rooms purge
 runs under `purge:chats` (`dailyAt('02:00')`); orphan logs under `purge:logs` (`dailyAt('03:30')`).
 
+## The nightly window — what daytime monitoring misses
+
+`purge:logs` reached 47% of db2 and was invisible in every sample taken between 07:00 and 03:30.
+There are **28 jobs scheduled between 00:30 and 06:30**, none of which a daytime profile sees:
+
+```
+00:30 logs:rotate            02:30 purge:messages           03:30 purge:logs        ← finding 10
+01:00 locations:remap-postcodes  02:30 stats:generate-daily  03:45 users:update-lastaccess
+01:00 messages:deindex       02:40 browse:backfill-max-distance  04:00 mail:spool:process
+02:00 groups:update-stats    02:45 ai:usage-counts:update    04:30 chats:update-expected
+02:00 purge:chats  ← K       02:50 mail:reengage-outcomes    04:30 emails:validate
+                             03:00 cleanup:sessions          04:45 users:update-approx-locs
+                             03:00 locations:update-postcodes 05:00 integrations:sync-whatjobs
+                             03:00 messages:process-expired  05:00 locations:fix-skewed
+                             03:00 users:update-engagement   05:00 users:remap-locations
+                             03:23 discourse:not-signed-up   05:10 electricals:stats
+                                                             06:00 users:cleanup
+                                                             06:20 monitor:deprecated-endpoints
+                                                             06:30 users:fix-tn-names
+```
+
+Of these, only `purge:logs` (03:30) and `purge:chats` (02:00) have been examined — both carry the
+rescan defect (proposal K). `purge:messages` (02:30) is in the same service and its loops use
+indexed `arrival < cutoff` filters, so it is among the ten that are fine.
+
+**The remaining 25 are unexamined.** Anything on this list could be doing what `purge:logs` does and
+would never appear in a daytime profile. A monitoring pass timed for 00:30-06:30 is the obvious next
+piece of work if db2 remains hot after A, B, D, G and K.
+
 ## Attribution: every item verified against its source
 
 After misclassifying the jobs count three times, every profile item was re-checked by locating its
