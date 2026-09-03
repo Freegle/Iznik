@@ -9,9 +9,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/stretchr/testify/assert"
 )
@@ -105,6 +107,8 @@ func stubRingIndex(t *testing.T, lane string, admits ...uint64) {
 // was the search half of the incident.
 func TestBrowseScopedSearch_RingAdmittedPostSearchable(t *testing.T) {
 	t.Setenv("RIPPLE_RURAL_ACCESS_ENABLED", "1")
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
 	db := database.DBConn
 	ringSchemaExec(t)
 
@@ -112,12 +116,31 @@ func TestBrowseScopedSearch_RingAdmittedPostSearchable(t *testing.T) {
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	group := CreateTestGroup(t, prefix)
 	CreateTestMembership(t, posterID, group, "Member")
-	ringed := CreateTestMessage(t, posterID, group, "Quibblewick Chair ring admits viewer (ringsearch)", 51.5, -0.1)
+	subject := "Quibblewick Chair ring admits viewer (ringsearch)"
+	ringed := CreateTestMessage(t, posterID, group, subject, 51.5, -0.1)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid = ?", ringed)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", ringed)
 
 	farReachWithSparseRing(t, ringed)
 	stubRingIndex(t, "$.rural.sparse", ringed)
+
+	// Seed the post into the embedding store with an antiparallel (far below
+	// MinVectorScore) vector, so it is found only via the lexical guarantee -
+	// the same path browse_search_nearby_test.go exercises for the plain-reach
+	// arm. CreateTestMessage no longer maintains the retired keyword index, so a
+	// search test must seed the in-memory embedding store directly, or every
+	// candidate is dropped before the ring-admission check under test is
+	// reached.
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: ringed, Groupid: group, Msgtype: "Offer", Lat: 51.5, Lng: -0.1,
+			Subject: subject, Arrival: time.Now(), SubjectVec: makeAntiparallelVec(20.0)},
+	})
+	t.Cleanup(func() { embedding.Global.SetEntries(nil) })
+	queryVec := makeTestVec(2.0)
+	server := mockSidecarReturning(t, queryVec[:])
+	defer server.Close()
+	embedding.SetSidecarURL(server.URL)
+	t.Cleanup(func() { embedding.SetSidecarURL("") })
 
 	// A sparse-band viewer the ring covers.
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
@@ -132,7 +155,7 @@ func TestBrowseScopedSearch_RingAdmittedPostSearchable(t *testing.T) {
 		"'$.mylocation', JSON_OBJECT('lat', 51.5, 'lng', -0.1), "+
 		"'$.browseDensityBand', 'dense') WHERE id = ?", denseID)
 
-	words := message.GetWords("Quibblewick Chair ring admits viewer (ringsearch)")
+	words := message.GetWords(subject)
 	search := func(tok string) map[uint64]bool {
 		resp, _ := getApp().Test(httptest.NewRequest("GET",
 			"/api/message/search/"+words[0]+"?browse=1&jwt="+tok, nil), 60000)
