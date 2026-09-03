@@ -1332,3 +1332,63 @@ node. If the share holds, the question is why db1's apiv2 is taking member traff
 **Not seen in this window:** the illustrations watermark (proposal B), which was 13.6% an hour
 earlier. It is periodic, so its share depends entirely on when the sample lands — B's value still
 rests on the measured 39,668,257 → 13,644 row reduction, not on any single sample.
+
+## 2026-09-03 11:30 — measure in threads, not shares; and the leave-check multiplier
+
+**Methodology correction.** Comparing percentage shares across windows is misleading when total
+concurrency moves. Between 11:15 and 11:27 the digest query's share fell 67.1% → 29.4%, which looks
+like a large improvement and is not one: total concurrency doubled (4.12 → 8.27 mean threads), so the
+digest went 2.77 → 2.43 threads while *other* work arrived. **Mean concurrent threads
+(samples ÷ rounds) is the unit that composes**; shares only compare within one window.
+
+db2 mysqld 550% CPU, load 6.2 at 11:27 (was 800% / load 9.4 at 11:15).
+
+| mean threads | source | workload |
+|---|---|---|
+| **2.43** | batch | **digest reach recipients [A]** |
+| 1.20 | batch | other |
+| **0.91** | batch | **users lastaccess scan [D]** |
+| 0.79 | db1 apiv2 | other |
+| 0.72 | batch | rippling_reach read |
+| 0.68 | db1 apiv2 | chat room list |
+| 0.67 | batch | illustrations watermark [B] |
+| **0.47** | batch | **ripple leave-check [I]** |
+| 0.33 | db1 apiv2 | spatial count |
+
+A + B + D + I = **4.48 of 8.27 threads (54%)**. db1's apiv2 is 1.80 threads (21.7%), now reproduced
+across four windows (18.1 / 19.9 / 16.2 / 21.7%) — still all inside ~30 minutes, so still not proven
+as steady state, but no longer dismissible as a transient.
+
+### Proposal I now has a measured mechanism — and a safer fix than "shorten the window"
+
+`ExpandService::pullRippledPostsFromLeftGroups` (`ExpandService.php:2221`) runs on
+`ripple:expand --everyMinute`. Each tick re-derives the **same 2 days** of Left logs:
+
+| | |
+|---|---|
+| `Group`/`Left` rows in the 2-day window | **1,076** |
+| `Group`/`Left` rows actually new per 5 min | **1** |
+| all `logs` rows in the 2-day window | 90,377 |
+| EXPLAIN driving rows on `ll` (`timestamp_2`) | **193,442** |
+
+Each of the 1,076 then drives a `messages.fromuser` join (~16 rows) and **two dependent subqueries**
+on `logs` (~17 rows each). So ~1,440 ticks/day × 1,076 leaves ≈ **1.55 M leave-rows processed per day
+to act on roughly 288 real leaves** — a ~1,000× multiplier on the driving set. The operation is
+idempotent (an already-pulled copy is skipped), so essentially all of that is repeated work. Same
+shape as proposal A.
+
+**The fix is a watermark on `logs.id`, not a shorter window**, and it is *safer* than what is there
+now, not merely faster:
+
+- `logs.id` is monotonic, so `ll.id > watermark` is exact and drives a PRIMARY range instead of a
+  193,442-row `timestamp_2` scan.
+- A time window silently **misses** anything older than 2 days after a long stall. The current code
+  calls 2 days "a generous safety margin covering brief stalls" — a watermark has no such failure
+  mode: a longer stall just means a bigger catch-up.
+- Store it in `config` (as with `reach_partition_fp`) — no DDL.
+
+Expected: driving set 1,076 → ~1-5 per tick, i.e. the 0.47 threads goes to roughly nothing.
+
+**Caveat on ordering:** the watermark must advance only past rows whose processing committed, or a
+crash between read and write drops leaves permanently. Advance it to `MAX(ll.id)` *seen* only after
+the pull loop completes.
