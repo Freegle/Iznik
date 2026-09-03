@@ -611,9 +611,18 @@ later activity:
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | scheduled expansions | 237 | 417 | 394 | 199 | 130 | 119 | **47** | **6** | **20** | 73 | 109 | 221 | 332 | 407 | 407 |
 
-So there is a **deep overnight trough, not a pause**: hours 00-05 total 395 scheduled expansions
-against roughly 2,400 if they ran at the evening rate — about **16% of daytime**, bottoming at 6 in
-the 03:00 hour. Reach never stops.
+So there is a **deep overnight trough, not a pause**. Reach never stops.
+
+**Caveat on the numbers above — `next_expansion_at` is a rolling snapshot too.** It is
+forward-looking and cannot be rewritten, but it *fills in*: posts advance and get rescheduled, so a
+future hour's count grows as that hour approaches. Measured from a 20:26 vantage, hour 03 held 6 and
+hour 04 held 20; from 02:27 the same hours held **118** and **158**. Do not compute ratios from a
+single snapshot of it.
+
+**Use observed arrivals instead** — those are direct: **~8/min by day, 0-2/min overnight**, with the
+reach-mail window collapsing from ~750 to **4**. That is the ~15-25% of daytime that matters, and it
+is what the load actually follows: mysqld bottomed at **100%** at 02:27, the lowest reading of the
+whole monitoring period.
 
 Proposal A's saving therefore applies essentially round the clock, at reduced volume for ~6 hours
 overnight. An earlier draft downgraded the daily total to ~70% of a 24/7 assumption on the strength
