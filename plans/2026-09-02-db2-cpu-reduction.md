@@ -520,7 +520,19 @@ do {
 |---|---|
 | `EXPLAIN` | `logs` type=range, key=**`user`**, **rows=10,902,401** |
 | one chunk observed | **640 s** (`id=1262839`, still running) |
+| total run time observed | **41 minutes and counting** |
 | share of db2 at 03:42 | **47%** of 22,178 samples |
+| **rows deleted in 60 s** | **7** |
+| **rows read in 60 s** | **20,300,749** (338,345/s) |
+| **read:delete ratio** | **~2,900,000 : 1** |
+
+The last three lines are the whole finding: measured from `Innodb_rows_deleted` /
+`Innodb_rows_read` deltas while the purge was the dominant consumer on an otherwise quiet node, it
+reads **2.9 million rows for every row it deletes**.
+
+*(`information_schema.tables.table_rows` for `logs` appeared to fall 42,637,297 → 21,773,086 over
+the same period. That is InnoDB estimate noise, not deletions — at 7 deletes/minute it cannot have
+removed 20 M rows. Do not use `table_rows` to measure purge progress.)*
 
 **The per-row `DELETE` is correct and deliberate** — one row at a time is the Galera-safe pattern
 and should stay.
