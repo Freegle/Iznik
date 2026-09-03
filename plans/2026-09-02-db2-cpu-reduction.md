@@ -398,9 +398,23 @@ recommends, already in production. Copy it.
 | **mod2mod chaseup** | everyMinute | 2 days | **153 rooms** | **0 in the last hour** |
 
 **Proposal J: `ChatChaseupModsService:33`** — `chat_rooms` joined to `chat_messages` on
-`date >= now()->subDays(2)`, then a per-room loop. 153 rooms re-fetched and re-looped every minute;
-6 hours would be 14, one hour 0. Either narrow the window or add a watermark on the last message id
-processed, per the welcome-mail precedent.
+`date >= now()->subDays(2)`, then a per-room loop. 153 rooms re-fetched every minute; 6 hours would
+be 14, one hour 0.
+
+**The loop body is the expensive part.** Per room, per minute it runs three queries, and the first
+fetches **every message the room has ever had** — the code comment says so explicitly: *"Get ALL
+messages for this room (not filtered by date)"* (`ChatChaseupModsService:52-57`), then a
+`memberships` role lookup and a `groups` lookup.
+
+Measured: those 153 rooms hold **16,730 messages**, all re-fetched every minute — ~24 million
+message rows a day, plus ~306 extra per-room lookups a minute, to chase up conversations that
+mostly have not changed. Narrow the window or add a watermark, per the welcome-mail precedent; the
+"all messages ever" fetch could also stop at the first two distinct senders, since the loop only
+needs to know whether exactly one person has posted.
+
+*(Measuring this cost a mistake worth recording: a triple join across `chat_messages` (41 M rows)
+ran 135 s on production before being killed. A client-side `timeout` kills the ssh, NOT the server
+query — check `information_schema.processlist` and `KILL QUERY` explicitly.)*
 
 ### 10. Server configuration
 
