@@ -502,6 +502,48 @@ emits backticks, so `lastaccess >=` misses what `` `lastaccess` >= `` matches; a
 reported 40% "unmapped" purely from that. And percentages are of the *current* profile: reach is
 3.6% at 01:57 and 46-68% by day, so a single sample ranks the hour, not the system.)*
 
+### 10. Orphan-log purge — 47% of db2 overnight, one chunk observed at 640 s
+
+Appeared at 03:42 and immediately dominated the profile. `PurgeService.php:977-999`
+(`purgeOrphanedUserLogs`), run by `purge:logs`.
+
+```php
+do {
+    $logs = DB::select("SELECT logs.id FROM logs LEFT JOIN users ON users.id = logs.user
+                        WHERE `timestamp` < ? AND logs.user IS NOT NULL AND users.id IS NULL
+                        LIMIT {$this->chunkSize}", [$cutoff]);
+    foreach ($logs as $log) { DB::delete("DELETE FROM logs WHERE id = ?", [$log->id]); }
+} while (count($logs) > 0);
+```
+
+| | |
+|---|---|
+| `EXPLAIN` | `logs` type=range, key=**`user`**, **rows=10,902,401** |
+| one chunk observed | **640 s** (`id=1262839`, still running) |
+| share of db2 at 03:42 | **47%** of 22,178 samples |
+
+**The per-row `DELETE` is correct and deliberate** — one row at a time is the Galera-safe pattern
+and should stay.
+
+**The re-scan is the defect.** There is no watermark, so every chunk re-runs the whole anti-join
+from the start: 10.9 M index entries scanned to yield 1,000 ids, repeated until the table is clean.
+The optimiser drives from `logs.user IS NOT NULL` on the `user` index, so the `timestamp` cutoff is
+only a filter, never a seek.
+
+**Proposal K: add a keyset watermark**, exactly the pattern
+`SendPendingWelcomeMailsCommand:102-107` already uses:
+
+```php
+... AND logs.id > ?   ORDER BY logs.id   LIMIT {$this->chunkSize}
+```
+carrying the last id forward between iterations. Each chunk then resumes instead of rescanning,
+turning an O(n²) sweep into a single pass. A composite index on `logs (user, timestamp)` would help
+further but is a large index on a 42.6 M-row table — try the watermark first.
+
+*(A caution for anyone measuring this: counting the outstanding orphans with the same anti-join is
+itself a 10.9 M-row scan. I timed one out twice. The `EXPLAIN` gives you the shape without paying
+for it.)*
+
 ## Attribution: every item verified against its source
 
 After misclassifying the jobs count three times, every profile item was re-checked by locating its
