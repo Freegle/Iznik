@@ -544,6 +544,20 @@ further but is a large index on a 42.6 M-row table — try the watermark first.
 itself a 10.9 M-row scan. I timed one out twice. The `EXPLAIN` gives you the shape without paying
 for it.)*
 
+**Audited the rest of `PurgeService` — 2 of its 12 chunked loops share the defect, the other 10 are
+fine.** None of the twelve carries a watermark (`grep -c "id > ?"` = 0), but rescanning only hurts
+where the driving scan is expensive:
+
+| loop | plan per chunk | verdict |
+|---|---|---|
+| orphan logs (`:988`) | `logs` range on `user`, **10,902,401 rows** | **defect** |
+| **empty chat rooms (`~:68`)** | `chat_rooms` range on `typelatest`, **3,811,850 rows** | **defect** |
+| orphaned chat images (`~:99`) | `type=ref key=incomingid`, **rows=1** | fine |
+| `reviewrejected = 1`, `arrival < cutoff`, … | indexed filters | fine — rows vanish as they are deleted, so the rescan is cheap |
+
+So **proposal K applies to both anti-join loops**, not just the logs one. The empty-chat-rooms purge
+runs under `purge:chats` (`dailyAt('02:00')`); orphan logs under `purge:logs` (`dailyAt('03:30')`).
+
 ## Attribution: every item verified against its source
 
 After misclassifying the jobs count three times, every profile item was re-checked by locating its
