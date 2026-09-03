@@ -1604,3 +1604,53 @@ from >90 days away, and the subset cannot be identified after the fact because t
 is gone. The clean hook is at the point `lastaccess` is written, where the old value is still in
 hand — worth checking whether that path can cheaply emit a "returned from dormancy" event rather than
 re-evaluating all 1,536.
+
+## 2026-09-03 12:45 — proposal A is now fully costed: ~17×, and it clears the halving target alone
+
+Ninth window (12:42): db2 mysqld 640%, **7.57 mean threads**, **A = 3.18 threads (42%)**, db1 down
+again to 14.6%. Nine windows of A: 2.43 / 2.89 / 3.27 / 2.68 / 2.58 / 3.18 — mean **~2.84 threads**.
+
+The member-side half was the one unmeasured piece. It turns out **the inverse query already exists**:
+`/v1/reach-eval` with `discover:true` answers "which posts now cover this member", backed by
+`rippling_reach_leaves WHERE leaf = ?` (`iznik-routing-go/reach_eval.go:521`). Nothing new to build
+on the query side.
+
+### Measured cost of the member-side lookup
+
+`rippling_reach_leaves` is **1.62 M rows / 0.13 GB data / 0.16 GB index**, with `leaf_msgid
+(leaf, msgid)` — **covering** for that query. Average **1,339** msgids per leaf, max 5,756, over 1,273
+populated leaves. Ten random leaves timed:
+
+| msgids returned | 25 | 190 | 271 | 481 | 941 | 1,598 | 2,138 | 2,579 | 3,429 |
+|---|---|---|---|---|---|---|---|---|---|
+| time | 48 ms | 43 | 43 | 38 | 44 | 43 | 46 | 44 | 40 |
+
+**Flat at ~43 ms across a 137× range of result sizes** — that is round-trip overhead, not index work.
+On a pooled connection the index range itself is sub-millisecond. The member-side lookup is free; the
+label evaluation that follows runs in the routing server, not on db2.
+
+### The arithmetic
+
+| | executions/min | × per-exec | = threads |
+|---|---|---|---|
+| **today** | 224-266 | 0.71-0.80 s | **~2.84** ✓ matches all nine windows |
+| post-side watermark | **12.1** | 0.71 s | 0.14 |
+| member-side feeds | ~32 | ~0.05 s | 0.03 |
+| **proposed total** | | | **~0.17** |
+
+**≈17× reduction, removing ~2.67 of db2's ~8 threads — about 35% of total load, from this one change.**
+Combined with D (a 9.1 s scan every minute → a range read) and I (1,076 leaves/tick → ~1), the
+halving target is met without touching db1's routing at all.
+
+Sanity check on the per-execution figure: 3.18 threads ÷ 240 executions/min × 60 = **0.795 s**, which
+matches the 0.71 s measured independently on 09-02. The model is consistent with the observation.
+
+### Remaining risk, stated plainly
+
+The 12.1/min post-side figure is `rippling_reach.updated_at` movement over one hour on one day. Per
+the standing rule about single-day constants, it should be re-measured across a full day (and across
+the overnight window, where the ripple crons behave differently) before anyone sizes a job to it.
+
+The member-side design still needs the dormancy-return hook described at 12:30 — the
+"active in the last hour" feed (1,536/hr) is a superset, and narrowing it needs a hook where
+`lastaccess` is written and the previous value is still available.
