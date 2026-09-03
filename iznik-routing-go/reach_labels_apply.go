@@ -7,22 +7,26 @@ package main
 //
 //   - the label blob  -> rippling_reach.reach_labels_next, stamped with
 //                        reach_labels_next_fp = the file's partition
-//   - the leaf set    -> a staging table (--leaves-table) shaped exactly like
-//                        rippling_reach_leaves, to be RENAMEd into place
+//   - the leaf set    -> rippling_reach_leaves (--leaves-table), stamped with
+//                        the new fp, alongside the old partition's rows
 //
 // The stored reach_labels that decide membership today are never touched, and
-// neither is rippling_reach_leaves. That is the whole reason both staging
-// targets exist. Writing new labels into reach_labels itself, one row at a
-// time, would leave the table holding a mix of two partitions while the engine
-// serves one - a growing fraction of posts answering "not in reach" for the
-// entire duration. And rippling_reach_leaves cannot take a second partition's
-// rows at all: its (msgid, leaf) key is UNIQUE without fp, so an insert that
-// collides with an old-partition row is silently dropped and the post goes
-// undiscoverable after the switch. Staging beside the live data and switching
-// by fingerprint / by rename has no such window.
+// the old partition's leaf rows stay exactly as they are. Writing new labels
+// into reach_labels itself, one row at a time, would leave the table holding
+// a mix of two partitions while the engine serves one - a growing fraction of
+// posts answering "not in reach" for the entire duration. Staging beside the
+// live data and switching by fingerprint has no such window.
+//
+// Leaves can share the live table only because its UNIQUE key was widened to
+// (msgid, leaf, fp). Under the original (msgid, leaf) key an INSERT IGNORE of
+// a new-partition row colliding with an old one is silently dropped and the
+// post goes undiscoverable after the switch - so the command checks the key
+// shape from information_schema and refuses a table without it. The leaf
+// loader already filters by fp, so the old rows are invisible to the new
+// engine and vice versa; nothing else needs to change.
 //
 //   ./iznik-routing-go reach labels-apply --file /path/labels.bin \
-//        --expect-fp <partFP> [--leaves-table rippling_reach_leaves_next] \
+//        --expect-fp <partFP> [--leaves-table rippling_reach_leaves] \
 //        [--sleep-ms N] [--limit N] [--dry-run]
 //
 // --expect-fp is mandatory and must equal the file header's fingerprint. It
@@ -73,13 +77,8 @@ func reachLabelsApplyCmd(args []string) {
 	if *expectFP == 0 {
 		log.Fatalf("labels-apply: --expect-fp is required (the partition you are staging)")
 	}
-	if *leavesTable != "" {
-		if !leavesTableName.MatchString(*leavesTable) {
-			log.Fatalf("labels-apply: --leaves-table %q is not a plain table name", *leavesTable)
-		}
-		if *leavesTable == "rippling_reach_leaves" {
-			log.Fatalf("labels-apply: REFUSING to stage into the live leaves table; use a staging table and RENAME at cutover")
-		}
+	if *leavesTable != "" && !leavesTableName.MatchString(*leavesTable) {
+		log.Fatalf("labels-apply: --leaves-table %q is not a plain table name", *leavesTable)
 	}
 
 	f, err := os.Open(*file)
@@ -126,16 +125,27 @@ func reachLabelsApplyCmd(args []string) {
 			log.Fatalf("labels-apply: db ping: %v", err)
 		}
 		if *leavesTable != "" {
-			// The staging table must be the live table's twin, or the RENAME
-			// at cutover swaps in something the readers cannot use.
+			// Two partitions' rows can only share a table whose UNIQUE key
+			// includes fp. Without that, INSERT IGNORE silently drops any
+			// new-partition row that collides with an old (msgid, leaf) pair
+			// and the post goes undiscoverable after the switch. Decided from
+			// information_schema, not the table's name: the live table is
+			// fine once its key has been widened, and a staging twin created
+			// before the widening is not.
 			var n int
-			if err := db.QueryRow("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() "+
-				"AND table_name = ? AND column_name IN ('msgid','leaf','fp')", *leavesTable).Scan(&n); err != nil {
+			if err := db.QueryRow(
+				"SELECT COUNT(*) FROM information_schema.statistics s "+
+					"WHERE s.table_schema = DATABASE() AND s.table_name = ? AND s.non_unique = 0 "+
+					"AND s.index_name <> 'PRIMARY' "+
+					"AND (SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index) FROM information_schema.statistics "+
+					"     WHERE table_schema = s.table_schema AND table_name = s.table_name AND index_name = s.index_name) "+
+					"    = 'msgid,leaf,fp'",
+				*leavesTable).Scan(&n); err != nil {
 				log.Fatalf("labels-apply: inspect %s: %v", *leavesTable, err)
 			}
-			if n != 3 {
-				log.Fatalf("labels-apply: %s does not exist or lacks msgid/leaf/fp - create it with "+
-					"CREATE TABLE %s LIKE rippling_reach_leaves", *leavesTable, *leavesTable)
+			if n == 0 {
+				log.Fatalf("labels-apply: REFUSING: %s has no UNIQUE (msgid, leaf, fp) key, so a second "+
+					"partition's rows cannot coexist in it - widen the key first", *leavesTable)
 			}
 		}
 	}
