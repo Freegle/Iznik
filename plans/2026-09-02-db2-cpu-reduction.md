@@ -56,6 +56,26 @@ steady state.** Every other claim was re-audited against that test:
 The two flagged single-window claims each have an independent structural corroboration, so neither
 rests on the sample alone — but both would benefit from a second observation on a different day.
 
+## Day-over-day reproduction
+
+The whole profile was re-measured at the equivalent point in the next morning's digest window:
+
+| item | day 1, 08:58 | **day 2, 07:57** |
+|---|---|---|
+| reach recipient (A) | 47.0% | **39.7%** |
+| daily digest scan (D) | 17.9% | **17.4%** |
+| illustrations cleanup (B) | 6.3% | **6.7%** |
+| users lastaccess scan (D) | 4.1% | **4.5%** |
+| **D combined** | **22.0%** | **21.9%** |
+
+Three of four reproduce within a point. Reach is lower on day 2 (39.7% vs 47.0%) because its share
+tracks window size, which was 330 at that moment against the 1,244 dawn peak an hour earlier — the
+one item that legitimately moves.
+
+**This is the strongest reliability statement in the document**: the measurements are not artefacts
+of one day's conditions. It also isolates which figures are stable (B, D) and which are inherently
+variable (A, and G — which turned out to be a transient entirely).
+
 ## Baseline
 
 | node | cores | mysqld lifetime CPU-min | load during window | role |
