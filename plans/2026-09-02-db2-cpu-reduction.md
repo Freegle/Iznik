@@ -1445,3 +1445,57 @@ Current node CPU: **db1 18.8% (load 0.67), db2 443.8% (load 7.28), db3 175.0% (l
 **Question for Edward:** what is db1 being kept idle *for*? If it is SST-donor / backup cleanliness,
 option 3 may be acceptable and is by far the cheapest. If there is another reason, option 1 is the
 one worth building. I have not acted on any of them.
+
+## 2026-09-03 12:00 — proposal D is worse than recorded: a 9.1-second scan every minute for 215 rows
+
+Sixth window (11:57): db2 mysqld 706%, load 6.2, **8.97 mean threads**. db1 apiv2 24.3% — six
+windows now: 18.1 / 19.9 / 16.2 / 21.7 / 29.1 / 24.3%.
+
+Chasing the batch "other" bucket found two per-user queries, and following them back showed that the
+`users lastaccess` scan **[D]** and the `users_notifications` EXISTS are the *same service*:
+`NotificationExhortService::sendExhort` (`NotificationExhortService.php:44-58`), scheduled
+`everyMinute()` (`console.php:1143`).
+
+```php
+$users = DB::table('users')->whereNull('deleted')
+    ->where('lastaccess', '>=', $activeSinceTime)   // '5 minutes ago'
+    ->where('added', '<=', $joinedBeforeTime)       // '1 week ago'
+    ->pluck('id');
+foreach ($users as $userId) { /* EXISTS on users_notifications */ }
+```
+
+### Measured on db1 (idle node, so this is the floor)
+
+| | |
+|---|---|
+| rows the optimizer drives | **1,246,688** (`deleted` index, single column) |
+| rows actually returned | **215** |
+| wall time | **9.1 s** |
+| schedule | **every minute** |
+
+**9.1 s out of every 60 is a 15% duty cycle on one thread, permanently**, and that is the *idle-node*
+figure — on loaded db2 it measures 0.38-1.00 threads. Waste ratio **5,800:1**.
+
+### Why no existing index helps
+
+`users` has 13 indexes; **none leads with `lastaccess`**. The only one containing it is
+`added (added, lastaccess)`, and the query's `added <= 1 week ago` matches nearly every user, so the
+prefix is useless and the optimizer falls back to `deleted (deleted)` — which selects 1.25 M rows.
+
+`lastaccess >= NOW() - INTERVAL 5 MINUTE` returns 215 rows, so an index leading with `lastaccess`
+turns the whole thing into a short range read: **~5,800× fewer rows**, 9.1 s → milliseconds.
+
+Proposed (operator-applied — DDL, needs Edward): `ALTER TABLE users ADD INDEX (lastaccess, added)`.
+`users` is **2.49 M rows / 0.6 GB data / 0.8 GB index** — three orders of magnitude smaller than
+`rippling_reach`, so this is not the 09-02 DDL risk. Check first whether the digest's own active-user
+scan can use the same index before choosing the column order.
+
+### What is NOT worth chasing here
+
+The `users_notifications` EXISTS looked like a classic N+1 and **is not worth fixing**: the loop runs
+only **215 times**, and although `users_notifications` holds **4,213,465** `Exhort` rows across ~1 M
+users (~4 each), each EXISTS is a short `touser` lookup. Rewriting it as an anti-join would be
+tidier but would save almost nothing. The scan in front of it is the entire cost.
+
+This is worth stating plainly because the shape (a 1.2 M-row scan feeding a per-row loop) invites
+fixing the loop, which is the wrong half.
