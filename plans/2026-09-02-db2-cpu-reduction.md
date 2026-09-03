@@ -34,6 +34,28 @@ contains 15+ unexamined jobs, and the two that have been examined (`purge:logs`,
 both turned out to be defective. See "The nightly window". A 48-minute full-text capture of
 05:12-06:01 is the deepest look taken and every item in it is now traced.
 
+## Evidence base — which claims span a full cycle
+
+Proposal G was wrong because six consecutive samples over 12 hours looked like steady state and were
+all inside one post-deploy transient. **Repetition inside a bounded window proves nothing about the
+steady state.** Every other claim was re-audited against that test:
+
+| claim | sampled across | verdict |
+|---|---|---|
+| reach = 44-68% of db2 | 07:15, 08:58, 13:27, 16:57, 21:42, 02:42, 06:57 — two mornings | **full cycle** |
+| throughput 224-266/min | 13:42, 13:57, 18:12, 19:42, 21:45, 23:12, 06:27 | **full cycle** |
+| window 4 → 1,244 | 07:45, 17:57, 18:42, 21:11, 00:12, 05:57, 06:27, 06:42 | **full cycle** |
+| illustrations 5% → 22% | 13:27, 23:00, 01:27, 04:57, 06:57 | **full cycle** |
+| B: 15.93 s → 0.072 s | direct timing + `EXPLAIN` | not sampling |
+| D: 1,845,193 → 184,832 rows | direct counts + `EXPLAIN` | not sampling |
+| C: rejected | `EXPLAIN`, twice | not sampling |
+| **repeat rate ~18×/hour** | **one 10-minute sample** | corroborated independently by window ÷ throughput |
+| **K: 2.9 M reads per delete** | **one 60 s window, one purge run** | the `EXPLAIN` (10.9 M rows/chunk) is structural and independent |
+| ~~G: 23-49%~~ | ~~6 samples in one 12-hour transient~~ | **was wrong** |
+
+The two flagged single-window claims each have an independent structural corroboration, so neither
+rests on the sample alone — but both would benefit from a second observation on a different day.
+
 ## Baseline
 
 | node | cores | mysqld lifetime CPU-min | load during window | role |
