@@ -197,6 +197,20 @@ deferred count has stayed below threshold for two consecutive scans. Release is
 deliberately harder than suppression, so a single quiet moment inside a
 provider's own backoff window cannot reopen the floodgates.
 
+"Deliveries have resumed" is answered by asking the provider directly from the
+relay (`DeferralProbe::providerAccepting`: EHLO, MAIL FROM, QUIT - an aborted
+transaction that delivers nothing), and a refusal from that probe outranks
+every other signal. The relay has several sending addresses and routes a
+throttled provider to whichever one it is warming, so the probe resolves the
+domain through the relay's own `transport_maps`, reads that transport's
+`smtp_bind_address`, and binds it. An unbound probe leaves from the default
+address - the one the provider blocked - and would keep answering "still
+refusing" for a provider that another address is delivering to at full rate,
+with no way out because the refusal also cancels the fail-open below. That
+held a Yahoo suppression over 10,000 members for 33 hours on 2026-09-02/03.
+The log line `Mail deferral probe: provider is still refusing` names the
+address it asked from.
+
 There is also a fail-open: if the probe has not been able to confirm a
 suppression for `stale_after_hours`, it is released and alerted on. Quietly not
 mailing an entire provider for ever, because our own probe broke, would be
