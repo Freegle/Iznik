@@ -1499,3 +1499,46 @@ tidier but would save almost nothing. The scan in front of it is the entire cost
 
 This is worth stating plainly because the shape (a 1.2 M-row scan feeding a per-row loop) invites
 fixing the loop, which is the wrong half.
+
+## 2026-09-03 12:15 — db1's share is a handful of sessions, not a durable 29%
+
+Seventh window (12:12): db2 mysqld 593%, **9.76 mean threads**, db1 apiv2 **33.9%** (3.31 threads).
+Seven windows: 18.1 / 19.9 / 16.2 / 21.7 / 29.1 / 24.3 / **33.9%** — rising throughout.
+
+**This qualifies what I wrote at 11:45.** A targeted 600-character capture of db1's traffic shows:
+
+| | |
+|---|---|
+| db1 samples in the window | 59 |
+| **distinct member ids referenced** | **7** |
+| chat-list queries | 38 of 59 (**64%**) |
+| roomlist samples / **distinct query texts** | 24 / **2** |
+| per-query time | mean **0.1 s**, max 1 s |
+
+So db1's third of db2 is **seven members**, and two of them are re-firing a byte-identical chat-list
+query often enough to keep it in flight ~20% of the time. The queries are individually fast; the cost
+is entirely repetition.
+
+**Consequence for the routing recommendation:** moving db1's reads off db2 would shift this load, but
+it is **not a durable 29% saving** — it is a handful of live sessions and will fall to near zero when
+those members close their tabs. The steady, always-there load is the batch work (A, B, D, I). I
+should not have presented the db1 number alongside those as if they were the same kind of quantity.
+The routing question is still worth answering, but it is worth less than 11:45 implied.
+
+**What is genuinely wrong here** is the repetition. `fetchChats` has **eight call sites** in
+`iznik-nuxt3/pages/chats/[[id]].vue` (344, 467, 475, 554, 660, 693, …) plus two in `stores/mobile.js`,
+and there is **no timer** — so this is event-driven refetch amplification, several events each
+triggering a full chat-list reload. Two members holding a query in flight a fifth of the time is the
+symptom.
+
+**Not yet proven:** which events fire the refetches. I have the amplification measured but not the
+trigger, so the fix is not specified yet. The next step is instrumenting or reading the event paths
+in `chats/[[id]].vue`, not adding a cache in front of the query.
+
+### Also relevant: the badge cache is per-process
+
+`browsecount` (`iznik-server-go/browsecount/cache.go:29`) is an in-process map with a **30 s TTL**.
+With applb now routing to more than one apiv2, the same member's requests can land on different
+instances, and each caches separately — so **adding a backend multiplies cache misses rather than
+sharing them.** That is a structural reason why bringing db1 into the pool did not reduce load
+anywhere. Worth confirming whether applb is sticky before treating this as a defect.
