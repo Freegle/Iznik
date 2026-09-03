@@ -550,7 +550,39 @@ That is precisely the mechanism proposal A exploits, demonstrating itself withou
 us: once demand falls below shard capacity the passes complete inside their interval, throughput
 tracks demand rather than capacity, and the DB load falls with it.
 
-**It was transient, though — 15 minutes later it had reverted.** At 22:27 arrivals had recovered
+**THE FULL CURVE, observed overnight without changing anything.** By 00:12 the window had drained to
+**4 posts** and the reach query went with it:
+
+| window | throughput | in flight |
+|---|---|---|
+| 754 (evening peak) | 225/min | 2.64 |
+| 459 | 224/min | 2.25 |
+| 245 | 251/min | 2.39 |
+| **4** | **3/min** | **0.01** |
+
+**2.8 threads → 0.01.** Same query, same code, same hardware; only the window changed. Throughput
+is pinned at ~225-266/min by shard capacity while the window is large, and tracks the window
+one-for-one once below it. That is the entire basis of proposal A, demonstrated across the full
+range by the system itself.
+
+**And the floor it leaves**, sampled at 00:14 with reach effectively absent — total active queries
+down from ~44,000 per 70 s sample at peak to **11,123**, about a quarter of the busy level:
+
+| | share of the floor |
+|---|---|
+| **illustrations cleanup (proposal B)** | **13.1%** |
+| `messages.*` variant | 13.0% |
+| `messages_groups ⋈ messages` | 9.0% |
+| **users lastaccess scan (proposal D)** | **8.2%** |
+| `chat_rooms`, db1 API (proposal G) | 5.3% |
+| `logs ⋈ messages_groups` | 4.8% |
+
+Note this is the *overnight* floor with the window at 4. A 5-minute window in daytime traffic
+(~8 arrivals/min) gives a window of ~40 and throughput ~40/min — in-flight ~0.4 threads rather than
+0.01, against today's 2.8. So expect reach to fall to roughly **15% of its current DB time**, not
+to vanish. B, D and G are what dominate whatever remains.
+
+**The earlier crossover was transient — 15 minutes later it had reverted.** At 22:27 arrivals had recovered
 from 5/min to 8.2/min (demand ~492/min), throughput was back to **247/min**, in flight 2.28, and
 only 1 of 4 shards was still starting fresh. So this was a brief dip below capacity, not the
 overnight transition settling in. The mechanism is demonstrated; the state is not yet sustained.
