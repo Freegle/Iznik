@@ -1542,3 +1542,65 @@ With applb now routing to more than one apiv2, the same member's requests can la
 instances, and each caches separately — so **adding a backend multiplies cache misses rather than
 sharing them.** That is a structural reason why bringing db1 into the pool did not reduce load
 anywhere. Worth confirming whether applb is sticky before treating this as a defect.
+
+## 2026-09-03 12:30 — proposal A: the change-feeds are now measured, including the one that does not work
+
+Eighth window (12:27): db2 mysqld 712%, **7.78 mean threads**, db1 apiv2 back down to **16.5%** —
+which confirms the 12:15 qualification: db1's share is session-driven and swings 16-34%. **A, by
+contrast, is steady in every window: 2.43 / 2.89 / 3.27 / 2.68 / 2.58 threads (~2.8, ≈30% of db2).**
+A is the durable target; db1 is not.
+
+Edward's constraint (2026-09-02) is that a plain post-side watermark is rejected, because catching
+members who become eligible *after* a post's reach last changed — joined, moved, returned — is wanted
+behaviour. So the fix needs a post-side watermark **and** member-side feeds. All of them are now
+measured.
+
+### The waste, confirmed independently
+
+| | |
+|---|---|
+| `rippling_reach` rows updated in last 60 min | **728** (12.1/min) |
+| recipient-query executions | **224-266/min** (measured 09-02) |
+| **useful fraction** | **≈5%** |
+
+The 60-minute look-back re-evaluates the same ~728 posts on every pass, while only ~12/min are
+genuinely new. This reproduces the earlier "~95% re-does unchanged work" estimate from a completely
+different measurement.
+
+### Member-side feeds, measured
+
+| trigger | feed | volume |
+|---|---|---|
+| joined a group / changed to immediate | `memberships.added` | 377/hr = **6.3/min** |
+| returned after >90 days | `users.lastaccess` moving | 1,536/hr active = **25.6/min** (superset) |
+| moved | **`logs` type=`User` subtype=`PostcodeChange`** | 163/day = **0.11/min** |
+| — | `users.lastupdated` | 26/hr — **unusable, see below** |
+
+### The finding that matters: `users.lastupdated` cannot carry location changes
+
+The 09-02 note flagged 29/hr as "too low to cover a location change". It is not merely too low — it
+is **the wrong column**. `lastlocation` is written by bare column updates that never touch
+`lastupdated`:
+
+- `iznik-server-go/message/message.go:5246` — `db.Table("users").Where("id = ?", myid).Update("lastlocation", *req.Locationid)`
+- `iznik-server-go/user/auth.go:89` — same shape
+
+So a member who moves is **invisible** to any `lastupdated` watermark, and a design built on it would
+silently drop exactly the case Edward asked to preserve. The working feed is the **`PostcodeChange`
+log** that `ProcessSettingsUpdate` already writes (`user/user.go:2269`) — 163/day, effectively free.
+
+### What is still not designed
+
+The post-side half is straightforward: watermark on `rippling_reach.updated_at`, ~240/min → ~12/min,
+**a 20× reduction on the dominant query**.
+
+The member-side half is **not** simply additive and I have not costed it. A member-side trigger needs
+the *inverse* query — given a member, which recently-reached posts now cover them — which is a
+different shape from the current post→members query and has no measurement behind it yet. The volumes
+above (~32/min combined) say the trigger rate is cheap; they do not say the per-trigger query is.
+
+Also unresolved: the 1,536/hr "active in the last hour" feed is a **superset** of members returning
+from >90 days away, and the subset cannot be identified after the fact because the prior `lastaccess`
+is gone. The clean hook is at the point `lastaccess` is written, where the old value is still in
+hand — worth checking whether that path can cheaply emit a "returned from dormancy" event rather than
+re-evaluating all 1,536.
