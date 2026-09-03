@@ -352,6 +352,11 @@ At ~1.4% of db2 that is not a CPU priority; the more interesting question is a p
   `groupid(groupid,collection,deleted,arrival)`, "Using index", **0.01 s** per call. It appears in
   samples because it runs once per group, not because it is slow.
 
+- **Per-group newest-post probe** (`select mg.arrival, mg.msgid … order by mg.arrival desc limit 1`),
+  9.0% of the overnight floor: `EXPLAIN` gives `mg` type=**range**, key=`groupid`, **rows=2**,
+  "Backward index scan", with `messages` by PRIMARY eq_ref; **6-9 ms** per call. Well indexed. Like
+  the expand scan, its share is frequency — once per group across 507 groups — not cost.
+
 - **The 22.8% long tail** — nothing exceeds 3.9%, and the supporting indexes all exist:
 
   | query | index needed | present? |
