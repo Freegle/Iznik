@@ -817,9 +817,11 @@ class MatchMailService
             return [];
         }
 
+        // Staged-next label when its stamp is the live partition, else the
+        // live one - the routing server can only decode its own.
         $reach = DB::table('rippling_reach')
             ->where('msgid', $msgid)
-            ->first(['reach_labels', 'tick', 'max_drive_min', 'schedule']);
+            ->first([DB::raw(\App\Services\Ripple\ReachService::liveLabelsSql().' AS reach_labels'), 'tick', 'max_drive_min', 'schedule']);
         if ($reach === null || $reach->reach_labels === null) {
             return [];
         }

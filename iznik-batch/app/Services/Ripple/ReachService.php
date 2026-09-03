@@ -35,6 +35,84 @@ class ReachService
      */
     public const PROX_ERROR = 'error';
 
+    /**
+     * config key holding the partition fingerprint the stored reach_labels
+     * were computed against - the pairing record. The routing server refuses
+     * to serve artifacts that disagree with it, and the readers below use it
+     * to pick between the live label and one staged for the NEXT partition.
+     */
+    public const PARTITION_FP_CONFIG_KEY = 'reach_partition_fp';
+
+    /** @var array{at:float, fp:?int}|null process-local memo of the pairing record */
+    private static ?array $partitionFpMemo = null;
+
+    /**
+     * The partition fingerprint the reach engine is expected to be serving,
+     * from config, or null when none is recorded (a single-partition world:
+     * the live column is the only one). Memoised for a minute per process -
+     * a digest run asks thousands of times, and the row changes once per
+     * cutover.
+     */
+    public static function livePartitionFp(): ?int
+    {
+        $now = microtime(true);
+        if (self::$partitionFpMemo !== null && $now - self::$partitionFpMemo['at'] < 60) {
+            return self::$partitionFpMemo['fp'];
+        }
+        $raw = DB::table('config')->where('key', self::PARTITION_FP_CONFIG_KEY)->value('value');
+        $fp = ($raw !== null && preg_match('/^\d{1,20}$/', (string) $raw)) ? (int) $raw : null;
+        self::$partitionFpMemo = ['at' => $now, 'fp' => $fp];
+
+        return $fp;
+    }
+
+    /** Tests only. */
+    public static function resetPartitionFpMemo(): void
+    {
+        self::$partitionFpMemo = null;
+    }
+
+    /**
+     * SQL for "the label blob to decode": the one staged for the next
+     * partition when its stamp equals the live fingerprint, else the live
+     * column. This is what makes a partition cutover atomic for every
+     * reader: nothing is rewritten, the pairing record changes and every
+     * staged post switches together. With no pairing record it is just the
+     * live column.
+     *
+     * $prefix is the table alias with its dot ("rr."), or '' for a bare
+     * single-table select. The fingerprint is validated numeric before it is
+     * interpolated.
+     */
+    public static function liveLabelsSql(string $prefix = ''): string
+    {
+        $fp = self::livePartitionFp();
+        if ($fp === null) {
+            return "{$prefix}reach_labels";
+        }
+
+        return "COALESCE(IF({$prefix}reach_labels_next_fp = {$fp}, {$prefix}reach_labels_next, NULL), {$prefix}reach_labels)";
+    }
+
+    /**
+     * The same choice made in PHP, for a row fetched with SELECT * (both
+     * label columns present). Null when the row has no usable label.
+     */
+    public static function pickLabels(?object $row): ?string
+    {
+        if ($row === null) {
+            return null;
+        }
+        $fp = self::livePartitionFp();
+        if ($fp !== null
+            && isset($row->reach_labels_next_fp, $row->reach_labels_next)
+            && (int) $row->reach_labels_next_fp === $fp) {
+            return (string) $row->reach_labels_next;
+        }
+
+        return $row->reach_labels ?? null;
+    }
+
     private string $url;
     private string $curve;
     private string $mode;
@@ -673,7 +751,12 @@ class ReachService
      */
     public function storeUnionSecs(int $msgid): bool
     {
-        $row = DB::table('rippling_reach')->select('reach_labels')->where('msgid', $msgid)->first();
+        // The blob the LIVE engine can decode - staged-next when its stamp is
+        // the live partition, else the live column (see liveLabelsSql).
+        $row = DB::table('rippling_reach')
+            ->select(DB::raw(self::liveLabelsSql().' AS reach_labels'))
+            ->where('msgid', $msgid)
+            ->first();
         if ($row === null || $row->reach_labels === null) {
             return false;
         }

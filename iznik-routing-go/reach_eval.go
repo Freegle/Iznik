@@ -84,13 +84,21 @@ var evalRowLoader = func(ids []uint64) ([]evalRow, error) {
 		return nil, errNoEvalDB
 	}
 	ph := make([]string, len(ids))
-	args := make([]interface{}, len(ids))
+	args := make([]interface{}, 0, len(ids)+1)
+	// A label staged for the NEXT partition (reach_labels_next, stamped with
+	// reach_labels_next_fp) is used only when that stamp is THIS engine's
+	// partition; otherwise the live column decides, exactly as before. That
+	// is what makes a partition cutover atomic: the moment a node boots the
+	// new artifacts, every staged post switches with it, and nothing was
+	// mutated to get there. An engine with no fingerprint (nil) never matches.
+	args = append(args, liveReachPartFP())
 	for i, id := range ids {
 		ph[i] = "?"
-		args[i] = id
+		args = append(args, id)
 	}
 	rows, err := db.Query(
-		"SELECT rr.msgid, rr.reach_labels, rr.tick, rr.max_drive_min, rr.schedule, rr.rejected_groups, rr.status, rr.origin_union_secs, "+
+		"SELECT rr.msgid, COALESCE(IF(rr.reach_labels_next_fp = ?, rr.reach_labels_next, NULL), rr.reach_labels), "+
+			"rr.tick, rr.max_drive_min, rr.schedule, rr.rejected_groups, rr.status, rr.origin_union_secs, "+
 			"(SELECT mg.groupid FROM messages_groups mg WHERE mg.msgid = rr.msgid AND mg.deleted = 0 ORDER BY mg.arrival ASC LIMIT 1) "+
 			"FROM rippling_reach rr WHERE rr.msgid IN ("+
 			strings.Join(ph, ",")+")", args...)

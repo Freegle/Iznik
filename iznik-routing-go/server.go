@@ -549,6 +549,15 @@ func handleHealth(g *Graph) fiber.Handler {
 		if g.Deprivation != nil {
 			status["deprivation"] = "loaded"
 		}
+		// The reach engine's partition, as a string (JSON numbers lose
+		// precision above 2^53). The deploy gate compares it with
+		// config.reach_partition_fp - the pairing record for the stored
+		// labels - and stops a rollout whose artifacts the labels do not
+		// match. Absent = no engine loaded (reach endpoints answer 503).
+		if e := reachEngine(); e != nil {
+			status["reach_partition_fp"] = strconv.FormatUint(e.partFP, 10)
+			status["reach"] = "loaded"
+		}
 		return c.JSON(status)
 	}
 }

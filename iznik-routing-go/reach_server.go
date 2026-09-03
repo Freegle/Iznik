@@ -50,6 +50,16 @@ func reachEngine() *ReachEngine { return reachLivePtr.Load() }
 
 func setReachLive(e *ReachEngine) { reachLivePtr.Store(e) }
 
+// liveReachPartFP is the live engine's partition fingerprint, or 0 when no
+// engine is loaded. 0 is never a real fingerprint, so a SQL comparison
+// against a staged label's stamp simply fails to match.
+func liveReachPartFP() uint64 {
+	if e := reachEngine(); e != nil {
+		return e.partFP
+	}
+	return 0
+}
+
 // reachPrevPtr holds the PREVIOUS partition build (REACH_DIR_PREV), held so a map
 // refresh stops being a cliff: stored labels embed their build's fingerprint,
 // and every evaluator routes each blob to the build that can read it. The

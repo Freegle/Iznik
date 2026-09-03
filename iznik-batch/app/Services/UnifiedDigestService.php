@@ -928,7 +928,9 @@ class UnifiedDigestService
             // admitted, so that flag rides along per candidate.
             $reachSvc = app(\App\Services\Ripple\ReachService::class);
             $reachRow = DB::table('rippling_reach')->where('msgid', $msgid)->first();
-            $probeLabels = $reachRow->reach_labels ?? null;
+            // Staged-next label when its stamp is the live partition, else
+            // the live one - the routing server can only decode its own.
+            $probeLabels = \App\Services\Ripple\ReachService::pickLabels($reachRow);
             $currentSecs = $reachRow !== null
                 ? $reachSvc->currentBudgetSecs((int) ($reachRow->tick ?? 0), (float) ($reachRow->max_drive_min ?? 0), $reachRow->schedule ?? null)
                 : 0.0;
