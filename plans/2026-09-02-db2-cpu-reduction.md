@@ -974,10 +974,20 @@ tracks demand rather than capacity, and the DB load falls with it.
 
 | window | throughput | in flight |
 |---|---|---|
-| 754 (evening peak) | 225/min | 2.64 |
+| **1,208 (morning peak, 06:27)** | **254/min** | **2.68** |
+| 754 (evening) | 225/min | 2.64 |
 | 459 | 224/min | 2.25 |
 | 245 | 251/min | 2.39 |
 | **4** | **3/min** | **0.01** |
+
+Throughput is **flat at 224-266/min across a 5× window range (245 → 1,208)** and collapses only
+once the window falls below the ceiling. The ceiling is real and the relationship is proven across
+a 300× range of window sizes.
+
+**The true peak is dawn, not evening.** The window runs 8 at 05:57 → **1,208 at 06:27**, with
+arrivals 0.3/min → 12.7/min: overnight expansions queue and fire at first light. An earlier draft
+put the peak at 16:00-18:00 on the strength of the `updated_at` hourly distribution, which was an
+artefact. At the morning peak each post is re-checked every ~4.75 min (~12.6×/hour).
 
 **2.8 threads → 0.01.** Same query, same code, same hardware; only the window changed. Throughput
 is pinned at ~225-266/min by shard capacity while the window is large, and tracks the window
