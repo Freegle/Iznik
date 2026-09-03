@@ -272,6 +272,17 @@ class DeferralProbe
      * relay's sending ip - probing from anywhere else answers a question we did
      * not ask.
      *
+     * And it must ask from the ADDRESS THE MAIL WILL LEAVE FROM. The relay has
+     * several sending addresses and routes a throttled provider to whichever
+     * one it is warming (transport_maps -> a transport with its own
+     * smtp_bind_address). An unbound connection leaves from the default
+     * address - the one the provider blocked in the first place - so it kept
+     * answering "still refusing" for a provider that was being delivered at
+     * 150/min from another address. From 2026-09-02 that held a suppression
+     * over 10,000 members for a day and a half with no way out: the refusal
+     * outranks the fail-open by design. Resolve the domain through the relay's
+     * own transport maps and bind what postfix would bind.
+     *
      * @return bool|null true = accepting, false = still refusing, null = we
      *                   could not tell, so the caller should fall back to
      *                   organic evidence rather than assume either way
@@ -288,10 +299,24 @@ class DeferralProbe
         // "could not tell". That is exactly what production did at 08:01 on
         // 2026-08-19: it failed safe, and therefore silently.
         $script = "echo '".self::MARK_ACCEPTING."'\n".
-            'python3 - '.escapeshellarg($domain).' '.escapeshellarg($sender).' <<\'PYEOF\'
+            'DOMAIN='.escapeshellarg($domain)."\n".
+            'SENDER='.escapeshellarg($sender)."\n".
+            <<<'SH'
+# The address postfix would send from: first transport_maps hit for the
+# domain, that transport's smtp_bind_address, else the global one. Read-only
+# postconf/postmap queries, nothing here writes.
+BIND=""; TR=""
+for m in $(postconf -h transport_maps 2>/dev/null | tr ',' ' '); do
+  v=$(postmap -q "$DOMAIN" "$m" 2>/dev/null)
+  [ -n "$v" ] && { TR=${v%%:*}; break; }
+done
+[ -n "$TR" ] && BIND=$(postconf -Mf "$TR/unix" 2>/dev/null | sed -nE 's/^[[:space:]]*-o[[:space:]]+smtp_bind_address=([^[:space:]]+).*/\1/p' | head -1)
+[ -z "$BIND" ] && BIND=$(postconf -h smtp_bind_address 2>/dev/null)
+python3 - "$DOMAIN" "$SENDER" "$BIND" "$TR" <<'PYEOF'
 import smtplib, socket, sys
 
-domain, sender = sys.argv[1], sys.argv[2]
+domain, sender, bind, transport = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+via = "%s via %s" % (bind or "default", transport or "default")
 
 try:
     import subprocess
@@ -307,7 +332,8 @@ except Exception as e:
     sys.exit(0)
 
 try:
-    s = smtplib.SMTP(timeout=20)
+    # source_address pins the local end; (ip, 0) lets the kernel pick a port.
+    s = smtplib.SMTP(timeout=20, source_address=(bind, 0) if bind else None)
     s.connect(host, 25)
     s.ehlo("bulk2")
     code, msg = s.mail(sender)
@@ -318,16 +344,17 @@ try:
     # 2xx to MAIL FROM means they are taking mail from this ip right now.
     # 4xx here is the throttle itself (421 4.7.0 [TSSnn]).
     if 200 <= code < 300:
-        print("ACCEPTING %s %d" % (host, code))
+        print("ACCEPTING %s %d from %s" % (host, code, via))
     elif 400 <= code < 500:
-        print("REFUSING %s %d %s" % (host, code, msg.decode("utf8", "replace")[:120]))
+        print("REFUSING %s %d from %s %s" % (host, code, via, msg.decode("utf8", "replace")[:120]))
     else:
-        print("UNKNOWN %s %d" % (host, code))
+        print("UNKNOWN %s %d from %s" % (host, code, via))
 except (socket.timeout, OSError, smtplib.SMTPException) as e:
     # Could not reach them at all: that is our network or theirs being down,
     # not a verdict on our reputation.
-    print("UNKNOWN %s %s" % (host, e))
-PYEOF';
+    print("UNKNOWN %s from %s %s" % (host, via, e))
+PYEOF
+SH;
 
         $out = $this->runner->run($target, $script);
 
@@ -350,6 +377,14 @@ PYEOF';
         }
 
         if (str_contains($out, 'REFUSING ')) {
+            // Say which address was refused: a refusal from the default
+            // address while the provider is routed elsewhere is the bug this
+            // probe used to have, and the log line is how you would see it.
+            Log::info('Mail deferral probe: provider is still refusing', [
+                'domain' => $domain,
+                'detail' => trim(str_replace(self::MARK_ACCEPTING, '', $out)),
+            ]);
+
             return false;
         }
 

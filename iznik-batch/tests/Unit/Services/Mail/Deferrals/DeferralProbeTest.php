@@ -352,6 +352,31 @@ class DeferralProbeTest extends TestCase
         $this->assertNull($probe->providerAccepting('relay@host', 'yahoo.co.uk', 'noreply@example.com'));
     }
 
+    public function test_asks_from_the_address_postfix_would_send_from(): void
+    {
+        // The relay routes a throttled provider to a warm address through
+        // transport_maps. An unbound probe leaves from the default address -
+        // the blocked one - and answered "still refusing" for a provider that
+        // was being delivered from another address, which held a suppression
+        // over 10,000 members for 33 hours (2026-09-02). The script must
+        // resolve the domain through the relay's maps and bind that address.
+        $script = null;
+        $probe = new DeferralProbe($this->runner(
+            DeferralProbe::MARK_ACCEPTING . "\nACCEPTING mta5.am0.yahoodns.net 250 from 77.72.7.253 via warm1\n",
+            function (string $target, string $sent) use (&$script) {
+                $script = $sent;
+            }
+        ));
+
+        $this->assertTrue($probe->providerAccepting('relay@host', 'yahoo.co.uk', 'noreply@example.com'));
+        $this->assertNotNull($script);
+        $this->assertStringContainsString("postconf -h transport_maps", $script, 'must walk the relay\'s transport maps');
+        $this->assertStringContainsString('postmap -q "$DOMAIN"', $script, 'must resolve the probed domain, not a guess');
+        $this->assertStringContainsString('smtp_bind_address', $script, 'must read the transport\'s bind address');
+        $this->assertStringContainsString('source_address=(bind, 0)', $script, 'must bind the socket to that address');
+        $this->assertStringContainsString("DOMAIN='yahoo.co.uk'", $script);
+    }
+
     public function test_refuses_to_put_a_bogus_domain_in_a_shell(): void
     {
         $called = false;
