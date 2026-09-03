@@ -220,6 +220,19 @@ select id from users where deleted is null and lastaccess >= ? and added <= ?
 Same root cause as finding 2 — no index on `lastaccess`. Both queries report the identical
 1,422,686-row estimate.
 
+**Caller identified: `NotificationExhortService.php:44-48`, run by `notifications:exhort`
+`->everyMinute()`** (`routes/console.php:1143`). Its own comment sets out the design: *"The 90-day
+per-user cooldown means running every minute over a 5-minute active window simply dedupes; matches
+V1."* So the intent is deliberate — but the cost of deduping is a **1,422,686-row scan every
+minute** to return 59 users at 01:45, or ~2,704 in daytime.
+
+**The per-user `EXISTS` loop that follows is NOT a problem** — checked rather than assumed:
+`users_notifications` has a `touser` index and the check plans as `type=ref, rows=1`. At 59-2,704
+cheap indexed lookups a minute it is not worth touching.
+
+So this finding and finding 2 share one fix: **proposal D's index**. Nothing about the exhort job's
+logic needs changing; it just has no usable access path.
+
 ### 5. apiv2 read routing sends db1's API load to db2 — ~28% of db2
 
 Found 2026-09-02 afternoon, when a production deploy restarted services on all three nodes and
