@@ -2644,13 +2644,19 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Queue email to poster (includes stdmsg content for the batch processor).
 	// The batch processor will also create the mod log entry and notify group moderators.
 	// One task per authorised group so per-group logging and notifications are correct.
+	//
+	// A standard message attached to an approval is the third route by which a
+	// moderator's words reach the poster, so it is gated the same way: a group the post
+	// rippled into approves its own copy without writing to the freegler.
+	originGid := MessageOriginGroup(db, req.ID)
+
 	for _, gid := range authorizedGroups {
 		// Identical golden to
 		// 02b3821ea3b9, 7603ee833330 and e1f780721381; converted together per gate (h).
 		db.Table("background_tasks").Create(map[string]interface{}{
 			"task_type": "email_message_approved",
-			"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
-				req.ID, gid, myid, subject, body, stdmsgid, "Approve"),
+			"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
+				req.ID, gid, myid, subject, body, stdmsgid, "Approve", NotifyPosterFlag(originGid, gid)),
 		})
 	}
 
@@ -2673,39 +2679,57 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 }
 
 // handleReject rejects a pending message.
-// MessageOriginGroup returns the group a message was first posted to — the group whose
-// messages_groups.arrival matches the message's own arrival. With rippling-out a post is
-// added to nearby groups later (at ripple time), so the origin is the earliest-arriving
-// group AND its arrival must be at/near messages.arrival. Only that group's rejection
-// notifies the poster (#6); a secondary (rippled-in) group's rejection stays silent.
+// MessageOriginGroup returns the group a message was first posted to — the one it was not
+// rippled into. Rippling-out adds a messages_groups row per group a post reaches, flagged
+// rippled_in = 1; the poster's own group keeps rippled_in = 0. Only the origin group's
+// moderators correspond with the poster (#6, Discourse 10102); a rippled-in group's
+// moderators administer their copy in silence.
 //
-// Returns 0 when the origin cannot be determined — including when the origin group's row
-// was HARD-deleted (handleDeleteMessage / handleMove), leaving only later rippled-in
-// rows: those fail the arrival-match, so we return 0 and the caller falls back to
-// notifying all groups (the safe direction — notify rather than silently drop).
-// Soft-deleted (deleted=1) origin rows from a plain-delete rejection still persist and
-// are matched correctly, so a later secondary rejection stays silent as intended.
+// rippled_in is the only sound test. It is written by ExpandService at ripple time and
+// never moves, and is the same column the client marks the home group with
+// (composables/rippleStatus.js homeGroupId). An arrival window (mg.arrival close to
+// messages.arrival) does NOT work: handleApprove re-stamps messages_groups.arrival to the
+// approval time while messages.arrival keeps the time the post was received, so any post
+// moderated more slowly than the window has no row inside it and reads as having no
+// origin — which silently opens everything gated on "is this the home group?".
+//
+// Returns 0 when the origin cannot be determined — the origin row was HARD-deleted
+// (handleDeleteMessage / handleMove) leaving only rippled-in rows, or the message has no
+// rows at all. Callers then fall back to notifying (the safe direction — notify rather
+// than silently drop). Soft-deleted (deleted=1) origin rows from a plain-delete rejection
+// still persist and are still matched, so a later secondary rejection stays silent.
 //
 // messages_groups has no surrogate id column (its key is the composite (msgid, groupid)),
-// so groupid is the tiebreak when two groups share the same arrival second: lowest groupid
+// so groupid is the tiebreak when two rows share the same arrival second: lowest groupid
 // wins, deterministically. Manual cross-posting is retired by #10, so same-second ties are
 // rare (TN same-second import order).
 func MessageOriginGroup(db *gorm.DB, msgid uint64) uint64 {
-	var res struct {
-		Groupid  uint64
-		IsOrigin bool
-	}
-	db.Table("messages_groups mg").
-		Select("mg.groupid AS groupid, (mg.arrival <= m.arrival + INTERVAL 10 MINUTE) AS is_origin").
-		Joins("JOIN messages m ON m.id = mg.msgid").
-		Where("mg.msgid = ?", msgid).
-		Order("mg.arrival ASC, mg.groupid ASC").
+	var gid uint64
+	db.Table("messages_groups").
+		Select("groupid").
+		Where("msgid = ? AND rippled_in = 0", msgid).
+		Order("arrival ASC, groupid ASC").
 		Limit(1).
-		Scan(&res)
-	if !res.IsOrigin {
+		Scan(&gid)
+	return gid
+}
+
+// NotifyPosterFlag reports whether a moderation action taken on group gid may be relayed
+// to the poster: 1 for the post's home group, 0 for a group it merely rippled into. It is
+// written into the poster-email background task, which the batch reads before sending
+// anything to the freegler (ProcessBackgroundTasksCommand::handleModStdMessage).
+//
+// The task is queued either way, because the action DID happen on that group and its
+// moderation log entry and moderator push are its own business. It is only the
+// correspondence that belongs to the home community.
+//
+// An unknown origin yields 1: better a message the poster did not need than a rejection
+// they never hear about on the group they actually posted to.
+func NotifyPosterFlag(originGid, gid uint64) int {
+	if originGid != 0 && gid != originGid {
 		return 0
 	}
-	return res.Groupid
+	return 1
 }
 
 func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
@@ -2808,24 +2832,27 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// "out of area" rejection is not their concern.
 	originGid := MessageOriginGroup(db, req.ID)
 
-	// Queue the rejection email only for the origin group (the batch processor creates
-	// one log+push per group). Secondary-group rejections are silent to the poster and
-	// logged for #9 observability (how often rippling pushes a post somewhere a group
-	// rejects it). Iterate only the groups actually rejected here (Pending at the time)
-	// so a group where the post had already gone live gets no phantom email/log (#9815).
+	// Queue the rejection task for every group actually rejected here (Pending at the
+	// time) so a group where the post had already gone live gets no phantom log (#9815).
+	// notifyposter carries whether the batch may relay it to the freegler: only the origin
+	// group may. A secondary group's rejection still queues its task, so that group keeps
+	// its own moderation log entry and its mods get their push — the task carries
+	// notifyposter 0 and the batch sends no mail and opens no modmail chat. Secondary
+	// rejections are also logged for #9 observability (how often rippling pushes a post
+	// somewhere a group rejects it).
 	for _, gid := range pendingGroups {
-		if originGid != 0 && gid != originGid {
+		notifyPoster := NotifyPosterFlag(originGid, gid)
+		if notifyPoster == 0 {
 			log.Printf("ripple: secondary-group reject msgid=%d groupid=%d byuser=%d (poster not notified)", req.ID, gid, myid)
 			RecordRippleEvent(db, "secondary_reject")
 			ClipReachForRejectedGroup(db, req.ID, gid)
-			continue
 		}
 		// Identical golden to
 		// b25ea3ba4ade, 7603ee833330 and e1f780721381; converted together per gate (h).
 		db.Table("background_tasks").Create(map[string]interface{}{
 			"task_type": "email_message_rejected",
-			"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
-				req.ID, gid, myid, subject, body, stdmsgid, "Reject"),
+			"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
+				req.ID, gid, myid, subject, body, stdmsgid, "Reject", notifyPoster),
 		})
 	}
 
@@ -2962,6 +2989,14 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	}
 	ctx.Groupid = authorizedGroups[0]
 
+	// Resolve the origin BEFORE the delete below removes the rows it is read from.
+	// Deleting a rippled-in copy takes the post off that community and says nothing to
+	// the freegler, exactly as rejecting one does. This is the route that actually
+	// misfired in Discourse 10102: the shared "Animals (Delete)" standard message has
+	// action "Delete Approved Message", so it never went near handleReject's suppression
+	// and a Walsall moderator's note reached a Potteries poster.
+	originGid := MessageOriginGroup(db, req.ID)
+
 	// Per-group delete: remove only the authorized groups' rows.
 	// Identical golden to f90b6df0a3bb
 	// (handleRejectToDraft); converted together per gate (h).
@@ -3007,12 +3042,22 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// Queue email+log+push via background task for each authorized group.
 	// The batch processor will create the mod log entry and notify group moderators.
 	for _, gid := range authorizedGroups {
+		notifyPoster := NotifyPosterFlag(originGid, gid)
+		if notifyPoster == 0 {
+			log.Printf("ripple: secondary-group delete msgid=%d groupid=%d byuser=%d (poster not notified)", req.ID, gid, myid)
+			RecordRippleEvent(db, "secondary_delete")
+			// A delete removes the messages_groups row outright, so the "already on this
+			// group" guard that stops a post being added twice no longer holds and the next
+			// expansion tick would put it straight back. Record the group as having turned
+			// the post away, exactly as a rejection does, so the expander leaves it alone.
+			ClipReachForRejectedGroup(db, req.ID, gid)
+		}
 		// Identical golden to
 		// b25ea3ba4ade, 02b3821ea3b9 and e1f780721381; converted together per gate (h).
 		db.Table("background_tasks").Create(map[string]interface{}{
 			"task_type": "email_message_rejected",
-			"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
-				req.ID, gid, myid, subject, body, stdmsgid, "Delete Approved Message"),
+			"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
+				req.ID, gid, myid, subject, body, stdmsgid, "Delete Approved Message", notifyPoster),
 		})
 	}
 
@@ -3338,9 +3383,40 @@ func handleReply(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		stdmsgid = *req.Stdmsgid
 	}
 
-	// Use request groupid if provided, otherwise fall back to context.
-	if req.Groupid != nil && *req.Groupid > 0 {
-		ctx.Groupid = *req.Groupid
+	// Resolve the group the reply is sent as, the way every other mod action does. A bare
+	// "am I a moderator of this message?" check is not enough here: the requested group is
+	// whose name the message goes out under, so a moderator of a group the post rippled
+	// into must not be able to name the HOME group and write to the poster as them.
+	reqGid := uint64(0)
+	if req.Groupid != nil {
+		reqGid = *req.Groupid
+	}
+	authorizedGroups, err := resolveAuthorizedGroups(myid, reqGid, ctx.Groupids)
+	if err != nil {
+		return err
+	}
+
+	// With no group named, keep the message's primary group when the caller may act on it,
+	// which is the group a reply has always gone out as.
+	ctx.Groupid = authorizedGroups[0]
+	if reqGid == 0 {
+		primary := getPrimaryGroupForMessage(db, req.ID)
+		for _, gid := range authorizedGroups {
+			if gid == primary {
+				ctx.Groupid = primary
+				break
+			}
+		}
+	}
+
+	// A reply does nothing except send the poster a message, so on a copy the post merely
+	// rippled into there is nothing left for it to do: correspondence about a post belongs
+	// to the community it was posted on (Discourse 10102). Refuse rather than accept and
+	// silently drop it — the moderator wrote those words deliberately and must be told
+	// they did not go.
+	if NotifyPosterFlag(MessageOriginGroup(db, req.ID), ctx.Groupid) == 0 {
+		return fiber.NewError(fiber.StatusForbidden,
+			"Only the community this was posted on can message the freegler about it")
 	}
 
 	// Write the mod log entry synchronously, exactly once, like the other mod actions
@@ -3355,8 +3431,8 @@ func handleReply(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// b25ea3ba4ade, 02b3821ea3b9 and 7603ee833330; converted together per gate (h).
 	db.Table("background_tasks").Create(map[string]interface{}{
 		"task_type": "email_message_reply",
-		"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
-			req.ID, ctx.Groupid, myid, subject, body, stdmsgid, "Leave Approved Message"),
+		"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
+			req.ID, ctx.Groupid, myid, subject, body, stdmsgid, "Leave Approved Message", 1),
 	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

@@ -118,6 +118,11 @@ class AutoApproveService
                     $rippledInHours = (int) config('freegle.ripple.rippled_in_pending_hours', self::RIPPLED_IN_PENDING_HOURS);
                     $q2->where('messages_groups.rippled_in', 1)
                         ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) >= ?', [$rippledInHours])
+                        // The veto window means "no moderator objected". A copy held because it
+                        // breaks the receiving group's own rules carries the reasons that held
+                        // it (ExpandService::rippleIntoNewGroups), and a rule the group wrote
+                        // down IS an objection - so it waits for a moderator, not for the clock.
+                        ->whereNull('messages_groups.contentcheck_reasons')
                         ->whereExists(function ($q3) {
                             $q3->select(DB::raw(1))
                                 ->from('messages_groups as origin_mg')

@@ -4139,4 +4139,278 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(1, $stats['initialized']);
         $this->assertNotNull(DB::table('rippling_reach')->where('msgid', $msgid)->first());
     }
+
+    /**
+     * A post is vetted against the rules of the community it was posted on. Rippling then
+     * carried it, already approved, onto communities whose own rules it might break - so a
+     * group that bans live animals got a rabbit on its board with no chance to say no
+     * (Discourse 10102/3, and 9829 before it, where moderators were told their per-group
+     * worry words would catch this).
+     *
+     * A group's OWN rules are now checked as the copy is created: a match makes that
+     * group's copy Pending instead of Approved, so its moderators decide before members
+     * see it.
+     */
+    public function test_group_own_worry_word_ripples_in_as_pending_not_approved(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        DB::table('messages')->where('id', $msgid)->update([
+            'subject' => 'OFFER: brown rabbit (London)',
+            'textbody' => 'A friendly rabbit.',
+        ]);
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($b, 'the post still ripples in - it is held for review, not dropped');
+        $this->assertSame('Pending', $b->collection, 'a group whose own rules it breaks reviews it first');
+        $this->assertNull($b->approvedat, 'and it is not marked approved');
+    }
+
+    /** The reason is recorded, so the moderator can see what their rule caught. */
+    public function test_group_own_rule_hold_records_why(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        DB::table('messages')->where('id', $msgid)->update([
+            'subject' => 'OFFER: brown rabbit (London)',
+            'textbody' => 'A friendly rabbit.',
+        ]);
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($b->contentcheck_reasons, 'the moderator is told what matched');
+        $this->assertStringContainsString('rabbit', $b->contentcheck_reasons);
+        $this->assertNotNull($b->contentcheck_checked_at);
+    }
+
+    /** One group's rule is one group's business: the others still get the post as normal. */
+    public function test_group_own_rule_hold_is_scoped_to_that_group(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        DB::table('messages')->where('id', $msgid)->update([
+            'subject' => 'OFFER: brown rabbit (London)',
+            'textbody' => 'A friendly rabbit.',
+        ]);
+
+        $fussy = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $fussy->id]
+        );
+
+        $relaxed = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.17 51.53,-0.13 51.53,-0.13 51.57,-0.17 51.57,-0.17 51.53))', 3857, $relaxed->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame('Pending', DB::table('messages_groups')
+            ->where('msgid', $msgid)->where('groupid', $fussy->id)->value('collection'));
+        $this->assertSame('Approved', DB::table('messages_groups')
+            ->where('msgid', $msgid)->where('groupid', $relaxed->id)->value('collection'));
+    }
+
+    /**
+     * Only the group's OWN rules hold it. Freegle-wide keywords were already weighed on the
+     * community it was posted to, where a moderator may have approved it in full knowledge -
+     * re-running them here would hold the post everywhere it ripples over a decision that has
+     * already been made.
+     */
+    public function test_a_freegle_wide_keyword_does_not_hold_a_rippled_in_copy(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        DB::table('messages')->where('id', $msgid)->update([
+            'subject' => 'OFFER: brown rabbit (London)',
+            'textbody' => 'A friendly rabbit.',
+        ]);
+
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'rabbit',
+            'scope' => 'global',
+            'category' => 'review',
+            'match_mode' => 'literal',
+        ]);
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame('Approved', DB::table('messages_groups')
+            ->where('msgid', $msgid)->where('groupid', $groupB->id)->value('collection'),
+            'a Freegle-wide keyword was already adjudicated on the origin community');
+    }
+
+    /** A group with a keyword row of its own holds the copy, exactly as a worry word does. */
+    public function test_group_scoped_concern_keyword_ripples_in_as_pending(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        DB::table('messages')->where('id', $msgid)->update([
+            'subject' => 'OFFER: brown rabbit (London)',
+            'textbody' => 'A friendly rabbit.',
+        ]);
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'rabbit',
+            'scope' => 'group',
+            'group_id' => $groupB->id,
+            'category' => 'review',
+            'match_mode' => 'literal',
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame('Pending', DB::table('messages_groups')
+            ->where('msgid', $msgid)->where('groupid', $groupB->id)->value('collection'));
+    }
+
+    /** Nothing matching means nothing changes: the ordinary path still approves at ripple-in. */
+    public function test_a_post_breaking_no_group_rule_still_ripples_in_approved(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertSame('Approved', $b->collection, 'a sofa is not a rabbit');
+        $this->assertNotNull($b->approvedat);
+    }
+
+
+    /**
+     * Taking a rippled-in copy off a community must stick. Deleting it HARD-deletes that
+     * group's messages_groups row, so the "already on this group" guard that stops a post
+     * being added twice stops holding - and the next expansion tick, whose reach still
+     * covers the area, puts it straight back (Discourse 10102, where the copies were
+     * removed with a delete standard message).
+     */
+    public function test_a_deleted_rippled_in_copy_does_not_ripple_back_in(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'it rippled in to start with'
+        );
+
+        // A moderator removes it from their community: the row is hard-deleted and the
+        // group recorded as having rejected it (what the API does on a secondary removal).
+        DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->delete();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'rejected_groups' => json_encode([(int) $groupB->id]),
+        ]);
+
+        // Age the reach so the next hazard tick is due (hazard_hours [1,3,6]): the tick a
+        // reach advances to comes from elapsed time since its arrival, not from
+        // next_expansion_at alone, so without this nothing expands and the test proves
+        // nothing.
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'arrival' => now()->subHours(4),
+            'next_expansion_at' => now()->subHour(),
+        ]);
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'a community that has removed the post does not get it again'
+        );
+    }
+
+    /**
+     * The exclusion must discriminate on the record and nothing else. Both copies are
+     * removed; only one group is recorded as having turned the post away. The unrecorded
+     * one coming back is also what proves the re-ripple really happens, so the test above
+     * is not passing merely because nothing expanded.
+     */
+    public function test_only_the_community_that_turned_it_away_is_kept_out(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $removed = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.16 51.52,-0.16 51.58,-0.18 51.58,-0.18 51.52))', 3857, $removed->id]
+        );
+
+        $other = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.14 51.52,-0.12 51.52,-0.12 51.58,-0.14 51.58,-0.14 51.52))', 3857, $other->id]
+        );
+
+        $this->service()->process(false, 500);
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $removed->id)->first(),
+            'both communities got it to start with'
+        );
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $other->id)->first()
+        );
+
+        // Both copies go, but only one community is recorded as having turned it away.
+        DB::table('messages_groups')->where('msgid', $msgid)
+            ->whereIn('groupid', [$removed->id, $other->id])->delete();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'rejected_groups' => json_encode([(int) $removed->id]),
+            // See the note above: age the reach so a hazard tick is actually due.
+            'arrival' => now()->subHours(4),
+            'next_expansion_at' => now()->subHour(),
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $removed->id)->first(),
+            'the community that turned it away does not get it again'
+        );
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $other->id)->first(),
+            'a community that did not is reached again as normal'
+        );
+    }
+
 }

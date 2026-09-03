@@ -11,6 +11,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -147,6 +148,17 @@ func PostMemberships(c *fiber.Ctx) error {
 		}
 	}
 
+	// Whether the member's only tie to this group is a post of theirs that rippled in.
+	// Read once, before the actions below delete the row it lives on. A group removes such
+	// a member as it sees fit, but says nothing to them: they never joined, so a note from
+	// a community they have not heard of is the same confusion as one about their post
+	// (Discourse 10102).
+	rippleOnly := rippling.IsRippleOnlyMembership(db, req.Userid, req.Groupid)
+	notifyMember := 1
+	if rippleOnly {
+		notifyMember = 0
+	}
+
 	switch req.Action {
 	case "Hold":
 		if result := db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
@@ -165,6 +177,16 @@ func PostMemberships(c *fiber.Ctx) error {
 	case "Leave Member", "Leave Approved Member":
 		// send modmail to the member without changing membership status.
 		// PHP memberships.php line 291-294: just calls $u->mail().
+		//
+		// This action is nothing but a message, so on a membership rippling created for a
+		// poster it has nothing to do: that membership is a record of where their post
+		// travelled, not a relationship with this community (Discourse 10102). Refuse it
+		// rather than accept and drop it - the moderator wrote those words on purpose.
+		if rippleOnly {
+			return fiber.NewError(fiber.StatusForbidden,
+				"This member's only tie to the group is a post that rippled in, so there is nobody here to write to")
+		}
+
 		subject := ""
 		if req.Subject != nil {
 			subject = *req.Subject
@@ -184,8 +206,8 @@ func PostMemberships(c *fiber.Ctx) error {
 		// d22ba1d6c).
 		db.Table("background_tasks").Create(map[string]interface{}{
 			"task_type": "email_mod_stdmsg",
-			"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
-				req.Userid, req.Groupid, myid, subject, body, stdmsgid, "Leave Approved Member"),
+			"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
+				req.Userid, req.Groupid, myid, subject, body, stdmsgid, "Leave Approved Member", notifyMember),
 		})
 		// V1 parity: Leave Approved Member only calls $u->mail(), no log entry.
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -211,8 +233,8 @@ func PostMemberships(c *fiber.Ctx) error {
 		if subject != "" || body != "" {
 			db.Table("background_tasks").Create(map[string]interface{}{
 				"task_type": "email_mod_stdmsg",
-				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
-					req.Userid, req.Groupid, myid, subject, body, 0, "Approve Member"),
+				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
+					req.Userid, req.Groupid, myid, subject, body, 0, "Approve Member", notifyMember),
 			})
 		}
 
@@ -240,8 +262,8 @@ func PostMemberships(c *fiber.Ctx) error {
 		if subject != "" || body != "" {
 			db.Table("background_tasks").Create(map[string]interface{}{
 				"task_type": "email_mod_stdmsg",
-				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
-					req.Userid, req.Groupid, myid, subject, body, stdmsgid, req.Action),
+				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
+					req.Userid, req.Groupid, myid, subject, body, stdmsgid, req.Action, notifyMember),
 			})
 		}
 
@@ -391,6 +413,12 @@ type GetMembershipsMember struct {
 	Engagement          *string                 `json:"engagement"`
 	Lastmodmail         *string                 `json:"lastmodmail,omitempty"`
 	Bouncing            bool                    `json:"bouncing" gorm:"column:bouncing"`
+	// True when this membership exists only because rippling auto-joined the poster
+	// after their post reached the group (ExpandService::addPosterMembershipToRippledGroups).
+	// It records where a post travelled, not a relationship with the community, so
+	// ModTools does not offer the group's moderators a chat off the back of it
+	// (Discourse 10102).
+	Rippled bool `json:"rippled" gorm:"column:rippled"`
 	// Set while the member's email provider is refusing our mail. This is
 	// deliberately NOT the same thing as Bouncing: bouncing means their
 	// address is bad, whereas this is our own sending reputation with their
@@ -469,7 +497,7 @@ func GetMemberships(c *fiber.Ctx) error {
 				"b.date AS added, b.date AS bandate, b.byuser AS bannedby, "+
 				"u.fullname, u.firstname, u.lastname, u.engagement, "+
 				"b.userid AS id, NULL AS heldby, NULL AS settings, "+
-				"0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, "+
+				"0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, 0 AS rippled, "+
 				"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason, "+mailDelayedCols).
 			Joins("JOIN users u ON u.id = b.userid").
 			Where("b.groupid = ?", groupid)
@@ -500,7 +528,7 @@ func GetMemberships(c *fiber.Ctx) error {
 		db.Table("memberships m").
 			Select("m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
 				"u.fullname, u.firstname, u.lastname, m.settings, "+
-				"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, "+
+				"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, "+
 				"b.date AS bandate, b.byuser AS bannedby, "+
 				"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, "+
 				"MAX(l.timestamp) AS lastmodmail, "+mailDelayedCols).
@@ -526,7 +554,7 @@ func GetMemberships(c *fiber.Ctx) error {
 
 	selectCols := "m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, " +
 		"u.fullname, u.firstname, u.lastname, m.settings, " +
-		"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, " +
+		"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, " +
 		"b.date AS bandate, b.byuser AS bannedby, " +
 		"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing, " + mailDelayedCols
 
@@ -765,7 +793,7 @@ func getSpamMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error 
 	result := db.Table("memberships m").
 		Select("m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
 			"u.fullname, u.firstname, u.lastname, m.settings, "+
-			"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, "+
+			"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, "+
 			"b.date AS bandate, b.byuser AS bannedby, "+
 			"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing, "+mailDelayedCols).
 		Joins("JOIN users u ON u.id = m.userid").
@@ -1323,6 +1351,7 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ?",
 		userid, groupid).Scan(&existingRole)
 	if existingRole != "" {
+		rippling.ClearRippledMembership(db, userid, groupid, "joined")
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid, "addedto": utils.COLLECTION_APPROVED})
 	}
 
@@ -1373,6 +1402,7 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ?",
 		userid, groupid).Scan(&existingRole)
 	if existingRole != "" {
+		rippling.ClearRippledMembership(db, userid, groupid, "joined")
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "addedto": "Approved"})
 	}
 

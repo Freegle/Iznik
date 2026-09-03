@@ -873,6 +873,49 @@ class ContentCheckService
             ->where('category', '!=', 'allowed')
             ->get();
 
+        return $this->matchKeywords($keywords, $subject, $textbody, $groupid);
+    }
+
+    /**
+     * The rules a group wrote down for itself: its own concern_keywords rows and its own
+     * worry words, with the Freegle-wide keywords left out.
+     *
+     * Used when a post ripples into a group. The post was already weighed against the rules
+     * of the community it was posted on - and a moderator there may have approved it in full
+     * knowledge of a Freegle-wide keyword - so re-running those here would hold it everywhere
+     * it travels over a decision already made. What has NOT been considered is whether it
+     * breaks the receiving group's own rules, and that is what this asks.
+     *
+     * @return array<int, array<string, mixed>> Empty when the group's own rules say nothing.
+     */
+    public function checkGroupOwnRules(string $subject, string $textbody, int $groupid): array
+    {
+        $keywords = DB::table('concern_keywords')
+            ->where('scope', 'group')
+            ->where('group_id', $groupid)
+            ->where('category', '!=', 'allowed')
+            ->get();
+
+        $reasons = [];
+
+        if ($r = $this->matchKeywords($keywords, $subject, $textbody, $groupid)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkPerGroupWorryWords($subject, $textbody, $groupid)) {
+            $reasons[] = $r;
+        }
+
+        return $this->dedupeReasons($reasons);
+    }
+
+    /**
+     * Match a set of concern_keywords rows against a post, returning the first hit.
+     * Shared by checkConcernKeywords (global + group) and checkGroupOwnRules (group only)
+     * so both apply the same whitelist cleaning, match modes, excludes and context check.
+     */
+    private function matchKeywords($keywords, string $subject, string $textbody, int $groupid): ?array
+    {
+
         // 'allowed'-category entries are a whitelist: text matching them is
         // removed BEFORE scanning, so a flagging keyword can't fire on a word
         // inside a whitelisted phrase. V1's worry words and the Go display path
