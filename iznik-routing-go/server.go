@@ -20,6 +20,13 @@ import (
 // Dijkstras on every call.
 type isochroneResponse struct {
 	Drive GeoJSONPolygon `json:"drive"`
+
+	// OnGraph is false when the point snapped to no road at all, i.e. it is outside
+	// the loaded OSM extract. The polygon above is then empty for that reason and
+	// not because the place is genuinely cut off, and a caller that cannot tell
+	// those apart stores "no reach" forever. Answer honestly, the way
+	// handleQuintile answers "available": false.
+	OnGraph bool `json:"onGraph"`
 }
 
 // handleIsochrone handles GET /v1/isochrone?lat=&lng=&minutes=
@@ -41,7 +48,16 @@ func handleIsochrone(g *Graph) fiber.Handler {
 
 		iso := Isochrone(g, lat, lng, secs)
 		res := NetworkResolution(g, iso.ReachedNodes)
-		return c.JSON(isochroneResponse{Drive: IsochronePolygon(g, iso.ReachedNodes, res)})
+		if !iso.OriginFound {
+			// Loud on purpose: the only way this happens is a point outside the
+			// extract the graph was built from, which is a data-coverage bug that
+			// otherwise looks exactly like "nowhere is reachable from here".
+			log.Printf("isochrone: %.4f,%.4f is outside the loaded map - no road within snapping range", lat, lng)
+		}
+		return c.JSON(isochroneResponse{
+			Drive:   IsochronePolygon(g, iso.ReachedNodes, res),
+			OnGraph: iso.OriginFound,
+		})
 	}
 }
 
@@ -230,7 +246,13 @@ func handleCatchment(g *Graph) fiber.Handler {
 			bounds = IsochroneBounds(g, iso.ReachedNodes, res)
 		}
 
-		resp := fiber.Map{"catchment": poly}
+		if !iso.OriginFound {
+			// This is the path that materialises reach for a rippling post, so an
+			// origin outside the extract means that post gets no reach at all - and
+			// says so nowhere. Tell the caller, and say it out loud here.
+			log.Printf("catchment: %.4f,%.4f is outside the loaded map - no road within snapping range, so this post gets no reach", lat, lng)
+		}
+		resp := fiber.Map{"catchment": poly, "onGraph": iso.OriginFound}
 		if coarse {
 			// Say so, so a caller can tell a coarse outline from an exact one without
 			// having to infer it from the vertex count.

@@ -296,3 +296,42 @@ func TestWktPolygonToCoords_DegreeCoords(t *testing.T) {
 		t.Errorf("expected [-1.3 51.6], got %v", got)
 	}
 }
+
+// TestIsochroneEndpoint_ReportsOffMapOrigin covers the failure that hid the Isle of
+// Man for a year: an origin outside the loaded OSM extract produced an empty polygon
+// and a 200, which reads exactly like "nowhere is reachable from here". onGraph is
+// the difference between those two answers.
+func TestIsochroneEndpoint_ReportsOffMapOrigin(t *testing.T) {
+	app := newInternalApp(t)
+
+	on := getIsochrone(t, app, "/v1/isochrone?lat=51.4545&lng=-2.5879&minutes=15")
+	if !on.OnGraph {
+		t.Errorf("point on the test graph: onGraph = false, want true")
+	}
+
+	// Douglas, Isle of Man: far outside the Bristol test extract.
+	off := getIsochrone(t, app, "/v1/isochrone?lat=54.1509&lng=-4.4814&minutes=30")
+	if off.OnGraph {
+		t.Errorf("point off the test graph: onGraph = true, want false")
+	}
+	if len(off.Drive.Geometry.Coordinates) > 0 && len(off.Drive.Geometry.Coordinates[0]) > 0 {
+		t.Errorf("off-map origin returned a polygon of %d points", len(off.Drive.Geometry.Coordinates[0]))
+	}
+}
+
+func getIsochrone(t *testing.T, app *fiber.App, url string) isochroneResponse {
+	t.Helper()
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, url, nil), 30000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+	var r isochroneResponse
+	if err := json.Unmarshal(body, &r); err != nil {
+		t.Fatalf("invalid JSON: %v\nbody: %s", err, body)
+	}
+	return r
+}

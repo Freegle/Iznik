@@ -60,9 +60,15 @@ func reachMain(args []string) {
 	}
 }
 
-// reachLoadOrBuild returns the graph+overlay, from snapshot when present.
+// reachLoadOrBuild returns the graph+overlay, from snapshot when it is present and
+// still current for the extract.
 func reachLoadOrBuild() (*Graph, *Overlay) {
-	if _, err := os.Stat(reachSnapPath); err == nil {
+	if stale := snapshotStaleAgainstPBF(reachSnapPath); stale != "" {
+		// The snapshot is a cache of the extract, so an extract that has moved on
+		// makes it wrong rather than merely old. Rebuild instead of loading it:
+		// reusing it here is how a refreshed map quietly fails to take effect.
+		log.Printf("reach: %s; rebuilding from the extract", stale)
+	} else if _, err := os.Stat(reachSnapPath); err == nil {
 		g, ov, err := LoadReachSnapshot(reachSnapPath)
 		if err == nil {
 			return g, ov

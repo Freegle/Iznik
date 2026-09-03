@@ -1149,6 +1149,17 @@ class ReachService
         $body = $response->json() ?? [];
         $wkt = $this->polygonToWkt($body['catchment'] ?? null);
         if ($wkt === null) {
+            // Distinguish the two ways this comes back empty. onGraph=false means the
+            // origin is outside the OSM extract the routing graph was built from, so no
+            // post from there can ever get reach until the extract is fixed - that is a
+            // data-coverage bug, not a quiet local answer. Older routing builds omit the
+            // field, so absent means "cannot tell" and keeps the general message.
+            if (($body['onGraph'] ?? true) === false) {
+                Log::warning('ripple: origin is outside the routing map, so no post from here can get reach', ['lat' => $lat, 'lng' => $lng]);
+            } else {
+                Log::warning('ripple: catchment came back empty', ['lat' => $lat, 'lng' => $lng, 'minutes' => $minutes]);
+            }
+
             return null;
         }
 
@@ -1213,7 +1224,19 @@ class ReachService
             }
             $body = $resp->json() ?? [];
             $wkt = $this->polygonToWkt($body['catchment'] ?? null);
-            $out[$i] = $wkt === null ? null : [
+            if ($wkt === null) {
+                // Off the map is not the same as nothing within the budget. onGraph=false
+                // means the origin has no road node in the extract the graph was built
+                // from, so retrying this post next sweep can never do better. Say so here
+                // rather than let it read as an ordinary empty answer. Older routing
+                // builds omit the field, so absent means "cannot tell".
+                if (($body['onGraph'] ?? true) === false) {
+                    Log::warning('ripple: origin is outside the routing map, so no post from here can get reach', ['lat' => $j['lat'], 'lng' => $j['lng']]);
+                }
+                $out[$i] = null;
+                continue;
+            }
+            $out[$i] = [
                 'wkt' => $wkt,
                 'outer' => $this->polygonToWkt($body['catchment_outer'] ?? null),
                 'inner' => $this->polygonToWkt($body['catchment_inner'] ?? null),

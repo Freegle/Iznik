@@ -278,12 +278,39 @@ func reachRetryLoop(dir string) {
 	}
 }
 
+// snapshotStaleAgainstPBF reports whether the graph snapshot at snapPath predates
+// the OSM extract it was built from. Nothing keys these artifacts to the extract,
+// so a refreshed map with an old snapshot serves the OLD road network and says
+// nothing about it - which is how a missing region survives its own fix. Returns
+// an empty string when the snapshot is current, or when either file is missing.
+func snapshotStaleAgainstPBF(snapPath string) string {
+	snap, err := os.Stat(snapPath)
+	if err != nil {
+		return ""
+	}
+	pbfPath := getenv("OSM_PBF_PATH", "data/uk-latest.osm.pbf")
+	pbf, err := os.Stat(pbfPath)
+	if err != nil {
+		return ""
+	}
+	if !pbf.ModTime().After(snap.ModTime()) {
+		return ""
+	}
+	return fmt.Sprintf("%s was built %s, before %s changed at %s",
+		snapPath, snap.ModTime().Format(time.RFC3339), pbfPath, pbf.ModTime().Format(time.RFC3339))
+}
+
 // reachBootFromEnv loads the engine when REACH_DIR is set. Returns the
 // engine's graph so main can skip the PBF build, or nil to fall back.
 func reachBootFromEnv() *Graph {
 	dir := getenv("REACH_DIR", "")
 	if dir == "" {
 		return nil
+	}
+	if stale := snapshotStaleAgainstPBF(filepath.Join(dir, "graph.snap")); stale != "" {
+		// Loud on purpose: the artifacts win over the extract at boot, so a map
+		// refresh that stops here changes nothing and reports nothing.
+		log.Printf("reach: WARNING: %s - serving the OLD road network until the artifacts are rebuilt", stale)
 	}
 	start := time.Now()
 	eng, err := loadReachEngineFromDir(dir)
@@ -858,7 +885,12 @@ func handleLeaf() fiber.Handler {
 func engineOrFlatIsochrone(g *Graph, lat, lng float64, secs float32) IsochroneResult {
 	if e := reachEngine(); e != nil {
 		lbl := e.QueryLabelsCached(lat, lng, secs)
-		return IsochroneResult{ReachedNodes: e.ReachedNodes(lbl, secs)}
+		// Same snap the engine did, read back so callers can tell an unmapped
+		// origin from a small reach (see IsochroneResult.OriginFound).
+		return IsochroneResult{
+			ReachedNodes: e.ReachedNodes(lbl, secs),
+			OriginFound:  nearestDriveNode(g, lat, lng) != noNode,
+		}
 	}
 	return Isochrone(g, lat, lng, secs)
 }
@@ -877,7 +909,11 @@ func engineOrFlatMultiSource(g *Graph, seeds []NodeID, secs float32) IsochroneRe
 		base float32
 	}
 	var chainSeeds []chainSeed
+	seeded := false
 	for _, s := range seeds {
+		if s != noNode {
+			seeded = true
+		}
 		lbl := e.QueryLabelsFromNode(s, secs)
 		// The merge collapses per-seed origin-chain info, so remember each
 		// mid-chain seed for the along-chain refinement after expansion.
@@ -895,5 +931,5 @@ func engineOrFlatMultiSource(g *Graph, seeds []NodeID, secs float32) IsochroneRe
 	for _, cs := range chainSeeds {
 		e.refineOriginChain(reached, cs.node, cs.base, secs)
 	}
-	return IsochroneResult{ReachedNodes: reached}
+	return IsochroneResult{ReachedNodes: reached, OriginFound: seeded}
 }

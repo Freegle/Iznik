@@ -13,6 +13,14 @@ type IsochroneResult struct {
 	// callers read how far a node is BY ROAD, not just by time, for free - a nearby node reads
 	// as a small distance even if the isochrone sprawls much further in other directions.
 	DistM map[NodeID]float32
+
+	// OriginFound reports whether (lat, lng) snapped to a node at all. False means
+	// the graph has no usable road within nearestNodeGrid's search radius (about
+	// 11km), so the empty ReachedNodes above says "not on our map", NOT "nothing is
+	// near you". Callers that cannot tell those apart ship silence: an OSM extract
+	// missing the Isle of Man left its 825 members with no reach for a year, with
+	// no error and nothing logged.
+	OriginFound bool
 }
 
 // item is a priority queue entry.
@@ -83,7 +91,7 @@ func Isochrone(g *Graph, lat, lng float64, limitSeconds float32) IsochroneResult
 		}
 	}
 
-	return IsochroneResult{ReachedNodes: dist, DistM: distM}
+	return IsochroneResult{ReachedNodes: dist, DistM: distM, OriginFound: true}
 }
 
 // nearestDriveNode returns the NodeID closest to (lat, lng) that a car can use.
