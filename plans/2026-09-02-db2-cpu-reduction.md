@@ -626,8 +626,26 @@ rescan defect (proposal K). `purge:messages` (02:30) is in the same service and 
 indexed `arrival < cutoff` filters, so it is among the ten that are fine.
 
 **The remaining 25 are unexamined.** Anything on this list could be doing what `purge:logs` does and
-would never appear in a daytime profile. A monitoring pass timed for 00:30-06:30 is the obvious next
-piece of work if db2 remains hot after A, B, D, G and K.
+would never appear in a daytime profile.
+
+**Sampled one more nightly hour (04:59-05:01) and it was different again — 74.5% of 46,479 samples
+were queries not seen at any other point in 22 hours of monitoring:**
+
+| share | client | query | job |
+|---|---|---|---|
+| **18.6%** | batch | `messages_groups.msgid, groupid, …` | not yet traced |
+| **9.6%** | batch | `users_searches s LEFT JOIN users_se…` | `embeddings:searches` |
+| 7.1% | batch | `messages.id FROM messages INNER JOIN messages_groups` | not yet traced |
+| **5.9%** | **`bulk2-internal`** | `messages_spamham.spamham, messages.message` | not yet traced |
+| 5.0% | batch | `DISTINCT messages.id, lat, lng, …` | not yet traced |
+
+Two things follow. **`bulk2-internal` is a client of db2 that appears nowhere in the daytime
+profile** — the estate reaching db2 is wider than the batch/apiv2/spatial split established earlier.
+And `chats:update-counts` and `embeddings:searches` were both running, neither examined.
+
+This is one 90-second sample of one nightly hour. It is enough to say the nightly window is not a
+long tail of small jobs — it is a second workload of comparable size to the daytime one, and it has
+had roughly 1% of the scrutiny.
 
 ## Attribution: every item verified against its source
 
