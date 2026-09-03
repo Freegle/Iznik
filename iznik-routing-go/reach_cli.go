@@ -32,6 +32,8 @@ func reachMain(args []string) {
 		reachMatricesCmd(args[1:])
 	case "leaftables":
 		reachLeafTablesCmd(args[1:])
+	case "labels-export":
+		reachLabelsExportCmd(args[1:])
 	case "query":
 		reachQueryCmd(args[1:])
 	case "leafcheck":
