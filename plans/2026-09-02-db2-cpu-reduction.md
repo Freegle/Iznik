@@ -581,6 +581,25 @@ where the driving scan is expensive:
 So **proposal K applies to both anti-join loops**, not just the logs one. The empty-chat-rooms purge
 runs under `purge:chats` (`dailyAt('02:00')`); orphan logs under `purge:logs` (`dailyAt('03:30')`).
 
+## The fixed-cost class — B and H are a third of db2 at its quietest
+
+Two items do **identical work whether or not there is anything to do**, so their share rises as
+everything else falls away. At 04:57, with the node otherwise idle (load 1.40):
+
+| item | 13:27 | 23:00 | 01:27 | **04:57** |
+|---|---|---|---|---|
+| illustrations cleanup (B) | 4.9% | 7.4% | 20.1% | **22.0%** |
+| jobs count (H) | — | — | 6.5% | **10.3%** |
+| **combined** | | | | **32.3%** |
+
+Neither responds to load: B scans 33.2 M rows every minute and returns nothing; H counts 1.3 M rows
+on a fixed KNN-freshness tick. Together they are a third of db2 at the hour when it should be doing
+least.
+
+That is an argument for doing them early. They are also the two cheapest fixes in the plan — a
+watermark on B (verified: 39,668,257 rows → 13,644, 15.93 s → 0.072 s) and one index for H — and
+neither has any product tradeoff to weigh.
+
 ## The nightly window — what daytime monitoring misses
 
 `purge:logs` reached 47% of db2 and was invisible in every sample taken between 07:00 and 03:30.
