@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-01
+last_reviewed: 2026-09-03
 covers:
   - iznik-routing-go/graph.go
   - iznik-routing-go/dijkstra.go
@@ -169,6 +169,36 @@ deterministic — building it twice from the same road network gives two differe
 but equally valid layouts — so a file left over from an earlier build has to be
 detected rather than assumed compatible, and is rebuilt instead of being read
 against a layout it never matched.
+
+### The artifacts and the stored notes are one versioned pair
+
+Every post's per-region notes are stored in the database (`reach_labels`), and
+they only mean anything against the region layout they were written for. Load a
+different layout and every stored note silently answers "not reached" — on
+2026-09-03 that emptied every member's nearby feed at once. So the server treats
+the two as a pair, and three things enforce it (`reach_server.go`):
+
+- **The pairing record.** `config.reach_partition_fp` holds the layout
+  fingerprint the stored notes were built against. At boot the server compares
+  its own fingerprint with it and **refuses to serve** a layout that disagrees
+  (`reachPublish`) — a loud 503 rather than a quiet wrong answer, which the
+  deploy gate stops on. No record means no guard.
+- **"Unavailable" is never permanent.** A boot that cannot load its artifacts
+  used to answer 503 for the life of the process; it now keeps retrying in the
+  background (30 s, doubling to 10 min). The retry never rebuilds — an
+  unattended rebuild is exactly what renumbers the regions.
+- **Changing layout without a gap.** Notes for the *next* layout are computed
+  offline (`reach labels-export`, minutes for the whole country) and staged
+  beside the live ones (`reach labels-apply`, into `reach_labels_next` stamped
+  with their fingerprint; region rows for both layouts coexist in
+  `rippling_reach_leaves` because its key includes the fingerprint). Every
+  reader — the server's own row loader, and the batch paths that hand a note to
+  it — picks the staged note **only when its stamp is the live fingerprint**, so
+  the cutover is the pairing record changing and the artifacts swapping: every
+  post switches together, and nothing is rewritten to get there.
+
+`/health` reports `reach_partition_fp` so an operator can see every node serving
+the same layout as the notes.
 
 The road network also fixed a small unfairness in privacy blurring: locations
 shown to other members are deliberately made approximate, and the old circular
