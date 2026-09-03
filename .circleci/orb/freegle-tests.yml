@@ -2331,7 +2331,19 @@ jobs:
               # -x also removes gitignored files (e.g. .claude/skills/ralph/) that
               # would otherwise block checkout with "untracked files would be overwritten".
               git clean -fdx
-              git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH" || return 1
+              # Check out the commit this build is FOR, on a local branch of the
+              # branch's name (auto-merge and friends merge/inspect that branch).
+              # Checking out origin/$CIRCLE_BRANCH - the tip - used to fail the
+              # proof below whenever a second push landed before this job started:
+              # on 2026-09-03 job 34991 checked out f6666667 for a build of
+              # 76c291a9 and failed after three attempts, with nothing wrong.
+              # Every push then also tests only its own commit, so production
+              # only ever receives what was actually tested.
+              if [ -n "$CIRCLE_SHA1" ]; then
+                git checkout -B "$CIRCLE_BRANCH" "$CIRCLE_SHA1" || return 1
+              else
+                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH" || return 1
+              fi
               # Second clean: removes files from previous branch that git checkout couldn't
               # delete (e.g., root-owned files created by Docker containers via bind mounts,
               # or files left by concurrent builds sharing the workspace directory).
