@@ -34,7 +34,10 @@ LOG=/var/log/provider-discover.log
 CANDIDATES_FILE=/etc/postfix/warmup-candidates
 WINDOW_MIN=${1:-180}
 MIN_REFUSALS=50                          # 4.7.x refusals from the primary before a group enters play
-SAMPLE=${SAMPLE:-400000}
+# Lines, not minutes: 400k covered 102 of 360 minutes at morning volume on
+# 2026-09-02. Three million reaches back a day at peak (0.4s to seek) and the
+# coverage check below still guards the case where it does not.
+SAMPLE=${SAMPLE:-3000000}
 # Leaving play needs the primary CONFIRMED accepting the group: at least this
 # many sends, and more sends than refusals, inside a fully covered window.
 CONFIRM_MIN_SENT=10
@@ -98,16 +101,16 @@ dom_group() {
 since=$(date -u -d "$WINDOW_MIN min ago" '+%b %e %H:%M')
 tmp=$(mktemp); trap 'rm -f "$tmp" "$tmp".*' EXIT
 
-# The window slice is scanned several times - cut it once.
-tail -n "$SAMPLE" "$MAILLOG" > "$tmp.tail"
-awk -v s="$since" '$0 >= s' "$tmp.tail" > "$tmp.win"
+# The window slice is scanned several times - cut it once. Only the slice is
+# written out: the full tail can be hundreds of MB on a 2GB box.
+tail -n "$SAMPLE" "$MAILLOG" | awk -v s="$since" '$0 >= s' > "$tmp.win"
 
 # COVERAGE (2026-09-03): SAMPLE is a line count, so at morning volume it can
 # reach back far less than WINDOW_MIN (400k lines covered 102 of 360 minutes on
 # 2026-09-02 08:17Z). A short slice must never be mistaken for a quiet one - it
 # is a check that did not run. Entering play on a short slice is fine (a
 # refusal is a refusal); LEAVING play needs the whole window.
-first_line=$(head -1 "$tmp.tail" | cut -c1-15)
+first_line=$(tail -n "$SAMPLE" "$MAILLOG" | head -1 | cut -c1-15)
 covered=1
 if [ -n "$first_line" ] && [ "$first_line" \> "$since" ]; then
   covered=0
