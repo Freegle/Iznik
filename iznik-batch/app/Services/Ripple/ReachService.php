@@ -703,9 +703,13 @@ class ReachService
             return false;
         }
         // Union-admitted regions ride along with the reached ones, so members
-        // the union admits DISCOVER the post; dedupe against the label's own.
+        // the union admits DISCOVER the post. Dedupe here, in PHP: the leaves
+        // table's unique key is (msgid, leaf, fp), and MySQL treats NULLs as
+        // distinct in a unique index, so a row without a fingerprint would
+        // not be deduped by INSERT IGNORE the way (msgid, leaf) once did it.
+        $leaves = array_values(array_unique(array_map('intval', $leaves)));
         foreach ($body['union_leaves'] ?? [] as $leaf) {
-            if (!in_array((int) $leaf, $leaves, false)) {
+            if (!in_array((int) $leaf, $leaves, true)) {
                 $leaves[] = (int) $leaf;
             }
         }
@@ -785,7 +789,9 @@ class ReachService
             return false;
         }
         $secs = (float) $body['origin_union_secs'];
-        $unionLeaves = array_map('intval', $body['union_leaves'] ?? []);
+        // Deduped in PHP for the same reason as storeReachLabels: NULL-fp rows
+        // are not deduped by the (msgid, leaf, fp) key.
+        $unionLeaves = array_values(array_unique(array_map('intval', $body['union_leaves'] ?? [])));
         $fp = !empty($body['fp']) ? (string) $body['fp'] : null;
         try {
             DB::transaction(function () use ($msgid, $secs, $unionLeaves, $fp) {

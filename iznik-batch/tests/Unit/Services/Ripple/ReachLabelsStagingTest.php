@@ -95,20 +95,20 @@ class ReachLabelsStagingTest extends TestCase
         // while the reply gate decodes another.
         $expr = ReachService::liveLabelsSql();
         $picked = DB::selectOne(
-            "SELECT {$expr} AS blob FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, ? AS reach_labels_next_fp) AS t",
+            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, ? AS reach_labels_next_fp) AS t",
             [self::FP]
         );
-        $this->assertSame('staged', $picked->blob);
+        $this->assertSame('staged', $picked->picked);
 
         $stale = DB::selectOne(
-            "SELECT {$expr} AS blob FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, ? AS reach_labels_next_fp) AS t",
+            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, ? AS reach_labels_next_fp) AS t",
             [42]
         );
-        $this->assertSame('live', $stale->blob);
+        $this->assertSame('live', $stale->picked);
 
         $unstaged = DB::selectOne(
-            "SELECT {$expr} AS blob FROM (SELECT 'live' AS reach_labels, NULL AS reach_labels_next, NULL AS reach_labels_next_fp) AS t"
+            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, NULL AS reach_labels_next, NULL AS reach_labels_next_fp) AS t"
         );
-        $this->assertSame('live', $unstaged->blob);
+        $this->assertSame('live', $unstaged->picked);
     }
 }
