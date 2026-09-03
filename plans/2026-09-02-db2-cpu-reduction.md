@@ -1696,3 +1696,64 @@ start from the wrong number.
 
 **Still same-day.** Two methods agreeing removes the single-measurement risk, not the time-of-day
 risk; the overnight window still needs its own check before a job is sized.
+
+## 2026-09-03 13:15 — the overnight window: one job is fine, one costs 2.5 hours a night
+
+Eleventh window (13:12): db2 mysqld **800%**, **8.55 mean threads**, A = **3.21**, db1 26.7%.
+
+The 09-02 note said the nightly window is "a second workload of comparable size with ~1% of the
+scrutiny". **28 jobs** run between 00:00 and 07:00. Ranking them by cron-log size on batch-prod put
+two far above the rest (~120 KB each; everything else is under 1.5 KB).
+
+### `locations:update-postcodes` — checked, healthy, no action
+
+Last run: **2,713,361 postcodes processed, 0 added, 0 updated, 0 failed.** A full-dataset walk
+producing zero changes looks like an obvious target, and it is not one. `DoogalService.php:95-120`
+streams the CSV and resolves each **batch of 2,000** through a single indexed `name IN (...)` lookup
+— about **1,357 queries** for the whole 2.71 M-row dataset, with peak memory a function of batch size
+rather than table size. The comment records that this shape was chosen deliberately after V1's
+in-memory index corrupted the PHP heap. Nothing to fix.
+
+Recording this explicitly because "2.7 million rows for zero changes" is exactly the sort of line
+that invites a fix that is not needed.
+
+### `browse:backfill-max-distance --full` — 2 h 33 m every night to correct 0.87%
+
+| | |
+|---|---|
+| schedule | nightly 02:40; log mtime 05:17 ⇒ **~2 h 37 m** |
+| documented measurement (2026-09-01) | **132,228 members in 2 h 33 m** |
+| users walked | **~2.9 M** (full table) |
+| evaluated | 133,435 |
+| **corrected** | **1,155 (0.87%)** |
+| already consistent | 117,885 (88%) |
+| skipped, no location | 13,998 |
+
+This also answers Edward's earlier question — *"how significant are the corrections, are we getting
+it wrong when setting?"* — **0.87% of evaluated members**, with 88% already right.
+
+**D's index does NOT fix this**, and it is worth being exact about why. The nightly selection
+(`BackfillBrowseMaxDistanceCommand.php:322-325`) is
+
+```sql
+WHERE deleted IS NULL AND ( JSON_EXTRACT(settings,'$.browseMaxMinutes') IS NOT NULL
+                         OR JSON_EXTRACT(settings,'$.browseMaxDistance') IS NOT NULL
+                         OR lastaccess >= ? )
+```
+
+The `OR` against two unindexed `JSON_EXTRACT` predicates forces the full walk **regardless** of any
+`lastaccess` index — the file's own comment says so at line 75. Only the `--missing-only` path, which
+uses `AND lastaccess >= ?`, would benefit. So proposal D's index helps the every-minute exhort scan
+and this job's manual catch-up mode, and does nothing for the nightly pass.
+
+**What would fix it**, in increasing order of work:
+
+1. A **generated column** (`browse_band_set TINYINT` from the two JSON paths) with an index, turning
+   the OR into two indexable branches — or a `UNION ALL` of the two branches.
+2. A **change-feed**, the same pattern as A/D/I: re-evaluate only members whose inputs moved —
+   `PostcodeChange` (163/day, already measured), a settings write, or a new joiner. 1,155 corrections
+   a night against a 2.9 M-row walk is a ~2,500:1 waste ratio, and the inputs that can change a
+   member's band are all individually observable.
+
+Both need Edward: (1) is DDL, (2) is a behaviour change to a job that currently guarantees full
+coverage every night.
