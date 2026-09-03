@@ -1392,3 +1392,56 @@ Expected: driving set 1,076 → ~1-5 per tick, i.e. the 0.47 threads goes to rou
 **Caveat on ordering:** the watermark must advance only past rows whose processing committed, or a
 crash between read and write drops leaves permanently. Advance it to `MAX(ll.id)` *seen* only after
 the pull loop completes.
+
+## 2026-09-03 11:45 — db1's apiv2 IS an applb backend; the recorded topology is stale
+
+The db1 share is now measured across **five windows spanning ~45 minutes** and is rising:
+
+| window | 11:05 | 11:10 | 11:15 | 11:27 | 11:42 |
+|---|---|---|---|---|---|
+| db1 apiv2 share of db2 | 18.1% | 19.9% | 16.2% | 21.7% | **29.1%** |
+
+At 11:42 that is **2.70 of 9.28 mean threads**. This is no longer the retracted proposal-G claim: it
+reproduces, it rises, and the mechanism is now confirmed rather than inferred.
+
+### Mechanism (measured, not assumed)
+
+`ss` on db1 shows **32 established connections on :8192, every one from 185.199.221.13** — `applb`.
+So applb *is* routing member traffic to db1's apiv2. The note that db3 is the sole active backend is
+**stale**.
+
+Read targets, from each node's `/proc/<pid>/environ`:
+
+| node | apiv2 writes to | apiv2 **reads** from |
+|---|---|---|
+| db1 | db3 (10.220.0.47) | **db2** (10.220.0.150) |
+| db2 | db3 | db2 (itself) |
+| db3 | db3 | **db3 (itself)** |
+
+db3's apiv2 keeps its reads local, so traffic served by db3 never touches db2. Traffic served by
+**db1** does. That is the whole path: applb → db1:8192 → reads land on db2.
+
+### What db1 is actually running
+
+ModTools dashboard and member queries — `messages_by` collected-counts, `users_expected` reply
+counts, `users_related`, chat room lists, `messages_spatial` counts, `messages_outcomes` group stats.
+This is exactly the workload `plans/2026-08-13-mt-dashboard-stats-precompute.md` was written for;
+that plan measured the same endpoint at 25-56 s systemwide-1y per widget, 7-8 parallel GETs per page
+load. It also recorded the read-routing table above and concluded the burn "lands on db3, the write
+node" — which was true then and is not true now.
+
+### Three levers, and the choice is not mine to make
+
+Current node CPU: **db1 18.8% (load 0.67), db2 443.8% (load 7.28), db3 175.0% (load 4.46).**
+
+1. **Precompute the dashboard stats** (the existing 08-13 plan). Removes the *work*, not just its
+   location. Strictly the best of the three, and the only one that helps db3 too.
+2. **Take db1 out of the applb pool**, or point its apiv2 reads at db3. Both move ~2.7 threads from
+   db2 to db3. db3 is at 175% with headroom, but it is the write node.
+3. **Point db1's apiv2 reads at db1 itself.** This is the only option that adds load to neither db2
+   nor db3, and db1 is sitting at 18.8% with almost the entire node spare — but it contradicts the
+   standing "db1 is deliberately kept idle, never route to it" rule.
+
+**Question for Edward:** what is db1 being kept idle *for*? If it is SST-donor / backup cleanliness,
+option 3 may be acceptable and is by far the cheapest. If there is another reason, option 1 is the
+one worth building. I have not acted on any of them.
