@@ -542,6 +542,17 @@ from the start: 10.9 M index entries scanned to yield 1,000 ids, repeated until 
 The optimiser drives from `logs.user IS NOT NULL` on the `user` index, so the `timestamp` cutoff is
 only a filter, never a seek.
 
+**And it gets worse as it nears completion, not better.** `LIMIT 1000` bounds the *result*, not the
+*scan* — MySQL keeps reading until it has filled the limit. Early on, orphans are dense and the
+limit fills quickly; as they are deleted the scan must reach further for each one, and the final
+chunk reads the entire remaining table to find zero rows and terminate. That is why a chunk was
+observed at **640 s** and why the read:delete ratio reached 2.9 M:1 late in the run. (Confirmed
+incidentally: after the purge finished, a plain `LIMIT 1000` probe of the same anti-join timed out
+three times — there are too few orphans left for the limit to fill.)
+
+The keyset watermark fixes exactly this: with `AND logs.id > ? ORDER BY logs.id`, each chunk starts
+where the last ended, so total work is one pass regardless of how sparse the matches become.
+
 **Proposal K: add a keyset watermark**, exactly the pattern
 `SendPendingWelcomeMailsCommand:102-107` already uses:
 
