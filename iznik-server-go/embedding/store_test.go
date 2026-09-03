@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func makeVec(seed float32) [EmbeddingDim]float32 {
@@ -379,4 +380,29 @@ func TestStoreLoadReadsSubjectAndBodyColumns(t *testing.T) {
 	e2, err := decodeEntry(43, 7, 100, "Offer", 51.5, -0.1, "OFFER: Bare", time.Now(), subjectBytes, nil)
 	assert.NoError(t, err)
 	assert.Nil(t, e2.BodyVec)
+}
+
+func TestStoreSearchFindsMessageRippledIntoSearchedGroup(t *testing.T) {
+	// A message posted on origin group 100 that has also rippled into group
+	// 200 gets a messages_groups row (collection=Approved) on group 200, so it
+	// is visible to a member browsing group 200 - and to a mod's keyword/ID
+	// search there (both check messages_groups). messages_spatial only ever
+	// stores ONE groupid per message though (see the comment on
+	// message/groups.go's spatialGroupFilter), so a mod of the RECEIVING group
+	// (200) must still find the message via ModTools' semantic search
+	// (Discourse 9808/751).
+	s := &Store{}
+
+	vec := makeVec(0.5)
+
+	// GroupIDs carries every group the message is Approved on (origin + every
+	// rippled-in copy); Groupid alone (messages_spatial's single column) would
+	// only ever be the origin group.
+	s.entries = []Entry{
+		{Msgid: 1, Groupid: 100, GroupIDs: []uint64{100, 200}, Msgtype: "Offer", SubjectVec: vec},
+	}
+
+	results := s.Search(vec[:], 10, "", []uint64{200}, nil, 0, 0, 0, 0)
+	require.Len(t, results, 1, "message rippled into group 200 must be findable when a mod searches that group")
+	assert.Equal(t, uint64(1), results[0].Msgid)
 }
