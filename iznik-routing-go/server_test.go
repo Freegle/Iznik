@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -185,6 +186,42 @@ func TestIsochroneEndpoint_MissingLat(t *testing.T) {
 	}
 	if resp.StatusCode != 400 {
 		t.Errorf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
+// TestIsochroneEndpoint_ZeroLongitudeAccepted covers the second way a real place
+// got no reach: the guard read a longitude of zero as a missing parameter, so a
+// post on the Greenwich meridian - it runs up the country through Essex and
+// Lincolnshire - was turned away before any routing happened.
+func TestIsochroneEndpoint_ZeroLongitudeAccepted(t *testing.T) {
+	app := newInternalApp(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/isochrone?lat=51.5333&lng=0&minutes=5", nil)
+	resp, err := app.Test(req, 30000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("zero longitude: expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestValidLatLng(t *testing.T) {
+	cases := []struct {
+		name     string
+		lat, lng float64
+		want     bool
+	}{
+		{"on the meridian", 51.5333, 0, true},
+		{"Bristol", 51.4545, -2.5879, true},
+		{"no location at all", 0, 0, false},
+		{"latitude off the globe", 91, 0.5, false},
+		{"longitude off the globe", 51.5, 181, false},
+		{"not a number", math.NaN(), math.NaN(), false},
+	}
+	for _, c := range cases {
+		if got := validLatLng(c.lat, c.lng); got != c.want {
+			t.Errorf("%s: validLatLng(%v, %v) = %v, want %v", c.name, c.lat, c.lng, got, c.want)
+		}
 	}
 }
 

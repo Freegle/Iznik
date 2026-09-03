@@ -25,7 +25,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -374,7 +373,7 @@ func handleReachLabels() fiber.Handler {
 		lat := c.QueryFloat("lat")
 		lng := c.QueryFloat("lng")
 		minutes := c.QueryFloat("minutes")
-		if lat == 0 || lng == 0 || minutes <= 0 || minutes > 240 {
+		if !validLatLng(lat, lng) || minutes <= 0 || minutes > 240 {
 			return fiber.NewError(fiber.StatusBadRequest, "lat, lng and minutes (0-240) required")
 		}
 		start := time.Now()
@@ -734,7 +733,7 @@ func handleBlur(g *Graph) fiber.Handler {
 		lat := c.QueryFloat("lat")
 		lng := c.QueryFloat("lng")
 		metres := blurMetresOrDefault(c.QueryFloat("metres"))
-		if lat == 0 || lng == 0 || math.IsNaN(lat) || math.IsNaN(lng) || math.IsInf(lat, 0) || math.IsInf(lng, 0) {
+		if !validLatLng(lat, lng) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat and lng required")
 		}
 		blat, blng, roadm := roadBlurPoint(g, lat, lng, metres)
@@ -772,7 +771,7 @@ func handleBlurBatch(g *Graph) fiber.Handler {
 		}
 		out := make([]res, len(req.Points))
 		for i, p := range req.Points {
-			if p.Lat == 0 || p.Lng == 0 || math.IsNaN(p.Lat) || math.IsNaN(p.Lng) {
+			if !validLatLng(p.Lat, p.Lng) {
 				out[i] = res{ID: p.ID, Lat: p.Lat, Lng: p.Lng, Roadm: 0}
 				continue
 			}
@@ -842,7 +841,7 @@ func handleLeaf() fiber.Handler {
 		}
 		lat := c.QueryFloat("lat")
 		lng := c.QueryFloat("lng")
-		if lat == 0 || lng == 0 || math.IsNaN(lat) || math.IsNaN(lng) {
+		if !validLatLng(lat, lng) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat and lng required")
 		}
 		v := nearestDriveNode(e.G, lat, lng)
