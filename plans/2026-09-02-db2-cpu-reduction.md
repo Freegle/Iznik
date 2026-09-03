@@ -30,7 +30,9 @@ alternative was investigated and does not exist in the schema — see proposal A
 
 **What this does NOT cover:** the 00:30-05:00 nightly block, sampled only opportunistically. It
 contains 15+ unexamined jobs, and the two that have been examined (`purge:logs`, `purge:chats`)
-both turned out to be defective. See "The nightly window".
+both turned out to be defective. See "The nightly window". A 48-minute full-text capture of
+05:12-06:01 is the deepest look taken; one item in it (8.5%, `select distinct messages.id, lat, lng
+… left join messages_outcomes … and not exists …`) remains untraced to a job.
 
 ## Baseline
 
@@ -744,6 +746,14 @@ are relocated wholesale by G, and the spatial item is moved by neither.
   9.0% of the overnight floor: `EXPLAIN` gives `mg` type=**range**, key=`groupid`, **rows=2**,
   "Backward index scan", with `messages` by PRIMARY eq_ref; **6-9 ms** per call. Well indexed. Like
   the expand scan, its share is frequency — once per group across 507 groups — not cost.
+
+- **Per-group member query** (`SELECT DISTINCT memberships.userid … users.lastaccess >= 31 DAY AND
+  users.trustlevel IN (…)`), **7.3% of the nightly window**: `memberships` ref on `groupid_2`
+  (5,527 rows) then `users` **eq_ref on PRIMARY**. It reaches `users` by primary key and applies
+  `lastaccess` afterwards, so **proposal D's index does not help it** — checked, because the
+  predicate looked like D's. Cost is volume from being called per group, not a bad path. The
+  `DISTINCT` forces "Using temporary" and may be redundant if `memberships.userid` is already unique
+  per group.
 
 - **The 22.8% long tail** — nothing exceeds 3.9%, and the supporting indexes all exist:
 
