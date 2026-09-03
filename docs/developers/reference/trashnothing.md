@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-29
+last_reviewed: 2026-09-03
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -76,6 +76,29 @@ The `sourceheader` field stores the message origin:
 - `TN-Web` - Posted via TN website
 - `TN-Mobile` - Posted via TN mobile app
 - `Platform` - Posted via Freegle directly
+
+### Group Membership (Subscribe Mail)
+
+TN keeps its members' Freegle group list in step by emailing
+`<groupname>-subscribe@groups.ilovefreegle.org` from the member's TN address, one mail per
+group. `IncomingMailService::handleSubscribe()` handles it: it finds the group by
+`nameshort`, finds or creates the user from the envelope-from, and adds an Approved
+membership on daily digest.
+
+Two things gate and record that join:
+
+- **A ban blocks it.** A row in `users_banned` for that (user, group) means the subscribe
+  mail is dropped. TN re-sends these mails routinely, so without the gate a member a
+  moderator had banned would simply reappear on the group at the next TN sync.
+- **The join is logged.** A `Group`/`Joined` row with text `Subscribed` goes into `logs`,
+  so the join shows in the modlog as "Joined by emailing the group's subscribe address"
+  and counts toward the "seen on many groups" check in `MembershipsProcessingService`.
+
+Removal is the mirror image: `<groupname>-unsubscribe@` drops the membership, except for
+moderators and owners.
+
+`membership:remove-banned` clears up any membership held by a member banned from that
+group, for the rows written before the gate existed.
 
 ### Photo Handling
 

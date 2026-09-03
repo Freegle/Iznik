@@ -151,6 +151,107 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
     }
 
+    public function test_subscribe_records_the_join_in_the_modlog(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('joiner')]);
+        $userEmail = $user->emails->first()->email;
+
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $group->nameshort.'-subscribe@groups.ilovefreegle.org',
+            'Subject' => 'Subscribe',
+        ]);
+
+        $parsed = $this->parser->parse(
+            $email,
+            $userEmail,
+            $group->nameshort.'-subscribe@groups.ilovefreegle.org'
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+        $this->assertTrue(
+            DB::table('memberships')->where('userid', $user->id)->where('groupid', $group->id)->exists()
+        );
+        $this->assertTrue(
+            DB::table('logs')
+                ->where('type', 'Group')
+                ->where('subtype', 'Joined')
+                ->where('user', $user->id)
+                ->where('groupid', $group->id)
+                ->exists(),
+            'Subscribing by email should leave a Group/Joined log entry'
+        );
+    }
+
+    public function test_subscribe_from_banned_member_is_dropped(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('banned')]);
+        $userEmail = $user->emails->first()->email;
+
+        DB::table('users_banned')->insert([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'date' => now(),
+        ]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $group->nameshort.'-subscribe@groups.ilovefreegle.org',
+            'Subject' => 'Subscribe',
+        ]);
+
+        $parsed = $this->parser->parse(
+            $email,
+            $userEmail,
+            $group->nameshort.'-subscribe@groups.ilovefreegle.org'
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+        $this->assertFalse(
+            DB::table('memberships')->where('userid', $user->id)->where('groupid', $group->id)->exists(),
+            'A banned member must not be re-added to the group by a subscribe email'
+        );
+    }
+
+    public function test_subscribe_still_works_on_a_group_the_member_is_not_banned_from(): void
+    {
+        $bannedGroup = $this->createTestGroup();
+        $otherGroup = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('partban')]);
+        $userEmail = $user->emails->first()->email;
+
+        DB::table('users_banned')->insert([
+            'userid' => $user->id,
+            'groupid' => $bannedGroup->id,
+            'date' => now(),
+        ]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $otherGroup->nameshort.'-subscribe@groups.ilovefreegle.org',
+            'Subject' => 'Subscribe',
+        ]);
+
+        $parsed = $this->parser->parse(
+            $email,
+            $userEmail,
+            $otherGroup->nameshort.'-subscribe@groups.ilovefreegle.org'
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+        $this->assertTrue(
+            DB::table('memberships')->where('userid', $user->id)->where('groupid', $otherGroup->id)->exists()
+        );
+    }
+
     public function test_routes_unsubscribe_to_system(): void
     {
         $group = $this->createTestGroup();

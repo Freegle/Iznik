@@ -36,6 +36,9 @@
               <span v-else-if="log.text === 'Rippled'">
                 Joined automatically when their post rippled into this group
               </span>
+              <span v-else-if="log.text === 'Subscribed'">
+                Joined by emailing the group's subscribe address
+              </span>
               <span v-else> Joined automatically when posting/replying </span>
             </span>
           </span>
