@@ -1292,3 +1292,43 @@ to come from them.
 **A alone clears the target**: the reach recipient query is 47% of db2 at peak and 68% off-peak,
 runs 224×/min at 0.71 s for 2.99 threads continuously, and ~95% of those executions re-do unchanged
 work. Everything else is secondary to it.
+
+---
+
+## 2026-09-03 11:15 — db1's apiv2 is back, and it is ~16% of db2
+
+371 active-query samples, 90 rounds:
+
+| source | workload | share |
+|---|---|---|
+| batch (`docker-internal`) | **digest reach recipients** | **67.1%** |
+| batch | messages+groups | 7.0% |
+| batch | other | 9.4% |
+| **db1 apiv2** | **chat room list** | **8.1%** |
+| db1 apiv2 | other | 5.4% |
+| db1 apiv2 | spatial count | 2.2% |
+
+**Proposal A is confirmed as the whole game.** The reach recipient query is 67.1% here — matching the
+67.2% measured off-peak on 09-02, and up from 47% at peak. Nothing else is within an order of
+magnitude of it.
+
+**db1 contributes 16.2%, and this time it reproduces.** Three independent windows: 18.1%, 19.9%,
+16.2%. This is *not* the 09-02 finding I retracted — that was six samples inside one post-deploy
+transient, and the next morning db1 contributed 0 of 1,020. What is different now:
+
+- db1's `iznik-server-go` started 09:08 and has burned **22:42 CPU-minutes in ~2 h (≈18% of a core)**,
+  so it is genuinely serving requests, not idling.
+- The queries carry real member ids and chat-room id lists — member traffic, not batch.
+- db1's own mysqld is at 118% with load 0.83, i.e. the node is otherwise idle as designed.
+
+**Two things to check before proposing anything.** First, this contradicts the recorded topology
+(`applb` routing to db3 only, db1/db2 as `backup`) — either that is stale or something is reaching
+db1's apiv2 directly on :8192. Second, all three windows sit inside ~15 minutes; per the 09-02
+lesson, that is not yet steady state. Re-measure across an hour boundary before acting.
+
+Note the fix is **not** "point db1's apiv2 at db1" — db1 is deliberately kept idle as a database
+node. If the share holds, the question is why db1's apiv2 is taking member traffic at all.
+
+**Not seen in this window:** the illustrations watermark (proposal B), which was 13.6% an hour
+earlier. It is periodic, so its share depends entirely on when the sample lands — B's value still
+rests on the measured 39,668,257 → 13,644 row reduction, not on any single sample.
