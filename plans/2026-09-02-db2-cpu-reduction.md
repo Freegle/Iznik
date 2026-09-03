@@ -295,15 +295,21 @@ execution) but absent from processlist sampling all day; it surfaced live at **3
 | `visible = 1` | true for **every row** — the predicate contributes nothing |
 | indexes | `bodyhash`, `canonical_title`, `city`, `geometry` (SPATIAL), `job_reference`, `PRIMARY`, `seenat` — **none on `cpc`** |
 
-**It is an apiv2 query — `iznik-server-go/job/job.go:153` — but it arrives from `localhost`, i.e.
-db2's OWN apiv2, not db1's.** Client attribution at 02:57 puts it at 0.0% from `docker-internal`
-(batch) and 0.0% from `db1-internal`; the local database connections on db2 are held by
-`iznik-server-go` and `iznik-spatial-go`. So **proposal G as originally written — changing db1's
-read target — would NOT move this.** See the widened form of G.
+**Source: `iznik-spatial-go/dataset_jobs.go:252` — the spatial KNN server's index-freshness probe**,
+running on db2 against `localhost`, beside a `SELECT MAX(seenat) FROM jobs` at line 242.
+`jobsLiveFilter` (line 23) is `visible = 1 AND cpc >= %.2f AND geometry IS NOT NULL`.
 
-*(I reclassified this twice: first as batch, then as db1-apiv2 on the strength of the code location
-alone. The client split is what settled it. Code location tells you which service issues a query,
-not which node it lands on.)*
+So it is **neither batch nor apiv2**, and **no form of proposal G moves it** — G changes apiv2 read
+targets; the spatial server reads its own node. Proposal H is the fix.
+
+*(I classified this three times before getting it right: batch, then db1-apiv2, then db2's own
+apiv2 — each on partial evidence. Client attribution said `localhost`; db2's local connections are
+held by BOTH `iznik-server-go` and `iznik-spatial-go`, and I picked the wrong one. Only grepping the
+literal SQL settled it. Lesson: "which service issues this" needs the query text found in that
+service's source, not an inference from which processes hold connections.)*
+
+Worth passing to whoever owns spatial: line 242 already probes `MAX(seenat)` for change detection,
+so a full `COUNT(*)` over 1.3 M rows on the same tick may be redundant.
 
 Its share **rises** as the night deepens — 6.5% at 01:57, 9.1% at 02:42 — while its absolute count
 holds steady (917 then 941 samples as the total fell from 14,104 to 10,342). So it runs at a fixed
@@ -312,8 +318,7 @@ feature.
 
 **Proposal H (operator DDL): `ALTER TABLE jobs ADD INDEX cpc (cpc);`** — turns the full scan into a
 range scan over the 19.8% that match `cpc >= ?`, roughly **5× fewer rows examined**, with
-`geometry IS NOT NULL` applied as a filter afterwards. It **is** a db2 fix — the query runs on db2's own apiv2 — unless the widened form of G moves it
-first. Worth doing either way: the table grows ~300 k rows a day, so the scan degrades continuously
+`geometry IS NOT NULL` applied as a filter afterwards. It **is** a db2 fix and G does not cover it — the spatial server reads its own node. Worth doing: the table grows ~300 k rows a day, so the scan degrades continuously
 while an index does not.
 
 ### 7. Three high-frequency queries sampling under-weights — ~2% combined, but one is pure waste
@@ -882,8 +887,9 @@ then `monit restart iznik-server-go` on each — no rebuild needed, monit's star
 **Widened 2026-09-03 after client attribution.** The original form changed db1 only. But db2's own
 apiv2 also reads db2, and it is not idle: the jobs count (finding 6) arrives entirely from
 `localhost`, and local database connections on db2 are held by `iznik-server-go`. Measured at 02:57,
-apiv2 traffic on db2 totalled ~**39%** — `chat_rooms` 10.4%, `messages_outcomes` 6.5%, spatial
-browse 6.0%, jobs 6.8%, plus ~9.8% of the mixed long tail. Pointing **both** nodes' apiv2 at db3
+apiv2 traffic on db2 totalled ~**32%** — `chat_rooms` 10.4%, `messages_outcomes` 6.5%, spatial
+browse 6.0%, plus ~9.8% of the mixed long tail. (An earlier draft said 39% by wrongly counting the
+6.8% jobs count as apiv2; it is the spatial server's — see finding 6.) Pointing **both** nodes' apiv2 at db3
 leaves db2 serving batch only, which is what it was before this investigation started
 (99.8% batch). Verify by the boot line `Connecting to database ...` and by db2's client mix losing its
 `db1-internal` share.
