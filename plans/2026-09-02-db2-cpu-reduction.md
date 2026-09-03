@@ -4,6 +4,34 @@ Investigation only; **nothing here has been applied**. Measured 2026-09-02, 07:1
 
 Goal: halve db2's CPU.
 
+## Summary — every proposal, ranked
+
+| | change | worth to db2 | type | evidence |
+|---|---|---|---|---|
+| **A** | reach mail window 60 → 5 min | **46-68% by day** | one config value | window/throughput measured across 190× range; crossover observed live |
+| **G** | db1's **and db2's** apiv2 reads → db3 | **23-49% by day**, ~32% overnight | env line ×2 + monit restart | share measured 7×; db3 verified 80-95% idle |
+| **K** | keyset watermark on the two anti-join purge loops | **47% of db2 while `purge:logs` runs** | code | 2.9 M rows read per row deleted; 640 s chunk observed |
+| **D** | index `users (deleted, lastaccess)` | 8-22%, two callers | **operator DDL** | 1,845,193 → 184,832 rows (10.0×) |
+| **B** | illustrations watermark | 5% by day, **22% overnight** | code | 39,668,257 → 13,644 rows; 15.93 s → 0.072 s |
+| **H** | index `jobs (cpc)` | 6-10% overnight | **operator DDL** | full scan of 1.3 M rows; ~5× fewer |
+| **I** | leave-check lookback 2 days → ~30 min | ~6% | code | 1,195 rows scanned vs ~1/hour genuinely new |
+| **J** | mod2mod chaseup window/watermark | ~5% | code | 153 rooms and 16,730 messages re-fetched every minute |
+| **L** | microvolunteering: `LIKE`→`=` + index on `url` | ~5% | code + **operator DDL** | 3,461-row scan per candidate message |
+| **F** | `sort_buffer_size`, `table_open_cache` | hygiene only | my.cnf, both nodes | swap ruled out as a latency cause |
+| **E** | digest shard counts | re-derive after the above | config | tuned against the batch host's CPU, not db2's |
+| ~~C~~ | ~~sargable shard predicate~~ | **rejected** | — | `EXPLAIN` unchanged; ~1.6× even when forced |
+
+**A and G alone exceed the halving target and need no schema change.** K is the biggest single
+overnight win. B, D and H are the cheapest and carry no product tradeoff.
+
+**The one open decision** is in A: shortening the window means members who become eligible *after* a
+post's reach last changed are caught within 5 minutes rather than 60. The dual change-feed
+alternative was investigated and does not exist in the schema — see proposal A.
+
+**What this does NOT cover:** the 00:30-05:00 nightly block, sampled only opportunistically. It
+contains 15+ unexamined jobs, and the two that have been examined (`purge:logs`, `purge:chats`)
+both turned out to be defective. See "The nightly window".
+
 ## Baseline
 
 | node | cores | mysqld lifetime CPU-min | load during window | role |
