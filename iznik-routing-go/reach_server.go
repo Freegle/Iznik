@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"path/filepath"
 	"sort"
 	"time"
@@ -107,6 +108,38 @@ func loadReachEngineCore(dir string) (*ReachEngine, error) {
 	return NewReachEngine(g, ov, part, rm), nil
 }
 
+// rebuildReachSnapshot regenerates graph.snap in dir from the PBF, for the
+// self-heal in reachBootFromEnv. It writes ONLY the graph snapshot; the
+// partition, matrices and leaf-table artifacts already self-heal at load time
+// once their fingerprints stop matching, so there is nothing else to do here.
+func rebuildReachSnapshot(dir string) error {
+	pbf := getenv("OSM_PBF_PATH", "data/uk-latest.osm.pbf")
+	if _, err := os.Stat(pbf); err != nil {
+		return fmt.Errorf("no PBF at %s: %w", pbf, err)
+	}
+	var dep *DeprivationIndex
+	if path := getenv("DEPRIVATION_CSV", ""); path != "" {
+		dep = LoadDeprivation(path)
+	}
+	start := time.Now()
+	g, err := BuildGraph(pbf, dep)
+	if err != nil {
+		return fmt.Errorf("BuildGraph: %w", err)
+	}
+	ov := BuildOverlay(g)
+	// Match reachLoadOrBuild: the three-mode edges only shaped the contraction
+	// and are not stored, so release them before the write.
+	g.releaseModalEdges()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", dir, err)
+	}
+	if err := SaveReachSnapshot(filepath.Join(dir, "graph.snap"), g, ov); err != nil {
+		return fmt.Errorf("save: %w", err)
+	}
+	log.Printf("reach: rebuilt graph.snap in %v", time.Since(start).Round(time.Second))
+	return nil
+}
+
 // reachBootFromEnv loads the engine when REACH_DIR is set. Returns the
 // engine's graph so main can skip the PBF build, or nil to fall back.
 func reachBootFromEnv() *Graph {
@@ -117,8 +150,23 @@ func reachBootFromEnv() *Graph {
 	start := time.Now()
 	eng, err := loadReachEngineFromDir(dir)
 	if err != nil {
-		log.Printf("reach: boot from %s failed (%v); falling back to PBF build", dir, err)
-		return nil
+		// A stale or unreadable graph.snap used to mean "serve without a reach
+		// engine": the PBF fallback below produces a working graph, so /health
+		// and every non-reach route answer 200 while /v1/reach-* quietly 503.
+		// That is exactly what happened on 2026-09-02, when a binary carrying
+		// graphSnapVersion 2 met version-1 artifacts on all three db nodes and
+		// the deploy reported clean. Rebuild and save instead, then retry: the
+		// cost is one slow boot (~7 min, inside monit's 15-cycle grace) rather
+		// than silently losing reach until someone notices.
+		log.Printf("reach: boot from %s failed (%v); rebuilding artifacts", dir, err)
+		if rebuildErr := rebuildReachSnapshot(dir); rebuildErr != nil {
+			log.Printf("reach: rebuild failed (%v); falling back to PBF build", rebuildErr)
+			return nil
+		}
+		if eng, err = loadReachEngineFromDir(dir); err != nil {
+			log.Printf("reach: boot still failing after rebuild (%v); falling back to PBF build", err)
+			return nil
+		}
 	}
 	reachLive = eng
 	log.Printf("reach: engine ready in %v (%d regions, %d boundary nodes)",

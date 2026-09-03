@@ -259,8 +259,20 @@ deploy_routing() {
       OOM=$(dmesg 2>/dev/null | tail -3 | grep -ci "out of memory\|killed process")
       if [ "$H" = "200" ]; then
         GP=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:'"$ROUTING_INTERNAL_PORT$gp_path"'" 2>/dev/null)
-        [ "$GP" = "200" ] && { echo "OK health=200 group-proximity=200"; exit 0; }
-        echo "routing healthy but group-proximity=$GP (route missing?)"; exit 3
+        [ "$GP" != "200" ] && { echo "routing healthy but group-proximity=$GP (route missing?)"; exit 3; }
+        # Reach-engine probe. health and group-proximity BOTH pass on the PBF
+        # fallback, so they cannot tell "engine loaded" from "engine silently
+        # absent" — on 2026-09-02 a graphSnapVersion bump met version-1
+        # artifacts, every node reported clean, and /v1/reach-* 503d for ~16h.
+        # 503 means the engine did not load; 400 is this empty body being
+        # rejected by a live engine, which is the pass we want.
+        if [ "${DEPLOY_SKIP_REACH_PROBE:-0}" = "1" ]; then
+          echo "OK health=200 group-proximity=200 reach-probe=skipped"; exit 0
+        fi
+        RU=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "{}" \
+             "http://localhost:'"$ROUTING_INTERNAL_PORT"'/v1/reach-union" 2>/dev/null)
+        [ "$RU" = "503" ] && { echo "routing up but REACH ENGINE NOT LOADED (reach-union=503) - stale artifacts?"; exit 5; }
+        echo "OK health=200 group-proximity=200 reach-union=$RU"; exit 0
       fi
       [ "${OOM:-0}" != "0" ] && { echo "OOM during graph load"; exit 4; }
     done
