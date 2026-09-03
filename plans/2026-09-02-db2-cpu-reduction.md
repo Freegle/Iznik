@@ -459,9 +459,22 @@ consumer left to find:
 | leave-check | 6.0% | proposal **I** |
 | spatial browse (db1 API) | 4.0% | proposal **G** |
 | reach recipient | 3.6% | proposal **A** (overnight; 46-68% by day) |
-| `messages_outcomes` pair | 3.9% | finding 7 — ~2% by day, not a priority |
+| `messages_outcomes` pair | 3.9% | apiv2/ModTools — covered by **G**; see note below |
 | held-replies, users_emails, volunteering | 6.1% | documented |
 | unmapped long tail | 19.7% | nothing above 3.89% |
+
+**The `messages_outcomes` pair is apiv2, so proposal G removes it from db2.** The two queries are
+`session.go:1498` (`SELECT COUNT(DISTINCT mo.id)`) and `groupWork.go:356`
+(`SELECT mg.groupid, COUNT(DISTINCT mo.id) as count`) — identical `WHERE` clauses, the same 16 group
+ids, the second being the first grouped by `groupid`. Both are Go, so they reach db2 only via db1's
+apiv2 (db2's own apiv2 is a haproxy backup with negligible traffic; db3 reads itself). *Inferred
+from the code location — I could not catch them in a client-attribution sample, as they fire on
+ModTools page loads rather than continuously.*
+
+Separately worth noting for whoever owns ModTools: **the total is derivable from the breakdown.**
+`session.go`'s count is the sum of `groupWork.go`'s per-group counts, so one of the two scans is
+redundant. That is a cross-cutting client+endpoint change rather than a db2 fix, and G moves the
+cost off db2 either way.
 
 *(Two cautions for anyone repeating this. Classifier patterns must match the literal SQL — Laravel
 emits backticks, so `lastaccess >=` misses what `` `lastaccess` >= `` matches; a first pass here
