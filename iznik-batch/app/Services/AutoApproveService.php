@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Helpers\ItemQuality;
 use App\Models\Group;
+use App\Models\Membership;
 use App\Models\MessageGroup;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -221,7 +222,14 @@ class AutoApproveService
         // need not be a member of every nearby group their reach touches, so bypass the
         // membership gate — the group publish/closed/override checks above still apply.
         if ((int) ($candidate->rippled_in ?? 0) === 1) {
-            return true;
+            // Unless this group has taken its own view of the poster. Vetting on the origin
+            // group does not speak for a group whose moderators have set this member to
+            // MODERATED or PROHIBITED, so their copy stays Pending for a human here, exactly
+            // as a post made to this group directly would (Discourse 10090/5).
+            $status = Membership::explicitPostingStatuses((int) $candidate->fromuser, [$groupid])[$groupid] ?? null;
+
+            return $status !== Membership::POSTING_STATUS_MODERATED
+                && $status !== Membership::POSTING_STATUS_PROHIBITED;
         }
 
         // Low-quality / vague item ("anything", "free stuff", "various items", "things for the
