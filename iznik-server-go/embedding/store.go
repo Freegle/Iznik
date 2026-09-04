@@ -113,34 +113,57 @@ func fetchEntries(extraWhere string, args ...interface{}) ([]Entry, error) {
 		msgids = append(msgids, e.Msgid)
 	}
 
-	if len(msgids) > 0 {
-		type groupRow struct {
-			Msgid   uint64 `gorm:"column:msgid"`
-			Groupid uint64 `gorm:"column:groupid"`
-		}
-		var groupRows []groupRow
-		// ms.groupid above only ever names ONE group per message, even when the
-		// message is Approved on several (rippling adds a messages_groups row per
-		// receiving group) - see message/groups.go's spatialGroupFilter comment.
-		// Fetch every Approved group per msgid so Search can match a mod's group
-		// against any of them, not just the one messages_spatial happened to store
-		// (Discourse 9808/751: a rippled-in post was invisible to ModTools search
-		// scoped to the receiving group).
-		if err := db.Table("messages_groups").
-			Select("msgid, groupid").
-			Where("msgid IN (?) AND collection = ? AND deleted = 0", msgids, utils.COLLECTION_APPROVED).
-			Scan(&groupRows).Error; err == nil {
-			groupIDs := make(map[uint64][]uint64, len(entries))
-			for _, gr := range groupRows {
-				groupIDs[gr.Msgid] = append(groupIDs[gr.Msgid], gr.Groupid)
-			}
-			for i := range entries {
-				entries[i].GroupIDs = groupIDs[entries[i].Msgid]
-			}
-		}
+	groupIDs, err := fetchGroupIDs(msgids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		entries[i].GroupIDs = groupIDs[entries[i].Msgid]
 	}
 
 	return entries, nil
+}
+
+// fetchGroupIDs maps each msgid to every group the message is Approved on.
+// messages_spatial.groupid names only ONE group per message even when the message
+// is Approved on several (rippling adds a messages_groups row per receiving group)
+// - see message/groups.go's spatialGroupFilter comment. Search matches a mod's
+// group against any of them, not just the one messages_spatial happened to store
+// (Discourse 9808/751: a rippled-in post was invisible to ModTools search scoped
+// to the receiving group).
+//
+// Errors are returned, never swallowed: silently returning an empty map would
+// scope every entry to its single messages_spatial group and hide rippled-in
+// posts from the receiving group's moderators. The callers keep the entries they
+// already hold and retry on the next refresh tick.
+func fetchGroupIDs(msgids []uint64) (map[uint64][]uint64, error) {
+	groupIDs := make(map[uint64][]uint64, len(msgids))
+	if len(msgids) == 0 {
+		return groupIDs, nil
+	}
+
+	db := database.DBConn
+	if db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	type groupRow struct {
+		Msgid   uint64 `gorm:"column:msgid"`
+		Groupid uint64 `gorm:"column:groupid"`
+	}
+	var groupRows []groupRow
+	if err := db.Table("messages_groups").
+		Select("msgid, groupid").
+		Where("msgid IN (?) AND collection = ? AND deleted = 0", msgids, utils.COLLECTION_APPROVED).
+		Scan(&groupRows).Error; err != nil {
+		return nil, fmt.Errorf("groups query: %w", err)
+	}
+
+	for _, gr := range groupRows {
+		groupIDs[gr.Msgid] = append(groupIDs[gr.Msgid], gr.Groupid)
+	}
+
+	return groupIDs, nil
 }
 
 // Load reads all embeddings + spatial metadata from DB.
@@ -222,6 +245,16 @@ func (s *Store) Refresh() error {
 		}
 	}
 
+	// A message's groups change without the message itself changing: a post ripples
+	// into a nearby group minutes after approval, while it is already in the store.
+	// Re-map the groups for every open message, not just the ones being added, or
+	// the receiving group's moderators cannot find the post until the next full
+	// Load() (Discourse 9808/751).
+	groupIDs, err := fetchGroupIDs(openIds)
+	if err != nil {
+		return fmt.Errorf("refresh groups: %w", err)
+	}
+
 	s.mu.Lock()
 	kept := make([]Entry, 0, len(s.entries)+len(newEntries))
 	for i := range s.entries {
@@ -230,6 +263,9 @@ func (s *Store) Refresh() error {
 		}
 	}
 	s.entries = append(kept, newEntries...)
+	for i := range s.entries {
+		s.entries[i].GroupIDs = groupIDs[s.entries[i].Msgid]
+	}
 	s.mu.Unlock()
 
 	return nil
