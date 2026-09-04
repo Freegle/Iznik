@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-04
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -118,6 +118,14 @@ On a member you can:
   recorded automatically.
 
 Removing or banning is a last resort. A friendly word usually solves the problem.
+
+Some members are on your list only because a post of theirs **rippled in**: rippling
+joins the poster so the post can live on your community. That is not a relationship with
+you, so such a member has no **Chat** button and no standard messages that only write to
+them, and the removal standard message shows a plain confirmation instead of a compose
+box. You can still remove or ban them, and it is logged as usual - quietly, since they
+never joined you. If they later join, or move into your area, the membership becomes an
+ordinary one. See [rippling out](rippling-out.md).
 
 ## Feedback and micro-volunteering
 

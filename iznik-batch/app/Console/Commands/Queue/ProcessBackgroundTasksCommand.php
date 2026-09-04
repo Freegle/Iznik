@@ -526,6 +526,21 @@ class ProcessBackgroundTasksCommand extends Command
             return;
         }
 
+        // The acting group is a group the post RIPPLED INTO. Its moderators administer
+        // their own copy; correspondence about the post belongs to the community it was
+        // posted on (Discourse 10102). The log entry and moderator push above still
+        // happen, because the action did happen here - it is only the words to the
+        // freegler that are dropped. Absent means notify: every task queued before this
+        // existed, and every home-group action, must still reach the poster.
+        if (array_key_exists('notifyposter', $data) && (int) $data['notifyposter'] === 0) {
+            Log::info("Mod action {$taskType} on a rippled-in copy, poster not contacted", [
+                'msgid' => $msgId,
+                'groupid' => $groupId,
+                'byuser' => $byUser,
+            ]);
+            return;
+        }
+
         if (! $posterId) {
             Log::warning("No poster found for message {$msgId}");
             return;
@@ -653,6 +668,19 @@ class ProcessBackgroundTasksCommand extends Command
         if ($subject === '' && $body === '') {
             Log::info('Mod stdmsg for member without content, skipping email', [
                 'userid' => $userId,
+                'byuser' => $byUser,
+            ]);
+            return;
+        }
+
+        // The member's only tie to this group is a post of theirs that rippled in. The
+        // group's decision about them still stands and is logged by the API; what does not
+        // go is the message, because they never joined this community (Discourse 10102).
+        // Absent means notify, so every task queued before this existed still sends.
+        if (array_key_exists('notifyposter', $data) && (int) $data['notifyposter'] === 0) {
+            Log::info('Mod stdmsg for a member whose membership rippling created, not contacted', [
+                'userid' => $userId,
+                'groupid' => $groupId,
                 'byuser' => $byUser,
             ]);
             return;

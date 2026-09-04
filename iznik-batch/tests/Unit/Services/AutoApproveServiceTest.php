@@ -1108,4 +1108,44 @@ class AutoApproveServiceTest extends TestCase
         $this->assertEquals(48, AutoApproveService::PENDING_HOURS);
         $this->assertEquals(48, AutoApproveService::MEMBERSHIP_HOURS);
     }
+
+    /**
+     * A rippled-in copy held because it breaks THAT group's own rules must stay held. The
+     * veto window is a "no moderator objected" timer, and a rule the group wrote down is an
+     * objection - auto-approving past it would put the post in front of members anyway,
+     * which is the whole thing the check exists to stop (Discourse 10102).
+     */
+    public function test_does_not_fast_track_a_rippled_in_post_held_by_the_groups_own_rules(): void
+    {
+        $user = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $nearbyGroup = $this->createTestGroup();
+        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, $originGroup);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
+
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
+            'msgtype' => 'Offer', 'rippled_in' => 1,
+            'contentcheck_checked_at' => now()->subHours(2),
+            'contentcheck_reasons' => json_encode([[
+                'check' => 'pergroupworry',
+                'action' => 'flag',
+                'keyword' => 'rabbit',
+                'detail' => "Matched per-group worry word 'rabbit'",
+            ]]),
+        ]);
+
+        $this->service->process();
+
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
+        $this->assertEquals(MessageGroup::COLLECTION_PENDING, $mg->collection,
+            'a copy held by the group\'s own rules waits for a moderator, not for the clock');
+    }
+
 }

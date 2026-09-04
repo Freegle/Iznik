@@ -1,10 +1,11 @@
 ---
-last_reviewed: 2026-08-28
+last_reviewed: 2026-09-03
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
   - iznik-batch/app/Console/Commands/Browse/**
   - iznik-server-go/rippling/**
+  - iznik-nuxt3/composables/rippleStatus.js
   - iznik-server-go/density/**
   - iznik-spatial-go/cellset/**
   - iznik-spatial-go/dataset_reachoverflow.go
@@ -1202,6 +1203,15 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   (§7a) and `releasedat`. Two similar names, one letter apart: `dueat` is when it becomes
   due, `releasedat` is when it actually went.
 - `messages_groups.rippled_in = 1` - marks a rippled-in copy (vs the origin membership).
+  It is also how the post's **origin group** is identified: `MessageOriginGroup`
+  (`iznik-server-go/message/message.go`) takes the earliest-arriving `rippled_in = 0` row,
+  and the client's `homeGroupId` (`composables/rippleStatus.js`) uses the same column.
+  Identify the origin from this column and nothing else. In particular an arrival window
+  (`messages_groups.arrival` close to `messages.arrival`) does not work: approving
+  re-stamps `messages_groups.arrival` to the approval time while `messages.arrival` keeps
+  the time the post was received, so any post moderated slowly has no row inside the
+  window and reads as having no origin at all - which silently opens everything gated on
+  "is this the home group?".
 - `rippling_proximity` - cached "quicker to get to" P/Q points per (msgid, groupid).
 - `logs` `text='Rippled'` - the ripple-join marker used for rejoin suppression.
 - `memberships.rippled = 1` - marks a membership rippling created, when the member's own post

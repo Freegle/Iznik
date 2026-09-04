@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-03
+last_reviewed: 2026-09-04
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -101,6 +101,15 @@ situation (approve, reject, hold, and so on). You configure your sets under Sett
   between "autosend" and "edit first" for a session.
 
 Keep them friendly and personal. A short human note lands far better than a corporate one.
+
+On a post that **rippled in** from another community, you only see the actions that do
+something on yours. Anything we say to a poster about their post comes from the community
+they posted it on, so Blank Reply and the standard messages whose only job is to write to
+the poster are hidden. A standard message that rejects or deletes shows a short
+confirmation and takes the copy off your community without opening the compose box, and
+the poster is not told. Approve, Hold and Release stay as plain buttons. A rippled-in copy
+can also arrive Pending because it breaks your own keyword or worry-word rules, with the
+reason shown on the post. The whole picture is in [rippling out](rippling-out.md).
 
 ### Fill-in boxes and optional bits
 

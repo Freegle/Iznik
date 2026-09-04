@@ -20,6 +20,7 @@ import (
 	"github.com/freegle/iznik-server-go/location"
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -2375,6 +2376,12 @@ func ProcessSettingsUpdate(settingsJSON []byte, myid uint64, setClauses *[]strin
 			// Rippling-out: reach now follows declared location, so flag rapid location-hopping
 			// for moderator review (non-destructive).
 			CheckLocationChangeVelocity(db, myid)
+
+			// Someone who has moved into a community's area is an ordinary member of it, even
+			// if the only reason they had a membership was a post of theirs rippling in. Clear
+			// the ripple flag on those memberships so that community's moderators can deal with
+			// them normally again (Discourse 10102).
+			rippling.ClearRippledMembershipsAtLocationID(db, myid, newLocID)
 		}
 	}
 

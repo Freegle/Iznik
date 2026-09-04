@@ -3,6 +3,7 @@
 namespace App\Services\Ripple;
 
 use App\Models\Membership;
+use App\Services\ContentCheckService;
 use App\Services\MessageSpatialService;
 use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
@@ -61,19 +62,40 @@ class ExpandService
     /** Compact cell-set form of the reach polygon (plans/2026-08-24-rippling-reach-raster-storage.md). */
     private CellSetService $cellSets;
 
+    /** The receiving group's own rules, applied as a post ripples in. */
+    private ContentCheckService $contentCheck;
+
     public function __construct(
         private ReachService $reach,
         ?ReachBoundsService $bounds = null,
         ?DensityService $density = null,
         ?GroupRippleOptOut $optOut = null,
         ?RippleReplyService $replies = null,
-        ?CellSetService $cellSets = null
+        ?CellSetService $cellSets = null,
+        ?ContentCheckService $contentCheck = null
     ) {
         $this->bounds = $bounds ?? new ReachBoundsService();
         $this->density = $density ?? new DensityService();
         $this->optOut = $optOut ?? new GroupRippleOptOut();
         $this->replies = $replies ?? new RippleReplyService(new ReachQueryService());
         $this->cellSets = $cellSets ?? new CellSetService();
+        $this->contentCheck = $contentCheck ?? app(ContentCheckService::class);
+    }
+
+    /**
+     * Bump a per-day rippling counter. Best-effort: instrumentation never affects the run.
+     */
+    private function recordEvent(string $event, int $by = 1): void
+    {
+        try {
+            DB::statement(
+                'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) '
+                . 'ON DUPLICATE KEY UPDATE count = count + ?',
+                [$event, $by, $by]
+            );
+        } catch (\Throwable $e) {
+            // best-effort; never affect the expander
+        }
     }
 
     /**
@@ -1899,6 +1921,16 @@ class ExpandService
                        SELECT 1 FROM messages_groups mg WHERE mg.msgid = ? AND mg.groupid = g.id
                    )
                    AND NOT EXISTS (
+                       -- A community that has already turned this post away does not get it
+                       -- again. Rejecting leaves a messages_groups row, so the guard above
+                       -- covers it; DELETING removes the row outright, and without this the
+                       -- next tick would ripple the post straight back in over the top of a
+                       -- moderator's decision.
+                       SELECT 1 FROM rippling_reach rr
+                       WHERE rr.msgid = ?
+                         AND JSON_CONTAINS(COALESCE(rr.rejected_groups, JSON_ARRAY()), CAST(g.id AS JSON))
+                   )
+                   AND NOT EXISTS (
                        -- Suppress re-rippling only when the poster's MOST RECENT Group/Joined log
                        -- for this group is a ripple-join (text='Rippled') AND they then LEFT it -
                        -- i.e. the membership they last opted out of was a rippled one. Most recent
@@ -1946,13 +1978,31 @@ class ExpandService
                        WHERE mp.userid = ? AND mp.groupid = g.id
                          AND UPPER(mp.ourPostingStatus) = 'PROHIBITED'
                    )",
-                [$reachWkt, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser, $msg->fromuser]
+                // One binding per placeholder, in query order: the reach shape, the
+                // msgid twice (already on the group; turned away by the group), then the
+                // poster four times (rippled-then-left, users_banned, Banned membership,
+                // PROHIBITED posting status).
+                [$reachWkt, $msgid, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser, $msg->fromuser]
             );
 
             $postingStatuses = Membership::explicitPostingStatuses(
                 (int) $msg->fromuser,
                 array_map(static fn ($g) => (int) $g->id, $targetGroups)
             );
+
+            // The post was vetted against the rules of the community it was posted on. Each
+            // receiving group's OWN rules have never been applied to it, so ask them here: a
+            // group that bans live animals should get the chance to say no before its members
+            // see a rabbit, rather than finding it already on the board
+            // (Discourse 10102, and 9829 before it). A match makes THAT group's copy Pending;
+            // every other group's copy is unaffected.
+            $subject = '';
+            $textbody = '';
+            if (!empty($targetGroups)) {
+                $text = DB::table('messages')->where('id', $msgid)->first(['subject', 'textbody']);
+                $subject = $text->subject ?? '';
+                $textbody = $text->textbody ?? '';
+            }
 
             $n = 0;
             foreach ($targetGroups as $g) {
@@ -1965,26 +2015,39 @@ class ExpandService
                 $collection = $approveHere ? 'Approved' : 'Pending';
                 $approvedAt = $approveHere ? 'NOW()' : 'NULL';
 
-                $inserted = DB::affectingStatement(
-                    "INSERT IGNORE INTO messages_groups
-                        (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in)
-                     VALUES (?, ?, '$collection', $approvedAt, NOW(), 0, ?, 1)",
-                    [$msgid, $g->id, $msg->type]
-                );
+                // The group's own rules are asked first: a breach holds the copy with its
+                // reasons recorded, whatever the poster's standing here. Otherwise the copy
+                // lands where the decision above put it.
+                $breaches = $this->contentCheck->checkGroupOwnRules($subject, $textbody, (int) $g->id);
+
+                if (!empty($breaches)) {
+                    $inserted = DB::affectingStatement(
+                        "INSERT IGNORE INTO messages_groups
+                            (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in,
+                             contentcheck_checked_at, contentcheck_reasons)
+                         VALUES (?, ?, 'Pending', NULL, NOW(), 0, ?, 1, NOW(), ?)",
+                        [$msgid, $g->id, $msg->type, json_encode($breaches)]
+                    );
+
+                    if ($inserted > 0) {
+                        $this->recordEvent('rippled_in_held_by_group_rules');
+                        Log::info("ripple: held on group rules msgid={$msgid} groupid={$g->id}");
+                    }
+                } else {
+                    $inserted = DB::affectingStatement(
+                        "INSERT IGNORE INTO messages_groups
+                            (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in)
+                         VALUES (?, ?, '$collection', $approvedAt, NOW(), 0, ?, 1)",
+                        [$msgid, $g->id, $msg->type]
+                    );
+                }
+
                 $n += $inserted;
             }
             if ($n > 0) {
                 $stats['rippled_in'] += $n;
                 // §15/§16 instrumentation: count groups a post was rippled into.
-                try {
-                    DB::statement(
-                        'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) '
-                        . 'ON DUPLICATE KEY UPDATE count = count + ?',
-                        ['rippled_in', $n, $n]
-                    );
-                } catch (\Throwable $e) {
-                    // best-effort; never affect the expander
-                }
+                $this->recordEvent('rippled_in', $n);
             }
 
             // The poster becomes a member of every group their post has rippled into, exactly
