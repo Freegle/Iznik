@@ -2,7 +2,6 @@
 
 namespace App\Services\Ripple;
 
-use App\Models\Membership;
 use App\Services\ContentCheckService;
 use App\Services\MessageSpatialService;
 use App\Support\GreatCircle;
@@ -1985,10 +1984,16 @@ class ExpandService
                 [$reachWkt, $msgid, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser, $msg->fromuser]
             );
 
-            $postingStatuses = Membership::explicitPostingStatuses(
-                (int) $msg->fromuser,
-                array_map(static fn ($g) => (int) $g->id, $targetGroups)
-            );
+            // A stored MODERATED posting status on the receiving group does NOT hold the copy.
+            // It would be the natural signal - "this group has taken a view of the poster" -
+            // but the column cannot carry it: the v1 join path wrote MODERATED as its default,
+            // and 1.95M of the 1.96M rows holding it were added 2004-2018 with no moderator
+            // action behind them (a random sample of 500 had no OurPostingStatus log at all,
+            // where 475 of the 500 most recent did). Holding on it would hold every
+            // long-standing member of a neighbouring group. PROHIBITED stays a hard stop, in
+            // the query above: blocking was always an explicit act.
+            $collection = $immediateApprove ? 'Approved' : 'Pending';
+            $approvedAt = $immediateApprove ? 'NOW()' : 'NULL';
 
             // The post was vetted against the rules of the community it was posted on. Each
             // receiving group's OWN rules have never been applied to it, so ask them here: a
@@ -2006,18 +2011,8 @@ class ExpandService
 
             $n = 0;
             foreach ($targetGroups as $g) {
-                // A poster the receiving group has set to MODERATED is held for that
-                // group's moderators, exactly as a post they made there directly would be.
-                // Vetting on the origin group does not speak for a group that has taken a
-                // view on this member (Discourse 10090/5).
-                $moderatedHere = ($postingStatuses[(int) $g->id] ?? null) === Membership::POSTING_STATUS_MODERATED;
-                $approveHere = $immediateApprove && !$moderatedHere;
-                $collection = $approveHere ? 'Approved' : 'Pending';
-                $approvedAt = $approveHere ? 'NOW()' : 'NULL';
-
                 // The group's own rules are asked first: a breach holds the copy with its
-                // reasons recorded, whatever the poster's standing here. Otherwise the copy
-                // lands where the decision above put it.
+                // reasons recorded. Otherwise the copy lands where the origin's vetting put it.
                 $breaches = $this->contentCheck->checkGroupOwnRules($subject, $textbody, (int) $g->id);
 
                 if (!empty($breaches)) {

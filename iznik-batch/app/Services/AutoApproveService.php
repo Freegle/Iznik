@@ -227,14 +227,13 @@ class AutoApproveService
         // need not be a member of every nearby group their reach touches, so bypass the
         // membership gate — the group publish/closed/override checks above still apply.
         if ((int) ($candidate->rippled_in ?? 0) === 1) {
-            // Unless this group has taken its own view of the poster. Vetting on the origin
-            // group does not speak for a group whose moderators have set this member to
-            // MODERATED or PROHIBITED, so their copy stays Pending for a human here, exactly
-            // as a post made to this group directly would (Discourse 10090/5).
+            // Unless this group has blocked the poster outright. A stored MODERATED does not
+            // count: the v1 join path wrote it as its default, so 1.95M of the 1.96M rows
+            // carrying it record no moderator's decision at all (see
+            // ExpandService::rippleIntoNewGroups). PROHIBITED was always an explicit act.
             $status = Membership::explicitPostingStatuses((int) $candidate->fromuser, [$groupid])[$groupid] ?? null;
 
-            return $status !== Membership::POSTING_STATUS_MODERATED
-                && $status !== Membership::POSTING_STATUS_PROHIBITED;
+            return $status !== Membership::POSTING_STATUS_PROHIBITED;
         }
 
         // Low-quality / vague item ("anything", "free stuff", "various items", "things for the

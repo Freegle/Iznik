@@ -1315,33 +1315,35 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
-     * A poster the receiving group has set to MODERATED gets a Pending copy there, even
-     * though the post was approved on its origin group. Vetting on one group does not speak
-     * for a group whose moderators have taken their own view of this member
-     * (https://discourse.ilovefreegle.org/t/10090/5).
+     * A stored MODERATED posting status on the receiving group does NOT hold the copy. It
+     * looks like the group's moderators have taken a view of this member, but the column
+     * cannot say so: the v1 join path wrote MODERATED as its default, and 1.95M of the 1.96M
+     * live rows carrying it were added 2004-2018 with no moderator action behind them. A
+     * hold keyed on it (briefly live, 2026-09-04) would have held every long-standing member
+     * of a neighbouring group.
      */
-    public function test_rippled_in_copy_is_pending_on_a_group_that_moderates_the_poster(): void
+    public function test_a_stored_moderated_status_does_not_hold_the_rippled_in_copy(): void
     {
         $this->fakeRouting(3);
         $msgid = $this->seedSpatialPost(now()->subMinutes(30));
         $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
 
-        $moderatesPoster = $this->seedGroupInReach();
+        $legacyModerated = $this->seedGroupInReach();
         $noView = $this->seedGroupInReach();
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $moderatesPoster->id, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $legacyModerated->id, 'role' => 'Member',
             'collection' => 'Approved', 'ourPostingStatus' => 'MODERATED', 'added' => now(),
         ]);
 
         $this->service()->process(false, 500);
 
-        $held = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $moderatesPoster->id)->first();
-        $this->assertNotNull($held, 'the post still ripples in, it is just not approved');
-        $this->assertSame('Pending', $held->collection, 'held for the receiving group moderators');
-        $this->assertNull($held->approvedat, 'a held copy carries no approval time');
+        $copy = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $legacyModerated->id)->first();
+        $this->assertNotNull($copy, 'the post ripples in');
+        $this->assertSame('Approved', $copy->collection, 'MODERATED is not a moderation decision on this column');
+        $this->assertNotNull($copy->approvedat);
 
         $free = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $noView->id)->first();
-        $this->assertNotNull($free, 'a group with no view of the poster is unaffected');
+        $this->assertNotNull($free);
         $this->assertSame('Approved', $free->collection);
     }
 

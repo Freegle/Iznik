@@ -692,22 +692,22 @@ class AutoApproveServiceTest extends TestCase
     }
 
     /**
-     * The fast-track exists because the poster is usually not a member of the receiving group,
-     * so there is nobody there to have a view of them. Where the receiving group's moderators
-     * have set this member to MODERATED, that view stands: their copy waits for a human on that
-     * group, exactly as a post made there directly would
-     * (https://discourse.ilovefreegle.org/t/10090/5).
+     * A stored MODERATED on the receiving group does not stop the fast-track. It reads as the
+     * group's own view of this member, but the v1 join path wrote MODERATED as its default,
+     * so 1.95M of the 1.96M live rows carrying it record no moderator's decision. Treating it
+     * as one (briefly live, 2026-09-04) would have parked every long-standing member of a
+     * neighbouring group in that group's pending queue.
      */
-    public function test_does_not_fast_track_rippled_in_when_poster_is_moderated_on_that_group(): void
+    public function test_fast_tracks_rippled_in_when_poster_has_a_stored_moderated_status(): void
     {
         [$message, $nearbyGroup] = $this->seedRippledInPostWithPostingStatus('MODERATED');
 
         $this->service->process();
 
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-        ]);
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
+        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
+            'a stored MODERATED is the v1 default, not a decision, so it does not block the fast-track');
     }
 
     /** PROHIBITED stops this person posting to the group, so their rippled-in copy is not approved either. */
