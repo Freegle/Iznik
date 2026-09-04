@@ -84,6 +84,18 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 		empty := rippleEvalResponse{Results: make([]rippleEvalPoint, len(req.Points))}
 
 		maxSecs := float32(req.MaxMinutes * 60)
+
+		// A pure per-point request (no rank, no frontier, no polygon) needs no reached-set at
+		// all, so when the reach engine is live it is answered from a label query plus one
+		// exact arrival lookup per point - milliseconds against the 1-2.6s a 45-minute drive
+		// sweep costs from a city centre. Everything else still needs the sweep's DistM or
+		// ReachedNodes below.
+		if req.PointsOnly && !req.Frontier && req.PolygonSimplifyM <= 0 {
+			if out, ok := rippleEvalPointsFromEngine(g, req, maxSecs); ok {
+				return c.JSON(out)
+			}
+		}
+
 		iso := Isochrone(g, req.Lat, req.Lng, maxSecs)
 		if len(iso.ReachedNodes) == 0 {
 			return c.JSON(empty)
@@ -188,6 +200,32 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 		}
 		return c.JSON(out)
 	}
+}
+
+// rippleEvalPointsFromEngine is the points-only fast path: the post's labels (cached per
+// origin node and whole-minute budget, so a repeat post is free) and an exact arrival per point.
+// It keeps the sweep path's snap rule - the first of the nearest candidates that is reached, so
+// a point snapped to a one-way source is not misreported as unreachable - and the same
+// "unreachable within max_minutes" cut (arrival > T is null). ok is false with no engine live,
+// and the caller runs the sweep exactly as before.
+func rippleEvalPointsFromEngine(g *Graph, req rippleEvalRequest, maxSecs float32) (rippleEvalResponse, bool) {
+	e := reachEngine()
+	if e == nil {
+		return rippleEvalResponse{}, false
+	}
+	results := make([]rippleEvalPoint, len(req.Points))
+	lbl := e.QueryLabelsCached(req.Lat, req.Lng, maxSecs)
+	for i, p := range req.Points {
+		lng, lat := p[0], p[1]
+		for _, nid := range nearestDriveNodes(g, lat, lng, 4) {
+			if t := e.ArrivalAtBaseNode(lbl, nid); t != f32Inf && t <= lbl.T {
+				dMin := float64(t) / 60.0
+				results[i] = rippleEvalPoint{DriveMin: &dMin}
+				break
+			}
+		}
+	}
+	return rippleEvalResponse{Results: results}, true
 }
 
 // frontierMilesMedianMax summarises how far the isochrone reaches BY ROAD across directions: it
