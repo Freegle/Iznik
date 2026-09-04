@@ -877,6 +877,39 @@ class ContentCheckService
     }
 
     /**
+     * Whether a stored contentcheck_reasons blob records a hold by the receiving group's OWN
+     * rules - the reasons checkGroupOwnRules writes when a post ripples in.
+     *
+     * The column carries two different things. A copy held by the group's rules is written
+     * with its reasons at insert; but the periodic checkMessage pass also ANNOTATES any
+     * Pending row it visits - GroupModerated, MemberModerated, NoLocation and the rest are
+     * flags describing the row's situation, not a decision. A rippled-in copy that was Pending
+     * for some other reason and then got annotated must not read as "held by this group's
+     * rules", or nothing ever releases it: on 2026-09-04 five such copies sat Pending for
+     * hours with only a GroupModerated/MemberModerated flag on them.
+     *
+     * @param string|null $reasonsJson the messages_groups.contentcheck_reasons value
+     */
+    public static function reasonsHoldByGroupOwnRules(?string $reasonsJson): bool
+    {
+        if ($reasonsJson === null || $reasonsJson === '') {
+            return false;
+        }
+        $reasons = json_decode($reasonsJson, true);
+        if (!is_array($reasons)) {
+            return false;
+        }
+        foreach ($reasons as $r) {
+            $check = is_array($r) ? ($r['check'] ?? null) : null;
+            if ($check === self::CHECK_CONCERN_KEYWORD || $check === self::CHECK_PER_GROUP_WORRY) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * The rules a group wrote down for itself: its own concern_keywords rows and its own
      * worry words, with the Freegle-wide keywords left out.
      *

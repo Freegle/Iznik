@@ -7,6 +7,7 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\MessageOutcome;
 use App\Services\AutoApproveService;
+use App\Services\ContentCheckService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
@@ -1132,8 +1133,10 @@ class AutoApproveServiceTest extends TestCase
             'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
             'msgtype' => 'Offer', 'rippled_in' => 1,
             'contentcheck_checked_at' => now()->subHours(2),
+            // The check name the group-rules path really writes; a made-up name would pass
+            // for the wrong reason, because nothing would recognise it.
             'contentcheck_reasons' => json_encode([[
-                'check' => 'pergroupworry',
+                'check' => ContentCheckService::CHECK_PER_GROUP_WORRY,
                 'action' => 'flag',
                 'keyword' => 'rabbit',
                 'detail' => "Matched per-group worry word 'rabbit'",
@@ -1146,6 +1149,47 @@ class AutoApproveServiceTest extends TestCase
             ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
         $this->assertEquals(MessageGroup::COLLECTION_PENDING, $mg->collection,
             'a copy held by the group\'s own rules waits for a moderator, not for the clock');
+    }
+
+    /**
+     * The periodic content check annotates every Pending row it visits - GroupModerated on a
+     * fully moderated group, MemberModerated on a moderated member - and those are flags
+     * describing the row, not a hold by the group's rules. A rippled-in copy Pending for some
+     * other reason that picked up such a flag must still be released by the veto window. On
+     * 2026-09-04 five copies sat Pending for hours with only that flag on them, because the
+     * fast-track read "has reasons" as "held by this group's rules".
+     */
+    public function test_fast_tracks_a_rippled_in_post_that_only_carries_a_content_check_flag(): void
+    {
+        $user = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $nearbyGroup = $this->createTestGroup();
+        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, $originGroup);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
+
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
+            'msgtype' => 'Offer', 'rippled_in' => 1,
+            'contentcheck_checked_at' => now()->subHours(2),
+            'contentcheck_reasons' => json_encode([[
+                'check' => ContentCheckService::CHECK_GROUP_MODERATED,
+                'category' => null,
+                'action' => 'flag',
+                'detail' => "This group moderates all posts, whatever the member's setting",
+            ]]),
+        ]);
+
+        $this->service->process();
+
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
+        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
+            'a content-check flag is a description of the row, not a hold by the group\'s rules');
     }
 
 }

@@ -73,6 +73,7 @@ class AutoApproveService
                 'messages_groups.msgid',
                 'messages_groups.groupid',
                 'messages_groups.rippled_in',
+                'messages_groups.contentcheck_reasons',
                 'messages.fromuser',
                 'messages.spamtype',
                 'messages.subject',
@@ -119,11 +120,11 @@ class AutoApproveService
                     $rippledInHours = (int) config('freegle.ripple.rippled_in_pending_hours', self::RIPPLED_IN_PENDING_HOURS);
                     $q2->where('messages_groups.rippled_in', 1)
                         ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) >= ?', [$rippledInHours])
-                        // The veto window means "no moderator objected". A copy held because it
-                        // breaks the receiving group's own rules carries the reasons that held
-                        // it (ExpandService::rippleIntoNewGroups), and a rule the group wrote
-                        // down IS an objection - so it waits for a moderator, not for the clock.
-                        ->whereNull('messages_groups.contentcheck_reasons')
+                        // A copy held by the receiving group's own rules is kept out in
+                        // shouldApproveOnGroup, from the reasons it carries. Not a NULL test
+                        // on the column here: the periodic content check annotates every
+                        // Pending row it visits (GroupModerated, MemberModerated, ...), so
+                        // "has reasons" is not "held by this group's rules".
                         ->whereExists(function ($q3) {
                             $q3->select(DB::raw(1))
                                 ->from('messages_groups as origin_mg')
@@ -227,6 +228,15 @@ class AutoApproveService
         // need not be a member of every nearby group their reach touches, so bypass the
         // membership gate — the group publish/closed/override checks above still apply.
         if ((int) ($candidate->rippled_in ?? 0) === 1) {
+            // The veto window means "no moderator objected". A rule the receiving group wrote
+            // down IS an objection: a copy held by its own keywords or worry words
+            // (ExpandService::rippleIntoNewGroups) waits for a moderator, not for the clock.
+            // Only those reasons count - the periodic content check annotates Pending rows
+            // with flags such as GroupModerated, and a flag is not a hold (Discourse 10102).
+            if (ContentCheckService::reasonsHoldByGroupOwnRules($candidate->contentcheck_reasons ?? null)) {
+                return false;
+            }
+
             // Unless this group has blocked the poster outright. A stored MODERATED does not
             // count: the v1 join path wrote it as its default, so 1.95M of the 1.96M rows
             // carrying it record no moderator's decision at all (see
