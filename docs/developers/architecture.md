@@ -97,8 +97,10 @@ and per-group membership and roles are the ones you will meet first.
   That admission is NOT computed per request: it reads a value written onto each member by a
   scheduled batch pass (`browse:backfill-max-distance`). So the design has a moving part
   outside the request path, and if that pass stops working every member silently reverts to
-  no limit at all - which is what happened between 11 Aug and 15 Aug 2026. See section 7 of
-  the algorithm reference.
+  no limit at all - which is what happened between 11 Aug and 15 Aug 2026. A pass that runs but
+  gets the number wrong is just as quiet in the other direction: a bad rule left members on a
+  budget too narrow to match anything near them, and their daily mail simply stopped. See
+  section 7 of the algorithm reference.
 
   The second structural rule is that every surface must answer "has this post reached this
   member" the same way. Browse, the unread badge, search, the message page, both reply gates

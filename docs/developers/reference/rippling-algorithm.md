@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-03
+last_reviewed: 2026-09-04
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -906,8 +906,11 @@ rows, its latest row states its outcome.
   not fit in `DECIMAL(20,6)`.
 
   An explicit choice is carried across as the travel time it says, clamped to the member's band
-  cap; only the derived radius is recomputed. No location, or a failed density or routing
-  lookup, means the member is skipped and left untouched.
+  cap; only the derived radius is recomputed. A member who never chose is put ON their band cap
+  every run: their stored `browseMaxMinutes` is the pass's own output rather than a preference,
+  so it is re-derived rather than read back. Holding `browseMaxDistance` is what "chose" means
+  here, because the slider has always written both keys in the same save. No location, or a
+  failed density or routing lookup, means the member is skipped and left untouched.
 
   **Everything the pass does has to be idempotent, because it runs over the whole membership
   on a schedule.** It used to read a stored budget as a FRACTION of the old fixed 5-30 slider
@@ -920,6 +923,17 @@ rows, its latest row states its outcome.
   sentinel in one night, and the standing shape of the data is the same story: 31,916 sparse
   members piled on 45 and 7,747 dense members on 10. A future scale change belongs in a one-off
   command, not in the reconciler.
+
+  Dropping the rescale stopped the ratchet but did not undo it. The budget rule kept whatever it
+  read, so every member the ratchet had already moved stayed where it left them and nothing ever
+  widened them again. The narrowest went silent: a dense member on 10 minutes has a ~1.5 mile
+  radius, which empties their digest candidate set every morning, and the digest then stamps
+  `lastsent` and sends nothing, so the once-a-day guard blocks every later tick. No bounce, no
+  suppression, no `email_tracking` row - the member simply stops hearing from us (SR-8BWZ3). The
+  2026-09-01 run left 17,584 dense members below their 20-minute cap, and 11.8% of them had had
+  no daily digest since, against a 2.19% baseline. That is why a member who never chose is
+  re-derived rather than preserved: it puts about 21,300 of them back on their band cap through
+  the ordinary nightly pass, and it cannot freeze a future drift the same way.
 
   **The unlimited sentinel is no longer safe below the ceiling.** It means "defer to the
   server's own reach", and the server's own reach is now the ceiling - so it only says "as far

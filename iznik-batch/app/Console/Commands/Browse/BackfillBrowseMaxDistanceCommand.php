@@ -45,10 +45,13 @@ use Illuminate\Support\Facades\Log;
  * created for them.
  *
  * An explicit narrower choice is kept, not overwritten: it is carried across as the travel
- * time it says, clamped to the member's band cap. The pass is a RECONCILER, so everything it
- * does has to be idempotent - it runs nightly over the whole membership, and any rule that
- * reads its own output differently from the value a member set becomes a ratchet that walks
- * their chosen travel time away from them (see budgetFor).
+ * time it says, clamped to the member's band cap. A member who never chose sits ON their band
+ * cap, and is put back on it if anything has moved them off it.
+ *
+ * The pass is a RECONCILER, so everything it does has to be idempotent - it runs nightly over
+ * the whole membership, and any rule that reads its own output differently from the value a
+ * member set becomes a ratchet that walks their chosen travel time away from them (see
+ * budgetFor).
  *
  * The unlimited sentinel means "defer to the server's own reach", and that reach is
  * now the ceiling - so it only says "as far as my band goes" for a member whose band
@@ -380,7 +383,17 @@ class BackfillBrowseMaxDistanceCommand extends Command
         $bandStale = ($settings[self::BAND_KEY] ?? null) !== $cap['band'];
 
         $capMinutes = (int) round($cap['max_minutes']);
-        $desiredMinutes = $this->budgetFor($minutes, $capMinutes);
+
+        // A member who never chose is put on their band cap every time. Their stored minutes
+        // is this command's OWN output, not a preference, so reading it back as one is what
+        // let the old rescale ratchet stick: once a run had walked a dense member down to 10,
+        // the idempotent rule below preserved that 10 for ever and nothing ever widened them
+        // again. The 2026-09-01 pass left 17,584 dense members below their 20-minute cap that
+        // way, and the narrowest of them stopped being mailed anything at all, because a
+        // 1.5-mile radius empties their candidate list every morning. Only an explicit
+        // browseMaxDistance means the member has said what they want; anything else is ours
+        // to re-derive, so this also self-heals a band that has since moved.
+        $desiredMinutes = $chose ? $this->budgetFor($minutes, $capMinutes) : $capMinutes;
         $desired = $this->desiredDistance($loc, $desiredMinutes, $capMinutes, $apiBase);
         if ($desired === null) {
             $stats['lookup_failed']++;
@@ -520,10 +533,11 @@ class BackfillBrowseMaxDistanceCommand extends Command
     /**
      * Where the member's stored position lands on their own range.
      *
-     * A stored budget is the member's own choice, so it is carried across as the travel time
-     * it says, clamped to the band cap their surroundings earn - a position above that is one
-     * the reach engine will not honour. No stored minutes means the top stop; see the class
-     * docblock.
+     * Only ever asked about a member who HAS chosen, which is what makes a stored budget their
+     * own choice: it is carried across as the travel time it says, clamped to the band cap
+     * their surroundings earn - a position above that is one the reach engine will not honour.
+     * No stored minutes means the top stop; see the class docblock. Members who never chose do
+     * not come through here at all; they are put on their band cap, see reconcile().
      *
      * IDEMPOTENT, deliberately, because this is a reconciling pass that runs monthly and not a
      * migration. Reading a stored value as a FRACTION of the old fixed 5-30 slider is the right

@@ -145,14 +145,62 @@ class BackfillBrowseMaxDistanceCommandTest extends TestCase
         $this->assertSame(8.2, $this->distanceOf($id));
     }
 
-    public function testFillsAMissingCapForACapWantingSlider(): void
+    /**
+     * Stored minutes with no browseMaxDistance is this command's OWN output rather than a
+     * choice: the slider has always written both keys together. So it is re-derived, radius
+     * and all, instead of being read back as a preference.
+     */
+    public function testFillsAMissingCapForAMemberOnTheBandDefault(): void
     {
         $this->fakeMedium(3.7);
         $id = $this->userWith(['browseMaxMinutes' => 10]);
 
         $this->artisan('browse:backfill-max-distance')->assertSuccessful();
 
+        $this->assertSame(30, $this->minutesOf($id));
         $this->assertSame(3.7, $this->distanceOf($id));
+    }
+
+    /**
+     * The ratchet's aftermath. One run walked 17,584 dense members below their 20-minute cap,
+     * most of them onto 10 minutes and a 1.5 mile radius, and because the budget rule keeps
+     * whatever it reads, nothing ever widened them again. Their daily digest then found no
+     * posts near enough to send and stopped arriving. Putting them back is this pass's job, so
+     * a member who never chose goes back on their band cap however far below it they sit.
+     */
+    public function testANarrowedMemberWhoNeverChoseIsPutBackOnTheirBandCap(): void
+    {
+        $this->fakeLookups(400, 0.9, 4.8);
+        $id = $this->userWith([
+            'browseMaxMinutes' => 10,
+            'browseReachMaxDistance' => 1.53,
+            'browseDensityBand' => 'dense',
+        ]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame(20, $this->minutesOf($id), 'back on the dense cap');
+        $this->assertSame(4.8, $this->distanceOf($id), 'with the radius that travel time really buys');
+        $this->assertNull($this->chosenDistanceOf($id), 'and still no choice invented for them');
+    }
+
+    /**
+     * A member already on their band cap is left alone, though. This runs nightly over the
+     * whole membership, so a write each for the members who are already right would be
+     * 130,000 pointless saves and audit rows every night.
+     */
+    public function testAMemberAlreadyOnTheirBandCapIsNotRewritten(): void
+    {
+        $this->fakeLookups(400, 0.9, 4.8);
+        $this->userWith([
+            'browseMaxMinutes' => 20,
+            'browseReachMaxDistance' => 4.8,
+            'browseDensityBand' => 'dense',
+        ]);
+
+        $this->artisan('browse:backfill-max-distance')
+            ->expectsOutputToContain('1 already consistent')
+            ->assertSuccessful();
     }
 
     public function testTopStopBelowTheCeilingStoresARealRadiusNotTheSentinel(): void
