@@ -265,7 +265,10 @@ class ChaseUpService
             ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
             ->select(
                 'messages_groups.msgid',
-                'messages_groups.msgtype',
+                // messages.type, not the denormalised messages_groups.msgtype: the
+                // latter is NULL on the origin membership of some posts, which
+                // would silently skip them below.
+                DB::raw('messages.type as msgtype'),
                 'messages_groups.autoreposts',
                 'messages_groups.groupid',
                 'messages_groups.collection',
