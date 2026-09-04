@@ -1714,7 +1714,12 @@ timeout:
   which is cached per process because its query ORs three unindexed nullable columns and so
   full-scans `rippling_reply_attribution`.
 - `/rippling/analytics/drivetime[/score|/aggregate]` - the sampled routing pass, driven from the
-  client one chunk at a time.
+  client one chunk at a time. `/score` asks `/v1/ripple-eval` for `points_only` (it reads each
+  reply's `drive_min` and nothing else), and a points-only eval is answered from the reach engine
+  (`rippleEvalPointsFromEngine` in `iznik-routing-go/ripple.go`: one label query for the post, one
+  exact arrival per reply) rather than a full-graph 45-minute sweep. Measured on production from
+  a city centre: 2.6s per post with the sweep and its rank enumeration, ~10ms cold / ~1ms warm
+  from the engine, with identical answers to within the engine's quantisation (~0.3 min).
 
 **A gateway timeout here does not look like a timeout.** The 504 carries no
 `Access-Control-Allow-Origin` header, so the browser reports a CORS policy error and the real

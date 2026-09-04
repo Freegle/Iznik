@@ -119,6 +119,11 @@ type rippleEvalReq struct {
 	Mode       string       `json:"mode"`
 	MaxMinutes float64      `json:"max_minutes"`
 	Points     [][2]float64 `json:"points"`
+	// PointsOnly: the scorer reads each reply's drive_min and nothing else. Without it the
+	// routing server also enumerates every freegler in the reach to rank the points (a KNN call
+	// plus a snap per freegler - the bulk of a city post's 2.6s), and with it the routing server
+	// can answer from its reach engine without a full-graph sweep at all.
+	PointsOnly bool `json:"points_only"`
 }
 type rippleEvalResp struct {
 	Results []struct {
@@ -164,6 +169,7 @@ type DriveStat struct {
 func scoreOnePost(p samplePost) []driveObs {
 	body, _ := json.Marshal(rippleEvalReq{
 		Lat: p.lat, Lng: p.lng, Mode: "drive", MaxMinutes: driveMaxMinutes, Points: p.points,
+		PointsOnly: true,
 	})
 	resp, err := routingClient.Post(routingEvalURL()+"/v1/ripple-eval",
 		"application/json", bytes.NewReader(body))
