@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-03
+last_reviewed: 2026-09-04
 covers:
   - iznik-routing-go/graph.go
   - iznik-routing-go/dijkstra.go
@@ -9,6 +9,8 @@ covers:
   - iznik-routing-go/reach_partition.go
   - iznik-routing-go/reach_query.go
   - iznik-routing-go/reach_server.go
+  - iznik-routing-go/reach_labels_export.go
+  - iznik-routing-go/reach_labels_apply.go
   - iznik-spatial-go/places.go
   - iznik-spatial-go/places_search.go
   - iznik-spatial-go/places_api.go
@@ -195,7 +197,13 @@ the two as a pair, and three things enforce it (`reach_server.go`):
   reader — the server's own row loader, and the batch paths that hand a note to
   it — picks the staged note **only when its stamp is the live fingerprint**, so
   the cutover is the pairing record changing and the artifacts swapping: every
-  post switches together, and nothing is rewritten to get there.
+  post switches together, and nothing is rewritten to get there. Posts keep
+  arriving while the notes are staged, so the switch is preceded by a top-up:
+  re-export, then `labels-apply --skip-staged`, which reads the already-staged
+  set once and passes those posts without touching the database, so the top-up
+  takes seconds and the switch can follow at once. A post initialised in the
+  remaining gap carries a note for the old layout; clearing its note makes it
+  new again to the online path, which re-labels it against the live layout.
 
 `/health` reports `reach_partition_fp` so an operator can see every node serving
 the same layout as the notes.
