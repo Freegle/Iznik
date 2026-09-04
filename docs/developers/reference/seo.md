@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-19
+last_reviewed: 2026-09-04
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/server/utils/sitemap.ts
@@ -10,6 +10,7 @@ covers:
   - iznik-nuxt3/pages/message/[id].vue
   - iznik-nuxt3/public/robots.txt
   - iznik-server-go/message/sitemap.go
+  - iznik-batch/app/Services/MessageSpatialService.php
   - iznik-server-go/group/groupMessages.go
   - delivery-imagesweserv.conf
 ---
@@ -74,6 +75,13 @@ every time the sitemap regenerates.
 
 Excluded from the sitemap: `successful` posts (they answer 410, see below), and
 anything that isn't an `Offer` or a `Wanted`.
+
+That last filter reads `messages_spatial.msgtype`, which is a copy of
+`messages.type` written by `MessageSpatialService` in the batch. A row with no
+type is neither an Offer nor a Wanted, so it drops out of the sitemap without any
+error anywhere. Whatever writes a `messages_spatial` row has to set the type, and
+the reconciler compares the stored type with a null-safe test so that a row which
+somehow lost it gets corrected on the next pass.
 
 ## Renamed routes answer 301
 

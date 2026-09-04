@@ -3754,6 +3754,11 @@ func JoinAndPostAs(c *fiber.Ctx, caller uint64, author uint64, req PostMessageRe
 		"groupid":    groupid,
 		"collection": collection,
 		"arrival":    gorm.Expr("NOW()"),
+		// Denormalised copy of messages.type. Left unset it stays NULL, and the
+		// spatial index, the sitemap and the languishing chase-up all read it.
+		// Read from the row rather than msg.Type so a draft with no type stored
+		// writes NULL rather than an empty string the enum would reject.
+		"msgtype": gorm.Expr("(SELECT type FROM messages WHERE id = ?)", req.ID),
 	})
 
 	// Clear any previous outcomes (V1 parity: submit() always deletes outcomes before re-posting).
@@ -5243,8 +5248,12 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 			collection = utils.COLLECTION_APPROVED
 		}
 
+		// msgtype is a denormalised copy of messages.type. Left unset it stays
+		// NULL, and the spatial index, the sitemap and the languishing chase-up
+		// all read it.
 		db.Table("messages_groups").Create(map[string]interface{}{
 			"msgid": newMsgID, "groupid": req.Groupid, "collection": collection, "arrival": gorm.Expr("NOW()"),
+			"msgtype": req.Type,
 		})
 
 		// V1 parity: log Message/Received when a post is submitted directly (non-draft).
