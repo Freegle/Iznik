@@ -1,6 +1,9 @@
 # Safely upgrading the reach engine when region ids change
 
-**Status: staging in progress (labels). Do NOT perform the cutover — Edward is away.**
+**Status: CUTOVER DONE 22:09–22:14, 2026-09-03.** All four routing instances (db1/db2/db3 native +
+the FD-host container) serve partition `1259147727407222857`; pairing record inserted; every
+gate passed. **Step 5 housekeeping DONE 22:26–23:15** (live column = v2 on all 54,480 staged rows,
+`origin_union_secs` refreshed, 1,727,009 old-partition/unstamped leaf rows purged). See "Cutover log".
 
 ## What happened (2026-09-03)
 
@@ -209,7 +212,12 @@ in one sitting, with the deploy gate watching.
    those decode as "different partition" and the batch paths fail closed and retry — so do 3 and 4
    back to back.
 4. Swap artifacts (`data/reach` → v2), monit-restart routing per node **and the FD-host routing
-   container batch calls**. On boot `reachPublish` sees the pairing record match and serves; that
+   container batch calls**. **Use `deploy-prod.sh --only routing` (and `--only local`): the
+   19:45 apiv2-only deploy on 09-03 pulled every node's checkout to master, so the script's
+   change detection now sees routing as unchanged and will never roll it on its own.** The
+   binary the nodes run is still the 08-30 v1 build; a master build is v2 and, against the v1
+   artifacts, self-heals into a new partition with no pairing record to refuse it — which is why
+   routing was left out of that deploy. On boot `reachPublish` sees the pairing record match and serves; that
    node's loader flips to the staged column at the same instant — every post at once. Discovery
    flips with it: the leaf loader filters by the engine's own `fp`.
 5. **Afterwards, at leisure:** copy `reach_labels_next` → `reach_labels` one row at a time, refresh
@@ -253,3 +261,81 @@ Verified from the database, on db1 (i.e. replicated):
   migration + tests, `8506d6979` docs.
 - Code: `ce9b8e6d3` (export v2 + apply), `3dfc9e967` (no-permanent-503 + fingerprint guard) on master,
   not deployed.
+
+## Pre-cutover checks — DONE 20:30, 2026-09-03
+
+Everything before step 4 is in place; verified from the database and the files, not inferred.
+
+| | |
+|---|---|
+| leaves apply | ran: **1,456,818** rows `fp=1259147727407222857`; 1,693,236 v1 (`fp=4084719979963986481`); 33,531 unstamped |
+| staged labels | **53,830** rows stamped v2; **665** posts with reach and no staged label (was 71 at 14:10 — grows ~100/h; this is step 1's top-up, do it inside the sitting) |
+| pairing record | `config.reach_partition_fp` absent, confirmed |
+| v2 artifacts | `data/reach.v2` on db1/db2/db3 **and now the FD host** (`iznik-routing-go/data/reach.v2`, rsynced from db1): `partition.snap` md5 `0117cc9bce75` everywhere; `matrices.snap` header reads **`partFP=1259147727407222857`** on all four — read straight from the file (`FRGM3SNAP` magic, then overlayFP, partFP as LE uint64), no engine load needed |
+| v2 binary | pre-built from master (`09d0701d8`) as `/var/www/iznik-routing-go/iznik-routing-go.v2` on all three nodes (carries the `reach: REFUSING` guard); live `iznik-routing-go` untouched and copied to `iznik-routing-go.v1` |
+| live | v1 binary (08-30) + v1 artifacts on all four, `/v1/reach-union` 400 everywhere |
+| apiv2 | deployed to `09d0701d8` 19:45 (fail-open + hide-pending-reach); nodes' checkout is at master, so **`deploy-prod.sh --only routing` is mandatory** at step 4 |
+
+Step 1 as commands (a v2 binary is needed for the export; the FD container's is v1, so run it on
+db1 — the idle node — with its `.env` sourced; apply on the write node):
+
+```
+# db1: ~11 min, reads only
+cd /var/www/iznik-routing-go && . ./.env && ./iznik-routing-go.v2 reach labels-export \
+  --dir data/reach.v2 --out /tmp/labels-v2-topup.bin --workers 4
+# db3 (write node): pays only for the delta; refuses a file whose partFP != --expect-fp
+./iznik-routing-go.v2 reach labels-apply --file /tmp/labels-v2-topup.bin \
+  --expect-fp 1259147727407222857 --leaves-table rippling_reach_leaves --sleep-ms 20
+```
+
+## Cutover log — 2026-09-03 evening
+
+| Time | Step | Result |
+|---|---|---|
+| 20:55–21:16 | 1a top-up export (v2 image on the FD host, reading db1) | 54,499 posts, 1,474,086 leaf rows, `partFP 1259147727407222857`; 20 min at 46 rows/s (shared the host with the evening digest) |
+| 21:26–21:49 | 1b apply on db3, `--sleep-ms 20` | **676 written**, 53,806 already staged, 17 retracted mid-run, 21,636 leaf rows; the usual one-row verify race; Galera flow control unchanged (8.4e-05) |
+| 22:09:34 | 3 `INSERT config reach_partition_fp` | replicated to db2 at once |
+| 22:09:44 | 4 FD container (dir swap → `up -d --no-deps spatial` → `memory.swap.max=0`) | engine ready in 14.4 s, fp matches, reach-union 400; batch saw ~15 s of `connection refused` then `ripple:expand` clean |
+| 22:11–22:14 | 4 db1 → db2 → db3 (`deploy-prod.sh --only routing --nodes dbN`) | each: engine ready in 17–22 s, gate `reach-partition=1259147727407222857`, monit re-armed; one fail-open passthrough logged during a restart window |
+| 22:20 | stranded posts | **57 posts** had been initialised *after* the export's population query and labelled by the v1 engine before the switch (no staged label, v1-only leaves → undiscoverable on v2). Fixed: `reach_labels` set NULL one row at a time, then `ripple:backfill-reach-labels` refetched all 57 from the v2 container (57 stored, 0 failed, leaves now v2-only). |
+
+Verified after: discovery from a London point returns the same 189 posts on all three nodes;
+`reach-eval` of a staged post at its origin → `in`; apiv2 0 SQL errors / 0 panics on all nodes.
+
+### What to do differently next time
+
+- **The export-to-switch gap strands posts.** Any post whose `rippling_reach` row is initialised
+  after the export's population query gets a live-column label from whichever engine is live at
+  that moment. With the switch 53 minutes after the export, that was 57 posts. Either run the
+  apply straight into the switch, or plan the NULL-and-refetch pass as a standing step 4b:
+  `SELECT msgid ... WHERE reach_labels IS NOT NULL AND reach_labels_next IS NULL AND NOT EXISTS
+  (leaves with the new fp)`, NULL each, run `ripple:backfill-reach-labels`.
+- **The apply pays its `--sleep-ms` on skipped rows too** — a 676-row delta took 22 minutes
+  because it walked all 54k. A `--skip-staged` that filters on `reach_labels_next_fp` before the
+  per-row loop would make the top-up ~1 minute.
+- **v2 boots from its snapshot in ~20 s** (v1 rebuilt the graph from the PBF in ~5 min). The
+  routing restart is now cheap; monit's 15-cycle grace is far more than it needs.
+- Swapping the binary under a running process: `cp` onto it fails with "Text file busy" — copy to
+  a temp name and `mv -f` (rename), which is what `go build -o` does.
+- Keep for rollback until proven: `iznik-routing-go.v1` + `data/reach.v1old` on each node,
+  image `freegledocker-spatial:v1-20260830`, `iznik-routing-go/data/reach.v1old` on the FD host.
+
+### Housekeeping (step 5) — DONE 22:26–23:15
+
+Run from `freegledocker-batch-prod` as tinker scripts (the DDL hook rightly refuses any `.sql` file into
+`mysql`, and the one-row-per-statement rule is easiest to honour in PHP anyway). Before either write,
+the v1 state was dumped beside the v1 artifacts on the FD host so the step stays reversible:
+`iznik-routing-go/data/reach.v1old/labels-v1-20260903.tsv.gz` (54,480 rows: msgid, base64 label,
+union secs) and `leaves-v1-20260903.tsv.gz` (1,727,085 rows: msgid, leaf, fp).
+
+| | |
+|---|---|
+| 5a copy + union refresh | one `UPDATE … WHERE msgid = ?` per row setting `reach_labels = reach_labels_next` and `origin_union_secs` from the export file; 54,499 rows, 54,480 affected (19 retracted since the export), 22 min at 40 rows/s; verified live == staged on all 54,480, 0 NULLs; never-activates 18,418 (v1 had 18,122 — same semantics, v2 road times) |
+| 5b leaf purge | pre-checked: every post still in `rippling_reach` with v1 leaves also had v2 leaves (0 exceptions); all 1,564 unstamped-leaf posts and 9,385 of the v1-leaf posts were orphans (no reach row). One `DELETE … WHERE msgid = ? AND fp = ?` per post (the live `storeLabels` shape, ~26 rows each), 65,574 posts, 1,727,009 rows, 25 min at 43 posts/s |
+| after | leaves table is v2-only: 1,480,670 rows / 54,699 posts; every active post has a live label and v2 leaves; Galera flow control flat (8.4e-05) throughout; five random posts evaluate `in` at their origins |
+
+`reach_labels_next` / `_fp` were left populated: readers pick them by fingerprint, they equal the
+live column, and the next partition change overwrites them. The `config.reach_partition_fp` row
+stays. Rollback to v1 from here means restoring labels and leaves from the two dumps (one row per
+statement, ~50 min) plus the binary/artifact swap — no longer a five-minute operation.
+

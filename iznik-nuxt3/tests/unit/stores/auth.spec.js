@@ -4,6 +4,7 @@ import {
   expect,
   vi,
   beforeEach,
+  afterEach,
   beforeAll,
   afterAll,
 } from 'vitest'
@@ -456,7 +457,29 @@ describe('auth store', () => {
     })
   })
 
+  // logout() on the web (isApp false) starts disableGoogleAutoselect's retry
+  // loop: a real setTimeout every 100ms for up to five seconds, each tick
+  // writing a console line, because window.google never arrives here. Left on
+  // real timers those ticks outlive this file and race the worker's shutdown,
+  // which fails the whole run with "Closing rpc while onUserConsoleLog was
+  // pending" while every test passes (CI 35052, 2026-09-04). Any describe that
+  // reaches logout() owns the clock, so the retry never fires for real, and
+  // drops the pending timers with it. Not file-wide: the fetchUser tests below
+  // wait on real timers on purpose.
+  const ownTheClock = () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    })
+  }
+
   describe('logout', () => {
+    ownTheClock()
+
     it('resets user but preserves loginCount and loggedInEver', async () => {
       mockLogin.mockResolvedValue({ jwt: 'jwt', persistent: 'p' })
       mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
@@ -787,6 +810,8 @@ describe('auth store', () => {
   })
 
   describe('forget', () => {
+    ownTheClock() // forget() ends in logout(), and with it the retry loop
+
     it('calls session.forget then logs out', async () => {
       mockLogin.mockResolvedValue({ jwt: 'jwt', persistent: 'p' })
       mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
