@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-03
+last_reviewed: 2026-09-04
 owner: Freegle dev team
 covers:
   - docs/developers/reference/architecture.md
@@ -122,6 +122,14 @@ and per-group membership and roles are the ones you will meet first.
   The same rule applies to what we SHOW moderators: the per-post reach map draws the
   rings as well as the reach, because a map that stops at the committed outline tells a
   moderator a post did not get somewhere the mail has already invited people from.
+
+  The third rule is that a post has one home. Everything said to a poster about their
+  post comes from the community it was posted on; a community the post only rippled into
+  moderates its own copy silently, and a membership rippling created is not a
+  relationship its moderators can write to. The home is the earliest `messages_groups`
+  row with `rippled_in = 0` - identified from that column and nothing else, because an
+  arrival-time window breaks the moment a post is approved slowly (§9 of the algorithm
+  reference explains why).
 - **Getting a first reply in** sits alongside rippling and attacks the 44% of rippled posts
   that get no reply at all: a passthrough for a silent post's first reply, individual mail to
   the members who have asked for that specific item (an open post of the opposite type, or a

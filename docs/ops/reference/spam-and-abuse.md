@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-04
 owner: Freegle ops
 covers:
   - conf/rspamd
@@ -85,6 +85,14 @@ Everything that reaches the platform - by mail, website or app - passes through
 `ContentCheckService`. Its job is not to decide "spam or not" but to decide **whether a
 human should look before this goes live**. The relevant entry points are
 `checkMessage()` for posts and `checkChatMessage()` for chat.
+
+A third, `checkGroupOwnRules()`, runs as a post ripples into another community. The post
+was already weighed against the rules of the community it was posted on, Freegle-wide
+keywords included, and a moderator there may have approved it knowing that. So only the
+receiving community's **own** keywords and worry words are asked. A match makes that
+community's copy Pending with the reasons recorded in
+`messages_groups.contentcheck_reasons`, and auto-approve leaves such a copy for a human
+rather than releasing it when the veto window runs out.
 
 Reference data lives in its own tables, each with a moderator-facing editor in ModTools:
 
