@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -188,6 +189,42 @@ func TestIsochroneEndpoint_MissingLat(t *testing.T) {
 	}
 }
 
+// TestIsochroneEndpoint_ZeroLongitudeAccepted covers the second way a real place
+// got no reach: the guard read a longitude of zero as a missing parameter, so a
+// post on the Greenwich meridian - it runs up the country through Essex and
+// Lincolnshire - was turned away before any routing happened.
+func TestIsochroneEndpoint_ZeroLongitudeAccepted(t *testing.T) {
+	app := newInternalApp(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/isochrone?lat=51.5333&lng=0&minutes=5", nil)
+	resp, err := app.Test(req, 30000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("zero longitude: expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestValidLatLng(t *testing.T) {
+	cases := []struct {
+		name     string
+		lat, lng float64
+		want     bool
+	}{
+		{"on the meridian", 51.5333, 0, true},
+		{"Bristol", 51.4545, -2.5879, true},
+		{"no location at all", 0, 0, false},
+		{"latitude off the globe", 91, 0.5, false},
+		{"longitude off the globe", 51.5, 181, false},
+		{"not a number", math.NaN(), math.NaN(), false},
+	}
+	for _, c := range cases {
+		if got := validLatLng(c.lat, c.lng); got != c.want {
+			t.Errorf("%s: validLatLng(%v, %v) = %v, want %v", c.name, c.lat, c.lng, got, c.want)
+		}
+	}
+}
+
 func TestIsochroneEndpoint_DefaultMinutes(t *testing.T) {
 	app := newInternalApp(t)
 	req := httptest.NewRequest(http.MethodGet, "/v1/isochrone?lat=51.4545&lng=-2.5879", nil)
@@ -295,4 +332,43 @@ func TestWktPolygonToCoords_DegreeCoords(t *testing.T) {
 	if got[0] != -1.3 || got[1] != 51.6 {
 		t.Errorf("expected [-1.3 51.6], got %v", got)
 	}
+}
+
+// TestIsochroneEndpoint_ReportsOffMapOrigin covers the failure that hid the Isle of
+// Man for a year: an origin outside the loaded OSM extract produced an empty polygon
+// and a 200, which reads exactly like "nowhere is reachable from here". onGraph is
+// the difference between those two answers.
+func TestIsochroneEndpoint_ReportsOffMapOrigin(t *testing.T) {
+	app := newInternalApp(t)
+
+	on := getIsochrone(t, app, "/v1/isochrone?lat=51.4545&lng=-2.5879&minutes=15")
+	if !on.OnGraph {
+		t.Errorf("point on the test graph: onGraph = false, want true")
+	}
+
+	// Douglas, Isle of Man: far outside the Bristol test extract.
+	off := getIsochrone(t, app, "/v1/isochrone?lat=54.1509&lng=-4.4814&minutes=30")
+	if off.OnGraph {
+		t.Errorf("point off the test graph: onGraph = true, want false")
+	}
+	if len(off.Drive.Geometry.Coordinates) > 0 && len(off.Drive.Geometry.Coordinates[0]) > 0 {
+		t.Errorf("off-map origin returned a polygon of %d points", len(off.Drive.Geometry.Coordinates[0]))
+	}
+}
+
+func getIsochrone(t *testing.T, app *fiber.App, url string) isochroneResponse {
+	t.Helper()
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, url, nil), 30000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+	var r isochroneResponse
+	if err := json.Unmarshal(body, &r); err != nil {
+		t.Fatalf("invalid JSON: %v\nbody: %s", err, body)
+	}
+	return r
 }

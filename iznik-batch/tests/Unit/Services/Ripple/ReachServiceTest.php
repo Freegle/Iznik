@@ -361,6 +361,58 @@ class ReachServiceTest extends TestCase
         $this->assertNull($geom['inner']);
     }
 
+    public function test_catchment_geometry_says_so_when_the_origin_is_off_the_map(): void
+    {
+        Log::spy();
+        Http::fake(['*catchment*' => Http::response(['catchment' => null, 'onGraph' => false], 200)]);
+
+        $this->assertNull($this->service()->catchmentGeometry(54.1509, -4.4814, 30));
+
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message, $context = []) => str_contains((string) $message, 'outside the routing map'));
+    }
+
+    public function test_catchment_geometry_reports_an_empty_reach_on_the_map_differently(): void
+    {
+        Log::spy();
+        Http::fake(['*catchment*' => Http::response(['catchment' => null, 'onGraph' => true], 200)]);
+
+        $this->assertNull($this->service()->catchmentGeometry(51.5, -0.1, 30));
+
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message, $context = []) => str_contains((string) $message, 'came back empty'));
+    }
+
+    public function test_catchment_batch_says_so_when_an_origin_is_off_the_map(): void
+    {
+        Log::spy();
+        Http::fake(['*catchment*' => Http::response(['catchment' => null, 'onGraph' => false], 200)]);
+
+        $out = $this->service()->catchmentGeometriesBatch([['lat' => 54.1509, 'lng' => -4.4814, 'minutes' => 30]]);
+
+        $this->assertSame([null], $out);
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message, $context = []) => str_contains((string) $message, 'outside the routing map'));
+    }
+
+    public function test_catchment_batch_stays_quiet_for_an_empty_reach_on_the_map(): void
+    {
+        Log::spy();
+        Http::fake(['*catchment*' => Http::response(['catchment' => null, 'onGraph' => true], 200)]);
+
+        $out = $this->service()->catchmentGeometriesBatch([['lat' => 51.5, 'lng' => -0.1, 'minutes' => 30]]);
+
+        $this->assertSame([null], $out);
+        Log::shouldNotHaveReceived('warning');
+    }
+
+    public function test_catchment_geometry_does_not_guess_when_the_server_omits_ongraph(): void
+    {
+        Log::spy();
+        Http::fake(['*catchment*' => Http::response(['catchment' => null], 200)]);
+
+        $this->assertNull($this->service()->catchmentGeometry(51.5, -0.1, 30));
+
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message, $context = []) => str_contains((string) $message, 'came back empty'));
+    }
+
     public function test_schedule_omits_both_overflow_lanes_by_default(): void
     {
         // Dark by default: neither lane touches the request, so an unconfigured deployment

@@ -2,6 +2,7 @@
 
 namespace App\Services\Ripple;
 
+use App\Models\Membership;
 use App\Services\ContentCheckService;
 use App\Services\MessageSpatialService;
 use App\Support\GreatCircle;
@@ -1868,9 +1869,9 @@ class ExpandService
             // vetted on its origin group; matches AutoApproveService::approveOnGroup -
             // collection='Approved', approvedby NULL, approvedat NOW; spatial indexing follows
             // via the message_spatial cron). >0 inserts Pending for the mod-veto window.
+            // Overridden per group below for a poster the receiving group has set to
+            // MODERATED.
             $immediateApprove = ((int) config('freegle.ripple.rippled_in_pending_hours', 0)) <= 0;
-            $collection = $immediateApprove ? 'Approved' : 'Pending';
-            $approvedAt = $immediateApprove ? 'NOW()' : 'NULL';
 
             // Resolve the target groups with a plain, NON-LOCKING snapshot SELECT first, then
             // insert each membership row on its own. The previous single INSERT ... SELECT took
@@ -1966,8 +1967,27 @@ class ExpandService
                    AND NOT EXISTS (
                        SELECT 1 FROM memberships mb
                        WHERE mb.userid = ? AND mb.groupid = g.id AND mb.collection = 'Banned'
+                   )
+                   AND NOT EXISTS (
+                       -- PROHIBITED means the mods have stopped this person posting to this
+                       -- group. Both direct paths already refuse: the API tells them they are
+                       -- not allowed to post here, and incoming mail drops the post
+                       -- (IncomingMailService routes PROHIBITED to DROPPED). Rippling a copy in
+                       -- would post it for them anyway.
+                       SELECT 1 FROM memberships mp
+                       WHERE mp.userid = ? AND mp.groupid = g.id
+                         AND UPPER(mp.ourPostingStatus) = 'PROHIBITED'
                    )",
-                [$reachWkt, $msgid, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser]
+                // One binding per placeholder, in query order: the reach shape, the
+                // msgid twice (already on the group; turned away by the group), then the
+                // poster four times (rippled-then-left, users_banned, Banned membership,
+                // PROHIBITED posting status).
+                [$reachWkt, $msgid, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser, $msg->fromuser]
+            );
+
+            $postingStatuses = Membership::explicitPostingStatuses(
+                (int) $msg->fromuser,
+                array_map(static fn ($g) => (int) $g->id, $targetGroups)
             );
 
             // The post was vetted against the rules of the community it was posted on. Each
@@ -1986,6 +2006,18 @@ class ExpandService
 
             $n = 0;
             foreach ($targetGroups as $g) {
+                // A poster the receiving group has set to MODERATED is held for that
+                // group's moderators, exactly as a post they made there directly would be.
+                // Vetting on the origin group does not speak for a group that has taken a
+                // view on this member (Discourse 10090/5).
+                $moderatedHere = ($postingStatuses[(int) $g->id] ?? null) === Membership::POSTING_STATUS_MODERATED;
+                $approveHere = $immediateApprove && !$moderatedHere;
+                $collection = $approveHere ? 'Approved' : 'Pending';
+                $approvedAt = $approveHere ? 'NOW()' : 'NULL';
+
+                // The group's own rules are asked first: a breach holds the copy with its
+                // reasons recorded, whatever the poster's standing here. Otherwise the copy
+                // lands where the decision above put it.
                 $breaches = $this->contentCheck->checkGroupOwnRules($subject, $textbody, (int) $g->id);
 
                 if (!empty($breaches)) {

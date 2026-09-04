@@ -1302,6 +1302,101 @@ class ExpandServiceTest extends TestCase
         $this->assertSame('Pending', $b->collection, 'a positive window leaves the rippled-in row Pending for the mod-veto');
     }
 
+    /** Give every group in the reach box the same publishable area. */
+    private function seedGroupInReach(): object
+    {
+        $g = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $g->id]
+        );
+
+        return $g;
+    }
+
+    /**
+     * A poster the receiving group has set to MODERATED gets a Pending copy there, even
+     * though the post was approved on its origin group. Vetting on one group does not speak
+     * for a group whose moderators have taken their own view of this member
+     * (https://discourse.ilovefreegle.org/t/10090/5).
+     */
+    public function test_rippled_in_copy_is_pending_on_a_group_that_moderates_the_poster(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $moderatesPoster = $this->seedGroupInReach();
+        $noView = $this->seedGroupInReach();
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $moderatesPoster->id, 'role' => 'Member',
+            'collection' => 'Approved', 'ourPostingStatus' => 'MODERATED', 'added' => now(),
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $held = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $moderatesPoster->id)->first();
+        $this->assertNotNull($held, 'the post still ripples in, it is just not approved');
+        $this->assertSame('Pending', $held->collection, 'held for the receiving group moderators');
+        $this->assertNull($held->approvedat, 'a held copy carries no approval time');
+
+        $free = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $noView->id)->first();
+        $this->assertNotNull($free, 'a group with no view of the poster is unaffected');
+        $this->assertSame('Approved', $free->collection);
+    }
+
+    /**
+     * PROHIBITED means the receiving group's moderators have stopped this person posting
+     * there. Both direct paths already refuse - the API tells them they are not allowed to
+     * post here, and incoming mail drops the post - so no copy is rippled in either.
+     */
+    public function test_post_is_not_rippled_into_a_group_that_prohibits_the_poster(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $prohibits = $this->seedGroupInReach();
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $prohibits->id, 'role' => 'Member',
+            'collection' => 'Approved', 'ourPostingStatus' => 'PROHIBITED', 'added' => now(),
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $prohibits->id)->first(),
+            'no copy is rippled into a group the poster is prohibited from posting to'
+        );
+    }
+
+    /**
+     * Rippling creates memberships itself, with no posting status set. A membership with no
+     * status is not a moderation decision, so those copies still go in Approved. Reading a
+     * blank status as moderated would hold every rippled-in post from everyone rippling has
+     * ever joined to a group.
+     */
+    public function test_a_membership_with_no_posting_status_does_not_hold_the_rippled_in_copy(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->seedGroupInReach();
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Member',
+            'collection' => 'Approved', 'ourPostingStatus' => null, 'added' => now(),
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $b = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first();
+        $this->assertNull($b->ourPostingStatus, 'the membership still carries no posting status');
+        $copy = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($copy, 'post rippled in');
+        $this->assertSame('Approved', $copy->collection, 'a blank posting status is not a moderation decision');
+    }
+
     /**
      * Task #23: after a post rippled in, ripple:proximity-notes (out of the hot expander) resolves
      * quicker=true from /v1/group-proximity + the P/Q postcodes and stores the note in

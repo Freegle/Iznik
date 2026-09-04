@@ -27,7 +27,7 @@ package main
 //
 //   ./iznik-routing-go reach labels-apply --file /path/labels.bin \
 //        --expect-fp <partFP> [--leaves-table rippling_reach_leaves] \
-//        [--sleep-ms N] [--limit N] [--dry-run]
+//        [--sleep-ms N] [--limit N] [--dry-run] [--skip-staged]
 //
 // --expect-fp is mandatory and must equal the file header's fingerprint. It
 // is the operator saying out loud which partition they are staging; a file
@@ -44,6 +44,17 @@ package main
 // post already stamped with this fingerprint is skipped, leaf inserts are
 // INSERT IGNORE, so a top-up run after a fresh export only pays for what
 // changed.
+//
+// "Only pays for what changed" was true of the writes but not of the clock:
+// a skipped post still cost its conditional UPDATE, its INSERT IGNOREs and
+// the --sleep-ms pause, so the 676-post top-up of 2026-09-03 walked all
+// 54,499 rows in 22 minutes - and the switch that followed was 53 minutes
+// behind the export, long enough for 57 posts to be initialised and labelled
+// by the old engine in between. --skip-staged reads the already-staged set in
+// one query up front and passes those rows without touching the database or
+// sleeping, so a top-up costs seconds and the switch can follow at once. It
+// does forgo the leaf top-up for staged posts (their union leaves are not
+// re-offered), which is why it is opt-in.
 
 import (
 	"bufio"
@@ -69,6 +80,7 @@ func reachLabelsApplyCmd(args []string) {
 	sleepMs := fs.Int("sleep-ms", 20, "pause between posts")
 	limit := fs.Int("limit", 0, "max posts to apply (0 = all); for timing a sample")
 	dryRun := fs.Bool("dry-run", false, "read and validate the file, write nothing")
+	skipStaged := fs.Bool("skip-staged", false, "pass posts already stamped for this partition (and, with --leaves-table, already holding leaf rows for it) without any database work or pause; makes a top-up run take seconds, at the cost of not re-offering those posts' leaves")
 	_ = fs.Parse(args)
 
 	if *file == "" {
@@ -150,6 +162,37 @@ func reachLabelsApplyCmd(args []string) {
 		}
 	}
 
+	// The already-staged set for --skip-staged, read once. A post counts as
+	// staged when its label carries this fingerprint and, if leaves are being
+	// applied, at least one leaf row for this fingerprint exists - the EXISTS
+	// walks the (msgid, leaf, fp) key per post rather than scanning the table.
+	preStaged := map[uint64]struct{}{}
+	if *skipStaged && !*dryRun {
+		q := "SELECT msgid FROM rippling_reach WHERE reach_labels_next_fp = ?"
+		argv := []any{fileFP}
+		if *leavesTable != "" {
+			q = "SELECT rr.msgid FROM rippling_reach rr WHERE rr.reach_labels_next_fp = ? " +
+				"AND EXISTS (SELECT 1 FROM " + *leavesTable + " l WHERE l.msgid = rr.msgid AND l.fp = ?)"
+			argv = append(argv, fileFP)
+		}
+		rows, err := db.Query(q, argv...)
+		if err != nil {
+			log.Fatalf("labels-apply: read staged set: %v", err)
+		}
+		for rows.Next() {
+			var id uint64
+			if err := rows.Scan(&id); err != nil {
+				log.Fatalf("labels-apply: read staged set: %v", err)
+			}
+			preStaged[id] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			log.Fatalf("labels-apply: read staged set: %v", err)
+		}
+		rows.Close()
+		log.Printf("labels-apply: %d posts already staged for partition %d will be passed without database work", len(preStaged), fileFP)
+	}
+
 	const labelQ = "UPDATE rippling_reach SET reach_labels_next = ?, reach_labels_next_fp = ? " +
 		"WHERE msgid = ? AND (reach_labels_next_fp IS NULL OR reach_labels_next_fp <> ?)"
 
@@ -159,6 +202,15 @@ func reachLabelsApplyCmd(args []string) {
 		start                                                   = time.Now()
 		pause                                                   = time.Duration(*sleepMs) * time.Millisecond
 	)
+	progress := func() {
+		if seen%1000 != 0 {
+			return
+		}
+		rate := float64(seen) / time.Since(start).Seconds()
+		log.Printf("labels-apply: %d/%d (written %d, skipped %d, missing %d, leaves +%d; %.1f posts/s, ETA %s)",
+			seen, count, written, skipped, missing, leafInserted, rate,
+			time.Duration(float64(count-seen)/rate*float64(time.Second)).Round(time.Second))
+	}
 	for i := uint64(0); i < count; i++ {
 		if *limit > 0 && seen >= uint64(*limit) {
 			break
@@ -182,6 +234,12 @@ func reachLabelsApplyCmd(args []string) {
 		bytesOut += int(labelLen)
 		leafRows += uint64(leafCount)
 		if *dryRun {
+			continue
+		}
+		if _, ok := preStaged[msgid]; ok {
+			// Staged before this run began: nothing to write, nothing to pace.
+			skipped++
+			progress()
 			continue
 		}
 
@@ -225,12 +283,7 @@ func reachLabelsApplyCmd(args []string) {
 			}
 		}
 
-		if seen%1000 == 0 {
-			rate := float64(seen) / time.Since(start).Seconds()
-			log.Printf("labels-apply: %d/%d (written %d, skipped %d, missing %d, leaves +%d; %.1f posts/s, ETA %s)",
-				seen, count, written, skipped, missing, leafInserted, rate,
-				time.Duration(float64(count-seen)/rate*float64(time.Second)).Round(time.Second))
-		}
+		progress()
 		if pause > 0 {
 			time.Sleep(pause)
 		}

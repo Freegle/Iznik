@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-03
 owner: Freegle dev team
 covers:
   - docs/ops/reference/database-read-write-split.md
@@ -39,6 +39,20 @@ operational facts (from their component READMEs and
 - Rippling, the daily digest and browse depend on them being up.
 
 Plan restarts of these services with that warm-up time in mind.
+
+### Refreshing the map
+
+The graph is built from an OpenStreetMap extract on disk. Anywhere the extract leaves out
+has no roads, so posts from there get no reach at all - that is how the Isle of Man and the
+Channel Islands were dark. Build a replacement with
+`iznik-routing-go/scripts/build-osm-pbf.sh`, which fetches all four extracts we need and
+checks every named region has roads in it before it installs anything.
+
+Putting the new file on a host is not enough on its own. When `REACH_DIR` is set the
+service loads the saved graph files and never opens the extract, so a refresh takes three
+steps on each host that runs it: copy the new file into place, rebuild the saved graph with
+`./iznik-routing-go reach build`, then restart the service. Budget the warm-up above, and
+agree the restart with whoever is on call first.
 
 ## Database
 

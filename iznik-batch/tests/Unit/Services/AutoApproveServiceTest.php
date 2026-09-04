@@ -662,6 +662,84 @@ class AutoApproveServiceTest extends TestCase
         ]);
     }
 
+    /**
+     * Set up a post approved on its origin group and rippled into a nearby group, with the
+     * poster holding $status on the nearby group. Returns [message, nearby group].
+     */
+    private function seedRippledInPostWithPostingStatus(?string $status): array
+    {
+        $user = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $nearbyGroup = $this->createTestGroup();
+        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
+        $this->createMembership($user, $nearbyGroup, [
+            'added' => now()->subHours(72),
+            'ourPostingStatus' => $status,
+        ]);
+
+        $message = $this->createTestMessage($user, $originGroup);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
+
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
+            'msgtype' => 'Offer', 'rippled_in' => 1,
+        ]);
+
+        return [$message, $nearbyGroup];
+    }
+
+    /**
+     * The fast-track exists because the poster is usually not a member of the receiving group,
+     * so there is nobody there to have a view of them. Where the receiving group's moderators
+     * have set this member to MODERATED, that view stands: their copy waits for a human on that
+     * group, exactly as a post made there directly would
+     * (https://discourse.ilovefreegle.org/t/10090/5).
+     */
+    public function test_does_not_fast_track_rippled_in_when_poster_is_moderated_on_that_group(): void
+    {
+        [$message, $nearbyGroup] = $this->seedRippledInPostWithPostingStatus('MODERATED');
+
+        $this->service->process();
+
+        $this->assertDatabaseHas('messages_groups', [
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+        ]);
+    }
+
+    /** PROHIBITED stops this person posting to the group, so their rippled-in copy is not approved either. */
+    public function test_does_not_fast_track_rippled_in_when_poster_is_prohibited_on_that_group(): void
+    {
+        [$message, $nearbyGroup] = $this->seedRippledInPostWithPostingStatus('PROHIBITED');
+
+        $this->service->process();
+
+        $this->assertDatabaseHas('messages_groups', [
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+        ]);
+    }
+
+    /**
+     * Rippling creates memberships itself with no posting status set. A blank status is not a
+     * moderation decision, so the fast-track still applies. Were it read as "moderated", every
+     * rippled-in post from everyone rippling has ever joined to a group would sit Pending.
+     */
+    public function test_fast_tracks_rippled_in_when_membership_has_no_posting_status(): void
+    {
+        [$message, $nearbyGroup] = $this->seedRippledInPostWithPostingStatus(null);
+
+        $this->service->process();
+
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
+        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
+            'a membership with no posting status does not block the fast-track');
+    }
+
     public function test_skips_new_member_under_48_hours(): void
     {
         $user = $this->createTestUser();

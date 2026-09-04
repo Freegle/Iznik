@@ -88,6 +88,23 @@ design:
 2. **Each reached point has an exact travel time**, so "who is reachable within X minutes" is
    a lookup, not a new computation.
 
+### The map has edges, and a post outside them gets no reach
+
+The road network is built from Geofabrik extracts by
+`iznik-routing-go/scripts/build-osm-pbf.sh`. Great Britain and Ireland are separate
+downloads, and so are the Crown Dependencies (Isle of Man, Jersey, Guernsey), which are
+constitutionally not part of the UK and so appear in neither. The script probes every
+region it merges for a road network before installing the file, because a missing region
+does not look like an error at run time.
+
+An origin with no road within snapping range (about 11km) used to produce an empty reach
+with nothing logged, which reads exactly like "nowhere is reachable from here". Isle of
+Man Freegle, a live group with 825 members, got no reach on any post for a year that way.
+`IsochroneResult` now carries `OriginFound`, `/v1/isochrone` and `/v1/catchment` return
+`onGraph`, both handlers log the miss, and `ReachService` logs "origin is outside the
+routing map" from both its single and pooled catchment paths instead of the general
+empty-reach warning.
+
 ### 2a. Drawing the reach: reached points into a polygon
 
 Consumers need an area, not 5 million points: the map draws it, and browse/digest ask "is

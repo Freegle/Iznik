@@ -63,3 +63,32 @@ func TestNearestNode_CloseToGridCentre(t *testing.T) {
 	}
 	t.Logf("nearest node: id=%d lat=%.5f lng=%.5f dist=%.0fm", id, n.Lat, n.Lng, d)
 }
+
+// TestIsochrone_ReportsUnsnappedOrigin covers the failure that hid a missing
+// island for a year: ask for an isochrone somewhere the graph has no roads and
+// the answer is an empty set, indistinguishable from a genuinely tiny reach.
+//
+// The Isle of Man was absent from the OSM extract the graph was built from, so
+// every reach, ripple and nearby-browse query for its 825 members returned
+// nothing, with no error and nothing in the logs. OriginFound is what separates
+// "we looked and there is nothing near you" from "you are not on our map".
+func TestIsochrone_ReportsUnsnappedOrigin(t *testing.T) {
+	g := getTestGraph(t)
+
+	on := Isochrone(g, 51.4545, -2.5879, 15*60)
+	if !on.OriginFound {
+		t.Errorf("origin on the graph: OriginFound = false, want true")
+	}
+	if len(on.ReachedNodes) == 0 {
+		t.Errorf("origin on the graph: reached nothing")
+	}
+
+	// Douglas, Isle of Man - far beyond the ~11km the snap search covers.
+	off := Isochrone(g, 54.1509, -4.4814, 30*60)
+	if off.OriginFound {
+		t.Errorf("origin with no road within snapping range: OriginFound = true, want false")
+	}
+	if len(off.ReachedNodes) != 0 {
+		t.Errorf("unsnapped origin reached %d nodes, want 0", len(off.ReachedNodes))
+	}
+}
