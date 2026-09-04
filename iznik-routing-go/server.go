@@ -20,17 +20,38 @@ import (
 // Dijkstras on every call.
 type isochroneResponse struct {
 	Drive GeoJSONPolygon `json:"drive"`
+
+	// OnGraph is false when the point snapped to no road at all, i.e. it is outside
+	// the loaded OSM extract. The polygon above is then empty for that reason and
+	// not because the place is genuinely cut off, and a caller that cannot tell
+	// those apart stores "no reach" forever. Answer honestly, the way
+	// handleQuintile answers "available": false.
+	OnGraph bool `json:"onGraph"`
+}
+
+// validLat, validLng and validLatLng say whether a coordinate is a real point on
+// the globe. Zero longitude is a real value - the Greenwich meridian runs up the
+// country through Essex and Lincolnshire - so a post from there is a genuine
+// location and used to be turned away. Both values being zero is how a caller
+// says "no location", so only that pair is rejected. Not-a-number fails every
+// comparison, so it fails these too.
+func validLat(lat float64) bool { return lat >= -90 && lat <= 90 }
+
+func validLng(lng float64) bool { return lng >= -180 && lng <= 180 }
+
+func validLatLng(lat, lng float64) bool {
+	return validLat(lat) && validLng(lng) && !(lat == 0 && lng == 0)
 }
 
 // handleIsochrone handles GET /v1/isochrone?lat=&lng=&minutes=
 func handleIsochrone(g *Graph) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
-		if err != nil || lat == 0 {
+		if err != nil || !validLat(lat) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat required")
 		}
 		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
-		if err != nil || lng == 0 {
+		if err != nil || !validLng(lng) {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
 		minutes, _ := strconv.ParseFloat(c.Query("minutes", "15"), 64)
@@ -41,7 +62,16 @@ func handleIsochrone(g *Graph) fiber.Handler {
 
 		iso := Isochrone(g, lat, lng, secs)
 		res := NetworkResolution(g, iso.ReachedNodes)
-		return c.JSON(isochroneResponse{Drive: IsochronePolygon(g, iso.ReachedNodes, res)})
+		if !iso.OriginFound {
+			// Loud on purpose: the only way this happens is a point outside the
+			// extract the graph was built from, which is a data-coverage bug that
+			// otherwise looks exactly like "nowhere is reachable from here".
+			log.Printf("isochrone: %.4f,%.4f is outside the loaded map - no road within snapping range", lat, lng)
+		}
+		return c.JSON(isochroneResponse{
+			Drive:   IsochronePolygon(g, iso.ReachedNodes, res),
+			OnGraph: iso.OriginFound,
+		})
 	}
 }
 
@@ -129,11 +159,11 @@ func handleQuintiles(g *Graph) fiber.Handler {
 func handleFairness(g *Graph) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
-		if err != nil || lat == 0 {
+		if err != nil || !validLat(lat) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat required")
 		}
 		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
-		if err != nil || lng == 0 {
+		if err != nil || !validLng(lng) {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
 		minutes, _ := strconv.ParseFloat(c.Query("minutes", "15"), 64)
@@ -197,11 +227,11 @@ func handleCatchment(g *Graph) fiber.Handler {
 
 		// Point form (ad-hoc): catchment of a single location.
 		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
-		if err != nil || lat == 0 {
+		if err != nil || !validLat(lat) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat or groupid required")
 		}
 		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
-		if err != nil || lng == 0 {
+		if err != nil || !validLng(lng) {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
 		iso := engineOrFlatIsochrone(g, lat, lng, secs)
@@ -230,7 +260,13 @@ func handleCatchment(g *Graph) fiber.Handler {
 			bounds = IsochroneBounds(g, iso.ReachedNodes, res)
 		}
 
-		resp := fiber.Map{"catchment": poly}
+		if !iso.OriginFound {
+			// This is the path that materialises reach for a rippling post, so an
+			// origin outside the extract means that post gets no reach at all - and
+			// says so nowhere. Tell the caller, and say it out loud here.
+			log.Printf("catchment: %.4f,%.4f is outside the loaded map - no road within snapping range, so this post gets no reach", lat, lng)
+		}
+		resp := fiber.Map{"catchment": poly, "onGraph": iso.OriginFound}
 		if coarse {
 			// Say so, so a caller can tell a coarse outline from an exact one without
 			// having to infer it from the vertex count.
@@ -270,19 +306,19 @@ func handleCatchment(g *Graph) fiber.Handler {
 func handleDriveTime(g *Graph) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
-		if err != nil || lat == 0 {
+		if err != nil || !validLat(lat) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat required")
 		}
 		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
-		if err != nil || lng == 0 {
+		if err != nil || !validLng(lng) {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
 		toLat, err := strconv.ParseFloat(c.Query("tolat"), 64)
-		if err != nil || toLat == 0 {
+		if err != nil || !validLat(toLat) {
 			return fiber.NewError(fiber.StatusBadRequest, "tolat required")
 		}
 		toLng, err := strconv.ParseFloat(c.Query("tolng"), 64)
-		if err != nil || toLng == 0 {
+		if err != nil || !validLng(toLng) {
 			return fiber.NewError(fiber.StatusBadRequest, "tolng required")
 		}
 
@@ -370,11 +406,11 @@ func handleGroupExtent(g *Graph) fiber.Handler {
 func handleGroupProximity(g *Graph) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
-		if err != nil || lat == 0 {
+		if err != nil || !validLat(lat) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat required")
 		}
 		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
-		if err != nil || lng == 0 {
+		if err != nil || !validLng(lng) {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
 		gid, err := strconv.ParseInt(c.Query("groupid"), 10, 64)

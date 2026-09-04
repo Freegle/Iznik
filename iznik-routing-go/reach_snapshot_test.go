@@ -1,9 +1,12 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestReachSnapshotRoundTrip(t *testing.T) {
@@ -47,5 +50,53 @@ func TestReachSnapshotRoundTrip(t *testing.T) {
 	got := nearestDriveNode(g2, 51.4545, -2.5879)
 	if want != got {
 		t.Fatalf("nearest node after round trip: %d vs %d", got, want)
+	}
+}
+
+// TestSnapshotStaleAgainstPBF covers the trap sitting on the rollout path for any
+// map fix: the snapshot wins over the extract at boot, so refreshing the extract
+// without rebuilding the artifacts changes nothing, and used to say nothing.
+func TestSnapshotStaleAgainstPBF(t *testing.T) {
+	dir := t.TempDir()
+	snap := filepath.Join(dir, "graph.snap")
+	pbf := filepath.Join(dir, "uk-latest.osm.pbf")
+	for _, p := range []string{snap, pbf} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("OSM_PBF_PATH", pbf)
+
+	base := time.Now().Add(-24 * time.Hour)
+	setTime := func(p string, at time.Time) {
+		t.Helper()
+		if err := os.Chtimes(p, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Snapshot built after the extract: current, so no complaint.
+	setTime(pbf, base)
+	setTime(snap, base.Add(time.Hour))
+	if got := snapshotStaleAgainstPBF(snap); got != "" {
+		t.Errorf("snapshot newer than extract: got %q, want no complaint", got)
+	}
+
+	// Extract refreshed since the snapshot was built: stale.
+	setTime(pbf, base.Add(2*time.Hour))
+	got := snapshotStaleAgainstPBF(snap)
+	if got == "" {
+		t.Fatal("extract newer than snapshot: got no complaint, want one")
+	}
+	if !strings.Contains(got, snap) || !strings.Contains(got, pbf) {
+		t.Errorf("complaint should name both files, got %q", got)
+	}
+
+	// No extract on disk: nothing to compare against, so say nothing.
+	if err := os.Remove(pbf); err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshotStaleAgainstPBF(snap); got != "" {
+		t.Errorf("no extract on disk: got %q, want no complaint", got)
 	}
 }

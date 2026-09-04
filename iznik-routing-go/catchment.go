@@ -36,10 +36,12 @@ func multiSourceIsochrone(g *Graph, origins []NodeID, limitSeconds float32) Isoc
 	dist := make(map[NodeID]float32, 4096)
 	q := &pq{}
 	start := driveStartupSecs
+	seeded := false
 	for _, o := range origins {
 		if o == noNode {
 			continue
 		}
+		seeded = true
 		if _, seen := dist[o]; !seen {
 			dist[o] = start
 			heap.Push(q, &item{id: o, cost: start})
@@ -66,5 +68,5 @@ func multiSourceIsochrone(g *Graph, origins []NodeID, limitSeconds float32) Isoc
 		}
 	}
 
-	return IsochroneResult{ReachedNodes: dist}
+	return IsochroneResult{ReachedNodes: dist, OriginFound: seeded}
 }

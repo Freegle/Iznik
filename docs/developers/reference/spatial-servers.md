@@ -116,6 +116,20 @@ whatever the signs say; and unpaved lanes are slower still.
 The calibration tooling lives in `iznik-routing-go/cmd/calibrate` and can be
 re-run if road conditions or OpenStreetMap data shift materially.
 
+### Which map does it know?
+
+The travel-time mapper can only answer for places on the map it loaded. That map is
+stitched together from several OpenStreetMap downloads: Great Britain, Ireland and
+Northern Ireland, and the Crown Dependencies (Isle of Man, Jersey and Guernsey), which
+are separate downloads because they are not constitutionally part of the UK.
+
+Getting that stitching wrong used to be invisible. With a town missing from the map, the
+mapper simply answered "nothing is reachable", which looks the same as a genuinely
+cut-off spot, and Freegle stored that silence as the answer. Isle of Man Freegle lost a
+year of rippling to exactly that. The build script now refuses to install a map unless
+every region in it has roads, and the mapper says out loud when it is asked about a place
+it does not have.
+
 ## How this adds up: "rippling out"
 
 Putting those two together lets Freegle introduce a post to people gradually —
