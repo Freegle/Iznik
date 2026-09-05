@@ -12,6 +12,8 @@
 #   freegle worktree create <n>   Create a worktree with isolated compose env
 #   freegle worktree list         List worktrees with compose status
 #   freegle worktree remove <n>   Stop compose, remove volumes and worktree
+#   freegle worktree prune        Remove worktrees whose PR is merged/closed, and
+#                                 drop containers for worktrees left idle a week
 
 set -euo pipefail
 
@@ -23,6 +25,10 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# A worktree with no push for this many days gives up its containers on prune.
+# The branch and its volumes stay; compose rebuilds the containers on next use.
+WORKTREE_IDLE_DAYS=${WORKTREE_IDLE_DAYS:-7}
 
 # _next_free_ports COUNT START
 #   Reads reserved ports (one per line; non-numeric lines ignored) from stdin and
@@ -421,6 +427,40 @@ cmd_worktree_remove() {
 # Prune worktrees whose PR is closed/merged when it is safe to do so, and flag
 # any worktree that has no open PR but still holds uncommitted or unpushed work.
 # Pass --dry-run (-n) to preview without removing anything.
+# worktree_idle_days DIR [NOW_EPOCH]
+#   Prints whole days since the last push on DIR's branch, measuring against the
+#   remote ref so local commits do not count as activity. Falls back to the HEAD
+#   commit when detached or when the branch has no remote. Prints 99999 when no
+#   date can be read, so an unreadable worktree counts as idle rather than fresh.
+worktree_idle_days() {
+    local dir="$1" now="${2:-$(date +%s)}" branch ts
+    branch=$(git -C "$dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+    if [[ -n "$branch" ]] && git -C "$dir" rev-parse --verify --quiet "origin/$branch" >/dev/null 2>&1; then
+        ts=$(git -C "$dir" log -1 --format=%ct "origin/$branch" 2>/dev/null)
+    else
+        ts=$(git -C "$dir" log -1 --format=%ct HEAD 2>/dev/null)
+    fi
+    if [[ -z "$ts" ]]; then echo 99999; return; fi
+    echo $(( (now - ts) / 86400 ))
+}
+
+# drop_worktree_containers DIR
+#   Removes the containers of DIR's compose project and prints how many went.
+#   Volumes, images and the working tree are left alone, so the only cost of
+#   this is the rebuild. Prints 0 and returns non-zero when the project has no
+#   containers, has no name, or still has one running.
+drop_worktree_containers() {
+    local dir="$1" project running ids count
+    project=$(get_project_name "$dir")
+    if [[ -z "$project" ]]; then echo 0; return 1; fi
+    running=$(docker ps -q --filter "label=com.docker.compose.project=$project" 2>/dev/null | grep -c . || true)
+    if [[ "${running:-0}" -gt 0 ]]; then echo 0; return 1; fi
+    ids=$(docker ps -aq --filter "label=com.docker.compose.project=$project" 2>/dev/null || true)
+    count=$(printf '%s' "$ids" | grep -c . || true)
+    if [[ "${count:-0}" -eq 0 ]]; then echo 0; return 1; fi
+    printf '%s\n' "$ids" | xargs -r docker rm -f >/dev/null 2>&1 || true
+    echo "$count"
+}
 cmd_worktree_prune() {
     local dry_run=false
     if [[ "${1:-}" == "--dry-run" || "${1:-}" == "-n" ]]; then
@@ -438,8 +478,9 @@ cmd_worktree_prune() {
     echo -e "${BLUE}Refreshing remote refs (fetch --prune)...${NC}"
     git -C "$main_repo" fetch --prune origin >/dev/null 2>&1 || true
 
-    local -a to_remove=() flagged=() kept=()
+    local -a to_remove=() flagged=() kept=() survivors=()
     local wt name branch dirty unpushed pr_line pr_num pr_state label why
+    local idle dropped
 
     while IFS= read -r wt; do
         [[ "$wt" == "$main_repo" ]] && continue
@@ -498,6 +539,12 @@ cmd_worktree_prune() {
                 fi
                 ;;
         esac
+
+        # Anything not queued for removal stays put. Idle ones give up their
+        # containers further down.
+        if [[ "${to_remove[*]-}" != *"${wt}|"* ]]; then
+            survivors+=("${wt}|${label}")
+        fi
     done < <(get_worktrees)
 
     echo ""
@@ -531,6 +578,26 @@ cmd_worktree_prune() {
     [[ ${#kept[@]} -eq 0 ]] && echo "  (none)"
     for m in "${kept[@]}"; do echo "  • ${m}"; done
 
+    echo ""
+    echo -e "${BLUE}Idle containers (no push for ${WORKTREE_IDLE_DAYS}+ days, dropped and rebuildable):${NC}"
+    local found_idle=false
+    for entry in "${survivors[@]-}"; do
+        [[ -z "$entry" ]] && continue
+        path=${entry%%|*}; lbl=${entry#*|}
+        idle=$(worktree_idle_days "$path")
+        [[ "$idle" -lt "$WORKTREE_IDLE_DAYS" ]] && continue
+        if $dry_run; then
+            echo "  would drop containers: ${lbl} (idle ${idle}d)"
+            found_idle=true
+        else
+            dropped=$(drop_worktree_containers "$path") || true
+            if [[ "${dropped:-0}" -gt 0 ]]; then
+                echo -e "  ${YELLOW}dropped${NC} ${dropped} containers: ${lbl} (idle ${idle}d)"
+                found_idle=true
+            fi
+        fi
+    done
+    $found_idle || echo "  (none)"
     echo ""
     local remaining
     remaining=$(( $(get_worktrees | wc -l) - 1 ))
