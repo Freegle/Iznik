@@ -81,7 +81,7 @@ func fetchDriveMetricsChunk(routingURL string, lat, lng float64, targets []Targe
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		roadblur.MarkRoutingFailure()
+		roadblur.MarkRoutingFailureFor(resp.StatusCode)
 		return nil
 	}
 	var parsed struct {

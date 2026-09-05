@@ -407,8 +407,11 @@ hours). Now: the routing server's discover fails CLOSED with a 503 and logs the 
 apiv2 retries one 503 (`labelEvalAttempts`) before reporting; `LabelVerdictsWithDiscover`
 returns an `ok` flag; and `nearbyCount` answers 503 on `!ok` and caches nothing, so the
 client keeps the number it has. A routing server with no reach engine at all (no `REACH_DIR`:
-dev, CI) answers reach-eval 501, which apiv2 treats as answered-with-nothing and fails open on
-- only a configured engine's 503 is retried and then refused. The feed keeps its degraded empty page on the same failure
+dev, CI) answers every reach endpoint 501, which apiv2 treats as answered-with-nothing and fails
+open on - only a configured engine's 503 is retried and then refused. The shared routing breaker
+(`roadblur.MarkRoutingFailureFor`) opens only on a server fault (5xx other than 501/503): blur,
+drive-metrics, leaves and labels all apply that one rule, because a 503 from drive-metrics in an
+engine-less environment used to open it and the badge then refused for 30 seconds after every feed load. The feed keeps its degraded empty page on the same failure
 (the client's in-flight guard cannot recover from a rejected fetch until reload).
 
 The badge's spatial arm (`isochrone/reachspatial.go` `fromIDsWhere`) also carries the

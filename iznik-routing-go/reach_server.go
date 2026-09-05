@@ -368,7 +368,7 @@ func handleReachLabels() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		e := reachEngine()
 		if e == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
+			return fiber.NewError(fiber.StatusNotImplemented, "reach engine not configured (REACH_DIR)")
 		}
 		lat := c.QueryFloat("lat")
 		lng := c.QueryFloat("lng")
@@ -444,7 +444,7 @@ func handleReachUnion() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		e := reachEngine()
 		if e == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
+			return fiber.NewError(fiber.StatusNotImplemented, "reach engine not configured (REACH_DIR)")
 		}
 		var req struct {
 			Labels string `json:"labels"`
@@ -491,7 +491,7 @@ func handleReachArrival() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		e := reachEngine()
 		if e == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
+			return fiber.NewError(fiber.StatusNotImplemented, "reach engine not configured (REACH_DIR)")
 		}
 		var req reachArrivalReq
 		if err := c.BodyParser(&req); err != nil {
@@ -557,7 +557,7 @@ func handleDriveMetrics() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		e := reachEngine()
 		if e == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
+			return fiber.NewError(fiber.StatusNotImplemented, "reach engine not configured (REACH_DIR)")
 		}
 		var req driveMetricsReq
 		if err := c.BodyParser(&req); err != nil {
@@ -837,7 +837,7 @@ func handleLeaf() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		e := reachEngine()
 		if e == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
+			return fiber.NewError(fiber.StatusNotImplemented, "reach engine not configured (REACH_DIR)")
 		}
 		lat := c.QueryFloat("lat")
 		lng := c.QueryFloat("lng")

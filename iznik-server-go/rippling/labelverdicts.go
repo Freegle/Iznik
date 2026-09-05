@@ -183,9 +183,7 @@ func postLabelEval(body []byte) (parsed labelEvalResponse, retry bool, reason st
 		// read its label store for this request; any 4xx = this request (a
 		// 404 routing server that predates the endpoint, a rejected body) -
 		// neither says the routing server is unhealthy.
-		if resp.StatusCode >= 500 && resp.StatusCode != http.StatusServiceUnavailable {
-			roadblur.MarkRoutingFailure()
-		}
+		roadblur.MarkRoutingFailureFor(resp.StatusCode)
 		return parsed, resp.StatusCode == http.StatusServiceUnavailable,
 			"routing server returned HTTP " + strconv.Itoa(resp.StatusCode)
 	}
