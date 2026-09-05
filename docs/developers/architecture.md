@@ -110,8 +110,9 @@ and per-group membership and roles are the ones you will meet first.
   not find, and their replies were held indefinitely. See section 3b of the algorithm
   reference for the lanes and the table of where each is honoured. The unread badge is the
   one surface where "unanswered" must not fail open, because for it open is a number: it
-  refuses (503, nothing cached) when the reach engine cannot answer, and it honours the
-  member's mark-all-seen watermark like every other unseen count - see section 3c.
+  refuses (503, nothing cached) when a configured reach engine cannot answer, fails open
+  where no engine exists at all (dev, CI), and honours the member's mark-all-seen watermark
+  like every other unseen count - see section 3c.
 
   Agreeing on the answer is not sufficient: how a surface ASKS costs as much as what it
   concludes. The lane rings WERE 37,000-vertex polygons stored as JSON, so the read question

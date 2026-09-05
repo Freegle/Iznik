@@ -406,7 +406,9 @@ seconds, and members watched their badge flick 2, 0, 2 at every poll (153 member
 hours). Now: the routing server's discover fails CLOSED with a 503 and logs the error text;
 apiv2 retries one 503 (`labelEvalAttempts`) before reporting; `LabelVerdictsWithDiscover`
 returns an `ok` flag; and `nearbyCount` answers 503 on `!ok` and caches nothing, so the
-client keeps the number it has. The feed keeps its degraded empty page on the same failure
+client keeps the number it has. A routing server with no reach engine at all (no `REACH_DIR`:
+dev, CI) answers reach-eval 501, which apiv2 treats as answered-with-nothing and fails open on
+- only a configured engine's 503 is retried and then refused. The feed keeps its degraded empty page on the same failure
 (the client's in-flight guard cannot recover from a rejected fetch until reload).
 
 The badge's spatial arm (`isochrone/reachspatial.go` `fromIDsWhere`) also carries the

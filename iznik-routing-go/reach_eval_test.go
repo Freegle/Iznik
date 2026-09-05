@@ -615,3 +615,22 @@ func TestReachEvalCacheCapDoesNotEvictWhatThisRequestLoaded(t *testing.T) {
 		t.Fatalf("the relied-on entry must not be evicted by the request that used it")
 	}
 }
+
+// A routing server with no reach engine answers reach-eval 501, not 503: the
+// callers fail open on 501 (no engine here - dev, CI) and treat 503 as a
+// configured engine's transient read failure (retry, then refuse). Sharing one
+// status would leave every badge in an engine-less environment at 503 forever.
+func TestReachEvalUnconfiguredIs501(t *testing.T) {
+	g := makeTestGrid(nil)
+	prev := reachEngine()
+	setReachLive(nil)
+	defer func() { setReachLive(prev) }()
+	app := newApp(g, "", false)
+	b, _ := json.Marshal(map[string]any{"lat": 51.0, "lng": -2.0, "msgids": []uint64{1}, "discover": true})
+	req := httptest.NewRequest("POST", "/v1/reach-eval", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, 10000)
+	if err != nil || resp.StatusCode != 501 {
+		t.Fatalf("expected 501 when no engine is configured, got err=%v status=%v", err, resp.StatusCode)
+	}
+}

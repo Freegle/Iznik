@@ -200,7 +200,13 @@ func handleReachEval() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		e := reachEngine()
 		if e == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
+			// 501, not 503: this server has no reach engine at all (no REACH_DIR
+			// - dev and CI), which is a permanent shape the callers fail OPEN on.
+			// 503 is reserved for a configured engine that could not read its
+			// label store for THIS request, which they retry and then refuse
+			// - the badge must never confuse "no engine here" with "nothing in
+			// reach", nor sit at 503 forever in an environment without one.
+			return fiber.NewError(fiber.StatusNotImplemented, "reach engine not configured (REACH_DIR)")
 		}
 		var req reachEvalReq
 		if err := c.BodyParser(&req); err != nil {

@@ -744,8 +744,21 @@ func TestNearbyCountRefusesWhenReachEvalUnanswered(t *testing.T) {
 	mu.Unlock()
 	assert.True(t, roadblur.RoutingHealthy(), "a 503 is the server answering; it must not open the shared breaker")
 
-	// And it cached nothing: the next poll asks again and gets the real answer,
-	// with no Invalidate in between.
+	// A routing server with NO reach engine (501: dev, CI, a node before the
+	// artifacts deploy) is an answer, not a failure: the badge fails open on
+	// its grid verdict - here nothing - rather than refusing forever.
+	status, c = ask(http.StatusNotImplemented)
+	assert.Equal(t, 200, status, "no engine at all is an answered question")
+	assert.Equal(t, float64(0), c, "nothing discovered and nothing in the grid counts as zero")
+	mu.Lock()
+	assert.Equal(t, 1, calls, "a 501 is never retried")
+	mu.Unlock()
+	assert.True(t, roadblur.RoutingHealthy(), "a 501 must not open the shared breaker")
+
+	// And a refusal cached nothing: the next poll asks again and gets the real
+	// answer, with no Invalidate in between.
+	status, _ = ask(http.StatusServiceUnavailable, http.StatusServiceUnavailable)
+	assert.Equal(t, 503, status)
 	mu.Lock()
 	script, calls = nil, 0
 	mu.Unlock()

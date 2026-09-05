@@ -167,13 +167,22 @@ func postLabelEval(body []byte) (parsed labelEvalResponse, retry bool, reason st
 		return parsed, false, "routing server unreachable: " + err.Error()
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotImplemented {
+		// The routing server has no reach engine at all (no REACH_DIR: dev,
+		// CI, or a node before the artifacts deploy). That is an ANSWER - no
+		// labels exist here, every caller keeps its grid verdict - not a
+		// failure to retry or refuse on: a badge in an engine-less environment
+		// must not sit at 503 forever. Reported all the same, because in
+		// production an engine-less routing server is an outage.
+		reportEvalUnavailable("routing server has no reach engine (HTTP 501)")
+		return parsed, false, ""
+	}
 	if resp.StatusCode != http.StatusOK {
 		// The breaker is SHARED with blur and drive-time display, so only a
-		// server-side fault may trip it. 503 = the engine or its label store
-		// could not answer this request (or is not configured, before the
-		// artifacts deploy); any 4xx = this request (a 404 routing server
-		// that predates the endpoint, a rejected body) - neither says the
-		// routing server is unhealthy.
+		// server-side fault may trip it. 503 = a configured engine could not
+		// read its label store for this request; any 4xx = this request (a
+		// 404 routing server that predates the endpoint, a rejected body) -
+		// neither says the routing server is unhealthy.
 		if resp.StatusCode >= 500 && resp.StatusCode != http.StatusServiceUnavailable {
 			roadblur.MarkRoutingFailure()
 		}
