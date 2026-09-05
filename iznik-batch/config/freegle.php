@@ -496,6 +496,12 @@ return [
         // unit); beyond it the group stands alone as its own area.
         'area_cluster_miles' => (float) env('COMMUNITY_NEWS_AREA_MILES', 20),
 
+        // How many of an area's places to name in the research prompt, biggest
+        // first. Areas hold a median of 6 and a p90 of 14, so this covers most
+        // of them whole; past that the list crowds out the instructions without
+        // telling the model anything it will use.
+        'places_per_area' => (int) env('COMMUNITY_NEWS_PLACES_PER_AREA', 8),
+
         // How many nuggets the researcher aims to produce per area.
         'items_per_area' => (int) env('COMMUNITY_NEWS_ITEMS_PER_AREA', 6),
 
