@@ -35,11 +35,12 @@ type evalLabelEntry struct {
 // retraction (rejected), a freeze (held) and the advancing tick must all
 // bite within a minute, where the immutable label blob can cache for ten.
 type evalBudgetEntry struct {
-	secs      float32 // current tick budget
-	maxSecs   float32 // the row's maximum budget
-	rejected  []int64 // group ids whose areas are subtracted from this reach
-	held      bool    // frozen (back in moderation): never discoverable
-	originGid int64   // the post's origin group (its area is union-admitted)
+	used      time.Time // last time a request loaded or relied on this entry; the eviction order
+	secs      float32   // current tick budget
+	maxSecs   float32   // the row's maximum budget
+	rejected  []int64   // group ids whose areas are subtracted from this reach
+	held      bool      // frozen (back in moderation): never discoverable
+	originGid int64     // the post's origin group (its area is union-admitted)
 	// Road-native origin-group union threshold (reach_union.go):
 	// unionKnown=false (column NULL) = not computed yet, keep the
 	// transitional origin_area no-verdict behaviour; unionSecs=unionNever =
@@ -65,9 +66,10 @@ const (
 // evalCacheCap bounds the label cache; a var so a test can cross it cheaply.
 var evalCacheCap = 20000
 
-// evalRecentGrace is how long a freshly loaded entry is immune from eviction:
-// the window between a request loading its entries (evalLoad) and reading
-// them (the verdict loop), which resolveAreas' MySQL round trips sit inside.
+// evalRecentGrace is how long an entry a request has just loaded OR relied on
+// is immune from eviction: the window between evalLoad (which touches every
+// entry the request will read, reloaded or not) and the verdict loop, which
+// resolveAreas' MySQL round trips sit inside.
 const evalRecentGrace = 10 * time.Second
 
 // discoverMaxItems bounds how many leaf candidates one discover evaluates. It
@@ -406,7 +408,15 @@ func evalLoad(e *ReachEngine, ids []uint64) error {
 		be, okB := evalBudgets[id]
 		if !okL || now.After(le.expires) || !okB || now.After(be.expires) {
 			missing = append(missing, id)
+			continue
 		}
+		// Still valid, so not reloaded - but this request is about to read it.
+		// Marking it used is what keeps the bound below from evicting it
+		// between here and the verdict loop; without this, a request that
+		// crossed the cap lost the cached part of its own candidate set and
+		// answered a partial discover (34 of 591 posts, 2026-09-05 20:16).
+		be.used = now
+		evalBudgets[id] = be
 	}
 	evalMu.Unlock()
 	if len(missing) == 0 {
@@ -443,6 +453,7 @@ func evalLoad(e *ReachEngine, ids []uint64) error {
 		}
 		evalLabels[r.msgid] = evalLabelEntry{lbl: lbl, eng: lblEng, expires: now.Add(ttl)}
 		evalBudgets[r.msgid] = evalBudgetEntry{
+			used:       now,
 			secs:       currentBudgetSecs(r.tick, r.maxMin, r.schedule),
 			maxSecs:    float32(r.maxMin * 60),
 			rejected:   rejected,
@@ -457,7 +468,7 @@ func evalLoad(e *ReachEngine, ids []uint64) error {
 	for _, id := range missing {
 		if !seen[id] {
 			evalLabels[id] = evalLabelEntry{lbl: nil, expires: now.Add(evalBudgetTTL)}
-			evalBudgets[id] = evalBudgetEntry{expires: now.Add(evalBudgetTTL)}
+			evalBudgets[id] = evalBudgetEntry{used: now, expires: now.Add(evalBudgetTTL)}
 		}
 	}
 	if len(evalLabels) > evalCacheCap {
@@ -467,9 +478,9 @@ func evalLoad(e *ReachEngine, ids []uint64) error {
 }
 
 // evictEvalEntries brings the label cache back under its cap without touching
-// anything loaded in the last evalRecentGrace - the entries some request is
-// between loading and reading. Oldest first, down to half the cap so it runs
-// rarely. Callers must hold evalMu.
+// anything used in the last evalRecentGrace - the entries some request is
+// between loading (or finding still valid) and reading. Least recently used
+// first, down to half the cap so it runs rarely. Callers must hold evalMu.
 //
 // The bound used to be a reset of both maps, applied inside evalLoad right
 // after it had filled them. The request that crossed the cap therefore found
@@ -482,19 +493,16 @@ func evalLoad(e *ReachEngine, ids []uint64) error {
 // posts, the cap was crossed every few minutes under load.
 func evictEvalEntries(now time.Time) {
 	type aged struct {
-		id     uint64
-		loaded time.Time
+		id   uint64
+		used time.Time
 	}
 	cands := make([]aged, 0, len(evalBudgets))
 	for id, be := range evalBudgets {
-		// Every budget entry is stamped now+evalBudgetTTL when written, so its
-		// load time is recoverable without another field.
-		loaded := be.expires.Add(-evalBudgetTTL)
-		if now.Sub(loaded) >= evalRecentGrace {
-			cands = append(cands, aged{id, loaded})
+		if now.Sub(be.used) >= evalRecentGrace {
+			cands = append(cands, aged{id, be.used})
 		}
 	}
-	sort.Slice(cands, func(i, j int) bool { return cands[i].loaded.Before(cands[j].loaded) })
+	sort.Slice(cands, func(i, j int) bool { return cands[i].used.Before(cands[j].used) })
 	excess := len(evalLabels) - evalCacheCap/2
 	for _, c := range cands {
 		if excess <= 0 {

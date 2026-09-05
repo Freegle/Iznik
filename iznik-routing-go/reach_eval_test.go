@@ -563,10 +563,10 @@ func TestReachEvalCacheCapDoesNotEvictWhatThisRequestLoaded(t *testing.T) {
 		t.Fatalf("fresh entries must survive the bound, have %d want 8", n)
 	}
 	// Age everything past the grace, then one more load crosses the cap again
-	// and this time the bound has something it may evict: the oldest, down to
-	// half the cap, never the entry just loaded.
+	// and this time the bound has something it may evict: the least recently
+	// used, down to half the cap, never the entry just loaded.
 	for id, be := range evalBudgets {
-		be.expires = be.expires.Add(-evalRecentGrace)
+		be.used = be.used.Add(-evalRecentGrace)
 		evalBudgets[id] = be
 	}
 	evalMu.Unlock()
@@ -583,11 +583,35 @@ func TestReachEvalCacheCapDoesNotEvictWhatThisRequestLoaded(t *testing.T) {
 		t.Fatalf("the post loaded by the evicting request must keep its verdict, got %v", got)
 	}
 	evalMu.Lock()
-	defer evalMu.Unlock()
 	if _, kept := evalLabels[99]; !kept {
 		t.Fatalf("the entry loaded by the evicting request must not be evicted")
 	}
 	if n := len(evalLabels); n > evalCacheCap {
 		t.Fatalf("aged entries must be evicted back under the cap, have %d", n)
+	}
+	// An entry a request RELIES on but did not reload - cached earlier, still
+	// valid - is just as much part of its answer as one it loaded. Age all of
+	// them again, then ask about 99 while the region offers six new posts:
+	// the cap is crossed, and the aged-but-relied-on 99 must survive it.
+	for id, be := range evalBudgets {
+		be.used = be.used.Add(-evalRecentGrace)
+		evalBudgets[id] = be
+	}
+	evalMu.Unlock()
+	leafCandMu.Lock()
+	leafCandCache = map[int32]leafCandEntry{}
+	leafCandMu.Unlock()
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return []uint64{21, 22, 23, 24, 25, 26}, nil }
+	got, disc = call([]uint64{99})
+	if got[99] != "in" {
+		t.Fatalf("a relied-on cached entry must survive the bound, got %v", got)
+	}
+	if len(disc) != 6 {
+		t.Fatalf("the six fresh region posts must all answer, got %v", disc)
+	}
+	evalMu.Lock()
+	defer evalMu.Unlock()
+	if _, kept := evalLabels[99]; !kept {
+		t.Fatalf("the relied-on entry must not be evicted by the request that used it")
 	}
 }
