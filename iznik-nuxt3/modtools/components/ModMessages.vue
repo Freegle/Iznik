@@ -18,6 +18,7 @@
         :next-after-removed="nextAfterRemoved"
         :summary="summary"
         :search="messageTerm"
+        :oversight="oversight"
         @destroy="destroy"
       />
       <div :ref="'bottom' + message.id" />
@@ -47,6 +48,9 @@ const {
 
 defineProps({
   editreview: { type: Boolean, required: false, default: false },
+  // Set by the checked/trusted oversight pages to expose the per-message Reject (back to Pending)
+  // button. Forwarded to each ModMessage instance.
+  oversight: { type: Boolean, required: false, default: false },
 })
 
 onMounted(async () => {

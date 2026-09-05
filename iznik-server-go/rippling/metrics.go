@@ -357,6 +357,24 @@ func Metrics(c *fiber.Ctx) error {
 	captureFrom := ""
 	groupOpts := []GroupOption{}
 
+	// Earned-reach review-gate await metrics. reviewDelayMetrics is the JSON shape; rdSnap is the
+	// point-in-time snapshot (current rippling_reach state), rdHours the arrival-range-bounded
+	// post-hours delayed. Uses awaiting_review_since (set exactly while the cap pauses a post) and
+	// awaiting_review_seconds (lifetime accumulator). All zero if the columns aren't migrated.
+	type reviewDelayMetrics struct {
+		AwaitingCount      int64   `json:"awaiting_count"`
+		MedianAwaitSeconds float64 `json:"median_await_seconds"` // AVG, not true median - matches HeldReplySummary.MedianH
+		PostHoursDelayed   float64 `json:"post_hours_delayed"`
+		ResumedCount       int64   `json:"resumed_count"`
+	}
+	type reviewDelaySnapshotRaw struct {
+		AwaitingCount      int64   `gorm:"column:awaiting_count"`
+		MedianAwaitSeconds float64 `gorm:"column:median_await_seconds"`
+		ResumedCount       int64   `gorm:"column:resumed_count"`
+	}
+	var rdSnap reviewDelaySnapshotRaw
+	var rdHours float64
+
 	// ---- Run all independent DB queries concurrently --------------------------------
 	// A section's query error is ignored on purpose: a table or column may not exist yet on a DB
 	// that lags the migrations, and the panel simply omits that piece. The one error worth
@@ -527,9 +545,52 @@ func Metrics(c *fiber.Ctx) error {
 			Scan(&groupOpts).Error
 	})
 
+	// Review-gate snapshot: count + average wait of posts currently paused by the cap
+	// (awaiting_review_since set), and posts previously paused but now running (resumed:
+	// seconds accumulated but no longer paused). One small pass over rippling_reach.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Only LIVE rows can be waiting: a post whose reach was stopped (oversight reject)
+		// or frozen for moderation ('held') is not awaiting review, it is finished with —
+		// counting a stamped dead row would leave it in "awaiting review now" for ever, and
+		// its banked seconds would masquerade as a post that resumed. Reject clears the
+		// stamp as it stops the row; this predicate is the backstop for rows stopped by
+		// any other path.
+		//
+		// keep-raw: three conditional aggregates (SUM/AVG over CASE with TIMESTAMPDIFF) in
+		// one pass — GORM's chain builder cannot render a multi-aggregate projection.
+		db.Raw(`SELECT
+			COALESCE(SUM(CASE WHEN awaiting_review_since IS NOT NULL AND status = 'expanding'
+			               THEN 1 ELSE 0 END), 0) AS awaiting_count,
+			COALESCE(AVG(CASE WHEN awaiting_review_since IS NOT NULL AND status = 'expanding'
+			                  THEN TIMESTAMPDIFF(SECOND, awaiting_review_since, NOW()) END), 0) AS median_await_seconds,
+			COALESCE(SUM(CASE WHEN awaiting_review_since IS NULL AND awaiting_review_seconds > 0
+			                   AND status IN ('expanding', 'done')
+			               THEN 1 ELSE 0 END), 0) AS resumed_count
+		FROM rippling_reach`).Scan(&rdSnap)
+	}()
+
+	// Review-gate post-hours delayed: total awaiting_review_seconds for posts whose arrival is in
+	// the selected window, as post-hours. Bounded by arrival (not updated_at) so it's stable on re-query.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		db.Raw(`SELECT COALESCE(SUM(awaiting_review_seconds), 0) / 3600.0
+			FROM rippling_reach
+			WHERE arrival >= ? AND arrival < ?`, start, end).Scan(&rdHours)
+	}()
+
 	wg.Wait()
 
 	// ---- Post-processing (serial; all goroutines done) --------------------------------
+
+	reviewDelay := reviewDelayMetrics{
+		AwaitingCount:      rdSnap.AwaitingCount,
+		MedianAwaitSeconds: rdSnap.MedianAwaitSeconds,
+		PostHoursDelayed:   rdHours,
+		ResumedCount:       rdSnap.ResumedCount,
+	}
 
 	// Compute derived fields for reply-source rows. The headline ripple share counts only the
 	// channels that are DEFINITELY rippling - unknown is not credited (the old replies-minus-home
@@ -561,6 +622,7 @@ func Metrics(c *fiber.Ctx) error {
 		// First day with reply-time-captured evidence ('' until the capture deploy has seen
 		// a reply): the boundary the dashboard marks on the attribution chart.
 		"attribution_capture_from": captureFrom,
+		"review_delay":             reviewDelay,
 		"groups":                   groupOpts,
 		"groupid":                  gid,
 		"start":                    start,

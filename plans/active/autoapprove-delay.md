@@ -1,0 +1,206 @@
+# Auto-approve NULL-status posts after a configurable delay
+
+Branch: `feature/autoapprove-delay` (worktree `autoapprove`)
+
+## Goal
+
+Members whose group posting status is **NULL** ("auto-moderated" tier — never explicitly
+set) currently have their posts stuck in Pending until a mod acts or the 48-hour fallback
+fires. Introduce a faster, safer path: their **content-check-clean** posts auto-approve
+after a configurable delay (default **20 minutes**), giving mods and microvolunteers a
+window to intervene, **unless** danger signals are present, with a configurable
+**quality-check sample** held back for manual review.
+
+Plus ModTools oversight: dedicated **Checked** and **Trusted** views (`/messages/checked`,
+`/messages/trusted`; Go `filter=checked|trusted`), a live **auto-approve countdown** on
+Pending posts with a ≥10-minute on-load review guarantee (`messages_groups.autoapprove_hold_until`
++ a per-group `autoapproveat`), and help boxes explaining each queue. (An earlier experiment with
+an Approved-page `autoapproved/recentjoin/outsidecga` dropdown was reverted — it is NOT in the
+shipped design.)
+
+## Production sizing (live, last 30 days)
+
+- 66,074 posts; 11.3% from members who joined that group in the last 30 days.
+- Of recent-joiner posts: **NULL 76.5%**, DEFAULT 22.9%, MODERATED 0.3%, UNMODERATED 0.3%.
+- The 20-minute path carries ~5,700 posts/30d (~190/day) — today they wait for a mod or 48h.
+
+## Key architecture (from code exploration)
+
+- **All posts already land in Pending.** Go `handleJoinAndPost` always inserts Pending;
+  PHP `JoinAndPost`/email (MailRouter) route NULL → Pending. **No routing change needed.**
+- `messages:contentcheck` (every minute, `ContentCheckService::processUnprocessed`)
+  runs spam/worry/PII/language checks **once** per fresh pending row:
+  - clean + user not-moderated (DEFAULT/UNMODERATED) + group not moderated → promote now.
+  - clean + user **NULL**/MODERATED **or** group moderated → kept Pending, sets
+    `contentcheck_checked_at=now`, `contentcheck_reasons=NULL`.
+  - flagged (`action=flag`) → kept Pending with `contentcheck_reasons` JSON.
+  - blocked (`action=block`) → collection Spam.
+- `messages:auto-approve` (hourly, `AutoApproveService`, 48h) is the existing safety net.
+- Approve = `UPDATE messages_groups SET collection='Approved', approvedby=NULL,
+  approvedat=NOW(), arrival=NOW()` + log `Autoapproved` + spatial index + freebie alerts
+  for OFFERs. Digest cron mails it (reads collection='Approved', arrival>lastsent).
+
+## Design — new batch service `AutoApproveCleanService`
+
+`messages:auto-approve-clean`, scheduled **every minute** (`withoutOverlapping`,
+`runInBackground`). Picks up Pending rows that:
+
+1. poster's `memberships.ourPostingStatus IS NULL` — the auto-moderated tier (the
+   "reinterpret NULL as group settings" change; explicit MODERATED stays moderated,
+   DEFAULT/UNMODERATED already approved immediately by contentcheck).
+2. `contentcheck_checked_at IS NOT NULL AND contentcheck_reasons IS NULL` — content
+   check ran and was **clean**. (This is how "all posts still go through spam checks;
+   suspect → Pending" is honoured: suspect rows have reasons and are excluded.)
+3. `mg.arrival <= NOW() - INTERVAL {delay} MINUTE`, where `{delay}` is the per-group
+   `settings.autoapprove.delay_minutes` (JSON_EXTRACT) falling back to
+   `config('freegle.autoapprove.delay_minutes', 20)`.
+4. `mg.heldby IS NULL`, `m.heldby IS NULL`, `mg.spamreason IS NULL`, `m.spamreason IS NULL`,
+   `mg.deleted=0`, `m.deleted IS NULL`, `u.deleted IS NULL`.
+5. Group is **not moderated**: `settings.moderated` falsy AND `rules.fullymoderated` falsy
+   AND `overridemoderation != 'ModerateAll'` AND publish AND not closed AND not
+   `autofunctionoverride` (mirrors AutoApproveService gating, minus the 48h membership age).
+6. **No danger signals** (per msgid/groupid/fromuser) — see below.
+7. **Not** in the quality-check sample (deterministic per msgid; percent from
+   `settings.autoapprove.quality_check_percent` ?? `config(...quality_check_percent, 0)`).
+
+Then approve (same side effects as `AutoApproveService::approveOnGroup`) + log Autoapproved.
+
+### Danger signals (veto → leave Pending for a mod)
+
+- **Microvolunteering reject**: `microactions` where `msgid=`, `actiontype='CheckMessage'`,
+  `result='Reject'` → count ≥ 1.
+- **User notes**: `users_comments` where `userid=fromuser` → any row.
+- **Recent negative mod action**: `logs` where `user=fromuser` AND `byuser<>user` AND
+  `timestamp >= NOW()-{danger_log_days}` AND
+  ((type='Message' AND subtype IN ('Rejected','Deleted','Replied')) OR
+   (type='User' AND subtype IN ('Mailed','Rejected','Deleted','Suspect','ClassifiedSpam'))).
+- **Known spammer**: `spam_users` where `userid=fromuser` AND collection IN ('Spammer','PendingAdd').
+- **Membership review pending**: `memberships.reviewrequestedat IS NOT NULL` AND
+  (`reviewedat IS NULL` OR `reviewedat < reviewrequestedat`).
+
+(Worry-words / concern keywords already excluded via `contentcheck_reasons IS NULL`.)
+
+### Quality-check sample
+
+`abs(crc32((string)$msgid)) % 100 < percent` → **held** (skip; mod reviews, or 48h fallback
+catches it). Deterministic so a message never oscillates.
+
+## Frontend / Go API oversight (shipped design)
+
+- Go `ListMessagesMT` (`/api/modtools/messages`): `filter=checked|trusted` over the Approved
+  collection (checked = auto-approved from NULL-status members; trusted = DEFAULT/UNMODERATED),
+  restricted to unchecked posts within `MESSAGE_CHECK_WINDOW_DAYS`. Also bumps
+  `autoapprove_hold_until` (extend-only, ≥NOW()+10m) for fetched Pending rows.
+- New pages `/messages/checked/[[id]].vue` and `/messages/trusted/[[id]].vue` (summary view,
+  "Mark all as checked"). Approved page unchanged apart from a help box.
+- `ModMessage.vue`: live countdown badge from per-group `autoapproveat` (Pending only).
+- `ModHelpPending/Checked/Trusted/Approved.vue`: dismissible help boxes (useHelpBox).
+- `ModSettingsGroup.vue`: two `<ModGroupSetting>` controls (delay minutes, quality %).
+
+## Config / settings
+
+- `config/freegle.php` → `autoapprove` block (delay_minutes=20, quality_check_percent=0,
+  danger_log_days=90).
+- `iznik-server/include/group/Group.php` `defaultSettings['autoapprove']` gains
+  `delay_minutes`/`quality_check_percent` (for the modtools UI + PHP parity).
+
+## Gotchas (thought through)
+
+1. **Re-evaluation**: contentcheck only touches each row once (`contentcheck_checked_at IS
+   NULL`). This service must query already-checked rows → keys off `checked_at NOT NULL AND
+   reasons NULL`, NOT `checked_at NULL`.
+2. **Per-group delay** must be in the SQL (JSON_EXTRACT COALESCE default) so a group's
+   shorter/longer override is honoured; a single global threshold would be wrong.
+3. **Moderated groups**: contentcheck keeps clean posts Pending with reasons=NULL even on
+   moderated groups, so this service must explicitly exclude moderated/Big-Switch groups.
+4. **Races**: query filters `collection='Pending'` and the UPDATE uses `collection<>'Approved'`
+   so a mod approve/reject in the window can't double-fire; held rows excluded.
+5. **48h service overlap**: both set approvedby=NULL and guard on collection; harmless.
+6. **Deleted user/message**: filtered out (no Autoapproved log on invisible rows).
+7. **No membership-age gate** (unlike 48h service): the brief wants NULL members to post
+   after the delay regardless of join age; danger signals + content checks + QA sample
+   carry the risk. New-member visibility is also covered by the recent-join filter.
+8. **arrival reset on approve**: digest keys off arrival>lastsent; per-(msgid,groupid)
+   update only resets the row being approved. Correct for multi-group posts.
+9. **No schema migration / no routing change** → minimal blast radius.
+
+## Status
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| 1 | Design doc | ✅ | this file |
+| 2 | AutoApproveCleanService + tests (TDD) | ✅ | 25 unit tests; 29/29 green after held-FK fix |
+| 3 | AutoApproveCleanCommand + test | ✅ | 4 command tests |
+| 4 | Schedule entry (console.php) | ✅ | everyMinute, withoutOverlapping |
+| 5 | config/freegle.php defaults | ✅ | autoapprove block (no Group.php change — absent=site default) |
+| 6 | Go ListMessagesMT filter + tests | ✅ | filter=checked\|trusted (autoapproved/recentjoin/outsidecga experiment reverted) |
+| 7 | Checked/Trusted pages + countdown + help boxes | ✅ | /messages/checked,/trusted; autoapproveat countdown; ModHelp* boxes |
+| 8 | ModSettingsGroup.vue settings controls | ✅ | delay_minutes + quality_check_percent |
+| 9 | Run all suites via worktree status API | ✅ | full Laravel 3962/3962 ✓; Go 3004/3004 ✓; Vitest modtools 4475/4475 ✓ |
+| 10 | Push + PR (Freegle/Iznik) | ✅ | PR #639 — https://github.com/Freegle/Iznik/pull/639 (master merged 2026-09-05, all suites green locally; awaiting CI; never merge) |
+
+## 2026-08-08 adversarial re-review vs master (worktree autoapprove-review)
+
+Master moved 35 commits past the last rebase, including firstreply scouts/maxreach
+(dc88ef714, 993a85b7b, 30d8ae929) which ride rippling_reach and know nothing about the
+earned-reach gate. Findings fixed on the branch (master merged in first, cleanly):
+
+1. **Cap did not stop member-facing spread.** advanceDue persisted the enlarged polygon
+   (what Nearby browse, search and reach mails read) BEFORE rippleIntoNewGroups ran the
+   cap, which only skipped community placements; tick marched to 'done', after which a
+   capped post could never resume, and awaiting_review_since was never cleared on the
+   mod-look path. Fix: gate evaluated before the polygon write; a capped tick is not
+   consumed (polygon/tick/status frozen, next_expansion_at pushed ~5min); stamp banked
+   whenever the gate passes or stops applying.
+2. **Scouts bypassed the gate** (master-side feature, post-dated the gate design):
+   silentPosts/filterEligible are status-agnostic, so scouts mailed hand-picked people
+   beyond the frozen edge and a scout reply floored min_tick. Fix: silentPosts skips
+   unreviewed posts while RIPPLE_EARNED_REACH_ENABLED (mod look resumes scouting).
+   The 1h hold was already scout-safe by construction (no reach row = no eligible band).
+3. **Countdown lies (Go vs cron asymmetries)**: autoapproveat.go missed the cron's
+   spamreason (mg+m) and rippled_in=0 clean-path filters, and hardcoded the 90-day
+   danger-log window the cron reads from FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS.
+4. **Await metrics counted dead rows**: oversight reject left awaiting_review_since set
+   on the stopped row; the SysAdmin snapshot counted any stamped row as "awaiting" and
+   any banked-seconds row as "resumed". Fix: reject banks+clears in the same statement;
+   snapshot counts awaiting only on status='expanding', resumed only on expanding/done.
+5. **Env wiring**: the five feature flags reached apiv2/apiv2-live but not the batch
+   container (dev) nor .env.background.example (prod checklist) - the "countdown live,
+   cron dark" split. All wired + documented; danger-log-days added to both apiv2 envs.
+
+Docs consolidated in the same round: AUTO-APPROVE-FOR-MODERATORS.md (stale link, root
+location) and the superseded weight-2xN spec deleted; docs/moderators/post-moderation.md
+is the single reference; rippling-out mod/member guides, 02-moderating-posts,
+01-getting-started and the rippling-algorithm reference updated to match.
+
+## 2026-09-05 master merge + adversarial re-review (worktree autoapprove-review)
+
+Master moved 921 commits past the 2026-08-12 merge-base: the reach engine now stores
+cell grids (`polygon_cells`, `rippling_reach.polygon` dropped), advanceDue plans/fans-out/
+applies in passes, a Back-to-Pending freeze (`status='held'`), rippled-in copies moderated
+by the receiving group (own keywords/worry words hold the copy Pending; `rejected_groups`
+and PROHIBITED guards in the target query), and `RIPPLE_HIDE_PENDING`. Merge resolved:
+gate re-applied before the grid write; `rippleTargetsFor` mirrors master's target query;
+gate tests ported to `polygon_cells` with the advance rasterising on the real spatial server.
+
+Discourse context (Neil, 10088 #45-47, 2026-09-04): the Board's Ops & Tech WP is considering
+the 48h->24h cut "as part of the changes to post moderation"; a per-group auto-approve delay
+"will be implemented as part of the changes to post moderation" (= `settings.autoapprove.
+delay_minutes`); holds survive post-moderation (= `autoapprove_hold_until` + Pending queue).
+
+Findings fixed:
+1. **The clean path never fired on real data.** Since 9a11c3e79 (2026-07-31, before the
+   last merge) the content check writes a `MemberModerated` "why is this waiting" flag onto
+   every NULL-status member's clean post, so `contentcheck_reasons IS NULL` matched none of
+   them and the countdown always showed 48h. The PR's tests seeded reasons=NULL directly.
+   Fix: `ContentCheckService::HOLD_EXPLANATION_CHECKS` (MemberModerated, GroupModerated -
+   NOT NoLocation) + `reasonsAreContentClean()` + `contentCleanSql()`; cron and Go countdown
+   use it. Tests: real content check then clean approve (e2e), predicate cases PHP + SQL
+   agree, Go countdown with the explanation.
+2. **Countdown on a rippled-in copy**: showed the 48h fallback on a copy the receiving
+   group's own rules hold (which never auto-approves). Now: no countdown when held by
+   ConcernKeyword/PerGroupWorryWord; otherwise arrival + RIPPLE_RIPPLED_IN_PENDING_HOURS.
+
+Noted, not changed (product call): oversight Reject sets the reach `stopped` and the
+orphaned copies are retracted; master's Back-to-Pending sets `held` and leaves every copy
+Pending for its own community to decide (ac1278f7f). Two pull-back semantics coexist.

@@ -438,6 +438,39 @@ class MatchMailServiceTest extends TestCase
         $this->assertArrayNotHasKey((int) $message->fromuser, $this->mailedFor((int) $message->id));
     }
 
+    public function test_earned_reach_gate_defers_scouting_until_a_mod_look(): void
+    {
+        // Scouts are hand-picked invitations to people BEYOND the current reach
+        // edge, so for a post no human has looked at they would bypass the
+        // earned-reach gate (spread earned by clean exposure - see
+        // Ripple\ExpandService), and a scout reply would then pull the reach out
+        // to meet them. While the gate is on, a silent unreviewed post waits for
+        // a moderator look before it is scouted.
+        config(['freegle.ripple.earned_reach_enabled' => true]);
+        $message = $this->seedSilentOffer(); // approvedby NULL = no human look
+        $wanter = $this->memberAt(51.9, 0.8);
+        $this->wantedAt($wanter, 51.9, 0.8);
+
+        $this->service()->run();
+
+        $this->assertSame([], $this->mailedFor((int) $message->id),
+            'no scouts for an unreviewed post while the earned-reach gate is on');
+    }
+
+    public function test_earned_reach_gate_scouts_normally_after_a_mod_look(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true]);
+        $message = $this->seedSilentOffer();
+        DB::table('messages_groups')->where('msgid', $message->id)->update(['checkedat' => now()]);
+        $wanter = $this->memberAt(51.9, 0.8);
+        $this->wantedAt($wanter, 51.9, 0.8);
+
+        $this->service()->run();
+
+        $this->assertArrayHasKey($wanter->id, $this->mailedFor((int) $message->id),
+            'a mod look clears the gate and scouting resumes');
+    }
+
     public function test_does_nothing_at_all_when_switched_off(): void
     {
         config(['freegle.firstreply.matchmail.enabled' => false]);

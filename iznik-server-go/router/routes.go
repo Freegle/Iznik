@@ -57,6 +57,7 @@ import (
 	"github.com/freegle/iznik-server-go/membership"
 	"github.com/freegle/iznik-server-go/merge"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/moderation"
 
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
@@ -910,6 +911,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Tags message
 		rg.Get("/messages", deprecation.Marker("GET /messages", "2026-08-01"), message.ListMessages)
 		rg.Get("/modtools/messages", message.ListMessagesMT)
+		rg.Post("/modtools/messages/markchecked", message.MarkChecked)
 
 		// Message Sitemap
 		// @Router /message/sitemap [get]
@@ -1508,6 +1510,9 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 401 {object} fiber.Error "Unauthorized"
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/email/stats", emailtracking.Stats)
+
+		// Moderation analytics for the auto-approve approach (Admin/Support only).
+		rg.Get("/modtools/moderationstats", moderation.Stats)
 
 		// Deferral suppressions (authenticated, admin only)
 		// @Router /modtools/email/deferrals [get]

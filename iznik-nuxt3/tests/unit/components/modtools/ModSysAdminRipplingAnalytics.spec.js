@@ -516,6 +516,62 @@ describe('ModSysAdminRipplingAnalytics', () => {
     wrapper.unmount()
   })
 
+  describe('review_delay section (earned-reach gate)', () => {
+    it('renders the review gate heading', async () => {
+      mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+      mockFetchMetrics.mockResolvedValueOnce({})
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.html()).toContain('Review gate')
+      wrapper.unmount()
+    })
+
+    it('shows the empty state when review_delay is absent', async () => {
+      mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+      mockFetchMetrics.mockResolvedValueOnce({})
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.html()).toContain('No review gate data yet')
+      wrapper.unmount()
+    })
+
+    it('renders counts and formatted wait from review_delay', async () => {
+      mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+      mockFetchMetrics.mockResolvedValueOnce({
+        review_delay: {
+          awaiting_count: 3,
+          median_await_seconds: 2700,
+          post_hours_delayed: 8.5,
+          resumed_count: 12,
+        },
+      })
+      const wrapper = mountComponent()
+      await flushPromises()
+      const html = wrapper.html()
+      expect(html).toContain('45 min') // 2700s formatted
+      expect(html).toContain('8.5') // post_hours_delayed.toFixed(1)
+      expect(html).toContain('12') // resumed_count
+      wrapper.unmount()
+    })
+
+    it('exposes reviewDelay via vm', async () => {
+      mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+      const payload = {
+        review_delay: {
+          awaiting_count: 2,
+          median_await_seconds: 0,
+          post_hours_delayed: 1.0,
+          resumed_count: 5,
+        },
+      }
+      mockFetchMetrics.mockResolvedValueOnce(payload)
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.vm.reviewDelay).toEqual(payload.review_delay)
+      wrapper.unmount()
+    })
+  })
+
   it('draws the reliability bullseye: a ring per drive-time band, empty rings greyed', async () => {
     mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
     const wrapper = mountComponent()

@@ -877,6 +877,73 @@ class ContentCheckService
     }
 
     /**
+     * The checks holdReasons() writes to say WHY a clean post is waiting: the member's
+     * posting status, or the group's moderate-everything setting. They describe the row's
+     * situation, not its content, so a post carrying only these is content-clean - which is
+     * what the clean auto-approve path (AutoApproveCleanService) asks. Every NULL-status
+     * member's clean post carries MemberModerated, so a "reasons IS NULL" test would never
+     * match one. NoLocation is deliberately NOT here: a post nobody can place is not
+     * publishable, and the clean path seeds the spatial index from the post's location.
+     *
+     * The Go countdown (iznik-server-go/message/autoapproveat.go) carries the same list.
+     */
+    public const HOLD_EXPLANATION_CHECKS = [self::CHECK_MEMBER_MODERATED, self::CHECK_GROUP_MODERATED];
+
+    /**
+     * Whether a stored contentcheck_reasons blob records NO content finding: NULL, or only
+     * the hold explanations above. Mirrors contentCleanSql() exactly - elements without a
+     * `check` are ignored (the SQL wildcard skips them) and a blob that yields no checks at
+     * all is not clean (the SQL extract is NULL there).
+     *
+     * @param string|null $reasonsJson the messages_groups.contentcheck_reasons value
+     */
+    public static function reasonsAreContentClean(?string $reasonsJson): bool
+    {
+        if ($reasonsJson === null) {
+            return true;
+        }
+        $reasons = json_decode($reasonsJson, true);
+        if (!is_array($reasons)) {
+            return false;
+        }
+        $checks = [];
+        foreach ($reasons as $r) {
+            if (is_array($r) && array_key_exists('check', $r)) {
+                $checks[] = $r['check'];
+            }
+        }
+        if ($checks === []) {
+            return false;
+        }
+        foreach ($checks as $check) {
+            if (!in_array($check, self::HOLD_EXPLANATION_CHECKS, true)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * The SQL form of reasonsAreContentClean() for a candidate query, over $column (e.g.
+     * 'mg.contentcheck_reasons'). JSON_EXTRACT with the wildcard path yields the array of
+     * every element's `check`; JSON_CONTAINS(target, candidate) is true when every element
+     * of the candidate array is in the target - so the row passes when every check it
+     * carries is a hold explanation. A blob with no checks extracts to NULL and fails, as
+     * does one that is not valid JSON (guarded, so it cannot error the whole query).
+     */
+    public static function contentCleanSql(string $column): string
+    {
+        $allowed = implode(', ', array_map(
+            static fn (string $c): string => "'" . $c . "'",
+            self::HOLD_EXPLANATION_CHECKS
+        ));
+
+        return "({$column} IS NULL OR (JSON_VALID({$column})"
+            . " AND JSON_CONTAINS(JSON_ARRAY({$allowed}), JSON_EXTRACT({$column}, '$[*].check'))))";
+    }
+
+    /**
      * Whether a stored contentcheck_reasons blob records a hold by the receiving group's OWN
      * rules - the reasons checkGroupOwnRules writes when a post ripples in.
      *

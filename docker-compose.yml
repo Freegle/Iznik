@@ -759,6 +759,14 @@ services:
       # render — matching how V1 derives its base from TUS_UPLOADER.
       - UPLOADS=http://tusd:8080/tus/
       - PARTNER_KEY_FILE=/run/secrets/PARTNER_KEY
+      # Auto-approve rollout gate: the Go Pending countdown (autoapproveat) must agree
+      # with the Laravel clean-path cron about whether the 20-minute path is on, or mods
+      # would see countdowns that never fire. Mirror whatever the batch env sets.
+      - FREEGLE_AUTOAPPROVE_ENABLED=${FREEGLE_AUTOAPPROVE_ENABLED:-}
+      - FREEGLE_AUTOAPPROVE_TRIAL_GROUPS=${FREEGLE_AUTOAPPROVE_TRIAL_GROUPS:-}
+      - FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS=${FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS:-}
+      # Earned-reach review gate (reviewer-pool bounding in microvolunteering.go).
+      - RIPPLE_EARNED_REACH_ENABLED=${RIPPLE_EARNED_REACH_ENABLED:-}
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - LOKI_JSON_PATH=/var/log/freegle
@@ -971,6 +979,14 @@ services:
       - RIPPLE_ANALYTICS_SAMPLE=${RIPPLE_ANALYTICS_SAMPLE:-250}
       - RIPPLE_ANALYTICS_CONCURRENCY=${RIPPLE_ANALYTICS_CONCURRENCY:-16}
       - PARTNER_KEY_FILE=/run/secrets/PARTNER_KEY
+      # Auto-approve rollout gate: the Go Pending countdown (autoapproveat) must agree
+      # with the Laravel clean-path cron about whether the 20-minute path is on, or mods
+      # would see countdowns that never fire. Mirror whatever the batch env sets.
+      - FREEGLE_AUTOAPPROVE_ENABLED=${FREEGLE_AUTOAPPROVE_ENABLED:-}
+      - FREEGLE_AUTOAPPROVE_TRIAL_GROUPS=${FREEGLE_AUTOAPPROVE_TRIAL_GROUPS:-}
+      - FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS=${FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS:-}
+      # Earned-reach review gate (reviewer-pool bounding in microvolunteering.go).
+      - RIPPLE_EARNED_REACH_ENABLED=${RIPPLE_EARNED_REACH_ENABLED:-}
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - LOKI_JSON_PATH=/var/log/freegle
@@ -1698,6 +1714,16 @@ services:
       - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/avatar
       - SPATIAL_KNN_URL=http://spatial-knn:8194
       - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter,Reengage,CommunityNews
+      # Post-moderation + earned-reach flags: the Laravel cron is the component that
+      # actually acts on these, so they MUST reach this container from the same root
+      # .env the Go countdown (apiv2/apiv2-live) reads - otherwise the countdown can
+      # claim the clean path is live while the cron never runs it.
+      - FREEGLE_AUTOAPPROVE_ENABLED=${FREEGLE_AUTOAPPROVE_ENABLED:-}
+      - FREEGLE_AUTOAPPROVE_TRIAL_GROUPS=${FREEGLE_AUTOAPPROVE_TRIAL_GROUPS:-}
+      - FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS=${FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS:-}
+      - RIPPLE_EARNED_REACH_ENABLED=${RIPPLE_EARNED_REACH_ENABLED:-}
+      - RIPPLE_AUTOAPPROVE_HOLD_SECONDS=${RIPPLE_AUTOAPPROVE_HOLD_SECONDS:-}
+      - RIPPLE_CLEAN_VIEWS_PER_GROUP=${RIPPLE_CLEAN_VIEWS_PER_GROUP:-}
       # CI=true skips supervisor startup to prevent Laravel bootstrap race conditions.
       # Multiple supervisor workers bootstrapping Laravel simultaneously can corrupt services.php.
       - CI=${CI:-false}

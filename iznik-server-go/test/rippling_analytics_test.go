@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/stretchr/testify/assert"
 )
@@ -101,8 +104,8 @@ func TestRipplingAnalyticsEndpoint(t *testing.T) {
 	adminID := CreateTestUser(t, prefix+"_admin", "Support")
 	_, token := CreateTestSession(t, adminID)
 
-	url := fmt.Sprintf("/api/rippling/analytics?jwt=%s&stratum=rural", token)
-	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil), 30000)
+	endpoint := fmt.Sprintf("/api/rippling/analytics?jwt=%s&stratum=rural", token)
+	resp, err := getApp().Test(httptest.NewRequest("GET", endpoint, nil), 30000)
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode, "analytics route must be registered and answer")
 
@@ -177,4 +180,66 @@ func TestRipplingAnalyticsDriveTimeEndpoint(t *testing.T) {
 	bullseye, ok := done["bullseye"].([]interface{})
 	assert.True(t, ok, "aggregate response carries a bullseye array")
 	assert.Len(t, bullseye, 6, "bullseye always has the 6 fixed drive-time rings")
+}
+
+// Anchor regression (Discourse #9808): a RIPPLED post's per-day trend point must key on its
+// FIRST-RIPPLE date (rippling_reach.created_at, set when reach computation began), not on
+// messages.arrival (frozen at first-ever post) nor its home appearance. This used to be guarded
+// against the now-deleted /rippling/metrics "reply_rate_36h" KPI (see
+// TestRipplingMetricsOmitsHeavyScanKPIs); the equivalent day-anchored series lives in
+// /rippling/analytics section2.kpis (trendSeries), which groups by rippling_reach.created_at.
+func TestRipplingAnalyticsTrendAnchorsOnRippleReachCreatedDate(t *testing.T) {
+	prefix := uniquePrefix("rippleanchor")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+	db := database.DBConn
+
+	poster := CreateTestUser(t, prefix, "Poster")
+	group := CreateTestGroup(t, prefix)
+	other := CreateTestGroup(t, prefix+"b")
+	mid := CreateTestMessage(t, poster, group, "OFFER: anchor "+prefix, 51.5, -0.1)
+
+	// Three distinct dates: stale original post (30d ago), home appearance (3d ago), and the
+	// FIRST ripple / reach computation (2d ago). The trend point must be dated on the ripple date.
+	db.Exec("UPDATE messages SET arrival = NOW() - INTERVAL 30 DAY WHERE id = ?", mid)
+	db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 3 DAY WHERE msgid = ? AND rippled_in = 0", mid)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
+		"VALUES (?, ?, NOW() - INTERVAL 2 DAY, 'Approved', 0, 1)", mid, other)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", mid, other)
+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, outer_bound, total_freeglers, created_at, updated_at) "+
+		"VALUES (?, 51.5, -0.1, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)), "+
+		"50, NOW() - INTERVAL 2 DAY, NOW() - INTERVAL 2 DAY)", mid)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
+
+	start := time.Now().AddDate(0, 0, -5).Format("2006-01-02 15:04:05")
+	end := time.Now().AddDate(0, 0, 1).Format("2006-01-02 15:04:05")
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/analytics?jwt=%s&start=%s&end=%s",
+		token, url.QueryEscape(start), url.QueryEscape(end)), nil)
+	resp, err := getApp().Test(req, 30000)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	s2, ok := result["section2"].(map[string]interface{})
+	assert.True(t, ok, "section2 trend block present")
+	rows, ok := s2["kpis"].([]interface{})
+	assert.True(t, ok, "section2.kpis present")
+
+	// The post's home appearance (3d ago) and stale original arrival (30d ago) both differ from
+	// its first-ripple date (2d ago); the trend point must land on the reach's created_at date.
+	rippleDay := time.Now().AddDate(0, 0, -2).Format("2006-01-02")
+	foundOnRippleDay := false
+	for _, r := range rows {
+		m, _ := r.(map[string]interface{})
+		if m["day"] == rippleDay {
+			foundOnRippleDay = true
+			assert.GreaterOrEqual(t, m["posts"].(float64), float64(1),
+				"rippled post counted on its first-ripple day")
+		}
+	}
+	assert.True(t, foundOnRippleDay,
+		"rippled post appears on its first-ripple day, proving the trend anchors on rippling_reach.created_at")
 }

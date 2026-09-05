@@ -693,6 +693,21 @@ return [
         // rippling) and per tick (a post that becomes saturated stops fanning out). 0 disables.
         // 5 = the figure from the Discourse rippling thread.
         'reply_saturation_stop' => (int) env('RIPPLE_REPLY_SATURATION_STOP', 5),
+        // EARNED-REACH GATE (auto-approve x rippling). Ships DARK: when false, ExpandService
+        // behaves exactly as before - no 1h hold, no exposure cap, no await-review
+        // instrumentation. Go-live is a deliberate env flip, exactly like RIPPLE_ENABLED.
+        'earned_reach_enabled' => (bool) env('RIPPLE_EARNED_REACH_ENABLED', false),
+        // When the gate is on: minimum age (seconds) an auto-published, unreviewed post must
+        // reach before it may start rippling. A post with approvedby or checkedat set (a mod
+        // approved or checked it) skips the hold. Default 3600 (1h); 0 disables just the hold.
+        'autoapprove_hold_seconds' => (int) env('RIPPLE_AUTOAPPROVE_HOLD_SECONDS', 3600),
+        // When the gate is on: distinct clean VIEWS required per community an auto-published
+        // post ripples into. Reach is earned by exposure without complaint - members seeing
+        // the post and nobody flagging it - not by active reviewer sign-off (a per-community
+        // reviewer requirement could never keep up with post volume). Any flag (member report
+        // to the mods referencing the post, or a microvolunteer Reject) pauses further spread
+        // until a moderator look (approvedby/checkedat) clears it. 0 disables just the cap.
+        'clean_views_per_group' => (int) env('RIPPLE_CLEAN_VIEWS_PER_GROUP', 5),
         // Hours a rippled-in (messages_groups.rippled_in=1) post, already Approved on its
         // origin group, waits before it is approved onto the rippled-in group (it was already
         // vetted on origin). Default 0 = approve AT ripple-in time, so it never even flickers
@@ -1191,6 +1206,39 @@ return [
     'freebie_alerts' => [
         'api_url' => env('FREEBIE_ALERTS_API_URL', 'https://api.freebiealerts.app'),
         'api_key' => env('FREEBIE_ALERTS_KEY', ''),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Auto-approve (delayed) for NULL-status ("auto-moderated") members
+    |--------------------------------------------------------------------------
+    |
+    | Site-wide defaults for messages:auto-approve-clean. A group may override
+    | delay_minutes / quality_check_percent via settings.autoapprove.* (an
+    | absent or 0 delay override falls back to the site default below).
+    |
+    | - enabled:                master switch for the clean-path auto-approve.
+    |                           DEFAULT OFF: merging/deploying this code changes
+    |                           nothing until the switch is deliberately flipped.
+    | - trial_group_ids:        comma-separated group ids for a phased trial while
+    |                           the master switch is off (mirrors the rippling
+    |                           group experiment: RIPPLE_WITHIN_GROUPS with
+    |                           RIPPLE_ENABLED false). Ignored when enabled=true.
+    | - delay_minutes:          how long a content-check-clean post stays in
+    |                           Pending before auto-approval, giving mods and
+    |                           microvolunteers a chance to intervene.
+    | - quality_check_percent:  percentage of otherwise-eligible posts held back
+    |                           in Pending for a manual mod quality check (0 = none).
+    | - danger_log_days:        how far back to look for negative moderation log
+    |                           entries that veto auto-approval.
+    |
+    */
+    'autoapprove' => [
+        'enabled'               => (bool) env('FREEGLE_AUTOAPPROVE_ENABLED', false),
+        'trial_group_ids'       => env('FREEGLE_AUTOAPPROVE_TRIAL_GROUPS', ''),
+        'delay_minutes'         => (int) env('FREEGLE_AUTOAPPROVE_DELAY_MINUTES', 20),
+        'quality_check_percent' => (int) env('FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT', 0),
+        'danger_log_days'       => (int) env('FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS', 90),
     ],
 
     'email_health' => [

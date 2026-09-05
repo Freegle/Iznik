@@ -292,6 +292,18 @@ reach polygons is cheap. (The withdrawn propensity signal could not: "every freq
 Britain" is not a set worth building in order to discard 99.9% of it, so it started from members
 of the post's own communities instead.)
 
+**Unreviewed posts are not sent match mail while the earned-reach gate is on.** Reaching past
+the current edge is exactly what that gate exists to prevent for a post no human has looked at
+(see
+[rippling-algorithm.md](rippling-algorithm.md#the-earned-reach-gate-ripple_earned_reach_enabled-dark-by-default)),
+and a recipient who replies then raises `min_tick` and pulls the reach out - so mailing someone
+about an auto-published post would drive the ripple the gate is holding back. `silentPosts()`
+therefore requires a mod look (`approvedby` or `checkedat` on any of the post's rows,
+the gate's own test) whenever `ripple.earned_reach_enabled` is set. With the gate off -
+the default - the clause is omitted and selection is unchanged. The 1h pre-ripple hold
+needs no clause: a post with no `rippling_reach` row has no band to be outside of, so
+`filterEligible`'s inner join yields nobody.
+
 ### A matched member who replies pulls the reach out to them
 
 They were picked precisely because the ripple had not got to them. So a reply is evidence the

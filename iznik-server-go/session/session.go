@@ -1132,8 +1132,21 @@ func GetSession(c *fiber.Ctx) error {
 		var emailin, emailout int64
 		var maildeferrals int64
 		var helperEscalated int64
+		// Informational (blue) counts of UNCHECKED live posts for the oversight
+		// views: checked = auto-approved posts from auto-moderated (NULL) members;
+		// trusted = posts that went live from trusted (group-settings) members.
+		// A post leaves the count when a mod marks it checked (checkedat set) or
+		// once it is older than the window — older posts simply drop off the queue
+		// (no checkedat is written), so the queue can't pile up indefinitely.
+		var checked, trusted int64
 
 		var wg2 sync.WaitGroup
+
+		// Oversight queues count only unchecked posts within the check window.
+		checkedWindowSQL := fmt.Sprintf(
+			"AND mg.checkedat IS NULL AND mg.arrival >= NOW() - INTERVAL %d DAY",
+			utils.MESSAGE_CHECK_WINDOW_DAYS,
+		)
 
 		// --- Pending messages: active groups split by held, inactive all → pendingother ---
 		// Only count messages where contentcheck_checked_at IS NOT NULL: the content
@@ -1181,6 +1194,39 @@ func GetSession(c *fiber.Ctx) error {
 					Count(&inact)
 				pendingother += inact
 			}
+		}()
+
+		// --- Checked: UNCHECKED auto-approved posts from auto-moderated (NULL) members.
+		// Outstanding oversight work (blue): a mod hasn't marked it checked and it
+		// is within the 7-day check window. ---
+		wg2.Add(1)
+		go func() {
+			defer wg2.Done()
+			db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
+				"INNER JOIN messages m ON m.id = mg.msgid "+
+				"INNER JOIN users u ON u.id = m.fromuser "+
+				"INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "+
+				"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
+				"AND m.deleted IS NULL AND u.deleted IS NULL "+
+				"AND mg.approvedby IS NULL AND mg.rippled_in = 0 AND mem.ourPostingStatus IS NULL "+
+				checkedWindowSQL,
+				modGroupIDs, utils.COLLECTION_APPROVED).Scan(&checked)
+		}()
+
+		// --- Trusted: UNCHECKED live posts from trusted (group-settings) members.
+		// Outstanding oversight work (blue), same 7-day check window. ---
+		wg2.Add(1)
+		go func() {
+			defer wg2.Done()
+			db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
+				"INNER JOIN messages m ON m.id = mg.msgid "+
+				"INNER JOIN users u ON u.id = m.fromuser "+
+				"INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "+
+				"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
+				"AND m.deleted IS NULL AND u.deleted IS NULL "+
+				"AND mg.approvedby IS NULL AND mg.rippled_in = 0 AND mem.ourPostingStatus IN ('DEFAULT', 'UNMODERATED') "+
+				checkedWindowSQL,
+				modGroupIDs, utils.COLLECTION_APPROVED).Scan(&trusted)
 		}()
 
 		// --- Spam messages (only for active groups) ---
@@ -1620,6 +1666,8 @@ func GetSession(c *fiber.Ctx) error {
 		work = fiber.Map{
 			"pending":              pending,
 			"pendingother":         pendingother,
+			"checked":              checked,
+			"trusted":              trusted,
 			"spam":                 spam,
 			"pendingmembers":       pendingmembers,
 			"spammembers":          spammembers,

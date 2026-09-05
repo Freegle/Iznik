@@ -213,6 +213,24 @@ export const SETTINGS_INDEX = [
       'When this setting is No (for most groups), all new members are Moderated and members can be changed to Group Settings (meaning unmoderated) once they have made a valid post. When this setting is Yes, all posts must be moderated no matter what setting the user has.',
   },
   {
+    id: 'settings.autoapprove.delay_minutes',
+    tab: 'community',
+    section: 'accordion-features-mods',
+    sectionLabel: 'Features for Moderators',
+    label: 'Auto-approve delay (minutes)',
+    description:
+      'For members on Group Settings (not moderated), their posts are held briefly so you and microvolunteers can spot anything wrong, then auto-approved if no danger signals are found. This is how long to wait. Leave blank or 0 to use the site default (20 minutes).',
+  },
+  {
+    id: 'settings.autoapprove.quality_check_percent',
+    tab: 'community',
+    section: 'accordion-features-mods',
+    sectionLabel: 'Features for Moderators',
+    label: 'Auto-approve quality-check sample (%)',
+    description:
+      'Percentage of otherwise auto-approvable posts to hold in Pending anyway, so you can spot-check the quality of auto-approval. 0 (or blank) means none are held.',
+  },
+  {
     id: 'settings.autoadmins',
     tab: 'community',
     section: 'accordion-features-mods',

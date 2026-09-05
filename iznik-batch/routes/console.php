@@ -232,6 +232,18 @@ Schedule::command('ripple:proximity-notes')
     ->sendOutputTo(cronLog('ripple:proximity-notes'))
     ->runInBackground();
 
+// Auto-approve content-check-clean posts from NULL-status ("auto-moderated") members
+// after the configured delay (default 20 min), unless danger signals are present and
+// excluding a quality-check sample. Runs every minute so the window is honoured tightly.
+// Dark by default: FREEGLE_AUTOAPPROVE_ENABLED / FREEGLE_AUTOAPPROVE_TRIAL_GROUPS gate it
+// inside the service. Overlap expiry bounded (minutes) so a killed run can't leave a
+// mutex behind that stalls auto-approval for the default 24h.
+Schedule::command('messages:auto-approve-clean')
+    ->everyMinute()
+    ->withoutOverlapping(15)
+    ->sendOutputTo(cronLog('messages:auto-approve-clean'))
+    ->runInBackground();
+
 // Update UK spatial data - runs monthly.
 // Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.
 // Signals Go spatial server to reload after update.
