@@ -101,6 +101,16 @@ The checks never approve a copy a moderator has held, or one marked
 `messages_groups.needs_moderator` because a moderator sent the post back to pending. They
 record what they found and leave the decision to that community's moderators.
 
+`contentcheck_reasons` carries two different things, and a reader must say which it
+means. Findings (`Money`, `ConcernKeyword`, `PerGroupWorryWord`, ...) are what the checks
+caught. Explanations (`MemberModerated`, `GroupModerated`, `NoLocation`) are written by
+`holdReasons()` to say why a clean post is waiting, and every post from a member no
+moderator has given a posting status carries `MemberModerated`. So nothing decides on the
+column being NULL: `reasonsHoldByGroupOwnRules()` picks out the receiving community's own
+findings for a rippled-in copy, and `reasonsAreContentClean()` / `contentCleanSql()` treat
+a post carrying only explanations as clean for the post-moderation clean path
+(`NoLocation` excepted - a post nobody can place is not publishable).
+
 Reference data lives in its own tables, each with a moderator-facing editor in ModTools:
 
 | Table | What it holds |

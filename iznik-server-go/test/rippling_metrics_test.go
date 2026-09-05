@@ -609,8 +609,8 @@ func TestRipplingMetricsReviewDelayAwaiting(t *testing.T) {
 	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
 
 	db.Exec(
-		"INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, awaiting_review_since, awaiting_review_seconds) "+
-			"VALUES (?, 51.5, -0.1, ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857), "+
+		"INSERT INTO rippling_reach (msgid, lat, lng, outer_bound, arrival, awaiting_review_since, awaiting_review_seconds) "+
+			"VALUES (?, 51.5, -0.1, "+
 			"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)), "+
 			"NOW() - INTERVAL 2 HOUR, NOW() - INTERVAL 30 MINUTE, 0) "+
 			"ON DUPLICATE KEY UPDATE awaiting_review_since = NOW() - INTERVAL 30 MINUTE",
@@ -658,8 +658,8 @@ func TestRipplingMetricsReviewDelayIgnoresDeadRows(t *testing.T) {
 
 	// Stopped AND stamped AND with banked seconds: must move neither figure.
 	db.Exec(
-		"INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, status, awaiting_review_since, awaiting_review_seconds) "+
-			"VALUES (?, 51.5, -0.1, ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857), "+
+		"INSERT INTO rippling_reach (msgid, lat, lng, outer_bound, arrival, status, awaiting_review_since, awaiting_review_seconds) "+
+			"VALUES (?, 51.5, -0.1, "+
 			"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)), "+
 			"NOW() - INTERVAL 2 HOUR, 'stopped', NOW() - INTERVAL 30 MINUTE, 600) "+
 			"ON DUPLICATE KEY UPDATE status = 'stopped', awaiting_review_since = NOW() - INTERVAL 30 MINUTE, awaiting_review_seconds = 600",
@@ -689,8 +689,8 @@ func TestRipplingMetricsReviewDelayPostHours(t *testing.T) {
 	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
 
 	db.Exec(
-		"INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, awaiting_review_since, awaiting_review_seconds) "+
-			"VALUES (?, 51.5, -0.1, ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857), "+
+		"INSERT INTO rippling_reach (msgid, lat, lng, outer_bound, arrival, awaiting_review_since, awaiting_review_seconds) "+
+			"VALUES (?, 51.5, -0.1, "+
 			"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)), "+
 			"NOW() - INTERVAL 3 DAY, NULL, 7200) "+
 			"ON DUPLICATE KEY UPDATE awaiting_review_seconds = 7200",

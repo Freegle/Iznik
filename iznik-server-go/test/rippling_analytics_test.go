@@ -207,8 +207,8 @@ func TestRipplingAnalyticsTrendAnchorsOnRippleReachCreatedDate(t *testing.T) {
 		"VALUES (?, ?, NOW() - INTERVAL 2 DAY, 'Approved', 0, 1)", mid, other)
 	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", mid, other)
 
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, total_freeglers, created_at, updated_at) "+
-		"VALUES (?, 51.5, -0.1, ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857), "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, outer_bound, total_freeglers, created_at, updated_at) "+
+		"VALUES (?, 51.5, -0.1, "+
 		"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)), "+
 		"50, NOW() - INTERVAL 2 DAY, NOW() - INTERVAL 2 DAY)", mid)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)

@@ -8,6 +8,7 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Services\AutoApproveCleanService;
+use App\Services\ContentCheckService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -155,6 +156,78 @@ class AutoApproveCleanServiceTest extends TestCase
         // Suspect content (reasons present) must keep the post in Pending for a mod.
         [$user, $group, $message] = $this->makeApprovable([
             'mg' => ['contentcheck_reasons' => json_encode([['check' => 'Money', 'action' => 'flag']])],
+        ]);
+
+        $this->service->process();
+
+        $this->assertStillPending($message->id, $group->id);
+    }
+
+    public function test_the_real_content_check_then_the_clean_path_publishes(): void
+    {
+        // End to end through the two crons, in order. The content check writes a
+        // MemberModerated explanation onto every NULL-status member's clean post (that is
+        // why it is waiting), so a clean path that asked for reasons IS NULL matched none of
+        // the population it was built for. Seeding reasons = NULL directly, as the other
+        // tests here do, could never see that.
+        [$user, $group, $message] = $this->makeApprovable([
+            'mg' => ['contentcheck_checked_at' => null, 'contentcheck_reasons' => null],
+        ]);
+
+        (new ContentCheckService())->processUnprocessed();
+
+        $mg = DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $group->id)->first();
+        $this->assertSame(MessageGroup::COLLECTION_PENDING, $mg->collection, 'the content check keeps a NULL-status post Pending');
+        $this->assertNotNull($mg->contentcheck_checked_at);
+        $this->assertStringContainsString(
+            ContentCheckService::CHECK_MEMBER_MODERATED,
+            (string) $mg->contentcheck_reasons,
+            'the content check records why the post is waiting'
+        );
+
+        $stats = $this->service->process();
+
+        $this->assertGreaterThanOrEqual(1, $stats['approved']);
+        $this->assertApproved($message->id, $group->id);
+    }
+
+    public function test_hold_explanations_alone_are_content_clean(): void
+    {
+        [$user, $group, $message] = $this->makeApprovable([
+            'mg' => ['contentcheck_reasons' => json_encode([
+                ['check' => ContentCheckService::CHECK_MEMBER_MODERATED, 'category' => null, 'action' => 'flag', 'detail' => "This member's posts are moderated"],
+            ])],
+        ]);
+
+        $this->service->process();
+
+        $this->assertApproved($message->id, $group->id);
+    }
+
+    public function test_a_content_finding_beside_the_explanation_is_not_clean(): void
+    {
+        [$user, $group, $message] = $this->makeApprovable([
+            'mg' => ['contentcheck_reasons' => json_encode([
+                ['check' => ContentCheckService::CHECK_MEMBER_MODERATED, 'action' => 'flag'],
+                ['check' => ContentCheckService::CHECK_MONEY, 'action' => 'flag'],
+            ])],
+        ]);
+
+        $this->service->process();
+
+        $this->assertStillPending($message->id, $group->id);
+    }
+
+    public function test_a_post_with_no_location_is_not_clean(): void
+    {
+        // NoLocation is a hold explanation too, but a post nobody can place is not
+        // publishable: the clean path seeds the spatial index from the post's location.
+        [$user, $group, $message] = $this->makeApprovable([
+            'message' => ['lat' => null, 'lng' => null],
+            'mg' => ['contentcheck_reasons' => json_encode([
+                ['check' => ContentCheckService::CHECK_MEMBER_MODERATED, 'action' => 'flag'],
+                ['check' => ContentCheckService::CHECK_NO_LOCATION, 'action' => 'flag'],
+            ])],
         ]);
 
         $this->service->process();

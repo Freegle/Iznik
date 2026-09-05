@@ -22,10 +22,11 @@ use Illuminate\Support\Facades\Log;
  * then released automatically, UNLESS a danger signal is present. A configurable
  * percentage is held back as a manual quality-check sample.
  *
- * Posts only become eligible AFTER messages:contentcheck has run and found them clean
- * (contentcheck_checked_at set, contentcheck_reasons NULL). Suspect posts keep their
- * contentcheck_reasons and are never auto-approved here — they stay in Pending (or are
- * moved to Spam) exactly as before.
+ * Posts only become eligible AFTER messages:contentcheck has run and found no content
+ * problem (contentcheck_checked_at set; contentcheck_reasons NULL or carrying only the
+ * "why is this waiting" explanations - see ContentCheckService::HOLD_EXPLANATION_CHECKS).
+ * Suspect posts keep their contentcheck_reasons and are never auto-approved here — they
+ * stay in Pending (or are moved to Spam) exactly as before.
  *
  * Trusted members (DEFAULT/UNMODERATED) are unaffected — contentcheck already approves
  * their clean posts immediately. Explicit MODERATED/PROHIBITED members are unaffected too.
@@ -120,7 +121,10 @@ class AutoApproveCleanService
             ->whereNull('u.deleted')
             ->whereNull('mem.ourPostingStatus')           // the auto-moderated tier
             ->whereNotNull('mg.contentcheck_checked_at')   // content check has run ...
-            ->whereNull('mg.contentcheck_reasons')         // ... and the post was clean
+            // ... and found no content problem. Not a NULL test: the content check writes a
+            // MemberModerated explanation onto every NULL-status member's clean post (that is
+            // why it is waiting), so "reasons IS NULL" matched none of this population.
+            ->whereRaw(ContentCheckService::contentCleanSql('mg.contentcheck_reasons'))
             ->where('mg.quality_sample', 0)               // already-sampled rows are excluded entirely
             ->where('mg.rippled_in', 0)                   // rippled-in rows belong to AutoApproveService (carries the Taken/Received + rippled_in_pending_hours + recentLogs-bypass guards)
             ->whereRaw(
