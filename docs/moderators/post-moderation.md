@@ -282,6 +282,13 @@ notes, and lengthen your own delay.
 - **Rejecting a rippled-in copy is not done from the oversight queues.** Those actions
   only ever apply to a post's own community. A bad post that rippled in is rejected the
   ordinary way, which trims it from your area alone.
+- **Reject from the oversight queue and Back to Pending do different things to the
+  copies.** Reject stops the post's spread and the copies it rippled into other
+  communities are withdrawn on the engine's next pass - the whole post comes down.
+  Back to Pending freezes the spread but leaves every community's copy in its own
+  Pending queue, for that community to approve or reject. Which of the two a neighbouring
+  moderator sees depends on which button the post's own community pressed. That
+  difference is under review.
 
 ### Things that will surprise members
 
@@ -360,8 +367,9 @@ These are known and not fully solved:
   merely rippled in from another community do not appear - overseeing those belongs
   to the community they were posted on.
 - **Reject from the oversight queue** pulls a live post straight back to Pending and
-  held, stops its rippling immediately, and records the rejection - which both feeds
-  the error rate and becomes a danger signal on that member's next post.
+  held, stops its rippling immediately, withdraws the copies it had rippled into other
+  communities, and records the rejection - which both feeds the error rate and becomes
+  a danger signal on that member's next post.
 - **Your notes and statuses matter more, not less.** A note on a member keeps their
   posts in Pending. Explicit statuses always win. If you know a reason someone needs
   a human eye, write it down.
