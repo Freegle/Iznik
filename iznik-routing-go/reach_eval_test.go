@@ -466,6 +466,9 @@ func TestReachEvalDiscoverFailsClosedWhenTheStoreIsUnreadable(t *testing.T) {
 
 	// Nothing discovered is an empty list, not null: null is what a swallowed
 	// failure used to look like, and a captured response must tell them apart.
+	// The region read above is cached for a minute, so drop it first - the
+	// empty region must come from the loader, not from the cache.
+	resetReachEvalForTest()
 	leafRowLoader = func(leaf int32) ([]uint64, error) { return nil, nil }
 	status, body = discover()
 	if status != 200 {
