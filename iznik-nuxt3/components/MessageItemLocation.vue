@@ -31,13 +31,13 @@
       </div>
       <div>
         <client-only>
-          <b-badge
-            v-if="message && message.availablenow > 1"
-            variant="info"
-            class="ms-2 me-2 mt-0 align-top"
-          >
-            {{ message.availablenow ? message.availablenow : '0' }} left
-          </b-badge>
+          <MessageAvailability
+            v-if="message"
+            :availablenow="message.availablenow"
+            :availableinitially="message.availableinitially"
+            :bulkcount="message.bulkcount"
+            badge-class="ms-2 me-2 mt-0 align-top"
+          />
         </client-only>
       </div>
     </h3>
@@ -48,6 +48,7 @@
   </div>
 </template>
 <script setup>
+import MessageAvailability from './MessageAvailability'
 import Highlighter from 'vue-highlight-words'
 import { computed } from '#imports'
 import { useMessageStore } from '~/stores/message'
