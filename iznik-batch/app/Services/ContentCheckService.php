@@ -836,6 +836,24 @@ class ContentCheckService
         return $result === 1;
     }
 
+    // Like safePreg, but returns the substring the pattern actually matched
+    // rather than a bool. Regex-mode concern keywords store a PATTERN (e.g.
+    // 'crack\s+cocaine'), not a literal word, so the mod-facing reason needs
+    // what the pattern matched in the post text, not the pattern itself -
+    // otherwise the flag notice reads as regex soup (Discourse #10024).
+    private function safePregCapture(string $pattern, string $subject): ?string
+    {
+        $result = @preg_match($pattern, $subject, $matches);
+        if (preg_last_error() !== PREG_NO_ERROR) {
+            Log::warning('ContentCheck: invalid regex pattern', [
+                'pattern' => $pattern,
+                'error'   => preg_last_error_msg(),
+            ]);
+            return null;
+        }
+        return $result === 1 ? $matches[0] : null;
+    }
+
     // -------------------------------------------------------------------------
     // Concern keywords — unified table replacing worrywords + spam_keywords.
     // Supports match_mode (fuzzy/literal/regex), global + per-group scope,
@@ -855,6 +873,149 @@ class ContentCheckService
             ->where('category', '!=', 'allowed')
             ->get();
 
+        return $this->matchKeywords($keywords, $subject, $textbody, $groupid);
+    }
+
+    /**
+     * The checks holdReasons() writes to say WHY a clean post is waiting: the member's
+     * posting status, or the group's moderate-everything setting. They describe the row's
+     * situation, not its content, so a post carrying only these is content-clean - which is
+     * what the clean auto-approve path (AutoApproveCleanService) asks. Every NULL-status
+     * member's clean post carries MemberModerated, so a "reasons IS NULL" test would never
+     * match one. NoLocation is deliberately NOT here: a post nobody can place is not
+     * publishable, and the clean path seeds the spatial index from the post's location.
+     *
+     * The Go countdown (iznik-server-go/message/autoapproveat.go) carries the same list.
+     */
+    public const HOLD_EXPLANATION_CHECKS = [self::CHECK_MEMBER_MODERATED, self::CHECK_GROUP_MODERATED];
+
+    /**
+     * Whether a stored contentcheck_reasons blob records NO content finding: NULL, or only
+     * the hold explanations above. Mirrors contentCleanSql() exactly - elements without a
+     * `check` are ignored (the SQL wildcard skips them) and a blob that yields no checks at
+     * all is not clean (the SQL extract is NULL there).
+     *
+     * @param string|null $reasonsJson the messages_groups.contentcheck_reasons value
+     */
+    public static function reasonsAreContentClean(?string $reasonsJson): bool
+    {
+        if ($reasonsJson === null) {
+            return true;
+        }
+        $reasons = json_decode($reasonsJson, true);
+        if (!is_array($reasons)) {
+            return false;
+        }
+        $checks = [];
+        foreach ($reasons as $r) {
+            if (is_array($r) && array_key_exists('check', $r)) {
+                $checks[] = $r['check'];
+            }
+        }
+        if ($checks === []) {
+            return false;
+        }
+        foreach ($checks as $check) {
+            if (!in_array($check, self::HOLD_EXPLANATION_CHECKS, true)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * The SQL form of reasonsAreContentClean() for a candidate query, over $column (e.g.
+     * 'mg.contentcheck_reasons'). JSON_EXTRACT with the wildcard path yields the array of
+     * every element's `check`; JSON_CONTAINS(target, candidate) is true when every element
+     * of the candidate array is in the target - so the row passes when every check it
+     * carries is a hold explanation. A blob with no checks extracts to NULL and fails, as
+     * does one that is not valid JSON (guarded, so it cannot error the whole query).
+     */
+    public static function contentCleanSql(string $column): string
+    {
+        $allowed = implode(', ', array_map(
+            static fn (string $c): string => "'" . $c . "'",
+            self::HOLD_EXPLANATION_CHECKS
+        ));
+
+        return "({$column} IS NULL OR (JSON_VALID({$column})"
+            . " AND JSON_CONTAINS(JSON_ARRAY({$allowed}), JSON_EXTRACT({$column}, '$[*].check'))))";
+    }
+
+    /**
+     * Whether a stored contentcheck_reasons blob records a hold by the receiving group's OWN
+     * rules - the reasons checkGroupOwnRules writes when a post ripples in.
+     *
+     * The column carries two different things. A copy held by the group's rules is written
+     * with its reasons at insert; but the periodic checkMessage pass also ANNOTATES any
+     * Pending row it visits - GroupModerated, MemberModerated, NoLocation and the rest are
+     * flags describing the row's situation, not a decision. A rippled-in copy that was Pending
+     * for some other reason and then got annotated must not read as "held by this group's
+     * rules", or nothing ever releases it: on 2026-09-04 five such copies sat Pending for
+     * hours with only a GroupModerated/MemberModerated flag on them.
+     *
+     * @param string|null $reasonsJson the messages_groups.contentcheck_reasons value
+     */
+    public static function reasonsHoldByGroupOwnRules(?string $reasonsJson): bool
+    {
+        if ($reasonsJson === null || $reasonsJson === '') {
+            return false;
+        }
+        $reasons = json_decode($reasonsJson, true);
+        if (!is_array($reasons)) {
+            return false;
+        }
+        foreach ($reasons as $r) {
+            $check = is_array($r) ? ($r['check'] ?? null) : null;
+            if ($check === self::CHECK_CONCERN_KEYWORD || $check === self::CHECK_PER_GROUP_WORRY) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The rules a group wrote down for itself: its own concern_keywords rows and its own
+     * worry words, with the Freegle-wide keywords left out.
+     *
+     * Used when a post ripples into a group. The post was already weighed against the rules
+     * of the community it was posted on - and a moderator there may have approved it in full
+     * knowledge of a Freegle-wide keyword - so re-running those here would hold it everywhere
+     * it travels over a decision already made. What has NOT been considered is whether it
+     * breaks the receiving group's own rules, and that is what this asks.
+     *
+     * @return array<int, array<string, mixed>> Empty when the group's own rules say nothing.
+     */
+    public function checkGroupOwnRules(string $subject, string $textbody, int $groupid): array
+    {
+        $keywords = DB::table('concern_keywords')
+            ->where('scope', 'group')
+            ->where('group_id', $groupid)
+            ->where('category', '!=', 'allowed')
+            ->get();
+
+        $reasons = [];
+
+        if ($r = $this->matchKeywords($keywords, $subject, $textbody, $groupid)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkPerGroupWorryWords($subject, $textbody, $groupid)) {
+            $reasons[] = $r;
+        }
+
+        return $this->dedupeReasons($reasons);
+    }
+
+    /**
+     * Match a set of concern_keywords rows against a post, returning the first hit.
+     * Shared by checkConcernKeywords (global + group) and checkGroupOwnRules (group only)
+     * so both apply the same whitelist cleaning, match modes, excludes and context check.
+     */
+    private function matchKeywords($keywords, string $subject, string $textbody, int $groupid): ?array
+    {
+
         // 'allowed'-category entries are a whitelist: text matching them is
         // removed BEFORE scanning, so a flagging keyword can't fire on a word
         // inside a whitelisted phrase. V1's worry words and the Go display path
@@ -871,8 +1032,13 @@ class ContentCheckService
                 continue;
             }
 
+            // For regex mode, $word is a PATTERN rather than the literal text
+            // to display - capture what it actually matched so the mod-facing
+            // reason names real text from the post, not the pattern.
+            $matchedText = null;
+
             $matched = match ($kw->match_mode) {
-                'regex'   => $this->safePreg('/' . $word . '/i', $original),
+                'regex'   => ($matchedText = $this->safePregCapture('/' . $word . '/i', $original)) !== null,
                 'literal' => preg_match('/\b' . preg_quote(strtolower($word), '/') . '\b/', $haystack) === 1,
                 default   => $this->matchesFuzzy($haystack, $word),
             };
@@ -892,12 +1058,14 @@ class ContentCheckService
                 continue;
             }
 
+            $displayWord = $matchedText ?? $word;
+
             return [
                 'check'    => self::CHECK_CONCERN_KEYWORD,
                 'category' => $kw->category,
                 'action'   => $kw->action ?? 'flag',
-                'keyword'  => $word,
-                'detail'   => "Matched concern keyword '{$word}'",
+                'keyword'  => $displayWord,
+                'detail'   => "Matched concern keyword '{$displayWord}'",
             ];
         }
 

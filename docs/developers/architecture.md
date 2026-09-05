@@ -132,6 +132,13 @@ and per-group membership and roles are the ones you will meet first.
   row with `rippled_in = 0` - identified from that column and nothing else, because an
   arrival-time window breaks the moment a post is approved slowly (§9 of the algorithm
   reference explains why).
+- **Post-moderation** (dark by default) lets a clean post from a member no moderator has
+  set a posting status for publish by itself after a short delay, with moderators
+  overseeing it afterwards; it is described for moderators in
+  [../moderators/post-moderation.md](../moderators/post-moderation.md). Its one structural
+  claim on rippling is the earned-reach gate (rippling-algorithm.md §5): an auto-published
+  post waits before it starts to spread, and then earns each further community by being seen
+  and not flagged, until a moderator looks.
 - **Getting a first reply in** sits alongside rippling and attacks the 44% of rippled posts
   that get no reply at all: a passthrough for a silent post's first reply, individual mail to
   the members who have asked for that specific item (an open post of the opposite type, or a

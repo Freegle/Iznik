@@ -44,6 +44,76 @@ func dangerLogDays() int {
 	return 90
 }
 
+// holdExplanationChecks mirrors ContentCheckService::HOLD_EXPLANATION_CHECKS: the checks the
+// content check writes to say WHY a clean post is waiting (the member's posting status, the
+// group's moderate-everything setting). They describe the row, not its content. Every
+// NULL-status member's clean post carries MemberModerated, so a nil-reasons check would show
+// the 48h fallback for the whole population the clean path exists for. NoLocation is
+// deliberately absent: a post nobody can place is not publishable.
+var holdExplanationChecks = map[string]bool{"MemberModerated": true, "GroupModerated": true}
+
+// contentCheckReasonsClean mirrors ContentCheckService::reasonsAreContentClean (and the SQL
+// the cron's candidate query uses): nil, or only hold explanations. Elements without a
+// `check` are ignored, and a blob that yields no checks at all is not clean - the same
+// answers the SQL JSON_EXTRACT/JSON_CONTAINS form gives.
+func contentCheckReasonsClean(raw *json.RawMessage) bool {
+	if raw == nil {
+		return true
+	}
+	var reasons []map[string]interface{}
+	if err := json.Unmarshal(*raw, &reasons); err != nil {
+		return false
+	}
+	seen := 0
+	for _, r := range reasons {
+		check, ok := r["check"]
+		if !ok {
+			continue
+		}
+		seen++
+		name, isString := check.(string)
+		if !isString || !holdExplanationChecks[name] {
+			return false
+		}
+	}
+
+	return seen > 0
+}
+
+// groupOwnRuleChecks mirrors ContentCheckService::reasonsHoldByGroupOwnRules: the checks
+// ExpandService writes when a rippled-in copy breaks the RECEIVING group's own keywords or
+// worry words. Such a copy waits for one of that group's moderators, never for the clock
+// (AutoApproveService::shouldApproveOnGroup), so no countdown belongs on it.
+var groupOwnRuleChecks = map[string]bool{"ConcernKeyword": true, "PerGroupWorryWord": true}
+
+func reasonsHoldByGroupOwnRules(raw *json.RawMessage) bool {
+	if raw == nil {
+		return false
+	}
+	var reasons []map[string]interface{}
+	if err := json.Unmarshal(*raw, &reasons); err != nil {
+		return false
+	}
+	for _, r := range reasons {
+		if name, ok := r["check"].(string); ok && groupOwnRuleChecks[name] {
+			return true
+		}
+	}
+
+	return false
+}
+
+// rippledInPendingHours mirrors config('freegle.ripple.rippled_in_pending_hours'): how long
+// AutoApproveService leaves a rippled-in copy Pending for the receiving group's veto before
+// approving it. Read from the same variable the batch container reads.
+func rippledInPendingHours() int {
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("RIPPLE_RIPPLED_IN_PENDING_HOURS"))); err == nil && v > 0 {
+		return v
+	}
+
+	return 0
+}
+
 // phpTruthy mirrors PHP's !empty(): nil, false, 0, "" and "0" are falsy; everything
 // else is truthy. Used so the Go group-allows check matches AutoApproveCleanService's
 // PHP getSetting()/empty() semantics exactly.
@@ -133,6 +203,23 @@ func computeAutoapproveat(db *gorm.DB, message *Message, groups []MessageGroup, 
 	for _, i := range pendingIdx {
 		mg := &groups[i]
 
+		// A rippled-in copy is AutoApproveService's, not the clean path's, and its rules are
+		// the receiving group's: a copy the group's own keywords or worry words held waits for
+		// a moderator of that group and never auto-approves, so it gets no countdown. Any
+		// other Pending copy is released once rippled_in_pending_hours have passed (the
+		// hourly sweep adds up to an hour on top, which this estimate ignores).
+		if mg.RippledIn == 1 {
+			if reasonsHoldByGroupOwnRules(mg.ContentcheckReasons) || mg.Spamreason != nil || msgSpamreason {
+				continue
+			}
+			t := mg.Arrival.Add(time.Duration(rippledInPendingHours()) * time.Hour)
+			if mg.AutoapproveHoldUntil != nil && mg.AutoapproveHoldUntil.After(t) {
+				t = *mg.AutoapproveHoldUntil
+			}
+			groups[i].Autoapproveat = &t
+			continue
+		}
+
 		var row struct {
 			OurPostingStatus     *string `gorm:"column:ourpostingstatus"`
 			Settings             *string `gorm:"column:settings"`
@@ -184,7 +271,7 @@ func computeAutoapproveat(db *gorm.DB, message *Message, groups []MessageGroup, 
 			groupAllows &&
 			row.OurPostingStatus == nil &&
 			mg.ContentcheckCheckedAt != nil &&
-			mg.ContentcheckReasons == nil &&
+			contentCheckReasonsClean(mg.ContentcheckReasons) &&
 			mg.QualitySample == 0 &&
 			mg.RippledIn == 0 &&
 			mg.Spamreason == nil &&

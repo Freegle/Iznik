@@ -137,7 +137,7 @@ catches it). Deterministic so a message never oscillates.
 | 7 | Checked/Trusted pages + countdown + help boxes | ✅ | /messages/checked,/trusted; autoapproveat countdown; ModHelp* boxes |
 | 8 | ModSettingsGroup.vue settings controls | ✅ | delay_minutes + quality_check_percent |
 | 9 | Run all suites via worktree status API | ✅ | full Laravel 3962/3962 ✓; Go 3004/3004 ✓; Vitest modtools 4475/4475 ✓ |
-| 10 | Push + PR (Freegle/Iznik) | ✅ | PR #639 — https://github.com/Freegle/Iznik/pull/639 (awaiting CI; never merge) |
+| 10 | Push + PR (Freegle/Iznik) | ✅ | PR #639 — https://github.com/Freegle/Iznik/pull/639 (master merged 2026-09-05, all suites green locally; awaiting CI; never merge) |
 
 ## 2026-08-08 adversarial re-review vs master (worktree autoapprove-review)
 
@@ -172,3 +172,35 @@ Docs consolidated in the same round: AUTO-APPROVE-FOR-MODERATORS.md (stale link,
 location) and the superseded weight-2xN spec deleted; docs/moderators/post-moderation.md
 is the single reference; rippling-out mod/member guides, 02-moderating-posts,
 01-getting-started and the rippling-algorithm reference updated to match.
+
+## 2026-09-05 master merge + adversarial re-review (worktree autoapprove-review)
+
+Master moved 921 commits past the 2026-08-12 merge-base: the reach engine now stores
+cell grids (`polygon_cells`, `rippling_reach.polygon` dropped), advanceDue plans/fans-out/
+applies in passes, a Back-to-Pending freeze (`status='held'`), rippled-in copies moderated
+by the receiving group (own keywords/worry words hold the copy Pending; `rejected_groups`
+and PROHIBITED guards in the target query), and `RIPPLE_HIDE_PENDING`. Merge resolved:
+gate re-applied before the grid write; `rippleTargetsFor` mirrors master's target query;
+gate tests ported to `polygon_cells` with the advance rasterising on the real spatial server.
+
+Discourse context (Neil, 10088 #45-47, 2026-09-04): the Board's Ops & Tech WP is considering
+the 48h->24h cut "as part of the changes to post moderation"; a per-group auto-approve delay
+"will be implemented as part of the changes to post moderation" (= `settings.autoapprove.
+delay_minutes`); holds survive post-moderation (= `autoapprove_hold_until` + Pending queue).
+
+Findings fixed:
+1. **The clean path never fired on real data.** Since 9a11c3e79 (2026-07-31, before the
+   last merge) the content check writes a `MemberModerated` "why is this waiting" flag onto
+   every NULL-status member's clean post, so `contentcheck_reasons IS NULL` matched none of
+   them and the countdown always showed 48h. The PR's tests seeded reasons=NULL directly.
+   Fix: `ContentCheckService::HOLD_EXPLANATION_CHECKS` (MemberModerated, GroupModerated -
+   NOT NoLocation) + `reasonsAreContentClean()` + `contentCleanSql()`; cron and Go countdown
+   use it. Tests: real content check then clean approve (e2e), predicate cases PHP + SQL
+   agree, Go countdown with the explanation.
+2. **Countdown on a rippled-in copy**: showed the 48h fallback on a copy the receiving
+   group's own rules hold (which never auto-approves). Now: no countdown when held by
+   ConcernKeyword/PerGroupWorryWord; otherwise arrival + RIPPLE_RIPPLED_IN_PENDING_HOURS.
+
+Noted, not changed (product call): oversight Reject sets the reach `stopped` and the
+orphaned copies are retracted; master's Back-to-Pending sets `held` and leaves every copy
+Pending for its own community to decide (ac1278f7f). Two pull-back semantics coexist.

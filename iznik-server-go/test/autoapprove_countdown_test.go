@@ -114,7 +114,6 @@ func TestAutoapproveatPendingModGating(t *testing.T) {
 	db.Exec("DELETE FROM messages WHERE id IN (?, ?)", cleanMsg, dangerMsg)
 }
 
-
 // The danger-signal log window is configurable for the cron
 // (FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS, default 90). The countdown must honour the
 // same setting, or the two disagree about whether a post will auto-approve: a
@@ -146,6 +145,94 @@ func TestAutoapproveatDangerLogDaysConfigurable(t *testing.T) {
 
 	assert.NotNil(t, getAutoapproveatField(t, msg, groupID, modToken),
 		"a negative log outside the configured danger window must not suppress the countdown")
+}
+
+// The content check writes a MemberModerated explanation onto every NULL-status
+// member's clean post - that is what the real population looks like, not reasons=NULL.
+// The countdown must read that as clean (20-minute path), exactly as the cron does, and
+// must still read a real content finding beside it as not clean (48h fallback).
+func TestAutoapproveatMemberModeratedExplanationIsClean(t *testing.T) {
+	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "true")
+	prefix := uniquePrefix("aaexplain")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	poster := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, poster, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
+	_, modToken := CreateTestSession(t, modID)
+
+	parseAt := func(v interface{}) time.Time {
+		s, ok := v.(string)
+		assert.True(t, ok, "autoapproveat should be a timestamp string")
+		at, err := time.Parse(time.RFC3339, s)
+		assert.NoError(t, err)
+		return at
+	}
+
+	explained := CreateTestMessage(t, poster, groupID, prefix+" explained", 52.0, -1.0)
+	flagged := CreateTestMessage(t, poster, groupID, prefix+" flagged", 52.0, -1.0)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", explained, flagged)
+	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", explained, flagged)
+	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE, autoapprove_hold_until=NULL, "+
+		"contentcheck_reasons='[{\"check\":\"MemberModerated\",\"category\":null,\"action\":\"flag\",\"detail\":\"This member''s posts are moderated\"}]' WHERE msgid=?", explained)
+	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE, autoapprove_hold_until=NULL, "+
+		"contentcheck_reasons='[{\"check\":\"MemberModerated\",\"action\":\"flag\"},{\"check\":\"Money\",\"action\":\"flag\"}]' WHERE msgid=?", flagged)
+
+	v := getAutoapproveatField(t, explained, groupID, modToken)
+	assert.NotNil(t, v, "a post carrying only the MemberModerated explanation is on the clean path")
+	assert.True(t, parseAt(v).Before(time.Now().Add(time.Hour)),
+		"the explanation alone must give the 20-minute clean-path estimate, not the 48h fallback")
+
+	v = getAutoapproveatField(t, flagged, groupID, modToken)
+	assert.NotNil(t, v)
+	assert.True(t, parseAt(v).After(time.Now().Add(40*time.Hour)),
+		"a content finding beside the explanation is not clean: 48h fallback")
+}
+
+// A rippled-in copy is AutoApproveService's: released after rippled_in_pending_hours,
+// unless the RECEIVING group's own keywords or worry words held it, in which case it waits
+// for one of that group's moderators and never auto-approves. The countdown must say the
+// same - a 48h countdown on a rule-held copy promises a release that will not come.
+func TestAutoapproveatRippledInCopy(t *testing.T) {
+	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "true")
+	t.Setenv("RIPPLE_RIPPLED_IN_PENDING_HOURS", "2")
+	prefix := uniquePrefix("aarippled")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	poster := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, poster, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	parseAt := func(v interface{}) time.Time {
+		s, ok := v.(string)
+		assert.True(t, ok, "autoapproveat should be a timestamp string")
+		at, err := time.Parse(time.RFC3339, s)
+		assert.NoError(t, err)
+		return at
+	}
+
+	released := CreateTestMessage(t, poster, groupID, prefix+" rippled copy", 52.0, -1.0)
+	ruleHeld := CreateTestMessage(t, poster, groupID, prefix+" rule-held copy", 52.0, -1.0)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", released, ruleHeld)
+	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", released, ruleHeld)
+	db.Exec("UPDATE messages_groups SET collection='Pending', rippled_in=1, arrival=NOW() - INTERVAL 30 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 29 MINUTE, contentcheck_reasons=NULL, autoapprove_hold_until=NULL WHERE msgid=?", released)
+	db.Exec("UPDATE messages_groups SET collection='Pending', rippled_in=1, arrival=NOW() - INTERVAL 30 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 29 MINUTE, autoapprove_hold_until=NULL, "+
+		"contentcheck_reasons='[{\"check\":\"PerGroupWorryWord\",\"action\":\"flag\",\"detail\":\"rabbit\"}]' WHERE msgid=?", ruleHeld)
+
+	v := getAutoapproveatField(t, released, groupID, modToken)
+	assert.NotNil(t, v, "a rippled-in copy nothing holds is released after rippled_in_pending_hours")
+	at := parseAt(v)
+	assert.True(t, at.After(time.Now().Add(60*time.Minute)) && at.Before(time.Now().Add(120*time.Minute)),
+		"estimate is arrival + 2h (RIPPLE_RIPPLED_IN_PENDING_HOURS), not the 48h fallback")
+
+	assert.Nil(t, getAutoapproveatField(t, ruleHeld, groupID, modToken),
+		"a copy held by the receiving group's own rules never auto-approves: no countdown")
 }
 
 // The rollout gate (FREEGLE_AUTOAPPROVE_ENABLED / FREEGLE_AUTOAPPROVE_TRIAL_GROUPS)
@@ -295,8 +382,8 @@ func TestMarkCheckedReject(t *testing.T) {
 	groupB := CreateTestGroup(t, prefix+"_b")
 	// Mid-pause when rejected: the awaiting stamp must be banked and cleared by the
 	// reject, or the "posts awaiting review" metric counts this dead row forever.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, awaiting_review_since) "+
-		"VALUES (?, 52.0, -1.0, ST_GeomFromText('POLYGON((-1.2 51.9,-0.8 51.9,-0.8 52.1,-1.2 52.1,-1.2 51.9))', 3857), "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, outer_bound, arrival, awaiting_review_since) "+
+		"VALUES (?, 52.0, -1.0, "+
 		"ST_Envelope(ST_GeomFromText('POLYGON((-1.2 51.9,-0.8 51.9,-0.8 52.1,-1.2 52.1,-1.2 51.9))', 3857)), NOW(), "+
 		"NOW() - INTERVAL 10 MINUTE)", approved)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
