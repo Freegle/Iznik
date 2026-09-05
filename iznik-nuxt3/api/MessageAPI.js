@@ -367,6 +367,15 @@ export default class MessageAPI extends BaseAPI {
     return await this.$postv2('/messages/markseen', body, false)
   }
 
+  // Clear the browse unread count outright. Deliberately separate from markSeen: that one
+  // records that these particular posts were VIEWED, which is an impression and feeds the
+  // view count posters see. This one only says the member has cleared their count, and
+  // sends no ids at all - the browser only ever has the posts it has loaded, which is why
+  // the count could not be cleared before.
+  async clearCount() {
+    return await this.$postv2('/messages/clearcount', {}, false)
+  }
+
   // --- Bulk-offer ("clearance") logged-out update link ---------------------
 
   // Mint (or fetch the existing) secret link that lets an external owner update

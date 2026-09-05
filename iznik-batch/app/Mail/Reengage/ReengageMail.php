@@ -128,7 +128,7 @@ class ReengageMail extends MjmlMailable
         // Wrap every clickable link the template actually renders so the
         // onboarding funnel's click-through is measurable (opens come from the
         // pixel). The shared tip template renders exactly three: the per-day
-        // primary button ($ctaUrl -> give/find/browse) and the footer
+        // primary button ($ctaUrl -> give/ask/browse) and the footer
         // settings/unsubscribe links. Matches the digest/chat tracking
         // convention (position + action).
         //
@@ -138,8 +138,15 @@ class ReengageMail extends MjmlMailable
         // stay the direct keyed URL; a tracked redirect there would break the
         // no-session one-click POST from Gmail/Yahoo.
         if (! empty($content['ctaUrl']) && is_string($content['ctaUrl'])) {
-            // Keep the give/find/browse distinction in the click's action code.
+            // Keep the give/ask/browse distinction in the click's action code.
+            //
+            // The action code is derived from the path, but it is also written to
+            // email_tracking and compared over time, so it must survive a route
+            // being renamed - otherwise the day-3 click series silently splits in
+            // two at the cutover and before/after cannot be compared. /find became
+            // /ask in Aug 2026; the code stays 'find'.
             $slug = basename((string) parse_url($content['ctaUrl'], PHP_URL_PATH));
+            $slug = $slug === 'ask' ? 'find' : $slug;
             $content['ctaUrl'] = $this->trackedUrl($content['ctaUrl'], 'primary_cta', $slug !== '' ? $slug : 'cta');
         }
 

@@ -541,7 +541,7 @@ describe('ModMessage', () => {
         REAL_WORRY
       )
       await flushPromises()
-      expect(wrapper.text()).toContain('This group moderates all posts')
+      expect(wrapper.text()).toContain('This group moderated all posts')
     })
 
     it('accepts reasons already parsed into an array', async () => {
@@ -667,8 +667,8 @@ describe('ModMessage', () => {
       ])
       await flushPromises()
       const text = wrapper.text()
-      expect(occurrences(text, 'This group moderates all posts')).toBe(1)
-      expect(text).not.toContain('Flagged: This group moderates all posts')
+      expect(occurrences(text, 'This group moderated all posts')).toBe(1)
+      expect(text).not.toContain('Flagged: This group moderated all posts')
     })
 
     it('leaves the missing-location advice to the notice that already gives it', async () => {
@@ -720,7 +720,7 @@ describe('ModMessage', () => {
       ])
       await flushPromises()
       expect(
-        occurrences(wrapper.text(), "This member's posts are moderated")
+        occurrences(wrapper.text(), "This member's posts were moderated")
       ).toBe(1)
     })
   })
@@ -1987,6 +1987,48 @@ describe('ModMessage', () => {
       } finally {
         mockMyModGroups.pop()
         mockAuthStore.groups.pop()
+      }
+    })
+
+    // Discourse #10024 post 2: a mod covering several communities browsing Approved
+    // Messages (no explicit contextGroupid - the all-communities view) was shown "This
+    // member's posts were moderated..." on a post that had already gone out. The
+    // pending-first fallback anchored to a DIFFERENT group the mod also moderates,
+    // where the same post was still waiting, and rendered THAT group's live
+    // setting-based hold instead of the Approved copy actually being browsed.
+    it('anchors to the Approved copy, not a still-pending copy on another moderated group, when browsing Approved Messages', async () => {
+      mockMyModGroups.push({ id: 555 })
+      try {
+        const wrapper = mountComponent(
+          { collection: 'Approved' },
+          {
+            groups: [
+              {
+                groupid: 789,
+                namedisplay: 'Approved Group',
+                collection: 'Approved',
+              },
+              {
+                groupid: 555,
+                namedisplay: 'Pending Group',
+                collection: 'Pending',
+                contentcheck_reasons: [
+                  {
+                    check: 'GroupModerated',
+                    detail:
+                      "This group moderates all posts, whatever the member's setting",
+                  },
+                ],
+              },
+            ],
+          },
+          { ModMessageWorry }
+        )
+        await flushPromises()
+        expect(wrapper.vm.currentGroupid).toBe(789)
+        expect(wrapper.text()).not.toContain('Group setting')
+      } finally {
+        mockMyModGroups.pop()
       }
     })
 

@@ -2,6 +2,8 @@ package message
 
 import (
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -71,6 +73,25 @@ func applyUnseen(msgs []MessageSummary, viewed map[uint64]bool) {
 	}
 }
 
+// ownMessageIDs returns the subset of ids the given user wrote, batched in the same
+// chunk size as viewedMessageIDs. It reads only the messages table's own primary key and
+// fromuser, so it is a cheap way to answer "which of these are mine" for a list we have
+// already decided to return.
+func ownMessageIDs(db *gorm.DB, ids []uint64, userid uint64) map[uint64]bool {
+	own := make(map[uint64]bool, len(ids))
+
+	for _, chunk := range chunkWindows(ids, boundsLikesChunk) {
+		var chunkIDs []uint64
+		db.Raw("SELECT id FROM messages WHERE fromuser = ? AND id IN (?)", userid, chunk).Scan(&chunkIDs)
+
+		for _, id := range chunkIDs {
+			own[id] = true
+		}
+	}
+
+	return own
+}
+
 func Bounds(c *fiber.Ctx) error {
 	db := database.DBConn
 
@@ -115,7 +136,10 @@ func Bounds(c *fiber.Ctx) error {
 		// The groups join no longer filters on visibility, but is kept so that a post whose
 		// group has been deleted doesn't show up.
 		"INNER JOIN `groups` ON groups.id = messages_spatial.groupid "+
-		"WHERE ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), point)",
+		"WHERE ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), point) "+
+		// A post is not live until its reach exists - see rippling.ReachPendingFilter.
+		// It exempts the viewer's own posts, as does the own-posts arm below.
+		"AND "+rippling.ReachPendingFilter("messages_spatial.msgid", myid),
 		swlng, swlat,
 		swlng, nelat,
 		nelng, nelat,
@@ -205,6 +229,29 @@ func Bounds(c *fiber.Ctx) error {
 	}
 	msgs = merged
 
+	// Flag the viewer's own posts, as the other browse feeds do (message.Groups,
+	// isochrone.Messages): the client pins them above the feed, and this endpoint is what
+	// browse switches to the moment the member moves the map - so without this a member's
+	// own post was pinned until they panned, then vanished into the list.
+	//
+	// Asked as its own batched lookup over the ids we are actually returning, rather than
+	// taken from the own arm above: that arm carries its own bounds test, OPEN_AGE window and
+	// outcome filter, so an own post that reached this list via the SPATIAL arm alone would
+	// not be in it and would go unflagged. Authorship is not a property of which arm found
+	// the post.
+	if myid != 0 {
+		ids := make([]uint64, len(msgs))
+		for ix, m := range msgs {
+			ids[ix] = m.ID
+		}
+		own := ownMessageIDs(db, ids, myid)
+		for ix := range msgs {
+			if own[msgs[ix].ID] {
+				msgs[ix].Mine = true
+			}
+		}
+	}
+
 	// Order to match the old combined SQL: unseen first, then most-recent arrival, then highest id.
 	sort.SliceStable(msgs, func(i, j int) bool {
 		if msgs[i].Unseen != msgs[j].Unseen {
@@ -220,9 +267,15 @@ func Bounds(c *fiber.Ctx) error {
 		msgs = msgs[:limit64]
 	}
 
+	// One batched routing call resolves every location's road-aware blur.
+	blurCoords := make([][2]float64, 0, len(msgs))
+	for _, r := range msgs {
+		blurCoords = append(blurCoords, [2]float64{float64(r.Lat), float64(r.Lng)})
+	}
+	roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
 	for ix, r := range msgs {
 		// Protect anonymity of poster a bit.
-		msgs[ix].Lat, msgs[ix].Lng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
+		msgs[ix].Lat, msgs[ix].Lng = roadblur.RoadBlur(r.Lat, r.Lng, utils.BLUR_USER)
 	}
 
 	return c.JSON(msgs)

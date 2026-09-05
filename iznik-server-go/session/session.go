@@ -17,6 +17,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/housekeeper"
 	log2 "github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/maildeferral"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -590,7 +591,7 @@ func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error
 		})
 	}
 
-	persistent, jwtString, err := auth.CreateSessionAndJWT(userID)
+	persistent, jwtString, err := auth.CreateSessionAndJWT(c, userID, auth.LoginMethodPassword)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
 	}
@@ -631,7 +632,7 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 		})
 	}
 
-	persistent, jwtString, err := auth.CreateSessionAndJWT(uid)
+	persistent, jwtString, err := auth.CreateSessionAndJWT(c, uid, auth.LoginMethodLink)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
 	}
@@ -1129,6 +1130,7 @@ func GetSession(c *fiber.Ctx) error {
 		var chatreview, chatreviewother, newsletterstories, giftaid, happiness, relatedmembers int64
 		var housekeeping, cronjobs int64
 		var emailin, emailout int64
+		var maildeferrals int64
 		var helperEscalated int64
 		// Informational (blue) counts of UNCHECKED live posts for the oversight
 		// views: checked = auto-approved posts from auto-moderated (NULL) members;
@@ -1629,6 +1631,26 @@ func GetSession(c *fiber.Ctx) error {
 				defer wg2.Done()
 				emailin, emailout = FetchEmailHealth(db, time.Now().Hour())
 			}()
+
+			// --- Providers currently refusing our mail (ADMIN only) ---
+			// ADMIN only, like every other badge on that page - the whole
+			// block is SYSTEMROLE_ADMIN, so a support user gets no
+			// maildeferrals key and therefore no badge, exactly as they get
+			// none for housekeeping or cronjobs. Deliberate, not an oversight:
+			// support can open the Delayed tab (the endpoint is
+			// IsAdminOrSupport) but is not badged towards it. The neighbouring
+			// comments saying "admin/support" are wrong about the gate.
+			// Counted by DOMAIN, and per-mailbox reasons excluded, so the badge
+			// matches what the Delayed table shows. A full inbox is not an
+			// outage and must not light this up.
+			wg2.Add(1)
+			go func() {
+				defer wg2.Done()
+				db.Table("mail_suppressions").
+					Where("released_at IS NULL AND scope = ?", "domain").
+					Where("reason IS NULL OR reason NOT REGEXP ?", maildeferral.PerMailboxReason).
+					Count(&maildeferrals)
+			}()
 		}
 
 		wg2.Wait()
@@ -1639,7 +1661,7 @@ func GetSession(c *fiber.Ctx) error {
 			pendingadmins + editreview + pendingvolunteering + stories +
 			spammerpendingadd + spammerpendingremove +
 			chatreview + newsletterstories + relatedmembers + housekeeping + cronjobs +
-			emailin + emailout + helperEscalated
+			emailin + emailout + helperEscalated + maildeferrals
 
 		work = fiber.Map{
 			"pending":              pending,
@@ -1668,6 +1690,7 @@ func GetSession(c *fiber.Ctx) error {
 			"cronjobs":             cronjobs,
 			"emailin":              emailin,
 			"emailout":             emailout,
+			"maildeferrals":        maildeferrals,
 			"total":                total,
 		}
 	}
@@ -1845,6 +1868,22 @@ func GetSession(c *fiber.Ctx) error {
 		if utils.OurDomain(email.Email) == 0 {
 			me["email"] = email.Email
 			break
+		}
+	}
+
+	// Tell the member when their provider is currently refusing our mail, so
+	// they can check back on the site instead of waiting for email that cannot
+	// arrive. Preferred address only: emails is ordered preferred DESC, so the
+	// address chosen above is the one we would actually send to, and warning
+	// about a secondary address they never read would just be noise.
+	//
+	// This is the deferral sibling of "bouncing" above. They are different
+	// failures and read differently to a member: bouncing means their address
+	// is rejecting us and they must fix it, whereas this means their provider
+	// is throttling us and there is nothing for them to do but wait.
+	if primary, ok := me["email"].(string); ok {
+		if deferral := maildeferral.ForEmail(primary); deferral != nil {
+			me["emaildeferred"] = deferral
 		}
 	}
 
@@ -2254,6 +2293,40 @@ func PatchSession(c *fiber.Ctx) error {
 	})
 }
 
+// logLogout writes the User/Logout audit row, the counterpart of the User/Login
+// row auth.CreateSessionAndJWT writes. V1 wrote "Series $series"
+// (include/session/Session.php); the same series is recorded here so a logout can
+// be paired with the login that opened it, which is how you tell "logged out of
+// ModTools" from "logged out of Freegle" for one account.
+//
+// A logout that could identify neither the series nor the session row deletes
+// nothing (Discourse #9748) - it is still logged, because a client asking to log
+// out and being unable to say which session is exactly the state worth seeing.
+func logLogout(c *fiber.Ctx, myid uint64, sessionId uint64, series uint64) {
+	var text string
+
+	switch {
+	case series > 0:
+		text = "Series " + strconv.FormatUint(series, 10)
+	case sessionId > 0:
+		text = "Session " + strconv.FormatUint(sessionId, 10) + ", series unknown"
+	default:
+		text = "Session unidentified - nothing deleted"
+	}
+
+	if site := auth.RequestSite(c); site != "" {
+		text += " (" + site + ")"
+	}
+
+	log2.Log(log2.LogEntry{
+		Type:    log2.LOG_TYPE_USER,
+		Subtype: log2.LOG_SUBTYPE_LOGOUT,
+		User:    &myid,
+		Byuser:  &myid,
+		Text:    &text,
+	})
+}
+
 // DeleteSession logs the user out by destroying their session.
 //
 // @Summary Logout
@@ -2316,6 +2389,8 @@ func DeleteSession(c *fiber.Ctx) error {
 		// If the current session cannot be identified at all, do NOT delete every
 		// session for the user. A logout that can't scope itself must no-op rather
 		// than evict the user from every device and app (Discourse #9748).
+
+		logLogout(c, myid, sessionId, series)
 	}
 
 	return c.JSON(fiber.Map{

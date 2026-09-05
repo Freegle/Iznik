@@ -20,6 +20,15 @@ fi
 # Add new cron job
 (crontab -l 2>/dev/null; echo "$CRON_SCHEDULE $SCRIPT_PATH >> /var/log/yesterday-cron.log 2>&1") | crontab -
 
+# Keep the VM scripts current. Runs 15 minutes before the restore, so a fix merged during the
+# day is in place for that night rather than whenever somebody next logs in - twice now a
+# merged fix sat undeployed while restores failed nightly (9 Aug, 13 Aug).
+if crontab -l 2>/dev/null | grep -q "update-scripts.sh"; then
+    crontab -l 2>/dev/null | grep -v "update-scripts.sh" | crontab -
+fi
+(crontab -l 2>/dev/null; echo "45 5 * * * /var/www/FreegleDocker/yesterday/scripts/update-scripts.sh >> /var/log/yesterday-cron.log 2>&1") | crontab -
+echo "✅ Script-update cron installed (05:45 UTC, before the restore)"
+
 echo "✅ Cron job installed successfully"
 echo ""
 echo "The Yesterday environment will automatically restore the latest backup daily at 6 AM UTC"

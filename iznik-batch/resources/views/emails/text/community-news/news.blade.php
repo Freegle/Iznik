@@ -1,4 +1,4 @@
-Community News for {{ $areaName }}
+Community News near you
 ==============================
 
 {{ trim($intro) }}
@@ -21,6 +21,6 @@ A freegler near you says...
 You're getting this because you're a Freegle member near {{ $areaName }}.
 To stop these, turn off "Newsletters & stories" in your email settings: {{ $settingsUrl }}
 
-Give & find things near you: {{ $findUrl }}
+Give & ask for things near you: {{ $askUrl }}
 
 {{ config('freegle.branding.name') }} is a charity run by volunteers.

@@ -18,18 +18,6 @@
         sizes="100vw md:400px"
         class="imgthumb"
       />
-      <NuxtPicture
-        v-else-if="newsfeed.image?.externaluid"
-        format="webp"
-        fit="cover"
-        provider="uploadcare"
-        :src="newsfeed.image.externaluid"
-        :modifiers="newsfeed.image?.externalmod"
-        alt="ChitChat Image"
-        sizes="100vw md:400px"
-        :height="400"
-        class="imgthumb"
-      />
       <b-img
         v-else-if="newsfeed.image"
         lazy
@@ -98,8 +86,8 @@ import NewsUserIntro from '~/components/NewsUserIntro'
 import NewsLoveComment from '~/components/NewsLoveComment'
 import OurUploadedImage from '~/components/OurUploadedImage'
 
-const NewsShareModal = defineAsyncComponent(() =>
-  import('~/components/NewsShareModal')
+const NewsShareModal = defineAsyncComponent(
+  () => import('~/components/NewsShareModal')
 )
 
 const props = defineProps({

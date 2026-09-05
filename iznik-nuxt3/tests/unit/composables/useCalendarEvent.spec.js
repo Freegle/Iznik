@@ -51,7 +51,9 @@ describe('buildIcs', () => {
 
   it('escapes the comma in SUMMARY, DESCRIPTION and LOCATION', () => {
     expect(ics).toContain('SUMMARY:Freegle handover: blue sofa') // ':' is not an escaped ICS char
-    expect(ics).toContain('DESCRIPTION:Meet at the door. Ring the bell\\, second flat.')
+    expect(ics).toContain(
+      'DESCRIPTION:Meet at the door. Ring the bell\\, second flat.'
+    )
     expect(ics).toContain('LOCATION:10 High Street\\, Anytown\\, AN1 2BC')
   })
 

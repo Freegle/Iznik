@@ -207,11 +207,11 @@ import ChatMessageWarning from '~/components/ChatMessageWarning'
 import 'vue-simple-context-menu/dist/vue-simple-context-menu.css'
 import { useMe } from '~/composables/useMe'
 
-const ConfirmModal = defineAsyncComponent(() =>
-  import('~/components/ConfirmModal.vue')
+const ConfirmModal = defineAsyncComponent(
+  () => import('~/components/ConfirmModal.vue')
 )
-const ResultModal = defineAsyncComponent(() =>
-  import('~/components/ResultModal.vue')
+const ResultModal = defineAsyncComponent(
+  () => import('~/components/ResultModal.vue')
 )
 
 const props = defineProps({

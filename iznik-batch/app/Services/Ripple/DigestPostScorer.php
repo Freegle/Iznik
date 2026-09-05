@@ -41,11 +41,26 @@ class DigestPostScorer
         int $replies,
         bool $homeGroup,
         array $weights,
-        array $env
+        array $env,
+        ?float $driveMinutes = null
     ): array {
-        // close = 1 - dist/reach, clamped to [0,1]. reach<=0 => no closeness signal.
+        // close: the REFERENCE term (1 - driveMin/max_minutes, what the Go
+        // simulator has always computed) whenever the recipient's actual drive
+        // time is known - the routing engine's precomputed leaf tables made
+        // that a microseconds lookup, and UnifiedDigestService already fetches
+        // it per recipient for the distance filter, so the "infeasible at mass
+        // mail scale" premise of the haversine approximation no longer holds.
+        // The crow proxy remains the fallback for an unknown drive time (an
+        // unroutable point or a routing outage) - unknown means "use the
+        // proxy", never "score zero".
         $close = 0.0;
-        if ($reachRadius > 0) {
+        $maxMinutes = (float) ($env['max_minutes'] ?? 0);
+        if ($driveMinutes !== null && $maxMinutes > 0) {
+            $close = 1.0 - $driveMinutes / $maxMinutes;
+            if ($close < 0) {
+                $close = 0.0;
+            }
+        } elseif ($reachRadius > 0) {
             $close = 1.0 - $distanceMetres / $reachRadius;
             if ($close < 0) {
                 $close = 0.0;

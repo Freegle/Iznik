@@ -1,6 +1,6 @@
 require_relative '../../node_modules/@capacitor/ios/scripts/pods_helpers'
 
-platform :ios, '14.0'
+platform :ios, '15.0'
 use_frameworks!
 
 # workaround to avoid Xcode caching of Pods that requires
@@ -15,7 +15,7 @@ def capacitor_pods
   pod 'CapacitorAppLauncher', :path => '../../node_modules/@capacitor/app-launcher'
   pod 'CapacitorDevice', :path => '../../node_modules/@capacitor/device'
   pod 'CapacitorNetwork', :path => '../../node_modules/@capacitor/network'
-  pod 'FreegleCapacitorPushNotificationsCap7', :path => '../../node_modules/@freegle/capacitor-push-notifications-cap7'
+  pod 'FreegleCapacitorPushNotificationsCap8', :path => '../../node_modules/@freegle/capacitor-push-notifications-cap8'
   pod 'CapawesomeCapacitorBadge', :path => '../../node_modules/@capawesome/capacitor-badge'
   pod 'CapacitorCommunityAppleSignIn', :path => '../../node_modules/@capacitor-community/apple-sign-in'
   pod 'CapgoCapacitorSocialLogin', :path => '../../node_modules/@capgo/capacitor-social-login'
@@ -23,7 +23,6 @@ def capacitor_pods
   pod 'CapacitorCamera', :path => '../../node_modules/@capacitor/camera'
   pod 'CapacitorShare', :path => '../../node_modules/@capacitor/share'
   pod 'CapacitorApp', :path => '../../node_modules/@capacitor/app'
-  pod 'CapacitorBrowser', :path => '../../node_modules/@capacitor/browser'
   pod 'CapacitorScreenOrientation', :path => '../../node_modules/@capacitor/screen-orientation'
   pod 'CordovaPlugins', :path => '../capacitor-cordova-ios-plugins'
 end
@@ -32,6 +31,15 @@ target 'Freegle' do
   capacitor_pods
   # Add your Pods here
   pod 'Firebase/Messaging'
+
+  # Pin the Facebook SDK. CapgoCapacitorSocialLogin asks for '~> 18.0', and
+  # Podfile.lock is not in git, so every iOS build otherwise picks up whatever
+  # 18.x is current that day - login can change without a commit. 18.1.0 is what
+  # the builds in the field already resolved, so this freezes today's behaviour
+  # rather than adding an untested bump. Move it deliberately, and test Facebook
+  # sign-in on a device when you do.
+  pod 'FBSDKCoreKit', '18.1.0'
+  pod 'FBSDKLoginKit', '18.1.0'
 end
 
 #post_install do |installer|

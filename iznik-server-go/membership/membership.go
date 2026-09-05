@@ -11,6 +11,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -147,6 +148,17 @@ func PostMemberships(c *fiber.Ctx) error {
 		}
 	}
 
+	// Whether the member's only tie to this group is a post of theirs that rippled in.
+	// Read once, before the actions below delete the row it lives on. A group removes such
+	// a member as it sees fit, but says nothing to them: they never joined, so a note from
+	// a community they have not heard of is the same confusion as one about their post
+	// (Discourse 10102).
+	rippleOnly := rippling.IsRippleOnlyMembership(db, req.Userid, req.Groupid)
+	notifyMember := 1
+	if rippleOnly {
+		notifyMember = 0
+	}
+
 	switch req.Action {
 	case "Hold":
 		if result := db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
@@ -165,6 +177,16 @@ func PostMemberships(c *fiber.Ctx) error {
 	case "Leave Member", "Leave Approved Member":
 		// send modmail to the member without changing membership status.
 		// PHP memberships.php line 291-294: just calls $u->mail().
+		//
+		// This action is nothing but a message, so on a membership rippling created for a
+		// poster it has nothing to do: that membership is a record of where their post
+		// travelled, not a relationship with this community (Discourse 10102). Refuse it
+		// rather than accept and drop it - the moderator wrote those words on purpose.
+		if rippleOnly {
+			return fiber.NewError(fiber.StatusForbidden,
+				"This member's only tie to the group is a post that rippled in, so there is nobody here to write to")
+		}
+
 		subject := ""
 		if req.Subject != nil {
 			subject = *req.Subject
@@ -184,8 +206,8 @@ func PostMemberships(c *fiber.Ctx) error {
 		// d22ba1d6c).
 		db.Table("background_tasks").Create(map[string]interface{}{
 			"task_type": "email_mod_stdmsg",
-			"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
-				req.Userid, req.Groupid, myid, subject, body, stdmsgid, "Leave Approved Member"),
+			"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
+				req.Userid, req.Groupid, myid, subject, body, stdmsgid, "Leave Approved Member", notifyMember),
 		})
 		// V1 parity: Leave Approved Member only calls $u->mail(), no log entry.
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -211,8 +233,8 @@ func PostMemberships(c *fiber.Ctx) error {
 		if subject != "" || body != "" {
 			db.Table("background_tasks").Create(map[string]interface{}{
 				"task_type": "email_mod_stdmsg",
-				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
-					req.Userid, req.Groupid, myid, subject, body, 0, "Approve Member"),
+				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
+					req.Userid, req.Groupid, myid, subject, body, 0, "Approve Member", notifyMember),
 			})
 		}
 
@@ -240,8 +262,8 @@ func PostMemberships(c *fiber.Ctx) error {
 		if subject != "" || body != "" {
 			db.Table("background_tasks").Create(map[string]interface{}{
 				"task_type": "email_mod_stdmsg",
-				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
-					req.Userid, req.Groupid, myid, subject, body, stdmsgid, req.Action),
+				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
+					req.Userid, req.Groupid, myid, subject, body, stdmsgid, req.Action, notifyMember),
 			})
 		}
 
@@ -327,6 +349,43 @@ func PostMemberships(c *fiber.Ctx) error {
 	}
 }
 
+// mailDelayedCols surfaces deferral-aware mail suppression on a member row.
+//
+// A provider that stops accepting our mail - Yahoo did, on 2026-08-15, for
+// every address it hosts - leaves the member receiving nothing while their
+// own address is perfectly fine. Moderators need to see that, and to see that
+// it reads differently from "bouncing", which they correctly interpret as a
+// bad address and act on.
+//
+// All three read from mail_suppressed_counts, which the batch side writes as
+// it declines to generate each email. That is deliberate: working out from
+// scratch which provider is refusing a given member would mean resolving
+// their send address the way the mailer does (a ranking over users_emails,
+// not a flag) and then matching it by domain - which is not something a
+// reporting query should be reimplementing, and would not be indexable
+// either. The batch side already knows the answer at the moment it decides,
+// so it records it.
+//
+// The consequence worth knowing: a member shows as delayed once we have
+// actually held something back for them, not from the instant the provider
+// is suppressed. In practice that is the next digest or post notification
+// they were due.
+//
+// Correlated subqueries rather than joins, because a member has one row per
+// type of mail held and a join would multiply member rows. Each is keyed on
+// msc.userid, the leading column of the table's unique index.
+//
+// keep-raw: column-list fragment spliced into the four hand-written SELECTs
+// below, which are the established shape in this file.
+const mailDelayedCols = `(SELECT MIN(msc.firstat) FROM mail_suppressed_counts msc
+	 WHERE msc.userid = u.id AND msc.caughtup_at IS NULL) AS maildelayedsince,
+	(SELECT SUM(msc.count) FROM mail_suppressed_counts msc
+	 WHERE msc.userid = u.id AND msc.caughtup_at IS NULL) AS maildelayedcount,
+	(SELECT ms.provider FROM mail_suppressed_counts msc
+	   JOIN mail_suppressions ms ON ms.id = msc.suppressionid
+	 WHERE msc.userid = u.id AND msc.caughtup_at IS NULL
+	 ORDER BY msc.id DESC LIMIT 1) AS maildelayedprovider`
+
 // GetMembershipsMember is the response struct for individual members in GetMemberships.
 type GetMembershipsMember struct {
 	ID                  uint64                  `json:"id"`
@@ -354,6 +413,21 @@ type GetMembershipsMember struct {
 	Engagement          *string                 `json:"engagement"`
 	Lastmodmail         *string                 `json:"lastmodmail,omitempty"`
 	Bouncing            bool                    `json:"bouncing" gorm:"column:bouncing"`
+	// True when this membership exists only because rippling auto-joined the poster
+	// after their post reached the group (ExpandService::addPosterMembershipToRippledGroups).
+	// It records where a post travelled, not a relationship with the community, so
+	// ModTools does not offer the group's moderators a chat off the back of it
+	// (Discourse 10102).
+	Rippled bool `json:"rippled" gorm:"column:rippled"`
+	// Set while the member's email provider is refusing our mail. This is
+	// deliberately NOT the same thing as Bouncing: bouncing means their
+	// address is bad, whereas this is our own sending reputation with their
+	// provider, and moderators must be able to tell the two apart. Pointers
+	// so a query branch that does not select them reads as unknown rather
+	// than as a confident "not delayed".
+	MailDelayedSince    *string `json:"maildelayedsince" gorm:"column:maildelayedsince"`
+	MailDelayedProvider *string `json:"maildelayedprovider" gorm:"column:maildelayedprovider"`
+	MailDelayedCount    *int    `json:"maildelayedcount" gorm:"column:maildelayedcount"`
 }
 
 // GetMemberships handles GET /memberships - list group members (moderator use).
@@ -423,8 +497,8 @@ func GetMemberships(c *fiber.Ctx) error {
 				"b.date AS added, b.date AS bandate, b.byuser AS bannedby, "+
 				"u.fullname, u.firstname, u.lastname, u.engagement, "+
 				"b.userid AS id, NULL AS heldby, NULL AS settings, "+
-				"0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, "+
-				"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason").
+				"0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, 0 AS rippled, "+
+				"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason, "+mailDelayedCols).
 			Joins("JOIN users u ON u.id = b.userid").
 			Where("b.groupid = ?", groupid)
 		if contextID > 0 {
@@ -454,10 +528,10 @@ func GetMemberships(c *fiber.Ctx) error {
 		db.Table("memberships m").
 			Select("m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
 				"u.fullname, u.firstname, u.lastname, m.settings, "+
-				"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, "+
+				"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, "+
 				"b.date AS bandate, b.byuser AS bannedby, "+
 				"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, "+
-				"MAX(l.timestamp) AS lastmodmail").
+				"MAX(l.timestamp) AS lastmodmail, "+mailDelayedCols).
 			Joins("JOIN users u ON u.id = m.userid").
 			Joins("LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid").
 			Joins("INNER JOIN logs l ON l.user = m.userid AND l.groupid = m.groupid "+
@@ -480,9 +554,9 @@ func GetMemberships(c *fiber.Ctx) error {
 
 	selectCols := "m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, " +
 		"u.fullname, u.firstname, u.lastname, m.settings, " +
-		"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, " +
+		"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, " +
 		"b.date AS bandate, b.byuser AS bannedby, " +
-		"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing"
+		"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing, " + mailDelayedCols
 
 	// filterWhereSQL returns the filter-specific WHERE fragment (with
 	// comments/notes, moderation team, bouncing, or none) - one of 4 fixed
@@ -537,8 +611,19 @@ func GetMemberships(c *fiber.Ctx) error {
 			// TestTier3Shapes_836dc8807739, removed in d22ba1d6c).
 			whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL() + " AND m.userid = ?"
 			whereArgs := append(append([]interface{}{}, groupArgs...), collection, searchID)
+			// Honour the cursor, exactly as the no-search branch below does. This
+			// function always hands the caller a context cursor when it returns a full
+			// page (see nextContext at the end), including for searches - so a client
+			// that pages through search results sends it back and, before this, got the
+			// same top-`limit` rows again every time. Ordering switches from m.added to
+			// m.id to match the cursor; both are set at row creation so the practical
+			// order is unchanged.
+			if contextID > 0 {
+				whereSQL += " AND m.id < ?"
+				whereArgs = append(whereArgs, contextID)
+			}
 			baseTx().Where(whereSQL, whereArgs...).
-				Order("m.added DESC").Limit(limit).Scan(&members)
+				Order("m.id DESC").Limit(limit).Scan(&members)
 		} else {
 			searchPattern := "%" + search + "%"
 			// Match firstname/lastname as well as fullname: some members (e.g. LoveJunk
@@ -546,18 +631,29 @@ func GetMemberships(c *fiber.Ctx) error {
 			// so a fullname-only LIKE silently excludes them from name search even though
 			// enrichMembers builds their displayname from those columns. (Discourse 9518/371)
 			//
+			// Also match the CONCATENATED firstname+lastname: enrichMembers' displayname
+			// for these members is "firstname lastname" (the string ModTools actually shows
+			// a mod, and the one they type/paste back into search), which contains no
+			// substring equal to firstname or lastname alone, so the two LIKEs above still
+			// missed a full-name search even after 9518/371. (Discourse 9518/379)
+			//
 			// Same
 			// groupid==0 x filter toggles as 836dc8807739 above - 8 possible
 			// rendered forms, all proven by the retired ormharness
 			// (shapes.json / TestTier3Shapes_5f742c0fcf1f, removed in
 			// d22ba1d6c).
 			whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL() +
-				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?)"
+				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR CONCAT_WS(' ', u.firstname, u.lastname) LIKE ? OR ue.email LIKE ?)"
 			whereArgs := append(append([]interface{}{}, groupArgs...), collection,
-				searchPattern, searchPattern, searchPattern, searchPattern)
+				searchPattern, searchPattern, searchPattern, searchPattern, searchPattern)
+			// Same cursor handling as the numeric branch above - see comment there.
+			if contextID > 0 {
+				whereSQL += " AND m.id < ?"
+				whereArgs = append(whereArgs, contextID)
+			}
 			baseTx().Joins("LEFT JOIN users_emails ue ON ue.userid = m.userid").
 				Where(whereSQL, whereArgs...).
-				Group("m.id").Order("m.added DESC").Limit(limit).Scan(&members)
+				Group("m.id").Order("m.id DESC").Limit(limit).Scan(&members)
 		}
 	} else {
 		// Cursor-based pagination: m.id is the cursor (auto-increment correlates with join date).
@@ -697,9 +793,9 @@ func getSpamMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error 
 	result := db.Table("memberships m").
 		Select("m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
 			"u.fullname, u.firstname, u.lastname, m.settings, "+
-			"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, "+
+			"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, "+
 			"b.date AS bandate, b.byuser AS bannedby, "+
-			"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing").
+			"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing, "+mailDelayedCols).
 		Joins("JOIN users u ON u.id = m.userid").
 		Joins("LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid").
 		Where("m.groupid IN ? AND m.reviewrequestedat IS NOT NULL AND (m.reviewedat IS NULL OR m.reviewrequestedat > m.reviewedat)", modGroupIDs).
@@ -1255,6 +1351,7 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ?",
 		userid, groupid).Scan(&existingRole)
 	if existingRole != "" {
+		rippling.ClearRippledMembership(db, userid, groupid, "joined")
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid, "addedto": utils.COLLECTION_APPROVED})
 	}
 
@@ -1305,6 +1402,7 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ?",
 		userid, groupid).Scan(&existingRole)
 	if existingRole != "" {
+		rippling.ClearRippledMembership(db, userid, groupid, "joined")
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "addedto": "Approved"})
 	}
 

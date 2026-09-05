@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-11
+last_reviewed: 2026-08-26
 covers:
   - iznik-batch/app/Services/FirstReply/**
   - iznik-batch/app/Console/Commands/FirstReply/**
@@ -93,19 +93,52 @@ eventually have.
 
 `rippling_reach.polygon` is the reach a post has now. The routing server returns the whole
 tick schedule at t=0, so the widest tick - what the reach becomes - is knowable immediately;
-nothing stored it. `rippling_reach.max_polygon` now does, populated by a background pass
+nothing stored it. `rippling_reach.max_polygon_cells` now does, populated by a background pass
 (`firstreply:maxreach`) rather than derived on demand, because some schedule entries carry no
 inline geometry and have to be re-fetched from the routing server. A point-in-polygon test on
 somebody's reply is not the place to discover that.
 
+**The pass that fills it is index-sensitive in a way worth knowing about.**
+`MaxReachService::candidateQuery` looks for expanding posts that still lack a max reach,
+newest first, `LIMIT 200`, once a minute. Once every expanding post *has* one the predicate
+matches nothing - and a `LIMIT` that is never satisfied cannot stop a scan early, so the
+planner's unaided choice walks the whole `updated_at` index to prove the empty set: 55,990 row
+lookups in a ~50GB table, 2m09s on an idle db1, on the read node. Since labels-truth,
+`expanding AND max_polygon_cells IS NULL` is NOT an empty set: labelled rows deliberately
+never get a max grid (their stored label answers the gate at its full budget), so this
+count grows with the label backfill and says nothing about the sweep being stuck.
+
+There are two correct forms, and which applies is a schema fact rather than a preference,
+guarded by `MaxReachCandidateIndex::ready()`. Measured on a 55,015-row clone matching
+production:
+
+| form | rows examined | sort |
+|---|---|---|
+| planner unaided | whole `updated_at` walk | backward scan |
+| `FORCE INDEX (rippling_reach_status_index)` | 13,696 | filesort |
+| `rippling_reach_maxreach_candidates` | 1 | none |
+
+**The two do not stack.** Leaving the hint in place once the composite index exists pins the
+planner to the status index, so the composite is never used at all - 15,177 rows and a
+filesort, worse than no hint. The hint is strictly the fallback for before the DDL has run.
+
+Two traps in the index itself. `max_polygon_cells` is a `MEDIUMBLOB` and cannot be indexed, so
+its nullness is hoisted into a `has_max_reach` virtual generated column (the same idiom
+`has_overflow` uses) - and **MySQL will not substitute that column for its own defining
+expression**, so written as `max_polygon_cells IS NULL` the planner ignores the index entirely.
+The query has to name `has_max_reach`. The column is also defined over `max_polygon_cells`
+alone on purpose: a generated column pins every column it references, so naming a legacy column
+or `max_polygon_hash` would make MySQL refuse to drop them later.
+
 | Where | What |
 |---|---|
-| `iznik-batch/app/Services/FirstReply/MaxReachService.php` | populates and tests `max_polygon` |
+| `iznik-batch/app/Services/FirstReply/MaxReachService.php` | populates and tests `max_polygon_cells` |
+| `iznik-batch/app/Services/Ripple/MaxReachCandidateIndex.php` | which of the two candidate-scan forms this schema supports |
 | `iznik-batch/app/Services/Ripple/RippleReplyService.php` | `shouldHold()` consults the passthrough - email and TrashNothing replies |
 | `iznik-server-go/firstreply/passthrough.go` | the same decision for in-app replies |
 
 Both sides have to agree, because which door a reply came through is not something the poster
-knows or should care about. Both are conservative at every step: switched off, `max_polygon`
+knows or should care about. Both are conservative at every step: switched off, `max_polygon_cells`
 not yet populated, a query error, or a post that already has repliers all mean "hold as
 before". Being wrong in that direction costs a delay; being wrong the other way would deliver
 a reply the reach never covers.
@@ -245,7 +278,7 @@ pairing against a shuffled one.
 ### A recipient is someone the ripple has NOT reached yet
 
 The geographic test is a band, not a radius: **outside `rippling_reach.polygon` (the reach the
-post has right now) and inside `max_polygon` (the reach it ends up with)**.
+post has right now) and inside `max_polygon_cells` (the reach it ends up with)**.
 
 Both halves matter. The upper bound stops us mailing someone the post will never legitimately
 reach. The lower bound is what makes this mail worth sending at all: somebody already inside the
@@ -329,6 +362,12 @@ What it does consume is the reach mail: everyone actually mailed gets a
 time. That is keyed on who was **actually mailed**, not who was picked, so a member whose spool
 failed stays eligible for the reach mail rather than silently getting nothing. It is why
 `mailPostToUsers` returns the ids it sent to rather than a count.
+
+It reads that ledger as well as writing it, across every copy of the item rather than this
+one message. Scouting picks its own recipients, so the reach mailer's own check never saw
+them: without this, a member who had already been mailed one copy of an item could be
+scouted for another. The grouping is `UnifiedDigestService::itemSiblingMsgids()`, the same
+one the digest uses, and the check sits in `spoolPostToRecipients` so both paths get it.
 
 ### The mail is the ordinary digest mail
 
@@ -495,7 +534,7 @@ them in a quiet channel would mean nobody ever answers them.
 
 | Table | What |
 |---|---|
-| `rippling_reach.max_polygon` | the reach the post ends up with. NULL = not computed yet, and every reader falls back to current-reach behaviour |
+| `rippling_reach.max_polygon_cells` | the reach the post ends up with, as a compact cell grid (rippling reference §9b/§9c) - a run-stream probe with no network call. `isWithinMaxReach`/`ShouldPassThrough` ask the stored LABEL at its full budget first and only fall back to this grid; for a labelled row NULL means "the label answers this" (the sweep skips labelled rows and the drain command clears them), and only for an unlabelled row does it mean "no wider reach known yet" |
 | `rippling_reach.min_tick` | a floor the expander must not sit below, set when a matched member replies. NULL = expand on elapsed time alone, exactly as before |
 | `users_searches_embeddings` | a saved search term as a vector, embedded as a DOCUMENT so it shares the post threshold |
 | `chat_prompts` | options and answer for a `Prompt` chat message |
@@ -511,7 +550,7 @@ All are registered in `iznik-batch/routes/console.php` inside
 
 | Command | Cadence | What |
 |---|---|---|
-| `firstreply:maxreach` | every minute | fills in `max_polygon`, and sizes recorded passthroughs. Kept out of `ripple:expand`, which is the hot single-writer loop |
+| `firstreply:maxreach` | every minute | fills in `max_polygon_cells`, and sizes recorded passthroughs. Kept out of `ripple:expand`, which is the hot single-writer loop |
 | `firstreply:matchmail` | every minute | attributes replies to earlier match mail - pulling the post's reach out to cover anyone who replied - then finds and mails new matches |
 | `embeddings:searches` | hourly | embeds saved search terms so the `search` signal can match by vector. Also re-embeds after a model change |
 | `firstreply:engage` | every 5 min, **not currently registered** | sends the next due prompt. Nested inside a second `if (config('freegle.firstreply.chat.enabled'))`, which is off, because `EngagementService` returns immediately when the chat is off and a cron whose only job is to rediscover that is a process spawn every five minutes for nothing |
@@ -529,7 +568,8 @@ The Go API needs `FIRSTREPLY_ENABLED` and `FIRSTREPLY_PASSTHROUGH_ENABLED` too, 
 in-app reply path is enforced there.
 
 Sensible order: turn on `FIRSTREPLY_ENABLED` alone first so `firstreply:maxreach` can drain,
-then the passthrough (which needs `max_polygon` to do anything), then match mail.
+then the passthrough (which answers from stored labels wherever they exist, and needs
+`max_polygon_cells` only for unlabelled rows), then match mail.
 
 ### One cap, and it should never bind
 

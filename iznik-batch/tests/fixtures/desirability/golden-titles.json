@@ -1,0 +1,6002 @@
+[
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Bedside table/side table (Long Ditton KT6)",
+  "clean": "bedside table/side table",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "bedside table side table",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Mirror with wooden frame  (City of Bristol BS6)",
+  "clean": "mirror with wooden frame",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "mirror with wooden frame",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "[EdinburghFreegle] OFFER: OLD BUT UNUSED A5 DIARY (EH5)",
+  "clean": "but unused a5 diary",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "but unused a5 diary",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFERED: Guitar Chords Poster (Garston, WD25)",
+  "clean": "guitar chords poster",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "guitar chords poster",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER:  bubble wrap (Clayton West HD8)",
+  "clean": "bubble wrap",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "bubble wrap",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: 3-way socket adaptor (Eastcote HA5)",
+  "clean": "3-way socket adaptor",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "3-way socket adaptor",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Exercise bike (Queenstown FY1)",
+  "clean": "exercise bike",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "exercise bicycle",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "[StockportFreegle] OFFER:  Wind-sail board and mast  (Stockport SK2)",
+  "clean": "wind-sail board and mast",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "wind-sail board and mast",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Foldable wash basket (Edinburgh EH11)",
+  "clean": "foldable wash basket",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "foldable wash basket",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Joblot of plant pots  (Northcourt OX14)",
+  "clean": "joblot of plant pots",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "joblot of plant pot",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: EPSON printer/scanner SX215 for repair  (Waterthorpe S20)",
+  "clean": "epson printer/scanner sx215 for repair",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "epson",
+  "is_ikea": false,
+  "canonical": "printer scanner sx215 for repair",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Foam pad (E9)",
+  "clean": "foam pad",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "foam pad",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Mellisa and Doug puzzle (Oxford OX4)",
+  "clean": "mellisa and doug puzzle",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "mellisa and doug puzzle",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Office desk with builtin cupboard (Lee SE12)",
+  "clean": "office desk with builtin cupboard",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "office desk with builtin cupboard",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Flexispot Under Desk Drawer (Royal Victoria DLR E16)",
+  "clean": "flexispot under desk drawer",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "flexispot under desk drawer",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Television stand (B13 Birmingham)",
+  "clean": "television stand",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "tv stand",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER:  double bed and mattress  (Elvetham Heath GU51)",
+  "clean": "double bed and mattress",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "double bed and mattress",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Arts and craft stuff for kids (Garnethill G3)",
+  "clean": "arts and craft stuff for kids",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "arts and craft stuff for kids",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "Offered: Car Engine Oil 10W40 5 Litres (Wycombe centre HP11)",
+  "clean": "car engine oil 10w40 5 litres",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "car engine oil 10w40 5 litre",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Box of saucepans and frying pans (Shurdington GL51)",
+  "clean": "box of saucepans and frying pans",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "box of saucepans and frying pan",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: 3 cushions (RG2)",
+  "clean": "3 cushions",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "3 cushion",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "Re: [SouthLincsFreeRecyclers] OFFER: sewing machine (Moulton PE12)",
+  "clean": "sewing machine",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "sewing machine",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Android TV Box (Frizinghall BD9)",
+  "clean": "android tv box",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "android",
+  "is_ikea": false,
+  "canonical": "tv box",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Laundry basket (Hillmorton Paddox CV22)",
+  "clean": "laundry basket",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "laundry basket",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFERED: Lamp shades + base (Henley in Arden B95)",
+  "clean": "lamp shades + base",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "lamp shades + base",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "Offer: TV unit (Whyteleafe CR6)",
+  "clean": "tv unit",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "tv unit",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Snowman Tins (Annscroft SY5)",
+  "clean": "snowman tins",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "snowman tin",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Chest of drawers (GL5 Stroud)",
+  "clean": "chest of drawers",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "chest of drawer",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Medium Pet Bed. (Bedford MK40)",
+  "clean": "medium pet bed",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "medium pet bed",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "postcode",
+  "raw": "OFFER: Pink Pair Curtains (Great Linford MK14)",
+  "clean": "pink pair curtains",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "pink pair curtain",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: 2 x 2.3m flat profile speaker cable (Stonesfield OX29)",
+  "clean": "2.3m flat profile speaker cable",
+  "qty": 2,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "2.3m flat profile speaker cable",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: Vision Fitness X6100 elliptical cross trainer (Oakwood LS8)",
+  "clean": "vision fitness x6100 elliptical cross trainer",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "vision fitness x6100 elliptical cross trainer",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: Light fittings x 2 (Stotfold SG5)",
+  "clean": "light fittings",
+  "qty": 2,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "light fitting",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: Yankee Candle Simply Home x5 votive candles (South Croydon CR2)",
+  "clean": "yankee candle simply home x5 votive candles",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "yankee candle simply home x5 votive candle",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: 2 x Campingaz canisters  (Whitnash CV31)",
+  "clean": "campingaz canisters",
+  "qty": 2,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "campingaz canister",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: 4 x brown plastic cups with lids  (Ashford TW15)",
+  "clean": "brown plastic cups with lids",
+  "qty": 4,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "brown plastic cups with lid",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "Offer: Set of IKEA shelves (Tetbury GL8)",
+  "clean": "ikea shelves",
+  "qty": null,
+  "is_multiple": true,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "shelf",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: Pair of tartan curtains (Govan, Glasgow)",
+  "clean": "tartan curtains",
+  "qty": null,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "tartan curtain",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: Pair of hinged tall Ikea Pax doors (Palmers Green, N13)",
+  "clean": "hinged tall ikea pax doors",
+  "qty": null,
+  "is_multiple": true,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "hinged tall pax door",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "[RugbyFreegle] OFFER: Sheets of 5cm polystyrene x 2  (Bilton)",
+  "clean": "sheets of 5cm polystyrene",
+  "qty": 2,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "sheets of 5cm polystyrene",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: 2x single mattresses (Burnley)",
+  "clean": "single mattresses",
+  "qty": 2,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "single mattress",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: Cotton pillowcases larger than usual 50 x 90 cm (Stoneybank EH21)",
+  "clean": "cotton pillowcases larger than usual 50 x 90 cm",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "cotton pillowcases larger than usual 50 x 90 cm",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: Recipie cards - meat & fish x6 (Herne Hill, SE24)",
+  "clean": "recipie cards - meat & fish",
+  "qty": 6,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "recipie cards - meat and fish",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: A pair of IKEA grey curtain poles (Lyne KT16)",
+  "clean": "a pair of ikea grey curtain poles",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "a pair of grey curtain pole",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "Offered: DVD Cases - empty - x 30 or so (Amersham HP7)",
+  "clean": "dvd cases - empty - x 30 or so",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "dvd cases - empty - x 30 or so",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: 4 x Faux Leather Brown Chairs (New Greens AL3)",
+  "clean": "faux leather brown chairs",
+  "qty": 4,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "faux leather brown chair",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER:  x2 used fence panels  (Whitemoss Gap FY3)",
+  "clean": "used fence panels",
+  "qty": 2,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "used fence panel",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: 6 X coloured glasses (Dunecht)",
+  "clean": "coloured glasses",
+  "qty": 6,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "coloured glass",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: 2 x 2 Seater sofas - M&S Blue (Gadebridge HP1)",
+  "clean": "2 seater sofas - m&s blue",
+  "qty": 2,
+  "is_multiple": true,
+  "brand": "m_and_s",
+  "is_ikea": false,
+  "canonical": "2 seater sofas - blue",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFERED: white plastic garden posts with chain x4 (Waterlooville)",
+  "clean": "white plastic garden posts with chain",
+  "qty": 4,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "white plastic garden posts with chain",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: Pair of curtains (Hamsey Green CR2)",
+  "clean": "curtains",
+  "qty": null,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "curtain",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: 5 x childrens joke books (Brixton SW9)",
+  "clean": "childrens joke books",
+  "qty": 5,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "joke book",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER:  4 x 30ml muji travel bottles for creams  (Eltham SE9)",
+  "clean": "30ml muji travel bottles for creams",
+  "qty": 4,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "30ml muji travel bottles for cream",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: 1 x Valor paraffin heater (Byfleet)",
+  "clean": "valor paraffin heater",
+  "qty": 1,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "valor paraffin heater",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: 4 x metal cafe style dining chairs (Llangunllo LD1)",
+  "clean": "metal cafe style dining chairs",
+  "qty": 4,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "metal cafe style dining chair",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: 2 x leather dining chairs (Welwyn Garden City - AL7)",
+  "clean": "leather dining chairs",
+  "qty": 2,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "leather dining chair",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: 5 x 25kg bags of Cold Lay Tarmac (Marks Tey CO6)",
+  "clean": "25kg bags of cold lay tarmac",
+  "qty": 5,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "25kg bags of cold lay tarmac",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: 4 x ikea garden chairs (white plastic)  (Penrith CA11)",
+  "clean": "ikea garden chairs",
+  "qty": 4,
+  "is_multiple": true,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "garden chair",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: Recticel PIR insulation boards x7 - new (Roehampton SW15)",
+  "clean": "recticel pir insulation boards x7 - new",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "recticel pir insulation boards x7 - new",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "quantity",
+  "raw": "OFFER: Plastic cloches x 2 (New Marston OX3)",
+  "clean": "plastic cloches",
+  "qty": 2,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "plastic cloche",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Vitrex Carpet Trim 900mm - Brand New (Chatham ME4)",
+  "clean": "vitrex carpet trim 900mm - brand new",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "vitrex carpet trim 900mm - brand new",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Brand New Radiator H300 x L500 (Elmswell IP30)",
+  "clean": "radiator h300 x l500",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "radiator h300 x l500",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Brand new scarva colbalt oxide for ceramics (Lightpill GL5)",
+  "clean": "scarva colbalt oxide for ceramics",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "scarva colbalt oxide for ceramic",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Brand new baby shoes size 3-6 months  (NW2)",
+  "clean": "baby shoes size 3-6 months",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "shoes size 3-6 month",
+  "is_plural": true,
+  "flags": {
+   "baby": true,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "[hertford_freegle] OFFER: Brand new 2'6\" mattress (ware)",
+  "clean": "2'6\" mattress",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "2'6\" mattress",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Brand new Ikea Faktum kitchen base unit / cupboard (  TW12)",
+  "clean": "ikea faktum kitchen base unit / cupboard",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "faktum kitchen base unit cupboard",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Sofa bed good condition, unused for 2 yrs (Bicester OX26)",
+  "clean": "sofa bed , unused for 2 yrs",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "sofa bed , unused for 2 yrs",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Disney Game 4 players,6+yrs  Hardly Used (Moreton CH46)",
+  "clean": "disney game 4 players,6+yrs hardly used",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "disney game 4 players,6+yrs hardly used",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Brand new doormat (Sydenham SE26)",
+  "clean": "doormat",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "doormat",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "[BedfordFreegle] OFFER: Brand new inkjet cartridges HP 364 set 5 (Putnoe)",
+  "clean": "inkjet cartridges hp 364 set 5",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "hp",
+  "is_ikea": false,
+  "canonical": "inkjet cartridges 364 set 5",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "Offer: 2 Garden chairs plastic green in good condition Cam (Cam GL11)",
+  "clean": "2 garden chairs plastic green cam",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "2 garden chairs plastic green cam",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Red microwave. Used. Good condition (Bedminster BS3)",
+  "clean": "red microwave. used",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "red microwave. used",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "[Harrogate-Freegle] OFFER: Nice little travel alarm clock boxed/hardly used (HG5/Knaresborough) [2 Attachments]",
+  "clean": "nice little travel alarm clock boxed/hardly used",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "nice little travel alarm clock boxed hardly used",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Brand new Lambada Sensor (Resolven Neath SA11)",
+  "clean": "lambada sensor",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "lambada sensor",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Used but good condition  (Gipton LS8)",
+  "clean": "but",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "but",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Ready to collect Kids Cot with mattress hardly used. (Lower Earley RG6)",
+  "clean": "ready to collect kids cot with mattress hardly used",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "ready to collect kids cot with mattress hardly used",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Brand new bike helmet (basingstoke)",
+  "clean": "bike helmet",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "bicycle helmet",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: 3 seater sofa in good condition (Boscombe BH5)",
+  "clean": "3 seater sofa",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "3 seater sofa",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Metallic T-cut, hardly used (CB4 3)",
+  "clean": "metallic t-cut, hardly used",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "metallic t-cut, hardly used",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Small cat bed, hardly used (Holyport SL6)",
+  "clean": "small cat bed, hardly used",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "small cat bed, hardly used",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: IKEA Komplement drawer 100 X 58cm - Brand new in box (Fiveways BN1)",
+  "clean": "ikea komplement drawer 100 x 58cm - brand new in box",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "komplement drawer 100 x 58cm - brand new in box",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Bbq good condition (Kidlington OX5)",
+  "clean": "bbq",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "barbecue",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Commode in good condition (Goring Heath RG8)",
+  "clean": "commode",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "commode",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "[leedsfreegle] OFFER: Brand new Mothercare baby bath (Burley)",
+  "clean": "mothercare baby bath",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "mothercare baby bath",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Kids ABC electronic brand new (Croxteth L11)",
+  "clean": "kids abc electronic brand new",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "abc electronic brand new",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Brand new Handbag (Hasland S41)",
+  "clean": "handbag",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "handbag",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Brand New 1000 Piece Jigsaw (Green Street Green BR6)",
+  "clean": "1000 piece jigsaw",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "1000 piece jigsaw",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFERED: Brand new plusnet router (West Farleigh ME15)",
+  "clean": "plusnet router",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "plusnet router",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFER: Gloss paint, undercoat and 2 x emulsions. Brand new not used (Oakwood WA3)",
+  "clean": "gloss paint, undercoat and 2 x emulsions. brand new not used",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "gloss paint, undercoat and 2 x emulsions. brand new not used",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "condition",
+  "raw": "OFFERED: Highbury near Arsenal. Brand new black long cardigan size 20 still in bag",
+  "clean": "highbury near arsenal. brand new black long cardigan size 20 still in bag",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "highbury near arsenal. brand new black long cardigan size 20 still in bag",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "Bexley Freegle Offered: Blue Carpet 13ft x 9ft - Swanley",
+  "clean": "blue carpet 13ft x 9ft - swanley",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "blue carpet 13ft x 9ft - swanley",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Black shawl (TN38 - gensing road)",
+  "clean": "black shawl",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "black shawl",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Wacom pads - Hollingdean (Lower Bevendean BN1)",
+  "clean": "wacom pads - hollingdean",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "wacom pads - hollingdean",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Black Fleece - Size 12 (GU14)",
+  "clean": "black fleece - size 12",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "black fleece - size 12",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Ladies handbag - Collect from IG2 (Newbury Park IG2)",
+  "clean": "ladies handbag - collect from",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "ladies handbag - collect from",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Office Chair - dark grey fabric with armrests (Woolley)",
+  "clean": "office chair - dark grey fabric with armrests",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "office chair - dark grey fabric with armrest",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Assorted stationery - must collect today (18 Feb) (Gospel Oak NW3)",
+  "clean": "assorted stationery - must collect today",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "assorted stationery - must collect today",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "[Morpeth] Offered - Two seater brown leather settees - Cramlington [1 Attachment]",
+  "clean": "two seater brown leather settees",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "2 seater brown leather sofa",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Brand new Make Up & Toiletries (Cambridge - Coleridge - CB1)",
+  "clean": "make up & toiletries",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "make up and toiletries",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFERED  Aluminium stepladder - Marlow",
+  "clean": "aluminium stepladder - marlow",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "aluminium stepladder - marlow",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFERED: Heat retaining bricks - pizza oven (Lower Morden SM4)",
+  "clean": "heat retaining bricks - pizza oven",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "heat retaining bricks - pizza oven",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER:  Old carpet - LE11",
+  "clean": "carpet",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "carpet",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFERED: IKEA DUKTIG Toy Doll Bed - Pine (Teddington TW11)",
+  "clean": "ikea duktig toy doll bed - pine",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "duktig toy doll bed - pine",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Fabric - green with all over leaf pattern. (Scale Hall LA1)",
+  "clean": "fabric - green with all over leaf pattern",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "fabric - green with all over leaf pattern",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Chukka safety boots - size 12 (Upper Wolvercote OX2)",
+  "clean": "chukka safety boots - size 12",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "chukka safety boots - size 12",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Ladies Shoes - Size 6 (Ware SG12)",
+  "clean": "ladies shoes - size 6",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "ladies shoes - size 6",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "[ReadingFreegle] OFFER: square glass bottles - for ships? (Chalkhouse Green RG4)",
+  "clean": "square glass bottles - for ships?",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "square glass bottles - for ships?",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Couch - 2 seater - White cotton (Cambuskenneth FK9)",
+  "clean": "couch - 2 seater - white cotton",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "sofa - 2 seater - white cotton",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "[Lambeth-Freegle] OFFER: 4 seater corner sofa - grey (Bermondsey Square & Tower Bridge Rd)",
+  "clean": "4 seater corner sofa - grey",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "4 seater corner sofa - grey",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Sewing Machine -  Old and Heavy Collect from Horwich (Horwich BL6)",
+  "clean": "sewing machine - old and heavy collect from horwich",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "sewing machine - old and collect from horwich",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": true,
+   "vintage": false,
+   "electrical": true,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: solid beech coffee table - needs restored (Newhaven Harbour EH6)",
+  "clean": "solid beech coffee table - needs restored",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "solid beech coffee table - needs restored",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Hat/Coat Stand - black (M20)",
+  "clean": "hat/coat stand - black",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "hat coat stand - black",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "[Lambeth-Freegle] OFFER: Update - house clearance (Brixton SW2)",
+  "clean": "update - house clearance",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "update - house clearance",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: DK Amazing World Earth Book - New (Old Basing)",
+  "clean": "dk amazing world earth book - new",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "dk amazing world earth book - new",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: car booster seat - RG8 (Upper Basildon RG8)",
+  "clean": "car booster seat",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "booster seat",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Radio - small - Multi Band (Loughborough LE11)",
+  "clean": "radio - small - multi band",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "radio - small - multi band",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Free Standing Tray Holders - used in Bathrooms typically (Shepherds Bush W6)",
+  "clean": "free standing tray holders - used in bathrooms typically",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "free standing tray holders - used in bathrooms typically",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Pine headboard - single (Chiswick W4 near High Road)",
+  "clean": "pine headboard - single",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "pine headboard - single",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Matt emulsion - purple (Grandpont OX1)",
+  "clean": "matt emulsion - purple",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "matt emulsion - purple",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "place_dash",
+  "raw": "OFFER: Laminate flooring - 6 boards (Edinburgh EH5)",
+  "clean": "laminate flooring - 6 boards",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "laminate flooring - 6 board",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: Ikea nesting boxes (Leintwardine SY7)",
+  "clean": "ikea nesting boxes",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "nesting box",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFERED: John Lewis round coffee table (Morden SM4)",
+  "clean": "john lewis round coffee table",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "john_lewis",
+  "is_ikea": false,
+  "canonical": "round coffee table",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: samsung galaxy a51 spares (catford)",
+  "clean": "samsung galaxy a51 spares",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "samsung",
+  "is_ikea": false,
+  "canonical": "galaxy a51 spare",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: IKEA MYDAL Bunk Bed (Wokingham RG41)",
+  "clean": "ikea mydal bunk bed",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "mydal bunk bed",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: Dyson Vacuum Cleaner Belt (Scalby YO13)",
+  "clean": "dyson vacuum cleaner belt",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "dyson",
+  "is_ikea": false,
+  "canonical": "vacuum cleaner belt",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: ikea unit (Linslade)",
+  "clean": "ikea unit",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "unit",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: IKEA under bed storage (Colliers Wood SW19)",
+  "clean": "ikea under bed storage",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "under bed storage",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: IKEA Tub Chair  (Kings Hill SG12)",
+  "clean": "ikea tub chair",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "tub chair",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: IKEA Annons pan set - new unused (Streatham Hill SW2)",
+  "clean": "ikea annons pan set - new unused",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "annons pan set - new unused",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: King Size IKEA gas lift storage bed (Wormholt W12)",
+  "clean": "king size ikea gas lift storage bed",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "king size gas lift storage bed",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFERED: IKEA Plate Holders (Wickford/Runwell SS11)",
+  "clean": "ikea plate holders",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "plate holder",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: Ikea bathrobes and robes (SE13 Hither Green)",
+  "clean": "ikea bathrobes and robes",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "bathrobes and robe",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "[Farnborough-Aldershot-Freegle] OFFER: Ikea photo display frames Farnborough (GU14)",
+  "clean": "ikea photo display frames farnborough",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "photo display frames farnborough",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFERED: Ikea armchair (CT11)",
+  "clean": "ikea armchair",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "armchair",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: Bath mats from IKEA blue grey (SE1)",
+  "clean": "bath mats from ikea blue grey",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "bath mats from blue grey",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: Bosch strimmer (Staplefield RH17)",
+  "clean": "bosch strimmer",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "bosch",
+  "is_ikea": false,
+  "canonical": "strimmer",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: Side table/ dressing table ikea (hempsted , Peterborough)",
+  "clean": "side table/ dressing table ikea",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "side table dressing table",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: IKEA MALM KING SIZE BED (Bramber BN44)",
+  "clean": "ikea malm king size bed",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "malm king size bed",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: IKEA Udden Stainless Steel Kitchen Shelving Unit (Fairfield Park)",
+  "clean": "ikea udden stainless steel kitchen shelving unit",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "udden stainless steel kitchen shelving unit",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: Black IKEA desk (Palmers Green N13)",
+  "clean": "black ikea desk",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "black desk",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: John Lewis Black Wooden Picture Frame (Fairfield Park)",
+  "clean": "john lewis black wooden picture frame",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "john_lewis",
+  "is_ikea": false,
+  "canonical": "black wooden picture frame",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: Ikea Billy bookcase (Beckenham BR3)",
+  "clean": "ikea billy bookcase",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "billy bookcase",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "[VWH-Freegle] OFFER: Ikea 2 seater sofa (Faringdon)",
+  "clean": "ikea 2 seater sofa",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "2 seater sofa",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: TALL Ikea PAX wardrobe + doors (Pewsham SN15)",
+  "clean": "tall ikea pax wardrobe + doors",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "tall pax wardrobe + door",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: IKEA POÄNG Footstool  (Montpelier Road area BN1)",
+  "clean": "ikea poäng footstool",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "poäng footstool",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: Bosch IXO driver (Barford CV35)",
+  "clean": "bosch ixo driver",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "bosch",
+  "is_ikea": false,
+  "canonical": "ixo driver",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "[WM-Freegle] OFFER: ikea sofa bed (Boulters Meadow SL6)",
+  "clean": "ikea sofa bed",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "sofa bed",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: Samsung Compatible Printer Cartridge - MLT-D203E (Pinehurst SG13)",
+  "clean": "samsung compatible printer cartridge - mlt-d203e",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "samsung",
+  "is_ikea": false,
+  "canonical": "compatible printer cartridge - mlt-d203e",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "[MK-Freegle] OFFER: Ikea Swing Chair (Willen)",
+  "clean": "ikea swing chair",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "swing chair",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "brand",
+  "raw": "OFFER: White Ikea chest of drawers (Harrogate HG2)",
+  "clean": "white ikea chest of drawers",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "white chest of drawer",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: Pepper and French Climbing Bean seeds (Bixley IP5)",
+  "clean": "pepper and french climbing bean seeds",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "pepper and french climbing bean seed",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: Italian floor tiles (Montgomery SY15)",
+  "clean": "italian floor tiles",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "italian floor tile",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: Baby products (White City W12)",
+  "clean": "baby products",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "product",
+  "is_plural": true,
+  "flags": {
+   "baby": true,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: 6 dog blankets (Tranmere CH42)",
+  "clean": "6 dog blankets",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "6 dog blanket",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "[CarnforthFreegle] OFFER: Large bag Pets at Home wood shavings (Over Kellet)",
+  "clean": "large bag pets at home wood shavings",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "large bag pets at home wood shaving",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: vehicle jack with accessories (Bussage GL6)",
+  "clean": "vehicle jack with accessories",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "vehicle jack with accessory",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: Newborn girls clothes (Fishbourne)",
+  "clean": "newborn girls clothes",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "newborn girls clothes",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: Pack of 2 chopping boards - teddy and flowers (Malvern Link WR14)",
+  "clean": "pack of 2 chopping boards - teddy and flowers",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "pack of 2 chopping boards - teddy and flower",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: bookshelves (Seascale CA20)",
+  "clean": "bookshelves",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "bookshelves",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "Offered : Table and chairs  (Bexhill TN39)",
+  "clean": "table and chairs",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "table and chair",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: Light fittings (L21 (Litherland))",
+  "clean": "light fittings (l21 )",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "light fittings (l21 )",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "Offered: Uplighters (Hotley Bottom HP16)",
+  "clean": "uplighters",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "uplighter",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: Pair of purple eyelet curtains (West Marina TN38)",
+  "clean": "purple eyelet curtains",
+  "qty": null,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "purple eyelet curtain",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "[Tamworth_Freegle] OFFER: Inflatable horse fancy dress (Drayton bassett)",
+  "clean": "inflatable horse fancy dress",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "inflatable horse fancy dress",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: cabinet lighting strips (Brunswick BN3)",
+  "clean": "cabinet lighting strips",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "cabinet lighting strip",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: Glass jars (Town Green L39)",
+  "clean": "glass jars",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "glass jar",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: candle wicks (Millthorpe S18)",
+  "clean": "candle wicks",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "candle wick",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: Envelopes (NW11)",
+  "clean": "envelopes",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "envelope",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: Two Single Beds (New Normanton DE23)",
+  "clean": "two single beds",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "2 single bed",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "[Greencycle] OFFER:   cables, charger, earphones, and connectors   (Whalley Range M16)",
+  "clean": "cables, charger, earphones, and connectors",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "cables, charger, earphones, and connector",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: 10 pairs XXL tights  (Blewbury OX11)",
+  "clean": "10 pairs xxl tights",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "10 pairs xxl tight",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: Assorted DVD’s (Whitnash CV31)",
+  "clean": "assorted dvd’s",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "assorted dvd",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: Hanging Basket Brackets (Llanbister Road)",
+  "clean": "hanging basket brackets",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "hanging basket bracket",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: Pine shelves and brackets (Kempston MK42)",
+  "clean": "pine shelves and brackets",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "pine shelves and bracket",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: suspension files (Kingstone HR2)",
+  "clean": "suspension files",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "suspension file",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFERED: Garden pots (Southend on sea SS2)",
+  "clean": "garden pots",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "garden pot",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "[RugbyFreegle] OFFER: Plastic Plant Pots  (Rugby)",
+  "clean": "plastic plant pots",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "plastic plant pot",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: Papers and cards (Scalby YO13)",
+  "clean": "papers and cards",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "papers and card",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFERED: Cushions (Lower Place OL16)",
+  "clean": "cushions",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "cushion",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plural",
+  "raw": "OFFER: Crutches (St. James's SW1Y)",
+  "clean": "crutches",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "crutch",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Kids wooden shield (Bussage GL6)",
+  "clean": "kids wooden shield",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "wooden shield",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "Offer: Babycham  (Woodside Park N12)",
+  "clean": "babycham",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "babycham",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Ikea children’s table and chair (Leytonstone E11)",
+  "clean": "ikea children’s table and chair",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "table and chair",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Baby car seat and two isofix bases (SK16)",
+  "clean": "baby car seat and two isofix bases",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "car seat and 2 isofix base",
+  "is_plural": true,
+  "flags": {
+   "baby": true,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Child's cycling helmet. (Malvern Link WR14)",
+  "clean": "child's cycling helmet",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "cycling helmet",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFERED: Kids Toys , bike rack- (WOKING)",
+  "clean": "kids toys , bike rack",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "toys , bicycle rack",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Lindam baby gate (DA2 6JT)",
+  "clean": "lindam baby gate",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "lindam baby gate",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Baby sun tent (Doxey ST16)",
+  "clean": "baby sun tent",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "sun tent",
+  "is_plural": false,
+  "flags": {
+   "baby": true,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFERED: Kids dvds (Wimbledon SW20)",
+  "clean": "kids dvds",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "dvd",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: John Lewis nursery/kids furniture set. 3 pieces. (Highgate Village N6)",
+  "clean": "john lewis nursery/kids furniture set. 3 pieces",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "john_lewis",
+  "is_ikea": false,
+  "canonical": "nursery kids furniture set. 3 piece",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "[WESTMINSTERUKFREEGLE] OFFER: IKEA child mattress extendable, SW1V",
+  "clean": "ikea child mattress extendable",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "mattress extendable",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "Offer: Three classic children's TV DVDs (Bognor Regis PO21)",
+  "clean": "three classic children's tv dvds",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "3 classic kids tv dvd",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Child’s step up for toilet (Dagenham RM9)",
+  "clean": "child’s step up for toilet",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "step up for toilet",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Children's Wellies (Rg41 winnersh)",
+  "clean": "children's wellies",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "welly boots",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Baby stair gate (Treningle PL30)",
+  "clean": "baby stair gate",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "stair gate",
+  "is_plural": false,
+  "flags": {
+   "baby": true,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFERED: Child's bike (New Catton NR3)",
+  "clean": "child's bike",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "bicycle",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Baby nasal aspirator (IG8)",
+  "clean": "baby nasal aspirator",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "nasal aspirator",
+  "is_plural": false,
+  "flags": {
+   "baby": true,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Children's picture books (Leeland Way, Brent)",
+  "clean": "children's picture books",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "picture book",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Child’s booster seat  (Tilehurst RG30)",
+  "clean": "child’s booster seat",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "booster seat",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "[Wilmslow_Freegle] OFFER: CHILDRENS TOYS - MIXED BOYS (WILMSLOW)",
+  "clean": "childrens toys - mixed boys",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "toys - mixed boy",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Vintage Children's Encyclopedias (Shenley Church End MK5)",
+  "clean": "vintage children's encyclopedias",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "kids encyclopedia",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": true,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFERED: Two Kids Chairs (Pink) (Little Chalfont (HP7))",
+  "clean": "two kids chairs (little chalfont )",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "2 kids chairs (little chalfont )",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Child baby seat for a bike (SG18)",
+  "clean": "child baby seat for a bike",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "baby seat for a bicycle",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Baby proofing catches (S8 Woodseats)",
+  "clean": "baby proofing catches",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "proofing catch",
+  "is_plural": true,
+  "flags": {
+   "baby": true,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "[Oxford Freegle] OFFER: Baby bottles (OX3 0HE)",
+  "clean": "baby bottles",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "bottle",
+  "is_plural": true,
+  "flags": {
+   "baby": true,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Child bath bag (Abbeymead (GL4))",
+  "clean": "child bath bag (abbeymead )",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "bath bag (abbeymead )",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Baby car seat (Baildon BD17)",
+  "clean": "baby car seat",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "car seat",
+  "is_plural": false,
+  "flags": {
+   "baby": true,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Kids clothes ages 7-8 (Toxteth L8)",
+  "clean": "kids clothes ages 7-8",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "clothes ages 7-8",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Baby toys  (New Covent Garden Market (Flower) SW8)",
+  "clean": "baby toys (new covent garden market sw8)",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "toys (new covent garden market sw8)",
+  "is_plural": false,
+  "flags": {
+   "baby": true,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "kids",
+  "raw": "OFFER: Child’s car booster seat (Craigmillar Park EH16)",
+  "clean": "child’s car booster seat",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "booster seat",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "Offer: 14\" Philips portable TV with remote control. Withdean Park",
+  "clean": "14\" philips portable tv with remote control. withdean park",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "philips",
+  "is_ikea": false,
+  "canonical": "14in portable tv with remote control. withdean park",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 14
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: 42\" panasonic tv (North Tonbridge TN10)",
+  "clean": "42\" panasonic tv",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "panasonic",
+  "is_ikea": false,
+  "canonical": "42in tv",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 42
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "Offer: 2010 MacBook Pro 13\" (North Bersted PO22)",
+  "clean": "2010 macbook pro 13\"",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "apple",
+  "is_ikea": false,
+  "canonical": "2010 macbook pro 13\"",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: Hitachi 32\" TV (Southwick PO17)",
+  "clean": "hitachi 32\" tv",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "hitachi 32in tv",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 32
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: 18inch monitor & cables (Cob Lane B29)",
+  "clean": "18inch monitor & cables",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "18in monitor and cable",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 18
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "[Witney-Freegle] Offered:  Faulty Samsung 26\" flat screen tv (Witney)",
+  "clean": "faulty samsung 26\" flat screen tv",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "samsung",
+  "is_ikea": false,
+  "canonical": "faulty 26in flat screen tv",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 26
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: 50inch Samsung tv. Please read description  (Highbury Vale NG6)",
+  "clean": "50inch samsung tv. please read description",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "samsung",
+  "is_ikea": false,
+  "canonical": "50in tv. please read description",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 50
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: TV 15 inch Acoustic Solutions  (Bow Brickhill MK17)",
+  "clean": "tv 15 inch acoustic solutions",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "tv 15in acoustic solution",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 15
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: Corner TV unit. Glass door. Dark veneer. W33.5\" H19\" D16\" (Kempsey WR5)",
+  "clean": "corner tv unit. glass door. dark veneer. w33.5\" h19\" d16\"",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "corner tv unit. glass door. dark veneer. w33.5\" h19\" d16\"",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "[PenrithEdenFreegle] OFFER: 17\" PC LCD monitor (Bolton, Appleby)",
+  "clean": "17\" pc lcd monitor",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "17in pc lcd monitor",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 17
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: 2x 26\" car wiper blades (Wellington TF1)",
+  "clean": "26\" car wiper blades",
+  "qty": 2,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "26\" car wiper blade",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: Samsung 40inch TV (Hapton)",
+  "clean": "samsung 40inch tv",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "samsung",
+  "is_ikea": false,
+  "canonical": "40in tv",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 40
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: Logik 14\" screen (Castle MK40)",
+  "clean": "logik 14\" screen",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "logik",
+  "is_ikea": false,
+  "canonical": "14\" screen",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: Old Samsung 40\" TV (World's End RH15)",
+  "clean": "samsung 40\" tv",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "samsung",
+  "is_ikea": false,
+  "canonical": "40in tv",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 40
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: Wheeled plant pot caddy 11\" metal (Barnes SW13)",
+  "clean": "wheeled plant pot caddy 11\" metal",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "wheeled plant pot caddy 11\" metal",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "(FreegleClacksUK) OFFER: 2008 20\" iMac (not working) (Tullibody FK10)",
+  "clean": "2008 20\" imac",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "apple",
+  "is_ikea": false,
+  "canonical": "2008 20\" imac",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: Bicycle Tyres 28\" (Sowerby HX6)",
+  "clean": "bicycle tyres 28\"",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "bicycle tyres 28\"",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: \"50\" Cake Topper (Luton LU3)",
+  "clean": "50\" cake topper",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "50\" cake topper",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: Asus  19\" LCD Monitor (Malvern Wells WR14)",
+  "clean": "asus 19\" lcd monitor",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "asus",
+  "is_ikea": false,
+  "canonical": "19in lcd monitor",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 19
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: Canon PG-510 ink cartridge (Purley on Thames RG31)",
+  "clean": "canon pg-510 ink cartridge",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "canon",
+  "is_ikea": false,
+  "canonical": "pg-510 ink cartridge",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: 4 pieces of sunlight roofing 30inch x 30inch (Butterley DE5)",
+  "clean": "4 pieces of sunlight roofing 30inch x 30inch",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "4 pieces of sunlight roofing 30inch x 30inch",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "[CheshuntandWalthamCross-Freegle] OFFER: 21\" tv/vhs/dvd (Hertford, SG14)",
+  "clean": "21\" tv/vhs/dvd",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "21in tv vhs dvd",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 21
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: Panasonic 42\" plasma TV - 720p (Bellevue EH7)",
+  "clean": "panasonic 42\" plasma tv - 720p",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "panasonic",
+  "is_ikea": false,
+  "canonical": "42in plasma tv - 720p",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 42
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: Humax 23 inch TV (Newney Green CM1)",
+  "clean": "humax 23 inch tv",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "humax 23in tv",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 23
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "Offered: four new 17 inch car wiper blades (Warboys PE28)",
+  "clean": "four new 17 inch car wiper blades",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "4 new 17 inch car wiper blade",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "[RickmansworthFreegle] OFFERED: 9x 13\" Square floor tiles (In Rickmansworth WD3)",
+  "clean": "13\" square floor tiles",
+  "qty": 9,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "13\" square floor tile",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: 42 inches Philips TV (Dagenham, RM9)",
+  "clean": "42 inches philips tv",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "philips",
+  "is_ikea": false,
+  "canonical": "42in tv",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 42
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: 17\" Dell Monitor (Shaw SN5)",
+  "clean": "17\" dell monitor",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "dell",
+  "is_ikea": false,
+  "canonical": "17in monitor",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 17
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: Panasonic 39\" LCD TV - Faulty for Spares / Repair (IP3)",
+  "clean": "panasonic 39\" lcd tv - faulty for spares / repair",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "panasonic",
+  "is_ikea": false,
+  "canonical": "39in lcd tv - faulty for spares repair",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": 39
+  }
+ },
+ {
+  "cat": "screen",
+  "raw": "OFFER: Curtain track 46inch (Churchend RG30)",
+  "clean": "curtain track 46inch",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "curtain track 46inch",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "[BognorFreegle] Offer: Metal mid sleeper cabin bed 3&#39; wide (Middleton on Sea)",
+  "clean": "metal mid sleeper cabin bed 3' wide",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "metal mid sleeper cabin bed 3 wide",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "[North Shrop&#39;s Freegle] OFFER: Panasonic 'Traveller' camcorder (Norton in Hales TF9)",
+  "clean": "panasonic 'traveller' camcorder",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "panasonic",
+  "is_ikea": false,
+  "canonical": "'traveller camcorder",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "[North Shrop&#39;s Freegle] OFFER: desk (Weston Lullingfields SY4)",
+  "clean": "desk",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "desk",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "OFFER: Nail polish 💅🏽 (Newington Green N5)",
+  "clean": "nail polish",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "nail polish",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "[Oxford Freegle] OFFER: Double &amp; Single bedding (Cowley)",
+  "clean": "double & single bedding",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "double and single bedding",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "[BathFreegle] OFFER: 2 childrens&#39; ladybird umbrellas (Larkhall)",
+  "clean": "2 childrens' ladybird umbrellas",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "2 kids ladybird umbrella",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "OFFER: Smartphone projector 📽 (Hackney E9)",
+  "clean": "smartphone projector",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "smartphone projector",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": true,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "OFFER: Harry Potter Clothes 🧙‍♀️ (Lewisham SE13)",
+  "clean": "harry potter clothes",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "harry potter clothes",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "[North Shrop&#39;s Freegle] OFFER:  Qualcast Electric Lawnmower SY4 5UE (Lowe SY4)",
+  "clean": "qualcast electric lawnmower",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "qualcast electric lawnmower",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "[WESTMINSTERUKFREEGLE] OFFER: Women&#39;s  clothes 12/14, Artillery Mansions SW1P",
+  "clean": "women's clothes 12/14, artillery mansions",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "women clothes 12/14, artillery mansions",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "OFFER: Large wicker log 🪵 basket (Gosport PO12)",
+  "clean": "large wicker log basket",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "large wicker log basket",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "[North Shrop&#39;s Freegle] OFFER: ZANUSSI Built In Washing Machine - Spares / Repair (Market Drayton TF9)",
+  "clean": "zanussi built in washing machine - spares / repair",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "zanussi",
+  "is_ikea": false,
+  "canonical": "built in washing machine - spares repair",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "OFFER: Electric fire 🔥 (BS41)",
+  "clean": "electric fire",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "electric fire",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "OFFER: Large picture photo frame 🖼 (Abingdon OX14)",
+  "clean": "large picture photo frame",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "large picture photo frame",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "Offer: 🛏🎀 Single bed in very good condition with free duvet set (Pilton EX31)",
+  "clean": "single bed with free duvet set",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "single bed with free duvet set",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "OFFER: Hexagon mirrors 🪞 (10-12) (KT20)",
+  "clean": "hexagon mirrors",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "hexagon mirror",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "[leedsfreegle] OFFER: Carboot crockery &amp; glassware (Rothwell)",
+  "clean": "carboot crockery & glassware",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "carboot crockery and glassware",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "OFFER: Reindeer 🦌 Christmas lights (M33)",
+  "clean": "reindeer christmas lights",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "reindeer christmas light",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "[BathFreegle] OFFER: Meile &quot;cat and dog&quot; vacuum cleaner - in good working order (Lansdown)",
+  "clean": "meile cat and dog vacuum cleaner - in good working order",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "meile cat and dog vacuum cleaner - in good working order",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "OFFER: Blueprint/ mini craft bazooka 🤣 (Bramhall SK7)",
+  "clean": "blueprint/ mini craft bazooka",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "blueprint mini craft bazooka",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "[North Shrop&#39;s Freegle] OFFERED: HiFi System (Market Drayton)",
+  "clean": "hifi system",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "hifi system",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "OFFER: Plates and soup bol’s 🥣 (Grays)",
+  "clean": "plates and soup bol’s",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "plates and soup bol",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "OFFER: Size 10 🕷 Spider-Man wellys (Morland CA10)",
+  "clean": "size 10 spider-man wellys",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "size 10 spider-man welly boots",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "[hertford_freegle] OFFERED: Mama&#39;s & Papas Freestyer Pushchair Travel system Puckeridge SG9",
+  "clean": "mama's & papas freestyer pushchair travel system puckeridge",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "mama and papas freestyer pushchair travel system puckeridge",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "OFFER: Pumpkin 🎃 plants x 2 (Waterlooville PO7)",
+  "clean": "pumpkin plants",
+  "qty": 2,
+  "is_multiple": true,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "pumpkin plant",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "[Oswestry_Freegle] OFFER: Vintage garden table &amp; 4 chairs (llanymynech)",
+  "clean": "vintage garden table & 4 chairs",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "garden table and 4 chair",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": true,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "[Croydon] Offer: Men&#39;s bike (Crystal Palace)",
+  "clean": "men's bike",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "men bicycle",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "OFFER: Protein bagels 🥯 (Elstree WD6)",
+  "clean": "protein bagels",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "protein bagels",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "[North Shrop&#39;s Freegle] OFFERED: tube of shuttlecocks (SY13)",
+  "clean": "tube of shuttlecocks",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "tube of shuttlecock",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "emoji_html",
+  "raw": "OFFER: Dog 🐕 bowl 🥣  (Drum Brae EH4)",
+  "clean": "dog bowl",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "dog bowl",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: iPhone 14 Pro case (Round Hill BN2)",
+  "clean": "iphone 14 pro case",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "iphone 14 pro case",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Collection of Mens Health Magazines (West Wickham, BR4)",
+  "clean": "collection of mens health magazines",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "collection of mens health magazine",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Ready to roll icing  (Osney OX2)",
+  "clean": "ready to roll icing",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "ready to roll icing",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFERED: Orthopedic chair (CV2)",
+  "clean": "orthopedic chair",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "orthopedic chair",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Gel, padded bicycle seat cover (St Mark's GL51)",
+  "clean": "gel, padded bicycle seat cover",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "gel, padded bicycle seat cover",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Vertical Suspension Files A4 (Redhill, Colesmead area, RH1)",
+  "clean": "vertical suspension files a4",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "vertical suspension files a4",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFERED: Holdall (Worlingham NR34)",
+  "clean": "holdall",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "holdall",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Sledge hammer (Hornchurch RM11)",
+  "clean": "sledge hammer",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "sledge hammer",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Long plant pot (ashford)",
+  "clean": "long plant pot",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "long plant pot",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Toy stove and oven (Twickenham TW2)",
+  "clean": "toy stove and oven",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "toy stove and oven",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Cisco Networking Equipment (Brentwood Town CM14)",
+  "clean": "cisco networking equipment",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "cisco networking equipment",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Fridge freezer (Nuneaton)",
+  "clean": "fridge freezer",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "fridge freezer",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": true,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Ikea kids cupboard (blue doors) (Ockbrook DE72)",
+  "clean": "ikea kids cupboard",
+  "qty": null,
+  "is_multiple": false,
+  "brand": "ikea",
+  "is_ikea": true,
+  "canonical": "cupboard",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: King size duvet and 4 pillows (Chapel Allerton LS7)",
+  "clean": "king size duvet and 4 pillows",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "king size duvet and 4 pillow",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Tv bench (Bracknell Forest RG12)",
+  "clean": "tv bench",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "tv bench",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Bed (Callington PL17)",
+  "clean": "bed",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "bed",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Large, tough beanbag, hardly used (Merton Park SW20)",
+  "clean": "large, tough beanbag, hardly used",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "large, tough beanbag, hardly used",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: 2 heavy weight throws (Youlgreave DE45)",
+  "clean": "2 heavy weight throws",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "2 weight throw",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": true,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Plate set (SW18)",
+  "clean": "plate set",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "plate set",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Thule Roof Bars 120cm (Gidea Park RM2)",
+  "clean": "thule roof bars 120cm",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "thule roof bars 120cm",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "[Hackney-Freegle] OFFER: nail varnish (Homerton E9)",
+  "clean": "nail varnish",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "nail varnish",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "Offer: chest of bedroom drawers (Sale Moor M33)",
+  "clean": "chest of bedroom drawers",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "chest of bedroom drawer",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Sofa bed (Cawston CV22)",
+  "clean": "sofa bed",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "sofa bed",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "[TWFreegle] OFFER: Internal door (TN2)",
+  "clean": "internal door",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "internal door",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Lamp (New Alyth PH11)",
+  "clean": "lamp",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "lamp",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Folding Shower Screen (Llanfairfechan LL33)",
+  "clean": "folding shower screen",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "folding shower screen",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "Offer: Brita Maxtra water filter cartridge (South Croydon CR2)",
+  "clean": "brita maxtra water filter cartridge",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "brita maxtra water filter cartridge",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "[Oxford Freegle] OFFER:  Boys' cricket bats  (Cutteslowe OX2)",
+  "clean": "boys' cricket bats",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "boys cricket bat",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: Children's tricycle (Knightsfield AL8)",
+  "clean": "children's tricycle",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "tricycle",
+  "is_plural": false,
+  "flags": {
+   "baby": false,
+   "kids": true,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ },
+ {
+  "cat": "plain",
+  "raw": "OFFER: plaster board x 6 sheets (Whins of Milton FK7)",
+  "clean": "plaster board x 6 sheets",
+  "qty": null,
+  "is_multiple": false,
+  "brand": null,
+  "is_ikea": false,
+  "canonical": "plaster board x 6 sheet",
+  "is_plural": true,
+  "flags": {
+   "baby": false,
+   "kids": false,
+   "heavy": false,
+   "vintage": false,
+   "electrical": false,
+   "digital": false,
+   "screen_size": null
+  }
+ }
+]

@@ -12,6 +12,7 @@ import { classifyStaleBuild } from '~/composables/useStaleBuild'
 import { useCommunityEventStore } from '~/stores/communityevent'
 import { useVolunteeringStore } from '~/stores/volunteering'
 import { useMobileStore } from '~/stores/mobile'
+import { combinedBadgeCount } from '~/composables/useBadgeCount'
 
 export const navBarHidden = ref(false)
 
@@ -101,7 +102,7 @@ export function useNavbar() {
     const count = Math.min(99, chatStore.unreadCount)
     if (mobileStore.isApp) {
       mobileStore.setBadgeCount(
-        Math.min(99, count + (notificationStore.count || 0))
+        combinedBadgeCount(chatStore.unreadCount, notificationStore.count)
       )
     }
     return count
@@ -247,10 +248,10 @@ export function useNavbar() {
       router.push('/')
     } else if (
       currentPath === '/give/mobile/photos' ||
-      currentPath === '/find/mobile/photos'
+      currentPath === '/ask/mobile/photos'
     ) {
       // From mobile photos page, go to home to avoid redirect loop.
-      // The /give and /find pages redirect to mobile/photos on mobile, so router.back() would loop.
+      // The /give and /ask pages redirect to mobile/photos on mobile, so router.back() would loop.
       router.push('/')
     } else {
       try {

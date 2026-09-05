@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-11
+last_reviewed: 2026-09-01
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/UnsubscribeService.php
@@ -67,7 +67,7 @@ mailable declares its category with `unsubscribeType()`; both arms of the header
 | `newsletter` | newsletters, stories, community news | `users.newslettersallowed = 0` |
 | `relevant` | matched/suggested posts | `users.relevantallowed = 0` |
 | `chat` | chat message notifications | `settings.notifications.email = false` |
-| `notifications` | ChitChat digest, notification chase-ups | `settings.notificationmails = false` |
+| `notifications` | ChitChat digest, [notification chase-ups](./notification-chaseup-email.md) | `settings.notificationmails = false` |
 | `engagement` | donation asks, gift-aid chase-ups, re-engagement | `settings.engagement = false` |
 | `all` | everything above | all of the above |
 | `allexceptreplies` | everything above **except `chat`** | all of the above bar chat |

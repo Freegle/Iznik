@@ -201,6 +201,7 @@ import {
   nextTick,
 } from 'vue'
 import { storeToRefs } from 'pinia'
+import * as Sentry from '@sentry/browser'
 import { SocialLogin } from '@capgo/capacitor-social-login'
 import { SignInWithApple } from '@capacitor-community/apple-sign-in'
 import EmailValidator from './EmailValidator'
@@ -213,11 +214,11 @@ import { useMe } from '~/composables/useMe'
 import Api from '~/api'
 import { useMobileStore } from '@/stores/mobile' // APP
 
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
-const PasswordEntry = defineAsyncComponent(() =>
-  import('~/components/PasswordEntry')
+const PasswordEntry = defineAsyncComponent(
+  () => import('~/components/PasswordEntry')
 )
 
 // Setup
@@ -348,11 +349,42 @@ onMounted(() => {
 })
 
 // Methods
+
+// A social sign-in that dies inside the provider SDK never reaches our API, so
+// this is the only place it can be reported from. Without it the failure is
+// visible to the member and to nobody else: Facebook login on the iOS app was
+// dead for five days in August 2026 before a support ticket surfaced it.
+function socialLoginFailed(provider, message, error, cancelled) {
+  socialLoginError.value = message
+
+  if (cancelled) {
+    // The member changed their mind. Not a fault.
+    return
+  }
+
+  let platform = 'web'
+
+  if (isApp.value) {
+    platform = isiOS.value ? 'ios-app' : 'android-app'
+  }
+
+  Sentry.captureException(error instanceof Error ? error : new Error(message), {
+    tags: {
+      social_login_provider: provider,
+      social_login_platform: platform,
+    },
+    extra: { message },
+  })
+}
+
 function tryLater(native) {
   if (native) {
     nativeLoginError.value = 'Something went wrong; please try later.'
   } else {
-    socialLoginError.value = 'Something went wrong; please try later.'
+    socialLoginFailed(
+      loginType.value || 'unknown',
+      'Something went wrong; please try later.'
+    )
   }
 }
 
@@ -607,9 +639,19 @@ async function loginFacebook() {
       const response = await SocialLogin.login(loginOptions)
       // console.log("Facebook response", response)
       let accessToken = false
+
+      // A Limited Login session has no Graph access token, so the plugin sends
+      // accessToken: null and the JWT in idToken. Facebook also forces limited
+      // login whenever App Tracking Transparency is refused, whatever we asked
+      // for, so believe the response rather than the platform. The flag we send
+      // decides how the server verifies the token, so it has to describe the
+      // token we actually read.
+      let limitedLogin = isiOS.value
       if (response && response.result) {
-        accessToken = response.result.accessToken.token
-        if (isiOS.value) accessToken = response.result.idToken
+        limitedLogin = response.result.isLimitedLogin ?? isiOS.value
+        accessToken = limitedLogin
+          ? response.result.idToken
+          : response.result.accessToken?.token
       }
       if (accessToken) {
         // console.log("accessToken", accessToken)
@@ -617,15 +659,15 @@ async function loginFacebook() {
         await authStore.login({
           fblogin: 1,
           fbaccesstoken: accessToken,
-          fblimited: isiOS.value,
+          fblimited: limitedLogin,
         })
         // We are now logged in.
         self.pleaseShowModal = false
       } else {
-        socialLoginError.value = 'Facebook app login failed'
+        socialLoginFailed('facebook', 'Facebook app login failed')
       }
     } catch (e) {
-      socialLoginError.value = 'Facebook app login error: ' + e.message
+      socialLoginFailed('facebook', 'Facebook app login error: ' + e.message, e)
     }
     return
   }
@@ -654,11 +696,13 @@ async function loginFacebook() {
       // We are now logged in.
       pleaseShowModal.value = false
     } else {
-      socialLoginError.value =
+      socialLoginFailed(
+        'facebook',
         'Facebook response is unexpected.  Please try later.'
+      )
     }
   } catch (e) {
-    socialLoginError.value = 'Facebook login error: ' + e.message
+    socialLoginFailed('facebook', 'Facebook login error: ' + e.message, e)
   }
 }
 
@@ -687,19 +731,19 @@ function loginAppleApp() {
           // We are now logged in.
           self.pleaseShowModal = false
         } else {
-          socialLoginError.value = 'No identityToken given'
+          socialLoginFailed('apple', 'No identityToken given')
         }
       })
       .catch((e) => {
         if (e.message.includes('1001')) {
-          socialLoginError.value = 'Apple login cancelled'
+          socialLoginFailed('apple', 'Apple login cancelled', e, true)
         } else {
-          socialLoginError.value = e.message
+          socialLoginFailed('apple', e.message, e)
         }
       })
   } catch (e) {
     console.log('Apple login error: ', e)
-    socialLoginError.value = 'Apple login error: ' + e.message
+    socialLoginFailed('apple', 'Apple login error: ' + e.message, e)
   }
 }
 
@@ -725,11 +769,11 @@ async function loginGoogleApp() {
       console.log('Logged in')
       self.pleaseShowModal = false
     } else {
-      socialLoginError.value = 'Google: no result.idToken found'
+      socialLoginFailed('google', 'Google: no result.idToken found')
     }
   } catch (e) {
     console.log('Google login error: ', e)
-    socialLoginError.value = 'Google login error: ' + e.message
+    socialLoginFailed('google', 'Google login error: ' + e.message, e)
   }
 }
 
@@ -758,10 +802,10 @@ async function handleGoogleCredentialsResponse(response) {
       console.log('Logged in')
       pleaseShowModal.value = false
     } catch (e) {
-      socialLoginError.value = 'Google login failed: ' + e.message
+      socialLoginFailed('google', 'Google login failed: ' + e.message, e)
     }
   } else if (response?.error && response.error !== 'immediate_failed') {
-    socialLoginError.value = 'Google login failed: ' + response.error
+    socialLoginFailed('google', 'Google login failed: ' + response.error)
   }
 }
 

@@ -2,6 +2,7 @@
 
 namespace App\Services\FirstReply;
 
+use App\Services\Ripple\RingIndex;
 use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -312,14 +313,6 @@ class MatchMailService
     public function mailMatchesFor(object $post, array $cfg, bool $dryRun = false): int
     {
         $msgid = (int) $post->msgid;
-
-        // This fires as soon as a post is seen, which can be a beat before the
-        // background pass has worked out the post's eventual reach - and without
-        // that nobody is eligible. Ask for it directly rather than making the post
-        // wait a minute for a different cron. Schedule-only, so it costs a JSON
-        // decode and an UPDATE; posts that need a routing call are left to the
-        // background pass and simply get no match mail this time round.
-        $this->maxReach->populateForPost($msgid);
 
         $candidates = $this->candidates($post, $cfg);
         if (empty($candidates)) {
@@ -669,9 +662,7 @@ class MatchMailService
      */
     private function filterEligible(int $msgid, array $userIds, array $cfg): array
     {
-        if (empty($userIds) || !$this->maxReach->available()) {
-            // No max_polygon yet means no basis for reaching beyond today's reach,
-            // and mailing inside today's reach only is the reach mailer's job.
+        if (empty($userIds)) {
             return [];
         }
 
@@ -723,9 +714,30 @@ class MatchMailService
         // keep-raw: spatial ST_Contains/ST_Distance band tests over a JSON-vs-
         // locations CASE point expression, a dynamic IN list and a conditional
         // cadence-gate fragment - the builder cannot render this shape.
+        // Someone an overflow lane has already admitted is NOT a candidate for this mail.
+        // They can see the post on browse, find it in search and reply to it, and the ordinary
+        // reach mail tells them about it - so by this query's own rule ("mailing them spends a
+        // slot and a mail to change nothing") they are already reached. The polygon test below
+        // cannot see them, because a lane admits precisely the people outside it.
+        //
+        // Asked of the ring index after the query, not restated as SQL here. There
+        // is one answer to "does a ring admit this member" and every surface reads
+        // it - see App\Services\Ripple\RingIndex. A second definition living in
+        // this file is exactly how the mail came to invite people the site refused.
+
+        // The band test - outside the reach the post has NOW, inside the reach
+        // it will eventually have - is answered from the post's two stored
+        // grids, fetched ONCE for the post rather than tested per candidate
+        // (applyCellBand below): a run-stream probe for each containment and
+        // distanceToNearestCellMetres for the nearest-edge ordering. dist is a
+        // NULL placeholder here; applyCellBand fills it in from the grids.
+        // keep-raw: JSON-vs-locations CASE point expression and a dynamic IN list - the builder cannot render this shape
         $rows = DB::select(
             "SELECT u.id AS id,
-                    ST_Distance(rr.polygon, $pointExpr) AS dist
+                    NULL AS dist,
+                    ST_Y($pointExpr) AS cand_lat,
+                    ST_X($pointExpr) AS cand_lng,
+                    JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band
              FROM users u
              LEFT JOIN locations l ON l.id = u.lastlocation
              JOIN rippling_reach rr ON rr.msgid = ?
@@ -733,14 +745,14 @@ class MatchMailService
                AND u.deleted IS NULL
                AND (u.lastaccess IS NULL OR u.lastaccess > DATE_SUB(NOW(), INTERVAL 90 DAY))
                AND EXISTS (SELECT 1 FROM users_emails ue WHERE ue.userid = u.id{$mailableSql})
-               AND rr.max_polygon IS NOT NULL
                -- OUTSIDE the reach the post has right now, INSIDE the reach it
                -- will eventually have. Someone already inside the current
-               -- polygon is going to be told anyway, by the ordinary ripple, so
+               -- reach is going to be told anyway, by the ordinary ripple, so
                -- mailing them spends a slot and a mail to change nothing.
-               -- The whole point of this mail is to reach past the current edge.
-               AND NOT ST_Contains(rr.polygon, $pointExpr)
-               AND ST_Contains(rr.max_polygon, $pointExpr) = 1
+               -- The whole point of this mail is to reach past the current
+               -- edge. The stored label is the eventual-reach record; the
+               -- band itself is applied by applyCellBand.
+               AND rr.reach_labels IS NOT NULL
                AND NOT EXISTS (
                      SELECT 1 FROM firstreply_scouts fs
                      WHERE fs.userid = u.id AND fs.sent_at > DATE_SUB(NOW(), INTERVAL ? HOUR)
@@ -756,15 +768,117 @@ class MatchMailService
                -- earlier, and that is the consent for it - the same one the
                -- engagement and non-essential admin mails honour.
                AND u.relevantallowed = 1",
-            array_merge([self::SRID, $msgid], $userIds, $unmailableParams, [self::SRID, self::SRID, $cooldown, $weekCap, $msgid])
+            array_merge(
+                [self::SRID, self::SRID, $msgid],
+                $userIds,
+                $unmailableParams,
+                [$cooldown, $weekCap, $msgid]
+            )
         );
 
+        $rows = $this->applyCellBand($msgid, $rows);
+
+        // Someone an overflow lane has already admitted is NOT a candidate for this
+        // mail: they can see the post on browse, find it in search and reply to it,
+        // and the ordinary reach mail tells them about it - so by this query's own
+        // rule ("mailing them spends a slot and a mail to change nothing") they are
+        // already reached. The polygon test above cannot see them, because a lane
+        // admits precisely the people outside it.
+        $candidates = [];
+        foreach ($rows as $i => $r) {
+            if ($r->cand_lat === null || $r->cand_lng === null) {
+                continue;
+            }
+            $lanes = RingIndex::lanesFor(is_string($r->density_band ?? null) ? $r->density_band : null);
+            if ($lanes === []) {
+                continue;
+            }
+            $candidates[$i] = [
+                'lat' => (float) $r->cand_lat,
+                'lng' => (float) $r->cand_lng,
+                'lanes' => $lanes,
+            ];
+        }
+        $ringAdmitted = array_flip(RingIndex::admits($msgid, $candidates));
+
         $out = [];
-        foreach ($rows as $r) {
+        foreach ($rows as $i => $r) {
+            if (isset($ringAdmitted[$i])) {
+                continue;
+            }
             $out[(int) $r->id] = $r->dist === null ? null : (float) $r->dist;
         }
 
         return $out;
     }
 
+    /**
+     * The cells-only form of the band test: keep only candidates OUTSIDE the
+     * post's current reach and INSIDE its eventual reach, and give each the
+     * distance to the current reach's edge for the nearest-first ordering.
+     *
+     * Both grids are read ONCE for the post - they are properties of the post,
+     * not of the candidate - and every candidate is then a run-stream probe
+     * against the same bytes. A grid that cannot answer admits nobody: this
+     * mail is an EXTRA one sent past the current edge, so silence is the
+     * conservative direction and the ordinary reach mail still covers the
+     * member when the ripple arrives.
+     *
+     * @param array<int,object> $rows
+     * @return array<int,object>
+     */
+    private function applyCellBand(int $msgid, array $rows): array
+    {
+        if ($rows === []) {
+            return [];
+        }
+
+        // Staged-next label when its stamp is the live partition, else the
+        // live one - the routing server can only decode its own.
+        $reach = DB::table('rippling_reach')
+            ->where('msgid', $msgid)
+            ->first([DB::raw(\App\Services\Ripple\ReachService::liveLabelsSql().' AS reach_labels'), 'tick', 'max_drive_min', 'schedule']);
+        if ($reach === null || $reach->reach_labels === null) {
+            return [];
+        }
+
+        // ONE routing call evaluates the stored label at every candidate
+        // point - arrival within the label's full budget means inside the
+        // EVENTUAL reach; the in-flag at the current tick budget means
+        // inside the CURRENT one. The band is exactly "arrived eventually
+        // AND not yet current", ordered by how soon past the edge they are.
+        // Routing unreachable means no extra mail this round - this is an
+        // EXTRA mail, and the ordinary reach mail still covers the member
+        // when the ripple arrives. There is no grid fallback.
+        $svc = app(\App\Services\Ripple\ReachService::class);
+        $currentSecs = $svc->currentBudgetSecs(
+            (int) $reach->tick, (float) $reach->max_drive_min, $reach->schedule
+        );
+        $points = [];
+        foreach ($rows as $i => $r) {
+            if ($r->cand_lat !== null && $r->cand_lng !== null) {
+                $points[$i] = [(float) $r->cand_lat, (float) $r->cand_lng];
+            }
+        }
+        $evals = $points !== [] ? $svc->reachArrivalBatch((string) $reach->reach_labels, $currentSecs, $points) : [];
+        if ($evals === null) {
+            return [];
+        }
+        $kept = [];
+        foreach ($points as $i => $p) {
+            $ev = $evals[$i] ?? null;
+            if ($ev === null || $ev['arrival'] === null) {
+                continue; // never reached, even eventually
+            }
+            if ($ev['in']) {
+                continue; // already inside the current reach
+            }
+            $r = $rows[$i];
+            // Ordering key: seconds past the current edge.
+            $r->dist = max(0.0, $ev['arrival'] - $currentSecs);
+            $kept[] = $r;
+        }
+
+        return $kept;
+    }
 }

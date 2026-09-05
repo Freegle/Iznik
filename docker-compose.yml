@@ -853,8 +853,13 @@ services:
       - SPATIAL_INDEX_DIR=/data
       - SPATIAL_PORT=8194
       - SPATIAL_ADMIN_PORT=8195
+      # Photon-compatible /api place search. The artifact is built by
+      # iznik-routing-go/cmd/placesextract; where the file is absent the
+      # dataset skips loading and /api answers 503.
+      - PLACES_FILE=/places/places.jsonl.gz
     volumes:
       - spatial_data:/data
+      - ${SPATIAL_DATA_DIR:-./iznik-routing-go/data}:/places:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8194/health || exit 1"]
       interval: 30s
@@ -884,6 +889,16 @@ services:
         required: false
     restart: "no"
     environment:
+      # Bound the GC pacer by the container, not by GOGC's default doubling.
+      # With neither set, Go sizes the heap at ~2x the live set and the
+      # scavenger returns pages lazily, so anon RSS sat at 11.6GB against a
+      # 12GiB cgroup while the artifacts account for ~5.2GB of it, squeezing
+      # the mmap'd leaf tables down to 868MB resident and costing 93M file
+      # refaults. GOMEMLIMIT is a SOFT target: Go keeps serving above it, it
+      # only collects harder. Leave headroom below the cgroup ceiling for the
+      # leaf-table page cache, and tune with a load test rather than by feel.
+      - GOMEMLIMIT=${SPATIAL_GOMEMLIMIT:-9GiB}
+      - GOGC=${SPATIAL_GOGC:-50}
       - SPATIAL_PORT=8196
       - SPATIAL_INTERNAL_PORT=8194
       - SPATIAL_KNN_URL=http://spatial-knn:8194
@@ -891,6 +906,8 @@ services:
       # the container stays up for routing-go tests without the 2.5GB UK graph.
       - OSM_PBF_PATH=${OSM_PBF_PATH:-/data/uk-latest.osm.pbf}
       - DEPRIVATION_CSV=${DEPRIVATION_CSV:-/data/uk_lsoa_quintile.csv}
+      # Reach engine artifacts (see iznik-routing-go/REACH-ENGINE.md); empty = off.
+      - REACH_DIR=${REACH_DIR:-}
       - MYSQL_HOST=percona
       - MYSQL_PORT=3306
       - MYSQL_USER=root
@@ -953,8 +970,10 @@ services:
       - IMAGE_DELIVERY=https://delivery.ilovefreegle.org
       - TUS_UPLOADER=https://uploads.ilovefreegle.org:8080
       # Routing server (graph) for on-the-fly rippling drive-time analytics. Prod: the routing
-      # internal no-auth port. Locally, point ROUTING_EVAL_URL at the live routing tunnel in .env.
-      - ROUTING_EVAL_URL=${ROUTING_EVAL_URL:-http://spatial:8194}
+      # internal no-auth port. Locally the SIBLING live container, not the dev one: this API
+      # answers for the production database, so a reach measured against the dev graph and the
+      # dev member index would be a local answer wearing a live label.
+      - ROUTING_EVAL_URL=${LIVE_ROUTING_EVAL_URL:-http://spatial-live:8194}
       # Drive-time sample size + routing concurrency for the analytics endpoint. Tunable without a
       # rebuild. apiv2-live reaches routing over the slow SSH tunnel, so raise concurrency locally.
       - RIPPLE_ANALYTICS_SAMPLE=${RIPPLE_ANALYTICS_SAMPLE:-250}
@@ -986,7 +1005,13 @@ services:
       - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
       - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
       - CLOUDFLARE_AI_TOKEN=${CLOUDFLARE_AI_TOKEN:-}
-      - SPATIAL_SERVER_URL=${SPATIAL_SERVER_URL:-http://spatial:8196}
+      - SPATIAL_SERVER_URL=${LIVE_SPATIAL_SERVER_URL:-http://spatial-live:8196}
+      # Density banding (which decides a member's reach cap, and so what /town/near reports)
+      # asks this KNN index for the nearest k members. Left pointing at the dev index - which
+      # holds the seeded test users, not 169k real ones - every point measures as BandUnknown
+      # and /town/near quietly serves the flat fallback cap instead of the band's. That is the
+      # one number the rippling explorer's "whose posts can I see" direction is about.
+      - SPATIAL_KNN_URL=${LIVE_SPATIAL_KNN_URL:-http://spatial-knn-live:8194}
     volumes:
       - apiv2_logs:/var/log/freegle
     healthcheck:
@@ -1077,11 +1102,24 @@ services:
         required: false
     restart: "no"
     environment:
+      # Bound the GC pacer by the container, not by GOGC's default doubling.
+      # With neither set, Go sizes the heap at ~2x the live set and the
+      # scavenger returns pages lazily, so anon RSS sat at 11.6GB against a
+      # 12GiB cgroup while the artifacts account for ~5.2GB of it, squeezing
+      # the mmap'd leaf tables down to 868MB resident and costing 93M file
+      # refaults. GOMEMLIMIT is a SOFT target: Go keeps serving above it, it
+      # only collects harder. Leave headroom below the cgroup ceiling for the
+      # leaf-table page cache, and tune with a load test rather than by feel.
+      - GOMEMLIMIT=${SPATIAL_GOMEMLIMIT:-9GiB}
+      - GOGC=${SPATIAL_GOGC:-50}
       - SPATIAL_PORT=8196
       - SPATIAL_INTERNAL_PORT=8194
       - SPATIAL_KNN_URL=http://spatial-knn-live:8194
       - OSM_PBF_PATH=/data/uk-latest.osm.pbf
       - DEPRIVATION_CSV=/data/uk_lsoa_quintile.csv
+      # Reach engine artifacts (graph/partition/matrices snapshots). Empty =
+      # engine off, PBF boot as before. See iznik-routing-go/REACH-ENGINE.md.
+      - REACH_DIR=${REACH_DIR_LIVE:-}
       - MYSQL_HOST=db-live
       - MYSQL_PORT=${LIVE_DB_PORT:-1234}
       - MYSQL_USER=${LIVE_DB_USER:-root}
@@ -1613,6 +1651,21 @@ services:
       - APP_NAME=Freegle Batch Jobs
       - APP_KEY=base64:JXsa9TVxy8PQIrAgimIh0+4v8U7rSYhd3/+an8WYYQc=
       - APP_ENV=local
+      # Electricals classifier. eee:classify-new runs from this container's scheduler and
+      # feeds the public /electricals page, so the key has to be here and not only on the
+      # separate eee-batch research container.
+      #
+      # The accuracy the page carries (96% is-electrical, 93% condition) was measured on
+      # gemini-2.0-flash-lite, which Google has since retired. Pinned to a model that
+      # exists; the payload records which model the figures were measured on and flags that
+      # they have not been re-measured, so the page cannot quote them as this run's own
+      # accuracy. Re-measuring against Natalie's 200 labels is outstanding.
+      #
+      # Pinned rather than -latest deliberately: a moving alias would change the classifier
+      # under us without any signal, and the accuracy claim would drift silently.
+      - GOOGLE_GEMINI_API_KEY=${GOOGLE_GEMINI_API_KEY:-}
+      - EEE_MODEL=${EEE_MODEL:-gemini}
+      - EEE_GEMINI_MODEL=${EEE_GEMINI_MODEL:-gemini-3.5-flash-lite}
       - APP_DEBUG=true
       - RUN_MIGRATIONS=true
       - APP_URL=http://localhost
@@ -1658,7 +1711,7 @@ services:
       # all callers (no searchmode param) to the legacy keyword cascade. Default
       # (unset) = vector-hybrid search. Removed once keyword search is retired.
       - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
-      - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api/avatar
+      - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/avatar
       - SPATIAL_KNN_URL=http://spatial-knn:8194
       - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter,Reengage,CommunityNews
       # Post-moderation + earned-reach flags: the Laravel cron is the component that
@@ -1725,6 +1778,10 @@ services:
       # /etc/monitoring-ssh-key. Defaults to /dev/null (dev/CI: checks are
       # disabled anyway when FREEGLE_MONITORING_HOSTS is empty).
       - ${MONITORING_SSH_KEY_HOST_PATH:-/dev/null}:/etc/monitoring-ssh-key:ro
+      # Read-only probe key for mail:deferrals:scan. Separate from the
+      # monitoring key above on purpose: that one is a root shell across the
+      # estate, this one only reads the outbound relay's mail queue.
+      - ${MAIL_DEFERRALS_SSH_KEY_HOST_PATH:-/dev/null}:/etc/mail-deferrals-ssh-key:ro
     extra_hosts:
       - "db-host:${DB_HOST_IP:-127.0.0.1}"
       # Read replica for the DB read/write split. Falls back to the write host
@@ -1805,7 +1862,7 @@ services:
       # Freegle Mail Configuration
       - FREEGLE_NOREPLY_ADDR=noreply@ilovefreegle.org
       - FREEGLE_USER_DOMAIN=users.ilovefreegle.org
-      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Admin,ChaseUp,AutoRepost,MessageExpiry,AIImageReviewDigest,NotificationChaseUp,UnifiedDigest,Reengage,CommunityNews
+      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Admin,ChaseUp,AutoRepost,MessageExpiry,AIImageReviewDigest,NotificationChaseUp,UnifiedDigest,Reengage,CommunityNews,DonationAsk,DonationThank,StoriesNewsletter
       # Freegle Images
       - FREEGLE_IMAGES_DOMAIN=https://images.ilovefreegle.org
       - FREEGLE_DELIVERY_URL=https://delivery.ilovefreegle.org

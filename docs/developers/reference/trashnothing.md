@@ -1,10 +1,13 @@
 ---
-last_reviewed: 2026-08-08
+last_reviewed: 2026-09-03
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
   - iznik-batch/app/Console/Commands/TrashNothing/**
   - iznik-batch/app/Models/UserDeletion.php
+  - iznik-batch/app/Services/Mail/Incoming/IncomingMailService.php
+  - iznik-batch/app/Console/Commands/Dedup/**
+  - iznik-batch/app/Services/UnifiedDigestService.php
 ---
 
 # TrashNothing Integration Documentation
@@ -74,6 +77,29 @@ The `sourceheader` field stores the message origin:
 - `TN-Mobile` - Posted via TN mobile app
 - `Platform` - Posted via Freegle directly
 
+### Group Membership (Subscribe Mail)
+
+TN keeps its members' Freegle group list in step by emailing
+`<groupname>-subscribe@groups.ilovefreegle.org` from the member's TN address, one mail per
+group. `IncomingMailService::handleSubscribe()` handles it: it finds the group by
+`nameshort`, finds or creates the user from the envelope-from, and adds an Approved
+membership on daily digest.
+
+Two things gate and record that join:
+
+- **A ban blocks it.** A row in `users_banned` for that (user, group) means the subscribe
+  mail is dropped. TN re-sends these mails routinely, so without the gate a member a
+  moderator had banned would simply reappear on the group at the next TN sync.
+- **The join is logged.** A `Group`/`Joined` row with text `Subscribed` goes into `logs`,
+  so the join shows in the modlog as "Joined by emailing the group's subscribe address"
+  and counts toward the "seen on many groups" check in `MembershipsProcessingService`.
+
+Removal is the mirror image: `<groupname>-unsubscribe@` drops the membership, except for
+moderators and owners.
+
+`membership:remove-banned` clears up any membership held by a member banned from that
+group, for the rows written before the gate existed.
+
 ### Photo Handling
 
 TN sends photo links as URLs like `https://trashnothing.com/pics/{id}`. Freegle:
@@ -111,6 +137,23 @@ The traffic above goes TN to Freegle. The other direction is a single polling en
 authenticated with a row in `partners_keys`. It answers "what has moved since?" with
 three arrays: `messages`, `users` and `ratings`. `since` defaults to an hour ago.
 
+**`since` is clamped to at most 90 days ago** (`changes.MaxSinceLookback`). None of the
+queries behind the endpoint carry a `LIMIT`: every matching row is materialised into a Go
+slice and then into a JSON body, so the cost of one request is set entirely by how far
+back the caller asks. On 2026-08-17 a single call with a `since` of 1947 made the six-way
+`UNION` examine 17.9M rows over 130s and the OOM killer took apiv2 - and monit with it -
+on that node. At 90 days the same request cost about 1GB of apiv2 RSS when measured on
+2026-08-18, which the node absorbs without noticing. A partner who asks for more is not
+rejected; they are answered from the clamped window, and the response reports which
+window that was in `changes.since`, so "I asked for a year and got 90 days" is
+detectable rather than silent.
+
+Nothing serialises the endpoint, so that is the per-call cost, not a ceiling: concurrent
+catch-ups multiply it, and a dozen at once would be as fatal as the single unclamped call
+was. The clamp bounds one request, not the endpoint. Expect a full catch-up to take tens
+of seconds and return tens of MB - slow is normal here, and not by itself a fault worth
+chasing when a partner reports a timeout.
+
 Each entry in `users` carries a `type`:
 
 | type | Means | What the partner should do |
@@ -133,8 +176,11 @@ The tombstone exists precisely because `users` entries are otherwise derived fro
 `users.lastupdated`, which needs a row to read. Without it a purged member simply stops
 appearing in the feed, and the partner keeps a copy of someone who asked to be gone.
 Rows have no foreign key to `users` for the same reason, and are pruned after
-`UserManagementService::DELETION_RETENTION_DAYS` (90 days), far longer than any partner
-catch-up window.
+`UserManagementService::DELETION_RETENTION_DAYS` (90 days) - deliberately the same window
+as the `since` clamp above, so a partner catching up over the longest window the endpoint
+will answer still sees every tombstone that survives. Moving either number without the
+other opens a gap in which a purged member stops appearing in the feed while the partner
+still holds a copy.
 
 Deletions are appended after the modified users, so a partner applying the array in
 order ends on the deletion rather than resurrecting a user who was also edited inside
@@ -232,6 +278,123 @@ users.ljuserid  BIGINT UNSIGNED  -- LoveJunk user ID
 messages.sourceheader  VARCHAR(80)  -- e.g., "TN-Facebook", "TN-Web"
 messages.tnpostid      VARCHAR(80)  -- TN post identifier
 ```
+
+## Cross-posts and reposts
+
+TN lets a member send one item to several Freegle groups. That arrives as **one inbound
+email per group**, each carrying the same `X-Trash-Nothing-Post-Id`. A **repost** - the
+member offering the same thing again days later - is a different thing: TN allocates it a
+**new** post id, so the two cannot be told apart by id.
+
+The two are handled at different layers, deliberately.
+
+| Case | Same `tnpostid`? | Handled where | Result |
+|------|------------------|---------------|--------|
+| Cross-post: one item, N groups, N emails | Yes | Ingestion, `IncomingMailService::createGroupPostMessage` | One `messages` row with N `messages_groups` rows |
+| Repost: same item offered again later | No - new id each time | `UnifiedDigestService` content key | One digest card, and one immediate mail, for the set; both remain live posts on the site |
+
+### Cross-posts: one message, many groups
+
+The first email for a post id creates the message as usual. A later email carrying a post
+id we already hold does **not** create a second message - `attachGroupToTnMessage()` adds
+a `messages_groups` row to the existing one, along with that group's own
+`messages_history` and `logs` rows. Per-message work (the `messages_items` link, the TN
+image attachments) is not repeated.
+
+This makes a TN cross-post structurally identical to a Freegle-native one, which matters
+because everything downstream already collapses on `msgid` - `isochrone/message.go` uses
+`DISTINCT ms.msgid` for the browse feed and `COUNT(DISTINCT ms.msgid)` for the navbar
+badge. No read-side special-casing is needed, and none should be added.
+
+Two emails for one post id arriving together can both pass the lookup and both create a
+message. No lock is used to prevent that. Each insert autocommits, so id order is commit
+order: whichever row got the higher id was written after the lower one had committed, and
+sees it on the check straight after its own insert. That one is soft-deleted and its group
+attached to the winner, so a single message is left. This holds across cluster nodes
+because it only reads committed rows - unlike `GET_LOCK`, which Galera does not
+replicate and which would only appear to work while writes happen to be pinned to one
+node.
+
+There is deliberately no unique index on `messages.tnpostid`. It cannot be added while
+duplicates remain, and there are a great many: ~656k sets covering ~1.87M live messages,
+up to 30 copies each.
+
+Before this, each email created its own message, so one item became N messages sharing
+only a post id - each with its own `messages_spatial` and `rippling_reach` rows, and so
+shown once per copy to anyone whose reach or membership covered more than one of the
+groups (Discourse 9808/689).
+
+### Reposts: content, not id
+
+`UnifiedDigestService::getDeduplicationKey()` keys on `fromuser` + normalised subject +
+location, with an equal `tnpostid` treated as a definitive match in `bodiesMatch()`.
+Keying on the post id alone was tried and reverted (`423c6b0e6`): because a repost gets a
+fresh id, the digest listed the same item once per posting - "Small lamp" four times,
+27 such items in four days (Discourse 9808/#233).
+
+The same key now decides the immediate mails too, over a seven-day window
+(`UnifiedDigestService::ITEM_DEDUP_DAYS`). Past that, a member re-offering the same thing is
+news again and gets a fresh mail.
+
+Note the deliberate asymmetry: a repost is **not** collapsed on the browse feed. The feed
+collapses on `msgid` and nothing else, so each posting is its own card. Two postings days
+apart are two real posts, and the member meant to make both. The same is true of a
+TrashNothing set that predates the merge above: until `tn:merge-crossposts` collapses it,
+each copy is its own card on browse, even though the mail paths now treat the set as one
+item.
+
+### Merging copies created before this
+
+`php artisan tn:merge-crossposts` collapses a set onto its lowest-id message. It derives
+every `msgid`-bearing column from `information_schema` rather than a hand-written list,
+moves what it can onto the canonical message, and deletes rows that cannot move because
+the canonical already has an equivalent - notably `messages_spatial`, whose `msgid` is
+UNIQUE and which is what the feed reads.
+
+It defaults to `--days=90`. Only recent posts are in `messages_spatial`, so only those
+can appear on a feed or ripple; older sets are left alone because merging them would touch
+an enormous number of rows to no visible effect. Over 90 days there are ~11k sets and ~24k
+messages to merge, against ~656k sets across all time. `--limit` runs it in batches, and
+`--dry-run` reports without writing.
+
+**This is a command, not a migration.** Laravel migrations are the source of truth for
+dev and CI only - production does not run them - so this is run by hand on the batch host.
+Nothing depends on it having been run: until a set is collapsed, its messages are simply
+excluded from rippling (below).
+
+### Copies and mail
+
+A member is mailed **once per item**, not once per message. That distinction matters because
+one item can exist as several messages: a hand cross-post to two groups, a repost, or a
+TrashNothing set that predates the merge above.
+
+The rule is the daily digest's, called rather than restated. `itemSiblingMsgids()` groups
+messages using `getDeduplicationKey()` and `bodiesMatch()`, the same two functions
+`deduplicatePosts()` uses, so the two cannot drift.
+
+| Path | What it mails | How it knows the member has had it |
+|------|---------------|------------------------------------|
+| `processGroupImmediate()` - non-rippling posts, per-group cursor | one message | `rippling_reach_notified`, read across every copy of the item |
+| `mailNewlyReachedForPost()` - rippling posts, reach-gated | one message | the same ledger, in the recipient query |
+| `mailPostToUsers()` - first-reply scouting | one message | the same ledger, in `spoolPostToRecipients()` |
+| daily digest and daily push | a roll-up | `deduplicatePosts()` within one send, the member's cursor across sends |
+
+The ledger is written against the message actually mailed, and read across the whole set, so
+a member who had the first copy is passed over when a second arrives, whichever path would
+have mailed it.
+
+The two daily channels have no per-send ledger, so their across-sends check uses the
+member's own cursor: a copy the cursor has already passed is one they were shown. That
+stands in closely because copies of an item share a poster and a location, so the two things
+that decide whether a post reaches a member at all - it being their own post, and their
+distance slider - treat every copy of it alike.
+
+### Copies and rippling
+
+A message sharing its post id with another live message does not ripple into new groups.
+Each copy would otherwise ripple on its own account, so one item would reach people once
+per copy. The check is self-limiting: once a set is collapsed there is no other live
+message to match, and the post ripples like any other.
 
 ### Groups Table
 ```sql

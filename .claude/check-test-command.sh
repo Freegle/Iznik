@@ -37,6 +37,14 @@ fi
 if echo "$PWD" | grep -qE 'monitor-fsm'; then
   IS_DATA_COMMAND=true
 fi
+# Allow claude-sub-broker — a standalone Nuxt repo with its own vitest and
+# playwright setup, outside the Docker stack the status API serves.
+if echo "$COMMAND" | grep -qE 'claude-sub-broker'; then
+  IS_DATA_COMMAND=true
+fi
+if echo "$PWD" | grep -qE 'claude-sub-broker'; then
+  IS_DATA_COMMAND=true
+fi
 # Allow iznik-spatial-go and iznik-routing-go — separate Go modules not covered by the status API.
 if echo "$COMMAND" | grep -qE 'iznik-spatial-go|spatial-server|iznik-routing-go|routing-server'; then
   IS_DATA_COMMAND=true
@@ -101,14 +109,47 @@ TEST_PATTERNS=(
   '\bdocker run\b.*\b(golang|node|composer|php):'
 )
 
+# Judge the command with heredoc BODIES removed, so a commit message, a doc or a log
+# entry that quotes one of these commands is not mistaken for running it. Observed:
+# a session-log entry describing a migration command blocked a plain file append.
+SCAN=$(echo "$COMMAND" | awk '
+  {
+    if (tag != "") { if ($0 ~ ("^[[:space:]]*" tag "[[:space:]]*$")) tag = ""; next }
+    line = $0
+    if (match(line, /<<-?["'"'"'"]?[A-Za-z_][A-Za-z0-9_]*["'"'"'"]?/)) {
+      t = substr(line, RSTART, RLENGTH)
+      sub(/^<<-?/, "", t); gsub(/["'"'"'"]/, "", t)
+      tag = t
+    }
+    print line
+  }')
+
 IS_TEST_COMMAND=false
 if [ "$IS_DATA_COMMAND" = false ]; then
   for pattern in "${TEST_PATTERNS[@]}"; do
-    if echo "$COMMAND" | grep -qE "$pattern"; then
+    if echo "$SCAN" | grep -qE "$pattern"; then
       IS_TEST_COMMAND=true
       break
     fi
   done
+fi
+
+# A search tool whose PATTERN contains a trigger is looking for it, not running it.
+# Observed while auditing these very hooks: grepping the .claude directory for one of
+# these command names blocked the grep.
+if [ "$IS_TEST_COMMAND" = true ] \
+   && echo "$SCAN" | grep -qE '(^|[;&|]|&&|\|\|)[[:space:]]*(grep|rg|ag|ack)\b' \
+   && ! echo "$SCAN" | grep -qE '(^|[;&|]|&&|\|\|)[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(go|php|npx|npm|vendor/bin/phpunit)[[:space:]]'; then
+  IS_TEST_COMMAND=false
+fi
+
+# A path can spell a trigger where two of them meet - "cache_test.go test/x_test.go"
+# contains "go test" - so a match that is only ever part of a longer path is not a test
+# run. Checked after the patterns so a genuine invocation still blocks.
+if [ "$IS_TEST_COMMAND" = true ] \
+   && echo "$SCAN" | grep -qE '[A-Za-z0-9_./-]+\.(go|php|js|ts|mjs)\b' \
+   && ! echo "$SCAN" | grep -qE '(^|[;&|]|&&|\|\|)[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(go|php|npx|npm|docker|vendor/bin/phpunit)\b'; then
+  IS_TEST_COMMAND=false
 fi
 
 if [ "$IS_TEST_COMMAND" = false ]; then

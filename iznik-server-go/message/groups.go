@@ -2,6 +2,8 @@ package message
 
 import (
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -23,6 +25,13 @@ func Groups(c *fiber.Ctx) error {
 	gid, _ := strconv.ParseUint(c.Params("id"), 10, 64)
 
 	start := time.Now().AddDate(0, 0, -utils.OPEN_AGE).Format("2006-01-02")
+
+	// "Mark all seen" moves this watermark instead of writing a View row per post, so the
+	// spatial arm's unseen flag below must honour it - the badge (isochrone Count) already
+	// does, and without it a member who cleared their browse saw every post they never
+	// individually opened come back flagged "New to you" on the mygroups feed. Inlined (a
+	// uint from our own row) because the arm's args are positional.
+	watermark := strconv.FormatUint(BrowseClearedWatermark(db, myid), 10)
 
 	// Build the EXISTS fragment for the spatial arm to filter by group membership
 	// without relying on messages_spatial.groupid (which stores only ONE group for
@@ -77,6 +86,11 @@ func Groups(c *fiber.Ctx) error {
 		"messages_spatial.promised, " +
 		"messages_spatial.groupid, " +
 		"messages_spatial.msgtype AS type, " +
+		// fromuser drives the `mine` flag below. The client pins the viewer's own posts to
+		// the top of every sort order and lifts them into the "posts by you" row, and this
+		// feed is what "All my communities" and a single-group view render - so without it
+		// own posts were pinned on the nearby feed and buried here.
+		"m.fromuser AS fromuser, " +
 		"messages_spatial.arrival, " +
 		// posted = the ORIGINAL post time (messages.arrival), stable across rippling.
 		// The client's "Newest posted" sort keys on posted; messages_spatial.arrival is
@@ -84,17 +98,22 @@ func Groups(c *fiber.Ctx) error {
 		// selected sort appeared not to be applied (Discourse 9844, mygroups variant).
 		// Mirrors the nearby/reach feed (isochrone/message.go).
 		"m.arrival AS posted, " +
-		"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen " +
+		"CASE WHEN messages_likes.msgid IS NULL AND messages_spatial.id > " + watermark + " THEN 1 ELSE 0 END AS unseen " +
 		"FROM messages_spatial " +
 		"INNER JOIN messages m ON m.id = messages_spatial.msgid " +
 		"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? " +
 		"WHERE 1=1 " + spatialGroupFilter +
+		// A post is not live until its reach exists - see rippling.ReachPendingFilter.
+		// It exempts the viewer's own posts, which this arm has to serve: the
+		// own-posts arm below only covers posts not yet in messages_spatial.
+		" AND " + rippling.ReachPendingFilter("messages_spatial.msgid", myid) + " " +
 		"UNION " +
 		"SELECT lat, lng, messages.id, " +
 		"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, " +
 		"ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, " +
 		"ANY_VALUE(messages_groups.groupid) AS groupid, " +
 		"messages.type, " +
+		"messages.fromuser AS fromuser, " +
 		"MAX(messages_groups.arrival) AS arrival, " +
 		"messages.arrival AS posted, " +
 		"ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen " +
@@ -105,6 +124,13 @@ func Groups(c *fiber.Ctx) error {
 		"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? " +
 		"WHERE fromuser = ? AND messages_groups.arrival >= ? " +
 		"AND messages_outcomes.id IS NULL " +
+		// This arm exists for posts that are not in messages_spatial yet (Pending, or
+		// brand-new and awaiting the spatial insert). Once a post IS in spatial the arm
+		// above serves it, so admitting it here too handed the client duplicate rows
+		// (UNION only collapses identical rows, and the two arms disagree on arrival) -
+		// and kept showing posts spatial had PRUNED (expired/withdrawn), the exact class
+		// the nearby feed's own-posts arm filters the same way.
+		"AND NOT EXISTS (SELECT 1 FROM messages_spatial ms2 WHERE ms2.msgid = messages.id) " +
 		"GROUP BY messages.id" +
 		") t"
 
@@ -124,10 +150,21 @@ func Groups(c *fiber.Ctx) error {
 	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
 	hasLoc := latlng.Lat != 0 || latlng.Lng != 0
 
+	// One batched routing call resolves every location's road-aware blur.
+	blurCoords := make([][2]float64, 0, len(msgs))
+	for _, r := range msgs {
+		blurCoords = append(blurCoords, [2]float64{float64(r.Lat), float64(r.Lng)})
+	}
+	roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
 	for ix, r := range msgs {
 		// Protect anonymity of poster a bit.
-		blurLat, blurLng := utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
+		blurLat, blurLng := roadblur.RoadBlur(r.Lat, r.Lng, utils.BLUR_USER)
 		msgs[ix].Lat, msgs[ix].Lng = blurLat, blurLng
+
+		// Flag the viewer's own posts, exactly as the nearby feed does
+		// (isochrone.reachCandidateRow.toSummary). This is what lets the client pin them
+		// above the feed; the author id itself is json:"-" and never leaves the server.
+		msgs[ix].Mine = r.Fromuser != 0 && r.Fromuser == myid
 
 		// Per-post distance in miles from the viewer to the BLURRED point, so the "All my
 		// communities" browse view can be narrowed by the client's distance slider. Computed
@@ -139,6 +176,15 @@ func Groups(c *fiber.Ctx) error {
 		if hasLoc {
 			msgs[ix].Distance = utils.Haversine(viewerLat, viewerLng, blurLat, blurLng)
 		}
+	}
+
+	// Stamp drive minutes/miles on every summary (one batched routing call over the
+	// blurred points, exactly as the nearby feed does). The client's drive-minutes
+	// slider filter decides from these on the FIRST render; without them it fell back
+	// to a per-post async road lookup whose late answers flipped the verdict after
+	// paint - posts flashed up and then collapsed to "You're up to date".
+	if hasLoc {
+		AddSummaryRoadMetrics(viewerLat, viewerLng, msgs)
 	}
 
 	return c.JSON(msgs)

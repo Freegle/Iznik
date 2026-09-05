@@ -16,6 +16,8 @@ use Tests\TestCase;
  */
 class FirstReplyPassthroughTest extends TestCase
 {
+    use \Tests\Support\SeedsReachCells;
+
     private const TICK1 = 'POLYGON((-0.15 51.45, -0.05 51.45, -0.05 51.55, -0.15 51.55, -0.15 51.45))';
 
     private const TICK3 = 'POLYGON((-1.0 51.0, 1.0 51.0, 1.0 52.0, -1.0 52.0, -1.0 51.0))';
@@ -29,7 +31,6 @@ class FirstReplyPassthroughTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        MaxReachService::forgetAvailability();
         DB::statement('DELETE FROM rippling_held_replies');
         DB::statement('DELETE FROM rippling_reach');
 
@@ -40,11 +41,57 @@ class FirstReplyPassthroughTest extends TestCase
             'freegle.firstreply.passthrough.enabled' => true,
             'freegle.firstreply.passthrough.max_existing_repliers' => 1,
         ]);
+
+        // The routing server, faked by POINT: the label admits everywhere the
+        // post will eventually reach and refuses NEVER_REACHED. The gate is
+        // under test, not the geometry - that is proven routing-side.
+        // Http::fake merges first-stub-wins, so tests needing a different
+        // answer set the properties below instead of re-faking.
+        $this->maxVerdictOverride = null;
+        $this->reachEvalDown = false;
+        \Illuminate\Support\Facades\Http::fake(function ($request) {
+            if (!str_contains($request->url(), 'reach-eval')) {
+                return null;
+            }
+            $lat = (float) ($request['lat'] ?? 0);
+            $lng = (float) ($request['lng'] ?? 0);
+            if ($this->reachEvalDown) {
+                // The routing server up but unable to decide, which is the
+                // shape a stopped reach engine takes.
+                return \Illuminate\Support\Facades\Http::response('', 503);
+            }
+            if (($request['budget'] ?? '') === 'max') {
+                // The eventual reach: everywhere except NEVER_REACHED.
+                $verdict = $this->maxVerdictOverride
+                    ?? (abs($lat - self::NEVER_REACHED[0]) < 0.01 ? 'out' : 'in');
+            } else {
+                // The current reach: only INSIDE_NOW.
+                $in = abs($lat - self::INSIDE_NOW[0]) < 0.01 && abs($lng - self::INSIDE_NOW[1]) < 0.01;
+                $verdict = $in ? 'in' : 'out';
+            }
+            $results = array_map(
+                fn ($id) => ['msgid' => (int) $id, 'verdict' => $verdict],
+                $request['msgids'] ?? []
+            );
+
+            return \Illuminate\Support\Facades\Http::response(['results' => $results]);
+        });
     }
+
+    /**
+     * When set, the max-budget answer uses this verdict. The current-tick
+     * answer is deliberately left alone: the two are questions about different
+     * reaches, and blanking both makes a missing label indistinguishable from
+     * an outage - which the two now behave differently on.
+     */
+    private ?string $maxVerdictOverride = null;
+
+    /** When true, every reach-eval answer is a 503: the reach engine is down. */
+    private bool $reachEvalDown = false;
 
     private function service(): RippleReplyService
     {
-        return new RippleReplyService(new ReachQueryService(), new MaxReachService(app(ReachService::class)));
+        return new RippleReplyService(new ReachQueryService(), app(MaxReachService::class));
     }
 
     /** @return array{0:int, 1:\App\Models\User} the post id and its poster */
@@ -61,14 +108,13 @@ class FirstReplyPassthroughTest extends TestCase
 
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)),
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)),
                      NOW(), 'drive', 1, 3, 4000, 30, ?, NOW(), 'expanding', NOW(), NOW())",
-            [$message->id, self::TICK1, self::TICK1, $schedule]
+            [$message->id, $this->reachCellsFor(self::TICK1), self::TICK1, $schedule]
         );
-
-        app(MaxReachService::class)->populate();
+        DB::table('rippling_reach')->where('msgid', $message->id)->update(['reach_labels' => 'label-bytes']);
 
         return [(int) $message->id, $poster];
     }
@@ -161,14 +207,31 @@ class FirstReplyPassthroughTest extends TestCase
         );
     }
 
-    public function test_unpopulated_max_reach_leaves_the_hold_in_place(): void
+    public function test_no_stored_label_leaves_the_hold_in_place(): void
     {
-        // Deploying ahead of the backfill must change nothing.
+        // A post whose label has not been stored yet must change nothing: the
+        // passthrough has no eventual reach to work from, so the hold stands on
+        // the current tick's own refusal, which is still answered.
         [$msgid] = $this->seedRipplingPost();
-        DB::statement('UPDATE rippling_reach SET max_polygon = NULL WHERE msgid = ?', [$msgid]);
+        $this->maxVerdictOverride = 'nolabels';
 
         $this->assertTrue(
             $this->service()->shouldHold($msgid, self::REACHED_LATER[0], self::REACHED_LATER[1])
+        );
+    }
+
+    public function test_reply_passes_through_when_the_reach_engine_cannot_answer(): void
+    {
+        // Nothing could be asked, so nothing has been refused. A second reply
+        // from somewhere the post never reaches is the strictest case there is,
+        // and even that goes through while the engine is silent.
+        [$msgid, $poster] = $this->seedRipplingPost();
+        $this->addReplier($msgid, $poster);
+        $this->reachEvalDown = true;
+
+        $this->assertFalse(
+            $this->service()->shouldHold($msgid, self::NEVER_REACHED[0], self::NEVER_REACHED[1]),
+            'an unanswerable reach question must not hold a reply'
         );
     }
 }

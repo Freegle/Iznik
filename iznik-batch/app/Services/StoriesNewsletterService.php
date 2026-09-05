@@ -149,7 +149,7 @@ class StoriesNewsletterService
         // CTAs with tracking source param.
         $tellUrl = "{$userSite}/stories?src=storynewsletter";
         $giveUrl = "{$userSite}/give?src=storynewsletter";
-        $findUrl = "{$userSite}/find?src=storynewsletter";
+        $askUrl = "{$userSite}/ask?src=storynewsletter";
 
         // Find all eligible members:
         //   - in a published Freegle group
@@ -201,7 +201,7 @@ class StoriesNewsletterService
                 headerImageUrl: $headerImageUrl,
                 tellUrl: $tellUrl,
                 giveUrl: $giveUrl,
-                findUrl: $findUrl,
+                askUrl: $askUrl,
                 previewText: $preview,
                 unsubscribeUrl: "{$userSite}/unsubscribe",
                 settingsUrl: "{$userSite}/settings",

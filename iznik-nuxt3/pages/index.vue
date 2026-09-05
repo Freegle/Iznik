@@ -24,12 +24,12 @@
                 <span>Give</span>
               </NuxtLink>
               <NuxtLink
-                to="/find"
-                class="action-btn action-btn--find"
+                to="/ask"
+                class="action-btn action-btn--ask"
                 @click="clicked('ask')"
               >
-                <v-icon icon="search" class="action-btn__icon" />
-                <span>Find</span>
+                <v-icon icon="shopping-cart" class="action-btn__icon" />
+                <span>Ask</span>
               </NuxtLink>
             </div>
             <p class="browse-label">
@@ -265,7 +265,7 @@ async function explorePlace(place) {
 
 // Lifecycle hooks
 onMounted(() => {
-  if (process.client) {
+  if (import.meta.client) {
     if (me.value) {
       goHome()
     }
@@ -372,7 +372,9 @@ onBeforeUnmount(() => {
   font-size: clamp(0.95rem, 2.5vw, 1.15rem);
   font-weight: 600;
   text-decoration: none;
-  transition: transform 0.1s, box-shadow var(--transition-fast),
+  transition:
+    transform 0.1s,
+    box-shadow var(--transition-fast),
     background var(--transition-fast);
   min-width: clamp(90px, 22vw, 150px);
   border-radius: var(--radius-md, 0.375rem);
@@ -394,7 +396,7 @@ onBeforeUnmount(() => {
   }
 }
 
-.action-btn--find {
+.action-btn--ask {
   background: $color-secondary;
   color: white;
   box-shadow: 0 2px 8px rgba($color-secondary, 0.3);

@@ -54,8 +54,15 @@ android {
         }
         release {
             signingConfig signingConfigs.release
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // R8 shrink + optimize + obfuscate. Google Play requires >=25% coverage on all
+            // three from February 2027 for apps whose DEX exceeds 10MB, and ours is well
+            // over: 40MB for Freegle (Stripe drags in Compose), 15MB for ModTools.
+            // proguard-android-optimize.txt, NOT proguard-android.txt: the latter carries
+            // -dontoptimize, which would leave Play's optimization metric at zero even with
+            // minification on. Resource shrinking stays off - Play measures code, and the
+            // bulk of the APK is assets/public (the Nuxt bundle), which it cannot touch.
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }
@@ -77,6 +84,10 @@ dependencies {
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
     implementation "com.google.firebase:firebase-messaging:23.+"
+    // Block Store: carries the login session to a new device (BlockStorePlugin). Play counts a
+    // Block Store integration shipped by 30 September 2026 as meeting the Zero-Tap Sign-In
+    // restoration requirement that otherwise lands in April 2027.
+    implementation "com.google.android.gms:play-services-auth-blockstore:$playServicesBlockstoreVersion"
 }
 
 apply from: 'capacitor.build.gradle'

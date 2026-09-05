@@ -157,6 +157,10 @@ describe('ModMember', () => {
             template: '<div class="mod-bouncing" />',
             props: ['user'],
           },
+          ModMailDelayed: {
+            template: '<div class="mod-mail-delayed" />',
+            props: ['since', 'provider', 'count'],
+          },
           ModDeletedOrForgotten: {
             template: '<div class="mod-deleted-or-forgotten" />',
             props: ['user'],
@@ -734,9 +738,9 @@ describe('ModMember', () => {
       // stripped by JSON.stringify) so JSON_MERGE_PATCH changes it.
       const sentNotifications =
         mockUserStore.edit.mock.calls[0][0].settings.notifications
-      expect(Object.prototype.hasOwnProperty.call(sentNotifications, 'email')).toBe(
-        true
-      )
+      expect(
+        Object.prototype.hasOwnProperty.call(sentNotifications, 'email')
+      ).toBe(true)
       expect(sentNotifications.email).toBe(false)
       // Must NOT send mod-specific fields like modnotifs/backupmodnotifs.
       const sentSettings = mockUserStore.edit.mock.calls[0][0].settings
@@ -965,6 +969,25 @@ describe('ModMember', () => {
         member: createMember({ bandate: null }),
       })
       expect(wrapper.find('.settings-group').exists()).toBe(true)
+    })
+  })
+
+  // A membership that exists only because rippling auto-joined the poster is not a
+  // relationship with this community, so its volunteers have no chat to start
+  // (Discourse 10102).
+  describe('ripple-created membership', () => {
+    it('offers no chat button', () => {
+      const wrapper = mountComponent({
+        member: createMember({ rippled: true }),
+      })
+      expect(wrapper.find('.chat-button').exists()).toBe(false)
+    })
+
+    it('still offers a chat button for an ordinary member', () => {
+      const wrapper = mountComponent({
+        member: createMember({ rippled: false }),
+      })
+      expect(wrapper.find('.chat-button').exists()).toBe(true)
     })
   })
 })

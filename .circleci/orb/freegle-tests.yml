@@ -113,6 +113,21 @@ executors:
   android-executor:
     docker:
       - image: cimg/android:2025.10-node
+    # large (8GB), NOT xlarge. Docker xlarge is not in our CircleCI plan: #1434 bumped
+    # this to xlarge for R8 release-bundle memory, and from 2026-08-27 15:56 to
+    # 2026-08-29 EVERY android job failed instantly at dispatch with
+    # "resource-class-not-in-plan" (zero-duration, "Task information unavailable" -
+    # visible via GET /api/v2/project/gh/Freegle/Iznik/job/<n> .messages). xlarge never
+    # ran a single build, so this revert loses nothing that ever worked.
+    #
+    # The problem #1434 was addressing remains real but is release-only: R8 minification
+    # (on for release builds since #1428) had the Gradle daemon OS-killed during
+    # packageReleaseBundle on an 8GB box (JVM allowed 4GB heap + 1GB metaspace in
+    # android/gradle.properties, R8 native wants headroom on top). The debug jobs that
+    # run on master (assembleDebug) do not minify and were green on large for months.
+    # If a release bundle OOMs again the fix must fit 8GB (trim org.gradle.jvmargs /
+    # cap workers for the release lane) or the plan must be upgraded - do NOT bump this
+    # back to xlarge without confirming the plan now includes it.
     resource_class: large
 
   macos-executor:
@@ -449,7 +464,7 @@ commands:
             # that saturates the disk (95% util) and starves the CircleCI runner of I/O,
             # causing it to miss heartbeats → infrastructure_fail.
             # Database cleanliness is handled by setup-test-database.sh which issues
-            # DROP DATABASE / CREATE DATABASE on self-hosted runners (including Katapult)
+            # DROP DATABASE / CREATE DATABASE on self-hosted runners (including cloud runner VMs)
             # so each pipeline starts with a fresh schema without the InnoDB init cost.
             docker-compose down --remove-orphans || true
             # On self-hosted runner, also clean up containers from old CI runs that used
@@ -464,12 +479,12 @@ commands:
             fi
 
             # Ensure local Docker registry mirrors are in daemon.json.
-            # Must run for ALL runner types (Katapult cloud + self-hosted).
+            # Must run for ALL runner types (cloud runner VMs + self-hosted).
             # 5002 = build-layer cache (insecure-registries only).
             # 5000 = Docker Hub pull-through mirror: must be in registry-mirrors so
             # Docker routes infrastructure image pulls (percona, redis, traefik, etc.)
             # through the local cache instead of hitting Docker Hub directly.
-            # Without 5000 in registry-mirrors the Katapult VM IP hits Docker Hub's
+            # Without 5000 in registry-mirrors the runner VM IP hits Docker Hub's
             # anonymous pull rate limit (100/6h per IP) and docker-compose up fails.
             NEEDS_DAEMON_UPDATE=false
             grep -q "5002" /etc/docker/daemon.json 2>/dev/null || NEEDS_DAEMON_UPDATE=true
@@ -544,8 +559,9 @@ commands:
             # Pre-pull shared base images once before any parallel builds start.
             # freegle-base: used by freegle-prod-local, modtools-prod-local, etc.
             # freegle-batch-base: used by batch — contains compiled PHP extensions/PECL/MJML.
-            #   On Katapult, the cache server GHCR mirror (185.44.254.6:5001) serves both
-            #   images locally, so pulls are fast even on ephemeral VMs with no layer cache.
+            #   The cache VM's GHCR mirror (185.44.254.6:5001) is wired up only on
+            #   Katapult-provisioned VMs; Hetzner runners pull straight from ghcr.io
+            #   (see scripts/hetzner/cloud-init.yaml).
             echo "Pre-pulling shared base images (timeout 180s each)..."
             timeout 180 docker pull ghcr.io/freegle/freegle-base:latest \
               || echo "⚠️  freegle-base pre-pull timed out — builds will re-attempt"
@@ -563,8 +579,8 @@ commands:
             IS_WSL=false
             grep -qi "microsoft\|wsl" /proc/version 2>/dev/null && IS_WSL=true
 
-            # On Katapult: pull previously built images from the local cache registry so
-            # BuildKit finds cache hits via --cache-from even on fresh VMs.
+            # On cloud runner VMs: pull previously built images from the local cache registry
+            # so BuildKit finds cache hits via --cache-from even on fresh VMs.
             # Generates a compose override that adds cache_from: to each service.
             INLINE_CACHE_FLAG=""
             if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && [ "$IS_WSL" = "false" ]; then
@@ -628,10 +644,10 @@ commands:
             BATCH_PID=$!
 
             if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && [ "$IS_WSL" = "false" ]; then
-              # Katapult runner (native Linux, 16+ CPUs / 48GB RAM):
+              # Cloud runner VM (native Linux, 16+ CPUs):
               # Build all container groups in parallel — each group is independent.
               # BuildKit's internal scheduler further parallelises steps within each build.
-              echo "Katapult: building all container groups in parallel..."
+              echo "Cloud runner: building all container groups in parallel..."
               GO_LOG=$(mktemp) NUXT_LOG=$(mktemp) OTHER_LOG=$(mktemp)
 
               # Go API container (independent — no shared layers with Nuxt)
@@ -653,11 +669,33 @@ commands:
               # spatial-knn and spatial are NOT brought up from a registry image — they
               # build from local source. They must be built explicitly here: otherwise
               # `docker-compose up` reuses whatever image already exists on a pooled
-              # Katapult VM, which can be a stale build from before a source change (e.g.
+              # runner VM, which can be a stale build from before a source change (e.g.
               # missing the admin /v1/:dataset/upsert route → integration-seed tests 404).
               # The Dockerfile's COPY busts on source change, so cache_from keeps this fast.
               docker-compose build $INLINE_CACHE_FLAG playwright status spatial-knn spatial > "$OTHER_LOG" 2>&1 &
               OTHER_PID=$!
+
+              # Every group above redirects to a log file, so between "building in
+              # parallel" and the first "build complete" the console says NOTHING.
+              # A group that legitimately runs longer than no_output_timeout (25m)
+              # therefore kills the job with "Too long with no output" while it is
+              # still working - which reads as a hang rather than a slow build.
+              # Heartbeat naming the groups still going, so the timer only ever
+              # fires on a build that has genuinely stopped making progress.
+              (
+                HB_START=$(date +%s)
+                while kill -0 $GO_PID 2>/dev/null || kill -0 $NUXT_PID 2>/dev/null \
+                   || kill -0 $OTHER_PID 2>/dev/null; do
+                  sleep 60
+                  STILL=""
+                  kill -0 $GO_PID    2>/dev/null && STILL="$STILL go"
+                  kill -0 $NUXT_PID  2>/dev/null && STILL="$STILL nuxt"
+                  kill -0 $OTHER_PID 2>/dev/null && STILL="$STILL other"
+                  [ -n "$STILL" ] && \
+                    echo "   ... building for $((($(date +%s) - HB_START) / 60))m, still running:$STILL"
+                done
+              ) &
+              HEARTBEAT_PID=$!
 
               BUILD_FAILED=0
               check_build() {
@@ -674,6 +712,8 @@ commands:
               check_build $GO_PID    "Go (apiv2)"                "$GO_LOG"
               check_build $NUXT_PID  "Nuxt (freegle/modtools)"   "$NUXT_LOG"
               check_build $OTHER_PID "Playwright + status"       "$OTHER_LOG"
+
+              kill $HEARTBEAT_PID 2>/dev/null || true
 
               if [ $BUILD_FAILED -eq 1 ]; then
                 kill $BATCH_PID 2>/dev/null || true
@@ -717,7 +757,7 @@ commands:
             cat "$BATCH_LOG" | tail -5
 
             # Push built images to local cache registry in background — doesn't block startup.
-            # These provide --cache-from sources for fresh Katapult VMs on subsequent runs.
+            # These provide --cache-from sources for fresh runner VMs on subsequent runs.
             if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && [ "$IS_WSL" = "false" ]; then
               (
                 CACHE_REG="185.44.254.6:5002"
@@ -764,7 +804,7 @@ commands:
             rm -rf ./iznik-batch/vendor/
 
             echo "=== Phase 1: Starting infrastructure + batch for migrations ==="
-            # Retry the bringup. On Katapult cloud instances the Docker Hub pull-through
+            # Retry the bringup. On ephemeral cloud runners the Docker Hub pull-through
             # mirror (185.44.254.6:5000) is sometimes not loaded by the running dockerd (see
             # the mirror setup above), so :latest image pulls (mjml, percona, ...) hit Docker
             # Hub's anonymous rate limit (toomanyrequests) and this up fails. That is a
@@ -1468,7 +1508,17 @@ commands:
             fi
 
             echo "📦 Installing npm dependencies..."
-            npm ci --prefer-offline --no-audit
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci --prefer-offline --no-audit; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
 
             echo "🔧 Running nuxi prepare..."
             npx nuxi prepare
@@ -1510,7 +1560,7 @@ commands:
 
             # The tested modules require nothing outside Node's stdlib, so there is
             # no npm install here - verified by running with node_modules removed.
-            # Prefer the runner's own Node; Katapult VMs may not have one, so fall
+            # Prefer the runner's own Node; cloud runner VMs may not have one, so fall
             # back to a container rather than installing a toolchain.
             if command -v node >/dev/null 2>&1 && \
                node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)' 2>/dev/null; then
@@ -2234,34 +2284,79 @@ jobs:
             git config --global --unset-all url.ssh://git@github.com.insteadOf 2>/dev/null || true
             git config --global url.https://github.com/.insteadOf git@github.com: 2>/dev/null || true
 
+            # Authenticate the fetch. Anonymous HTTPS to github.com from this runner has
+            # been answered with a credentials prompt and "expected flush after ref
+            # listing", which is what rate limiting looks like to git. The helper reads
+            # the token from the environment when it runs, so the token itself is never
+            # written to disk and never appears in a command line.
+            if [ -n "$GITHUB_TOKEN" ]; then
+              git config --global credential.helper \
+                '!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f'
+              echo "Fetching as an authenticated user"
+            else
+              echo "No GITHUB_TOKEN: fetching anonymously, which github.com may rate limit"
+            fi
+
             # Abort if transfer drops below 100 bytes/s for 60 seconds
             git config --global http.lowSpeedLimit 100
             git config --global http.lowSpeedTime 60
 
             checkout_code() {
-              if [ -d .git ]; then
-                git fetch --prune origin
-                # HEAD may be an orphan if a previous run failed mid-init; ignore the error.
-                git reset --hard HEAD 2>/dev/null || true
-                # -x also removes gitignored files (e.g. .claude/skills/ralph/) that
-                # would otherwise block checkout with "untracked files would be overwritten".
-                git clean -fdx
-                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH" || return 1
-                # Second clean: removes files from previous branch that git checkout couldn't
-                # delete (e.g., root-owned files created by Docker containers via bind mounts,
-                # or files left by concurrent builds sharing the workspace directory).
-                git clean -fd
-              else
+              if [ ! -d .git ]; then
                 # git clone fails when the directory isn't empty (leftover files from
                 # a previous build). Use git init + fetch instead, which works either way.
-                # git clean removes untracked files that would block git checkout.
                 git init
                 git remote add origin "$CIRCLE_REPOSITORY_URL" 2>/dev/null || git remote set-url origin "$CIRCLE_REPOSITORY_URL"
-                git fetch --prune origin
-                # -x also removes gitignored files that would block checkout.
-                git clean -fdx
+              fi
+
+              # A failed fetch must fail the attempt. It used to be allowed to fail: the
+              # checkout then succeeded against whatever refs the workspace already had,
+              # so master built green against the PREVIOUS commit and no new branch could
+              # be checked out at all. Silence here is worse than a red build.
+              #
+              # The repository is public, so an anonymous fetch is a real fallback rather
+              # than a courtesy: it means a token that has expired or lost its scope can
+              # never be the thing that stops CI.
+              if ! git fetch --prune origin; then
+                if [ -n "$GITHUB_TOKEN" ]; then
+                  echo "Authenticated fetch failed; trying anonymously"
+                  git -c credential.helper= fetch --prune origin || return 1
+                else
+                  return 1
+                fi
+              fi
+
+              # HEAD may be an orphan if a previous run failed mid-init; ignore the error.
+              git reset --hard HEAD 2>/dev/null || true
+              # -x also removes gitignored files (e.g. .claude/skills/ralph/) that
+              # would otherwise block checkout with "untracked files would be overwritten".
+              git clean -fdx
+              # Check out the commit this build is FOR, on a local branch of the
+              # branch's name (auto-merge and friends merge/inspect that branch).
+              # Checking out origin/$CIRCLE_BRANCH - the tip - used to fail the
+              # proof below whenever a second push landed before this job started:
+              # on 2026-09-03 job 34991 checked out f6666667 for a build of
+              # 76c291a9 and failed after three attempts, with nothing wrong.
+              # Every push then also tests only its own commit, so production
+              # only ever receives what was actually tested.
+              if [ -n "$CIRCLE_SHA1" ]; then
+                git checkout -B "$CIRCLE_BRANCH" "$CIRCLE_SHA1" || return 1
+              else
                 git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH" || return 1
-                git clean -fd
+              fi
+              # Second clean: removes files from previous branch that git checkout couldn't
+              # delete (e.g., root-owned files created by Docker containers via bind mounts,
+              # or files left by concurrent builds sharing the workspace directory).
+              git clean -fd
+
+              # The workspace is reused between builds, so prove we are testing the commit
+              # this build was triggered for rather than one left behind by an earlier run.
+              if [ -n "$CIRCLE_SHA1" ]; then
+                HEAD_SHA=$(git rev-parse HEAD)
+                if [ "$HEAD_SHA" != "$CIRCLE_SHA1" ]; then
+                  echo "Checked out $HEAD_SHA but this build is for $CIRCLE_SHA1"
+                  return 1
+                fi
               fi
             }
 
@@ -2269,7 +2364,10 @@ jobs:
               [ $attempt -gt 1 ] && echo "⚠️  Checkout attempt $attempt..." && sleep 15
               checkout_code && echo "✅ Checkout complete" && exit 0
               echo "Attempt $attempt failed"
-              rm -rf .git 2>/dev/null || true
+              # Keep .git on the first failure: a warm workspace is worth far more than a
+              # clean one, and re-cloning the repo is what makes a rate limit worse. Start
+              # from nothing only for the last attempt.
+              [ $attempt -ge 2 ] && rm -rf .git 2>/dev/null || true
             done
             echo "❌ Checkout failed after 3 attempts"
             exit 1
@@ -2375,7 +2473,7 @@ jobs:
           reason: "Running Vitest unit tests (fail-fast before parallel tests)"
 
       # Run all tests in parallel via status API.
-      # On Katapult: Vitest also runs here (no sequential pre-step).
+      # On cloud runners: Vitest also runs here (no sequential pre-step).
       # On WSL/cloud: Vitest already ran as a sequential pre-step above.
       - run:
           name: Run iznik-batch, Playwright, Go, and Vitest tests in parallel
@@ -2559,7 +2657,17 @@ jobs:
                 fi
                 cd "$NUXT_DIR"
                 echo "running" > /tmp/vitest-result
-                npm ci --prefer-offline --no-audit
+                # codeload rate-limits (429) the GitHub tarball dependency in the lock
+                # file, which npm's own --fetch-retries does not cover. Retry the whole
+                # install with backoff; clamp stays an `if` so the loop body's status is
+                # the clamp's, not a failed test (see docker/embedding-sidecar).
+                n=0; delay=15; until npm ci --prefer-offline --no-audit; do
+                  n=$((n+1))
+                  [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+                  echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+                  sleep "$delay"; delay=$((delay*2))
+                  if [ "$delay" -gt 120 ]; then delay=120; fi
+                done
                 npx nuxi prepare
                 npm run test:unit:run -- --reporter=verbose --coverage 2>&1 | tee /tmp/vitest-output.log
                 EXIT_CODE=${PIPESTATUS[0]}
@@ -2892,15 +3000,24 @@ jobs:
               status_response=$(curl -s "http://localhost:${PORT_STATUS:-8081}/api/tests/spatial/status" || echo '{"status":"error"}')
               status=$(echo "$status_response" | jq -r '.status // "unknown"')
               if [ "$status" = "completed" ]; then
-                echo "$status_response" | jq -r '.logs // ""' | tail -30
                 if [ "$(echo "$status_response" | jq -r '.success // false')" = "true" ]; then
+                  echo "$status_response" | jq -r '.logs // ""' | tail -30
                   echo "✅ Spatial tests passed"; break
                 else
+                  logs=$(echo "$status_response" | jq -r '.logs // ""')
+                  echo "--- failure-relevant lines (DATA RACE / FAIL / panic, with context) ---"
+                  echo "$logs" | grep -aE -B3 -A30 'WARNING: DATA RACE|--- FAIL|^FAIL|panic:|build failed|cannot find|SIGSEGV' | tail -400
+                  echo "--- last 40 lines ---"
+                  echo "$logs" | tail -40
                   echo "❌ Spatial tests failed"; exit 1
                 fi
               elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
-                echo "$status_response" | jq -r '.logs // ""' | tail -30
-                echo "❌ Spatial tests failed"; exit 1
+                logs=$(echo "$status_response" | jq -r '.logs // ""')
+                  echo "--- failure-relevant lines (DATA RACE / FAIL / panic, with context) ---"
+                  echo "$logs" | grep -aE -B3 -A30 'WARNING: DATA RACE|--- FAIL|^FAIL|panic:|build failed|cannot find|SIGSEGV' | tail -400
+                  echo "--- last 40 lines ---"
+                  echo "$logs" | tail -40
+                  echo "❌ Spatial tests failed"; exit 1
               fi
             done
           no_output_timeout: 10m
@@ -2923,15 +3040,24 @@ jobs:
               status_response=$(curl -s "http://localhost:${PORT_STATUS:-8081}/api/tests/routing/status" || echo '{"status":"error"}')
               status=$(echo "$status_response" | jq -r '.status // "unknown"')
               if [ "$status" = "completed" ]; then
-                echo "$status_response" | jq -r '.logs // ""' | tail -30
                 if [ "$(echo "$status_response" | jq -r '.success // false')" = "true" ]; then
+                  echo "$status_response" | jq -r '.logs // ""' | tail -30
                   echo "✅ Routing tests passed"; break
                 else
+                  logs=$(echo "$status_response" | jq -r '.logs // ""')
+                  echo "--- failure-relevant lines (DATA RACE / FAIL / panic, with context) ---"
+                  echo "$logs" | grep -aE -B3 -A30 'WARNING: DATA RACE|--- FAIL|^FAIL|panic:|build failed|cannot find|SIGSEGV' | tail -400
+                  echo "--- last 40 lines ---"
+                  echo "$logs" | tail -40
                   echo "❌ Routing tests failed"; exit 1
                 fi
               elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
-                echo "$status_response" | jq -r '.logs // ""' | tail -30
-                echo "❌ Routing tests failed"; exit 1
+                logs=$(echo "$status_response" | jq -r '.logs // ""')
+                  echo "--- failure-relevant lines (DATA RACE / FAIL / panic, with context) ---"
+                  echo "$logs" | grep -aE -B3 -A30 'WARNING: DATA RACE|--- FAIL|^FAIL|panic:|build failed|cannot find|SIGSEGV' | tail -400
+                  echo "--- last 40 lines ---"
+                  echo "$logs" | tail -40
+                  echo "❌ Routing tests failed"; exit 1
               fi
             done
           no_output_timeout: 10m
@@ -3009,9 +3135,45 @@ jobs:
             elif [ -d ~/FreegleDocker/.git ]; then echo "export COV_ROOT=~/FreegleDocker" >> $BASH_ENV
             else echo "export SKIP_COVERAGE=true" >> $BASH_ENV; fi
             echo "export COVERALLS_SERVICE_NAME=circleci" >> $BASH_ENV
-            echo "export COVERALLS_SERVICE_JOB_ID=${CIRCLE_BUILD_NUM}" >> $BASH_ENV
             echo "export COVERALLS_SERVICE_NUMBER=${CIRCLE_BUILD_NUM}" >> $BASH_ENV
             echo "export COVERALLS_PARALLEL=true" >> $BASH_ENV
+            # Deliberately NOT exporting COVERALLS_SERVICE_JOB_ID here. In a
+            # Coveralls parallel build each flag upload is a separate JOB inside
+            # one build: they share service_number and must differ in
+            # service_job_id (node-coveralls getOptions.js reads both from the
+            # environment). Exporting one id for the whole build made all four
+            # uploads claim to be the same job, so the /webhook that finalises
+            # the build answered {"jobs":0} on every run and `carryforward`
+            # never applied.
+            #
+            # The damage lands on PARTIAL uploads. Every suite runs on every
+            # branch (see "Determine changed paths" - path skipping was removed),
+            # so a partial upload means the build FAILED partway: the upload
+            # steps are `when: always`, so they still send whatever completed,
+            # which for an early failure is Go alone. Measured 2026-08-17:
+            #   build 32370 master  failed  -> 1 report  -> aggregate 85.876%
+            #   build 32377 master  failed  -> 1 report  -> aggregate 85.872%
+            #   build 32381 master  success -> 4 reports
+            #   build 32393 branch  success -> 4 reports -> aggregate 75.621%
+            # carryforward exists to fill the missing flags from master so a
+            # partial upload still reports an honest whole-repo figure. With it
+            # dead, the failed build's aggregate was Go's number alone (85.9%
+            # against a true 75.6%), and that wrong number became the baseline -
+            # so the next healthy full build was reported as "coverage decreased
+            # by 10.3%" having changed nothing.
+            #
+            # Each upload below sets its own id from the flag name instead.
+            #
+            # It must also set COVERALLS_SERVICE_JOB_NUMBER. node-coveralls takes
+            # service_job_number from CIRCLE_BUILD_NUM (getOptions.js:58) unless
+            # that env var overrides it (line 153), so with only the job_id made
+            # distinct all four uploads still posted an identical
+            # service_job_number. Dumping a real payload with `coveralls
+            # --stdout` under this exact environment showed parallel:true,
+            # service_number and flag_name all correct and only that field
+            # colliding, which is the remaining way four uploads could still be
+            # read as one job. Distinct job ids alone did NOT restore
+            # carryforward (1.1.380, build 32411, still "jobs":0).
             echo "export COV_UPLOADS=0" >> $BASH_ENV
 
             # Retry helper for every Coveralls upload below.
@@ -3054,10 +3216,26 @@ jobs:
             docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv2 sh -c 'cd /app && go install github.com/jandelgado/gcov2lcov@latest 2>/dev/null && ~/go/bin/gcov2lcov -infile=coverage.out -outfile=coverage.lcov' 2>&1 || { echo "⚠️ Convert failed"; exit 0; }
             docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv2:/app/coverage.lcov "$GO_DIR/coverage.lcov" 2>/dev/null
             sed -i 's|^SF:/app/|SF:iznik-server-go/|' "$GO_DIR/coverage.lcov"
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="go"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="go" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-go" && export COVERALLS_SERVICE_JOB_NUMBER="${CIRCLE_BUILD_NUM}-go"
             cov_upload "$GO_DIR/coverage.lcov" && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
             cp "$GO_DIR/coverage.lcov" /tmp/patch-go.lcov 2>/dev/null || true
+            # Retain the profile as a build artefact before clearing it out of the
+            # checkout. Coveralls reports a percentage delta but never says which
+            # statements moved, and this suite's coverage is not reproducible: it
+            # shares iznik_go_test with the concurrently-running Laravel suite, so
+            # load-dependent error and timeout branches are covered on one run and
+            # not the next. That is how a "Coverage decreased (-0.004%)" red lands
+            # on a commit containing no Go changes at all - 0.004% is one statement.
+            # Deleting the profile here left nothing to diff, so the question was
+            # unanswerable after the fact. Keep both: coverage.out carries per-block
+            # statement counts, which is what a build-to-build diff actually needs.
+            mkdir -p ~/coverage-artifacts
+            cp "$GO_DIR/coverage.out" ~/coverage-artifacts/go-coverage.out 2>/dev/null || true
+            cp "$GO_DIR/coverage.lcov" ~/coverage-artifacts/go-coverage.lcov 2>/dev/null || true
             rm -f "$GO_DIR/coverage.out" "$GO_DIR/coverage.lcov"
+
+      - store_artifacts:
+          path: ~/coverage-artifacts
 
       - run:
           name: Upload Laravel coverage
@@ -3078,7 +3256,7 @@ jobs:
             " /tmp/lc.xml > /tmp/lc.lcov 2>&1
             [ -s /tmp/lc.lcov ] || { echo "⚠️ Conversion failed"; exit 0; }
             echo "✅ Converted ($(wc -l < /tmp/lc.lcov) lines)"
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="laravel"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="laravel" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-laravel" && export COVERALLS_SERVICE_JOB_NUMBER="${CIRCLE_BUILD_NUM}-laravel"
             cov_upload /tmp/lc.lcov && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
 
       - run:
@@ -3094,7 +3272,7 @@ jobs:
             [ -z "$VL" ] && echo "⚠️ Not found" && exit 0
             echo "✅ Found at $VL"
             sed 's|^SF:|SF:iznik-nuxt3/|' "$VL" > /tmp/vl.lcov
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="vitest"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="vitest" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-vitest" && export COVERALLS_SERVICE_JOB_NUMBER="${CIRCLE_BUILD_NUM}-vitest"
             cov_upload /tmp/vl.lcov && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
 
       - run:
@@ -3108,7 +3286,7 @@ jobs:
             [ -z "$PL" ] && docker cp ${COMPOSE_PROJECT_NAME:-freegle}-playwright:/app/coverage/lcov.info /tmp/pl.lcov 2>/dev/null && PL="/tmp/pl.lcov" && echo "✅ Found"
             [ -z "$PL" ] && echo "⚠️ Not found" && exit 0
             sed 's|^SF:|SF:iznik-nuxt3/|' "$PL" > /tmp/pl-fixed.lcov
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="playwright"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="playwright" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-playwright" && export COVERALLS_SERVICE_JOB_NUMBER="${CIRCLE_BUILD_NUM}-playwright"
             cov_upload /tmp/pl-fixed.lcov && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
 
       - run:
@@ -3118,19 +3296,36 @@ jobs:
             [ "${SKIP_COVERAGE:-}" = "true" ] && exit 0
             if [ "${COV_UPLOADS:-0}" -gt 0 ]; then
               # Carry forward master's last-known coverage for any suite flags not
-              # uploaded in this build. Feature branches skip test suites whose
-              # subtree wasn't touched (SKIP_GO/SKIP_LARAVEL/SKIP_VITEST/SKIP_PLAYWRIGHT),
-              # so their Coveralls flag files are absent — without carryforward,
-              # Coveralls compares partial-branch coverage against master's full
-              # coverage and reports a large false "coverage dropped" regression
-              # (seen as a -7.1% drop on Nuxt-only PRs that skip Go+Laravel).
-              # carryforward only fills flags MISSING from this build; uploaded
-              # flags keep their fresh PR coverage.
+              # uploaded in this build, so a partial upload still reports an
+              # honest whole-repo figure. carryforward only fills flags MISSING
+              # from this build; uploaded flags keep their fresh coverage.
+              #
+              # This used to say feature branches skip untouched subtrees via
+              # SKIP_GO/SKIP_LARAVEL/SKIP_VITEST/SKIP_PLAYWRIGHT. That is no
+              # longer true - "Determine changed paths" hardcodes all four to
+              # false, precisely because skipping broke carryforward. Today a
+              # flag is missing because the build FAILED before that suite
+              # produced its artefact, and these steps are `when: always`.
               echo "📊 Uploaded $COV_UPLOADS reports. Sending webhook (carryforward=go,laravel,vitest,playwright)..."
-              curl -sf -X POST "https://coveralls.io/webhook?repo_token=${COVERALLS_REPO_TOKEN}" \
+              WEBHOOK_OUT=$(curl -sf -X POST "https://coveralls.io/webhook?repo_token=${COVERALLS_REPO_TOKEN}" \
                 -H "Content-Type: application/json" \
-                -d "{\"payload\":{\"build_num\":\"${CIRCLE_BUILD_NUM}\",\"status\":\"done\",\"carryforward\":[\"go\",\"laravel\",\"vitest\",\"playwright\"]}}" \
-                && echo "✅ Webhook sent" || echo "⚠️ Webhook failed"
+                -d "{\"payload\":{\"build_num\":\"${CIRCLE_BUILD_NUM}\",\"status\":\"done\",\"carryforward\":[\"go\",\"laravel\",\"vitest\",\"playwright\"]}}") \
+                && echo "✅ Webhook sent: $WEBHOOK_OUT" || echo "⚠️ Webhook failed"
+              # The reply carries the number of parallel jobs Coveralls actually
+              # grouped into this build. It must be >= the number we uploaded.
+              # A zero here means the uploads did not register as parallel jobs,
+              # so `carryforward` silently did nothing and the build's coverage
+              # is whatever subset happened to land - which is how the "-10.3%"
+              # phantom regression on full-stack PRs was produced. Say so
+              # loudly rather than letting it rot unnoticed again.
+              WEBHOOK_JOBS=$(echo "$WEBHOOK_OUT" | sed -n 's/.*"jobs":[[:space:]]*\([0-9]*\).*/\1/p')
+              if [ "${WEBHOOK_JOBS:-0}" -lt "${COV_UPLOADS:-0}" ]; then
+                echo "⚠️ Coveralls grouped ${WEBHOOK_JOBS:-0} parallel job(s) but we uploaded ${COV_UPLOADS} report(s)."
+                echo "⚠️ carryforward will not have applied; the aggregate coverage for this build is unreliable."
+                echo "⚠️ Check that each upload sets a distinct COVERALLS_SERVICE_JOB_ID."
+              else
+                echo "✅ Coveralls grouped ${WEBHOOK_JOBS} parallel job(s)"
+              fi
             else echo "⚠️ No coverage uploaded"; fi
 
       - run:
@@ -3418,7 +3613,18 @@ jobs:
             - npm-deps-v1-
       - run:
           name: Install Node.js Dependencies
-          command: npm ci
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -3567,7 +3773,18 @@ jobs:
             - npm-deps-v1-
       - run:
           name: Install Node.js Dependencies
-          command: npm ci
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -3576,7 +3793,19 @@ jobs:
             - node_modules
       - run:
           name: Install ModTools Dependencies
-          command: cd modtools && npm ci --legacy-peer-deps
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            cd modtools
+            n=0; delay=15; until npm ci --legacy-peer-deps; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -3824,7 +4053,18 @@ jobs:
             - npm-deps-v1-
       - run:
           name: Install Node.js Dependencies
-          command: npm ci
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -3833,7 +4073,19 @@ jobs:
             - node_modules
       - run:
           name: Install ModTools Dependencies
-          command: cd modtools && npm ci --legacy-peer-deps
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            cd modtools
+            n=0; delay=15; until npm ci --legacy-peer-deps; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -4145,7 +4397,18 @@ jobs:
             - npm-deps-v1-
       - run:
           name: Install Node.js Dependencies
-          command: npm ci
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -4313,12 +4576,35 @@ jobs:
           auto_rerun_delay: 10s
       - run:
           name: Install Node.js Dependencies
-          command: npm ci
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
           name: Install ModTools Dependencies
-          command: cd modtools && npm ci --legacy-peer-deps
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            cd modtools
+            n=0; delay=15; until npm ci --legacy-peer-deps; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -4523,7 +4809,17 @@ jobs:
       - run:
           name: Install Node.js Dependencies
           command: |
-            npm ci
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
             npm install @rollup/rollup-darwin-arm64 @oxc-parser/binding-darwin-arm64 @oxc-transform/binding-darwin-arm64 @oxc-minify/binding-darwin-arm64 --prefer-offline || true
           max_auto_reruns: 3
           auto_rerun_delay: 10s
@@ -4835,8 +5131,18 @@ jobs:
       - run:
           name: Install Node.js Dependencies
           command: |
-            npm ci
-            npm update @freegle/capacitor-push-notifications-cap7
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
+            npm update @freegle/capacitor-push-notifications-cap8
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -5016,9 +5322,19 @@ jobs:
       - run:
           name: Install Node.js Dependencies
           command: |
-            npm ci
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
             npm install @rollup/rollup-darwin-arm64 @oxc-parser/binding-darwin-arm64 @oxc-transform/binding-darwin-arm64 @oxc-minify/binding-darwin-arm64 --prefer-offline || true
-            npm update @freegle/capacitor-push-notifications-cap7
+            npm update @freegle/capacitor-push-notifications-cap8
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:

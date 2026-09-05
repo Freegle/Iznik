@@ -373,7 +373,12 @@ describe('ModLogMessage', () => {
       // When message is deleted but API returned historical msgsubject, show the link
       // (not the "no info available" fallback).
       const wrapper = createWrapper({
-        log: { id: 1, msgid: 2200, msgsubject: 'Wanted: Old Subject', message: null },
+        log: {
+          id: 1,
+          msgid: 2200,
+          msgsubject: 'Wanted: Old Subject',
+          message: null,
+        },
       })
       expect(wrapper.find('a').exists()).toBe(true)
       expect(wrapper.text()).not.toContain('(no info available)')

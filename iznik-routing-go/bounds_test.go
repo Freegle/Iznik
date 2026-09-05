@@ -17,8 +17,8 @@ import (
 // Every reached node must lie inside the OUTER bound (superset of the exact reach).
 func TestIsochroneBounds_OuterContainsAllReachedNodes(t *testing.T) {
 	g := getTestGraph(t)
-	result := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
-	res := AutoResolution(15*60, Walk)
+	result := Isochrone(g, 51.4545, -2.5879, 15*60)
+	res := AutoResolution(15 * 60)
 
 	bounds := IsochroneBounds(g, result.ReachedNodes, res)
 	if bounds.Outer == nil {
@@ -46,8 +46,15 @@ func TestIsochroneBounds_OuterContainsAllReachedNodes(t *testing.T) {
 // margin exceeds the simplification tolerance by design.
 func TestIsochroneBounds_InnerWithinExactPolygon(t *testing.T) {
 	g := getTestGraph(t)
-	result := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
-	res := AutoResolution(15*60, Walk)
+	// Two things have to hold for this test to mean anything: the reach must
+	// not saturate the fixture grid (a saturated reach is a plain rectangle,
+	// and nothing simplifies that to half), and the raster must be finer than
+	// the ~111m node spacing or the outline is pre-smoothed into a blob. So the
+	// budget is small and the resolution is pinned at the floor the auto rule
+	// allows, rather than derived from the budget.
+	const secs = 150
+	result := Isochrone(g, 51.4545, -2.5879, secs)
+	const res = 0.0005
 
 	exact := IsochronePolygon(g, result.ReachedNodes, res)
 	bounds := IsochroneBounds(g, result.ReachedNodes, res)
@@ -78,8 +85,16 @@ func TestIsochroneBounds_InnerWithinExactPolygon(t *testing.T) {
 // The bounds only earn their keep if they are much smaller than the exact outline.
 func TestIsochroneBounds_AreSimplified(t *testing.T) {
 	g := getTestGraph(t)
-	result := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
-	res := AutoResolution(15*60, Walk)
+	// Two things have to hold for this test to mean anything. The reach must
+	// not saturate the fixture grid: a car covers all 2,500 nodes in 15 minutes
+	// and a saturated reach is a plain rectangle, which nothing can simplify to
+	// half. And the raster must be finer than the ~111m node spacing, or the
+	// outline is pre-smoothed into a blob with nothing left to simplify. At
+	// 300s and the finest resolution the auto rule allows, the exact outline is
+	// 181 points against a 51-point outer bound.
+	const secs = 300
+	const res = 0.0005
+	result := Isochrone(g, 51.4545, -2.5879, secs)
 
 	exact := IsochronePolygon(g, result.ReachedNodes, res)
 	bounds := IsochroneBounds(g, result.ReachedNodes, res)

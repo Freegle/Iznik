@@ -508,8 +508,13 @@ func CreateTestMessage(t *testing.T, userID uint64, groupID uint64, subject stri
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
 
+	// Back-dated past rippling.ReachPendingGraceMinutes. A post with no
+	// rippling_reach row is hidden from the feeds for its first few minutes, and
+	// these fixtures have no reach row, so a fixture stamped NOW() would be
+	// invisible to every feed test. Tests that want the grace window itself set
+	// arrival back to NOW() explicitly.
 	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
-		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, NOW())",
+		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL 15 MINUTE))",
 		userID, subject, locationID)
 
 	if result.Error != nil {
@@ -526,11 +531,11 @@ func CreateTestMessage(t *testing.T, userID uint64, groupID uint64, subject stri
 
 	// Add to messages_groups
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
-		"VALUES (?, ?, NOW(), 'Approved', 0)", messageID, groupID)
+		"VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 15 MINUTE), 'Approved', 0)", messageID, groupID)
 
 	// Add to messages_spatial
 	db.Exec(fmt.Sprintf("INSERT INTO messages_spatial (msgid, point, successful, groupid, arrival, msgtype) "+
-		"VALUES (?, ST_GeomFromText(?, %d), 1, ?, NOW(), 'Offer')", utils.SRID),
+		"VALUES (?, ST_GeomFromText(?, %d), 1, ?, DATE_SUB(NOW(), INTERVAL 15 MINUTE), 'Offer')", utils.SRID),
 		messageID, fmt.Sprintf("POINT(%f %f)", lng, lat), groupID)
 
 	// Index words for search - extract words from subject and add to search index

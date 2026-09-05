@@ -7,6 +7,7 @@ import {
   enterLogoutMode,
   exitLogoutMode,
 } from '~/api/BaseAPI'
+import { action as clientAction } from '~/composables/useClientLog'
 import { useComposeStore } from '~/stores/compose'
 import { useGroupStore } from '~/stores/group'
 import api from '~/api'
@@ -14,14 +15,24 @@ import { useMobileStore } from '@/stores/mobile'
 import { useMiscStore } from '~/stores/misc'
 import { useDebugStore } from '~/stores/debug'
 import { trackConversion } from '~/composables/useTrackConversion'
+import {
+  clearRestoredSession,
+  restoreSessionFromDevice,
+  saveSessionForRestore,
+} from '~/composables/useSessionRestore'
+
+// How many 100ms retries we give the Google script before accepting that it is
+// not coming. Five seconds is well past a normal load, and stopping matters:
+// privacy extensions block the script outright, and an unbounded retry keeps a
+// timer and a console line going for the life of the page.
+const DISABLE_AUTOSELECT_MAX_TRIES = 50
 
 // A login that lands on an account created this recently is treated as the
 // registration itself (social logins create the account server-side, so the
 // client only finds out here).
 const NEW_ACCOUNT_WINDOW_MS = 5 * 60 * 1000
 
-export const useAuthStore = defineStore({
-  id: 'auth',
+export const useAuthStore = defineStore('auth', {
   persist: {
     storage: piniaPluginPersistedstate.localStorage(),
     // We don't persist much about the user, to avoid data getting 'stuck'.  All we need is enough to log us
@@ -63,6 +74,64 @@ export const useAuthStore = defineStore({
     setAuth(jwt, persistent) {
       this.auth.jwt = jwt
       this.auth.persistent = persistent
+
+      // Hand the long-lived token to Block Store so the user's next Android device picks the
+      // session up (Play Zero-Tap restoration). Deliberately not awaited: this runs on every
+      // session refresh and must not add latency to an API response. It never rejects.
+      saveSessionForRestore(persistent)
+    },
+    // Called from the boot paths on a device we have not logged in on yet: Block Store may
+    // hold the session transferred from the user's previous Android device, before anything
+    // is in localStorage. Returns whether we adopted one.
+    async adoptRestoredSession() {
+      // Telemetry for the mod logout-wave investigation (Discourse #10072): the one
+      // question a cold start must answer is which layer lost the session - localStorage
+      // gone (WebView storage did not survive the update), Block Store empty/broken (the
+      // R8-runtime question), or the server rejecting stored creds (implicit_logout,
+      // logged in wipeAuth). One event per cold boot; joins in Loki via {source="client"}
+      // + action_name='session_restore'.
+      if (this.auth.jwt || this.auth.persistent) {
+        // Client-only: bootSession also runs during SSR, and the client log
+        // channel is a browser batch.
+        if (import.meta.client) {
+          clientAction('session_restore', { outcome: 'had_credentials' })
+        }
+        return false
+      }
+
+      const persistent = await restoreSessionFromDevice()
+
+      if (!persistent) {
+        if (import.meta.client) {
+          clientAction('session_restore', { outcome: 'nothing_to_adopt' })
+        }
+        return false
+      }
+
+      // No JWT: the persistent token alone authenticates, and GET /session mints a fresh JWT.
+      this.setAuth(null, persistent)
+      clientAction('session_restore', { outcome: 'adopted_from_blockstore' })
+
+      return true
+    },
+    // An implicit logout: the server has told us these credentials are invalid
+    // (401 or an empty result on the authoritative /session check). Clear
+    // everything an explicit logout clears, including the Block Store copy.
+    // Leaving Block Store behind meant an Android device whose localStorage was
+    // evicted could keep re-adopting the same dead token, 401 again, and loop
+    // back to the login screen indefinitely.
+    wipeAuth() {
+      // The server rejected stored credentials - the third layer of the logout-wave
+      // telemetry (see adoptRestoredSession). Logged BEFORE the wipe so the event
+      // still carries the dying session's context in the batched client log.
+      if (import.meta.client) {
+        clientAction('implicit_logout', {})
+      }
+      this.setAuth(null, null)
+      this.setUser(null)
+      // Deliberately not awaited, like saveSessionForRestore in setAuth: it
+      // never rejects, and the wipe must not add latency to error handling.
+      clearRestoredSession()
     },
     setUser(value) {
       if (value) {
@@ -135,7 +204,7 @@ export const useAuthStore = defineStore({
     clearRelated() {
       this.userlist = []
     },
-    disableGoogleAutoselect() {
+    disableGoogleAutoselect(attempt = 0) {
       // SSR / torn-down test environments have no window. A bare `window`
       // identifier throws ReferenceError (not undefined) in that case, which
       // surfaced as an "uncaught exception after test teardown" when a
@@ -148,10 +217,28 @@ export const useAuthStore = defineStore({
         } catch (e) {
           console.log('Ignore Google autoselect error', e)
         }
-      } else {
-        console.log("Google not yet loaded so can't disable")
-        setTimeout(this.disableGoogleAutoselect, 100)
+        return
       }
+
+      // Google may never arrive - the script is blocked outright by many
+      // privacy extensions. Retrying without end left a 100ms timer writing a
+      // line to the member's console for the life of the page, and in the unit
+      // tests those logs outlive the test file and race the worker shutdown,
+      // failing the run with "Closing rpc while onUserConsoleLog was pending"
+      // even though every test passed. Give it five seconds, then stop.
+      if (attempt >= DISABLE_AUTOSELECT_MAX_TRIES) {
+        console.log(
+          'Google never loaded, so stopping trying to disable autoselect'
+        )
+        return
+      }
+
+      console.log("Google not yet loaded so can't disable")
+
+      // Arrow rather than a bare method reference: setTimeout passes no
+      // arguments, so the attempt count would reset to 0 every time and never
+      // reach the limit, and the method would be called with no `this`.
+      setTimeout(() => this.disableGoogleAutoselect(attempt + 1), 100)
     },
     // Abort all in-flight API requests. Used before logout to prevent
     // stale responses from arriving with Set-Cookie headers that would
@@ -210,6 +297,10 @@ export const useAuthStore = defineStore({
 
         this.logoutPushId()
       }
+      // Drop the transferable copy too, or a restore onto a new device would sign a user
+      // back in after they deliberately signed out.
+      await clearRestoredSession()
+
       // We are going to reset the store, but there are a few things we want to preserve.
       const loginCount = this.loginCount
       const config = this.config
@@ -444,7 +535,7 @@ export const useAuthStore = defineStore({
           composeStore.email = me.email
         }
 
-        if (process.client) {
+        if (import.meta.client) {
           // Sync marketing consent from local storage to user profile if needed
           const miscStore = useMiscStore()
 
@@ -477,8 +568,7 @@ export const useAuthStore = defineStore({
         }
       } else if (!serverError) {
         // No user returned and no server error — auth is genuinely invalid.
-        this.setAuth(null, null)
-        this.setUser(null)
+        this.wipeAuth()
       }
 
       this.loginStateKnown = true

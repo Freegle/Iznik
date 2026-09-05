@@ -47,20 +47,6 @@
           sizes="(orientation: landscape) and (max-width: 991px) 100px, 200px"
           :preload="preload"
         />
-        <NuxtPicture
-          v-else-if="message.attachments[0]?.externaluid"
-          format="webp"
-          provider="uploadcare"
-          :src="message.attachments[0].externaluid"
-          :modifiers="message.attachments[0].externalmods"
-          :alt="photoAlt"
-          class="photo-image"
-          :width="400"
-          fit="inside"
-          sizes="(orientation: landscape) and (max-width: 991px) 100px, 200px"
-          :preload="preload"
-          :loading="preload ? 'eager' : 'lazy'"
-        />
         <ProxyImage
           v-else-if="message.attachments[0]?.path"
           class-name="photo-image"
@@ -96,10 +82,10 @@
         <div class="info-row">
           <MessageTag :id="id" :inline="true" class="title-tag ps-1 pe-1" />
           <div class="info-icons">
-            <span v-if="hasLocation" class="location">
+            <span v-if="hasLocation" :title="distanceTooltip" class="location">
               <v-icon icon="map-marker-alt" />{{ locationText }}
             </span>
-            <span class="time"
+            <span :title="postedTooltip" class="time"
               ><v-icon icon="clock" />{{ timeAgo || '...' }}</span
             >
           </div>
@@ -131,10 +117,10 @@
         {{ descriptionText || 'Click to see more details.' }}
       </div>
       <div class="content-meta">
-        <span v-if="hasLocation" class="meta-location">
+        <span v-if="hasLocation" :title="distanceTooltip" class="meta-location">
           <v-icon icon="map-marker-alt" />{{ locationText }}
         </span>
-        <span class="meta-time">
+        <span :title="postedTooltip" class="meta-time">
           <v-icon icon="clock" />{{ displayTimeAgo || '...' }}
         </span>
       </div>
@@ -146,6 +132,7 @@
 
 <script setup>
 import { computed, toRef } from 'vue'
+import { postAgeBadge } from '~/composables/usePostAgeBadge'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
 import { useMiscStore } from '~/stores/misc'
 import { useOrientation } from '~/composables/useOrientation'
@@ -184,8 +171,10 @@ const {
   attachmentCount,
   timeAgo,
   timeAgoExpanded,
+  fullTimeAgo,
   distanceText,
   distanceTextExpanded,
+  distanceTooltip,
   isPinned,
   isOffer,
   isWanted,
@@ -235,6 +224,11 @@ const descriptionText = computed(() => {
   return text.substring(0, maxLen).trim() + '...'
 })
 
+// "17 hours" alone reads ambiguously; the mouseover says what it means.
+const postedTooltip = computed(
+  () => fullTimeAgo.value || 'When this was posted'
+)
+
 const locationText = computed(() => {
   // Show area name if available, otherwise distance
   if (message.value?.area) {
@@ -244,6 +238,13 @@ const locationText = computed(() => {
 })
 
 const displayTimeAgo = computed(() => {
+  // The badge and the feed order read the SAME clock (visibleSince): how long this has been
+  // available to you. When the post was first written materially earlier - reposted, or
+  // rippled to you late - the badge says so, short on a phone and spelled out from lg up.
+  // Falls back to the plain age when the server has not supplied the field.
+  const badge = postAgeBadge(message.value, { wide: isLgPlus.value })
+  if (badge) return badge
+
   return isLgPlus.value ? timeAgoExpanded.value : timeAgo.value
 })
 

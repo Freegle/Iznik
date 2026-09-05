@@ -72,14 +72,17 @@
           class="text-center mt-2 header--size5 text--medium-large-highlight community__text"
         >
           <!-- eslint-disable-next-line -->
-          Need help?  Go <nuxt-link no-prefetch to="/help">here</nuxt-link>.
+          Need help? Go <nuxt-link no-prefetch to="/help">here</nuxt-link>.
         </p>
         <p
           v-if="showStartMessage"
           class="text-center mt-2 header--size5 text--medium-large-highlight community__text"
         >
           <!-- eslint-disable-next-line -->
-          If there's no community for your area, would you like to start one? <ExternalLink href="mailto:newgroups@ilovefreegle.org">Get in touch!</ExternalLink>
+          If there's no community for your area, would you like to start one?
+          <ExternalLink href="mailto:newgroups@ilovefreegle.org"
+            >Get in touch!</ExternalLink
+          >
         </p>
       </div>
       <div v-else>
@@ -130,9 +133,13 @@ import { useGroupStore } from '~/stores/group'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import { getDistance } from '~/composables/useMap'
-import { filterMessagesByDistance } from '~/composables/useDistance'
+import {
+  filterMessagesByDistance,
+  browseSliderMinuteCheck,
+} from '~/composables/useDistance'
 import { sortBrowseMessages } from '~/composables/useMessageSort'
 import { MAX_MAP_ZOOM, BROWSE_DISTANCE_UNLIMITED } from '~/constants'
+import { useMessageStore } from '~/stores/message'
 import { useNearbyStore } from '~/stores/nearby'
 
 import JoinWithConfirm from '~/components/JoinWithConfirm'
@@ -264,6 +271,7 @@ const emit = defineEmits([
 const miscStore = useMiscStore()
 const groupStore = useGroupStore()
 const authStore = useAuthStore()
+const messageStore = useMessageStore()
 const nearbyStore = useNearbyStore()
 const me = computed(() => authStore.user)
 
@@ -277,7 +285,7 @@ const loading = ref(false)
 const bounds = ref(null)
 const zoom = ref(null)
 const centre = ref(null)
-const mapready = ref(process.server)
+const mapready = ref(import.meta.server)
 const mapVisible = ref(true)
 const postsVisible = ref(true)
 const mapMoved = ref(false)
@@ -362,7 +370,11 @@ const messagesForList = computed(() => {
   // response before the API returned it) always pass, so we don't hide anything on a
   // stale/partial response. Shared with PostMap's own marker/coverage filtering so the
   // list and the map can never disagree about which posts are within range.
-  msgs = filterMessagesByDistance(msgs, props.selectedMaxDistance)
+  msgs = filterMessagesByDistance(
+    msgs,
+    props.selectedMaxDistance,
+    browseSliderMinuteCheck()
+  )
 
   return msgs
 })
@@ -410,7 +422,50 @@ const filteredMessages = computed(() => {
 // "Closest" now orders by the server's per-post distance (the value shown on each badge),
 // so the map centre is no longer needed here.
 function sortMessages(messages) {
-  return sortBrowseMessages(messages, props.selectedSort)
+  // The list we sort here is the nearby-feed SUMMARY, which does not carry visibleSince - the
+  // full message fetched for each card does. Without this the badge and the order came from
+  // different clocks again: cards showed 16, 8, 10, 5 days while the sort quietly ordered them
+  // 28 Jul, 26 Jul, 25 Jul, 25 Jul by the original arrival. Only old, rippled or reposted posts
+  // diverge, which is why the top of the feed looked right and the tail did not.
+  const enriched = (messages || []).map((m) => {
+    const full = messageStore.byId(m?.id)
+    let out = m
+    if (!m?.visibleSince && full?.visibleSince) {
+      out = { ...out, visibleSince: full.visibleSince }
+    }
+    // The distance badge shows road miles for the FULL record's blurred
+    // coordinates; the feed summary carries a DIFFERENT blurred point (it is
+    // blurred from the spatial row, not the message row), up to a few hundred
+    // metres away - enough to swap neighbouring cards. "Closest" must order
+    // by the same number the badges print, so prefer the full record's
+    // coordinates once it has loaded.
+    if (full?.lat != null) {
+      out = out === m ? { ...m } : out
+      out.lat = full.lat
+      out.lng = full.lng
+      out.roadCoords = true
+      // The record's answer REPLACES the summary's, even when the record has
+      // none (roadmiles becomes undefined): the badge renders from the
+      // record, so a surviving summary value would sort by a number the card
+      // does not show.
+      out.roadmiles = full.roadmiles ?? undefined
+    }
+    return out
+  })
+
+  return sortBrowseMessages(
+    enriched,
+    props.selectedSort,
+    // PAYLOAD-ONLY road miles: the feed stamps roadmiles on every summary
+    // server-side, so the very first sort already runs in road order, and the
+    // enrichment above upgrades to the full record's figure (the one the badge
+    // prints) for any later legitimate re-sort. No async lookup here - a late
+    // answer influencing the sort is exactly the post-render reshuffle the
+    // order lock exists to forbid. A message with no road answer at all sorts
+    // by its crow distance (sortBrowseMessages' own fallback), which is just
+    // as stable.
+    (m) => m?.roadmiles ?? null
+  )
 }
 
 const sortedMessagesOnMap = computed(() => {
@@ -434,13 +489,13 @@ const sortedMessagesOnMap = computed(() => {
 
 const showRegions = computed(() => {
   // We want to show the regions if we're zoomed out, or for SSR = SEO.
-  return process.server || zoom.value < 7
+  return import.meta.server || zoom.value < 7
 })
 
 const showGroupList = computed(() => {
   // We want to show the list of groups for SSR = SEO, or if we are not showing the regions (because we're
   // zoomed out)
-  return process.server || !showRegions.value
+  return import.meta.server || !showRegions.value
 })
 
 const closestGroups = computed(() => {
@@ -504,7 +559,13 @@ const closestGroups = computed(() => {
 })
 
 // Watchers
-// Update the locked sort order when the set of message IDs changes
+// Update the locked sort order ONLY when the set of message IDs changes. The
+// order a member sees at first paint never changes underneath them: the feed
+// ships roadmins/roadmiles on every summary, so the very first sort already
+// runs in road order and there is nothing to "converge" later. (This watcher
+// used to also re-lock when async road answers arrived, because the first
+// sort once ran before they existed - that re-lock WAS a visible post-render
+// reshuffle, which is banned however mild.)
 watch(
   messagesOnMap,
   (newMessages) => {
@@ -515,16 +576,37 @@ watch(
 
     const currentIds = new Set(newMessages.map((m) => m.id))
 
-    // Check if we need to update the locked order: no locked order yet, or IDs have changed
     const needsUpdate =
       !lockedSortOrder.value ||
+      // Only a change in WHICH posts are in the feed re-sorts. Never flag
+      // changes (unseen as the member reads) and never late data arrivals -
+      // both are the very reshuffle the lock exists to prevent.
       lockedSortOrder.value.length !== currentIds.size ||
       !lockedSortOrder.value.every((id) => currentIds.has(id))
 
     if (needsUpdate) {
-      // Sort and lock in the order
       const sorted = sortMessages(newMessages)
-      lockedSortOrder.value = sorted.map((m) => m.id)
+      const ids = sorted.map((m) => m.id)
+      // Only replace the lock when the ORDER actually changed: blindly
+      // assigning a fresh array re-rendered the whole grid (flicker, scroll
+      // jumping to the top) even when every card was already in the right
+      // place.
+      const same =
+        lockedSortOrder.value &&
+        lockedSortOrder.value.length === ids.length &&
+        lockedSortOrder.value.every((id, i) => id === ids[i])
+      if (!same) {
+        // Deliberately loud: every one of these is a full list re-render, and
+        // they are only expected when the feed SET changes (load, search, map
+        // move) - never repeatedly during a settled page.
+        console.log(
+          '[browse] sort order re-locked:',
+          !lockedSortOrder.value
+            ? 'initial'
+            : `set size ${lockedSortOrder.value.length} -> ${ids.length}`
+        )
+        lockedSortOrder.value = ids
+      }
     }
   },
   { immediate: true }
@@ -571,8 +653,13 @@ watch(
     // Only reset the infinite scroll when the actual list of message IDs changes,
     // not when other properties (like unseen status) change. This prevents the
     // scroll position from being lost when messages are marked as seen.
-    const newIds = JSON.stringify(newVal.map((m) => m.id))
+    const newIds = JSON.stringify(newVal.map((m) => m.id).sort())
     if (lastFilteredIds.value !== newIds) {
+      // The SET of posts changed (map move, search, feed refresh) - reset the
+      // infinite scroll. A pure reorder of the same set (road distances
+      // refining the Closest order) must NOT reset: bumping the :key
+      // remounts the whole list, which collapses it for a frame and clamps
+      // the member's scroll position back to the top.
       lastFilteredIds.value = newIds
       infiniteId.value++
     }
@@ -596,8 +683,11 @@ function messagesChanged(messages) {
     if (!messages || !messagesOnMap.value) {
       changed = true
     } else {
-      const oldids = messagesOnMap.value.map((m) => m.id)
-      const newids = messages.map((m) => m.id)
+      // Sorted compare: only a change in WHICH posts are shown is a new
+      // list. A same-set reorder must not remount the list (see the
+      // filtered-ids watcher above for why).
+      const oldids = messagesOnMap.value.map((m) => m.id).sort()
+      const newids = messages.map((m) => m.id).sort()
 
       if (JSON.stringify(oldids) !== JSON.stringify(newids)) {
         changed = true

@@ -2,7 +2,7 @@
 // Capacitor app and Safari on iPhone/iPad. iPadOS masquerades as MacIntel,
 // so a Mac platform with real touch points is treated as iPad.
 export function isIOS() {
-  if (!process.client) {
+  if (!import.meta.client) {
     return false
   }
 

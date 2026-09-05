@@ -1,0 +1,23 @@
+# Non-default settings in /etc/monit/monitrc on db1/db2/db3. Identical on all
+# three except the hostname in "check system".
+
+set daemon 60               # CYCLE LENGTH - HALF the batch host's. The same
+                            # "for N cycles" therefore means half the wall-clock
+                            # time here as it does there. Check which host you
+                            # are on before reasoning about a grace period.
+set logfile /var/log/monit.log
+set idfile /var/lib/monit/id
+set statefile /var/lib/monit/state
+set mailserver localhost
+set eventqueue
+    basedir /var/lib/monit/events
+    slots 100
+set alert __ALERT_EMAIL__ not on { instance, action } with reminder on 120 cycles
+set httpd port 2812 and
+   use address localhost
+   allow localhost
+check system __NODE_FQDN__          # e.g. db-1.<domain>
+    if cpu usage (user) > 90% for 8 cycles then alert
+    if cpu usage (system) > 40% for 20 cycles then alert
+    if cpu usage (wait) > 40% for 20 cycles then alert
+include /etc/monit/conf.d/*

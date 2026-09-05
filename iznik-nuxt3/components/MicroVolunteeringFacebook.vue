@@ -14,7 +14,13 @@
         scrolling="no"
         frameborder="0"
         allowfullscreen="true"
-        allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share"
+        allow="
+          autoplay;
+          clipboard-write;
+          encrypted-media;
+          picture-in-picture;
+          web-share;
+        "
       />
     </div>
     <div class="d-flex flex-wrap justify-content-around mt-3">

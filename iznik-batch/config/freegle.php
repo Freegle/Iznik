@@ -123,6 +123,14 @@ return [
             'groups.ilovefreegle.org',
             'direct.ilovefreegle.org',
             'republisher.freegle.in',
+            // Our own ModTools site. It has no MX and its A record is a static
+            // web host, so postfix falls back to that per RFC, tries port 25
+            // against a web server and times out - a transient failure by SMTP
+            // rules, so it retried for the full queue lifetime and expired
+            // without ever marking anyone bouncing. The 112 accounts here are
+            // synthetic (modbot, confirmmod-*, modconfirm-*) and not one has
+            // another address, so nobody loses mail they could have received.
+            'modtools.org',
         ],
         'excluded_domain_patterns' => [
             '@yahoogroups.',
@@ -176,6 +184,68 @@ return [
         'trashnothing_domain' => env('FREEGLE_TRASHNOTHING_DOMAIN', 'trashnothing.com'),
         // Trash Nothing shared secret for mail authentication (skips spam check)
         'trashnothing_secret' => env('FREEGLE_TRASHNOTHING_SECRET', ''),
+
+        // Deferral-aware suppression (mail:deferrals:scan).
+        //
+        // Our relay 250-accepts a message and only later finds the receiving
+        // provider will not take it, so nothing in the sending path can see a
+        // deferral. This block configures the probe that reads the relay's
+        // own queue and the thresholds that decide when to stop generating.
+        'deferrals' => [
+            // Master switch. Off means the command no-ops and is not even
+            // scheduled, matching how ripple/firstreply are gated.
+            'enabled' => (bool) env('FREEGLE_MAIL_DEFERRALS_ENABLED', true),
+
+            // ssh target for the outbound relay, e.g. "deferrals@10.0.0.1".
+            // As with FREEGLE_MONITORING_HOSTS the estate's topology lives
+            // ONLY in the environment (.env.background on the batch host),
+            // never in committed code. Empty = disabled (dev/CI).
+            'host' => env('FREEGLE_MAIL_DEFERRALS_HOST', ''),
+
+            // Private key path INSIDE the container, bind-mounted from
+            // MAIL_DEFERRALS_SSH_KEY_HOST_PATH. Deliberately its own key
+            // rather than the monitoring one: that key is a root shell across
+            // the whole estate, whereas this only ever needs to read a queue.
+            // Ops restricts it with a forced command in authorized_keys.
+            'ssh_key' => env('FREEGLE_MAIL_DEFERRALS_SSH_KEY', '/etc/mail-deferrals-ssh-key'),
+
+            // Longer than the monitoring probe's 30s: during an incident the
+            // queue listing is the bulk of the payload, and a timeout here
+            // means flying blind for another cycle.
+            'ssh_timeout_seconds' => (int) env('FREEGLE_MAIL_DEFERRALS_SSH_TIMEOUT', 120),
+
+            // Cap on the queue listing we will pull back, so a runaway queue
+            // cannot exhaust PHP's memory. Truncation is reported and only
+            // ever understates the counts, which is safe against thresholds
+            // that are themselves lower bounds.
+            'max_queue_bytes' => (int) env('FREEGLE_MAIL_DEFERRALS_MAX_QUEUE_BYTES', 64 * 1024 * 1024),
+
+            // MX-group tier. Suppress a relay family once this many of its
+            // messages are deferred AND deliveries to it have all but
+            // stopped. During the 2026-08-15 Yahoo incident the ratio was
+            // about one delivery an hour against tens of thousands of
+            // deferral events, so this is not a close call in practice.
+            'mxgroup_min_deferred' => (int) env('FREEGLE_MAIL_DEFERRALS_MXGROUP_MIN', 500),
+            'mxgroup_max_delivered_per_hour' => (int) env('FREEGLE_MAIL_DEFERRALS_MXGROUP_MAX_DELIVERED', 10),
+
+            // Per-address tier. Catches "452 4.2.2 ... over quota", which is
+            // one person's mailbox rather than our reputation, so it wants a
+            // slower and more forgiving trigger.
+            'address_min_deferred' => (int) env('FREEGLE_MAIL_DEFERRALS_ADDRESS_MIN', 5),
+            'address_min_hours' => (int) env('FREEGLE_MAIL_DEFERRALS_ADDRESS_HOURS', 24),
+
+            // Release. Deliveries must have resumed and the deferred count
+            // must have fallen below this for two consecutive scans, so a
+            // single quiet scan inside a backoff window cannot reopen the
+            // floodgates.
+            'release_max_deferred' => (int) env('FREEGLE_MAIL_DEFERRALS_RELEASE_MAX', 100),
+            'release_clear_scans' => (int) env('FREEGLE_MAIL_DEFERRALS_RELEASE_SCANS', 2),
+
+            // How long a suppression may stand without the scan confirming it
+            // still applies. If the probe breaks we must fail open rather
+            // than silently stop mailing a provider for ever.
+            'stale_after_hours' => (int) env('FREEGLE_MAIL_DEFERRALS_STALE_HOURS', 24),
+        ],
     ],
 
     'mod_welfare' => [
@@ -201,6 +271,21 @@ return [
         // Rate-limit retry policy (V1 Utils::curlWithRetry: 60 retries, 1s delay).
         'max_retries' => (int) env('DISCOURSE_MAX_RETRIES', 60),
         'retry_delay_s' => (int) env('DISCOURSE_RETRY_DELAY_S', 1),
+
+        // The annual AGM category (discourse:agm). Only staff and this group
+        // may start topics in it; everyone else may read and reply.
+        'agm' => [
+            'announcers_group' => env('DISCOURSE_AGM_ANNOUNCERS_GROUP', 'Announcers'),
+            'colour' => env('DISCOURSE_AGM_COLOUR', '0088CC'),
+            'text_colour' => env('DISCOURSE_AGM_TEXT_COLOUR', 'FFFFFF'),
+            // Seeds the "About the ... category" topic. :name is the category name.
+            'description' => env(
+                'DISCOURSE_AGM_DESCRIPTION',
+                'All users of Discourse have been put on settings so that they are watching this group. '
+                .'You can switch this off, if you wish, by clicking on the user-cog icon at the top of the page '
+                .'and then select "+ Tracking" then remove ":name" from your Watched list.'
+            ),
+        ],
     ],
 
     // PayPal NVP/SOAP API (V1 paypal_download.php fallback transaction downloader).
@@ -430,6 +515,27 @@ return [
         // How many days a researched item stays eligible for posting/emailing.
         'item_freshness_days' => (int) env('COMMUNITY_NEWS_ITEM_FRESHNESS_DAYS', 10),
 
+        // Staleness guards (SourceFreshness): stop the research model dressing up
+        // an old source as something happening now.
+        //
+        // How old a dated news ARTICLE may be and still be announcing a current
+        // event. Only applied to og:type=article pages carrying an explicit
+        // article:published_time - on an evergreen page that date is just when
+        // the page was created, and trusting it rejects live events.
+        'source_max_age_days' => (int) env('COMMUNITY_NEWS_SOURCE_MAX_AGE_DAYS', 365),
+
+        // How long the same URL stays deduped within one area, so repeated
+        // research runs don't write up the same story again and again.
+        'source_dedup_days' => (int) env('COMMUNITY_NEWS_SOURCE_DEDUP_DAYS', 180),
+
+        // Read the year off the source's own picture and drop the item when the
+        // picture advertises an earlier one (the 2014 RiverFest poster). Needs
+        // anthropic_api_key; silently skipped without it.
+        'check_image_year' => (bool) env('COMMUNITY_NEWS_CHECK_IMAGE_YEAR', true),
+        // Deliberately a small, fast model: this is short OCR-shaped work run
+        // once per researched item, not the research itself. Override to raise it.
+        'vision_model' => env('COMMUNITY_NEWS_VISION_MODEL', 'claude-haiku-4-5'),
+
         // Curated per-place source store (JSON files). Research seeds the model
         // with these known-good local feeds, health-checks them each run, and
         // re-discovers new ones roughly quarterly. See
@@ -474,7 +580,7 @@ return [
         // server + app code can deploy (and clear the app stores) ahead of go-live; flip
         // RIPPLE_ENABLED=true to turn rippling on with no code change. When false the ripple:expand
         // cron is not scheduled, so no reach is ever computed and every reach consumer stays inert.
-        'enabled' => (bool) env('RIPPLE_ENABLED', false),
+        'enabled' => (bool) env('RIPPLE_ENABLED', true),
         // Arrival cutoff (server local time). Only posts that arrived on or after this
         // instant ever START rippling; older pending posts are left alone. This is the
         // flood guard: when rippling first turns on, every historical pending post would
@@ -502,6 +608,13 @@ return [
         // Maximum drive-time (minutes) the reach may grow to. This is the FLAT cap, used
         // when the density-conditional cap below is off or cannot measure.
         'max_minutes' => (float) env('RIPPLE_MAX_MINUTES', 30),
+
+        // How long one ripple:expand run may keep taking rows before it stops cleanly
+        // and lets the next tick resume. MUST stay below ExpandCommand's single-instance
+        // lock TTL (3600s) - a run that outlives the lock lets the every-minute schedule
+        // stack another run at each expiry, which is the 2026-08-30 gate-saturation
+        // collapse. 0 disables (tests / operator one-offs).
+        'expand_time_box_seconds' => (int) env('RIPPLE_EXPAND_TIME_BOX_SECONDS', 2700),
         // Density-conditional cap. Measured on 887 posts split by local freegler
         // density, the chance a replier goes on to collect collapses past ~20-25
         // minutes in dense areas and does not fall at all out to 45 in sparse ones, so
@@ -557,6 +670,15 @@ return [
         // retraction to polygon-overlap only). Independent of RIPPLE_ENABLED; an
         // empty/absent list falls back to polygon-only for that post.
         'reachable_gate' => filter_var(env('RIPPLE_REACHABLE_GATE', true), FILTER_VALIDATE_BOOLEAN),
+        // coarse_tick_geometry: fetch each tick's catchment in the routing server's
+        // region-scale form rather than at road resolution. Expansion only asks
+        // region-scale questions of it (sandwich bounds, origin-group union, which
+        // groups the reach touches), and the full-resolution form costs seconds and
+        // megabytes at the large budgets late ticks use - on eight shared compute
+        // slots. Only applied where the reachable gate makes the group answer exact
+        // regardless (ExpandService::coarseTickGeometryOk). Default ON; set
+        // RIPPLE_COARSE_TICK_GEOMETRY=false as the killswitch.
+        'coarse_tick_geometry' => filter_var(env('RIPPLE_COARSE_TICK_GEOMETRY', true), FILTER_VALIDATE_BOOLEAN),
         'proximity_slow_ms' => (int) env('RIPPLE_PROXIMITY_SLOW_MS', 3000),
         // Reply-saturation stop (extent-governor design T1.1): a post with at least this many
         // DISTINCT repliers (distinct users with an Interested chat reply on the post,
@@ -634,8 +756,65 @@ return [
         // (Per-RU-class stratification — target_by_ru — is the planned Stage-A
         // refinement and is not yet wired; this first cut is a single global cap.)
         'extent' => [
-            'enabled' => (bool) env('RIPPLE_EXTENT_ENABLED', false),
+            'enabled' => (bool) env('RIPPLE_EXTENT_ENABLED', true),
             'target_users' => (int) env('RIPPLE_EXTENT_TARGET_USERS', 4000),
+        ],
+        // Rural-access overflow. The extent cap above sizes a post's audience by the NEAREST
+        // N members, which in a dense area binds long before the travel-time ceiling: measured
+        // on live, a post outside Birmingham stopped at 28.0 minutes on exactly 4,000 members
+        // while a sparse-band moderator 31.4 minutes away, whose own slider was already at the
+        // 45-minute maximum, was shut out. This asks the routing server for one ring per band
+        // ceiling alongside the capped reach, so that member can find the post - on browse and
+        // in the newly-reached mail, since a member who cannot be told about the post is barely
+        // less shut out than one who cannot see it. It does NOT add the post to a group's copy:
+        // the mail path stays members-only, so this reaches people who have already joined a
+        // group the post is on, never a cold recipient.
+        'rural_access' => [
+            'enabled' => filter_var(env('RIPPLE_RURAL_ACCESS_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+        ],
+        // Cluster-anchor overflow. A different miss from rural-access above: that lane covers a
+        // post whose audience cap bound short of the travel-time budget; this one covers a post
+        // whose cap did NOT bind (small enough pool that the reach ran its full drive-time
+        // budget) and which still leaves a dense pocket of freeglers stranded just past the
+        // isochrone edge - typically a village or estate the road network routes around. The
+        // routing server looks for one qualifying cell (audience >= cluster_k, only when the
+        // post's own pool is still under cluster_floor) and, if found, draws up to
+        // cluster_max_wedges wedge polygons out to it, bounded by cluster_max_minutes overall.
+        //
+        // Pull-only surface: browse/search/banner/reply read the stored wedges unconditionally
+        // (no band gate, unlike rural_access), but this lane is mailed on the same terms as the others: a member a wedge
+        // UnifiedDigestService::overflowBranch, which reads only 'rural'/'fairness', and the
+        // daily digest / daily-posts push reach gate, which consults the rural ring only.
+        'cluster' => [
+            'enabled' => filter_var(env('RIPPLE_CLUSTER_ANCHOR_ENABLED', true), FILTER_VALIDATE_BOOLEAN), // live-by-default, Edward's convention
+            // Defaults to the AUDIENCE CAP, not to a number of its own, so the two
+            // lanes meet rather than leaving a gap between them. Rural fires when the
+            // cap BOUND; cluster fires when it did not and the post is still under
+            // this floor. With an independent floor of 1,000 against a cap of 4,000,
+            // a post reaching 1,000-3,999 people qualified for neither - measured
+            // 2026-08-21 over three days of live reaches, that was 1,879 posts, a
+            // THIRD of everything posted, and it is exactly the semi-rural case both
+            // lanes were written for. 341 live posts across the Yorkshire Dales
+            // carried no ring of any kind; one sampled at 1,896.
+            'floor' => (int) env('RIPPLE_CLUSTER_FLOOR', (int) env('RIPPLE_EXTENT_TARGET_USERS', 4000)),
+            'cell_k' => (int) env('RIPPLE_CLUSTER_CELL_K', 150),
+            'max_wedges' => (int) env('RIPPLE_CLUSTER_MAX_WEDGES', 3),
+            'max_minutes' => (float) env('RIPPLE_CLUSTER_MAX_MINUTES', 60),
+        ],
+        // Demographic-fairness overflow. Measured on live: members in the most deprived fifth
+        // are reached by ~457 posts per 30 days against ~574 for every other fifth, while
+        // membership is flat across fifths. That shortfall is NOT caused by the extent cap
+        // (capped reaches are at parity); it sits in the reaches that run to the ceiling, which
+        // are mostly rural-origin, because rural areas are rarely classed as most-deprived.
+        // So this stretches the budget for deprived RECIPIENTS on exactly those reaches.
+        //
+        // max_quintile defaults to 1 because the shortfall is a knee at the most deprived
+        // fifth rather than a gradient, and because one fifth needs one traced ring rather
+        // than four. Raising it buys the full linear gradient at proportionate cost.
+        'fairness' => [
+            'enabled' => filter_var(env('RIPPLE_FAIRNESS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            'weight' => (float) env('RIPPLE_FAIRNESS_WEIGHT', 0.0),
+            'max_quintile' => (int) env('RIPPLE_FAIRNESS_MAX_QUINTILE', 1),
         ],
         // Unified-digest score-ordering (see App\Services\Ripple\DigestPostScorer).
         // Mirrors the /rippling "Digest preview" weights. Tunable via env without a deploy.
@@ -648,6 +827,10 @@ return [
             ],
             'window_hours' => (float) env('RIPPLE_DIGEST_WINDOW_HOURS', 24),
             'budget_decay' => (float) env('RIPPLE_DIGEST_BUDGET_DECAY', 25),
+            // The reference close term's horizon (1 - driveMin/max_minutes):
+            // defaults to the ripple max_minutes knob, the same value the
+            // /rippling digest preview defaults to.
+            'max_minutes' => (float) env('RIPPLE_DIGEST_SCORE_MAX_MINUTES', env('RIPPLE_MAX_MINUTES', 30)),
             // ~30km, the 30-min drive-isochrone analogue. Used for posts with no
             // rippling_reach row (the dominant case while rippling is dark, and for
             // all backlog posts after go-live).
@@ -695,7 +878,7 @@ return [
 
     'firstreply' => [
         // Master switch. Off means none of the below runs, whatever they say.
-        'enabled' => filter_var(env('FIRSTREPLY_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+        'enabled' => filter_var(env('FIRSTREPLY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
 
         // Share of POSTS in the trial, 0-100. A post is in or out for its whole
         // life and across all three levers at once, so the arms never overlap and
@@ -713,7 +896,7 @@ return [
         // going to be allowed - so the hold only turns a fast reply into a slow
         // one, on exactly the posts that can least afford it.
         'passthrough' => [
-            'enabled' => filter_var(env('FIRSTREPLY_PASSTHROUGH_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            'enabled' => filter_var(env('FIRSTREPLY_PASSTHROUGH_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
             // How many distinct repliers a post may already have and still get the
             // passthrough. 1 = only the very first reply. Raise to soften the cliff
             // for posts where the first replier goes quiet.
@@ -1128,6 +1311,15 @@ return [
         // within this many hours (tolerates the overnight gap + slow cold runs).
         'whatjobs_max_age_hours' => (int) env('FREEGLE_MONITORING_WHATJOBS_MAX_AGE_HOURS', 24),
 
+        // ripple:expand — alert when more than the threshold of 'expanding'
+        // rows are further than max_age past next_expansion_at. A day is far
+        // beyond the deliberate overnight pause plus the morning catch-up, so
+        // rows that late mean the expander is wedged (2026-08-31: ~10k rows
+        // sat days overdue for days, unnoticed). The threshold tolerates a few
+        // individually-stuck rows without masking a stalled pipeline.
+        'ripple_backlog_max_age_minutes' => (int) env('FREEGLE_MONITORING_RIPPLE_BACKLOG_MAX_AGE_MIN', 1440),
+        'ripple_backlog_threshold' => (int) env('FREEGLE_MONITORING_RIPPLE_BACKLOG_THRESHOLD', 50),
+
         // data:git-summary (weekly) — alert if its config timestamp is older
         // than this many days.
         'git_summary_max_age_days' => (int) env('FREEGLE_MONITORING_GIT_SUMMARY_MAX_AGE_DAYS', 10),
@@ -1135,14 +1327,6 @@ return [
         // data:update-cpi (monthly) — alert if its config timestamp is older
         // than this many days.
         'cpi_max_age_days' => (int) env('FREEGLE_MONITORING_CPI_MAX_AGE_DAYS', 40),
-    ],
-
-    'dedup' => [
-        // Guard for the dedup:tn artisan command. Defaults to false — the
-        // command refuses to run unless this is true, so it's safe to deploy
-        // the code without changing existing Trash Nothing behaviour.
-        // --dry-run still works regardless (it only reads).
-        'tn_enabled' => env('TN_DEDUP_ENABLED', false),
     ],
 
     'lovejunk' => [
@@ -1192,9 +1376,12 @@ return [
         'anthropic_api_key' => env('ANTHROPIC_API_KEY', ''),
         'claude_model'      => env('EEE_CLAUDE_MODEL', 'claude-sonnet-4-6'),
 
-        // Google Gemini.
+        // Google Gemini. The default must be a model that still exists: the gemini-2.0
+        // family is retired, and a retired default means every call 404s — which the
+        // driver treats as a soft failure, so the hourly job "succeeds" classifying
+        // nothing on any host that has not set EEE_GEMINI_MODEL.
         'gemini_api_key'  => env('GOOGLE_GEMINI_API_KEY', ''),
-        'gemini_model'    => env('EEE_GEMINI_MODEL', 'gemini-2.0-flash'),
+        'gemini_model'    => env('EEE_GEMINI_MODEL', 'gemini-3.5-flash-lite'),
 
         // OpenAI.
         'openai_api_key'  => env('OPENAI_API_KEY', ''),
@@ -1225,5 +1412,30 @@ return [
         'publish_brands'    => env('EEE_PUBLISH_BRANDS', false),
         'publish_category'  => env('EEE_PUBLISH_CATEGORY', true),
         'publish_condition' => env('EEE_PUBLISH_CONDITION', true),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Electricals page
+    |--------------------------------------------------------------------------
+    |
+    | Grouping for the item lists on /electricals. Item names are folded to a
+    | canonical type so brands and spellings of the same thing count once, and a
+    | rare item is dropped when it is really a version of a common one.
+    |
+    | The near-identity threshold is high on purpose. Measured on live titles,
+    | similarity scores "fridge freezer" against "freezer" at 0.93 and "cd
+    | player" against "dvd player" at 0.85, so anything looser stops meaning
+    | "the same item with an extra word" and starts meaning "a related thing".
+    |
+    */
+    'electricals' => [
+        // Same sidecar as everything else; empty means the word test runs alone.
+        'sidecar_url'                => env('EMBEDDING_SIDECAR_URL', ''),
+        'variant_identical_cos'      => env('ELECTRICALS_VARIANT_IDENTICAL_COS', 0.90),
+        // How much commoner a rival has to be before a rare item counts as a
+        // version of it, and the floor below which nothing counts as common.
+        'variant_popularity_ratio'   => env('ELECTRICALS_VARIANT_POPULARITY_RATIO', 3),
+        'variant_min_popular_count'  => env('ELECTRICALS_VARIANT_MIN_POPULAR_COUNT', 10),
     ],
 ];

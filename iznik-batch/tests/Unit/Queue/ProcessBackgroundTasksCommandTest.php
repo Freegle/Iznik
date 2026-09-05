@@ -2798,4 +2798,195 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             "Failed asserting that '{$haystack}' contains '{$needle}'."
         );
     }
+
+    /**
+     * A moderator of a group a post rippled INTO administers their own copy of it. Their
+     * removal must not be relayed to the freegler, who posted somewhere else and has never
+     * heard of that community (Discourse 10102). The group still gets its own moderation
+     * log entry and its volunteers still get their push, because the action DID happen
+     * there - it is only the correspondence that belongs to the home community.
+     */
+    public function test_mod_stdmsg_with_notifyposter_off_sends_no_mail_but_still_logs(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Carol Moderator']);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: brown rabbit (Longton ST3)',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Rejected',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_rejected',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Re: OFFER: brown rabbit (Longton ST3)',
+                'body' => 'We do not accept posts for living creatures.',
+                'stdmsgid' => 0,
+                'notifyposter' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')
+            ->once()
+            ->with($group->id)
+            ->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertNotSent(ModStdMessageMail::class);
+
+        $log = DB::table('logs')
+            ->where('msgid', $msgId)
+            ->where('type', 'Message')
+            ->where('subtype', 'Rejected')
+            ->first();
+        $this->assertNotNull($log, 'the acting group still records what it did');
+
+        $this->assertEquals(0, DB::table('chat_messages')->where('refmsgid', $msgId)->count(),
+            'and no modmail chat is opened with the poster');
+    }
+
+    /**
+     * The flag is absent on every task queued before this change and on every home-group
+     * action, and absent must keep meaning "tell the poster".
+     */
+    public function test_mod_stdmsg_without_notifyposter_still_mails_the_poster(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Sharon Moderator']);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: brown rabbit (Longton ST3)',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Rejected',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_rejected',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Re: OFFER: brown rabbit (Longton ST3)',
+                'body' => 'Sorry, we cannot take this.',
+                'stdmsgid' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')->once()->with($group->id)->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ModStdMessageMail::class);
+    }
+
+
+    /**
+     * The member-facing half of the same rule: a group removes a member whose only tie to
+     * it is a post that rippled in, and says nothing to them (Discourse 10102).
+     */
+    public function test_member_stdmsg_with_notifyposter_off_sends_no_mail(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createTestUserEmail($member, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Carol Moderator']);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $member->id,
+                'groupid' => $group->id,
+                'byuser' => $mod->id,
+                'subject' => 'Removed',
+                'body' => 'We do not accept posts for living creatures.',
+                'stdmsgid' => 0,
+                'action' => 'Delete Approved Member',
+                'notifyposter' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertNotSent(ModStdMessageMail::class);
+    }
+
+    /** Absent still means notify, for every task queued before the flag existed. */
+    public function test_member_stdmsg_without_notifyposter_still_mails(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createTestUserEmail($member, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Sharon Moderator']);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $member->id,
+                'groupid' => $group->id,
+                'byuser' => $mod->id,
+                'subject' => 'Removed',
+                'body' => 'Sorry, this has not worked out.',
+                'stdmsgid' => 0,
+                'action' => 'Delete Approved Member',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ModStdMessageMail::class);
+    }
+
 }

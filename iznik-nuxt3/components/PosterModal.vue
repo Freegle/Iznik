@@ -75,16 +75,6 @@
           alt="Poster Photo"
           width="250"
         />
-        <NuxtPicture
-          v-else-if="image?.imageuid"
-          fit="cover"
-          format="webp"
-          provider="uploadcare"
-          :src="image.imageuid"
-          :modifiers="image.imagemods"
-          alt="Poster Photo"
-          width="250"
-        />
         <b-img v-else width="250" thumbnail src="/placeholder.jpg" />
       </div>
     </div>
@@ -116,14 +106,14 @@ import SpinButton from '~/components/SpinButton'
 import { useNoticeboardStore } from '~/stores/noticeboard'
 import { useOurModal } from '~/composables/useOurModal'
 
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
-const DraggableMap = defineAsyncComponent(() =>
-  import('~/components/DraggableMap')
+const DraggableMap = defineAsyncComponent(
+  () => import('~/components/DraggableMap')
 )
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 
 const emit = defineEmits(['hidden'])

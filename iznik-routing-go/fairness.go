@@ -31,8 +31,8 @@ type QuintileResult struct {
 // quintileMultiplier returns the time-budget multiplier for a node of quintile q
 // at the given fairness weight W ∈ [0,1].
 //
-//   W=0: all quintiles get multiplier 1.0 (standard isochrone)
-//   W=1: Q1 gets 2.0, Q2 gets 1.75, Q3 gets 1.5, Q4 gets 1.25, Q5 gets 1.0
+//	W=0: all quintiles get multiplier 1.0 (standard isochrone)
+//	W=1: Q1 gets 2.0, Q2 gets 1.75, Q3 gets 1.5, Q4 gets 1.25, Q5 gets 1.0
 //
 // Unknown quintile (0) is treated as middle (Q3 equivalent).
 func quintileMultiplier(q Quintile, W float32) float32 {
@@ -54,33 +54,29 @@ func quintileMultiplier(q Quintile, W float32) float32 {
 //  3. Build per-quintile polygons and a standard (W=0) baseline polygon.
 //
 // When g.Deprivation is nil, only the standard polygon is populated.
-func FairnessIsochrone(g *Graph, lat, lng float64, limitSecs float32, mode Mode, fairnessWeight float32) FairnessResult {
+func FairnessIsochrone(g *Graph, lat, lng float64, limitSecs float32, fairnessWeight float32) FairnessResult {
 	// Clamp fairness weight.
-	if fairnessWeight < 0 {
-		fairnessWeight = 0
-	}
-	if fairnessWeight > 1 {
-		fairnessWeight = 1
-	}
+	fairnessWeight = float32(clampFairnessWeight(float64(fairnessWeight)))
 
 	// Max exploration limit: for Q1 at full fairness weight, time = base × (1 + W×1.0).
 	maxMult := float32(1.0) + fairnessWeight
 	maxLimit := limitSecs * maxMult
 
 	// ── Dijkstra ──────────────────────────────────────────────────────────────
-	origin := nearestNodeForMode(g, lat, lng, mode)
+	origin := nearestDriveNode(g, lat, lng)
 	if origin == noNode {
 		return FairnessResult{FairnessScore: -1}
 	}
 
 	startLat := float64(g.Nodes[origin].Lat)
 	startLng := float64(g.Nodes[origin].Lng)
-	maxReachM := modeMaxSpeed(mode) * float64(maxLimit)
+	maxReachM := driveMaxSpeedMS * float64(maxLimit)
 
 	dist := make(map[NodeID]float32, 4096)
-	dist[origin] = 0
+	start := driveStartupSecs
+	dist[origin] = start
 	pqueue := &pq{}
-	heap.Push(pqueue, &item{id: origin, cost: 0})
+	heap.Push(pqueue, &item{id: origin, cost: start})
 
 	for pqueue.Len() > 0 {
 		cur := heap.Pop(pqueue).(*item)
@@ -91,11 +87,7 @@ func FairnessIsochrone(g *Graph, lat, lng float64, limitSecs float32, mode Mode,
 			break
 		}
 		for _, e := range g.EdgesFrom(cur.id) {
-			ec := e.Seconds[mode]
-			if ec < 0 {
-				continue
-			}
-			nc := cur.cost + ec
+			nc := cur.cost + e.Sec()
 			if nc > maxLimit {
 				continue
 			}
@@ -110,6 +102,14 @@ func FairnessIsochrone(g *Graph, lat, lng float64, limitSecs float32, mode Mode,
 		}
 	}
 
+	return fairnessFromReached(g, origin, dist, limitSecs, fairnessWeight)
+}
+
+// fairnessFromReached is everything after the reached-set: quintile
+// partitioning, polygons and the score. Split out so the reach engine can
+// supply the arrivals from a label query instead of the full-graph Dijkstra -
+// the weighting logic itself has exactly one implementation either way.
+func fairnessFromReached(g *Graph, origin NodeID, dist map[NodeID]float32, limitSecs float32, fairnessWeight float32) FairnessResult {
 	// ── Partition nodes ───────────────────────────────────────────────────────
 	standardNodes := make(map[NodeID]float32, len(dist))
 	var qNodes [6]map[NodeID]float32
@@ -123,7 +123,7 @@ func FairnessIsochrone(g *Graph, lat, lng float64, limitSecs float32, mode Mode,
 			standardNodes[id] = t
 		}
 		// Per-quintile: within quintile-specific extended time.
-		qv := g.Nodes[id].Quintile
+		qv := g.QuintileOf(id)
 		mult := quintileMultiplier(qv, fairnessWeight)
 		if t <= limitSecs*mult {
 			q := int(qv)
@@ -134,7 +134,7 @@ func FairnessIsochrone(g *Graph, lat, lng float64, limitSecs float32, mode Mode,
 	}
 
 	// ── Build polygons ────────────────────────────────────────────────────────
-	res := NetworkResolution(g, standardNodes, mode)
+	res := NetworkResolution(g, standardNodes)
 
 	result := FairnessResult{
 		Standard:      IsochronePolygon(g, standardNodes, res),
@@ -179,3 +179,14 @@ func FairnessIsochrone(g *Graph, lat, lng float64, limitSecs float32, mode Mode,
 	return result
 }
 
+// clampFairnessWeight holds the fairness weight to [0,1]. One place, so the isochrone endpoint
+// and the ripple overflow lane cannot drift apart on what an out-of-range weight means.
+func clampFairnessWeight(w float64) float64 {
+	if w < 0 {
+		return 0
+	}
+	if w > 1 {
+		return 1
+	}
+	return w
+}

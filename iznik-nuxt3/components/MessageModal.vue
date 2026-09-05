@@ -73,8 +73,8 @@ import { useMessageStore } from '~/stores/message'
 import { useOurModal } from '~/composables/useOurModal'
 import ImageCarousel from '~/components/ImageCarousel'
 
-const MessageExpanded = defineAsyncComponent(() =>
-  import('~/components/MessageExpanded')
+const MessageExpanded = defineAsyncComponent(
+  () => import('~/components/MessageExpanded')
 )
 
 const messageStore = useMessageStore()

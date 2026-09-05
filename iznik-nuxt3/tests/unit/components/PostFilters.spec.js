@@ -52,6 +52,20 @@ vi.mock('~/constants', () => ({
   BROWSE_MINUTES_FALLBACK_MAX: 30,
   BROWSE_MINUTES_MAX: 45,
   BROWSE_MINUTES_STEP: 5,
+  // The mock replaces the whole module, so the two distance axes have to be spelled out here too -
+  // DistanceSliders reads them to tell "linked" from "split".
+  DISTANCE_AXES: {
+    browse: {
+      minutesKey: 'browseMaxMinutes',
+      milesKey: 'browseMaxDistance',
+      bandCapped: true,
+    },
+    myPosts: {
+      minutesKey: 'myPostsMaxMinutes',
+      milesKey: 'myPostsMaxDistance',
+      bandCapped: false,
+    },
+  },
 }))
 
 // The time-based slider converts the chosen minutes to a crow-flies mile radius via the routing-backed
@@ -551,7 +565,7 @@ describe('PostFilters', () => {
     // The sentinel defers to the server's own reach, which grows every post to the
     // widest band's budget - so it only means "as far as I would go" for a member whose
     // own band earns that ceiling. A sparse member at their top stop is exactly that case.
-    it('stores BROWSE_DISTANCE_UNLIMITED (and skips routing) at the top stop when the band is the ceiling', async () => {
+    it('stores BROWSE_DISTANCE_UNLIMITED (and derives no radius) at the top stop when the band is the ceiling', async () => {
       mockFetchNear.mockResolvedValue({
         cap_minutes: 45,
         density_band: 'sparse',
@@ -571,7 +585,12 @@ describe('PostFilters', () => {
       expect(mockMe.value.settings.browseMaxDistance).toBe(
         Number.MAX_SAFE_INTEGER
       )
-      expect(mockFetchNear).not.toHaveBeenCalled() // the top stop needs no reach lookup
+      // The top stop needs no RADIUS - it stores the sentinel and defers to the server's own
+      // reach. It does still need the reach SHAPE, or dragging to the top would leave the map
+      // shading the narrower travel time the member just dragged away from. So there is exactly
+      // one lookup, and it is the one that asks for the polygon.
+      expect(mockFetchNear).toHaveBeenCalledTimes(1)
+      expect(mockFetchNear).toHaveBeenCalledWith(51.5, -0.1, 45, true)
       const emitted = wrapper.emitted('update:selectedMaxDistance')
       expect(emitted[emitted.length - 1]).toEqual([Number.MAX_SAFE_INTEGER])
     })
@@ -584,7 +603,9 @@ describe('PostFilters', () => {
       input.element.value = 10
       await input.trigger('change')
       await flushPromises()
-      expect(mockFetchNear).toHaveBeenCalledWith(51.5, -0.1, 10)
+      // true = also fetch the reach outline: browse draws a map, so it takes the shape from
+      // the routing pass this lookup already runs rather than routing it again.
+      expect(mockFetchNear).toHaveBeenCalledWith(51.5, -0.1, 10, true)
       expect(mockMe.value.settings.browseMaxMinutes).toBe(10)
       expect(mockMe.value.settings.browseMaxDistance).toBe(4) // mocked reach_radius_miles
       expect(wrapper.emitted('update:selectedMaxDistance')[0]).toEqual([4])
@@ -684,6 +705,87 @@ describe('PostFilters', () => {
         settings: expect.objectContaining({ browseType: 'Wanted' }),
       })
       expect(wrapper.emitted('update:selectedType')[0]).toEqual(['Wanted'])
+    })
+  })
+
+  // "Show posts from" used to forget a single community on reload: only the two whole-feed
+  // views were stored, so the dropdown sprang back to Nearby every visit (Discourse 10096).
+  describe('community stickiness', () => {
+    function pickGroup(wrapper, val) {
+      return wrapper
+        .findComponent('.group-select')
+        .vm.$emit('update:modelValue', val)
+    }
+
+    it('remembers a single community and emits it', async () => {
+      const wrapper = createWrapper({ forceShowFilters: true })
+
+      pickGroup(wrapper, 1)
+      await flushPromises()
+
+      expect(mockAuthStore.saveAndGet).toHaveBeenCalledWith({
+        settings: expect.objectContaining({
+          browseGroup: 1,
+          // Naming a community narrows the feed it is already showing; it is not a third
+          // whole-feed view, so browseView is left where it was.
+          browseView: 'nearby',
+        }),
+      })
+      expect(wrapper.emitted('update:selectedGroup')[0]).toEqual([1])
+    })
+
+    it('opens on the community the page restored, not on Nearby', () => {
+      // The panel is lazily mounted, so it can appear after the page has already restored a
+      // saved community. Saying "-- Nearby --" over a feed filtered to one is the same
+      // mismatch, wearing the other face.
+      mockMe.value.settings.browseGroup = 1
+      const wrapper = createWrapper({ forceShowFilters: true, selectedGroup: 1 })
+
+      expect(wrapper.findComponent('.group-select').props('modelValue')).toBe(1)
+    })
+
+    it('clears the remembered community when the member goes back to Nearby', async () => {
+      mockMe.value.settings.browseGroup = 1
+      const wrapper = createWrapper({ forceShowFilters: true, selectedGroup: 1 })
+
+      pickGroup(wrapper, -1)
+      await flushPromises()
+
+      expect(mockAuthStore.saveAndGet).toHaveBeenCalledWith({
+        settings: expect.objectContaining({
+          browseGroup: null,
+          browseView: 'nearby',
+        }),
+      })
+      expect(wrapper.emitted('update:selectedGroup')[0]).toEqual([0])
+    })
+
+    it('clears it for all my communities too', async () => {
+      mockMe.value.settings.browseGroup = 1
+      const wrapper = createWrapper({ forceShowFilters: true, selectedGroup: 1 })
+
+      pickGroup(wrapper, 0)
+      await flushPromises()
+
+      expect(mockAuthStore.saveAndGet).toHaveBeenCalledWith({
+        settings: expect.objectContaining({
+          browseGroup: null,
+          browseView: 'mygroups',
+        }),
+      })
+    })
+
+    it('does not write the saved community back when the page restores it', async () => {
+      // The restore arrives as a selectedGroup prop change, which lands in the same watcher.
+      // Writing there would spend a save on every visit to Browse putting back what is stored.
+      mockMe.value.settings.browseGroup = 1
+      const wrapper = createWrapper({ forceShowFilters: true })
+
+      await wrapper.setProps({ selectedGroup: 1 })
+      await flushPromises()
+      expect(wrapper.emitted('update:selectedGroup')[0]).toEqual([1])
+
+      expect(mockAuthStore.saveAndGet).not.toHaveBeenCalled()
     })
   })
 })

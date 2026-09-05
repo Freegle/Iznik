@@ -18,27 +18,21 @@ request that produced it.
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         Application Servers                                  │
-│   Go API (apiv2)  │  Laravel Batch  │  Browser (via apiv2)  │  Containers   │
-└────────┬────────┴───────┬───────┴────────┬────────┴───────────┬─────────────┘
-         │                │                │                     │
-         ▼                ▼                ▼                     ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Docker: Direct to Loki    │    Live: JSON files → Alloy → Loki            │
-└─────────────────────────────────────────────────────────────────────────────┘
-         │                                          │
-         ▼                                          ▼
-┌─────────────────────────┐            ┌─────────────────────────┐
-│        MySQL            │            │         Loki            │
-│   (Source of Truth)     │            │   (Primary for API)     │
-│   - logs table          │            │   - 7-day API retention │
-│                         │            │   - Grafana dashboards  │
-└─────────────────────────┘            └─────────────────────────┘
+```mermaid
+flowchart TD
+    GO["Go API (apiv2)"] --> SHIP
+    LAR["Laravel batch"] --> SHIP
+    BR["Browser, relayed via apiv2"] --> SHIP
+    CON["Container stdout and stderr"] --> SHIP
+    SHIP["In Docker: straight to Loki<br/>On live servers: JSON files, shipped by Alloy"]
+    SHIP --> LOKI[("Loki<br/>what the log viewer reads<br/>7 days for api and client, Grafana dashboards")]
+    GO --> SQL[("MySQL logs table<br/>source of truth")]
+    LAR --> SQL
 ```
 
-**Current Status:** MySQL and Loki run in parallel. MySQL remains source of truth until all read dependencies are migrated.
+MySQL and Loki run in parallel, and MySQL stays the source of truth until the remaining
+reads against it are migrated. What is left to do is in
+[Implementation status](#implementation-status).
 
 ## What we log
 
@@ -51,7 +45,7 @@ will have.
 | `api` | apiv2 | One line per request: endpoint, method, status, duration, `user_id`, `session_id` |
 | `api_headers` | apiv2 | Request/response headers for the same request, split out because they are bulky |
 | `client` | Browser, relayed via `POST /clientlog` | Browser-side events and errors. **Carries `session_id` but no `user_id`** |
-| `logs_table` | apiv2 | Rows mirrored from the MySQL `logs` table - carries `type` and `subtype` |
+| `logs_table` | nothing, currently | Was meant to mirror the MySQL `logs` table. `misc.LokiClient.LogFromLogsTable` exists but **has no caller**, so this source is empty - read the `logs` table itself (see below) |
 | `email` | Laravel | Outbound mail: recipient, type, spool outcome |
 | `incoming_mail` | Laravel | Inbound mail routing decisions |
 | `bounce` | Laravel | Bounce processing |
@@ -93,6 +87,32 @@ Set per stream in `conf/loki-config.yaml`, and deliberately mirrors the retentio
 **Old data is simply not there.** A support case about something three weeks ago will find
 nothing in `api` or `client`, and that is expected rather than a fault. `reject_old_samples`
 is off so historical backfill is accepted.
+
+The `{subtype=...}` rows above are aspirational: nothing writes the `logs_table` source, so
+those streams are empty and the retention never bites.
+
+## Login and logout
+
+Sign-in and sign-out are audited in the MySQL `logs` table, not in Loki: `type='User'` with
+`subtype='Login'` or `'Logout'`, `user` and `byuser` both set to the member. `PurgeService`
+keeps them for a year.
+
+apiv2 writes them from one place each - `auth.CreateSessionAndJWT` (every login path funnels
+through it) and `session.DeleteSession`. `text` carries V1's wording for how they signed in
+("Using email/password", "Using link", "Using Google <uid>", ...) plus two things V1 did not
+record: the `X-Freegle-Site` tag, so a Freegle login is distinguishable from a ModTools one,
+and the session series, which pairs a login with the logout that eventually closes it. A logout
+that could not work out which session to close says so rather than writing nothing.
+
+```sql
+SELECT timestamp, subtype, text FROM logs
+WHERE user = <userid> AND type = 'User' AND subtype IN ('Login', 'Logout')
+ORDER BY id DESC LIMIT 50;
+```
+
+Between the V1 retirement and 2026-08-28 apiv2 wrote neither, so there is a hole in this data
+for that period; a member reporting repeated logouts in it can only be traced through raw
+`sessions` rows.
 
 ## How it gets there
 
@@ -162,18 +182,55 @@ Four things that catch people out every time:
   passing `start`/`end` will suggest a label is unused when it simply had no traffic in the
   last hour.
 
-And a modelling point rather than a syntax one: **`user_id` and `session_id` are JSON fields,
-not labels.** They must be filtered after a `| json` stage, not in the `{}` selector. Only
-low-cardinality things belong in labels - a user id as a label would mean a Loki stream per
-user, which is exactly what Loki is not for.
+### Finding one user's logs
+
+This changed on **2026-08-23** and the two eras look different, so read this before
+writing a query against `user_id`.
+
+**What was wrong.** On the production database nodes `user_id` was promoted to a real Loki
+**stream label** - despite this page previously saying it was not. One stream per user is the
+pattern Loki's own guidance warns against, and it did exactly what you would expect: 11,565
+distinct values in 24 hours against Loki's default ceiling of 5,000 active streams, with the
+overflow **discarded silently** - 535,859 entries in two days. Anything built on those logs,
+the subject-access dump included, was quietly incomplete.
+
+**Why it was not simply moved to a JSON field.** Structured metadata and JSON fields are not
+indexed. Measured over a one-hour window, `{app="freegle"} | user_id="x"` reads 115MB and
+138,594 lines where the label lookup reads 324KB and 239 - roughly **356x the work**. The dump
+queries a 30-day window under a timeout, so that trade was not available either.
+
+**What it is now.** Both, deliberately:
+
+- **`user_bucket`** is a stream label holding `user_id % 32` - coarse, so it is 32 values
+  instead of tens of thousands, and it keeps the query index-narrowed.
+- **`user_id`** is **structured metadata** - attached to each entry, exact, and creating no
+  streams. Match it with a `| user_id="..."` filter, not inside `{}`.
+
+The bucket count lives in `misc.UserBucket` in `iznik-server-go`, and **every reader recomputes
+it**. Change it there and the JS support tools must change with it, or a user's logs go
+missing without an error.
 
 ```logql
-# Wrong - user_id is not a label, so this matches nothing
+# Entries written from 2026-08-23 onwards
+{app="freegle", user_bucket="25"} | user_id="12345"      # 12345 % 32 = 25
+
+# Entries written before then - still inside retention until late September 2026
 {app="freegle", user_id="12345"}
 
-# Right
-{app="freegle"} | json | user_id="12345"
+# Anonymous / pre-login traffic has no user in either era
+{app="freegle", source="client"} | user_id=""
 ```
+
+Until nothing older than 2026-08-23 is left in retention, **a complete answer needs both
+forms merged**. That is what `iznik-server-go/userdump/loki.go` and the support tools in
+`claude-agent-sdk/` do; they are disjoint - a stream selector cannot match structured
+metadata - so there is nothing to de-duplicate.
+
+Put the `| user_id="..."` filter **before** any `| json` stage. `| json` also pulls a
+`user_id` out of the line body, and the parsed one is renamed rather than replacing the
+structured-metadata value.
+
+`session_id` remains a JSON field on every source: filter it after `| json`.
 
 `trace_id` is the awkward one: it is a **JSON field on most sources but a real label on
 `source="email"`**, which is the only source that promotes it. So
@@ -226,10 +283,8 @@ In Docker, `LOKI_ENABLED=true` is set in docker-compose.yml. Apps write directly
 
 Loki config: `conf/loki-config.yaml`
 
-Key settings:
-- Default retention: 31 days
-- Stream-specific retention per log category
-- Compaction runs every 10 minutes
+Compaction runs every 10 minutes. Retention is per stream; the table is under
+[Retention](#retention) rather than repeated here.
 
 </details>
 
@@ -432,7 +487,9 @@ sudo journalctl -u alloy -f
 # API errors in the last hour
 {source="api", status_code=~"5.."}
 
-# Login events for a specific user
+# Login events for a specific user - NOTE: logs_table has no writer, so this
+# returns nothing today. Query the MySQL logs table instead (see "Login and
+# logout" above).
 {source="logs_table", subtype="Login"} |= "user_id\":12345"
 
 # API headers for debugging a specific endpoint

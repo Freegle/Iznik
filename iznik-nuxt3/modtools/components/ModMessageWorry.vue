@@ -69,8 +69,8 @@
           see anything wrong, it's fine to approve.
         </span>
         <span v-else>
-          <strong>Flagged for review:</strong> {{ reason.detail }}. If you can't
-          see anything wrong, it's fine to approve.
+          <strong>Flagged for review:</strong> {{ readableDetail(reason) }}. If
+          you can't see anything wrong, it's fine to approve.
         </span>
         <!-- Name the word that did it. A paint post flagged as a Medicine gave
              no clue it was "mineral", so the category looked arbitrary and the
@@ -93,12 +93,16 @@
            wrong with these, so they must not read like a flag - a queue that
            says nothing at all is what prompted Discourse #9987. -->
       <span v-else-if="reason.check === 'GroupModerated'">
-        <strong>Group setting:</strong> This group moderates all posts, whatever
-        the member's setting, so this one needs approving.
+        <strong>Group setting:</strong> This group moderated all posts when this
+        arrived, whatever the member's setting, so this one needs approving.
       </span>
+      <!-- Past tense deliberately. This is a snapshot taken when the post arrived, and a
+           moderator can change the member's status while the post is still in the queue -
+           which is how a member on Group Settings ended up with a box insisting their posts
+           are moderated (Discourse #10024). -->
       <span v-else-if="reason.check === 'MemberModerated'">
-        <strong>Member setting:</strong> This member's posts are moderated, so
-        this one needs approving.
+        <strong>Member setting:</strong> This member's posts were moderated when
+        this arrived, so this one needs approving.
       </span>
       <span v-else-if="reason.check === 'NoLocation'">
         <strong>No location:</strong> We couldn't work out where this post is.
@@ -193,13 +197,38 @@ watch(
   { immediate: true }
 )
 
+/* Reasons stored before PR #1322 quoted the PATTERN rather than the text it matched, so a
+   moderator was shown "Matched concern keyword '(?<!$)water\W)\butt\b(?!\s+rd)'" - the "codey
+   type stuff" of Discourse #10024. That fix stops new rows being written that way; rows already
+   in the database still hold patterns, so anything that looks like one is not shown at all. */
+const REGEX_MARKERS = /\(\?|\\[bBswWd]|\[\^|\{\d|\|\)|\.\*/
+
+function looksLikePattern(text) {
+  return REGEX_MARKERS.test(text)
+}
+
 /* The word that triggered a keyword flag, as a moderator should see it. New
    reasons carry an explicit `keyword`; older stored ones only have it quoted
    inside the detail text. */
 function flaggedWord(reason) {
-  if (reason?.keyword) return String(reason.keyword)
-  const m = /'([^']+)'/.exec(reason?.detail || '')
-  return m ? m[1] : null
+  const word = reason?.keyword
+    ? String(reason.keyword)
+    : (/'([^']+)'/.exec(reason?.detail || '') || [])[1] || null
+
+  if (!word || looksLikePattern(word)) return null
+  return word
+}
+
+/* The detail text as a moderator should see it: without the pattern a legacy row quotes.
+   "Matched concern keyword '<regex>'" then reads "Matched concern keyword", which still says
+   why the post was flagged without showing anybody a lookbehind. */
+function readableDetail(reason) {
+  const detail = String(reason?.detail || '')
+  return detail
+    .replace(/\s*'([^']*)'/g, (whole, quoted) =>
+      looksLikePattern(quoted) ? '' : whole
+    )
+    .trim()
 }
 
 /* The keyword a flag is about, for de-duplication. Only the keyword-based
@@ -277,16 +306,34 @@ const allStoredKeywords = computed(() => {
   return set
 })
 
+/* A setting-based hold explains why a post is WAITING. Once it has been approved there is
+   nothing waiting and nothing to do, so the box is at best noise and at worst wrong: it kept
+   telling moderators a post "needs approving" that they had already approved, and claimed a
+   member's posts were moderated after they had been moved to Group Settings (Discourse #10024).
+   Content flags are not spent this way - see below.
+
+   Only suppressed on a collection we can actually read: an older payload without one keeps the
+   explanation, because a post sitting in the queue with no reason given is the complaint that
+   put these boxes there in the first place (Discourse #9987). */
+function isSpent(reason, groupRow) {
+  return (
+    SETTING_CHECKS.includes(reason?.check) &&
+    groupRow?.collection === 'Approved'
+  )
+}
+
 /* Stored contentcheck_reasons to show, scoped to the group being moderated. */
 const displayedReasons = computed(() => {
   const groups = message.value?.groups
   if (!groups || !groups.length) return []
 
   let reasons = []
+  let sourceRow = null
   if (props.groupid) {
     const row = groups.find(
       (mg) => parseInt(mg.groupid) === parseInt(props.groupid)
     )
+    sourceRow = row || null
     reasons = row ? parseReasons(row.contentcheck_reasons) : []
   } else {
     /* No group context: fall back to the first group that has reasons. */
@@ -294,12 +341,14 @@ const displayedReasons = computed(() => {
       const parsed = parseReasons(mg.contentcheck_reasons)
       if (parsed.length) {
         reasons = parsed
+        sourceRow = mg
         break
       }
     }
   }
   return dedupeByKeyword(reasons).filter(
-    (reason) => !props.covered.includes(reason?.check)
+    (reason) =>
+      !props.covered.includes(reason?.check) && !isSpent(reason, sourceRow)
   )
 })
 

@@ -7,6 +7,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -218,14 +219,19 @@ func Similar(c *fiber.Ctx) error {
 		for _, cnd := range candidates {
 			ids = append(ids, cnd.Msgid)
 		}
-		blocked = ReachBlockedSet(ids, centreLat, centreLng)
+		// myid, not 0: the centre above IS this viewer's location when they are
+		// logged in, so the rings that admit them on browse, search and reply must
+		// admit them here too. Logged out, myid is 0 and the centre is the post's
+		// own location - the no-rings case, which is the same call.
+		blocked = ReachBlockedSet(myid, ids, centreLat, centreLng)
 	}
 
 	out := make([]SimilarResult, 0, limit)
-	// De-duplicate items that appear more than once. A single post rippled to many
-	// groups is one msgid (fine), but rippling can also strand genuine COPIES — a
-	// separate msgid per group for the same item — which would otherwise show as
-	// repeated cards. Same author + same subject identifies those; keep the first
+	// De-duplicate items that appear more than once. A post on many groups is a single
+	// msgid however it got there - rippling and TrashNothing cross-posts both add
+	// messages_groups rows to one message rather than creating another - so what this
+	// catches is a member posting the same thing twice by hand, which is two msgids for
+	// one item. Same author + same subject identifies those; keep the first
 	// (highest-scoring, since candidates are score-ordered).
 	seen := make(map[string]bool)
 	for _, cnd := range candidates {
@@ -246,7 +252,7 @@ func Similar(c *fiber.Ctx) error {
 			continue // a rippled copy of an item already included
 		}
 		seen[dedupKey] = true
-		lat, lng := utils.Blur(cnd.Lat, cnd.Lng, utils.BLUR_USER)
+		lat, lng := roadblur.RoadBlur(cnd.Lat, cnd.Lng, utils.BLUR_USER)
 		out = append(out, SimilarResult{
 			Msgid:   cnd.Msgid,
 			Groupid: cnd.Groupid,

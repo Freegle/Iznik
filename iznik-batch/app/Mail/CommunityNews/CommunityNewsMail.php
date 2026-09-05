@@ -32,7 +32,7 @@ class CommunityNewsMail extends MjmlMailable
         public readonly string $areaName,
         public readonly string $intro,
         public readonly array  $items,
-        public readonly string $findUrl,
+        public readonly string $askUrl,
         public readonly string $settingsUrl,
         public readonly ?array $story = null,
     ) {
@@ -41,7 +41,7 @@ class CommunityNewsMail extends MjmlMailable
 
     protected function getSubject(): string
     {
-        return 'Community News for ' . $this->areaName;
+        return 'Community News near you';
     }
 
     protected function unsubscribeType(): ?string
@@ -95,7 +95,7 @@ class CommunityNewsMail extends MjmlMailable
             'areaName'    => $this->areaName,
             'intro'       => $this->intro,
             'items'       => $items,
-            'findUrl'     => $this->trackedUrl($this->findUrl, 'find_button', 'find'),
+            'askUrl'     => $this->trackedUrl($this->askUrl, 'find_button', 'find'),
             'settingsUrl' => $this->trackedUrl($this->settingsUrl, 'footer_settings', 'settings'),
             'story'       => $this->story,
             'preview'     => $preview,

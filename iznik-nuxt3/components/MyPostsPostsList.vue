@@ -114,16 +114,16 @@
           </nuxt-link>
         </template>
         <template v-else-if="props.type === 'Wanted'">
-          <nuxt-link to="/find" class="mobile-btn mobile-btn--find">
-            <v-icon icon="search" class="me-2" />Find stuff
+          <nuxt-link to="/ask" class="mobile-btn mobile-btn--ask">
+            <v-icon icon="shopping-cart" class="me-2" />Ask for stuff
           </nuxt-link>
         </template>
         <template v-else>
           <nuxt-link to="/give" class="mobile-btn mobile-btn--give">
             <v-icon icon="gift" class="me-2" />Give stuff
           </nuxt-link>
-          <nuxt-link to="/find" class="mobile-btn mobile-btn--find">
-            <v-icon icon="search" class="me-2" />Find stuff
+          <nuxt-link to="/ask" class="mobile-btn mobile-btn--ask">
+            <v-icon icon="shopping-cart" class="me-2" />Ask for stuff
           </nuxt-link>
         </template>
       </div>
@@ -595,7 +595,7 @@ const visibleCollectionGroups = computed(() => {
     }
   }
 
-  &--find {
+  &--ask {
     background: $color-secondary;
     color: $color-white;
 

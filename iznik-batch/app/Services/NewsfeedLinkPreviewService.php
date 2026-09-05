@@ -100,7 +100,11 @@ class NewsfeedLinkPreviewService
         return $ips;
     }
 
-    protected function isFetchableUrl(string $url): bool
+    /**
+     * Public so other server-side fetchers of untrusted URLs (SourceFreshness)
+     * reuse this guard rather than growing a second copy of it.
+     */
+    public function isFetchableUrl(string $url): bool
     {
         $parts = parse_url($url);
         $scheme = strtolower($parts['scheme'] ?? '');
@@ -144,6 +148,15 @@ class NewsfeedLinkPreviewService
                 return $this->upsertInvalid($url);
             }
 
+            // A 200 with an empty body is a real thing (tracker pixels, broken
+            // CDNs). DOMDocument::loadHTML('') throws ValueError on PHP 8 - an
+            // \Error, so the \Exception catch below never saw it, the row was
+            // never marked invalid, and the same URL crashed the cron every
+            // minute (2026-08-17, 08:45 onwards).
+            if (trim($response->body()) === '') {
+                return $this->upsertInvalid($url);
+            }
+
             $data = $this->parseHtml($response->body());
 
             DB::statement(
@@ -161,7 +174,10 @@ class NewsfeedLinkPreviewService
             );
 
             return (int) DB::getPdo()->lastInsertId();
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // \Throwable, not \Exception: the parser throws \Error subclasses
+            // (ValueError above being the proven case) and an unmarked row
+            // retries forever.
             return $this->upsertInvalid($url);
         }
     }
@@ -179,6 +195,12 @@ class NewsfeedLinkPreviewService
 
     protected function parseHtml(string $html): array
     {
+        // DOMDocument::loadHTML() throws a ValueError when handed an empty string,
+        // so answer directly rather than letting it reach the parser.
+        if (trim($html) === '') {
+            return ['title' => null, 'description' => null, 'image' => null];
+        }
+
         libxml_use_internal_errors(true);
         $dom = new DOMDocument();
         $dom->loadHTML($html, LIBXML_NOERROR);

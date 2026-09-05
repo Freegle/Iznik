@@ -1092,7 +1092,9 @@ $line: #e4e8e3;
   color: $muted;
   cursor: pointer;
   border-right: 1px solid $line;
-  transition: background 0.12s, color 0.12s;
+  transition:
+    background 0.12s,
+    color 0.12s;
 }
 .seg-btn:last-child {
   border-right: 0;
@@ -1140,7 +1142,8 @@ $line: #e4e8e3;
   background: var(--card-bg);
   border: 1px solid $line;
   border-radius: 14px;
-  box-shadow: 0 1px 2px rgba(20, 30, 24, 0.04),
+  box-shadow:
+    0 1px 2px rgba(20, 30, 24, 0.04),
     0 6px 16px rgba(20, 30, 24, 0.05);
   overflow: hidden;
   display: flex;

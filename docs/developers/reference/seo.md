@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-27
+last_reviewed: 2026-09-04
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/server/utils/sitemap.ts
@@ -10,6 +10,7 @@ covers:
   - iznik-nuxt3/pages/message/[id].vue
   - iznik-nuxt3/public/robots.txt
   - iznik-server-go/message/sitemap.go
+  - iznik-batch/app/Services/MessageSpatialService.php
   - iznik-server-go/group/groupMessages.go
   - delivery-imagesweserv.conf
 ---
@@ -75,6 +76,31 @@ every time the sitemap regenerates.
 Excluded from the sitemap: `successful` posts (they answer 410, see below), and
 anything that isn't an `Offer` or a `Wanted`.
 
+That last filter reads `messages_spatial.msgtype`, which is a copy of
+`messages.type` written by `MessageSpatialService` in the batch. A row with no
+type is neither an Offer nor a Wanted, so it drops out of the sitemap without any
+error anywhere. Whatever writes a `messages_spatial` row has to set the type, and
+the reconciler compares the stored type with a null-safe test so that a row which
+somehow lost it gets corrected on the next pass.
+
+## Renamed routes answer 301
+
+The WANTED flow moved from `/find` to `/ask` in Aug 2026. `/find` had been in the
+sitemap and the prerender list for years, so it has inbound links and accumulated
+ranking; it answers a permanent redirect rather than a 404 so that carries over.
+`/ask` replaces it in `staticLinks()` and in the prerender list - the old path is
+not listed in either, because a sitemap should only advertise URLs that answer 200.
+
+The redirect is deliberately in three places, and all three are load bearing:
+`public/_redirects` (forced, so Netlify's edge answers before it looks for a
+static file), `routeRules` in `nuxt.config.ts` (any non-Netlify host, including
+`prod-local`), and `middleware/ask.global.js` (navigation inside the running app,
+which never reaches a server at all - the Capacitor build is a static export).
+`tests/unit/middleware/ask.global.spec.js` and
+`tests/e2e/test-ask-redirect.spec.js` hold all three in place. They are the first
+redirect tests in the repo: `server/middleware/councils.js` quietly became dead
+code because a `routeRules` entry shadowed it, and nothing noticed.
+
 ## Finished posts answer 410
 
 A post that has been taken, received, withdrawn, deleted, or rejected everywhere
@@ -137,6 +163,11 @@ also emits:
 `seoDescription` strips only an **allowlist** of real HTML tags rather than
 anything shaped like `<word>`, so an item described as fitting "`<angle>`
 brackets" survives.
+
+Each entry carries a `key:`, which is what deduplicates a tag when a page
+overrides a site-wide default. That field used to be `hid:`; unhead 2 (Nuxt 4)
+dropped `hid` entirely, and a stray `hid:` is silently ignored rather than
+rejected, so the tag it was meant to replace ends up emitted twice.
 
 ### Post descriptions
 

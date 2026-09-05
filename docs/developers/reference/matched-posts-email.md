@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-09
+last_reviewed: 2026-08-28
 owner: Freegle dev team
 covers:
   - iznik-server-go/message/postmatches.go
@@ -9,6 +9,15 @@ covers:
   - iznik-batch/app/Console/Commands/Message/NotifyMatchedPostsCommand.php
   - iznik-batch/app/Mail/Matched/MatchedPosts.php
 ---
+
+> **Live posts only.** A candidate is dropped if it has a `Taken`, `Received` or
+> `Withdrawn` outcome. All three mean the item is gone, so mailing it sends someone after
+> something that is not there.
+>
+> **Reach is checked from the POST's location, with no viewer.** The batch calls this
+> unauthenticated and the recipient is the post's owner, so overflow rings do not apply: a ring
+> admits a person standing at their own location, and there is nobody standing here. See
+> `rippling-algorithm.md` section 3b.
 
 # Matched-posts email
 

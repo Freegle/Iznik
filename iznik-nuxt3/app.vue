@@ -110,6 +110,7 @@
   </div>
 </template>
 <script setup>
+import { useNavbarVisibility } from './composables/useNavbarVisibility'
 import { useNoticeboardStore } from './stores/noticeboard'
 import { useAuthStore } from './stores/auth'
 import { useGroupStore } from './stores/group'
@@ -268,11 +269,7 @@ const loginCount = computed(() => {
   return authStore.loginCount
 })
 
-const shouldShowNavbar = computed(() => {
-  // Hide navbar for layouts that shouldn't show it
-  const layout = route.meta?.layout || 'default'
-  return layout !== 'no-navbar'
-})
+const shouldShowNavbar = useNavbarVisibility(route)
 
 // watch(loginCount, async () => {
 //   if (!route.query.k) {
@@ -305,7 +302,7 @@ onMounted(async () => {
   }
 })
 
-if (process.client) {
+if (import.meta.client) {
   if (typeof window !== 'undefined') {
     // There's a bug https://github.com/nuxt/framework/issues/3141 which causes route to stop working.
     const messages = [

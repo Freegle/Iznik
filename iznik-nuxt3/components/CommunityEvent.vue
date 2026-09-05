@@ -49,15 +49,6 @@
             :modifiers="event.image.externalmods"
             alt="Community Event Photo"
           />
-          <NuxtPicture
-            v-else-if="event?.image?.externaluid"
-            format="webp"
-            fit="cover"
-            provider="uploadcare"
-            :src="event.image.externaluid"
-            :modifiers="event.image.externalmods"
-            alt="Community Event Photo"
-          />
           <b-img v-else lazy :src="event.image.path" />
         </div>
       </div>
@@ -114,15 +105,6 @@
             :modifiers="event.image.externalmods"
             alt="Community Event Photo"
           />
-          <NuxtPicture
-            v-else-if="event?.image?.externaluid"
-            format="webp"
-            fit="cover"
-            provider="uploadcare"
-            :src="event.image.externaluid"
-            :modifiers="event.image.externalmods"
-            alt="Community Event Photo"
-          />
           <b-img v-else lazy :src="event.image.path" />
         </div>
       </div>
@@ -143,8 +125,8 @@ import { useGroupStore } from '~/stores/group'
 import ReadMore from '~/components/ReadMore'
 import { twem } from '~/composables/useTwem'
 
-const CommunityEventModal = defineAsyncComponent(() =>
-  import('./CommunityEventModal')
+const CommunityEventModal = defineAsyncComponent(
+  () => import('./CommunityEventModal')
 )
 
 const props = defineProps({

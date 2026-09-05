@@ -4,8 +4,7 @@ import api from '~/api'
 import { useAuthStore } from '~/stores/auth'
 import { useUserStore } from '~/stores/user'
 
-export const useMemberStore = defineStore({
-  id: 'member',
+export const useMemberStore = defineStore('member', {
   state: () => ({
     list: {}, // membershipid: member
     // The context from the last fetch, used for fetchMore.

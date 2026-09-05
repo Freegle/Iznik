@@ -90,10 +90,14 @@ test.describe('ModTools Spammer List', () => {
           headers: { Authorization: jwt },
         })
         .catch(() => null)
-      const checkData = checkResp ? await checkResp.json().catch(() => ({})) : {}
+      const checkData = checkResp
+        ? await checkResp.json().catch(() => ({}))
+        : {}
       const pendingCount = checkData?.spammers?.length ?? 0
       if (pendingCount === 0) {
-        console.log('[Test] No PendingAdd spammers found, checking for existing entries to reset')
+        console.log(
+          '[Test] No PendingAdd spammers found, checking for existing entries to reset'
+        )
         // Query all spam entries for the test user (any collection).
         const userResp = await page.request
           .get(`${API_V2}/modtools/spammers?userid=${testEnv.user.id}`, {
@@ -103,15 +107,25 @@ test.describe('ModTools Spammer List', () => {
         const userData = userResp ? await userResp.json().catch(() => ({})) : {}
         const existingEntry = userData?.spammers?.[0]
         if (existingEntry?.id) {
-          console.log('[Test] Resetting existing entry', existingEntry.id, 'to PendingAdd')
+          console.log(
+            '[Test] Resetting existing entry',
+            existingEntry.id,
+            'to PendingAdd'
+          )
           await page.request
             .patch(`${API_V2}/modtools/spammers`, {
-              data: { id: existingEntry.id, collection: 'PendingAdd', heldby: null },
+              data: {
+                id: existingEntry.id,
+                collection: 'PendingAdd',
+                heldby: null,
+              },
               headers: { Authorization: jwt },
             })
             .catch(() => {})
         } else {
-          console.log('[Test] No existing entry found, creating fresh PendingAdd entry')
+          console.log(
+            '[Test] No existing entry found, creating fresh PendingAdd entry'
+          )
           await page.request
             .post(`${API_V2}/modtools/spammers`, {
               data: {
@@ -175,7 +189,9 @@ test.describe('ModTools Spammer List', () => {
     // If all visible cards are held, release one first to create a Hold-able card.
     // Previous test runs may have held many entries leaving no Hold buttons visible.
     const holdBtn = page.locator('.member-card button:has-text("Hold")').first()
-    const holdVisible = await holdBtn.isVisible({ timeout: 5000 }).catch(() => false)
+    const holdVisible = await holdBtn
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
 
     if (!holdVisible) {
       const releaseBtn = page
@@ -238,7 +254,9 @@ test.describe('ModTools Spammer List', () => {
     // If all entries are unheld (holdBtns == totalCards), hold one to establish
     // the test condition. Otherwise, we verify the state left by a previous test.
     if (holdBtns === totalCards) {
-      const holdBtn = page.locator('.member-card button:has-text("Hold")').first()
+      const holdBtn = page
+        .locator('.member-card button:has-text("Hold")')
+        .first()
       await expect(holdBtn).toBeVisible({ timeout: timeouts.ui.appearance })
       await holdBtn.click()
 
@@ -310,7 +328,9 @@ test.describe('ModTools Spammer List', () => {
     const confirmBtn = page
       .locator('.member-card button:has-text("Confirm add to spammer list")')
       .first()
-    const confirmVisible = await confirmBtn.isVisible({ timeout: 5000 }).catch(() => false)
+    const confirmVisible = await confirmBtn
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
 
     if (!confirmVisible) {
       const releaseBtn = page
@@ -377,7 +397,9 @@ test.describe('ModTools Spammer List', () => {
           headers: { Authorization: jwt },
         })
         .catch(() => null)
-      const checkData = checkResp ? await checkResp.json().catch(() => ({})) : {}
+      const checkData = checkResp
+        ? await checkResp.json().catch(() => ({}))
+        : {}
       if ((checkData?.spammers?.length ?? 0) === 0) {
         const userResp = await page.request
           .get(`${API_V2}/modtools/spammers?userid=${testEnv.user.id}`, {
@@ -389,7 +411,11 @@ test.describe('ModTools Spammer List', () => {
         if (existingEntry?.id) {
           await page.request
             .patch(`${API_V2}/modtools/spammers`, {
-              data: { id: existingEntry.id, collection: 'PendingAdd', heldby: null },
+              data: {
+                id: existingEntry.id,
+                collection: 'PendingAdd',
+                heldby: null,
+              },
               headers: { Authorization: jwt },
             })
             .catch(() => {})
@@ -435,7 +461,9 @@ test.describe('ModTools Spammer List', () => {
     const rejectBtn = page
       .locator('.member-card button:has-text("Reject add to spammer list")')
       .first()
-    const rejectVisible = await rejectBtn.isVisible({ timeout: 5000 }).catch(() => false)
+    const rejectVisible = await rejectBtn
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
 
     if (!rejectVisible) {
       const releaseBtn = page

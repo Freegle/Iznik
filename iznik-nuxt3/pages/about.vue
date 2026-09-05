@@ -124,8 +124,8 @@
                         boardmember?.profile?.default
                           ? null
                           : boardmember?.profile?.url
-                          ? boardmember.profile.url
-                          : boardmember?.profile?.turl
+                            ? boardmember.profile.url
+                            : boardmember?.profile?.turl
                       "
                       class="me-2"
                       size="lg"
@@ -281,13 +281,13 @@
                   </ul>
                   <p>
                     Each Freegle local group is run independently and is
-                    affiliated to Freegle, which provides central services
-                    (such as this website) to these groups and their volunteers.
-                    Freegle is a registered society under the Co-operative
-                    and Community Benefit Societies Act 2014 (previously known
-                    as an Industrial and Provident Society for Community
-                    Benefit). Freegle is owned and governed by its members.
-                    Local and national volunteers are eligible for membership.
+                    affiliated to Freegle, which provides central services (such
+                    as this website) to these groups and their volunteers.
+                    Freegle is a registered society under the Co-operative and
+                    Community Benefit Societies Act 2014 (previously known as an
+                    Industrial and Provident Society for Community Benefit).
+                    Freegle is owned and governed by its members. Local and
+                    national volunteers are eligible for membership.
                   </p>
                   <p>
                     Charities of this type are slightly unusual in that they do

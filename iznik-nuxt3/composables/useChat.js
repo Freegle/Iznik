@@ -1,5 +1,6 @@
 import pluralize from 'pluralize'
 import { milesAway } from '~/composables/useDistance'
+import { roadDistance, roadMilesRounded } from '~/composables/useDriveDistance'
 import { computed } from '#imports'
 import { useChatStore } from '~/stores/chat'
 import { useUserStore } from '~/stores/user'
@@ -91,7 +92,18 @@ export function setupChat(selectedChatId, chatMessageId) {
     return last
   })
 
-  const milesaway = computed(() =>
+  // Prefer road distance (reach engine) for display; crow-flies fallback.
+  const roadDist = computed(() => {
+    if (!otheruser?.value?.lat && !otheruser?.value?.lng) {
+      return null
+    }
+    return roadDistance(otheruser.value.lat, otheruser.value.lng).value
+  })
+
+  // crowmilesaway: pure crow-flies, for LOGIC thresholds (far-away warnings)
+  // — deliberately not road-preferring, so blur distortion and engine
+  // availability can never change what gets warned about.
+  const crowmilesaway = computed(() =>
     milesAway(
       authStore.user?.lat,
       authStore.user?.lng,
@@ -100,8 +112,24 @@ export function setupChat(selectedChatId, chatMessageId) {
     )
   )
 
-  const milesstring = computed(
-    () => pluralize('mile', milesaway.value, true) + ' away'
+  const milesaway = computed(() => {
+    const road = roadDist.value
+    if (road?.miles != null) {
+      return roadMilesRounded(road.miles)
+    }
+    return crowmilesaway.value
+  })
+
+  // True when milesaway/milesstring are showing ROAD distance (the engine
+  // answered); tooltips must describe the number actually shown.
+  const milesIsRoad = computed(() => roadDist.value?.miles != null)
+
+  // No leading "about": both templates that render this supply their own
+  // qualifier ("About <strong>…</strong>", "…is about … from you").
+  const milesstring = computed(() =>
+    roadDist.value?.miles != null
+      ? pluralize('mile', milesaway.value, true) + ' away by road'
+      : pluralize('mile', milesaway.value, true) + ' away'
   )
 
   const unseen = computed(() => chat?.value?.unseen)
@@ -130,6 +158,8 @@ export function setupChat(selectedChatId, chatMessageId) {
     lastfromme,
     tooSoonToNudge,
     milesaway,
+    crowmilesaway,
+    milesIsRoad,
     milesstring,
     chatmessage,
     chatStore,

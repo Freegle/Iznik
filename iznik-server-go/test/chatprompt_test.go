@@ -37,17 +37,19 @@ func ensureFirstReplyTables(t *testing.T) {
 		PRIMARY KEY (day, event)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	// max_polygon is added by migration; add it here too so a schema-loaded test
-	// database has it. Errors are ignored: the column may already exist.
-	db.Exec("ALTER TABLE rippling_reach ADD COLUMN max_polygon GEOMETRY NULL SRID 3857")
-	db.Exec("ALTER TABLE rippling_reach ADD COLUMN max_cumulative_users INT UNSIGNED NULL")
+	// Columns added by later migrations; add them here too so a schema-loaded test
+	// database has them. Checked first rather than added-and-let-it-fail: a database
+	// that already has them logged three "Duplicate column name" errors on every run,
+	// which sit directly above the first real failure and read exactly like its cause.
+	addColumnIfMissing("rippling_reach", "max_cumulative_users", "INT UNSIGNED NULL")
+	addColumnIfMissing("rippling_reach", "max_polygon_cells", "MEDIUMBLOB NULL")
 
 	// Likewise chat_prompts.msgids. The CREATE TABLE above only fires when the
 	// table is absent, and the migration that creates it is guarded the same way -
 	// so a database that was migrated BEFORE msgids existed keeps a chat_prompts
 	// with no msgids column, and every prompt test fails on the insert. CI is
 	// unaffected (it migrates fresh); long-lived dev databases are not.
-	db.Exec("ALTER TABLE chat_prompts ADD COLUMN msgids JSON NULL")
+	addColumnIfMissing("chat_prompts", "msgids", "JSON NULL")
 
 	// The 'Prompt' enum value likewise.
 	var colType string
@@ -486,3 +488,22 @@ func TestAnswerChatPrompt_NoRushRecordsWithoutPatchingThePost(t *testing.T) {
 // This is a regression test for a real one: the dashboard's own date filter
 // sends bare dates, and the average "hours earlier" read 5.6 instead of 3.7
 // because the most recent passthroughs were being excluded.
+
+// addColumnIfMissing adds a column only when it is absent, so a database that already
+// has it produces no output. The alternative - issuing the ALTER unconditionally and
+// discarding the error - makes every run of these tests print duplicate-column errors
+// that are not failures, and they cost real time to rule out when something else breaks.
+func addColumnIfMissing(table, column, definition string) {
+	db := database.DBConn
+
+	var present int
+	db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() "+
+		"AND table_name = ? AND column_name = ?", table, column).Scan(&present)
+	if present > 0 {
+		return
+	}
+
+	if err := db.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition).Error; err != nil {
+		fmt.Printf("WARNING: could not add %s.%s: %v\n", table, column, err)
+	}
+}

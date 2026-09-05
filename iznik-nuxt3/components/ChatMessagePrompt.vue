@@ -15,8 +15,8 @@
               <div v-if="posts.length" class="mt-2 mb-1">
                 <ChatPromptPost
                   v-for="msgid in shownPosts"
-                  :key="msgid"
                   :id="msgid"
+                  :key="msgid"
                 />
                 <b-button
                   v-if="hiddenCount > 0"
@@ -144,7 +144,7 @@ const dateId = uid('promptdate')
 const { chatmessage, emessage } = useChatMessageBase(
   props.chatid,
   props.id,
-  props.pov,
+  props.pov
 )
 
 const answering = ref(false)
@@ -170,7 +170,7 @@ const posts = computed(() => {
 const MAX_SHOWN = 5
 const showAll = ref(false)
 const shownPosts = computed(() =>
-  showAll.value ? posts.value : posts.value.slice(0, MAX_SHOWN),
+  showAll.value ? posts.value : posts.value.slice(0, MAX_SHOWN)
 )
 const hiddenCount = computed(() => posts.value.length - shownPosts.value.length)
 
@@ -179,7 +179,7 @@ const dateOption = computed(() => options.value.find((o) => o.input === 'date'))
 const plainOptions = computed(() => options.value.filter((o) => !o.input))
 
 const today = computed(() =>
-  new Date(Date.now()).toISOString().substring(0, 10),
+  new Date(Date.now()).toISOString().substring(0, 10)
 )
 const maxDate = computed(() => {
   const d = new Date(Date.now())
@@ -200,7 +200,7 @@ const showOptions = computed(
     options.value.length > 0 &&
     // Support and moderators viewing someone else's chat are looking, not
     // answering on their behalf.
-    props.pov === null,
+    props.pov === null
 )
 
 const answeredLabel = computed(() => {

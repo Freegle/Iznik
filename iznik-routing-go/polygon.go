@@ -375,16 +375,8 @@ func emptyPolygon() GeoJSONPolygon {
 }
 
 // AutoResolution picks a grid resolution appropriate for the isochrone size.
-func AutoResolution(limitSeconds float32, mode Mode) float64 {
-	var speedKmH float64
-	switch mode {
-	case Walk:
-		speedKmH = 5
-	case Cycle:
-		speedKmH = 15
-	default:
-		speedKmH = 50
-	}
+func AutoResolution(limitSeconds float32) float64 {
+	const speedKmH = 50.0
 	reachKm := speedKmH * float64(limitSeconds) / 3600.0
 	res := reachKm / 20.0 / 111.0
 	if res < 0.0005 {
@@ -410,14 +402,11 @@ func AutoResolution(limitSeconds float32, mode Mode) float64 {
 // never closed over; and because the cell is ~the node spacing, adjacent reached nodes
 // stay grid-connected, so a genuinely-connected reach is not fragmented. No per-geography
 // magic number: pass a denser city or a different projection and it self-adjusts.
-func NetworkResolution(g *Graph, reached map[NodeID]float32, mode Mode) float64 {
+func NetworkResolution(g *Graph, reached map[NodeID]float32) float64 {
 	lens := make([]float64, 0, len(reached))
 	for u := range reached {
 		nu := g.Nodes[u]
 		for _, e := range g.EdgesFrom(u) {
-			if e.Seconds[mode] < 0 {
-				continue
-			}
 			if _, ok := reached[e.To]; !ok || u > e.To {
 				continue // only edges between two reached nodes; dedupe undirected
 			}

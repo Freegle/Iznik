@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import BulkItemEditor from '~/components/BulkItemEditor.vue'
 
 // Stub heavy children so their imports (Uppy etc.) don't load.
 vi.mock('~/components/PhotoUploader', () => ({
@@ -25,7 +26,6 @@ const uploadPhotoMock = vi.fn()
 vi.mock('~/composables/useBulkPhotoUpload', () => ({
   useBulkPhotoUpload: () => ({ uploadPhoto: uploadPhotoMock }),
 }))
-import BulkItemEditor from '~/components/BulkItemEditor.vue'
 
 // Auto-stub the bootstrap-vue-next form components this component uses that the
 // global test setup doesn't already stub (the setup throws on unresolved
@@ -139,8 +139,8 @@ describe('BulkItemEditor', () => {
   it('attaches to the right item even if rows are added mid-upload', async () => {
     let resolveUpload
     uploadPhotoMock.mockReturnValueOnce(
-      new Promise((res) => {
-        resolveUpload = res
+      new Promise((resolve) => {
+        resolveUpload = resolve
       })
     )
     const w = mount(BulkItemEditor, mountOpts)

@@ -268,16 +268,6 @@
             width="100"
             class="mt-1 ms-4 image__uploaded"
           />
-          <NuxtPicture
-            v-else-if="imageuid"
-            format="webp"
-            provider="uploadcare"
-            :src="imageuid"
-            :modifiers="imagemods"
-            alt="ChitChat Photo"
-            width="100"
-            class="mt-1 ms-4 image__uploaded"
-          />
           <OurUploader
             v-if="uploading"
             v-model="currentAtts"
@@ -397,14 +387,14 @@ const emit = defineEmits(['rendered', 'expand-duplicates'])
 const autocapitalizeMode = isIOS() ? 'none' : 'sentences'
 
 const NewsReportModal = defineAsyncComponent(() => import('./NewsReportModal'))
-const NewsConvertModal = defineAsyncComponent(() =>
-  import('./NewsConvertModal')
+const NewsConvertModal = defineAsyncComponent(
+  () => import('./NewsConvertModal')
 )
-const ConfirmModal = defineAsyncComponent(() =>
-  import('~/components/ConfirmModal.vue')
+const ConfirmModal = defineAsyncComponent(
+  () => import('~/components/ConfirmModal.vue')
 )
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 const OurAtTa = defineAsyncComponent(() => import('~/components/OurAtTa'))
 

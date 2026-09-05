@@ -6,10 +6,6 @@
     <param name="android-package" value="nl.xservices.plugins.Calendar"/>
   </feature>
 
-  <feature name="InAppBrowser">
-    <param name="android-package" value="org.apache.cordova.inappbrowser.InAppBrowser"/>
-  </feature>
-
   
   <preference name="CameraUsesGeolocation" value="true" />
   <preference name="AndroidLaunchMode" value="singleTask" />

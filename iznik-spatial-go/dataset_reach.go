@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/peterstace/simplefeatures/geom"
+	"spatial-server/cellset"
 )
 
 // ReachDataset serves point-in-reach for the browse feed's unread badge (and
@@ -22,13 +22,12 @@ import (
 // fires — 65-84% of R-tree candidates have no inner bound, so they fall
 // through to exact ST_Contains against ~11k-vertex polygon BLOBs.
 //
-// Here each reach polygon is rasterised ONCE at load into a ~2KB tri-state
-// grid (raster.go): a query point classifies as in / out / partial in O(1).
-// Only the thin partial band (cells a polygon edge passes through) still
-// needs the exact polygon — the caller (apiv2) resolves those few against
-// rippling_reach in MySQL, keeping correctness exact while removing ~96% of
-// the geometry work. The polygons themselves are NOT kept in the index
-// (that would be ~9GB; the rasters are ~150MB).
+// The index is built from the stored cell grid (rippling_reach.polygon_cells,
+// plans/2026-08-24-rippling-reach-raster-storage.md): the item blob is the
+// encoded grid itself (~23KB), and a query point is answered EXACTLY by
+// walking its run stream — no boundary band, no `partial`, no fallback to the
+// geometry. A row with no readable cells is skipped (fail-closed - it has no
+// reach anywhere).
 //
 // Status filtering is the caller's contract: rows with status='held' (reach
 // frozen because the origin post went back to Pending) are excluded here,
@@ -44,35 +43,100 @@ func (d *ReachDataset) Name() string { return "reach" }
 func (d *ReachDataset) RebuildInterval() time.Duration { return 24 * time.Hour }
 func (d *ReachDataset) DeltaInterval() time.Duration   { return 2 * time.Minute }
 
+// reachSelect builds the row query. `retired` = labels-truth answers
+// everything for this row, so it leaves this index entirely - containment for
+// it is served by the routing server's label evaluation (the discover arm).
+//
+// A row retires when it is union-ready (stored label + origin_union_secs,
+// including -1 = never), NOT only once its grid blob has been NULLed:
+// retirement must not depend on the doomed grid columns, or on the paced
+// row-by-row drain that NULLs them (each NULL is a full Galera row-image
+// writeset - pure cost for columns whose end state is an operator DROP).
+// The drained-grid arm stays so rows drained before this change, or in a
+// schema where origin_union_secs has not landed yet, retire exactly as
+// before.
+func reachSelect(where string) string {
+	return "SELECT rr.msgid, rr.status, rr.polygon_cells, " +
+		retiredExpr(unionColPresent) + " AS retired " +
+		"FROM rippling_reach rr " + where
+}
+
+// retiredExpr is reachSelect's retirement predicate; split out so the
+// with/without-origin_union_secs schemas are both testable. unionCol is
+// probed once per process alongside gridColumnsPresent.
+func retiredExpr(unionCol bool) string {
+	if unionCol {
+		return "(rr.reach_labels IS NOT NULL AND (rr.polygon_cells IS NULL OR rr.origin_union_secs IS NOT NULL))"
+	}
+	return "(rr.reach_labels IS NOT NULL AND rr.polygon_cells IS NULL)"
+}
+
+type reachRawRow struct {
+	msgid   int64
+	status  string
+	cells   []byte
+	retired bool
+}
+
+func scanReachRaw(rows *sql.Rows) (reachRawRow, error) {
+	var r reachRawRow
+	return r, rows.Scan(&r.msgid, &r.status, &r.cells, &r.retired)
+}
+
+// gridColumnsPresent reports whether the retired grid columns still exist.
+// After the operator's final drop this dataset has nothing to index - every
+// row is served by the routing server's label evaluation - so it loads empty
+// and the deltas no-op, quietly. Checked once per process.
+var (
+	gridColsOnce    sync.Once
+	gridColsPresent bool
+	unionColPresent bool
+)
+
+func gridColumnsPresent(mysqlDB *sql.DB) bool {
+	gridColsOnce.Do(func() {
+		var n int
+		if err := mysqlDB.QueryRow(
+			`SELECT COUNT(*) FROM information_schema.columns
+			  WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'polygon_cells'`,
+		).Scan(&n); err == nil {
+			gridColsPresent = n > 0
+		}
+		if !gridColsPresent {
+			log.Printf("reach: polygon_cells dropped - dataset retired, serving empty")
+		}
+		// Same once: does the union-readiness column exist? Decides which
+		// retirement predicate reachSelect compiles (see retiredExpr).
+		if err := mysqlDB.QueryRow(
+			`SELECT COUNT(*) FROM information_schema.columns
+			  WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'origin_union_secs'`,
+		).Scan(&n); err == nil {
+			unionColPresent = n > 0
+		}
+	})
+	return gridColsPresent
+}
+
 func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
+	if !gridColumnsPresent(mysqlDB) {
+		return InsertItems(idx, nil, nil)
+	}
 	// Load ALL non-held statuses; held rows are simply absent (the delta
-	// re-adds them if released). ST_AsWKB gives portable WKB; the polygon
-	// column is SRID 3857-tagged but stores plain degrees (site convention).
-	rows, err := mysqlDB.Query(`
-		SELECT msgid, status, ST_AsWKB(polygon)
-		FROM rippling_reach
-		WHERE status != 'held'
-	`)
+	// re-adds them if released).
+	rows, err := mysqlDB.Query(reachSelect(`WHERE rr.status != 'held'`))
 	if err != nil {
 		return fmt.Errorf("reach load query: %w", err)
 	}
 	defer rows.Close()
 
-	// Rasterising an ~11k-vertex polygon costs ~14ms (BenchmarkBuildRaster), so
-	// ~50k reaches would be ~12 minutes serially. Fan the CPU work out to a
-	// worker pool while this goroutine keeps draining MySQL rows; row order is
-	// irrelevant to the index. Capped below NumCPU so a rebuild never starves
-	// the co-located apiv2/routing processes on the prod db nodes.
-	type rawRow struct {
-		msgid  int64
-		status string
-		wkb    []byte
-	}
+	// A cells row is a header validation (microseconds). Capped below NumCPU
+	// so a rebuild never starves the co-located apiv2/routing processes on
+	// the prod db nodes.
 	workers := runtime.NumCPU() - 2
 	if workers < 1 {
 		workers = 1
 	}
-	in := make(chan rawRow, workers*2)
+	in := make(chan reachRawRow, workers*2)
 	out := make(chan Item, workers*2)
 	var skipped int64
 	var wg sync.WaitGroup
@@ -81,7 +145,11 @@ func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 		go func() {
 			defer wg.Done()
 			for r := range in {
-				item, ok := buildReachItem(r.msgid, r.status, r.wkb)
+				if r.retired {
+					// Drained under labels-truth: not this index's row.
+					continue
+				}
+				item, ok := buildReachItem(r.msgid, r.status, r.cells)
 				if !ok {
 					atomic.AddInt64(&skipped, 1)
 					continue
@@ -106,8 +174,8 @@ func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 
 	var scanErr error
 	for rows.Next() {
-		var r rawRow
-		if err := rows.Scan(&r.msgid, &r.status, &r.wkb); err != nil {
+		r, err := scanReachRaw(rows)
+		if err != nil {
 			scanErr = err
 			break
 		}
@@ -126,15 +194,13 @@ func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 }
 
 // ApplyDelta upserts reaches modified since `since` and removes newly-held
-// ones. Polygon clips (ST_Difference on completion) and expansions both
-// arrive as plain updates: the whole raster is rebuilt from the current
-// polygon, so there is no cell-set drift to reconcile.
+// ones. Clips and expansions both arrive as plain updates: the item is
+// rebuilt from the row's current cells, so there is no drift to reconcile.
 func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
-	rows, err := mysqlDB.Query(`
-		SELECT msgid, status, ST_AsWKB(polygon)
-		FROM rippling_reach
-		WHERE updated_at > ?
-	`, since.UTC())
+	if !gridColumnsPresent(mysqlDB) {
+		return nil
+	}
+	rows, err := mysqlDB.Query(reachSelect(`WHERE rr.updated_at > ?`), since.UTC())
 	if err != nil {
 		return fmt.Errorf("reach delta query: %w", err)
 	}
@@ -142,7 +208,23 @@ func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) 
 
 	var upserted, removed, skipped int
 	for rows.Next() {
-		item, ok := scanReachRow(rows)
+		r, err := scanReachRaw(rows)
+		if err != nil {
+			log.Printf("reach scan: %v", err)
+			skipped++
+			continue
+		}
+		if r.retired {
+			// A writer drained this row's grid (labels-truth): remove it -
+			// a skipped upsert would leave the PREVIOUS tick's smaller
+			// reach serving stale answers forever.
+			if err := idx.DeleteByExtID(r.msgid); err != nil {
+				log.Printf("reach delta: remove retired msgid=%d: %v", r.msgid, err)
+			}
+			removed++
+			continue
+		}
+		item, ok := buildReachItem(r.msgid, r.status, r.cells)
 		if !ok {
 			skipped++
 			continue
@@ -181,7 +263,10 @@ func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) 
 // reconcile diffs the index's extids against rippling_reach's live msgids:
 // index-only entries are deleted, source-only msgids are fetched and built.
 func (d *ReachDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
-	rows, err := mysqlDB.Query(`SELECT msgid FROM rippling_reach WHERE status != 'held'`)
+	// Retired rows (grid drained under labels-truth) are OUT of the source
+	// set, so their stale index entries are deleted like any other.
+	rows, err := mysqlDB.Query(`SELECT msgid FROM rippling_reach WHERE status != 'held'
+		AND NOT (reach_labels IS NOT NULL AND polygon_cells IS NULL)`)
 	if err != nil {
 		return fmt.Errorf("reach reconcile ids: %w", err)
 	}
@@ -224,16 +309,14 @@ func (d *ReachDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
 		if _, ok := indexed[id]; ok {
 			continue
 		}
-		row := mysqlDB.QueryRow(`SELECT msgid, status, ST_AsWKB(polygon) FROM rippling_reach WHERE msgid = ?`, id)
-		var msgid int64
-		var status string
-		var wkbRaw []byte
-		if err := row.Scan(&msgid, &status, &wkbRaw); err != nil {
+		row := mysqlDB.QueryRow(reachSelect(`WHERE rr.msgid = ?`), id)
+		var r reachRawRow
+		if scanErr := row.Scan(&r.msgid, &r.status, &r.cells, &r.retired); scanErr != nil {
 			// Row vanished between the id list and this fetch: fine, next tick.
 			continue
 		}
-		item, ok := buildReachItem(msgid, status, wkbRaw)
-		if !ok || status == "held" {
+		item, ok := buildReachItem(r.msgid, r.status, r.cells)
+		if !ok || r.status == "held" || r.retired {
 			continue
 		}
 		if err := InsertItems(idx, []Item{item}, nil); err != nil {
@@ -248,50 +331,56 @@ func (d *ReachDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
 	return nil
 }
 
-// scanReachRow reads one (msgid, status, wkb) row and builds its index Item.
-func scanReachRow(rows *sql.Rows) (Item, bool) {
-	var msgid int64
-	var status string
-	var wkbRaw []byte
-	if err := rows.Scan(&msgid, &status, &wkbRaw); err != nil {
-		log.Printf("reach scan: %v", err)
-		return Item{}, false
-	}
-	return buildReachItem(msgid, status, wkbRaw)
-}
-
-// buildReachItem rasterises one reach polygon into an index Item: the
-// serialized raster is stored as the item's blob (the WKB column is just
-// bytes to the index). ok=false when the geometry is unusable — the row is
-// skipped, and the badge's MySQL fallback still covers that post, so a skip
-// degrades cost, never correctness.
-func buildReachItem(msgid int64, status string, wkbRaw []byte) (Item, bool) {
+// buildReachItem builds one row's index Item from its encoded grid: the item
+// blob IS the grid, giving exact answers. Validation walks the whole run
+// stream (streaming, no allocation), so a corrupt or absent blob skips the
+// row - it has no reach anywhere, and skipping is the fail-closed direction.
+func buildReachItem(msgid int64, status string, cells []byte) (Item, bool) {
 	if status == "held" {
 		// Only reachable from the delta (Load filters held in SQL); the caller
 		// removes it. Envelope fields are unused for removal.
 		return Item{ExtID: msgid, Extra: map[string]any{"status": status}}, true
 	}
-	g, err := geom.UnmarshalWKB(stripSRIDPrefix(wkbRaw), geom.NoValidate{})
+
+	if len(cells) > 0 {
+		set, minLng, minLat, maxLng, maxLat, err := cellset.ValidateEncoded(cells)
+		if err == nil && set > 0 {
+			return Item{
+				ExtID:  msgid,
+				MinLng: minLng, MaxLng: maxLng,
+				MinLat: minLat, MaxLat: maxLat,
+				// Planar cell-count area: only comparative uses exist and the
+				// legacy path's g.Area() was the same planar degrees².
+				Area:  float64(set) * cellset.CellDegrees * cellset.CellDegrees,
+				WKB:   cells,
+				Extra: map[string]any{"status": status},
+			}, true
+		}
+		if err != nil {
+			log.Printf("reach: msgid=%d cells rejected (%v), row skipped", msgid, err)
+		}
+	}
+
+	return Item{}, false
+}
+
+// classifyReachBlob answers one point against one item blob. The encoded-grid
+// probe answers exactly. A coarse tri-state raster blob (only possible in an
+// on-disk index adopted from before the cells era; rebuilt away within one
+// rebuild interval) keeps its boundary band; a blob neither can read
+// classifies as partial, which the callers log and fail closed on.
+func classifyReachBlob(blob []byte, lng, lat float64) byte {
+	if in, ok := cellset.ContainsEncoded(blob, lng, lat); ok {
+		if in {
+			return cellIn
+		}
+		return cellOut
+	}
+	raster, err := DeserializeRaster(blob)
 	if err != nil {
-		return Item{}, false
+		return cellPartial
 	}
-	raster := BuildRaster(g)
-	if raster == nil {
-		return Item{}, false
-	}
-	env := g.Envelope()
-	min, max, ok := env.MinMaxXYs()
-	if !ok {
-		return Item{}, false
-	}
-	return Item{
-		ExtID:  msgid,
-		MinLng: min.X, MaxLng: max.X,
-		MinLat: min.Y, MaxLat: max.Y,
-		Area:  g.Area(),
-		WKB:   raster.Serialize(),
-		Extra: map[string]any{"status": status},
-	}, true
+	return raster.Classify(lng, lat)
 }
 
 // Query is not meaningful for reach (it's a containment dataset, not KNN).
@@ -303,9 +392,9 @@ func (d *ReachDataset) Within(_ *Index, _ QueryParams) ([]int64, error) {
 	return nil, fmt.Errorf("reach dataset does not support within; use /containing")
 }
 
-// Containing implements PointContainer: all reaches whose raster says the
-// point is definitely inside (in) or on the boundary band (partial — caller
-// must exact-test these against rippling_reach.polygon).
+// Containing implements PointContainer: all reaches whose stored form says
+// the point is definitely inside (in) or cannot be decided locally (partial —
+// only legacy coarse-raster rows and unreadable blobs produce these).
 func (d *ReachDataset) Containing(idx *Index, lng, lat float64) (in []int64, partial []int64, err error) {
 	candidates, err := QueryBBox(idx, lng, lng, lat, lat)
 	if err != nil {
@@ -315,13 +404,7 @@ func (d *ReachDataset) Containing(idx *Index, lng, lat float64) (in []int64, par
 		if c.WKB == nil {
 			continue
 		}
-		raster, err := DeserializeRaster(c.WKB)
-		if err != nil {
-			// Corrupt blob: surface as partial so the exact test decides.
-			partial = append(partial, c.ExtID)
-			continue
-		}
-		switch raster.Classify(lng, lat) {
+		switch classifyReachBlob(c.WKB, lng, lat) {
 		case cellIn:
 			in = append(in, c.ExtID)
 		case cellPartial:

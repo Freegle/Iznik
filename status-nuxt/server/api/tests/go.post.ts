@@ -1,5 +1,5 @@
 import { spawn, execSync } from 'child_process'
-import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
+import { getTestState, setTestState, appendTestLogs, isTestRunning, condenseCrashDumps } from '../../utils/testState'
 import { checkContainersReady, containersNotReadyMessage } from '../../utils/requiredContainers'
 
 const prefix = process.env.COMPOSE_PROJECT_NAME || 'freegle'
@@ -14,6 +14,15 @@ export default defineEventHandler(async (event) => {
 
   const query = getQuery(event)
   const withCoverage = query.coverage === 'true'
+  // Optional ?filter=<regexp> narrows the run to matching test names. A full run
+  // takes minutes and its output is condensed, so a single failing test's
+  // assertion message is otherwise unreadable. Restricted to the characters a Go
+  // -run pattern needs, because it is interpolated into a shell command.
+  const rawFilter = typeof query.filter === 'string' ? query.filter : ''
+  const filter = /^[A-Za-z0-9_|^$/.\-]{1,200}$/.test(rawFilter) ? rawFilter : ''
+  if (rawFilter && !filter) {
+    throw createError({ statusCode: 400, message: 'filter may only contain Go test-name pattern characters' })
+  }
 
   // Check if already running
   if (isTestRunning('go')) {
@@ -45,6 +54,7 @@ export default defineEventHandler(async (event) => {
     message: 'Setting up Go test database...',
     logs: '',
     progress: { completed: 0, total: 0, passed: 0, failed: 0, current: '' },
+    failedTests: [],
     startTime: Date.now(),
     endTime: null,
     withCoverage,
@@ -63,9 +73,21 @@ export default defineEventHandler(async (event) => {
   // package normally finishes just under go test's default 10m, so under any extra DB
   // load (e.g. the Laravel suite running concurrently) it gets killed at exactly 600s
   // with zero test failures — a phantom red.
+  // The coverage variant also pins -p 1. Without it ~10 packages run concurrently
+  // against the single iznik_go_test database, on a runner where CI deliberately runs
+  // iznik-batch, Playwright, Go and Vitest in parallel (load hit 14.26 while Go was
+  // running, build 32736). Load-dependent error and timeout branches then get covered
+  // on one run and not the next, which is what puts "Coverage decreased (-0.004%)" —
+  // one statement — on commits containing no Go at all. Serialising costs effectively
+  // nothing here: Go finishes ~2m into a step whose critical path is Playwright at
+  // ~19m, so the suite can slow down several-fold without moving the job's wall clock,
+  // and the timeouts above it are 30m (go test) / 35m (orb poll) / 48m (watchdog).
+  // Not applied to the plain variant: no coverage is produced there, so determinism
+  // buys nothing and developers keep the faster parallel run.
+  const runArg = filter ? ` -run '${filter}'` : ''
   const testCmd = withCoverage
-    ? `export CGO_ENABLED=1 && export MYSQL_HOST=${perconaIp} && export MYSQL_DBNAME=iznik_go_test && go mod tidy && go test -v -race -timeout 30m -coverprofile=coverage.out ./... -coverpkg ./...`
-    : `export MYSQL_HOST=${perconaIp} && export MYSQL_DBNAME=iznik_go_test && go test -count=1 -timeout 30m ./... -v`
+    ? `export CGO_ENABLED=1 && export MYSQL_HOST=${perconaIp} && export MYSQL_DBNAME=iznik_go_test && go mod tidy && go test -v -race -p 1 -timeout 30m${runArg} -coverprofile=coverage.out ./... -coverpkg ./...`
+    : `export MYSQL_HOST=${perconaIp} && export MYSQL_DBNAME=iznik_go_test && go test -count=1 -timeout 30m${runArg} ./... -v`
 
   // Run tests asynchronously
   const testProcess = spawn('sh', ['-c', `
@@ -114,10 +136,17 @@ export default defineEventHandler(async (event) => {
         state.progress.passed++
         state.progress.completed++
       }
-      // Count failures: --- FAIL: TestName (top-level only)
-      if (line.match(/--- FAIL:/) && !line.match(/^\s{4,}--- FAIL:/)) {
+      // Count failures: --- FAIL: TestName (top-level only), and keep the names.
+      // go test buffers a package's output and flushes it all when the package
+      // finishes, so on the big integration package the FAIL lines arrive in one
+      // burst seconds before the process exits - and land in the middle that
+      // condenseCrashDumps elides, leaving a red run that names nothing.
+      const failMatch = line.match(/--- FAIL:\s+(\S+)/)
+      if (failMatch && !line.match(/^\s{4,}--- FAIL:/)) {
         state.progress.failed++
         state.progress.completed++
+        if (!state.failedTests) state.failedTests = []
+        state.failedTests.push(failMatch[1])
       }
     }
 
@@ -147,9 +176,12 @@ export default defineEventHandler(async (event) => {
         state.progress.passed++
         state.progress.completed++
       }
-      if (line.match(/--- FAIL:/) && !line.match(/^\s{4,}--- FAIL:/)) {
+      const failMatch = line.match(/--- FAIL:\s+(\S+)/)
+      if (failMatch && !line.match(/^\s{4,}--- FAIL:/)) {
         state.progress.failed++
         state.progress.completed++
+        if (!state.failedTests) state.failedTests = []
+        state.failedTests.push(failMatch[1])
       }
       setTestState('go', state)
       stdoutBuffer = ''
@@ -163,7 +195,11 @@ export default defineEventHandler(async (event) => {
       endTime: Date.now(),
       message: code === 0
         ? `All tests passed (${p.passed}✓)`
-        : `Tests failed (${p.passed}✓ ${p.failed}✗)`,
+        : `Tests failed (${p.passed}✓ ${p.failed}✗)` + (state.failedTests?.length ? `: ${state.failedTests.join(', ')}` : ''),
+      // A fatal crash dumps every goroutine; bound the dump so the panic
+      // header - the only part that names the crashing line - survives the
+      // orb's tail-limited failure report instead of being the part cut.
+      ...(code === 0 ? {} : { logs: condenseCrashDumps(state.logs) }),
     })
     console.log(`Go tests completed with code ${code}`)
   })

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/stretchr/testify/assert"
@@ -24,9 +25,9 @@ func TestNearbyReachFeed(t *testing.T) {
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
-		polygon GEOMETRY NOT NULL SRID 3857,
-		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
-		SPATIAL INDEX msgreach_poly (polygon)
+		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("nearbyreach")
@@ -51,20 +52,24 @@ func TestNearbyReachFeed(t *testing.T) {
 
 	// 'near': small reach polygon centred on the viewer -> post origin == viewer, so
 	// distance ≈ 0 and the closeness term is ≈ 1 (highest possible).
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", near)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells)", near, mustRasterize(t, "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"))
 	// 'far': reach polygon is well away (~53N, 2E) and does NOT cover the viewer -> excluded.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 53.0, 2.0, "+
-		"ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", far)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 53.0, 2.0, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells)", far, mustRasterize(t, "POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))"))
 	// 'midfar': a much bigger reach polygon whose origin (51.9,-0.1, ~44km from the viewer) is
 	// still far from the viewer, but the polygon is large enough to also cover the viewer -> the
 	// post IS in reach, but its origin is much less close than 'near's, so its closeness (and
 	// hence total) score must be lower.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.9, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", midfar)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.9, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells)", midfar, mustRasterize(t, "POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))"))
+
+	// The reach universe must come from THESE fixtures, not the real
+	// index built from another database.
+	stubReachIndexFromDB(t, false)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -130,9 +135,9 @@ func TestNearbyCountDistanceLimit(t *testing.T) {
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
-		polygon GEOMETRY NOT NULL SRID 3857,
-		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
-		SPATIAL INDEX msgreach_poly (polygon)
+		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("nearbycountdist")
@@ -149,16 +154,20 @@ func TestNearbyCountDistanceLimit(t *testing.T) {
 
 	// 'near': origin == viewer -> blurred distance is a small fraction of a mile (BLUR_USER is
 	// only 400m).
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", near)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells)", near, mustRasterize(t, "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"))
 	// 'far': origin ~44km (~27 miles) from the viewer, but its (large) reach polygon still
 	// covers the viewer, so it IS in the reach set -> counted when there's no distance limit.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.9, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", far)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.9, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells)", far, mustRasterize(t, "POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))"))
 
 	// No limit: both unseen reach-covered posts are counted (the sentinel/absent default).
+	// The reach universe must come from THESE fixtures, not the real
+	// index built from another database.
+	stubReachIndexFromDB(t, false)
+
 	unlimitedResp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
 	assert.Equal(t, 200, unlimitedResp.StatusCode)
 	var unlimitedBody map[string]interface{}
@@ -180,6 +189,13 @@ func TestNearbyCountDistanceLimit(t *testing.T) {
 	// settings.browseMaxDistance is honoured server-side too (no query param needed), so the
 	// app-wide navbar badge respects the slider without every call site passing it explicitly.
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.browseMaxDistance', 10) WHERE id = ?", viewerID)
+
+	// This asks the same question as the explicit maxDistance=10 call above - same viewer,
+	// same resolved distance - so it would be answered from the remembered count and pass
+	// whatever the server did with the setting. Forget it first, so the assertion below
+	// still proves the setting was read.
+	browsecount.Invalidate(viewerID)
+
 	settingResp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
 	assert.Equal(t, 200, settingResp.StatusCode)
 	var settingBody map[string]interface{}
@@ -200,9 +216,9 @@ func TestNearbyFeedHonoursDistanceLimit(t *testing.T) {
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
-		polygon GEOMETRY NOT NULL SRID 3857,
-		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
-		SPATIAL INDEX msgreach_poly (polygon)
+		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("nearbyfeeddist")
@@ -219,12 +235,16 @@ func TestNearbyFeedHonoursDistanceLimit(t *testing.T) {
 
 	// 'near' reach polygon covers the viewer; 'far' is ~27 miles away but its large reach
 	// polygon still covers the viewer, so both are in the reach set.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", near)
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.9, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", far)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells)", near, mustRasterize(t, "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"))
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.9, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells)", far, mustRasterize(t, "POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))"))
+
+	// The reach universe must come from THESE fixtures, not the real
+	// index built from another database.
+	stubReachIndexFromDB(t, false)
 
 	inFeed := func(url string) map[float64]bool {
 		resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil))
@@ -264,9 +284,9 @@ func TestNearbyFeedPostedIsOriginalArrival(t *testing.T) {
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
-		polygon GEOMETRY NOT NULL SRID 3857,
-		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
-		SPATIAL INDEX msgreach_poly (polygon)
+		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("nearbyposted")
@@ -286,9 +306,13 @@ func TestNearbyFeedPostedIsOriginalArrival(t *testing.T) {
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 
 	// Reach polygon covers the viewer so the post is on the nearby feed.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", msg)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells)", msg, mustRasterize(t, "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"))
+
+	// The reach universe must come from THESE fixtures, not the real
+	// index built from another database.
+	stubReachIndexFromDB(t, false)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -334,12 +358,16 @@ func TestNearbyReachFeedExcludesHeld(t *testing.T) {
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 
 	// Both reach polygons cover the viewer - only the status differs.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", live)
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'held') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", held)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells), status = VALUES(status)", live, mustRasterize(t, "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"))
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'held') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells), status = VALUES(status)", held, mustRasterize(t, "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"))
+
+	// The reach universe must come from THESE fixtures, not the real
+	// index built from another database.
+	stubReachIndexFromDB(t, false)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -365,9 +393,9 @@ func TestNearbyFeedHonoursAuthorDistanceLimit(t *testing.T) {
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
-		polygon GEOMETRY NOT NULL SRID 3857,
-		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
-		SPATIAL INDEX msgreach_poly (polygon)
+		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("nearbyauthordist")
@@ -387,12 +415,16 @@ func TestNearbyFeedHonoursAuthorDistanceLimit(t *testing.T) {
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 
 	// Both reach polygons cover the viewer; 'near' is at the viewer (~0mi), 'far' is ~27mi away.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", near)
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.9, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", far)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells)", near, mustRasterize(t, "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"))
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.9, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells)", far, mustRasterize(t, "POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))"))
+
+	// The reach universe must come from THESE fixtures, not the real
+	// index built from another database.
+	stubReachIndexFromDB(t, false)
 
 	inFeed := func(url string) map[float64]bool {
 		resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil))
@@ -411,6 +443,11 @@ func TestNearbyFeedHonoursAuthorDistanceLimit(t *testing.T) {
 	// The viewer has no distance limit of their own, so the unread count takes the fast (no per-post
 	// distance) path - which must ALSO honour the author cap so the badge matches the feed.
 	countOf := func() float64 {
+		// The badge may lag a post arriving or changing by a few seconds (see the
+		// browsecount package, whose own tests cover that). These tests are about which
+		// posts the counting SQL includes, so ask afresh rather than measure the reuse.
+		browsecount.Invalidate(viewerID)
+
 		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
 		assert.Equal(t, 200, resp.StatusCode)
 		var body map[string]interface{}
@@ -458,14 +495,23 @@ func TestNearbyCountExcludesHeld(t *testing.T) {
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 
 	// Both reach polygons cover the viewer - only the status differs.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", live)
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'held') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", held)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells), status = VALUES(status)", live, mustRasterize(t, "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"))
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'held') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells), status = VALUES(status)", held, mustRasterize(t, "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"))
+
+	// The reach universe must come from THESE fixtures, not the real
+	// index built from another database.
+	stubReachIndexFromDB(t, false)
 
 	countOf := func(url string) float64 {
+		// The badge may lag a post arriving or changing by a few seconds (see the
+		// browsecount package, whose own tests cover that). These tests are about which
+		// posts the counting SQL includes, so ask afresh rather than measure the reuse.
+		browsecount.Invalidate(viewerID)
+
 		resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil))
 		assert.Equal(t, 200, resp.StatusCode)
 		var body map[string]interface{}
@@ -492,11 +538,11 @@ func TestNearbyCountExcludesHeld(t *testing.T) {
 		"releasing the held reach adds exactly that post to the distance-limited badge count")
 }
 
-// TestNearbyCountSpatialReach: with SPATIAL_REACH_MODE=on the badge count takes its reach
-// containment from the spatial server (stubbed here): `in` ids count directly, `partial`
-// ids are exact-tested against rippling_reach.polygon (including a held re-check newer
-// than the spatial index), and a spatial failure falls back to the SQL containment path
-// with the same answer.
+// TestNearbyCountSpatialReach: the badge count takes its reach containment from the
+// spatial server (stubbed here): `in` ids count directly (with a held re-check newer
+// than the spatial index), `partial` ids - legacy coarse-raster rows healthy indexes no
+// longer produce - are logged and excluded, and a spatial failure falls back to the
+// degraded outer-bound + cells-probe path with the same answer.
 func TestNearbyCountSpatialReach(t *testing.T) {
 	db := database.DBConn
 
@@ -518,15 +564,18 @@ func TestNearbyCountSpatialReach(t *testing.T) {
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 
-	coveringPoly := "ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)"
-	elsewherePoly := "ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857)"
+	coveringWKT := "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"
+	elsewhereWKT := "POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))"
+	coveringCells := mustRasterize(t, coveringWKT)
+	elsewhereCells := mustRasterize(t, elsewhereWKT)
 	for _, row := range []struct {
 		msgid uint64
-		poly  string
-	}{{covered, coveringPoly}, {boundary, coveringPoly}, {outside, elsewherePoly}} {
-		db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-			row.poly+", ST_Envelope("+row.poly+"), 'expanding') "+
-			"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", row.msgid)
+		cells []byte
+		wkt   string
+	}{{covered, coveringCells, coveringWKT}, {boundary, coveringCells, coveringWKT}, {outside, elsewhereCells, elsewhereWKT}} {
+		db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+			"ST_Envelope(ST_GeomFromText('"+row.wkt+"', 3857)), 'expanding') "+
+			"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells), status = VALUES(status)", row.msgid, row.cells)
 	}
 
 	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -535,13 +584,19 @@ func TestNearbyCountSpatialReach(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"in":[%d],"partial":[%d,%d]}`, covered, boundary, outside)
+		// `outside` comes back as a partial id: healthy cells-backed rows never
+		// produce one, so the client must log and EXCLUDE it, never count it.
+		fmt.Fprintf(w, `{"in":[%d,%d],"partial":[%d]}`, covered, boundary, outside)
 	}))
 	defer stub.Close()
-	t.Setenv("SPATIAL_REACH_MODE", "on")
 	t.Setenv("SPATIAL_KNN_URL", stub.URL)
 
 	countOf := func() float64 {
+		// The badge may lag a post arriving or changing by a few seconds (see the
+		// browsecount package, whose own tests cover that). These tests are about which
+		// posts the counting SQL includes, so ask afresh rather than measure the reuse.
+		browsecount.Invalidate(viewerID)
+
 		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
 		assert.Equal(t, 200, resp.StatusCode)
 		var body map[string]interface{}
@@ -550,17 +605,16 @@ func TestNearbyCountSpatialReach(t *testing.T) {
 		return c
 	}
 
-	// Spatial path: `covered` counts from the in-list, `boundary` survives the exact
-	// test, `outside` is excluded by it. The stub only returns these three ids, so the
-	// count is exact (no >= hedging needed).
+	// Spatial path: `covered` and `boundary` count from the in-list; `outside`
+	// is a partial id and is excluded. The stub only returns these three ids,
+	// so the count is exact (no >= hedging needed).
 	assert.Equal(t, float64(2), countOf(),
-		"in-list counts directly; partial ids resolve by the exact polygon test")
+		"in-list counts directly; partial ids are excluded, never counted")
 
-	// A hold newer than the spatial index must still hide the post: flip `boundary`
-	// (a partial id, so the SQL exact test sees the fresh status) to held.
+	// A hold newer than the spatial index must still hide the post.
 	db.Exec("UPDATE rippling_reach SET status = 'held' WHERE msgid = ?", boundary)
 	assert.Equal(t, float64(1), countOf(),
-		"a freshly-held partial id is re-checked in SQL and excluded")
+		"a freshly-held in-list id is re-checked in SQL and excluded")
 	db.Exec("UPDATE rippling_reach SET status = 'expanding' WHERE msgid = ?", boundary)
 
 	// The same must hold for a definite `in` id. The raster is rebuilt on a 2-minute
@@ -582,15 +636,13 @@ func TestNearbyCountSpatialReach(t *testing.T) {
 	assert.Equal(t, float64(1), countOf(),
 		"an in-list id whose reach row has gone is not counted")
 	// Put it back: the fallback assertions below expect both posts in reach again.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-		coveringPoly+", ST_Envelope("+coveringPoly+"), 'expanding')", covered)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('"+coveringWKT+"', 3857)), 'expanding')", covered, coveringCells)
 
-	// Spatial down: transparent fallback to the SQL containment path, same answer.
+	// Spatial down: transparent fallback to the degraded outer-bound +
+	// cells-probe path, same answer - `outside` is pruned by its own outer
+	// bound and the two covering grids probe true.
 	stub.Close()
 	assert.Equal(t, float64(2), countOf(),
-		"spatial failure falls back to the SQL containment path with the same result")
-
-	// Mode off: SQL path even with a (dead) URL configured.
-	t.Setenv("SPATIAL_REACH_MODE", "")
-	assert.Equal(t, float64(2), countOf(), "mode off uses the SQL path")
+		"spatial failure falls back to the outer-bound + cells-probe path with the same result")
 }

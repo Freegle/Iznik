@@ -12,22 +12,22 @@
         Rippling Out Explorer
       </div>
       <div id="rippling-panel-body">
+        <!-- Two tabs. "Reach from a place" answers both directions for one pin, so the
+             direction sits inside it as a selector rather than as a third tab: the
+             postcode you typed is the same postcode either way, and re-entering it to
+             flip direction was the whole reason the old split was awkward. -->
         <div
           id="rippling-view-mode"
           class="rpl-mode-row"
           style="margin-bottom: 8px"
         >
-          <button class="rpl-mode-btn rpl-active" data-view="catchment">
+          <button class="rpl-mode-btn rpl-active" data-tab="catchment">
             <span class="rpl-icon">🎯</span
             ><span class="rpl-mode-label">Group catchment</span>
           </button>
-          <button class="rpl-mode-btn" data-view="outbound">
-            <span class="rpl-icon">📡</span
-            ><span class="rpl-mode-label">Who could see my post</span>
-          </button>
-          <button class="rpl-mode-btn" data-view="inbound">
-            <span class="rpl-icon">📥</span
-            ><span class="rpl-mode-label">Digest preview</span>
+          <button class="rpl-mode-btn" data-tab="reach">
+            <span class="rpl-icon">📍</span
+            ><span class="rpl-mode-label">Reach from a place</span>
           </button>
         </div>
 
@@ -35,35 +35,55 @@
           <input
             id="rippling-search-box"
             type="text"
-            placeholder="Search UK location…"
+            placeholder="Postcode or place…"
             autocomplete="off"
           />
           <ul id="rippling-search-results"></ul>
         </div>
 
+        <!-- Which way round to read the pin. Outbound treats it as the poster, inbound
+             as the recipient; the geometry is the same drive-time isochrone either way,
+             but the minutes that bind it are not, which is the point of the toggle. -->
+        <div
+          id="rippling-direction"
+          class="rpl-mode-row"
+          style="display: none; margin: 8px 0 4px"
+        >
+          <button class="rpl-mode-btn rpl-active" data-dir="outbound">
+            <span class="rpl-icon">📡</span
+            ><span class="rpl-mode-label">Who can see my posts</span>
+          </button>
+          <button class="rpl-mode-btn" data-dir="inbound">
+            <span class="rpl-icon">📥</span
+            ><span class="rpl-mode-label">Whose posts can I see</span>
+          </button>
+        </div>
+
         <div id="rippling-intro-outbound" class="rpl-intro">
-          Drop a marker. The map shows how a post made there would ripple out:
-          who is eligible to see this post, in what order, and how fast the wave
-          spreads.
+          Drop a pin, or type a postcode. The map shows how far a post made
+          there ripples out, and which Freeglers and groups are close enough to
+          be shown it.
         </div>
         <div
           id="rippling-intro-inbound"
           class="rpl-intro"
           style="display: none"
         >
-          Drop a marker. The map shows what would appear in a digest sent to a
-          member at that spot — every post within their reach (the radius below)
-          over the last 24 hours, in the order set by the sliders further down.
+          Drop a pin, or type a postcode. The map shows how far someone there is
+          shown posts from — a limit set by how built-up their area is, not by
+          any one post.
         </div>
         <div
           id="rippling-intro-catchment"
           class="rpl-intro"
           style="display: none"
         >
-          Pick a group. The map shows the group's own area (blue outline) and —
-          outside it — the catchment: the area from which posts could in theory ripple
-          IN to that group, heat-shaded by how quickly a post there would arrive by
-          road (see the key, bottom-left).
+          Start typing a group name in the Group box below — it will suggest
+          matches as you type. The map will then outline that group's own area
+          in blue and, outside it, heat-shade the catchment: the area from which
+          posts could in theory ripple IN to it, by how quickly a post there
+          would arrive by road (see the key, bottom-left). Until you choose one
+          there is nothing to draw, so the map stays empty.
         </div>
         <div
           id="rippling-catchment-panel"
@@ -86,26 +106,6 @@
             />
             <datalist id="rippling-catchment-grouplist"></datalist>
           </label>
-          <div id="rippling-catchment-reach" class="rpl-reach-toggle">
-            <span class="rpl-reach-toggle-label">Reach model</span>
-            <label
-              ><input
-                type="radio"
-                name="rippling-catchment-reach"
-                value="current"
-                checked
-              />
-              Current (30-min)</label
-            >
-            <label
-              ><input
-                type="radio"
-                name="rippling-catchment-reach"
-                value="audience"
-              />
-              Possible alternative (audience-based)</label
-            >
-          </div>
           <div
             id="rippling-catchment-extent"
             class="rpl-extent-card"
@@ -128,36 +128,26 @@
               >Open directions in Google Maps →</a
             >
           </div>
-          <div
-            id="rippling-catchment-audience"
-            class="rpl-audience-caption"
-            style="display: none"
-          ></div>
-        </div>
-
-        <!-- Inbound: "What's in the digest" group — controls which posts -->
-        <div
-          id="rippling-sim-contents"
-          class="rpl-sim-group"
-          style="display: none"
-        >
-          <div class="rpl-sim-group-title">What's in the digest</div>
-          <div class="rpl-sim-group-sub">
-            How far we look for posts. Bigger reach = more posts in the digest.
-          </div>
         </div>
 
         <div id="rippling-time-row" class="rpl-slider-row">
           <div class="rpl-slider-label">
-            <span>Maximum reach</span>
+            <!-- Rewritten per direction: outbound it is how far the post travels,
+                 inbound how far the member is shown posts from. -->
+            <span id="rippling-time-label">Maximum reach</span>
           </div>
+          <!-- value AND max are set from REACH_CEILING_MINUTES on init
+               (setupRipplingExplorer); these attributes are the pre-hydration
+               defaults and must match it. The max used to run to 60 so the slider
+               could be dragged past the ceiling, which drew a reach no post ever
+               gets - the explorer shows what we do, not what we might do. -->
           <input
             id="rippling-time-slider"
             type="range"
             min="1"
-            max="60"
+            max="45"
             step="1"
-            value="30"
+            value="45"
           />
           <div
             style="
@@ -170,115 +160,19 @@
           >
             <span>Short</span><span>Long</span>
           </div>
-          <div class="rpl-slider-help" id="rippling-time-help">
-            The default setting is the reach we actually use in production now. Raise
-            it only to explore a larger, hypothetical reach.
-          </div>
-        </div>
-
-        <!-- Inbound: pie chart + counts (the result of "what's in") -->
-        <div id="rippling-sim-pie-wrap" style="display: none">
+          <!-- Filled from reachSliderHelp() on init so the numbers come from one place. -->
+          <div id="rippling-time-help" class="rpl-slider-help"></div>
+          <!-- Inbound only: the band and cap that actually bind this member. Outbound the
+               pin's own area is irrelevant and the caption above already says so, which
+               is why there is one box here and not two saying the same thing. -->
           <div
-            style="display: flex; gap: 8px; align-items: center; margin: 6px 0"
-          >
-            <svg
-              id="rippling-pie"
-              width="56"
-              height="56"
-              viewBox="-1 -1 2 2"
-              style="flex-shrink: 0; transform: rotate(-90deg)"
-            >
-              <circle r="1" fill="#eee" />
-            </svg>
-            <div
-              id="rippling-home-summary"
-              style="font-size: 11px; color: #555; line-height: 1.4; flex: 1"
-            ></div>
-          </div>
-        </div>
-
-        <!-- Inbound: "What order is it in?" group title — sits OUTSIDE the rail like the other heading, for visual consistency. -->
-        <div
-          id="rippling-sim-sort-title"
-          class="rpl-sim-group"
-          style="display: none"
-        >
-          <div class="rpl-sim-group-title">What order is it in?</div>
-          <div class="rpl-sim-group-sub">
-            How we rank the posts inside the digest. These don't change what's
-            <em>in</em> it, just the order.
-          </div>
-        </div>
-
-        <div id="rippling-inbound-row" style="display: none">
-          <div class="rpl-sim-knob">
-            <label>Closeness <span id="rippling-w-close-val">1.0</span></label>
-            <input
-              id="rippling-w-close"
-              type="range"
-              min="0"
-              max="2"
-              step="0.1"
-              value="1.0"
-            />
-            <div class="rpl-sim-help">
-              Higher = closer posts go higher in the digest.
-            </div>
-          </div>
-          <div class="rpl-sim-knob">
-            <label
-              >Eyeballs budget
-              <span id="rippling-w-budget-val">1.0</span></label
-            >
-            <input
-              id="rippling-w-budget"
-              type="range"
-              min="0"
-              max="2"
-              step="0.1"
-              value="1.0"
-            />
-            <div class="rpl-sim-help">
-              Higher = posts few people have viewed yet go higher (spreads
-              attention to undersubscribed posts).
-            </div>
-          </div>
-          <div class="rpl-sim-knob">
-            <label
-              >Home-group anchor
-              <span id="rippling-w-anchor-val">0.0</span></label
-            >
-            <input
-              id="rippling-w-anchor"
-              type="range"
-              min="0"
-              max="2"
-              step="0.1"
-              value="0"
-            />
-            <div class="rpl-sim-help">
-              Higher = posts in the member's home group (the default group for
-              their postcode) go higher in the digest.
-            </div>
-          </div>
-          <button id="rippling-show-digest" class="rpl-digest-btn">
-            📄 Show digest mock-up
-          </button>
-
-          <div
-            id="rippling-sim-summary"
-            style="
-              font-size: 11px;
-              color: #555;
-              margin-top: 6px;
-              line-height: 1.5;
-              padding-top: 6px;
-              border-top: 1px solid #f0f0f0;
-            "
+            id="rippling-recipient-cap"
+            class="rpl-slider-help"
+            style="display: none"
           ></div>
         </div>
 
-        <div class="rpl-slider-row">
+        <div id="rippling-fairness-row" class="rpl-slider-row">
           <div class="rpl-slider-label">
             <span>Fairness adjustment</span>
             <span style="display: flex; align-items: center; gap: 6px">
@@ -325,13 +219,17 @@
 
         <div id="rippling-stats"></div>
 
-        <div class="rpl-ripple-row">
+        <div id="rippling-ripple-row" class="rpl-ripple-row">
           <button id="rippling-btn">▶ Animate ripple</button>
           <span id="rippling-info" class="rpl-ripple-info"
             >by drive · 1–30 min</span
           >
         </div>
-        <div class="rpl-slider-row" style="margin-top: 6px; margin-bottom: 4px">
+        <div
+          id="rippling-speed-row"
+          class="rpl-slider-row"
+          style="margin-top: 6px; margin-bottom: 4px"
+        >
           <div class="rpl-slider-label">
             <span style="font-size: 11px">Animation speed</span>
           </div>
@@ -363,6 +261,7 @@
         </div>
 
         <div
+          id="rippling-layer-toggles"
           style="
             display: flex;
             align-items: center;
@@ -381,7 +280,7 @@
             >Show:</span
           >
           <div class="rpl-layer-toggles" style="margin-top: 0">
-            <label class="rpl-layer-toggle"
+            <label id="rippling-tog-quintiles-label" class="rpl-layer-toggle"
               ><input id="rippling-tog-quintiles" type="checkbox" checked />
               Deprivation</label
             >
@@ -393,16 +292,7 @@
               ><input id="rippling-tog-groups" type="checkbox" checked />
               Groups</label
             >
-            <label class="rpl-layer-toggle"
-              ><input id="rippling-tog-audience" type="checkbox" />
-              Proposed: audience-based reach</label
-            >
           </div>
-          <div
-            id="rippling-audience-caption"
-            class="rpl-audience-caption"
-            style="display: none; width: 100%"
-          ></div>
         </div>
 
         <div
@@ -415,6 +305,7 @@
           "
         >
           <div
+            id="rippling-groups-title"
             style="
               font-size: 11px;
               font-weight: 600;
@@ -458,19 +349,15 @@
         <div id="rippling-tl-tick-layer"></div>
       </div>
     </div>
-
-    <RipplingDigestModal ref="digestModal" />
   </div>
 </template>
 
 <script setup>
-import RipplingDigestModal from './RipplingDigestModal.vue'
 import RipplingLegend from './RipplingLegend.vue'
 import { onMounted, onUnmounted, ref } from '#imports'
 import { setupRipplingExplorer } from '~/composables/rippling/setupRipplingExplorer.js'
 import './RipplingExplorer.css'
 
-const digestModal = ref(null)
 const legendMode = ref('outbound')
 // Heatmap key for the catchment tab: [{ color, label }] per drive-time band, populated
 // by drawCatchment from the actual band minutes so the key matches what's on the map.
@@ -479,6 +366,10 @@ const catchmentLegend = ref([])
 const props = defineProps({
   spatialUrl: { type: String, default: 'http://localhost:8196' },
   jwt: { type: String, default: '' },
+  // apiv2, for /town/near — the ONLY source of a point's density band and cap that
+  // isn't a fourth reimplementation of the band policy. Empty disables the lookup and
+  // the band line simply stays hidden.
+  apiv2Url: { type: String, default: '' },
   // Minimal mode (e.g. embedded in the per-post reach modal): hide the controls
   // panel and legend, leaving just the map, the ripple point and the time scrubber.
   minimal: { type: Boolean, default: false },
@@ -496,19 +387,29 @@ const props = defineProps({
   // The ACTUAL stored reach outline (GeoJSON Polygon string or object, from the mod-only
   // /message/{id}/reach endpoint). Arrives after mount (fetched separately), so it's watched.
   actualReach: { type: [String, Object], default: null },
+  // The post's overflow RINGS, keyed by lane ("rural.sparse", "cluster.w1"), each
+  // GeoJSON, from the same mod-only endpoint. Drawn over the reach as outlines: a post
+  // reaches these members too, and a map that shows only the reach says it does not -
+  // which is wrong for precisely the rural posts a moderator is most likely to be
+  // checking.
+  overflowRings: { type: Object, default: null },
   // Suppress the projected (schedule-modelled) reach polygons, leaving the actual stored
   // reach as the only reach drawn. For the per-post reach modal: once we can show where a
   // post really got to, a model of where it should have got to is just a second, contradictory
   // outline on the same map. The standalone explorer - which has no actual reach to show -
   // leaves this false and keeps the projection.
   hideProjection: { type: Boolean, default: false },
+  // The viewer's own group names. The catchment tab is useless until a group is
+  // picked, and a moderator almost always wants one of theirs, so when they have
+  // exactly one we open on it rather than on an empty map. More than one is
+  // ambiguous, so those get the focused picker instead of an arbitrary choice.
+  myGroupNames: { type: Array, default: () => [] },
 })
 
 let cleanup = null
 onMounted(async () => {
   cleanup = await setupRipplingExplorer({
     props,
-    digestModal,
     legendMode,
     catchmentLegend,
   })

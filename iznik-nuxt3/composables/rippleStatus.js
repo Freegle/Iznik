@@ -155,7 +155,7 @@ export function rippledInAreaDates(groups, myGroups) {
   // Normalise the viewer's group ids into a set (accepts {id} objects or bare ids).
   const mine = new Set()
   for (const g of myGroups || []) {
-    const raw = g && typeof g === 'object' ? g.id ?? g.groupid : g
+    const raw = g && typeof g === 'object' ? (g.id ?? g.groupid) : g
     const n = parseInt(raw)
     if (!Number.isNaN(n)) mine.add(n)
   }

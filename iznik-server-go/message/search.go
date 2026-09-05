@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 	"strconv"
@@ -105,6 +106,12 @@ type SearchResult struct {
 	// reflect the member's "How far away" slider and "Closest" sort. 0 when the member has no
 	// known location (logged out).
 	Distance float64 `json:"distance" gorm:"-"`
+	// Roadmins/Roadmiles mirror the feed summaries' fields: drive time and road miles from
+	// the member, stamped in one batched routing call when their drive-minutes budget is in
+	// play, so the client's payload-only verdict and Closest sort see the same numbers the
+	// server filtered and ordered by. Nil when not fetched or the engine had no answer.
+	Roadmins  *float64 `json:"roadmins,omitempty" gorm:"-"`
+	Roadmiles *float64 `json:"roadmiles,omitempty" gorm:"-"`
 }
 
 func GetWords(search string) []string {
@@ -240,19 +247,69 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 		// fixed golden with no unresolved gap (the manifest's stale,
 		// presentInCode=false 7ef7f895e8bf is the pre-fix snapshot), so this
 		// is an ordinary fixed-shape multi-join query, not a many-shapes site.
-		db.Table("rippling_reach rr").
-			Select("ms.msgid").
-			Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
-			Joins("INNER JOIN messages m ON m.id = ms.msgid").
-			Joins("INNER JOIN users au ON au.id = m.fromuser").
-			Where("ms.successful = 0 AND rr.status != 'held' "+
-				"AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) "+
-				"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "+
-				utils.AuthorReachCapWhere,
-				lng, lat, utils.SRID,
-				lng, lat, utils.SRID,
-				float64(9007199254740991), lat, lng, lat).
-			Scan(&reachIDs)
+		// Containment matches the feed: the committed reach, or any overflow ring
+		// that admits this viewer (rippling.ViewerOverflowPaths - the same answer
+		// the feed and badge give, so a post can never be scrollable but
+		// unsearchable). The author cap stays outside the OR: it is the author's
+		// own preference and applies however the viewer got in.
+		// TWO ARMS, TWO QUERIES - deliberately not one OR.
+		//
+		// The committed-reach arm. Preferred source: the spatial index's id
+		// list (exact, from the stored cell grids - the same authority the
+		// feed and badge use), narrowed here by the same visibility and
+		// author-cap conjuncts, bounded by primary key. The legacy geometry
+		// SQL survives as the fallback while its columns exist; once they are
+		// dropped the last resort is the outer-bound superset with each
+		// candidate probed against its stored cells in Go.
+		//
+		// History, because this is the exact query the 2026-08-21 outage hit:
+		// the SQL form is driven by the outer_bound R-tree, and ORing the
+		// ring test into it removed that index (EXPLAIN: key=
+		// rippling_reach_polygon rows=1 becomes key=NULL rows=62,534) and
+		// full-scanned a 17GB table on every cold cache fill - 70+ concurrent
+		// copies, 250 running threads, load 158. The ring test stays out of
+		// every form here.
+		reachIDs = searchReachArmIDs(db, lng, lat)
+
+		// Ring arm. The posts an overflow ring admits this viewer to, resolved
+		// through rippling.AdmittedMsgids - the spatial server's rasters, with
+		// only the boundary band going to the JSON. The ids arrive already
+		// decided, so all that is left here is the same visibility and
+		// author-cap filtering the committed arm applies, bounded by primary
+		// key. No ring test reaches this query at all: it is the shape, not the
+		// volume, that took the site down.
+		if admitted := rippling.AdmittedMsgids(db, lng, lat, utils.SRID,
+			rippling.ViewerOverflowPaths(db, myid, float32(lat), float32(lng))); len(admitted) > 0 {
+			var ringIDs []uint64
+			rArgs := []interface{}{admitted}
+			rArgs = append(rArgs, float64(9007199254740991), lat, lng, lat)
+
+			if err := db.Table("rippling_reach rr").
+				Select("ms.msgid").
+				Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
+				Joins("INNER JOIN messages m ON m.id = ms.msgid").
+				Joins("INNER JOIN users au ON au.id = m.fromuser").
+				Where("ms.successful = 0 AND rr.status != 'held' AND rr.msgid IN (?) "+
+					utils.AuthorReachCapWhere,
+					rArgs...).
+				Scan(&ringIDs).Error; err != nil {
+				fmt.Printf("search: overflow ring arm gave up (%v)\n", err)
+			}
+
+			if len(ringIDs) > 0 {
+				seen := make(map[uint64]bool, len(reachIDs))
+				for _, id := range reachIDs {
+					seen[id] = true
+				}
+				for _, id := range ringIDs {
+					if !seen[id] {
+						reachIDs = append(reachIDs, id)
+						seen[id] = true
+					}
+				}
+			}
+		}
+
 		storeReachUniverse(key, reachIDs, now)
 	}
 
@@ -576,4 +633,83 @@ func SearchByMsgID(db *gorm.DB, msgid uint64, groupids []uint64) []SearchResult 
 	}
 
 	return results
+}
+
+// searchReachArmIDs resolves the committed-reach arm of the search universe:
+// which live posts' current reach covers this viewer, filtered by the same
+// visibility and author-cap conjuncts as the feed. Two forms, in preference
+// order, mirroring the feed's reachContainmentSQL:
+//
+//  1. Spatial-index id list (exact, from the stored cell grids), narrowed by
+//     a primary-key IN - the keyed lookup shape.
+//  2. Degraded (spatial down): outer-bound superset in SQL, each candidate
+//     probed against its stored cells here. Correct and bounded, just
+//     slower - the emergency path.
+func searchReachArmIDs(db *gorm.DB, lng, lat float64) []uint64 {
+	authorCapArgs := []interface{}{float64(9007199254740991), lat, lng, lat}
+	var reachIDs []uint64
+
+	if in, partial, ok := rippling.SpatialReachIDs(db, lng, lat); ok {
+		if len(partial) > 0 {
+			// Impossible for healthy rows (partial meant a legacy
+			// coarse-raster row); do not silently hide posts.
+			fmt.Printf("search: %d partial reach ids with no legacy geometry to resolve them\n", len(partial))
+		}
+		// Labels-truth: the same narrowing AND discovery union the feed
+		// applies, so search can never surface a post browse hides - nor
+		// hide a discovered post browse shows (the file's own invariant:
+		// never scrollable but unsearchable). The SQL below still applies
+		// every visibility conjunct to the discovered ids.
+		ids := make([]uint64, len(in))
+		for i, id := range in {
+			ids[i] = uint64(id)
+		}
+		verdicts, discovered := rippling.LabelVerdictsWithDiscover(lat, lng, ids)
+		in = rippling.DropLabelOut(in, verdicts)
+		for _, id := range discovered {
+			in = append(in, int64(id))
+		}
+		db.Table("rippling_reach rr").
+			Select("ms.msgid").
+			Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
+			Joins("INNER JOIN messages m ON m.id = ms.msgid").
+			Joins("INNER JOIN users au ON au.id = m.fromuser").
+			Where("ms.successful = 0 AND rr.status != 'held' "+
+				"AND rr.msgid IN (?) "+utils.AuthorReachCapWhere,
+				append([]interface{}{in}, authorCapArgs...)...).
+			Scan(&reachIDs)
+		return reachIDs
+	}
+
+	// Degraded: outer-bound superset + Go-side cells probe. Rows the probe
+	// cannot decide (a RETIRED grid: the label + union threshold replaced
+	// its cells) get one batched label evaluation - the same rescue the
+	// feed's degraded path applies (filterProbed) - so a spatial-index
+	// outage alone does not desynchronise search from browse; only spatial
+	// AND routing down together fails closed.
+	var cands []struct {
+		Msgid uint64 `gorm:"column:msgid"`
+		Cells []byte `gorm:"column:cells"`
+	}
+	args := []interface{}{lng, lat, utils.SRID}
+	db.Table("rippling_reach rr").
+		Select("ms.msgid, "+rippling.ReachCellsExpr(db)+" AS cells").
+		Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
+		Joins("INNER JOIN messages m ON m.id = ms.msgid").
+		Joins("INNER JOIN users au ON au.id = m.fromuser").
+		Where("ms.successful = 0 AND rr.status != 'held' "+
+			"AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) "+
+			utils.AuthorReachCapWhere,
+			append(args, authorCapArgs...)...).
+		Scan(&cands)
+	var undecided []uint64
+	for _, c := range cands {
+		if in, ok := rippling.CellSetContains(c.Cells, lng, lat); ok && in {
+			reachIDs = append(reachIDs, c.Msgid)
+		} else if len(c.Cells) == 0 {
+			undecided = append(undecided, c.Msgid)
+		}
+	}
+	reachIDs = append(reachIDs, rippling.RescueUndecided(lat, lng, undecided)...)
+	return reachIDs
 }

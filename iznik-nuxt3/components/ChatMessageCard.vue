@@ -39,17 +39,6 @@
           :width="300"
           :height="300"
         />
-        <NuxtPicture
-          v-else-if="message.attachments[0]?.externaluid"
-          format="webp"
-          provider="uploadcare"
-          :src="message.attachments[0].externaluid"
-          :modifiers="message.attachments[0].externalmods"
-          alt="Item Photo"
-          class="photo-image"
-          :width="300"
-          :height="300"
-        />
         <ProxyImage
           v-else-if="message.attachments[0]?.path"
           class-name="photo-image"
@@ -223,7 +212,8 @@ function goToMessage() {
   overflow: hidden;
 
   &.offer-gradient {
-    background: radial-gradient(
+    background:
+      radial-gradient(
         ellipse at 30% 20%,
         rgba(129, 199, 132, 0.9) 0%,
         transparent 50%
@@ -242,7 +232,8 @@ function goToMessage() {
   }
 
   &.wanted-gradient {
-    background: radial-gradient(
+    background:
+      radial-gradient(
         ellipse at 25% 25%,
         rgba(144, 202, 249, 0.9) 0%,
         transparent 45%

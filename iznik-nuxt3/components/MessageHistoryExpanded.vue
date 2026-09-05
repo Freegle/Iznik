@@ -43,8 +43,13 @@
         </nuxt-link>
       </div>
       <SupporterInfo v-if="fromuser?.supporter" class="d-inline" />
-      <div v-if="milesaway" class="align-middle" @click="showProfileModal">
-        About {{ milesPlural }} away
+      <div
+        v-if="milesaway"
+        :title="milesIsRoad ? DISTANCE_TOOLTIP_ROAD : DISTANCE_TOOLTIP"
+        class="align-middle"
+        @click="showProfileModal"
+      >
+        About {{ milesPlural }} away<span v-if="milesIsRoad"> by road</span>
       </div>
       <div
         v-for="group in message.groups"
@@ -75,9 +80,11 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, defineAsyncComponent } from 'vue'
+import { ref, computed } from 'vue'
 import pluralize from 'pluralize'
 import { milesAway } from '~/composables/useDistance'
+import { DISTANCE_TOOLTIP, DISTANCE_TOOLTIP_ROAD } from '~/constants'
+import { roadDistance, roadMilesRounded } from '~/composables/useDriveDistance'
 import { useUserStore } from '~/stores/user'
 import ProfileImage from '~/components/ProfileImage'
 import { useMessageStore } from '~/stores/message'
@@ -116,13 +123,30 @@ const fromuser = computed(() => {
     : null
 })
 
+const roadDist = computed(() => {
+  if (message.value?.roadmins != null) {
+    // Shipped with the message fetch itself (server-side batched call).
+    return { mins: message.value.roadmins, miles: message.value.roadmiles }
+  }
+  if (!message.value?.lat) {
+    return null
+  }
+  return roadDistance(message.value.lat, message.value.lng).value
+})
+
 const milesaway = computed(() => {
+  const road = roadDist.value
+  if (road?.miles != null) {
+    return roadMilesRounded(road.miles)
+  }
   return milesAway(me?.lat, me?.lng, message.value?.lat, message.value?.lng)
 })
 
 const milesPlural = computed(() => {
   return pluralize('mile', milesaway.value, true)
 })
+
+const milesIsRoad = computed(() => roadDist.value?.miles != null)
 
 const openOfferPlural = computed(() => {
   return message.value && fromuser.value && fromuser.value.info

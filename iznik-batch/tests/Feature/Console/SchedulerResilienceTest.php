@@ -143,4 +143,60 @@ class SchedulerResilienceTest extends TestCase
         // silently passing because nothing loaded.
         $this->assertGreaterThan(50, $guarded, 'expected many overlap-guarded scheduled jobs');
     }
+
+    /**
+     * Every scheduled command must actually be RUNNABLE as scheduled. A no-value flag passed
+     * as ['--flag' => true] compiles to --flag='1', which Symfony rejects with "does not
+     * accept a value" - so the job would error every single night while the schedule listing
+     * looked perfectly healthy. Caught exactly that on browse:backfill-max-distance
+     * --missing-only before it shipped.
+     *
+     * Parses each scheduled artisan command's options against the command's own definition,
+     * which is the check that would have failed.
+     */
+    public function test_every_scheduled_command_parses_against_its_own_definition(): void
+    {
+        $schedule = new Schedule();
+        ScheduleFacade::swap($schedule);
+        require base_path('routes/console.php');
+
+        $checked = 0;
+        foreach ($schedule->events() as $event) {
+            $cmd = $event->command ?? '';
+            if (! preg_match('/artisan[\'"]?\s+(.*)$/', $cmd, $m)) {
+                continue;
+            }
+
+            // Split the scheduled argument string the way the shell would.
+            $argv = str_getcsv(trim($m[1]), ' ', "'");
+            $name = array_shift($argv);
+            if ($name === null || $name === '' || str_starts_with($name, '-')) {
+                continue;
+            }
+
+            $console = $this->app->make(\Illuminate\Contracts\Console\Kernel::class);
+            $console->bootstrap();
+            $all = $console->all();
+            if (! isset($all[$name])) {
+                continue; // not an artisan command we own (or is conditionally registered)
+            }
+
+            $definition = $all[$name]->getDefinition();
+            // ArgvInput drops its FIRST element as the script name, so the command name goes
+            // there. Passing ['artisan', $name, ...] instead makes $name look like a positional
+            // argument and every command fails with "No arguments expected".
+            $input = new \Symfony\Component\Console\Input\ArgvInput(
+                array_merge([$name], array_filter($argv, fn ($a) => $a !== null && $a !== ''))
+            );
+
+            try {
+                $input->bind($definition);
+                $checked++;
+            } catch (\Throwable $e) {
+                $this->fail("Scheduled command is not runnable as scheduled: [{$cmd}] - {$e->getMessage()}");
+            }
+        }
+
+        $this->assertGreaterThan(0, $checked, 'no scheduled artisan commands were checked');
+    }
 }

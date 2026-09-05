@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -381,10 +382,11 @@ func TestDeleteMembershipsModRemovesMember(t *testing.T) {
 // the row is written at all.
 //
 // AssertFlip protocol (fix already in master via 0d342ced6):
-//   Step 1 — Assert CORRECT behaviour (passes on fixed master):
-//     Group/Left log exists AND byuser is non-nil AND byuser equals the acting user.
-//   Step 2 — Invert (would fail on fixed master, proves assertion is meaningful):
-//     assert byuser IS nil — fails because fix sets it.
+//
+//	Step 1 — Assert CORRECT behaviour (passes on fixed master):
+//	  Group/Left log exists AND byuser is non-nil AND byuser equals the acting user.
+//	Step 2 — Invert (would fail on fixed master, proves assertion is meaningful):
+//	  assert byuser IS nil — fails because fix sets it.
 //
 // Self-leave: byuser must equal the leaving user's own ID.
 // Mod-removes: byuser must equal the moderator's ID (not the removed member's).
@@ -2017,6 +2019,76 @@ func TestGetMembershipsSearchNullFullname(t *testing.T) {
 	assert.True(t, found, "member with NULL fullname should be found by lastname search")
 }
 
+// A LoveJunk member's full displayed name ("firstname lastname", the string ModTools
+// actually shows a mod and the one they will type/paste back into search) matches no
+// single column, so even after 9518/371 (firstname/lastname LIKE) a mod searching by
+// the full name still gets nothing, while searching by numeric ID works. Reproduces
+// the Hackney Freegle reports for users 43506372/43428022 (Discourse 9518/379).
+func TestGetMembershipsSearchFullNameLoveJunk(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("lj_fullname")
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Simulate a LoveJunk member: fullname NULL, name split across firstname/lastname.
+	firstname := prefix + "_First"
+	lastname := prefix + "_Last"
+	settings := `{"mylocation": {"lat": 55.9533, "lng": -3.1883}}`
+	res := db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
+		"VALUES (?, ?, NULL, 'User', NULL, ?)", firstname, lastname, settings)
+	assert.NoError(t, res.Error)
+	var targetID uint64
+	db.Raw("SELECT id FROM users WHERE firstname = ? AND lastname = ? AND fullname IS NULL ORDER BY id DESC LIMIT 1", firstname, lastname).Scan(&targetID)
+	assert.NotZero(t, targetID, "LoveJunk-style user should have been created")
+	CreateTestMembership(t, targetID, groupID, "Member")
+
+	// Numeric-ID search works today - confirms the reported asymmetry.
+	idURL := fmt.Sprintf("/api/memberships?groupid=%d&search=%d&jwt=%s", groupID, targetID, token)
+	idReq := httptest.NewRequest("GET", idURL, nil)
+	idResp, err := getApp().Test(idReq, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, idResp.StatusCode)
+	var idResponse map[string]interface{}
+	json.NewDecoder(idResp.Body).Decode(&idResponse)
+	idMembersRaw, _ := idResponse["members"].([]interface{})
+	foundByID := false
+	for _, raw := range idMembersRaw {
+		m := raw.(map[string]interface{})
+		if uint64(m["userid"].(float64)) == targetID {
+			foundByID = true
+			break
+		}
+	}
+	assert.True(t, foundByID, "member should be found by numeric ID search")
+
+	// Search using the full displayed name, exactly as ModTools shows it and as a
+	// mod would type/paste it back in - "firstname lastname".
+	fullName := firstname + " " + lastname
+	reqURL := fmt.Sprintf("/api/memberships?groupid=%d&search=%s&jwt=%s", groupID, url.QueryEscape(fullName), token)
+	req := httptest.NewRequest("GET", reqURL, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
+
+	found := false
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
+		uid := uint64(m["userid"].(float64))
+		if uid == targetID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "member with NULL fullname should be found by full 'firstname lastname' search")
+}
+
 func TestGetMembershipsPendingCollection(t *testing.T) {
 	prefix := uniquePrefix("mod_getpend")
 	groupID := CreateTestGroup(t, prefix)
@@ -2122,6 +2194,112 @@ func TestGetMembershipsPagination(t *testing.T) {
 		id := uint64(m["id"].(float64))
 		assert.False(t, page1IDs[id], "member id %d should not appear on both pages", id)
 	}
+}
+
+// GetMemberships hands the caller a context cursor whenever it returns a full page,
+// including for searches. The search branches must therefore honour that cursor the same
+// way the non-search branch does (TestGetMembershipsPagination above) - otherwise a client
+// paging through search results sends the cursor back and is served the same top-N rows
+// forever, so the list never advances past page one.
+func TestGetMembershipsSearchPagination(t *testing.T) {
+	prefix := uniquePrefix("mod_srchpage")
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Create 5 members that all match the same search term, so we can paginate with limit=3.
+	memberIDs := make([]uint64, 5)
+	for i := 0; i < 5; i++ {
+		memberIDs[i] = CreateTestUser(t, fmt.Sprintf("%s_findme_%d", prefix, i), "User")
+		CreateTestMembership(t, memberIDs[i], groupID, "Member")
+	}
+
+	// Fetch first page (limit=3).
+	url := fmt.Sprintf("/api/memberships?groupid=%d&search=%s_findme&limit=3&jwt=%s", groupID, prefix, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var page1 map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&page1)
+	page1Members, _ := page1["members"].([]interface{})
+	assert.Equal(t, 3, len(page1Members), "first page should return exactly limit members")
+
+	cursor, hasCursor := page1["context"]
+	assert.True(t, hasCursor, "response should include context cursor")
+	assert.NotNil(t, cursor, "context should not be nil when a full page is returned")
+
+	// Fetch second page using the cursor, same search term.
+	cursorID := uint64(cursor.(float64))
+	url2 := fmt.Sprintf("/api/memberships?groupid=%d&search=%s_findme&limit=3&context=%d&jwt=%s", groupID, prefix, cursorID, token)
+	req2 := httptest.NewRequest("GET", url2, nil)
+	resp2, err := getApp().Test(req2, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var page2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&page2)
+	page2Members, _ := page2["members"].([]interface{})
+	assert.GreaterOrEqual(t, len(page2Members), 1, "second page should return at least one member")
+
+	// No member may appear on both pages - if this fails, the search branch is ignoring
+	// the context cursor and just re-returning the first page.
+	page1IDs := map[uint64]bool{}
+	for _, raw := range page1Members {
+		m := raw.(map[string]interface{})
+		page1IDs[uint64(m["id"].(float64))] = true
+	}
+	for _, raw := range page2Members {
+		m := raw.(map[string]interface{})
+		id := uint64(m["id"].(float64))
+		assert.False(t, page1IDs[id], "member id %d should not appear on both search pages", id)
+	}
+}
+
+// The numeric branch of the search - where the term is a bare userid - honours the cursor
+// too. It matches a single membership, so asking for the page after that member's own id
+// must come back empty rather than handing the same row out again.
+func TestGetMembershipsNumericSearchPagination(t *testing.T) {
+	prefix := uniquePrefix("mod_numsrch")
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	// Searching the bare userid finds that one membership.
+	url := fmt.Sprintf("/api/memberships?groupid=%d&search=%d&limit=10&jwt=%s", groupID, memberID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var page1 map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&page1)
+	page1Members, _ := page1["members"].([]interface{})
+	assert.Equal(t, 1, len(page1Members), "the numeric search finds the one membership")
+
+	found := page1Members[0].(map[string]interface{})
+	membershipID := uint64(found["id"].(float64))
+
+	// Ask for what comes after it. m.id < membershipID excludes the only match, so there
+	// is nothing left - without the cursor the same row would be returned again.
+	url2 := fmt.Sprintf("/api/memberships?groupid=%d&search=%d&limit=10&context=%d&jwt=%s", groupID, memberID, membershipID, token)
+	req2 := httptest.NewRequest("GET", url2, nil)
+	resp2, err := getApp().Test(req2, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var page2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&page2)
+	page2Members, _ := page2["members"].([]interface{})
+	assert.Equal(t, 0, len(page2Members), "nothing follows the only match")
 }
 
 // --- GET /memberships?collection=Happiness ---
@@ -4347,4 +4525,124 @@ func TestDeleteMembershipsDemotesStaleModeratorSystemRole(t *testing.T) {
 	var systemrole string
 	database.DBConn.Raw("SELECT systemrole FROM users WHERE id = ?", userID).Scan(&systemrole)
 	assert.Equal(t, "User", systemrole, "leaving the only mod group must demote systemrole to User")
+}
+
+// TestGetMembershipsMailDelayed covers the deferral-aware suppression fields.
+//
+// These exist because "email delayed" and "bouncing" mean different things and
+// moderators act on them differently: bouncing means the member's address is
+// bad, whereas delayed means a provider has stopped accepting mail from OUR
+// servers and there is nothing anyone can do but wait.
+func TestGetMembershipsMailDelayed(t *testing.T) {
+	prefix := uniquePrefix("mf_delay")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	delayedID := CreateTestUser(t, prefix+"_delayed", "User")
+	CreateTestMembership(t, delayedID, groupID, "Member")
+
+	normalID := CreateTestUser(t, prefix+"_normal", "User")
+	CreateTestMembership(t, normalID, groupID, "Member")
+
+	var suppressionID uint64
+	db.Exec("INSERT INTO mail_suppressions (scope, value, provider, reason, deferred_since, first_seen, last_seen) "+
+		"VALUES ('domain', ?, 'Yahoo', '421 4.7.0 [TSS04] temporarily deferred', ?, NOW(), NOW())",
+		prefix+".example", "2026-08-15 16:38:00")
+	db.Raw("SELECT id FROM mail_suppressions WHERE value = ?", prefix+".example").Scan(&suppressionID)
+
+	db.Exec("INSERT INTO mail_suppressed_counts (userid, emailtype, suppressionid, count, firstat, lastat) "+
+		"VALUES (?, 'digest_immediate', ?, 7, ?, NOW())",
+		delayedID, suppressionID, "2026-08-15 16:38:00")
+	db.Exec("INSERT INTO mail_suppressed_counts (userid, emailtype, suppressionid, count, firstat, lastat) "+
+		"VALUES (?, 'chat', ?, 2, ?, NOW())",
+		delayedID, suppressionID, "2026-08-16 09:00:00")
+
+	defer func() {
+		db.Exec("DELETE FROM mail_suppressed_counts WHERE userid IN (?, ?)", delayedID, normalID)
+		db.Exec("DELETE FROM mail_suppressions WHERE value = ?", prefix+".example")
+	}()
+
+	url := fmt.Sprintf("/api/memberships?groupid=%d&collection=Approved&jwt=%s", groupID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	membersRaw, ok := result["members"]
+	assert.True(t, ok, "response should include members")
+	members := membersRaw.([]interface{})
+
+	var sawDelayed, sawNormal bool
+	for _, raw := range members {
+		m := raw.(map[string]interface{})
+		uid := uint64(m["userid"].(float64))
+
+		if uid == delayedID {
+			sawDelayed = true
+			assert.NotNil(t, m["maildelayedsince"], "delayed member should carry a since date")
+			assert.Contains(t, m["maildelayedsince"], "2026-08-15",
+				"since must be when we first held mail, not when we noticed")
+			assert.Equal(t, "Yahoo", m["maildelayedprovider"],
+				"moderators should read the provider's name, not a piece of DNS")
+			// 7 digests plus 2 chat notifications, summed across types.
+			assert.Equal(t, float64(9), m["maildelayedcount"])
+			// Delayed is NOT bouncing - their address is fine.
+			assert.Equal(t, false, m["bouncing"])
+		}
+
+		if uid == normalID {
+			sawNormal = true
+			assert.Nil(t, m["maildelayedsince"], "an unaffected member must not look delayed")
+			assert.Nil(t, m["maildelayedcount"])
+		}
+	}
+
+	assert.True(t, sawDelayed, "the delayed member should be in the list")
+	assert.True(t, sawNormal, "the unaffected member should be in the list")
+}
+
+// TestGetMembershipsMailDelayedClearedOnCatchUp proves the notice goes away
+// once the catch-up has been sent, rather than sticking around for ever the
+// way the legacy bouncing flag did.
+func TestGetMembershipsMailDelayedClearedOnCatchUp(t *testing.T) {
+	prefix := uniquePrefix("mf_dlyclr")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_m", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	db.Exec("INSERT INTO mail_suppressed_counts (userid, emailtype, count, firstat, lastat, caughtup_at) "+
+		"VALUES (?, 'chat', 3, NOW(), NOW(), NOW())", memberID)
+
+	defer db.Exec("DELETE FROM mail_suppressed_counts WHERE userid = ?", memberID)
+
+	url := fmt.Sprintf("/api/memberships?groupid=%d&collection=Approved&jwt=%s", groupID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	for _, raw := range result["members"].([]interface{}) {
+		m := raw.(map[string]interface{})
+		if uint64(m["userid"].(float64)) == memberID {
+			assert.Nil(t, m["maildelayedsince"], "a caught-up member is no longer delayed")
+			return
+		}
+	}
+
+	t.Fatal("member not found in list")
 }

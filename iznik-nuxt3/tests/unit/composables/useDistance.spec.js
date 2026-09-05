@@ -3,6 +3,7 @@ import {
   milesAway,
   isWithinDistance,
   filterMessagesByDistance,
+  roadMinuteVerdict,
 } from '~/composables/useDistance'
 import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 
@@ -131,6 +132,25 @@ describe('filterMessagesByDistance', () => {
     expect(result.map((m) => m.id).sort()).toEqual([1, 3])
   })
 
+  it('road minuteCheck wins over the crow radius in both directions', () => {
+    // Post 2 is crow-inside (5<=5) but a long drive: dropped. Post 3 is
+    // crow-outside (10>5) but a quick drive: kept. Posts the engine has not
+    // answered for (null) keep the crow behaviour.
+    const check = (m) => (m.id === 2 ? false : m.id === 3 ? true : null)
+    const result = filterMessagesByDistance(posts, 5, check)
+    expect(result.map((m) => m.id).sort()).toEqual([1, 3, 4, 5])
+  })
+
+  it('minuteCheck is not consulted when unlimited (referential no-op stays)', () => {
+    const check = () => false
+    const result = filterMessagesByDistance(
+      posts,
+      BROWSE_DISTANCE_UNLIMITED,
+      check
+    )
+    expect(result).toBe(posts)
+  })
+
   it('handles an empty list', () => {
     expect(filterMessagesByDistance([], 5)).toEqual([])
   })
@@ -144,5 +164,25 @@ describe('filterMessagesByDistance', () => {
     const original = [...posts]
     filterMessagesByDistance(posts, 5)
     expect(posts).toEqual(original)
+  })
+})
+
+describe('roadMinuteVerdict', () => {
+  // The flicker contract: the verdict comes ONLY from the payload the feed shipped, so it
+  // is decided at first paint and cannot change once rendered - there is no async lookup
+  // whose late answer could flip it.
+  it('decides from a shipped roadmins, inclusive at the budget', () => {
+    expect(roadMinuteVerdict({ roadmins: 20 }, 25)).toBe(true)
+    expect(roadMinuteVerdict({ roadmins: 30 }, 25)).toBe(false)
+    expect(roadMinuteVerdict({ roadmins: 25 }, 25)).toBe(true)
+  })
+
+  it('returns null (stable crow fallback) whenever the payload has no roadmins', () => {
+    // Routing outage, an unroutable point, or a stale cached feed: the crow rule applies
+    // and, being payload-derived too, is equally immovable after paint.
+    expect(roadMinuteVerdict({}, 25)).toBeNull()
+    expect(roadMinuteVerdict({ lat: 53.8, lng: -2.6 }, 25)).toBeNull()
+    expect(roadMinuteVerdict({ roadmins: null }, 25)).toBeNull()
+    expect(roadMinuteVerdict(null, 25)).toBeNull()
   })
 })

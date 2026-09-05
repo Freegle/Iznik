@@ -40,7 +40,9 @@ describe('Sticky ad zone background', () => {
     expect(tint, '.sticky-ad-zone must set a background-color').toBeTruthy()
 
     const jobsIdx = jobs.indexOf('.jobs-slot {')
-    const jobsRule = stripComments(jobs.substring(jobsIdx, jobs.indexOf('}', jobsIdx)))
+    const jobsRule = stripComments(
+      jobs.substring(jobsIdx, jobs.indexOf('}', jobsIdx))
+    )
     const jobsBg = jobsRule.match(/background:\s*([^;]+);/)?.[1]?.trim()
 
     // Same surface, so the leftover space reads as part of the block rather

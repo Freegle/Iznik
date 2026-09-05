@@ -29,8 +29,8 @@
               </b-form-select>
             </template>
             <p v-else class="text-muted">
-              We'll pass this to our central volunteers who deal with this kind of
-              thing.
+              We'll pass this to our central volunteers who deal with this kind
+              of thing.
             </p>
             <h4>Why are you reporting this?</h4>
             <b-form-select
@@ -112,7 +112,11 @@ async function send() {
     await chatStore.report(chatid, reason.value, comments.value, props.chatid)
   } else {
     // No group in common: route to the central spam team. Comment optional.
-    await chatStore.reportNoGroup(props.chatid, reason.value, comments.value || '')
+    await chatStore.reportNoGroup(
+      props.chatid,
+      reason.value,
+      comments.value || ''
+    )
   }
 
   hide()

@@ -219,10 +219,9 @@ describe('VolunteerOpportunity', () => {
       const renewBtn = wrapper
         .findAll('.b-button')
         .find((b) => b.text().includes('still active'))
-      if (renewBtn) {
-        await renewBtn.trigger('click')
-        expect(mockVolunteeringStore.renew).toHaveBeenCalledWith(1)
-      }
+      expect(renewBtn).toBeTruthy()
+      await renewBtn.trigger('click')
+      expect(mockVolunteeringStore.renew).toHaveBeenCalledWith(1)
     })
 
     it('calls expire when remove button clicked', async () => {
@@ -231,10 +230,127 @@ describe('VolunteerOpportunity', () => {
       const expireBtn = wrapper
         .findAll('.b-button')
         .find((b) => b.text().includes('remove'))
-      if (expireBtn) {
-        await expireBtn.trigger('click')
-        expect(mockVolunteeringStore.expire).toHaveBeenCalledWith(1)
-      }
+      expect(expireBtn).toBeTruthy()
+      await expireBtn.trigger('click')
+      expect(mockVolunteeringStore.expire).toHaveBeenCalledWith(1)
+    })
+  })
+
+  describe('renewal lifecycle', () => {
+    const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString()
+
+    it('does not ask for confirmation when recently renewed', async () => {
+      mockVolunteeringStore.byId.mockReturnValue({
+        ...mockVolunteering,
+        added: daysAgo(200),
+        renewed: daysAgo(2),
+      })
+      mockAuthStore.user = { id: 200 }
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain("Yes, it's still active")
+      expect(wrapper.text()).not.toContain('stop showing')
+    })
+
+    it('says the opportunity is active and when we will next check', async () => {
+      mockVolunteeringStore.byId.mockReturnValue({
+        ...mockVolunteering,
+        added: daysAgo(200),
+        renewed: daysAgo(2),
+      })
+      mockAuthStore.user = { id: 200 }
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain("it's active")
+      expect(wrapper.text()).toContain('check with you on')
+    })
+
+    it('asks for confirmation once the renewal is due', async () => {
+      mockVolunteeringStore.byId.mockReturnValue({
+        ...mockVolunteering,
+        added: daysAgo(200),
+        renewed: daysAgo(25),
+      })
+      mockAuthStore.user = { id: 200 }
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain("Yes, it's still active")
+      expect(wrapper.text()).toContain('stop showing')
+    })
+
+    it('asks for confirmation when never renewed and old', async () => {
+      mockVolunteeringStore.byId.mockReturnValue({
+        ...mockVolunteering,
+        added: daysAgo(40),
+        renewed: null,
+      })
+      mockAuthStore.user = { id: 200 }
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain("Yes, it's still active")
+    })
+
+    it('does not ask a newly created opportunity to confirm', async () => {
+      mockVolunteeringStore.byId.mockReturnValue({
+        ...mockVolunteering,
+        added: daysAgo(1),
+        renewed: null,
+      })
+      mockAuthStore.user = { id: 200 }
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain("Yes, it's still active")
+    })
+
+    it('confirms clearly straight after the owner clicks', async () => {
+      mockVolunteeringStore.byId.mockReturnValue({
+        ...mockVolunteering,
+        added: daysAgo(200),
+        renewed: daysAgo(25),
+      })
+      mockAuthStore.user = { id: 200 }
+      const wrapper = await createWrapper()
+      const renewBtn = wrapper
+        .findAll('.b-button')
+        .find((b) => b.text().includes('still active'))
+      await renewBtn.trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('Thanks')
+      expect(wrapper.text()).toContain("we've confirmed")
+      expect(wrapper.text()).not.toContain('stop showing')
+    })
+
+    it('does not ask dated opportunities to confirm', async () => {
+      mockVolunteeringStore.byId.mockReturnValue({
+        ...mockVolunteering,
+        added: daysAgo(200),
+        renewed: null,
+        dates: [{ start: '2030-01-01', end: '2030-01-02' }],
+      })
+      mockAuthStore.user = { id: 200 }
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain("Yes, it's still active")
+      expect(wrapper.text()).not.toContain('stop showing')
+    })
+
+    it('still offers reactivation when expired', async () => {
+      mockVolunteeringStore.byId.mockReturnValue({
+        ...mockVolunteering,
+        added: daysAgo(200),
+        renewed: daysAgo(2),
+        expired: true,
+      })
+      mockAuthStore.user = { id: 200 }
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('reactivate')
+      expect(wrapper.text()).toContain("Yes, it's still active")
+    })
+
+    it('shows no renewal notices to a non-owner', async () => {
+      mockVolunteeringStore.byId.mockReturnValue({
+        ...mockVolunteering,
+        added: daysAgo(200),
+        renewed: daysAgo(2),
+      })
+      mockAuthStore.user = { id: 999 }
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain("it's active")
+      expect(wrapper.text()).not.toContain('check with you on')
     })
   })
 
@@ -260,13 +376,14 @@ describe('VolunteerOpportunity', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('shows NuxtPicture when externaluid present', async () => {
+    it('does not render a picture for a bare externaluid', async () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       mockVolunteeringStore.byId.mockReturnValue({
         ...mockVolunteering,
         image: { externaluid: 'external-uid', externalmods: {} },
       })
       const wrapper = await createWrapper()
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
 
     it('shows b-img when path present', async () => {

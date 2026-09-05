@@ -71,6 +71,15 @@ limits_config:
   # Enable volume for Grafana Logs Drilldown
   volume_enabled: true
 
+  # An entry longer than max_line_size (256KB) is REJECTED, and with truncate off
+  # Loki discards the whole entry - so an oversized line loses the endpoint,
+  # status, duration and user_id too, not just the oversized field. Measured
+  # 2026-08-23: loki_discarded_samples_total{reason="line_too_long"} = 1,727
+  # entries / 1.10GB in two days, all apiv2 lines whose response_body ran to
+  # megabytes. apiv2 now bounds its own lines (misc/loki.go capLogLine); this is
+  # the backstop for every other producer, and clipping beats losing the entry.
+  max_line_size_truncate: true
+
   # Default 1m produced the exact-60s query kills; single-node TSDB
   # parallelism trimmed from the 128 default to something the 8 workers can
   # actually service.

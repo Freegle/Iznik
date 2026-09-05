@@ -37,10 +37,12 @@ func TestGenerateImageWithCloudflare_Success(t *testing.T) {
 	b64Image := base64.StdEncoding.EncodeToString(pngBytes)
 
 	var capturedPath string
+	var capturedBody map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedPath = r.URL.Path
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "Bearer test-ai-token", r.Header.Get("Authorization"))
+		json.NewDecoder(r.Body).Decode(&capturedBody)
 		resp := map[string]interface{}{
 			"result":  map[string]string{"image": b64Image},
 			"success": true,
@@ -62,6 +64,54 @@ func TestGenerateImageWithCloudflare_Success(t *testing.T) {
 	assert.Equal(t, pngBytes, result)
 	assert.Contains(t, capturedPath, "flux-1-schnell")
 	assert.Contains(t, capturedPath, "test-acct")
+
+	// Flux Schnell rejects the whole request with a 400 if we send anything outside its
+	// closed schema, so assert we send only what it accepts.
+	assert.Contains(t, capturedBody, "prompt")
+	assert.Equal(t, float64(8), capturedBody["steps"])
+	for _, banned := range []string{"num_steps", "width", "height"} {
+		assert.NotContains(t, capturedBody, banned)
+	}
+}
+
+func TestGenerateImageWithCloudflare_NSFWRefusal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"errors":[{"message":"AiError: Input prompt contains NSFW content.","code":8007}],"success":false}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "test-acct")
+	t.Setenv("CLOUDFLARE_AI_TOKEN", "test-ai-token")
+	old := CloudflareAPIBase
+	CloudflareAPIBase = srv.URL
+	defer func() { CloudflareAPIBase = old }()
+
+	_, err := generateImageWithCloudflare("bicycle")
+	require.Error(t, err)
+	// The moderator needs to know retrying cannot help until the description changes.
+	assert.Contains(t, err.Error(), "edit the item description")
+	assert.NotContains(t, err.Error(), "8007")
+}
+
+func TestGenerateImageWithCloudflare_ObjectErrors(t *testing.T) {
+	// Cloudflare reports input-schema violations as error objects in a 200 envelope with
+	// success=false. Those must surface as the API's message, not be mistaken for image bytes.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"errors":[{"message":"AiError: Bad input","code":5006}],"success":false,"result":{},"messages":[]}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "test-acct")
+	t.Setenv("CLOUDFLARE_AI_TOKEN", "test-ai-token")
+	old := CloudflareAPIBase
+	CloudflareAPIBase = srv.URL
+	defer func() { CloudflareAPIBase = old }()
+
+	_, err := generateImageWithCloudflare("bicycle")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "AiError: Bad input")
 }
 
 func TestGenerateImageWithCloudflare_MissingEnvVars(t *testing.T) {
@@ -317,4 +367,40 @@ func TestBuildImagePrompt_GenuineMultiItem_StillSplits(t *testing.T) {
 		prompt := buildImagePrompt(name)
 		assert.NotContains(t, prompt, "single object only", name+" lists multiple items")
 	}
+}
+
+func TestBuildImagePrompt_StripsCourtesyWords(t *testing.T) {
+	// Regression test for Discourse topic 9209/98: "WANTED: iron please" stored
+	// ai_images.name = "iron please", so the model was asked to draw an "iron please" and
+	// produced a smooth white blob. Moderator regeneration goes through buildImagePrompt()
+	// with the stored (uncleaned) name, so the strip has to happen here too.
+	prompt := buildImagePrompt("iron please")
+	assert.Contains(t, prompt, "single isolated iron centered")
+	assert.NotContains(t, prompt, "please")
+}
+
+func TestBuildImagePrompt_CourtesyWordDoesNotBreakMultiItemSplit(t *testing.T) {
+	// "sofa and a bed please" must still be recognised as two items once "please" has gone.
+	prompt := buildImagePrompt("sofa and a bed please")
+	assert.Contains(t, prompt, "sofa and a bed shown together")
+	assert.NotContains(t, prompt, "please")
+}
+
+func TestBuildImagePrompt_LeavesRealWordsBeginningWithPlease(t *testing.T) {
+	// Only the standalone courtesy word goes; a brand name that starts with it stays.
+	prompt := buildImagePrompt("Pleaser platform boots")
+	assert.Contains(t, prompt, "Pleaser platform boots")
+}
+
+func TestBuildImagePrompt_StripsAdultBiasWord(t *testing.T) {
+	// Regression test for Discourse topic 9630/60: "Adult bike" got an AI image of a
+	// medicine/supplement bottle, because "adult" biases the image generator toward pharmacy
+	// imagery. Moderator regeneration goes through buildImagePrompt() with the stored
+	// (uncleaned) ai_images.name, so the strip has to happen here too - and via the same
+	// misc.StripCourtesy() call as the compose-time cache lookup, so mobile and desktop keep
+	// resolving to the same cached image instead of each generating their own.
+	prompt := buildImagePrompt("Adult bike")
+	assert.Contains(t, prompt, "single isolated bike centered")
+	assert.NotContains(t, prompt, "Adult")
+	assert.NotContains(t, prompt, "adult")
 }

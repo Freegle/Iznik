@@ -33,7 +33,17 @@ export function fetchRetry(fetch) {
   }
 
   const retryOn = async function (attempt, error, response) {
-    const miscStore = useMiscStore()
+    let miscStore = null
+
+    if (import.meta.client) {
+      // Client-only: this callback runs on a later tick, where server-side
+      // (especially Netlify prerender) there is no active pinia instance any
+      // more, so useMiscStore() itself throws — the wrapper promise then
+      // never settles and the throw surfaces as an unhandledRejection
+      // instead of a fetch error. "Online" is also meaningless on the
+      // server.
+      miscStore = useMiscStore()
+    }
 
     // There is no point making another attempt until we believe we are back
     // online - but that is the only thing the connection check is for.  It
@@ -54,7 +64,9 @@ export function fetchRetry(fetch) {
     // reading a reply we already hold.
     const waitThenRetry = async function (why) {
       console.log(why)
-      await miscStore.waitForOnline()
+      if (miscStore) {
+        await miscStore.waitForOnline()
+      }
       return [true, false]
     }
 
@@ -168,9 +180,9 @@ export function fetchRetry(fetch) {
       const wrappedFetch = async function (attempt) {
         let response = null
         let error = null
-        let doRetry = false
-        let success = false
-        let data = null
+        let doRetry
+        let success
+        let data
 
         try {
           response = await fetch(input, init)

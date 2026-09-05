@@ -197,29 +197,29 @@ import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 import { useClientLog } from '~/composables/useClientLog'
 
-const MicroVolunteeringFacebook = defineAsyncComponent(() =>
-  import('./MicroVolunteeringFacebook')
+const MicroVolunteeringFacebook = defineAsyncComponent(
+  () => import('./MicroVolunteeringFacebook')
 )
-const MicroVolunteeringPhotosRotate = defineAsyncComponent(() =>
-  import('./MicroVolunteeringPhotosRotate')
+const MicroVolunteeringPhotosRotate = defineAsyncComponent(
+  () => import('./MicroVolunteeringPhotosRotate')
 )
-const MicroVolunteeringCheckMessage = defineAsyncComponent(() =>
-  import('./MicroVolunteeringCheckMessage')
+const MicroVolunteeringCheckMessage = defineAsyncComponent(
+  () => import('./MicroVolunteeringCheckMessage')
 )
-const MicroVolunteeringSimilarTerms = defineAsyncComponent(() =>
-  import('./MicroVolunteeringSimilarTerms')
+const MicroVolunteeringSimilarTerms = defineAsyncComponent(
+  () => import('./MicroVolunteeringSimilarTerms')
 )
-const MicroVolunteeringSurvey = defineAsyncComponent(() =>
-  import('./MicroVolunteeringSurvey')
+const MicroVolunteeringSurvey = defineAsyncComponent(
+  () => import('./MicroVolunteeringSurvey')
 )
-const MicroVolunteeringInvite = defineAsyncComponent(() =>
-  import('./MicroVolunteeringInvite')
+const MicroVolunteeringInvite = defineAsyncComponent(
+  () => import('./MicroVolunteeringInvite')
 )
-const MicroVolunteeringAIImageReview = defineAsyncComponent(() =>
-  import('./MicroVolunteeringAIImageReview')
+const MicroVolunteeringAIImageReview = defineAsyncComponent(
+  () => import('./MicroVolunteeringAIImageReview')
 )
-const MicroVolunteeringEeeLabel = defineAsyncComponent(() =>
-  import('./MicroVolunteeringEeeLabel')
+const MicroVolunteeringEeeLabel = defineAsyncComponent(
+  () => import('./MicroVolunteeringEeeLabel')
 )
 
 const props = defineProps({

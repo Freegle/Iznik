@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\LokiService;
 use App\Services\Ripple\RippleReplyService;
 use App\Support\EmojiUtils;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Kreait\Firebase\Factory;
@@ -37,6 +38,18 @@ class PushNotificationService
     // Constant notId for the daily digest push so Android replaces the
     // previous day's tray entry rather than stacking a new one.
     private const NEW_POSTS_NOT_ID = '200000001';
+
+    /**
+     * How long an identical ModTools payload counts as a repeat of the one just sent.
+     *
+     * The fan-out that produces the duplicates lands within a single drain of
+     * background_tasks - the observed clusters are 2-3 tasks queued in the same second
+     * and delivered within about ten - so a couple of minutes covers it with room to
+     * spare. It is deliberately short: two minutes is the most a mod can wait for a
+     * beep about work that arrived while an identical-looking summary was in flight,
+     * and the badge on the next push is correct regardless.
+     */
+    private const DUPLICATE_WINDOW_SECONDS = 120;
 
     // Mirrors iznik-server-go utils.NOTIFICATION_AGE: the in-app notification
     // bell/list (notification.Count()/List()) never returns rows older than this,
@@ -156,6 +169,15 @@ class PushNotificationService
      *
      * Queries the user's registered FCM devices and sends a data-only
      * notification with badge count and message summary.
+     *
+     * The payload is per USER - the aggregate work summary across every community they
+     * moderate - but the callers that ask for it are per GROUP (push_notify_group_mods
+     * is queued one task per group; ContentCheckService queues one per (msgid, groupid),
+     * including every rippled-in copy). So a post touching several of a mod's
+     * communities asked for the same banner several times over, and they got one beep
+     * per community for a single post (Discourse 9808/744). An identical payload inside
+     * the duplicate window is that fan-out, not new work, so it is not sent again;
+     * anything that changes the count, title or route hashes differently and goes out.
      */
     public function notify(int $userId, bool $modtools): int
     {
@@ -166,23 +188,38 @@ class PushNotificationService
         $count = 0;
 
         $apptype = $modtools ? self::APPTYPE_MODTOOLS : 'User';
-        $notifs = DB::select(
-            "SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?",
-            [$userId, $apptype]
-        );
+        $notifs = DB::table('users_push_notifications')
+            ->where('userid', $userId)
+            ->where('apptype', $apptype)
+            ->get();
+
+        // Built once per user, not once per device: it is the same summary for all of
+        // them, and each build runs the badge-breakdown queries.
+        $payload = $this->buildModToolsPayload($userId);
+        if ($payload === null) {
+            return 0;
+        }
+        $signature = self::payloadSignature($payload);
 
         foreach ($notifs as $notif) {
             if (! in_array($notif->type, [self::PUSH_FCM_ANDROID, self::PUSH_FCM_IOS])) {
                 continue;
             }
 
-            try {
-                $payload = $this->buildModToolsPayload($userId);
-                if ($payload === null) {
-                    continue;
-                }
+            $sentKey = self::duplicateCacheKey($notif->subscription);
 
+            if (Cache::get($sentKey) === $signature) {
+                Log::debug('Skipping duplicate push notification', [
+                    'user_id' => $userId,
+                    'type' => $notif->type,
+                ]);
+                continue;
+            }
+
+            try {
                 $this->sendFcm($userId, $notif->type, $notif->subscription, $payload);
+
+                Cache::put($sentKey, $signature, self::DUPLICATE_WINDOW_SECONDS);
 
                 DB::table('users_push_notifications')
                     ->where('userid', $userId)
@@ -205,6 +242,30 @@ class PushNotificationService
         }
 
         return $count;
+    }
+
+    /**
+     * Hash of a push payload, used to recognise a repeat of the one just delivered.
+     */
+    private static function payloadSignature(array $payload): string
+    {
+        ksort($payload);
+
+        return sha1(json_encode($payload));
+    }
+
+    /**
+     * Where the last payload delivered to a device is remembered.
+     *
+     * The cache rather than a column on users_push_notifications: this is state with a
+     * two-minute life, the store is already shared across batch processes, and an entry
+     * that expires or is lost simply lets the next push through, which is the safe way
+     * for a suppression rule to fail. The subscription is hashed because FCM tokens are
+     * long and are not something to spread into cache keys.
+     */
+    private static function duplicateCacheKey(string $subscription): string
+    {
+        return 'push:lastpayload:'.sha1($subscription);
     }
 
     /**
@@ -700,7 +761,7 @@ class PushNotificationService
             'image' => $modtools ? 'www/images/modtools_logo.png' : 'www/images/user_logo.png',
             'modtools' => $modtools ? '1' : '0',
             'sound' => 'default',
-            'route' => $modtools ? '/modtools' : '/',
+            'route' => '/',
             'notId' => (string) $userId,
             'test' => '1',
             'channel_id' => $modtools ? 'modtools' : 'chat_messages',
@@ -795,6 +856,53 @@ class PushNotificationService
     }
 
     /**
+     * Build the APNs config for an iOS push.
+     *
+     * ModTools pushes all carry the same user-scoped work summary ("N pending
+     * messages"), so a later one must REPLACE the banner already on the lock screen
+     * rather than add another one with another beep. Android does that with
+     * notification.tag (see buildAndroidConfig, same "modtools-<userid>" identity);
+     * iOS needs apns-collapse-id, which was missing - so the per-group fan-out that
+     * sends a mod of three communities three copies of one summary showed up as three
+     * separate banners (Discourse 9808/744). thread-id groups them in Notification
+     * Centre for the same reason.
+     *
+     * Only ModTools pushes collapse. Chat and new-post pushes are about a specific
+     * chat or post, so replacing an unread one with the next would lose it.
+     */
+    protected function buildApnsConfig(int $userId, array $payload): array
+    {
+        $isModtools = ($payload['channel_id'] ?? '') === 'modtools';
+        $hasVisibleContent = ! empty($payload['title']);
+        $isNewPosts = ($payload['category'] ?? '') === self::CATEGORY_NEW_POSTS;
+
+        $aps = [
+            'badge' => (int) ($payload['count'] ?? 0),
+            'sound' => 'default',
+        ];
+
+        // mutable-content=1 wakes the NSE so it can attach the post image
+        // and expand lines[] into a rich notification. Only set for NEW_POSTS
+        // — other categories (chat, modtools) don't use the NSE.
+        if ($isNewPosts) {
+            $aps['mutable-content'] = 1;
+        }
+
+        $headers = ['apns-priority' => '10'];
+
+        if ($isModtools && $hasVisibleContent) {
+            // Same identity Android uses as its tag, and well inside the 64-byte limit.
+            $headers['apns-collapse-id'] = "modtools-{$userId}";
+            $aps['thread-id'] = 'modtools';
+        }
+
+        return [
+            'headers' => $headers,
+            'payload' => ['aps' => $aps],
+        ];
+    }
+
+    /**
      * Send FCM notification to a device.
      *
      * When $forceVisible is true, includes a notification block so the push appears in the
@@ -877,30 +985,7 @@ class PushNotificationService
             }
 
             $message = CloudMessage::fromArray($ios);
-
-            $badge = (int) ($payload['count'] ?? 0);
-            $isNewPosts = ($payload['category'] ?? '') === self::CATEGORY_NEW_POSTS;
-
-            $aps = [
-                'badge' => $badge,
-                'sound' => 'default',
-            ];
-
-            // mutable-content=1 wakes the NSE so it can attach the post image
-            // and expand lines[] into a rich notification. Only set for NEW_POSTS
-            // — other categories (chat, modtools) don't use the NSE.
-            if ($isNewPosts) {
-                $aps['mutable-content'] = 1;
-            }
-
-            $message = $message->withApnsConfig([
-                'headers' => [
-                    'apns-priority' => '10',
-                ],
-                'payload' => [
-                    'aps' => $aps,
-                ],
-            ]);
+            $message = $message->withApnsConfig($this->buildApnsConfig($userId, $payload));
         }
 
         $this->messaging->validate($message);

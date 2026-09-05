@@ -1,25 +1,13 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/peterstace/simplefeatures/geom"
+	"spatial-server/cellset"
 )
 
-// wkbOf converts WKT to WKB for buildReachItem (which expects MySQL's WKB).
-func wkbOf(t *testing.T, wkt string) []byte {
-	t.Helper()
-	g, err := geom.UnmarshalWKT(wkt)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	return g.AsBinary()
-}
-
-// TestMetaTimeRoundTrip: the persisted sync point must round-trip, and read
-// back as zero (not error) from an index that has never written one — that is
-// what startup adoption relies on for pre-meta on-disk indexes.
 func TestMetaTimeRoundTrip(t *testing.T) {
 	idx, err := CreateIndex(":memory:")
 	if err != nil {
@@ -62,11 +50,11 @@ func TestReachContaining(t *testing.T) {
 	}
 	defer idx.Close()
 
-	covering, ok := buildReachItem(1001, "expanding", wkbOf(t, "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))"))
+	covering, ok := buildReachItem(1001, "expanding", cellsBlobOf(t, "POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))"))
 	if !ok {
 		t.Fatal("covering reach did not build")
 	}
-	elsewhere, ok := buildReachItem(1002, "done", wkbOf(t, "POLYGON((20 20, 30 20, 30 30, 20 30, 20 20))"))
+	elsewhere, ok := buildReachItem(1002, "done", cellsBlobOf(t, "POLYGON((0.02 0.02, 0.03 0.02, 0.03 0.03, 0.02 0.03, 0.02 0.02))"))
 	if !ok {
 		t.Fatal("elsewhere reach did not build")
 	}
@@ -77,7 +65,7 @@ func TestReachContaining(t *testing.T) {
 	d := &ReachDataset{}
 
 	// Deep inside the first polygon: definite in, and the far one absent.
-	in, partial, err := d.Containing(idx, 5, 5)
+	in, partial, err := d.Containing(idx, 0.005, 0.005)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,33 +74,22 @@ func TestReachContaining(t *testing.T) {
 	}
 
 	// Far outside both: nothing at all.
-	in, partial, err = d.Containing(idx, 15, 15)
+	in, partial, err = d.Containing(idx, 0.015, 0.015)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(in) != 0 || len(partial) != 0 {
-		t.Fatalf("expected nothing at (15,15), got in=%v partial=%v", in, partial)
+		t.Fatalf("expected nothing at (0.015,0.015), got in=%v partial=%v", in, partial)
 	}
 
-	// A hair inside the boundary: the raster must not claim definite-in; it
-	// must be partial (the caller exact-tests) — never lost entirely.
-	in, partial, err = d.Containing(idx, 9.999, 5)
+	// A point within the covered lattice near the edge: definite in - the
+	// grid answers exactly, there is no boundary band and no partial.
+	in, partial, err = d.Containing(idx, 0.0095, 0.005)
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
-	for _, id := range partial {
-		if id == 1001 {
-			found = true
-		}
-	}
-	for _, id := range in {
-		if id == 1001 {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("boundary point lost: in=%v partial=%v", in, partial)
+	if len(in) != 1 || in[0] != 1001 || len(partial) != 0 {
+		t.Fatalf("near-edge covered point must be definite: in=%v partial=%v", in, partial)
 	}
 
 	// ExtIDs (the reconcile's index-side view) reflects inserts and deletes.
@@ -135,11 +112,123 @@ func TestReachContaining(t *testing.T) {
 	if err := idx.DeleteByExtID(1001); err != nil {
 		t.Fatal(err)
 	}
-	in, partial, err = d.Containing(idx, 5, 5)
+	in, partial, err = d.Containing(idx, 0.005, 0.005)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(in) != 0 && len(partial) != 0 {
 		t.Fatalf("held/removed reach still returned: in=%v partial=%v", in, partial)
+	}
+}
+
+// cellsBlobOf rasterises a WKT into encoded cell bytes via the production
+// rasteriser, for building cells-backed reach items in tests.
+func cellsBlobOf(t *testing.T, wkt string) []byte {
+	t.Helper()
+	cs, err := cellset.FromPolygonWKT(wkt)
+	if err != nil {
+		t.Fatalf("rasterise: %v", err)
+	}
+	return cs.Encode()
+}
+
+// A cells-backed item answers EXACTLY: a point a hair inside the boundary is
+// a definite `in`, never `partial` - the whole point of preferring the fine
+// grid over the coarse raster.
+func TestReachContaining_CellsAnswerExactly(t *testing.T) {
+	idx, err := CreateIndex(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+
+	wkt := "POLYGON((0 0, 0.03 0, 0.03 0.03, 0 0.03, 0 0))" // 100x100 cells
+	item, ok := buildReachItem(3001, "expanding", cellsBlobOf(t, wkt))
+	if !ok {
+		t.Fatal("cells item did not build")
+	}
+	if err := InsertItems(idx, []Item{item}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &ReachDataset{}
+	// Just inside the eastern boundary: cell centres inside the polygon are
+	// covered, so a point in the last covered cell is a definite in.
+	in, partial, err := d.Containing(idx, 0.03-cellset.CellDegrees/2, 0.015)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(partial) != 0 {
+		t.Fatalf("cells-backed item must never answer partial, got %v", partial)
+	}
+	if len(in) != 1 || in[0] != 3001 {
+		t.Fatalf("expected definite in, got in=%v", in)
+	}
+
+	// Just outside: definite out, still no partial.
+	in, partial, err = d.Containing(idx, 0.03+cellset.CellDegrees/2, 0.015)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(in) != 0 || len(partial) != 0 {
+		t.Fatalf("expected definite out, got in=%v partial=%v", in, partial)
+	}
+}
+
+// Valid cells become the item blob verbatim; corrupt or absent cells skip the
+// row (fail closed - a row nobody can read has no reach anywhere).
+func TestBuildReachItem_CellsOrSkip(t *testing.T) {
+	wkt := "POLYGON((0 0, 0.03 0, 0.03 0.03, 0 0.03, 0 0))"
+	cells := cellsBlobOf(t, wkt)
+
+	fromCells, ok := buildReachItem(1, "expanding", cells)
+	if !ok || string(fromCells.WKB) != string(cells) {
+		t.Fatal("valid cells must become the item blob verbatim")
+	}
+
+	corrupt := append([]byte{}, cells...)
+	corrupt = corrupt[:len(corrupt)-1]
+	if _, ok := buildReachItem(2, "expanding", corrupt); ok {
+		t.Fatal("corrupt cells must skip the row")
+	}
+
+	if _, ok := buildReachItem(3, "expanding", nil); ok {
+		t.Fatal("no cells must skip the row")
+	}
+}
+
+// The SELECT must reference no dropped legacy column.
+func TestReachSelectNamesNoDroppedColumn(t *testing.T) {
+	sel := reachSelect("WHERE rr.status != 'held'")
+	if strings.Contains(sel, "polygon)") || strings.Contains(sel, "JOIN") || strings.Contains(sel, "hash") {
+		t.Fatalf("select must not reference dropped columns: %s", sel)
+	}
+	if !strings.Contains(sel, "rr.polygon_cells") {
+		t.Fatalf("select must read the cells: %s", sel)
+	}
+	// Labels-truth grid retirement: the select must carry the retired flag,
+	// so a drained row is REMOVED (delta) or never loaded - a skipped upsert
+	// would leave the previous tick's smaller reach serving stale answers.
+	if !strings.Contains(sel, "AS retired") {
+		t.Fatalf("select must carry the retired expression: %s", sel)
+	}
+}
+
+// Retirement must not depend on the doomed grid columns: a union-ready row
+// (label + origin_union_secs, -1 included via IS NOT NULL) retires with its
+// grid still populated, so the KNN cutover needs no row-by-row drain. The
+// no-union-column schema keeps the drained-grid predicate exactly as before.
+func TestRetiredExprUnionReadyBeatsGridPresence(t *testing.T) {
+	with := retiredExpr(true)
+	if !strings.Contains(with, "rr.origin_union_secs IS NOT NULL") ||
+		!strings.Contains(with, "rr.polygon_cells IS NULL OR") {
+		t.Fatalf("union-aware predicate must retire on union-readiness OR a drained grid: %s", with)
+	}
+	without := retiredExpr(false)
+	if strings.Contains(without, "origin_union_secs") {
+		t.Fatalf("pre-migration schema must not name origin_union_secs: %s", without)
+	}
+	if !strings.Contains(without, "rr.reach_labels IS NOT NULL AND rr.polygon_cells IS NULL") {
+		t.Fatalf("pre-migration schema keeps the drained-grid predicate: %s", without)
 	}
 }

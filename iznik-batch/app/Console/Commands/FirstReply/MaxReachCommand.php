@@ -3,6 +3,7 @@
 namespace App\Console\Commands\FirstReply;
 
 use App\Services\FirstReply\MaxReachService;
+use App\Traits\SingleInstanceLock;
 use Illuminate\Console\Command;
 
 /**
@@ -23,25 +24,26 @@ class MaxReachCommand extends Command
 
     protected $description = 'Populate the eventual (max) reach polygon for rippling posts';
 
+    use SingleInstanceLock;
+
     public function handle(MaxReachService $service): int
     {
-        if (!$service->available()) {
-            $this->info('rippling_reach.max_polygon does not exist yet; nothing to do.');
+        // everyMinute() + runInBackground() means withoutOverlapping() does not
+        // actually prevent overlap (see SingleInstanceLock); once a run outlives
+        // its minute the pile compounds, and each run calls the routing server.
+        return $this->runSingleInstance('firstreply:maxreach:run', 900, fn (): int => $this->runGuarded($service));
+    }
 
-            return Command::SUCCESS;
-        }
-
+    private function runGuarded(MaxReachService $service): int
+    {
         $stats = $service->populate(
             (int) $this->option('limit'),
             (int) $this->option('routing-budget')
         );
 
         $this->info(sprintf(
-            'max reach: scanned %d, filled %d (%d needed routing), skipped %d',
-            $stats['scanned'],
-            $stats['filled'],
-            $stats['routed'],
-            $stats['skipped']
+            'max reach: cumulative filled for %d labelled rows',
+            $stats['labelled_cumulative'] ?? 0
         ));
 
         // Same command because it is the same knowledge: this is the only place

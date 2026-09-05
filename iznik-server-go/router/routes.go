@@ -42,6 +42,8 @@ import (
 	"github.com/freegle/iznik-server-go/deprecation"
 	"github.com/freegle/iznik-server-go/domain"
 	"github.com/freegle/iznik-server-go/donations"
+	"github.com/freegle/iznik-server-go/driving"
+	"github.com/freegle/iznik-server-go/electricals"
 	"github.com/freegle/iznik-server-go/emailtracking"
 	"github.com/freegle/iznik-server-go/export"
 	"github.com/freegle/iznik-server-go/group"
@@ -274,6 +276,16 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {object} item.ImpactResponse
 		// @Failure 400 {object} fiber.Error "Missing or empty name"
 		rg.Get("/item/impact", item.Impact)
+
+		// Electricals statistics
+		// @Router /electricals/stats [get]
+		// @Summary Public statistics for electrical items on Freegle
+		// @Description Rolling twelve-month figures for electrical reuse: counts and share, tonnes and CO2e, most popular and most unusual items, success rate against non-electrical posts, and the condition split. Generated on a schedule by the Laravel command electricals:stats and served from electricals_stats; not computed per request.
+		// @Tags electricals
+		// @Produce json
+		// @Success 200 {object} map[string]interface{} "Generated statistics payload"
+		// @Failure 404 {object} fiber.Error "No statistics generated yet"
+		rg.Get("/electricals/stats", electricals.Stats)
 
 		// Chats
 		// @Router /chat [get]
@@ -881,6 +893,12 @@ func SetupRoutes(app *fiber.App) {
 		rg.Get("/locations", location.SearchLocations)
 		rg.Get("/town/near", town.Near)
 
+		// Road drive time/distance from the logged-in member to a batch of
+		// points, via the routing server's reach engine. Fail-soft: empty
+		// results when the engine is unavailable (clients show crow-flies).
+		// @Router /drivedistance [post]
+		rg.Post("/drivedistance", driving.DriveDistance)
+
 		// Location Write Operations
 		rg.Put("/locations", location.CreateLocation)
 		rg.Patch("/locations", location.UpdateLocation)
@@ -1021,6 +1039,23 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 400 {object} fiber.Error "Invalid request"
 		// @Failure 401 {object} fiber.Error "Not logged in"
 		rg.Post("/messages/markseen", message.MarkSeen)
+
+		// Clear Browse Count
+		//
+		// Distinct from markseen above, and deliberately so: markseen records that these
+		// particular posts were VIEWED (a messages_likes impression, feeding the view count
+		// posters see). This one records only that the member has cleared their unread
+		// count, which is not a claim that they looked at anything.
+		//
+		// @Router /messages/clearcount [post]
+		// @Summary Clear the browse unread count
+		// @Description Marks the member's whole browse feed as cleared, without the client enumerating posts
+		// @Tags message
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 401 {object} fiber.Error "Not logged in"
+		rg.Post("/messages/clearcount", isochrone.ClearCount)
 
 		// Message Actions (POST)
 		// @Router /message [post]
@@ -1478,6 +1513,18 @@ func SetupRoutes(app *fiber.App) {
 
 		// Moderation analytics for the auto-approve approach (Admin/Support only).
 		rg.Get("/modtools/moderationstats", moderation.Stats)
+
+		// Deferral suppressions (authenticated, admin only)
+		// @Router /modtools/email/deferrals [get]
+		// @Summary List providers currently refusing our mail, and the members affected
+		// @Description Support view of deferral-aware mail suppression: active suppressions plus members whose mail is being held
+		// @Tags emailtracking
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/email/deferrals", emailtracking.Deferrals)
 
 		// Email Statistics Time Series (authenticated, admin only)
 		// @Router /email/stats/timeseries [get]

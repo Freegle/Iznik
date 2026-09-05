@@ -67,17 +67,6 @@
                     :width="400"
                     :height="200"
                   />
-                  <NuxtPicture
-                    v-else-if="message.attachments[0]?.externaluid"
-                    format="webp"
-                    provider="uploadcare"
-                    :src="message.attachments[0].externaluid"
-                    :modifiers="message.attachments[0].externalmods"
-                    alt="Item Photo"
-                    class="photo-image"
-                    :width="400"
-                    :height="200"
-                  />
                   <ProxyImage
                     v-else-if="message.attachments[0]?.path"
                     class-name="photo-image"
@@ -527,6 +516,7 @@ import { useLocationStore } from '~/stores/location'
 import { useGroupStore } from '~/stores/group'
 import { timeago } from '~/composables/useTimeFormat'
 import { milesAway } from '~/composables/useDistance'
+import { roadDistance } from '~/composables/useDriveDistance'
 import { onMounted, ref, computed, watch, useRouter, toRef } from '#imports'
 import { useMe } from '~/composables/useMe'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
@@ -535,22 +525,22 @@ import ProfileImage from '~/components/ProfileImage'
 import MessageTag from '~/components/MessageTag'
 import OurUploadedImage from '~/components/OurUploadedImage'
 
-const MyMessageReply = defineAsyncComponent(() =>
-  import('./MyMessageReply.vue')
+const MyMessageReply = defineAsyncComponent(
+  () => import('./MyMessageReply.vue')
 )
-const MessageShareModal = defineAsyncComponent(() =>
-  import('./MessageShareModal')
+const MessageShareModal = defineAsyncComponent(
+  () => import('./MessageShareModal')
 )
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
 const OutcomeModal = defineAsyncComponent(() => import('./OutcomeModal'))
-const MessageEditModal = defineAsyncComponent(() =>
-  import('./MessageEditModal')
+const MessageEditModal = defineAsyncComponent(
+  () => import('./MessageEditModal')
 )
 const RenegeModal = defineAsyncComponent(() => import('./RenegeModal'))
-const MessagePhotosModal = defineAsyncComponent(() =>
-  import('~/components/MessagePhotosModal')
+const MessagePhotosModal = defineAsyncComponent(
+  () => import('~/components/MessagePhotosModal')
 )
 
 const props = defineProps({
@@ -695,9 +685,25 @@ const closestUser = computed(() => {
   if (replyusers.value?.length > 1 && me.value) {
     replyusers.value.forEach((u) => {
       if (u) {
-        const miles = milesAway(u.lat, u.lng, me.value.lat, me.value.lng)
-        if (dist === null || miles < dist) {
-          dist = miles
+        // Drive time decides who is genuinely closest - the same measure the
+        // rest of the site selects and ranks by - with crow miles only for a
+        // replier the routing engine has no answer for yet. Mixing the two
+        // units in one comparison would be meaningless, so crow only breaks
+        // ties among the unanswered: any replier with a known drive time
+        // outranks distance-only ones once answers land (they arrive in one
+        // batched, cached lookup; the tag is text on a row, so a settle does
+        // not move anything).
+        const road = roadDistance(u.lat, u.lng).value
+        const measure =
+          road?.mins != null
+            ? { known: 1, value: road.mins }
+            : { known: 0, value: milesAway(u.lat, u.lng, me.value.lat, me.value.lng) }
+        if (
+          dist === null ||
+          measure.known > dist.known ||
+          (measure.known === dist.known && measure.value < dist.value)
+        ) {
+          dist = measure
           ret = u.id
         }
       }
@@ -950,7 +956,7 @@ const repost = async (e) => {
   }
 
   await composeStore.setAttachmentsForMessage(0, msg.attachments)
-  router.push(msg.type === 'Offer' ? '/give' : '/find')
+  router.push(msg.type === 'Offer' ? '/give' : '/ask')
 }
 
 const hidden = () => {
@@ -1261,7 +1267,8 @@ onMounted(async () => {
   justify-content: center;
 
   &.offer-gradient {
-    background: radial-gradient(
+    background:
+      radial-gradient(
         ellipse at 30% 20%,
         rgba(129, 199, 132, 0.9) 0%,
         transparent 50%
@@ -1280,7 +1287,8 @@ onMounted(async () => {
   }
 
   &.wanted-gradient {
-    background: radial-gradient(
+    background:
+      radial-gradient(
         ellipse at 25% 25%,
         rgba(144, 202, 249, 0.9) 0%,
         transparent 45%

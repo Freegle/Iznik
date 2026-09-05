@@ -91,12 +91,6 @@ func TestRipplingMetricsReportsDegradedSectionsOnDeadline(t *testing.T) {
 	adminID := CreateTestUser(t, prefix+"_admin", "Support")
 	_, token := CreateTestSession(t, adminID)
 
-	// Settle the graded-attribution schema check BEFORE shrinking the deadline. It caches its
-	// answer in a sync.Once for the life of the process, so letting it run first against the
-	// expired context would cache "legacy schema" and break every later test that expects the
-	// wide variant.
-	rippling.AttributionSchemaReady(database.DBConn)
-
 	restore := rippling.MetricsDeadline
 	rippling.MetricsDeadline = time.Nanosecond
 	defer func() { rippling.MetricsDeadline = restore }()
@@ -323,11 +317,9 @@ func TestRipplingMetricsReplyKPIs(t *testing.T) {
 	var result map[string]interface{}
 	json.Unmarshal(rsp(resp), &result)
 
-	// The split is present (an array), and the graded columns are flagged live.
+	// The split is present (an array).
 	split, hasSplit := result["reply_source_split"].([]interface{})
 	assert.True(t, hasSplit, "reply_source_split present")
-	assert.Equal(t, true, result["attribution_channels_available"],
-		"graded columns exist on the migrated test DB")
 
 	// The seeded day's split row: 5 replies -> 1 home, 1 notified, 1 reach, 1 join, 1 unknown;
 	// ripple share counts only the definite ripple channels (3/5 = 60%).
@@ -544,7 +536,7 @@ func TestReplySourceSplitLegacyVariant(t *testing.T) {
 
 	unknownID := CreateTestUser(t, prefix+"_unknown", "User")
 
-	// Legacy rows: was_home_member only, graded columns untouched (as an unmigrated DB would have).
+	// Rows the attribution backfill has not reached: was_home_member only, attribution NULL.
 	db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) VALUES "+
 		"(?, ?, NOW() - INTERVAL 2 HOUR, 1), "+ // home member
 		"(?, ?, NOW() - INTERVAL 2 HOUR, 0), "+ // notified
@@ -555,7 +547,10 @@ func TestReplySourceSplitLegacyVariant(t *testing.T) {
 	rows := []rippling.ReplySourceRow{}
 	start := time.Now().AddDate(0, 0, -1).Format("2006-01-02 15:04:05")
 	end := time.Now().Format("2006-01-02 15:04:05")
-	err := db.Raw(rippling.ReplySourceSplitSQL(false, ""), start, end).Scan(&rows).Error
+	// Attribution-NULL rows must be derived PER ROW, not folded into home/unknown - otherwise
+	// the window between the migration landing on production and the backfill running reads
+	// as a misleading zero-ripple chart (seen live 2026-07-07).
+	err := db.Raw(rippling.ReplySourceSplitSQL(""), start, end).Scan(&rows).Error
 	assert.NoError(t, err)
 
 	var row *rippling.ReplySourceRow
@@ -566,29 +561,11 @@ func TestReplySourceSplitLegacyVariant(t *testing.T) {
 		}
 	}
 	if assert.NotNil(t, row, "the seeded day is present") {
-		assert.GreaterOrEqual(t, row.RippleNotified, 1, "notified-ledger reply derived live")
-		assert.GreaterOrEqual(t, row.RippleGroup, 1, "rippled-group membership derived live")
+		assert.GreaterOrEqual(t, row.RippleNotified, 1, "NULL-attribution notified reply derived per row")
+		assert.GreaterOrEqual(t, row.RippleGroup, 1, "NULL-attribution rippled-group reply derived per row")
 		assert.Equal(t, 0, row.RippleReach, "location channels are not derivable retrospectively")
 		assert.Equal(t, 0, row.OrganicLocal, "location channels are not derivable retrospectively")
 		assert.GreaterOrEqual(t, row.Unknown, 1, "un-evidenced replies sit in unknown")
-	}
-
-	// The WIDE variant must derive these same attribution-NULL rows per row, not fold them
-	// into home/unknown - otherwise the window between the migration landing on production
-	// and the backfill running reads as a misleading zero-ripple chart (seen live 2026-07-07).
-	wideRows := []rippling.ReplySourceRow{}
-	err = db.Raw(rippling.ReplySourceSplitSQL(true, ""), start, end).Scan(&wideRows).Error
-	assert.NoError(t, err)
-	var wideRow *rippling.ReplySourceRow
-	for i := range wideRows {
-		if wideRows[i].Replies >= 4 && wideRows[i].Home >= 1 {
-			wideRow = &wideRows[i]
-			break
-		}
-	}
-	if assert.NotNil(t, wideRow, "the seeded day is present in the wide variant") {
-		assert.GreaterOrEqual(t, wideRow.RippleNotified, 1, "NULL-attribution notified reply derived per row")
-		assert.GreaterOrEqual(t, wideRow.RippleGroup, 1, "NULL-attribution rippled-group reply derived per row")
 	}
 }
 

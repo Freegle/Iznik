@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, reactive } from 'vue'
 import PendingPage from '~/modtools/pages/messages/pending/[[id]]/[[term]].vue'
 
 // Mock refs that will be shared between tests
@@ -20,7 +20,7 @@ const mockSummarykey = ref(false)
 const mockSummary = computed(() => false)
 const mockMessages = ref([])
 const mockVisibleMessages = ref([])
-const mockWork = computed(() => 0)
+const mockWork = ref(0)
 const mockNextAfterRemoved = ref(null)
 const mockGetMessages = vi.fn()
 const mockListingIds = ref(new Set())
@@ -50,14 +50,17 @@ vi.mock('~/composables/useModMessages', () => ({
 }))
 
 // Mock stores
-const mockAuthStore = {
+// Reactive so the page's `outstanding` computed (which reads authStore.work,
+// the same counts the menu badge uses) and the watcher on it actually fire.
+const mockAuthStore = reactive({
   user: {
     settings: {
       lastaimsshow: null,
     },
   },
+  work: {},
   saveAndGet: vi.fn(),
-}
+})
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => mockAuthStore,
@@ -209,12 +212,14 @@ describe('PendingPage', () => {
     mockWorkType.value = null
     mockMessages.value = []
     mockVisibleMessages.value = []
+    mockWork.value = 0
     mockLimit.value = 10
     mockDistance.value = 10
     mockModGroupStore.received = true
     mockModGroupStore.list = {}
     mockMiscStore.get.mockReturnValue(null)
     mockAuthStore.user = { settings: { lastaimsshow: null } }
+    mockAuthStore.work = {}
     mockListingIds.value = new Set()
     mockMessageStore.list = {}
     mockMessageStore.context = null
@@ -228,6 +233,115 @@ describe('PendingPage', () => {
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
       expect(wrapper.text()).toContain('no messages at the moment')
+    })
+
+    // Discourse 10037: the group dropdown remembers its selection in
+    // localStorage and silently re-applies it on every visit, while the
+    // Pending badge in the menu counts work across every community. A
+    // moderator whose remembered community happens to have nothing pending
+    // sees a bare "no messages" page and a badge insisting there is work.
+    // Two moderators reported it as "I can't moderate on desktop".
+    it('names the filtered community and the outstanding count when the filter is hiding work', async () => {
+      mockMessages.value = []
+      mockBusy.value = false
+      mockModGroupStore.received = true
+      mockGroupid.value = 522709
+      mockGroup.value = { id: 522709, namedisplay: 'Skelmersdale Freegle' }
+      // A component left mounted by an earlier test still watches the shared
+      // groupid ref and re-derives group from the store, so the store has to
+      // agree about which community this is.
+      mockModGroupStore.get.mockReturnValue({
+        id: 522709,
+        namedisplay: 'Skelmersdale Freegle',
+      })
+      mockAuthStore.work = { pending: 3 }
+
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.text()).toContain('Skelmersdale Freegle')
+      expect(wrapper.text()).toContain('3')
+      expect(wrapper.text()).toContain('Show all my communities')
+    })
+
+    it('counts spam towards the outstanding total, as the menu badge does', async () => {
+      // workType on this page is pending+pendingother, but the listing also
+      // includes Spam-collection messages and the badge counts them, so a
+      // spam-only backlog on another community must still be explained.
+      mockMessages.value = []
+      mockBusy.value = false
+      mockModGroupStore.received = true
+      mockGroupid.value = 522709
+      mockGroup.value = { id: 522709, namedisplay: 'Skelmersdale Freegle' }
+      mockModGroupStore.get.mockReturnValue({
+        id: 522709,
+        namedisplay: 'Skelmersdale Freegle',
+      })
+      mockAuthStore.work = { pending: 0, spam: 2 }
+
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.text()).toContain('there are 2 waiting')
+      expect(wrapper.text()).toContain('Show all my communities')
+    })
+
+    it('ignores backup-community work, which all-communities does not show', async () => {
+      // pendingother covers posts on backup communities, and the
+      // all-communities listing only fans out over active ones by design
+      // (user.GetActiveModGroupIDs). Offering "Show all my communities" for
+      // work it will not show would send the moderator nowhere.
+      mockMessages.value = []
+      mockBusy.value = false
+      mockModGroupStore.received = true
+      mockGroupid.value = 522709
+      mockGroup.value = { id: 522709, namedisplay: 'Skelmersdale Freegle' }
+      mockModGroupStore.get.mockReturnValue({
+        id: 522709,
+        namedisplay: 'Skelmersdale Freegle',
+      })
+      mockAuthStore.work = { pending: 0, spam: 0, pendingother: 4 }
+
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.text()).toContain('no messages at the moment')
+      expect(wrapper.text()).not.toContain('Show all my communities')
+    })
+
+    it('keeps the plain empty notice when nothing is pending anywhere', async () => {
+      mockMessages.value = []
+      mockBusy.value = false
+      mockModGroupStore.received = true
+      mockGroupid.value = 522709
+      mockGroup.value = { id: 522709, namedisplay: 'Skelmersdale Freegle' }
+      // A component left mounted by an earlier test still watches the shared
+      // groupid ref and re-derives group from the store, so the store has to
+      // agree about which community this is.
+      mockModGroupStore.get.mockReturnValue({
+        id: 522709,
+        namedisplay: 'Skelmersdale Freegle',
+      })
+      mockAuthStore.work = { pending: 0 }
+
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.text()).toContain('no messages at the moment')
+      expect(wrapper.text()).not.toContain('Show all my communities')
+    })
+
+    it('keeps the plain empty notice when already showing all communities', async () => {
+      mockMessages.value = []
+      mockBusy.value = false
+      mockModGroupStore.received = true
+      mockGroupid.value = 0
+      mockAuthStore.work = { pending: 3 }
+
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.text()).not.toContain('Show all my communities')
     })
 
     it('shows loading message when groups not yet received', async () => {
@@ -349,6 +463,52 @@ describe('PendingPage', () => {
       expect(mockState.complete).not.toHaveBeenCalled()
       expect(mockState.loaded).toHaveBeenCalled()
     })
-  })
 
+    it('clearing the filter also forgets it, so the next visit is not filtered again (Discourse 10037)', async () => {
+      mockMessages.value = []
+      mockBusy.value = false
+      mockGroupid.value = 522709
+      mockGroup.value = { id: 522709, namedisplay: 'Skelmersdale Freegle' }
+      // A component left mounted by an earlier test still watches the shared
+      // groupid ref and re-derives group from the store, so the store has to
+      // agree about which community this is.
+      mockModGroupStore.get.mockReturnValue({
+        id: 522709,
+        namedisplay: 'Skelmersdale Freegle',
+      })
+      mockAuthStore.work = { pending: 3 }
+
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      await wrapper.vm.showAllCommunities()
+
+      expect(mockGroupid.value).toBe(0)
+      // ModGroupSelect only persists a choice made through the dropdown
+      // itself, so clearing the filter from here has to forget the
+      // remembered value too - otherwise the next mount restores it.
+      expect(mockMiscStore.set).toHaveBeenCalledWith({
+        key: 'groupselect-pending',
+        value: 0,
+      })
+    })
+
+    it('does not fire its own fetch on a work count change (Discourse 10037)', async () => {
+      // The work-count watcher inside useModMessages already refetches, with a
+      // limit covering the whole outstanding total, and reveals everything it
+      // gets. A second trigger here would just double every refresh - which is
+      // the duplicate-request problem this page is being fixed for.
+      mockMessages.value = []
+      mockBusy.value = false
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      const before = wrapper.vm.bump
+
+      mockAuthStore.work = { pending: 4 }
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.bump).toBe(before)
+      expect(mockMessageStore.fetchMessagesMT).not.toHaveBeenCalled()
+    })
+  })
 })

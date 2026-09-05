@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
+import ClearanceManager from '~/components/ClearanceManager.vue'
+
 const h = vi.hoisted(() => ({
   myid: 99,
   fetch: vi.fn().mockResolvedValue({}),
@@ -64,8 +66,6 @@ vi.mock('~/components/ClearanceManageItem', () => ({
     props: ['message', 'item', 'index'],
   },
 }))
-
-import ClearanceManager from '~/components/ClearanceManager.vue'
 
 const mountOpts = {
   props: { id: 1 },

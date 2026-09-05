@@ -93,6 +93,27 @@ class EeeVisionServiceTest extends TestCase
         $this->assertNull($result);
     }
 
+    public function test_build_image_url_strips_the_tus_prefix(): void
+    {
+        // freegletusd- marks who uploaded the image; it is not part of the stored object name,
+        // so it has to come off before the delivery proxy is asked for the object.
+        $url = EeeVisionService::buildImageUrl('freegletusd-abc123');
+
+        $this->assertStringContainsString('uploads.ilovefreegle.org:8080/abc123', $url);
+        $this->assertStringNotContainsString('freegletusd-', $url);
+        $this->assertStringStartsWith('https://delivery.ilovefreegle.org?url=', $url);
+    }
+
+    public function test_build_image_url_passes_an_unprefixed_id_through(): void
+    {
+        // Uploadcare is retired, so an id without the prefix is no longer sent to ucarecdn.com -
+        // it goes to our own delivery proxy like everything else.
+        $url = EeeVisionService::buildImageUrl('abc123');
+
+        $this->assertStringContainsString('uploads.ilovefreegle.org:8080/abc123', $url);
+        $this->assertStringNotContainsString('ucarecdn', $url);
+    }
+
     private function callFetchImageBase64(string $url): ?array
     {
         $reflection = new \ReflectionMethod(EeeVisionService::class, 'fetchImageBase64');

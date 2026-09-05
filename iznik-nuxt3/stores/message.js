@@ -7,6 +7,10 @@ import { useUserStore } from '~/stores/user'
 import { useNearbyStore } from '~/stores/nearby'
 import { useGroupStore } from '~/stores/group'
 import { useMiscStore } from '~/stores/misc'
+import {
+  prewarmRoadDistances,
+  roadAnswersVersion,
+} from '~/composables/useDriveDistance'
 
 // Debounce delay for batching message fetches (ms)
 const BATCH_DELAY = 50
@@ -14,8 +18,7 @@ const BATCH_DELAY = 50
 // Refetch a cached message after this long, in case its state has changed.
 const CACHE_TTL_SECONDS = 600
 
-export const useMessageStore = defineStore({
-  id: 'message',
+export const useMessageStore = defineStore('message', {
   state: () => ({
     list: {},
     byUserList: {},
@@ -189,6 +192,9 @@ export const useMessageStore = defineStore({
         }
 
         // Process each chunk
+        const fetched = []
+        const anyRoadChunks = []
+        const bareChunks = []
         for (const chunk of chunks) {
           this.fetchingCount++
 
@@ -214,6 +220,15 @@ export const useMessageStore = defineStore({
                   this.list[msg.id].addedToCache = Math.round(Date.now() / 1000)
                 }
               })
+              fetched.push(...msgs)
+              // Per API response, not per invocation: one chunk's routing
+              // call can fail server-side while another's succeeds, and the
+              // failed chunk's records still deserve the client fallback.
+              if (msgs.some((m) => m.roadmins != null)) {
+                anyRoadChunks.push(msgs)
+              } else {
+                bareChunks.push(msgs)
+              }
             } else if (typeof msgs === 'object') {
               this.list[msgs.id] = msgs
               if (this.list[msgs.id]) {
@@ -238,6 +253,25 @@ export const useMessageStore = defineStore({
           }
         }
 
+        // Road distances: the server ships roadmins/roadmiles with each
+        // message (computed in the same batched call that blurred the
+        // coords). Signal consumers that snapshot an order (the browse
+        // feed's locked sort) that new road answers exist, and only
+        // client-fetch for records an older server left bare - normally
+        // none, so a page load makes NO /drivedistance calls at all.
+        if (anyRoadChunks.length) {
+          roadAnswersVersion.value++
+        }
+        // All-or-nothing fallback PER RESPONSE: if any record in a response
+        // carries road metrics the server-side routing ran for it, and its
+        // bare records are posts the engine genuinely cannot answer - asking
+        // again from the client just repeats the null. A response with NO
+        // metrics (older server, or its routing call failed) gets the
+        // client-side batched lookup instead.
+        for (const chunkMsgs of bareChunks) {
+          prewarmRoadDistances(chunkMsgs)
+        }
+
         // Batch-fetch the groups these messages belong to in one request, so the per-post
         // MessageTag components find their group cached instead of each firing its own
         // /group/{id} call. Done here (rather than only in the list component) so it covers
@@ -260,7 +294,7 @@ export const useMessageStore = defineStore({
       }
     },
     async fetchInBounds(swlat, swlng, nelat, nelng, groupid, limit, cache) {
-      let ret = []
+      let ret
       const key =
         swlat + ':' + swlng + ':' + nelat + ':' + nelng + ':' + groupid
 
@@ -299,7 +333,7 @@ export const useMessageStore = defineStore({
       return await api(this.config).message.matches(query, lat, lng, limit)
     },
     async fetchMyGroups(gid) {
-      let ret = null
+      let ret
 
       if (this.fetchingMyGroups) {
         ret = await this.fetchingMyGroups
@@ -553,6 +587,12 @@ export const useMessageStore = defineStore({
         ? activeMessages.length
         : 0
     },
+    // Clears the whole browse count server-side. No ids: see MessageAPI.clearCount.
+    async clearCount() {
+      await api(this.config).message.clearCount()
+      this.count = 0
+    },
+
     async markSeen(ids, source) {
       try {
         await api(this.config).message.markSeen(ids, source)
@@ -765,7 +805,7 @@ export const useMessageStore = defineStore({
     // pending page (Discourse 9862). Only drop it once nothing's left. The review-queue states
     // match ModMessage's own predicate; mirrors hold()/release()'s re-fetch, but conditional.
     async refreshOrRemoveFromMTList(id) {
-      let message = null
+      let message
       try {
         message = await this.fetchMT({ id }, false)
       } catch (e) {

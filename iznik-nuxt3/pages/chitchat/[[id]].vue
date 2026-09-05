@@ -39,8 +39,8 @@
                   class="composer-textarea"
                 />
                 <NoticeMessage
-                  v-if="showGiveFind"
-                  ref="giveFind"
+                  v-if="showGiveAsk"
+                  ref="giveAsk"
                   variant="warning"
                   class="mt-2"
                 >
@@ -55,7 +55,7 @@
                       </b-button>
                     </div>
                     <div class="post__button d-flex justify-content-around">
-                      <b-button to="/find" variant="secondary">
+                      <b-button to="/ask" variant="secondary">
                         Ask for stuff
                       </b-button>
                     </div>
@@ -66,17 +66,6 @@
                   format="webp"
                   fit="cover"
                   :src="ouruid"
-                  :modifiers="imagemods"
-                  alt="ChitChat Photo"
-                  width="100"
-                  class="mt-2 uploaded-preview"
-                />
-                <NuxtPicture
-                  v-else-if="imageuid"
-                  format="webp"
-                  fit="cover"
-                  provider="uploadcare"
-                  :src="imageuid"
                   :modifiers="imagemods"
                   alt="ChitChat Photo"
                   width="100"
@@ -116,11 +105,13 @@
                   <v-icon icon="map-marker-alt" class="location-icon" />
                   <span>{{ areaname }}</span>
                 </div>
-                <b-form-select
-                  v-model="selectedArea"
-                  :options="areaOptions"
-                  class="filter-select"
-                  size="sm"
+                <DistanceSliderRow
+                  id="chitchat-distance"
+                  axis="chitchat"
+                  class="filter-slider"
+                  aria-label="How far away chitchat can be from you"
+                  right-label="Anywhere"
+                  unlimited-at-top
                 />
                 <!-- Community News posts are targeted at one area and capped in
                      any one feed, so there is otherwise no way to review what is
@@ -140,6 +131,15 @@
           <VisibleWhen :at="['xs', 'sm', 'md']">
             <NewsCommunityEventVolunteerSummary class="events-section" />
           </VisibleWhen>
+
+          <!-- Only offered when there is something to clear, and only on the feed itself
+               (not a single thread), where "all" has an obvious meaning. -->
+          <div v-if="!id && unreadCount" class="markallread-row">
+            <button type="button" class="markallread-btn" @click="markAllRead">
+              <v-icon icon="check-double" class="me-1" />
+              Mark all {{ unreadCount }} read
+            </button>
+          </div>
 
           <!-- Posts feed -->
           <div class="posts-feed">
@@ -202,12 +202,12 @@ import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { buildHead } from '~/composables/useBuildHead'
 import { useMiscStore } from '~/stores/misc'
 import { useNewsfeedStore } from '~/stores/newsfeed'
-import { useAuthStore } from '~/stores/auth'
 import { useLocationStore } from '~/stores/location'
 import { useTeamStore } from '~/stores/team'
 import NewsCommunityEventVolunteerSummary from '~/components/NewsCommunityEventVolunteerSummary'
 import { useMe } from '~/composables/useMe'
 import VisibleWhen from '~/components/VisibleWhen'
+import DistanceSliderRow from '~/components/DistanceSliderRow'
 import GlobalMessage from '~/components/GlobalMessage'
 import NoticeMessage from '~/components/NoticeMessage'
 import AutoHeightTextarea from '~/components/AutoHeightTextarea'
@@ -217,20 +217,20 @@ import MessageListUpToDate from '~/components/MessageListUpToDate.vue'
 import { untwem } from '~/composables/useTwem'
 import { useRoute } from '#imports'
 
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
-const SidebarLeft = defineAsyncComponent(() =>
-  import('~/components/SidebarLeft')
+const SidebarLeft = defineAsyncComponent(
+  () => import('~/components/SidebarLeft')
 )
-const SidebarRight = defineAsyncComponent(() =>
-  import('~/components/SidebarRight')
+const SidebarRight = defineAsyncComponent(
+  () => import('~/components/SidebarRight')
 )
-const ExpectedRepliesWarning = defineAsyncComponent(() =>
-  import('~/components/ExpectedRepliesWarning')
+const ExpectedRepliesWarning = defineAsyncComponent(
+  () => import('~/components/ExpectedRepliesWarning')
 )
-const OurUploadedImage = defineAsyncComponent(() =>
-  import('~/components/OurUploadedImage')
+const OurUploadedImage = defineAsyncComponent(
+  () => import('~/components/OurUploadedImage')
 )
 
 // Route validation
@@ -267,7 +267,6 @@ useHead(
 // Store setup
 const miscStore = useMiscStore()
 const newsfeedStore = useNewsfeedStore()
-const authStore = useAuthStore()
 const locationStore = useLocationStore()
 const teamStore = useTeamStore()
 
@@ -317,42 +316,24 @@ const infiniteDistance = ref(1000)
 const runChecks = ref(true)
 const infiniteState = ref(null)
 const currentAtts = ref([])
-const showGiveFind = ref(false)
-const shownGiveFind = ref(false)
+const showGiveAsk = ref(false)
+const shownGiveAsk = ref(false)
 const error = ref(false)
 const threadhead = ref(null)
 const loadingThread = ref(false)
 const infiniteId = ref(new Date().getTime())
-const giveFind = ref(null)
-
-// Area/location filter options
-const areaOptions = [
-  { value: 'nearby', text: 'Nearby' },
-  { value: 1609, text: 'Within 1 mile' },
-  { value: 3128, text: 'Within 2 miles' },
-  { value: 8046, text: 'Within 5 miles' },
-  { value: 16093, text: 'Within 10 miles' },
-  { value: 32186, text: 'Within 20 miles' },
-  { value: 80467, text: 'Within 50 miles' },
-  { value: '0', text: 'Anywhere' },
-]
+const giveAsk = ref(null)
 
 const areaname = ref(me.value?.settings?.mylocation?.area?.name)
 const areaid = computed(() => me.value?.settings?.mylocation?.areaid)
 
-const selectedArea = computed({
-  get() {
-    const settings = me.value?.settings
-    return settings?.newsfeedarea || 0
-  },
-  async set(newval) {
-    const settings = me.value.settings
-    settings.newsfeedarea = newval
-
-    await authStore.saveAndGet({
-      settings,
-    })
-  },
+// The travel-time slider (DistanceSliderRow axis="chitchat") owns writes: it
+// persists the minutes plus the derived crow radius into newsfeedarea, which
+// this computed - and the feed fetch and navbar count - keep reading. 0 =
+// anywhere (the slider's top stop).
+const selectedArea = computed(() => {
+  const settings = me.value?.settings
+  return settings?.newsfeedarea || 0
 })
 
 // A reviewing tool rather than a preference, so it lives in local state rather
@@ -467,6 +448,12 @@ const newsfeedToShow = computed(() => {
 // This is used to show the "you're up to date" divider.
 const seenBeforeVisit = computed(() => newsfeedStore.seenBeforeVisit)
 
+const unreadCount = computed(() => newsfeedStore.count)
+
+async function markAllRead() {
+  await newsfeedStore.markAllRead()
+}
+
 // Find the index in newsfeedToShow where we should show the divider.
 // The divider goes after the last "new" item (items with id > seenBeforeVisit).
 const upToDateDividerIndex = computed(() => {
@@ -580,23 +567,23 @@ function photoAdd() {
   uploading.value = true
 }
 
-function scrollToGiveFind(give) {
+function scrollToGiveAsk(give) {
   nextTick(() => {
-    if (giveFind.value) {
-      giveFind.value.$el.scrollIntoView()
+    if (giveAsk.value) {
+      giveAsk.value.$el.scrollIntoView()
 
       setTimeout(() => {
-        if (give && giveFind.value?.$refs.givebutton?.$el) {
-          giveFind.value.$refs.givebutton.$el.scrollIntoView()
-        } else if (!give && giveFind.value?.$refs.findbutton?.$el) {
-          giveFind.value.$refs.findbutton.$el.scrollIntoView()
+        if (give && giveAsk.value?.$refs.givebutton?.$el) {
+          giveAsk.value.$refs.givebutton.$el.scrollIntoView()
+        } else if (!give && giveAsk.value?.$refs.askbutton?.$el) {
+          giveAsk.value.$refs.askbutton.$el.scrollIntoView()
         }
       }, 500)
     }
 
     window.scrollBy(0, 100)
     setTimeout(() => {
-      showGiveFind.value = false
+      showGiveAsk.value = false
     }, 30000)
   })
 }
@@ -609,7 +596,7 @@ function runCheck() {
     if (msg) {
       msg = msg.toLowerCase()
 
-      if (!shownGiveFind.value) {
+      if (!shownGiveAsk.value) {
         for (const word of [
           'offer',
           'giving away',
@@ -618,14 +605,14 @@ function runCheck() {
           'collection only',
         ]) {
           if (msg.length && msg.includes(word)) {
-            showGiveFind.value = true
-            shownGiveFind.value = true
-            scrollToGiveFind(true)
+            showGiveAsk.value = true
+            shownGiveAsk.value = true
+            scrollToGiveAsk(true)
           }
         }
       }
 
-      if (!shownGiveFind.value) {
+      if (!shownGiveAsk.value) {
         for (const word of [
           'wanted',
           'wanting',
@@ -638,9 +625,9 @@ function runCheck() {
           'if anyone has',
         ]) {
           if (msg.length && msg.includes(word)) {
-            showGiveFind.value = true
-            shownGiveFind.value = true
-            scrollToGiveFind(false)
+            showGiveAsk.value = true
+            shownGiveAsk.value = true
+            scrollToGiveAsk(false)
           }
         }
       }
@@ -824,7 +811,8 @@ if (me.value) {
   padding: 0.875rem;
   font-size: 1rem;
   resize: none;
-  transition: border-color var(--transition-normal),
+  transition:
+    border-color var(--transition-normal),
     box-shadow var(--transition-normal);
 
   &:focus {
@@ -902,6 +890,26 @@ if (me.value) {
 }
 
 // Filter section
+.markallread-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.5rem;
+}
+
+.markallread-btn {
+  background: none;
+  border: none;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+  color: $primary;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    text-decoration: underline;
+  }
+}
+
 .filter-section {
   margin-top: 0;
   background: white;
@@ -915,6 +923,13 @@ if (me.value) {
   align-items: center;
   gap: 0.75rem;
   flex-wrap: wrap;
+}
+
+.filter-slider {
+  /* A fixed track width: the towns hint under the slider loads a beat after
+     first paint, and without this the row grew to fit it - a visible width
+     jump on every page load. The hint text wraps within this width instead. */
+  width: min(26rem, 100%);
 }
 
 .location-display {

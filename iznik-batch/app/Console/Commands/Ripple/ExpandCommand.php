@@ -32,6 +32,19 @@ class ExpandCommand extends Command
     {
         $this->registerShutdownHandlers();
 
+        // INTERIM headroom, not a fix (2026-08-26, first post-drop evening).
+        // Bulk runs accumulate memory across hundreds of advances and were
+        // dying at the default 1GB roughly every 45 minutes, each death also
+        // wedging the run lock below for its full TTL - so expansion limped at
+        // ~a quarter of its cadence with 1,200+ posts overdue. The streaming
+        // clip subtract removed the biggest single consumer; what remains
+        // grows gradually (final straw is always a query-result buffer,
+        // Connection.php:411) and is being charted by the mem_mb field
+        // ExpandService now logs per advance. Doubling the ceiling keeps
+        // rippling alive while that curve identifies the leak; REMOVE once the
+        // per-advance memory is flat.
+        ini_set('memory_limit', '2048M');
+
         // Hard single-instance guard. The scheduler's withoutOverlapping() is unreliable for
         // runInBackground() jobs: the overlap mutex is released as soon as the foreground tick
         // forks the background process, so a fresh run launches every minute even while the
@@ -42,8 +55,21 @@ class ExpandCommand extends Command
         // and auto-expires, so at most one bulk run executes at a time and a crashed run can't
         // wedge the lock forever. Controlled one-offs (--msgid / --dry-run) are exempt: they do
         // no bulk expansion and an operator must be able to run them alongside the cron.
+        // The TTL must exceed the WORST honest run, or the guard defeats
+        // itself: a backlogged run is 500 rows x one catchment each, and a
+        // late-tick (39-45 minute budget) catchment costs ~4.3s materialised
+        // (measured on an idle node, 2026-08-30), so a full run is ~36 minutes
+        // plus DB work. At 1800s the lock expired mid-run, the every-minute
+        // schedule admitted a fresh run each expiry, and the stack grew to
+        // EIGHT concurrent expands - exactly the routing server's 8
+        // compute-gate slots - so every catchment hit the 60s client timeout,
+        // goodput went to zero and 7,300 rows fell overdue. 3600s covers the
+        // worst run; a completed run still releases immediately, and the cost
+        // of a crashed run's wedge (next run waits out the remainder, the
+        // documented recreate gotcha) rises to at most an hour - far cheaper
+        // than the stacking collapse.
         $exemptFromLock = $this->option('msgid') !== null || (bool) $this->option('dry-run');
-        $lock = $exemptFromLock ? null : Cache::lock('ripple:expand:run', 1800);
+        $lock = $exemptFromLock ? null : Cache::lock('ripple:expand:run', 3600);
         if ($lock !== null && !$lock->get()) {
             Log::info('ripple:expand skipped: another run already holds the lock');
             $this->info('Another ripple:expand run is in progress; exiting.');

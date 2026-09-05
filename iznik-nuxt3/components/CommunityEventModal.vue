@@ -34,16 +34,6 @@
               alt="Community Event Photo"
               class="modal-image"
             />
-            <NuxtPicture
-              v-else-if="event?.image?.imageuid"
-              format="webp"
-              width="200"
-              provider="uploadcare"
-              :src="event.image.imageuid"
-              :modifiers="event.image.imagemods"
-              alt="Community Event Photo"
-              class="modal-image"
-            />
             <b-img
               v-else
               lazy
@@ -409,23 +399,23 @@ defineRule('min', min)
 defineRule('max', max)
 
 // Load components asynchronously
-const GroupSelect = defineAsyncComponent(() =>
-  import('~/components/GroupSelect')
+const GroupSelect = defineAsyncComponent(
+  () => import('~/components/GroupSelect')
 )
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
-const StartEndCollection = defineAsyncComponent(() =>
-  import('~/components/StartEndCollection')
+const StartEndCollection = defineAsyncComponent(
+  () => import('~/components/StartEndCollection')
 )
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
-const DonationButton = defineAsyncComponent(() =>
-  import('~/components/DonationButton')
+const DonationButton = defineAsyncComponent(
+  () => import('~/components/DonationButton')
 )
-const ExternalLink = defineAsyncComponent(() =>
-  import('~/components/ExternalLink')
+const ExternalLink = defineAsyncComponent(
+  () => import('~/components/ExternalLink')
 )
 
 // Props

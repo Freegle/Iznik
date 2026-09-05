@@ -129,15 +129,13 @@ if (!isApp.value) {
   }
 }
 
-const appearance = {
-  /* appearance */
-}
+const appearance = {/* appearance */}
 
 const options = {
   paymentMethods: {
     // In dev, we can't use Google/Apple pay because we aren't over HTTPS and the domain isn't registered.
-    googlePay: process.dev ? 'never' : 'auto',
-    applePay: process.dev ? 'never' : 'auto',
+    googlePay: import.meta.dev ? 'never' : 'auto',
+    applePay: import.meta.dev ? 'never' : 'auto',
   },
   paymentMethodOrder: ['googlepay', 'applepay', 'paypal', 'card', 'link'],
   layout: {

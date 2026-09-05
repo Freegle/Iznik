@@ -21,7 +21,7 @@
             {{
               type === 'Offer'
                 ? 'What are you giving away?'
-                : 'What are you looking for?'
+                : "Tell other freeglers what you'd like"
             }}
           </label>
           <PostItem
@@ -39,7 +39,7 @@
             {{
               type === 'Offer'
                 ? 'Any details that might help?'
-                : 'Tell us more about what you need:'
+                : "Tell us more about what you'd like:"
             }}
           </label>
           <b-form-textarea

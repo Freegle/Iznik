@@ -259,8 +259,37 @@ deploy_routing() {
       OOM=$(dmesg 2>/dev/null | tail -3 | grep -ci "out of memory\|killed process")
       if [ "$H" = "200" ]; then
         GP=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:'"$ROUTING_INTERNAL_PORT$gp_path"'" 2>/dev/null)
-        [ "$GP" = "200" ] && { echo "OK health=200 group-proximity=200"; exit 0; }
-        echo "routing healthy but group-proximity=$GP (route missing?)"; exit 3
+        [ "$GP" != "200" ] && { echo "routing healthy but group-proximity=$GP (route missing?)"; exit 3; }
+        # Reach-engine probe. health and group-proximity BOTH pass on the PBF
+        # fallback, so they cannot tell "engine loaded" from "engine silently
+        # absent" — on 2026-09-02 a graphSnapVersion bump met version-1
+        # artifacts, every node reported clean, and /v1/reach-* 503d for ~16h.
+        # 503 means the engine did not load; 400 is this empty body being
+        # rejected by a live engine, which is the pass we want.
+        if [ "${DEPLOY_SKIP_REACH_PROBE:-0}" = "1" ]; then
+          echo "OK health=200 group-proximity=200 reach-probe=skipped"; exit 0
+        fi
+        RU=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "{}" \
+             "http://localhost:'"$ROUTING_INTERNAL_PORT"'/v1/reach-union" 2>/dev/null)
+        if [ "$RU" = "503" ]; then
+          # Two different faults answer 503, and they need opposite responses.
+          # A REFUSING line means the engine loaded fine but its partition is
+          # not the one the stored labels were built against (the config
+          # pairing record) - the artifacts are wrong for this database, and
+          # serving them would empty every nearby feed (2026-09-03). Anything
+          # else is the engine not loading at all.
+          REFUSED=$(grep "reach: REFUSING" /tmp/iznik-routing-go.out 2>/dev/null | tail -1)
+          if [ -n "$REFUSED" ]; then
+            echo "routing up but REACH ENGINE REFUSED: partition does not match config.reach_partition_fp"
+            echo "  $REFUSED"
+            exit 6
+          fi
+          echo "routing up but REACH ENGINE NOT LOADED (reach-union=503) - stale artifacts?"; exit 5
+        fi
+        # Which partition this node is now serving; the operator should see
+        # the same value on every node, and on the stored labels.
+        FP=$(curl -s http://localhost:'"$ROUTING_PUBLIC_PORT"'/health 2>/dev/null | sed -n "s/.*\"reach_partition_fp\":\"\([0-9]*\)\".*/\1/p")
+        echo "OK health=200 group-proximity=200 reach-union=$RU reach-partition=${FP:-unknown}"; exit 0
       fi
       [ "${OOM:-0}" != "0" ] && { echo "OOM during graph load"; exit 4; }
     done

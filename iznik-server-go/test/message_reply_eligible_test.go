@@ -6,6 +6,8 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -22,9 +24,9 @@ func TestReplyEligibleReach(t *testing.T) {
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
-		polygon GEOMETRY NOT NULL SRID 3857,
-		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
-		SPATIAL INDEX msgreach_poly (polygon)
+		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("repelig")
@@ -46,10 +48,11 @@ func TestReplyEligibleReach(t *testing.T) {
 		assert.Nil(t, msgs[0].ReplyEligible, "no reach row → eligible (omitted)")
 	}
 
-	// 2) Reach row whose polygon does NOT contain the viewer → not eligible (false).
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", mid)
+	// 2) Reach row whose label refuses the viewer → not eligible (false).
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE lat = VALUES(lat)", mid)
+	stubReachEvalMax(t, "out")
 	db.Exec("DELETE FROM rippling_event_metrics WHERE event = 'reply_blocked' AND day = CURDATE()")
 	msgs = message.GetMessagesByIds(viewerID, []string{idStr}, false)
 	if assert.Len(t, msgs, 1) && assert.NotNil(t, msgs[0].ReplyEligible, "outside reach → replyeligible set") {
@@ -60,11 +63,24 @@ func TestReplyEligibleReach(t *testing.T) {
 	db.Raw("SELECT count FROM rippling_event_metrics WHERE event = 'reply_blocked' AND day = CURDATE()").Scan(&blockedCount)
 	assert.GreaterOrEqual(t, blockedCount, 1, "reply-blocked-by-reach event counted")
 
-	// 3) Reach row containing the viewer → eligible (nil).
-	db.Exec("UPDATE rippling_reach SET polygon = "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), "+
-		"outer_bound = ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), "+
-		"inner_bound = NULL WHERE msgid = ?", mid)
+	// 2b) The routing server cannot answer at all. No verdict is not a refusal:
+	//     the viewer keeps their reply. Telling somebody a post has not reached
+	//     them is worst exactly when it is wrong - the notice carries an arrival
+	//     time from the drive-time estimate, which keeps working through a reach
+	//     outage, so on 2026-09-02 it said a post would reach them at a time that
+	//     had already passed.
+	func() {
+		t.Setenv("ROUTING_EVAL_URL", "http://127.0.0.1:1")
+		roadblur.ResetRoutingBreaker()
+		defer roadblur.ResetRoutingBreaker()
+		msgs = message.GetMessagesByIds(viewerID, []string{idStr}, false)
+		if assert.Len(t, msgs, 1) {
+			assert.Nil(t, msgs[0].ReplyEligible, "routing down is not a refusal - the post stays reply-eligible")
+		}
+	}()
+
+	// 3) The label admits the viewer → eligible (nil).
+	stubReachEvalMax(t, "in")
 	msgs = message.GetMessagesByIds(viewerID, []string{idStr}, false)
 	if assert.Len(t, msgs, 1) {
 		assert.Nil(t, msgs[0].ReplyEligible, "inside reach → eligible (omitted)")
@@ -96,9 +112,9 @@ func TestReplyEligibleReachWhenMasterSwitchOff(t *testing.T) {
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
-		polygon GEOMETRY NOT NULL SRID 3857,
-		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
-		SPATIAL INDEX msgreach_poly (polygon)
+		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("repeligtrial")
@@ -110,11 +126,15 @@ func TestReplyEligibleReachWhenMasterSwitchOff(t *testing.T) {
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 	idStr := fmt.Sprint(mid)
 
-	// Reach row whose polygon does NOT contain the viewer → out of reach → replyeligible=false,
+	// Reach the routing server decides the viewer is OUT of → replyeligible=false,
 	// even though RIPPLE_ENABLED is off (the post is rippling via the per-group trial).
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", mid)
+	// The verdict has to be a decision: an unanswered row now fails open, so the
+	// notice can no longer appear just because reach evaluation was unavailable.
+	stubReachEvalMax(t, rippling.LabelVerdictOut)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells)", mid,
+		mustRasterize(t, "POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))"))
 	msgs := message.GetMessagesByIds(viewerID, []string{idStr}, false)
 	if assert.Len(t, msgs, 1) && assert.NotNil(t, msgs[0].ReplyEligible, "trial post, master off → replyeligible set") {
 		assert.False(t, *msgs[0].ReplyEligible, "trial post outside reach, master off → replyeligible=false")
@@ -133,9 +153,9 @@ func TestReplyEligibleDarkWhenNotRippling(t *testing.T) {
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
-		polygon GEOMETRY NOT NULL SRID 3857,
-		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
-		SPATIAL INDEX msgreach_poly (polygon)
+		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("repeligoff")

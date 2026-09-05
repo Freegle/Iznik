@@ -2,8 +2,7 @@ import { defineStore } from 'pinia'
 import { nextTick } from 'vue'
 import api from '~/api'
 
-export const useJobStore = defineStore({
-  id: 'job',
+export const useJobStore = defineStore('job', {
   state: () => ({
     list: [],
     fetching: null,

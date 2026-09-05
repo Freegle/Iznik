@@ -244,6 +244,12 @@ class SendDailyPostsPushCommand extends Command
         // Only available posts (no outcome). Mirrors sendDigestToUser filtering.
         $availablePosts = $allPosts->filter(fn ($p) => ! $p->has_outcome)->values();
 
+        // ...and the member's own distance preference, which the daily EMAIL digest applies
+        // in sendDigestToUser. Calling getPostsForUser directly skipped it, so a member who
+        // had narrowed their range still got the far-away post pushed to their phone while
+        // it was correctly missing from their inbox. Same method, so the two cannot drift.
+        $availablePosts = $digestService->filterByDistancePreference($availablePosts, $user);
+
         if ($availablePosts->isEmpty()) {
             if (! $dryRun) {
                 $this->advanceCursor($tracker, $allPosts);
@@ -251,8 +257,17 @@ class SendDailyPostsPushCommand extends Command
             return 'no_posts';
         }
 
-        // Deduplicate cross-posted items.
+        // Deduplicate cross-posted items...
         $deduped = $digestService->deduplicatePosts($availablePosts);
+
+        // ...and drop the ones whose item was pushed in an earlier run, so a repost or a
+        // hand-made copy doesn't buzz the phone about the same thing twice. Same method as the
+        // email digest, so the inbox and the phone cannot disagree about what is new.
+        $deduped = $digestService->dropCardsAlreadyCovered(
+            $deduped,
+            $tracker->lastmsgdate,
+            $digestService->digestGroupIdsForUser($user, UnifiedDigestService::MODE_DAILY)
+        );
 
         if ($deduped->isEmpty()) {
             if (! $dryRun) {

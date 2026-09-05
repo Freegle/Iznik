@@ -12,7 +12,7 @@
     </notice-message>
     <notice-message v-if="type === 'ReferToWanted'">
       <p>If you're looking for an item, then please:</p>
-      <b-button variant="primary" to="/find" class="mb-1">
+      <b-button variant="primary" to="/ask" class="mb-1">
         Post a WANTED
       </b-button>
       <p>
@@ -66,8 +66,8 @@ import NewsConvertedNotice from './NewsConvertedNotice'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useMe } from '~/composables/useMe'
 
-const ConfirmModal = defineAsyncComponent(() =>
-  import('~/components/ConfirmModal.vue')
+const ConfirmModal = defineAsyncComponent(
+  () => import('~/components/ConfirmModal.vue')
 )
 
 const props = defineProps({

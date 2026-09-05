@@ -192,6 +192,17 @@ describe('NotificationOptions', () => {
       const wrapper = createWrapper()
       expect(wrapper.find('.spinner-border').exists()).toBe(true)
     })
+
+    // The dropdown MENU is what scrolls: it carries height + overflow-y. Pointing
+    // infinite-loading at the dropdown root, which never scrolls, means the trigger
+    // never fires and the list stays at its initial handful however far you scroll.
+    it('watches the element that actually scrolls, not the dropdown root', () => {
+      const wrapper = createWrapper()
+      const infinite = wrapper.findComponent('.infinite-loading')
+      expect(infinite.props('forceUseInfiniteWrapper')).toBe(
+        '.notification-list__dropdown-menu'
+      )
+    })
   })
 
   describe('events', () => {

@@ -87,6 +87,41 @@ async function sh(cmd: string, args: string[], cwd?: string): Promise<{ stdout: 
   }
 }
 
+/**
+ * The most recently taken picture of open-PR CI in this context.
+ *
+ * Two actions read CI. `check_my_open_pr_ci` writes `_action_check_my_open_pr_ci`;
+ * `coverage_gate_decide` calls the same handler and nests the answer under its own
+ * `_action_coverage_gate_decide.red`, leaving the other key untouched. Which of the
+ * two is current depends on the path taken into the router: CHECK_TESTS refreshes
+ * the first, COVERAGE_GATE the second. A router that always preferred one of them
+ * would read a 40-minute-old list on the other path.
+ *
+ * That is not hypothetical. On 2026-08-12 iteration 1, CI_ROUTER read the fixed key
+ * and picked #658 as its focus PR at 17:53:45 — a PR that had gone green, and which
+ * the gate had just correctly excluded from a red list containing only #1201. The
+ * counter that limits attempts per PR was reset each lap precisely because #658 was
+ * green, so nothing stopped the re-pick, and the iteration burned 25 of its 40 steps
+ * going round WORK_ROUTER → COVERAGE_GATE → CI_ROUTER → analyse → collate.
+ *
+ * So compare `checkedAt` and take the newer. A result with no stamp is treated as
+ * older than any stamped one: the only unstamped returns are the error paths, whose
+ * empty PR lists must never win over a real reading.
+ */
+export function freshestCICheck(ctx: any): any {
+  const direct = ctx?._action_check_my_open_pr_ci ?? {}
+  const viaGate = ctx?._action_coverage_gate_decide?.red ?? {}
+
+  const stamp = (c: any): number => {
+    const t = c?.checkedAt ? Date.parse(c.checkedAt) : NaN
+    return Number.isNaN(t) ? -Infinity : t
+  }
+
+  // Ties (equal or both unstamped) keep the direct key, which is what every caller
+  // read before this helper existed.
+  return stamp(viaGate) > stamp(direct) ? viaGate : direct
+}
+
 const PROD_REPO = 'Freegle/Iznik'
 // Netlify site for the Freegle app (frontend). Site ID and slug both work with the public API.
 const NETLIFY_SITE = 'golden-caramel-d2c3a7.netlify.app'
@@ -2324,7 +2359,19 @@ print(urllib.request.urlopen(req).read().decode())
         }
       }
 
-      return { redPRs, pendingPRs, behindPRs, coverageJitterPRs, allGreen: redPRs.length === 0 && pendingPRs.length === 0 }
+      // checkedAt stamps WHEN this picture of CI was taken. Two actions read CI —
+      // this one, and coverage_gate_decide, which calls this handler and nests the
+      // answer under `red` without writing this action's own context key. Routers
+      // that pick a PR to work on must therefore choose the NEWER of the two rather
+      // than a fixed one of them; see freshestCICheck().
+      return {
+        redPRs,
+        pendingPRs,
+        behindPRs,
+        coverageJitterPRs,
+        allGreen: redPRs.length === 0 && pendingPRs.length === 0,
+        checkedAt: new Date().toISOString(),
+      }
     },
   },
 
@@ -3033,14 +3080,26 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         '--state', 'open', '--limit', '30', '--json', 'number,title,headRefName',
       ])
       const openPRs = listRes.code === 0 ? JSON.parse(listRes.stdout) as Array<{ number: number; title: string; headRefName: string }> : []
+      // One `gh pr view` per PR, but concurrently: these are independent network round
+      // trips and there can be 30 of them. Serially this state cost 13-21s every visit,
+      // and it is visited many times per iteration (8 times on 2026-08-12), all of it
+      // wall-clock the iteration's step budget pays for. Order is preserved because the
+      // dirty list is built by index from the settled results rather than by push order.
+      const mergeStates = await Promise.all(openPRs.map(pr =>
+        sh('gh', ['pr', 'view', String(pr.number), '--repo', 'Freegle/Iznik', '--json', 'mergeStateStatus'])
+      ))
       const dirtyPRs: Array<{ number: number; title: string; branch: string }> = []
-      for (const pr of openPRs) {
-        const viewRes = await sh('gh', ['pr', 'view', String(pr.number), '--repo', 'Freegle/Iznik', '--json', 'mergeStateStatus'])
-        if (viewRes.code === 0) {
+      openPRs.forEach((pr, i) => {
+        const viewRes = mergeStates[i]
+        if (viewRes.code !== 0) return
+        try {
           const { mergeStateStatus } = JSON.parse(viewRes.stdout)
           if (mergeStateStatus === 'DIRTY') dirtyPRs.push({ number: pr.number, title: pr.title, branch: pr.headRefName })
+        } catch {
+          // A truncated/garbled response is not evidence of a dirty branch; skip it
+          // rather than letting one bad parse abort the whole gate.
         }
-      }
+      })
 
       const pendingCount = Array.isArray(r.pendingPRs) ? r.pendingPRs.length : 0
       const coverageJitterPRs = Array.isArray(r.coverageJitterPRs) ? r.coverageJitterPRs : []
@@ -3141,7 +3200,9 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const ctx = context as any
       const master = ctx?._action_check_master_ci ?? {}
       const production = ctx?._action_check_production_ci ?? {}
-      const prCheck = ctx?._action_check_my_open_pr_ci ?? {}
+      // Whichever CI reading is newer — see freshestCICheck. Reading the fixed key
+      // here is what let a green PR stay the focus for five laps.
+      const prCheck = freshestCICheck(ctx)
       const masterFailing = master.failing === true
       const productionFailing = production.failing === true
       const masterFixAttempted = ctx?.masterFixAttempted === true
@@ -3254,15 +3315,28 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         }
       }
 
-      // onlyFixPR: when there IS a focus PR to fix, the iteration should ONLY
-      // run the PR fix agent — no Discourse triage, no bug dispatch, no Sentry.
-      // This prevents newly-created bug PRs from flooding the CI queue and
-      // wasting tokens analysing work we couldn't act on anyway.
-      const onlyFixPR = focusPR != null
+      // onlyFixPR used to mean "run the PR fix agent and NOTHING else — no Discourse
+      // triage, no Sentry". It is now narrower: at most one PR is fixed per iteration
+      // (section A of the dispatch prompt), but the analysis-only work runs ALONGSIDE it.
+      //
+      // The old gate cost whole iterations. A red PR exists on most iterations, so the
+      // fan-out repeatedly launched exactly one agent — five of the ten dispatches on
+      // 2026-08-12 — and the machine is a serial spine: one step at a time, each paying
+      // its full latency. Triage therefore waited for a 15-27 minute PR fix instead of
+      // running next to it, for no gain, because the stated reasons do not apply to it:
+      // triage and Sentry are analysis-only ("no code changes" in both prompts), so they
+      // create no PRs and put nothing on the single CI runner. The only real cost is
+      // tokens, and paying them concurrently is what buys the wall-clock back.
+      //
+      // It also starved triage outright — the failure this file's sibling regression
+      // suite was written for (2026-08-06: topic 10010 never read for a whole iteration).
+      // Gating is now limited to drain mode, decided above, where CI capacity is the
+      // genuine constraint.
+      const onlyFixPR = false
 
       return {
         _transition: 'PARALLEL_ANALYZE_AND_FIX',
-        reason: `master green, CI queue empty — focus PR: ${focusPR ? `#${focusPR.number}` : 'none'} (${pickableRedPRs.length} red, ${exhaustedPRs.size} exhausted) + ${topicsWithNew} active topics (${phase} phase)${onlyFixPR ? ' [onlyFixPR: triage skipped]' : ''}`,
+        reason: `master green, CI queue empty — focus PR: ${focusPR ? `#${focusPR.number}` : 'none'} (${pickableRedPRs.length} red, ${exhaustedPRs.size} exhausted) + ${topicsWithNew} active topics dispatched alongside it (${phase} phase)`,
         focusPRNumber: focusPR?.number ?? null,
         onlyFixPR,
         exhaustedPRNumbers: [...exhaustedPRs],

@@ -25,17 +25,6 @@
               :width="640"
               :height="480"
             />
-            <NuxtPicture
-              v-else-if="message.attachments[0]?.externaluid"
-              format="webp"
-              provider="uploadcare"
-              :src="message.attachments[0].externaluid"
-              :modifiers="message.attachments[0].externalmods"
-              alt="Item Photo"
-              class="photo-image"
-              :width="640"
-              :height="480"
-            />
             <ProxyImage
               v-else-if="message.attachments[0]?.path"
               class-name="photo-image"
@@ -280,7 +269,7 @@ const messageTypeClass = computed(() => {
 const categoryIcon = computed(() => {
   // Return appropriate icon based on message type
   const type = message.value?.type?.toLowerCase()
-  if (type === 'wanted') return 'search'
+  if (type === 'wanted') return 'shopping-cart'
   return 'gift'
 })
 

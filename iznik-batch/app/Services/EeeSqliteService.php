@@ -13,6 +13,12 @@ use PDO;
  */
 class EeeSqliteService
 {
+    /** Columns added for component observations, from prompt v1.3.0 onwards. */
+    private const COMPONENT_COLUMNS = [
+        'contains_eee_components' => 'INTEGER',
+        'electrical_components_description' => 'TEXT',
+    ];
+
     protected ?PDO $pdo = null;
 
     protected string $dbPath;
@@ -84,22 +90,14 @@ class EeeSqliteService
             )
         ");
 
-        // Add new component-observation columns if missing (prompt v1.3.0+).
-        $cols = $this->getItemTypeColumns();
-        if (!in_array('contains_eee_components', $cols)) {
-            $this->pdo->exec("ALTER TABLE eee_item_types ADD COLUMN contains_eee_components INTEGER");
-        }
-        if (!in_array('electrical_components_description', $cols)) {
-            $this->pdo->exec("ALTER TABLE eee_item_types ADD COLUMN electrical_components_description TEXT");
-        }
-
         // Upgrade v1 (single PK) or v2 (composite 3-col PK missing classification_mode).
         $cols   = $this->getItemTypeColumns();
         $pkCols = $this->getItemTypePkCount();
         if (!in_array('classification_mode', $cols) || $pkCols < 4) {
             $hasMode = in_array('classification_mode', $cols);
+            $this->pdo->exec("DROP TABLE IF EXISTS eee_item_types_new");
             $this->pdo->exec("
-                CREATE TABLE IF NOT EXISTS eee_item_types_new (
+                CREATE TABLE eee_item_types_new (
                     item_name                TEXT,
                     item_id                  INTEGER,
                     popularity               INTEGER,
@@ -120,18 +118,45 @@ class EeeSqliteService
                     PRIMARY KEY (item_name, model, prompt_version, classification_mode)
                 )
             ");
-            if ($hasMode) {
-                $this->pdo->exec("INSERT OR IGNORE INTO eee_item_types_new SELECT * FROM eee_item_types");
-            } else {
-                $this->pdo->exec("INSERT OR IGNORE INTO eee_item_types_new
-                    SELECT item_name, item_id, popularity, sample_size, images_analysed,
-                           eee_sample_count, is_eee, is_eee_confidence, is_eee_agree_rate,
-                           weee_category, weee_category_name, weee_category_confidence,
-                           needs_image_analysis, model, prompt_version, 'combined', classified_at
-                    FROM eee_item_types");
+            // Name every column on both sides of the copy. SELECT * breaks as soon as
+            // the source table has a column the new table does not.
+            $source = $target = [
+                'item_name', 'item_id', 'popularity', 'sample_size', 'images_analysed',
+                'eee_sample_count', 'is_eee', 'is_eee_confidence', 'is_eee_agree_rate',
+                'weee_category', 'weee_category_name', 'weee_category_confidence',
+                'needs_image_analysis', 'model', 'prompt_version',
+            ];
+
+            $source[] = $hasMode ? 'classification_mode' : "'combined'";
+            $target[] = 'classification_mode';
+
+            $source[] = 'classified_at';
+            $target[] = 'classified_at';
+
+            // Carry over any component columns an earlier run already added.
+            foreach (self::COMPONENT_COLUMNS as $col => $type) {
+                if (in_array($col, $cols)) {
+                    $this->pdo->exec("ALTER TABLE eee_item_types_new ADD COLUMN $col $type");
+                    $source[] = $col;
+                    $target[] = $col;
+                }
             }
+
+            $this->pdo->exec(
+                'INSERT OR IGNORE INTO eee_item_types_new (' . implode(', ', $target) . ')'
+                . ' SELECT ' . implode(', ', $source) . ' FROM eee_item_types'
+            );
             $this->pdo->exec("DROP TABLE eee_item_types");
             $this->pdo->exec("ALTER TABLE eee_item_types_new RENAME TO eee_item_types");
+        }
+
+        // Add the component-observation columns if missing (prompt v1.3.0+). This runs
+        // after the upgrade above so the copy never has to deal with them.
+        $cols = $this->getItemTypeColumns();
+        foreach (self::COMPONENT_COLUMNS as $col => $type) {
+            if (!in_array($col, $cols)) {
+                $this->pdo->exec("ALTER TABLE eee_item_types ADD COLUMN $col $type");
+            }
         }
 
         $this->pdo->exec("
@@ -200,6 +225,12 @@ class EeeSqliteService
         // Component-index derived EEE verdict (rule-based, no model judgment).
         if (!in_array('is_eee_from_components', $clsCols)) {
             $this->pdo->exec("ALTER TABLE eee_classifications ADD COLUMN is_eee_from_components INTEGER");
+        }
+        // Why the rule reached its verdict, so the dashboard can show it:
+        // named_eee | named_not_eee | primary | distinct_function | supplementary |
+        // no_electrical_components.
+        if (!in_array('is_eee_reason', $clsCols)) {
+            $this->pdo->exec("ALTER TABLE eee_classifications ADD COLUMN is_eee_reason TEXT");
         }
 
         $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_cls_messageid ON eee_classifications(messageid)");
@@ -290,9 +321,13 @@ class EeeSqliteService
             array_filter(array_keys($data), $nonKey)
         ));
 
+        // With only the key columns there is nothing to set, and an empty SET clause
+        // is a syntax error, so record the row and leave what is there alone.
+        $onConflict = $updates === '' ? 'DO NOTHING' : "DO UPDATE SET $updates";
+
         $pdo->prepare("
             INSERT INTO eee_item_types ($cols) VALUES ($vals)
-            ON CONFLICT(item_name, model, prompt_version, classification_mode) DO UPDATE SET $updates
+            ON CONFLICT(item_name, model, prompt_version, classification_mode) $onConflict
         ")->execute($data);
     }
 
@@ -529,7 +564,9 @@ class EeeSqliteService
             SELECT o.*, r.scope as run_scope
             FROM eee_observations o
             LEFT JOIN eee_runs r ON r.id = o.run_id
-            WHERE o.supersedes_id IS NULL
+            WHERE o.id NOT IN (
+                SELECT supersedes_id FROM eee_observations WHERE supersedes_id IS NOT NULL
+            )
             ORDER BY
                 CASE o.confidence
                     WHEN 'verified'    THEN 0

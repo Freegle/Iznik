@@ -89,8 +89,8 @@ import { useOurModal } from '~/composables/useOurModal'
 import UserRatings from '~/components/UserRatings'
 import DateFormatted from '~/components/DateFormatted'
 
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
 
 const props = defineProps({

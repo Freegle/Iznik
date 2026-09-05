@@ -72,6 +72,15 @@ type PointContainer interface {
 	Containing(idx *Index, lng, lat float64) (in []int64, partial []int64, err error)
 }
 
+// PointContainerFiltered is an optional interface for containment datasets whose
+// items are stamped with a category the caller must select on - currently the
+// overflow rings, where the same post admits one member's density band and
+// refuses another's. Callers name their categories and get plain external ids
+// back, so no caller needs the dataset's own encoding.
+type PointContainerFiltered interface {
+	ContainingFiltered(idx *Index, lng, lat float64, filter []string) (in []int64, partial []int64, err error)
+}
+
 // DriftChecker is an optional interface for delta datasets whose source table
 // can change in ways the incremental delta cannot self-heal.
 //

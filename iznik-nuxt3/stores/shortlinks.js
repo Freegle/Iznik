@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import api from '~/api'
 
-export const useShortlinkStore = defineStore({
-  id: 'shortlink',
+export const useShortlinkStore = defineStore('shortlink', {
   state: () => ({
     list: {},
   }),

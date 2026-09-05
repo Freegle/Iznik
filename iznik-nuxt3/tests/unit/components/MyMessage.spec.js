@@ -418,12 +418,13 @@ describe('MyMessage', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('renders NuxtPicture when attachment has externaluid', async () => {
+    it('does not render a picture for a bare externaluid', async () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture. Photos render through OurUploadedImage from ouruid, covered above.
       mockData.message.attachments = [
         { externaluid: 'test-externaluid', externalmods: null },
       ]
       const wrapper = await createWrapper()
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
 
     it('renders ProxyImage when attachment has path only', async () => {
@@ -779,9 +780,7 @@ describe('MyMessage', () => {
   describe('No Replies Section', () => {
     it('shows no-replies message when no replies and will auto-repost', async () => {
       mockData.message.replies = []
-      mockData.message.repostat = new Date(
-        Date.now() + 86400000
-      ).toISOString() // Tomorrow
+      mockData.message.repostat = new Date(Date.now() + 86400000).toISOString() // Tomorrow
       const wrapper = await createWrapper()
       expect(wrapper.find('.no-replies').exists()).toBe(true)
       expect(wrapper.text()).toContain('No replies yet')
@@ -790,9 +789,7 @@ describe('MyMessage', () => {
     it('does not show no-replies when message has outcomes', async () => {
       mockData.message.replies = []
       mockData.message.outcomes = [{ outcome: 'Taken' }]
-      mockData.message.repostat = new Date(
-        Date.now() + 86400000
-      ).toISOString()
+      mockData.message.repostat = new Date(Date.now() + 86400000).toISOString()
       const wrapper = await createWrapper({ showOld: true })
       expect(wrapper.find('.no-replies').exists()).toBe(false)
     })

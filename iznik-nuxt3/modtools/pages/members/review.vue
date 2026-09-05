@@ -46,11 +46,8 @@
 import { ref, nextTick, onMounted } from 'vue'
 import { setupModMembers } from '~/composables/useModMembers'
 import { useMemberStore } from '~/stores/member'
-import { useMiscStore } from '@/stores/misc'
 
 const memberStore = useMemberStore()
-// eslint-disable-next-line no-unused-vars
-const miscStore = useMiscStore()
 
 // Setup mod members composable
 const modMembers = setupModMembers(true)

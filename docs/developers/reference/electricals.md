@@ -1,0 +1,170 @@
+---
+last_reviewed: 2026-09-02
+covers:
+  - iznik-batch/app/Services/EeeClassificationService.php
+  - iznik-batch/app/Services/EeeComponentService.php
+  - iznik-batch/app/Services/EeeProductionStore.php
+  - iznik-batch/app/Services/ElectricalsStatsService.php
+  - iznik-batch/app/Services/Electricals/ItemClusterService.php
+  - iznik-batch/app/Services/Desirability/TitleCanonicalService.php
+  - iznik-batch/resources/desirability/**
+  - iznik-batch/app/Console/Commands/Eee/EeeClassifyNewCommand.php
+  - iznik-batch/app/Console/Commands/ElectricalsStatsCommand.php
+  - iznik-server-go/electricals/**
+  - iznik-nuxt3/pages/electricals.vue
+  - iznik-nuxt3/api/ElectricalsAPI.js
+---
+
+# Electricals - Technical Reference
+
+The public `/electricals` page reports what happens to electrical items on Freegle:
+how many are offered, taken, in what condition, and roughly what that reuse is worth.
+The figures come from an AI classification pipeline that runs hourly on the batch host.
+
+## What counts as electrical
+
+The definition is Material Focus's: **anything with a plug, a battery or a cable**,
+plus the short list of products the Environment Agency names as exceptions (a gas
+cooker whose only electrics are a clock and igniter is not EEE; a petrol mower is
+not, whatever its spark plug looks like). The decision record is
+`plans/2026-08-25-eee-definition-decision.md`.
+
+The model is never asked "is this electrical?" - that was measured as unreliable on
+exactly the boundary cases that matter. Instead it is asked to **observe components**
+(plug, battery compartment, cable, motor...), and `EeeComponentService` applies the
+rule to what was observed. The verdict is auditable: `messages_eee.is_eee_reason`
+says which limb decided each row.
+
+`is_eee` is tri-state. NULL means "not decided" - the model saw nothing, or the
+components could not be resolved - and every statistic excludes NULL rather than
+counting it as "not electrical".
+
+## Pipeline
+
+- **`eee:classify-new`** (hourly): classifies OFFERs approved since the last run.
+  Approved and undeleted only - the post's photo and text are sent to Google's
+  Gemini API, so nothing a moderator has not passed may enter the pipeline. The
+  high-water mark is the approval clock (`COALESCE(approvedat, arrival)` on the
+  Approved group row), and a NOT EXISTS on `messages_eee` makes re-scanning the
+  boundary safe. Results land in `messages_eee` via `EeeProductionStore` - the
+  narrow production projection (verdict, reason, buckets), not the wide research
+  row, which stays in the dev-side SQLite store. Each classified attachment is
+  also recorded in `eee_classified_attachments`, an index for downstream serving.
+  That write is best-effort and its failure is logged rather than raised, so a
+  missing row there does not mean the classification failed - read
+  `messages_eee` to answer that.
+- **`electricals:stats`** (daily 05:10): builds the whole page payload as one JSON
+  blob into `electricals_stats`. Rolling twelve-month window; only the newest row
+  is served. Queries dedupe to the newest classification per message, since
+  `messages_eee` keys on (msgid, model, prompt_version) and reclassification keeps
+  the old row.
+- **`items:backfill-popularity`** (weekly): reconciles `items.popularity`, which the
+  tonnage fallback weight depends on.
+- **`GET /electricals/stats`** (Go, public, both `/api` and `/apiv2`): serves the
+  newest payload verbatim with an hour's cache; 404 until the first generation.
+
+## Deployment prerequisites
+
+1. `GOOGLE_GEMINI_API_KEY` must be set in `.env.background` on the batch host, and
+   the model must be one that exists - the `gemini-2.0-*` family is retired, and a
+   dead model 404s on every call, which the driver treats as a soft failure. The
+   config default is `gemini-3.5-flash-lite`.
+2. The component index must exist before the hourly job will run:
+   `php artisan eee:build-component-index` (needs `OPENAI_API_KEY` for embeddings).
+   With an empty index every verdict would be NULL, so `eee:classify-new` refuses
+   to spend anything and exits with an error until the index is built.
+3. The page reports the rolling window it can see. Nothing backfills history
+   automatically - classifying the existing corpus is a spend decision and a
+   deliberate manual step (`eee:classify-new --since=...` with a raised limit, run
+   in tranches).
+
+## Weight and carbon
+
+Weights come from the `items` catalogue, not from the photo: each post is matched to
+an item type, and the type carries a weight. Posts whose type has no weight fall back
+to the population average, so the tonnage is a modelled figure rather than a measured
+one, and the page says so.
+
+Carbon is a **separate quantity from weight** and must never equal it. The factor is
+WRAP's "Benefits of Reuse" figure, 0.51 tonnes CO2e saved per tonne reused, held once
+in `App\Support\ReuseBenefit::CO2_PER_TONNE` and shared with the rest of the site.
+It is a physical rate, so unlike the pounds-per-tonne benefit in the same class it is
+not up-rated for inflation. The cash value on the page is the National TOMs NT31
+carbon proxy applied to the CO2 tonnage, not to the weight.
+
+The whole weight block is published only when some weight is actually known. With no
+weights the tonnage, the CO2 figure, the cash value and the mean item weight are all
+absent from the payload, and the page drops the tiles rather than printing zeroes.
+
+## The item lists
+
+Members type whatever they like, so one appliance arrives under dozens of names: the
+catalogue holds around five thousand distinct names for seven thousand electrical
+posts. Counting names understates every common item and fills the rare list with
+things that are not rare, which is how "Beko Fridge Freezer" came to be listed as
+unusual on a site where fridge freezers are among the commonest things offered.
+
+`ItemClusterService` folds the rows before either list is built:
+
+- **Grouping is by canonical title**, from
+  `App\Services\Desirability\TitleCanonicalService` - a port of Clement Lee's
+  desirability research pipeline, which strips brands, un-pluralises and applies the
+  synonym tables in `iznik-batch/resources/desirability/`. Its behaviour is pinned by
+  `tests/fixtures/desirability/golden-titles.json`, so a change here has to be paired
+  with a regenerated fixture. Cosine similarity is deliberately **not** used to
+  group, because it measures topical relatedness rather than sameness: "fridge
+  freezer" and "freezer" score 0.93 and "cd player" and "dvd player" 0.85, both
+  above the 0.78 of a pair that genuinely should merge. No threshold separates the
+  right merges from the wrong ones, so published counts are never merged on an
+  embedding.
+- **Counts are of distinct posts, members and communities**, taken from the id sets,
+  because a rippled post arrives once per group and summing would multiply it.
+- **The label is a name carrying no brand** where the cluster has one, even if a
+  branded spelling is commoner.
+
+The rare list then drops anything that is a **version of a common item**. A rival
+qualifies as common at ten or more offers and at least three times the candidate's
+count, and vetoes the candidate when either its words are all contained in the
+candidate's canonical form and strictly shorter ("lamp" against "table lamp"), or the
+embedding sidecar scores the pair at 0.90 or above. The second arm exists only for
+re-phrasings words cannot see, such as "breadmaker" against "bread maker"; on live
+data it fired twice against forty-four word vetoes. Cosine is safe here because it
+only ever removes an entry from a curiosity list, never merges a published count. A
+sidecar that cannot answer leaves the list untouched. The thresholds are config
+(`freegle.electricals.variant_*`), and the sidecar URL is `EMBEDDING_SIDECAR_URL`.
+
+## Estimates while coverage is partial
+
+The window's total OFFER volume is known exactly without any classification, so while
+the classifier is still working through the corpus the payload scales the rates it has
+measured to that full volume: `coverage` says how much of the window carries a verdict,
+`estimates` carries the scaled headline figures (electricals, tonnes, CO2, carbon
+value) plus a `firm` flag that flips at 98% coverage, and each `monthly_trend` month
+carries its own `total_offers` and a per-month `electrical_estimate` (published only at
+100+ verdicts in the month). The estimator converges on the direct count as coverage
+approaches 100%, so the page gets more accurate over time with no flag day; the page
+prefers the estimates, states the coverage while they are not firm, and drops the
+caveat when they are. The stated assumption is that the classified sample is seasonally
+representative - the coverage figure is published alongside so a reader can weigh that.
+
+## Alerting
+
+The pipeline fails soft per item, and nothing routes Laravel logs to Sentry, so a
+dark pipeline used to look like a healthy one (the `gemini-2.0` retirement went
+unnoticed this way). `App\Support\EeeAlarm` now escalates the pipeline-dark states
+to Sentry directly, once per run: an unconfigured vision service, an empty
+component index, a run where every classification failed (rejected key, retired
+model, dead endpoint), a 401/403 from the OpenAI embeddings API, and a missing or
+rejected `EEE_SYNC_SECRET` on the sync commands. Per-item detail stays in the
+Laravel log; the Sentry event is the dead-man switch.
+
+## Privacy
+
+Only approved, undeleted posts are classified, enforced both in the hourly
+selection and again inside `EeeClassificationService::classifyMessage()`. The
+Gemini key travels in a request header, never the URL, so connection-failure
+exceptions cannot log it. Chat context (`EEE_USE_CHAT_DATA`) is off by default and
+must stay off without a privacy review: chat messages are private between members,
+and the pipeline has no redaction machinery. Accuracy figures below the publication
+bar (per-item size and weight) are kept out of the stored payload entirely - the
+endpoint serves the payload raw, so anything in it is published.

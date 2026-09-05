@@ -123,12 +123,7 @@ class NotificationChaseUpService
             return 0;
         }
 
-        $notifications = $this->getUserNotifications($user->id);
-        if ($notifications->isEmpty()) {
-            return 0;
-        }
-
-        $notifData = $this->prepareNotifications($notifications);
+        $notifData = $this->prepareForUser($user);
         if (empty($notifData)) {
             return 0;
         }
@@ -214,6 +209,25 @@ class NotificationChaseUpService
     {
         $settings = $user->settings ?? [];
         return (bool) ($settings['notificationmails'] ?? true);
+    }
+
+    /**
+     * Build the notification rows an email to this user would carry.
+     *
+     * Public so the mail:test preview harness renders the same data a real send
+     * would, instead of keeping its own copy of the row shape.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function prepareForUser(User $user): array
+    {
+        $notifications = $this->getUserNotifications($user->id);
+
+        if ($notifications->isEmpty()) {
+            return [];
+        }
+
+        return $this->prepareNotifications($notifications);
     }
 
     /**

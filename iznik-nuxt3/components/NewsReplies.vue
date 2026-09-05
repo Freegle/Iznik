@@ -81,8 +81,8 @@ import { useAuthStore } from '~/stores/auth'
 import NewsRefer from '~/components/NewsRefer'
 import NewsUnreadDivider from '~/components/NewsUnreadDivider'
 
-const NewsReply = defineAsyncComponent(() =>
-  import('~/components/NewsReply.vue')
+const NewsReply = defineAsyncComponent(
+  () => import('~/components/NewsReply.vue')
 )
 
 // Show first HEAD_COUNT + last TAIL_COUNT replies; collapse when total > COLLAPSE_THRESHOLD.

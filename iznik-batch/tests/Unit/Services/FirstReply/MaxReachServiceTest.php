@@ -5,10 +5,13 @@ namespace Tests\Unit\Services\FirstReply;
 use App\Services\FirstReply\MaxReachService;
 use App\Services\Ripple\ReachService;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\SeedsReachCells;
 use Tests\TestCase;
 
 class MaxReachServiceTest extends TestCase
 {
+    use SeedsReachCells;
+
     // Tick 1: a small box around (51.5, -0.1). Tick 3: a much bigger one that
     // contains it, which is what the eventual reach looks like.
     private const TICK1 = 'POLYGON((-0.15 51.45, -0.05 51.45, -0.05 51.55, -0.15 51.55, -0.15 51.45))';
@@ -24,7 +27,6 @@ class MaxReachServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        MaxReachService::forgetAvailability();
         // The sizing sweep works on every pending row, so leftovers from another
         // test would show up in this one's counts.
         DB::statement('DELETE FROM firstreply_passthroughs');
@@ -33,7 +35,7 @@ class MaxReachServiceTest extends TestCase
 
     private function service(): MaxReachService
     {
-        return new MaxReachService(app(ReachService::class));
+        return app(MaxReachService::class);
     }
 
     /** A post rippling at tick 1, with the whole schedule cached as it is in production. */
@@ -51,72 +53,14 @@ class MaxReachServiceTest extends TestCase
 
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)),
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)),
                      NOW(), 'drive', 1, 3, 4000, 30, ?, NOW(), 'expanding', NOW(), NOW())",
-            [$message->id, self::TICK1, self::TICK1, $withSchedule ? $schedule : null]
+            [$message->id, $this->reachCellsFor(self::TICK1), self::TICK1, $withSchedule ? $schedule : null]
         );
 
         return (int) $message->id;
-    }
-
-    public function test_populate_stores_the_widest_tick_not_the_current_one(): void
-    {
-        $msgid = $this->seedRipplingPost();
-
-        $stats = $this->service()->populate();
-
-        $this->assertSame(1, $stats['filled']);
-        $this->assertSame(0, $stats['routed'], 'inline WKT means no routing call is needed');
-
-        // Somewhere only the final tick covers is now "will reach", while the
-        // current reach is untouched.
-        $this->assertTrue($this->service()->isWithinMaxReach(
-            $msgid, self::INSIDE_TICK3_ONLY[0], self::INSIDE_TICK3_ONLY[1]
-        ));
-        $this->assertSame(4000, $this->service()->maxCumulativeUsers($msgid));
-    }
-
-    public function test_current_reach_still_counts_as_within_max_reach(): void
-    {
-        $msgid = $this->seedRipplingPost();
-        $this->service()->populate();
-
-        $this->assertTrue($this->service()->isWithinMaxReach(
-            $msgid, self::INSIDE_TICK1[0], self::INSIDE_TICK1[1]
-        ));
-    }
-
-    public function test_somewhere_the_post_never_reaches_is_not_within_max_reach(): void
-    {
-        $msgid = $this->seedRipplingPost();
-        $this->service()->populate();
-
-        $this->assertFalse($this->service()->isWithinMaxReach(
-            $msgid, self::OUTSIDE_EVERYTHING[0], self::OUTSIDE_EVERYTHING[1]
-        ));
-    }
-
-    public function test_unpopulated_row_reports_nothing_within_max_reach(): void
-    {
-        // This is the pre-backfill state, and it must read as "no wider reach
-        // known" rather than as "everywhere" or an error: callers fall back to
-        // existing behaviour on false.
-        $msgid = $this->seedRipplingPost();
-
-        $this->assertFalse($this->service()->isWithinMaxReach(
-            $msgid, self::INSIDE_TICK3_ONLY[0], self::INSIDE_TICK3_ONLY[1]
-        ));
-        $this->assertNull($this->service()->maxCumulativeUsers($msgid));
-    }
-
-    public function test_populate_is_idempotent(): void
-    {
-        $this->seedRipplingPost();
-
-        $this->assertSame(1, $this->service()->populate()['filled']);
-        $this->assertSame(0, $this->service()->populate()['scanned'], 'already-filled rows are not re-scanned');
     }
 
     public function test_post_with_no_reach_row_is_not_within_max_reach(): void
@@ -126,35 +70,6 @@ class MaxReachServiceTest extends TestCase
         $message = $this->createTestMessage($user, $group);
 
         $this->assertFalse($this->service()->isWithinMaxReach((int) $message->id, 51.5, -0.1));
-    }
-
-    public function test_schedule_order_does_not_decide_the_max(): void
-    {
-        // The widest tick is picked by tick NUMBER, not by array position, so a
-        // reordered payload cannot silently narrow every post's eventual reach.
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($user, $group);
-
-        $schedule = json_encode([
-            ['tick' => 3, 'drive_min' => 30, 'cumulative_users' => 4000, 'wkt' => self::TICK3],
-            ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 200, 'wkt' => self::TICK1],
-        ]);
-
-        DB::statement(
-            "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks,
-                total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)),
-                     NOW(), 'drive', 1, 3, 4000, 30, ?, NOW(), 'expanding', NOW(), NOW())",
-            [$message->id, self::TICK1, self::TICK1, $schedule]
-        );
-
-        $this->service()->populate();
-
-        $this->assertTrue($this->service()->isWithinMaxReach(
-            (int) $message->id, self::INSIDE_TICK3_ONLY[0], self::INSIDE_TICK3_ONLY[1]
-        ));
     }
 
     public function test_sizes_a_passthrough_by_the_tick_that_would_have_covered_the_replier(): void
@@ -246,5 +161,75 @@ class MaxReachServiceTest extends TestCase
 
         $this->assertSame(1, $this->service()->computePassthroughSavings()['scanned']);
         $this->assertSame(0, $this->service()->computePassthroughSavings()['scanned']);
+    }
+
+
+    public function test_max_reach_prefers_the_stored_label_verdict(): void
+    {
+        // The cells say INSIDE_TICK1 is within reach; the stored label knows
+        // better (the far bank of an estuary) and its verdict decides.
+        $msgid = $this->seedRipplingPost();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => 'label-bytes']);
+        \Illuminate\Support\Facades\Http::fake(['*reach-eval*' => \Illuminate\Support\Facades\Http::response([
+            'results' => [['msgid' => $msgid, 'verdict' => 'out']],
+        ])]);
+
+        $this->assertFalse($this->service()->isWithinMaxReach(
+            $msgid, self::INSIDE_TICK1[0], self::INSIDE_TICK1[1]
+        ), 'an OUT label verdict must override in-reach cells');
+
+        // The gate asks about the EVENTUAL reach, so the label is evaluated at
+        // its own full budget, not the current tick.
+        \Illuminate\Support\Facades\Http::assertSent(
+            fn ($req) => str_contains($req->url(), 'reach-eval') && ($req['budget'] ?? '') === 'max'
+        );
+    }
+
+
+    public function test_populate_fills_cumulative_users_for_labelled_rows_without_a_grid(): void
+    {
+        $msgid = $this->seedRipplingPost();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => 'label-bytes']);
+
+        $stats = $this->service()->populate();
+
+        $this->assertSame(1, $stats['labelled_cumulative']);
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertSame(4000, (int) $row->max_cumulative_users, 'the schedule final tick audience feeds the nudge');
+        $this->assertNull($row->max_polygon_cells, 'a labelled row needs no grid - its label answers the gate');
+    }
+
+
+    public function test_label_in_verdict_admits(): void
+    {
+        $msgid = $this->seedRipplingPost();
+        \Illuminate\Support\Facades\Http::fake(['*reach-eval*' => \Illuminate\Support\Facades\Http::response([
+            'results' => [['msgid' => $msgid, 'verdict' => 'in']],
+        ])]);
+
+        $this->assertTrue($this->service()->isWithinMaxReach(
+            $msgid, self::INSIDE_TICK3_ONLY[0], self::INSIDE_TICK3_ONLY[1]
+        ));
+    }
+
+    public function test_no_label_verdict_holds(): void
+    {
+        // The label is the only record of the eventual reach: not stored yet,
+        // or routing unreachable, both hold the reply - the conservative
+        // default this gate has always had. There is no grid to fall back to.
+        $msgid = $this->seedRipplingPost();
+        \Illuminate\Support\Facades\Http::fake(['*reach-eval*' => \Illuminate\Support\Facades\Http::response([
+            'results' => [['msgid' => $msgid, 'verdict' => 'nolabels']],
+        ])]);
+        $this->assertFalse($this->service()->isWithinMaxReach(
+            $msgid, self::INSIDE_TICK3_ONLY[0], self::INSIDE_TICK3_ONLY[1]
+        ));
+
+        \App\Services\Ripple\ReachService::resetLabelEvalBreaker();
+        \Illuminate\Support\Facades\Http::fake(['*reach-eval*' => \Illuminate\Support\Facades\Http::response(null, 500)]);
+        $this->assertFalse($this->service()->isWithinMaxReach(
+            $msgid, self::INSIDE_TICK1[0], self::INSIDE_TICK1[1]
+        ));
+        \App\Services\Ripple\ReachService::resetLabelEvalBreaker();
     }
 }

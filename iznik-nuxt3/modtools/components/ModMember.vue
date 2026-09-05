@@ -86,6 +86,12 @@
           {{ user.locationchanges }} times in the last 90 days.
         </NoticeMessage>
         <ModBouncing v-if="user.bouncing" :userid="member.userid" />
+        <ModMailDelayed
+          v-if="member.maildelayedsince"
+          :since="member.maildelayedsince"
+          :provider="member.maildelayedprovider"
+          :count="member.maildelayedcount || 0"
+        />
         <NoticeMessage v-if="member.bandate">
           Banned
           <span :title="datetime(member.bandate)">{{
@@ -276,7 +282,12 @@
             :groupid="groupid"
             :role="member.role"
           />
+          <!-- A membership rippling created for a poster records where their post
+               travelled, not a relationship with this community, so there is no chat for
+               its volunteers to start (Discourse 10102). If the member writes to us
+               first, that chat appears in Chats as normal. -->
           <ChatButton
+            v-if="!member.rippled"
             :userid="member.userid"
             :groupid="member.groupid"
             title="Chat"

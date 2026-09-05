@@ -10,6 +10,7 @@
       <ModMessage
         :messageid="message.id"
         :context-groupid="groupid ? Number(groupid) : null"
+        :collection="collection"
         :next="
           ix < visibleMessages.length - 1 ? visibleMessages[ix + 1].id : null
         "
@@ -36,6 +37,7 @@ const messageStore = useMessageStore()
 // composables/modMessagesPage
 const modMessages = setupModMessages()
 const {
+  collection,
   context,
   groupid,
   messageTerm,
@@ -44,8 +46,7 @@ const {
   visibleMessages,
 } = modMessages
 
-// eslint-disable-next-line no-unused-vars
-const props = defineProps({
+defineProps({
   editreview: { type: Boolean, required: false, default: false },
   // Set by the checked/trusted oversight pages to expose the per-message Reject (back to Pending)
   // button. Forwarded to each ModMessage instance.
@@ -56,7 +57,7 @@ onMounted(async () => {
   // Ensure we have no cached messages for other searches/groups
   messageStore.clear()
 
-  if (process.client && groupid.value) {
+  if (import.meta.client && groupid.value) {
     groupStore.fetch(groupid.value)
   }
 

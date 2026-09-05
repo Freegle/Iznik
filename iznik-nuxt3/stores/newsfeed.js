@@ -3,8 +3,7 @@ import { nextTick } from 'vue'
 import api from '~/api'
 import { useAuthStore } from '~/stores/auth'
 
-export const useNewsfeedStore = defineStore({
-  id: 'newsfeed',
+export const useNewsfeedStore = defineStore('newsfeed', {
   state: () => ({
     // This is a barebones list of items in order.
     feed: [],
@@ -51,7 +50,11 @@ export const useNewsfeedStore = defineStore({
     async fetchCount(distance, log = true) {
       this.lastDistance = distance
       distance = distance || 'anywhere'
-      const ret = await api(this.config).news.count(distance, log)
+      const ret = await api(this.config).news.count(
+        distance,
+        log,
+        useAuthStore().user?.settings?.newsfeedMinutes
+      )
       this.count = ret?.count || 0
       return this.count
     },
@@ -144,6 +147,21 @@ export const useNewsfeedStore = defineStore({
         this.markAllSeen()
       }, delayMs)
     },
+    // Clear the count without needing to have loaded the items. markAllSeen below can
+    // only raise the watermark as far as the highest item this session happens to have
+    // fetched, which is why a member with a backlog had to scroll weeks back to shift it.
+    async markAllRead() {
+      if (this.delayedSeenTimer) {
+        clearTimeout(this.delayedSeenTimer)
+        this.delayedSeenTimer = null
+      }
+
+      this.delayedSeenMode = false
+
+      await api(this.config).news.seenAll()
+      this.count = 0
+    },
+
     markAllSeen() {
       // Mark all items as seen and update the count.
       if (this.delayedSeenTimer) {
@@ -183,7 +201,8 @@ export const useNewsfeedStore = defineStore({
         distance,
         undefined,
         undefined,
-        allNewsletters ? 'all' : undefined
+        allNewsletters ? 'all' : undefined,
+        useAuthStore().user?.settings?.newsfeedMinutes
       )
       return this.feed
     },

@@ -485,16 +485,6 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	tx848af7d73bfe.Statement.BuildClauses = []string{"SELECT"}
 	tx848af7d73bfe.Scan(&wasHome)
 
-	if !rippling.AttributionSchemaReady(db) {
-		db.Table("rippling_reply_attribution").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
-			"msgid":           refmsgid,
-			"userid":          myid,
-			"replied_at":      gorm.Expr("NOW()"),
-			"was_home_member": wasHome,
-		})
-		return
-	}
-
 	// Did we send this user the ripple "new post near you" mail for this post? Keyed lookup on
 	// the notified ledger - the strongest direct ripple-delivery evidence.
 	// Same
@@ -750,35 +740,48 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					ReachRows int `gorm:"column:reach_rows"`
 					InReach   int `gorm:"column:in_reach"`
 				}
-				var gateErr error
-				if rippling.ReachBoundsReady(db) {
-					// ReachInReachExpr always returns the same expression text
-					// (only the bind args vary per call) - the extractor
-					// couldn't fold that across a function call, but there is
-					// exactly one rendered form. Proven (as a single shape)
-					// by the retired ormharness (shapes.json /
-					// TestTier3Shapes_67cd5e1cc4ec, removed in d22ba1d6c).
-					expr, exprArgs := rippling.ReachInReachExpr(reach.lng, reach.lat, utils.SRID)
-					// Select takes ONLY the expression's own binds. Appending
-					// Refmsgid here as well - while Where binds it too - sent one
-					// argument more than the statement had placeholders, and
-					// MySQL rejected it with "expected 13 arguments, got 14".
-					//
-					// Layer 1 did not catch it: the rendered SQL TEXT is identical
-					// either way, and the golden comparison never counts binds.
-					// Only executing it fails, which is what the chat tests did.
-					gateErr = db.Table("rippling_reach rr").
-						Select("COUNT(*) AS reach_rows, COALESCE(MAX("+expr+"), 0) AS in_reach", exprArgs...).
-						Where("rr.msgid = ?", *payload.Refmsgid).
-						Scan(&rc).Error
-				} else {
-					gateErr = db.Table("rippling_reach").
-						Select("COUNT(*) AS reach_rows, COALESCE(MAX(ST_Contains(polygon, ST_SRID(POINT(?, ?), ?))), 0) AS in_reach",
-							latlng.Lng, latlng.Lat, utils.SRID).
-						Where("msgid = ?", *payload.Refmsgid).
-						Scan(&rc).Error
+				// The replier's overflow rings count as being in reach, exactly as they
+				// do on the feed, the badge, search and the message page: the mail
+				// deliberately invites ring members, and a capped post never grows, so
+				// holding a ring member's reply would sit on it until the item was taken.
+				//
+				// Read from rippling.AdmittedMsgids, the one answer every surface asks
+				// for, and applied in Go rather than ORed into the containment
+				// expression. Re-deriving it here from the same JSON is how surfaces
+				// drift apart, and this is the surface where drift is worst: a member
+				// the mail invited, whose reply this gate then holds indefinitely.
+				ringAdmits := false
+				for _, id := range rippling.AdmittedMsgids(db, reach.lng, reach.lat, utils.SRID,
+					rippling.ViewerOverflowPaths(db, myid, float32(reach.lat), float32(reach.lng))) {
+					if id == *payload.Refmsgid {
+						ringAdmits = true
+						break
+					}
+				}
+				// Containment is the routing server's answer about the stored
+				// label (rippling.ReachMembership), one batched call in place of
+				// the ST_Contains against a megabyte polygon this gate used to
+				// pay per reply.
+				//
+				// A row it could not answer for - no label stored yet, or the
+				// routing server down - does NOT hold the reply. Only a
+				// refusal does. On 2026-09-02 the reach engine was down for 16
+				// hours and every undecided row read as "out", so members were
+				// told a post three miles away had not reached them and their
+				// replies were held; the notice even carried an arrival time in
+				// the past, because the drive-time estimate behind that text
+				// was still working. An outage now costs ordering, not replies.
+				membership, gateErr := rippling.ReachMembership(db, []uint64{*payload.Refmsgid}, reach.lng, reach.lat)
+				rc.ReachRows = len(membership)
+				info, haveInfo := membership[*payload.Refmsgid]
+				if haveInfo && info.InReach {
+					rc.InReach = 1
 				}
 				if gateErr == nil {
+					// A ring admits them: in reach, whatever the polygon said.
+					if ringAdmits {
+						rc.InReach = 1
+					}
 					reach.checked = true
 					reach.reachRows = rc.ReachRows
 					reach.inReach = rc.InReach
@@ -788,11 +791,24 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					// ripple:release-replies cron then delivers it (or 'taken-gone' if the post goes
 					// first). Mirrors IncomingMailService::holdReplyIfOutsideReach for the web path.
 					//
-					// Unless this is the post's FIRST reply and the replier is inside the reach the
-					// post will eventually have (see firstreply.ShouldPassThrough). Holding that
-					// reply delays a poster who currently has nothing, to protect an ordering the
-					// replier was going to be allowed to cross anyway.
-					if rc.ReachRows > 0 && rc.InReach == 0 {
+					// Undecided is not a refusal: let the reply through and
+					// count it, so the size of an outage is visible after the
+					// fact as well as in the Sentry alert the routing call
+					// raises at the time.
+					if rc.ReachRows > 0 && rc.InReach == 0 && !info.Decided && !ringAdmits {
+						db.Table("rippling_event_metrics").Clauses(clause.OnConflict{
+							DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
+						}).Create(map[string]interface{}{
+							"day":   gorm.Expr("CURDATE()"),
+							"event": gorm.Expr("'reply_undecided_passthrough'"),
+							"count": gorm.Expr("1"),
+						})
+					} else if rc.ReachRows > 0 && rc.InReach == 0 {
+						// Unless this is the post's FIRST reply and the replier is
+						// inside the reach the post will eventually have (see
+						// firstreply.ShouldPassThrough). Holding that reply delays a
+						// poster who currently has nothing, to protect an ordering the
+						// replier was going to be allowed to cross anyway.
 						holdReply = !firstreply.ShouldPassThrough(db, *payload.Refmsgid, reach.lng, reach.lat)
 						if !holdReply {
 							db.Table("firstreply_event_metrics").Clauses(clause.OnConflict{
@@ -892,10 +908,56 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// 24=daily, events + volunteering allowed), NOT the LoveJunk FREQUENCY_NEVER. Best-effort: a join
 	// hiccup must never fail the reply.
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
-		var refGroup uint64
-		db.Table("messages_groups").Select("groupid").Where("msgid = ?", *payload.Refmsgid).Order("groupid").Limit(1).Scan(&refGroup)
-		if refGroup > 0 {
-			user.AddMembership(myid, refGroup, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_DAILY, 1, 1, "Joined to reply to a post")
+		// Already in one of the post's groups? Then nothing needs joining: they can
+		// see it and reply to it where they are. Without this check the join below
+		// picks the post's LOWEST GROUP ID, which is arbitrary — and once a post
+		// ripples, most of its groups are copies the replier has no connection to.
+		// A Leeds member replied to a Leeds post that had rippled to Bradford four
+		// minutes earlier; Bradford's id sorts first, so she was signed up to
+		// Bradford, unsubscribed, and said so on ChitChat (2026-08-17). Her Leeds
+		// membership was never consulted.
+		var alreadyIn int64
+		db.Table("messages_groups AS mg").
+			Joins("INNER JOIN memberships m ON m.groupid = mg.groupid AND m.userid = ?", myid).
+			Where("mg.msgid = ?", *payload.Refmsgid).
+			Count(&alreadyIn)
+
+		if alreadyIn == 0 {
+			var refGroup uint64
+
+			// Nearest to the replier, not lowest id. ST_Distance against a group's
+			// catchment is 0 when they are inside it, so the group whose area they
+			// actually live in wins, and failing that the closest one does — which
+			// is the group they would have joined by hand. Lowest id was a lottery:
+			// it is why a Leeds member replying to a Leeds post landed in Bradford.
+			// COALESCE keeps groups with no usable catchment last rather than first,
+			// where a NULL distance would otherwise sort them.
+			if reach.haveLocation {
+				db.Table("messages_groups AS mg").
+					Select("mg.groupid").
+					Joins("INNER JOIN `groups` g ON g.id = mg.groupid").
+					Where("mg.msgid = ?", *payload.Refmsgid).
+					// Must be wrapped in clause.OrderBy: GORM's Order() switches on
+					// clause.OrderBy, clause.OrderByColumn and string, with no default
+					// branch, so a bare clause.Expr is silently DROPPED and the query
+					// runs unordered — which returns the lowest group id, the very
+					// thing this is here to avoid. town.go and message.go order by
+					// distance the same way.
+					Order(clause.OrderBy{Expression: gorm.Expr(
+						"COALESCE(ST_Distance(g.polyindex, ST_SRID(POINT(?, ?), ?)), 1e9), mg.groupid",
+						reach.lng, reach.lat, utils.SRID)}).
+					Limit(1).Scan(&refGroup)
+			}
+
+			// No location, or the distance query found nothing: fall back to the
+			// original choice so a replier still ends up somewhere.
+			if refGroup == 0 {
+				db.Table("messages_groups").Select("groupid").Where("msgid = ?", *payload.Refmsgid).Order("groupid").Limit(1).Scan(&refGroup)
+			}
+
+			if refGroup > 0 {
+				user.AddMembership(myid, refGroup, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_DAILY, 1, 1, "Joined to reply to a post")
+			}
 		}
 	}
 

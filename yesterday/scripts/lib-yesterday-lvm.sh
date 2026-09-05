@@ -52,6 +52,65 @@ ylvm_find_backup() {
 
 # Prepare a full backup for a date into the staging mount, leaving a clean,
 # crash-recovered InnoDB datadir at $YLVM_STAGE_MNT. Also writes the percona
+# ---- Streaming the backup out of GCS ----------------------------------------
+#
+# Attempts allowed at pulling the backup. The stream is ~58GB over about six
+# minutes, and a single dropped connection anywhere in it fails the whole
+# nightly refresh: `set -euo pipefail` aborts, and the only other trigger is
+# tomorrow's 06:00 cron, so one blip costs a whole day of freshness. That is not
+# hypothetical - it killed the refresh on 2026-07-16 and again on 2026-08-14,
+# both with `xb_stream_read_chunk(): my_read() failed`, and the second left
+# Freegle serving a three-day-old copy of production.
+#
+# Bounded rather than infinite: a missing or corrupt object will never come good,
+# and the nightly window is finite.
+export YLVM_STREAM_ATTEMPTS="${YLVM_STREAM_ATTEMPTS:-3}"
+export YLVM_STREAM_BACKOFF="${YLVM_STREAM_BACKOFF:-60}"   # seconds, multiplied by attempt number
+
+# Empty staging and hand the blocks back to the thin pool. Belt-and-braces
+# alongside the `discard` mount option: without the fstrim, staging's pool
+# footprint accumulates across refreshes, because rm on a thin volume does not
+# free pool blocks by itself.
+ylvm_clear_stage() {
+    ylvm_log "Clearing staging $YLVM_STAGE_MNT ..."
+    rm -rf "${YLVM_STAGE_MNT:?}"/* "${YLVM_STAGE_MNT}"/.[!.]* 2>/dev/null || true
+    fstrim "$YLVM_STAGE_MNT" 2>/dev/null || true
+}
+
+# One attempt at the stream. Separated out so the retry loop is testable without
+# GCS: the tests stub this, not the pipe, because modelling the pipe would test
+# bash's pipefail rather than our retry.
+ylvm_stream_once() {
+    gcloud storage cat "$1" | xbstream -x -C "$YLVM_STAGE_MNT"
+}
+
+# Stream with bounded retries and growing backoff. Returns non-zero when every
+# attempt failed, so the caller still dies (and the EXIT trap still writes a
+# "failed" status) rather than proceeding with a half-extracted datadir.
+ylvm_stream_with_retry() {
+    local backup_file="$1"
+    local attempts="${YLVM_STREAM_ATTEMPTS:-3}"
+    local attempt=1
+
+    while :; do
+        ylvm_log "Streaming + extracting to staging (attempt $attempt/$attempts) ..."
+        if ylvm_stream_once "$backup_file"; then
+            return 0
+        fi
+        if [ "$attempt" -ge "$attempts" ]; then
+            ylvm_log "Stream failed on attempt $attempt/$attempts; giving up."
+            return 1
+        fi
+        # A failed extraction leaves partial files behind, and xbstream would
+        # extract the retry ON TOP of them - a datadir mixed from two streams,
+        # which would not surface until prepare, or worse, in the served data.
+        ylvm_log "Stream failed on attempt $attempt/$attempts; clearing staging and retrying."
+        ylvm_clear_stage
+        sleep $(( attempt * ${YLVM_STREAM_BACKOFF:-60} ))
+        attempt=$(( attempt + 1 ))
+    done
+}
+
 # my.cnf (matching restore-backup.sh) so the same image/params are used.
 ylvm_prepare_to_stage() {
     local date8="$1"
@@ -60,15 +119,9 @@ ylvm_prepare_to_stage() {
     ylvm_log "Backup: $backup_file"
 
     mountpoint -q "$YLVM_STAGE_MNT" || ylvm_die "Staging $YLVM_STAGE_MNT not mounted (run setup-lvm-thin.sh)"
-    ylvm_log "Clearing staging $YLVM_STAGE_MNT ..."
-    rm -rf "${YLVM_STAGE_MNT:?}"/* "${YLVM_STAGE_MNT}"/.[!.]* 2>/dev/null || true
-    # Return the just-freed blocks to the thin pool. Belt-and-braces alongside the
-    # `discard` mount option — without this, staging's pool footprint accumulates
-    # across refreshes (rm on a thin volume doesn't free pool blocks by itself).
-    fstrim "$YLVM_STAGE_MNT" 2>/dev/null || true
+    ylvm_clear_stage
 
-    ylvm_log "Streaming + extracting to staging ..."
-    gcloud storage cat "$backup_file" | xbstream -x -C "$YLVM_STAGE_MNT"
+    ylvm_stream_with_retry "$backup_file" || ylvm_die "Streaming $backup_file failed after $YLVM_STREAM_ATTEMPTS attempt(s)"
 
     ylvm_log "Decompressing .zst files (parallel) ..."
     find "$YLVM_STAGE_MNT" -type f -name "*.zst" -print0 | xargs -0 -P "$(nproc)" -I {} zstd -d --rm {}
@@ -99,22 +152,48 @@ EOF
     ylvm_log "✅ Staging prepared for $date8"
 }
 
+# uid:gid that mysqld runs as inside the container, read from the image the percona
+# service is actually configured to run.
+#
+# This is deliberately NOT derived from the backup's server_version. That version names
+# a Percona release, not a Docker tag that is guaranteed to exist: when production moved
+# to 8.0.46-38 the probe `docker run percona:8.0.46-38` failed, the old `|| echo 999`
+# fallback silently produced 999, and the datadir was chowned to a uid mysqld does not
+# run as. mysqld could then not create auto.cnf, crash-looped, and every nightly restore
+# failed at the password-reset step for six days.
+#
+# A wrong owner is unrecoverable without a re-chown, so refuse to guess.
+ylvm_mysql_uid_gid() {
+    local image uid gid
+    image="$(cd "$YLVM_COMPOSE_DIR" && docker compose config --images percona 2>/dev/null | head -1)"
+    [ -n "$image" ] || ylvm_die "Cannot read the percona image from docker compose config"
+    uid="$(docker run --rm "$image" id -u mysql 2>/dev/null)"
+    gid="$(docker run --rm "$image" id -g mysql 2>/dev/null)"
+    case "${uid}:${gid}" in
+        *[!0-9:]*|:*|*:) ylvm_die "Cannot read the mysql uid/gid from $image - refusing to guess, the wrong owner leaves mysqld unable to write its datadir" ;;
+    esac
+    printf '%s %s\n' "$uid" "$gid"
+}
+
+# Give the active datadir to the in-container mysql user. Needed after any change of
+# what is mounted there - a fresh apply, and also a clone of an older snapshot, which
+# carries whatever ownership was correct when that snapshot was taken.
+ylvm_chown_datadir() {
+    local uid gid
+    read -r uid gid <<<"$(ylvm_mysql_uid_gid)"
+    ylvm_log "Setting datadir ownership to ${uid}:${gid} ..."
+    chown -R "${uid}:${gid}" "$YLVM_ACTIVE_MNT"
+}
+
 # Apply the prepared staging datadir onto the live active datadir IN PLACE so
 # the thin pool only allocates changed blocks. Caller MUST ensure percona is
 # NOT using $YLVM_ACTIVE_MNT (stopped, or still on the old volume during prime).
 ylvm_apply_stage_to_active() {
-    local percona_version; percona_version="$(cat "$YLVM_COMPOSE_DIR/yesterday/data/percona-version" 2>/dev/null || echo)"
     mountpoint -q "$YLVM_ACTIVE_MNT" || ylvm_die "Active $YLVM_ACTIVE_MNT not mounted"
     ylvm_log "rsync --inplace staging -> active (changed blocks only) ..."
     rsync -a --inplace --no-whole-file --delete \
         "$YLVM_STAGE_MNT/" "$YLVM_ACTIVE_MNT/"
-    # Ownership for the in-container mysql user (detected like restore-backup.sh)
-    if [ -n "$percona_version" ]; then
-        local uid gid
-        uid="$(docker run --rm "percona:$percona_version" id -u mysql 2>/dev/null || echo 999)"
-        gid="$(docker run --rm "percona:$percona_version" id -g mysql 2>/dev/null || echo 999)"
-        chown -R "${uid}:${gid}" "$YLVM_ACTIVE_MNT"
-    fi
+    ylvm_chown_datadir
     sync
     ylvm_log "✅ Active updated in place"
 }
@@ -238,6 +317,54 @@ ylvm_set_restore_status() {
 EOF
 }
 
+# ---- Keeping the status honest while a long refresh runs --------------------
+#
+# The API decides a restore is stale, and reports `idle` / "No active restore",
+# when restore-status.json has not been written for YLVM_STATUS_STALE_MINUTES.
+# The refresh writes "preparing" once at the start and "completed" at the end,
+# and the rsync apply ALONE runs longer than that window on a full backup. So a
+# perfectly healthy restore reports as dead partway through, and is
+# indistinguishable from one that really has died - which is the signal the
+# staleness check exists to give.
+#
+# Observed 2026-08-15: the 06:00 refresh was 2h13m in, rsync running normally,
+# staging prepared, and the API had been reporting "No active restore" for over
+# an hour.
+#
+# The heartbeat rewrites the file periodically with the current phase, so
+# staleness once again means what it says.
+export YLVM_HEARTBEAT_INTERVAL="${YLVM_HEARTBEAT_INTERVAL:-60}"
+
+YLVM_HEARTBEAT_PID=""
+
+# Record the phase, refresh the status, and keep refreshing it until the next
+# call or ylvm_heartbeat_stop. Safe to call repeatedly.
+ylvm_phase() {
+    local message="$1" date8="$2"
+    ylvm_heartbeat_stop
+    ylvm_set_restore_status "preparing" "$message" "$date8"
+
+    # A subshell rather than a named background script: it inherits the config
+    # it needs, and dies with the refresh if that is killed outright.
+    (
+        while sleep "$YLVM_HEARTBEAT_INTERVAL"; do
+            ylvm_set_restore_status "preparing" "$message" "$date8"
+        done
+    ) &
+    YLVM_HEARTBEAT_PID=$!
+}
+
+# Stop the heartbeat. MUST be called before writing any terminal status, or the
+# heartbeat would overwrite "completed"/"failed" with "preparing" and the run
+# would look stuck forever.
+ylvm_heartbeat_stop() {
+    if [ -n "$YLVM_HEARTBEAT_PID" ]; then
+        kill "$YLVM_HEARTBEAT_PID" 2>/dev/null || true
+        wait "$YLVM_HEARTBEAT_PID" 2>/dev/null || true
+        YLVM_HEARTBEAT_PID=""
+    fi
+}
+
 # Write the set of instantly-switchable days to a file the backup-browser API
 # reads (mounted as /data in the yesterday-api container). The UI uses this to
 # show which dates are a ~1-min switch vs a full ~1-2h restore.
@@ -269,7 +396,13 @@ ylvm_reset_root_password() {
             && { ok=1; break; }
         sleep 2
     done
-    [ -n "$ok" ] || ylvm_die "percona socket not ready for password reset"
+    if [ -z "$ok" ]; then
+        # Take skip-grant-tables back out before giving up. Leaving it in means the next
+        # start of percona has authentication disabled entirely.
+        sed -i '/skip-grant-tables/d' "$cnf"
+        docker compose up -d percona >/dev/null 2>&1 || true
+        ylvm_die "percona socket not ready for password reset - see: docker logs ${project}-percona"
+    fi
     docker exec "${project}-percona" mysql --socket=/var/lib/mysql/mysql.sock -u root -e \
         "FLUSH PRIVILEGES; ALTER USER 'root'@'localhost' IDENTIFIED BY '${pw}'; ALTER USER 'root'@'%' IDENTIFIED BY '${pw}'; FLUSH PRIVILEGES;" 2>/dev/null \
         || ylvm_log "⚠️  password reset query failed"

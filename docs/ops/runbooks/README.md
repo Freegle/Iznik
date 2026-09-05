@@ -48,6 +48,28 @@ host after any change).
 - Full steps: **[deployment-spend-optimisation.md](deployment-spend-optimisation.md)**.
 - Run roughly monthly, or when a host crosses ~75% disk use.
 
+## Annual AGM category on Discourse
+
+Once a year the AGM gets its own Discourse category, which every user is put on
+"Watching" so the announcements reach them. Set up, announced and closed with the
+`discourse:agm` artisan command, run by hand in three separate steps.
+
+- Full steps: **[agm-category.md](agm-category.md)**.
+- The steps are separate on purpose: switching Watching on before the information
+  posts exist means every draft notifies the whole forum.
+
+## Outbound relay throttled by a provider
+
+A large receiving provider (Yahoo's estate is the usual one) starts answering
+`421 4.7.0 temporarily deferred` to one of the relay's sending addresses. Mail to that
+provider queues on the relay; the batch side notices and pauses generation for it.
+
+- The relay warms its other sending addresses against that provider and routes the
+  provider's mail to whichever one is being accepted, automatically and per provider.
+- Full description: **[outbound-relay-ip-warmup.md](outbound-relay-ip-warmup.md)**.
+- Pause the every-minute automation before touching its state by hand, and judge an
+  address on sustained deliveries, never on a one-off probe.
+
 ## Adding a runbook
 
 Keep summaries here **non-confidential**: describe impact, what pauses, what stays up, and

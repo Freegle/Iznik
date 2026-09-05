@@ -13,13 +13,14 @@ dependencies {
     implementation project(':capacitor-app-launcher')
     implementation project(':capacitor-device')
     implementation project(':capacitor-network')
-    implementation project(':freegle-capacitor-push-notifications-cap7')
+    implementation project(':freegle-capacitor-push-notifications-cap8')
     implementation project(':capawesome-capacitor-badge')
     implementation project(':capgo-capacitor-social-login')
     implementation project(':capacitor-status-bar')
     implementation project(':capacitor-camera')
     implementation project(':capacitor-share')
     implementation project(':capacitor-app')
+    implementation project(':capacitor-screen-orientation')
 
 }
 

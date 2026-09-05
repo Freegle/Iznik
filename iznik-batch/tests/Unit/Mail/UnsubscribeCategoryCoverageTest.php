@@ -42,6 +42,10 @@ class UnsubscribeCategoryCoverageTest extends TestCase
         \App\Mail\Chat\ChatReviewPendingMail::class => null,
         \App\Mail\Chat\ChatReviewSummaryMail::class => null,
         \App\Mail\Chat\SpamWarningMail::class => null,
+        // Sent once after a provider stops accepting our mail, in place of the
+        // chat notifications we declined to send, so it belongs to the same
+        // category those would have carried.
+        \App\Mail\Deferrals\UnreadChatCatchUpMail::class => UnsubscribeService::TYPE_CHAT,
         \App\Mail\CommunityNews\CommunityNewsMail::class => UnsubscribeService::TYPE_NEWSLETTER,
         \App\Mail\Digest\DigestReplyNotice::class => null,
         \App\Mail\Digest\UnifiedDigest::class => UnsubscribeService::TYPE_DIGEST,
