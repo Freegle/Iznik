@@ -7,6 +7,7 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\MessageOutcome;
 use App\Services\AutoApproveService;
+use App\Services\ContentCheckService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
@@ -662,6 +663,84 @@ class AutoApproveServiceTest extends TestCase
         ]);
     }
 
+    /**
+     * Set up a post approved on its origin group and rippled into a nearby group, with the
+     * poster holding $status on the nearby group. Returns [message, nearby group].
+     */
+    private function seedRippledInPostWithPostingStatus(?string $status): array
+    {
+        $user = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $nearbyGroup = $this->createTestGroup();
+        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
+        $this->createMembership($user, $nearbyGroup, [
+            'added' => now()->subHours(72),
+            'ourPostingStatus' => $status,
+        ]);
+
+        $message = $this->createTestMessage($user, $originGroup);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
+
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
+            'msgtype' => 'Offer', 'rippled_in' => 1,
+        ]);
+
+        return [$message, $nearbyGroup];
+    }
+
+    /**
+     * A stored MODERATED on the receiving group does not stop the fast-track. It reads as the
+     * group's own view of this member, but the v1 join path wrote MODERATED as its default,
+     * so 1.95M of the 1.96M live rows carrying it record no moderator's decision. Treating it
+     * as one (briefly live, 2026-09-04) would have parked every long-standing member of a
+     * neighbouring group in that group's pending queue.
+     */
+    public function test_fast_tracks_rippled_in_when_poster_has_a_stored_moderated_status(): void
+    {
+        [$message, $nearbyGroup] = $this->seedRippledInPostWithPostingStatus('MODERATED');
+
+        $this->service->process();
+
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
+        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
+            'a stored MODERATED is the v1 default, not a decision, so it does not block the fast-track');
+    }
+
+    /** PROHIBITED stops this person posting to the group, so their rippled-in copy is not approved either. */
+    public function test_does_not_fast_track_rippled_in_when_poster_is_prohibited_on_that_group(): void
+    {
+        [$message, $nearbyGroup] = $this->seedRippledInPostWithPostingStatus('PROHIBITED');
+
+        $this->service->process();
+
+        $this->assertDatabaseHas('messages_groups', [
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+        ]);
+    }
+
+    /**
+     * Rippling creates memberships itself with no posting status set. A blank status is not a
+     * moderation decision, so the fast-track still applies. Were it read as "moderated", every
+     * rippled-in post from everyone rippling has ever joined to a group would sit Pending.
+     */
+    public function test_fast_tracks_rippled_in_when_membership_has_no_posting_status(): void
+    {
+        [$message, $nearbyGroup] = $this->seedRippledInPostWithPostingStatus(null);
+
+        $this->service->process();
+
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
+        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
+            'a membership with no posting status does not block the fast-track');
+    }
+
     public function test_skips_new_member_under_48_hours(): void
     {
         $user = $this->createTestUser();
@@ -1030,4 +1109,87 @@ class AutoApproveServiceTest extends TestCase
         $this->assertEquals(48, AutoApproveService::PENDING_HOURS);
         $this->assertEquals(48, AutoApproveService::MEMBERSHIP_HOURS);
     }
+
+    /**
+     * A rippled-in copy held because it breaks THAT group's own rules must stay held. The
+     * veto window is a "no moderator objected" timer, and a rule the group wrote down is an
+     * objection - auto-approving past it would put the post in front of members anyway,
+     * which is the whole thing the check exists to stop (Discourse 10102).
+     */
+    public function test_does_not_fast_track_a_rippled_in_post_held_by_the_groups_own_rules(): void
+    {
+        $user = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $nearbyGroup = $this->createTestGroup();
+        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, $originGroup);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
+
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
+            'msgtype' => 'Offer', 'rippled_in' => 1,
+            'contentcheck_checked_at' => now()->subHours(2),
+            // The check name the group-rules path really writes; a made-up name would pass
+            // for the wrong reason, because nothing would recognise it.
+            'contentcheck_reasons' => json_encode([[
+                'check' => ContentCheckService::CHECK_PER_GROUP_WORRY,
+                'action' => 'flag',
+                'keyword' => 'rabbit',
+                'detail' => "Matched per-group worry word 'rabbit'",
+            ]]),
+        ]);
+
+        $this->service->process();
+
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
+        $this->assertEquals(MessageGroup::COLLECTION_PENDING, $mg->collection,
+            'a copy held by the group\'s own rules waits for a moderator, not for the clock');
+    }
+
+    /**
+     * The periodic content check annotates every Pending row it visits - GroupModerated on a
+     * fully moderated group, MemberModerated on a moderated member - and those are flags
+     * describing the row, not a hold by the group's rules. A rippled-in copy Pending for some
+     * other reason that picked up such a flag must still be released by the veto window. On
+     * 2026-09-04 five copies sat Pending for hours with only that flag on them, because the
+     * fast-track read "has reasons" as "held by this group's rules".
+     */
+    public function test_fast_tracks_a_rippled_in_post_that_only_carries_a_content_check_flag(): void
+    {
+        $user = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $nearbyGroup = $this->createTestGroup();
+        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, $originGroup);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
+
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
+            'msgtype' => 'Offer', 'rippled_in' => 1,
+            'contentcheck_checked_at' => now()->subHours(2),
+            'contentcheck_reasons' => json_encode([[
+                'check' => ContentCheckService::CHECK_GROUP_MODERATED,
+                'category' => null,
+                'action' => 'flag',
+                'detail' => "This group moderates all posts, whatever the member's setting",
+            ]]),
+        ]);
+
+        $this->service->process();
+
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
+        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
+            'a content-check flag is a description of the row, not a hold by the group\'s rules');
+    }
+
 }

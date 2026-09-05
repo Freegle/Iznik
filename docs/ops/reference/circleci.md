@@ -87,7 +87,6 @@ GOOGLE_PERSPECTIVE_KEY=your_google_perspective_key
 GOOGLE_GEMINI_API_KEY=your_google_gemini_key
 GOOGLE_PROJECT=your_google_project_id
 GOOGLE_APP_NAME=Freegle
-MAPBOX_KEY=your_mapbox_key
 MAXMIND_ACCOUNT=your_maxmind_account
 MAXMIND_KEY=your_maxmind_key
 ```
@@ -189,4 +188,4 @@ Each CircleCI build collects:
 - [CircleCI Configuration Details](../../../.circleci/README.md)
 - [Playwright Testing](../../../iznik-nuxt3/tests/e2e/README.md)
 - [Docker Compose Setup](../../../README.md#running)
-- [Status Monitoring](../../../README.md#monitoring)
+- [Monitoring and logging](../monitoring-and-logging.md)

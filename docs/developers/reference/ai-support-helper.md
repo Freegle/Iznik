@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-23
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -32,18 +32,19 @@ calls and answer back to the browser.
 
 ## Architecture
 
-```
-ModTools (support section)                 Backend container (ai-support-helper)
-ModSupportAIAssistant.vue                  server.js  → support-agent.js → tools.js
-  │  identify member first                   │
-  │  POST /api/log-analysis  (SSE) ──────────┤ verify caller is Support/Admin (auth.js
-  │  Authorization: Bearer <mod JWT>         │   → Go API /api/session)
-  │  { query, userId }                       │ audit(session) then run query():
-  │                                          │   Claude Agent SDK, read-only tools,
-  │  ◄── data: {type:'thinking'|'tool'|      │   codebase checkout at /app/codebase
-  │        'status'|'result'|'error'} ───────┘
-  ▼
-  renders streamed transcript + cost/tokens (answer sanitised with DOMPurify)
+```mermaid
+sequenceDiagram
+    participant MT as ModTools support section<br/>ModSupportAIAssistant.vue
+    participant H as ai-support-helper container<br/>server.js, support-agent.js, tools.js
+    participant GO as Go API /api/session
+
+    Note over MT: the volunteer identifies the member first
+    MT->>H: POST /api/log-analysis, server-sent events<br/>Bearer mod JWT, query plus userId
+    H->>GO: auth.js checks the caller is Support or Admin
+    GO-->>H: session and roles
+    Note over H: audit the session, then run the query:<br/>Claude Agent SDK, read-only tools,<br/>codebase checkout at /app/codebase
+    H-->>MT: streamed events of type thinking, tool,<br/>status, result or error
+    Note over MT: renders the transcript plus cost and tokens,<br/>answer sanitised with DOMPurify
 ```
 
 One `query()` code path serves both auth modes (see below); everything else is identical.

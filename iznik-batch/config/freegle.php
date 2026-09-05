@@ -608,6 +608,13 @@ return [
         // Maximum drive-time (minutes) the reach may grow to. This is the FLAT cap, used
         // when the density-conditional cap below is off or cannot measure.
         'max_minutes' => (float) env('RIPPLE_MAX_MINUTES', 30),
+
+        // How long one ripple:expand run may keep taking rows before it stops cleanly
+        // and lets the next tick resume. MUST stay below ExpandCommand's single-instance
+        // lock TTL (3600s) - a run that outlives the lock lets the every-minute schedule
+        // stack another run at each expiry, which is the 2026-08-30 gate-saturation
+        // collapse. 0 disables (tests / operator one-offs).
+        'expand_time_box_seconds' => (int) env('RIPPLE_EXPAND_TIME_BOX_SECONDS', 2700),
         // Density-conditional cap. Measured on 887 posts split by local freegler
         // density, the chance a replier goes on to collect collapses past ~20-25
         // minutes in dense areas and does not fall at all out to 45 in sparse ones, so
@@ -663,6 +670,15 @@ return [
         // retraction to polygon-overlap only). Independent of RIPPLE_ENABLED; an
         // empty/absent list falls back to polygon-only for that post.
         'reachable_gate' => filter_var(env('RIPPLE_REACHABLE_GATE', true), FILTER_VALIDATE_BOOLEAN),
+        // coarse_tick_geometry: fetch each tick's catchment in the routing server's
+        // region-scale form rather than at road resolution. Expansion only asks
+        // region-scale questions of it (sandwich bounds, origin-group union, which
+        // groups the reach touches), and the full-resolution form costs seconds and
+        // megabytes at the large budgets late ticks use - on eight shared compute
+        // slots. Only applied where the reachable gate makes the group answer exact
+        // regardless (ExpandService::coarseTickGeometryOk). Default ON; set
+        // RIPPLE_COARSE_TICK_GEOMETRY=false as the killswitch.
+        'coarse_tick_geometry' => filter_var(env('RIPPLE_COARSE_TICK_GEOMETRY', true), FILTER_VALIDATE_BOOLEAN),
         'proximity_slow_ms' => (int) env('RIPPLE_PROXIMITY_SLOW_MS', 3000),
         // Reply-saturation stop (extent-governor design T1.1): a post with at least this many
         // DISTINCT repliers (distinct users with an Interested chat reply on the post,
@@ -1246,6 +1262,15 @@ return [
         // integrations:sync-whatjobs — alert if jobs.seenat hasn't advanced
         // within this many hours (tolerates the overnight gap + slow cold runs).
         'whatjobs_max_age_hours' => (int) env('FREEGLE_MONITORING_WHATJOBS_MAX_AGE_HOURS', 24),
+
+        // ripple:expand — alert when more than the threshold of 'expanding'
+        // rows are further than max_age past next_expansion_at. A day is far
+        // beyond the deliberate overnight pause plus the morning catch-up, so
+        // rows that late mean the expander is wedged (2026-08-31: ~10k rows
+        // sat days overdue for days, unnoticed). The threshold tolerates a few
+        // individually-stuck rows without masking a stalled pipeline.
+        'ripple_backlog_max_age_minutes' => (int) env('FREEGLE_MONITORING_RIPPLE_BACKLOG_MAX_AGE_MIN', 1440),
+        'ripple_backlog_threshold' => (int) env('FREEGLE_MONITORING_RIPPLE_BACKLOG_THRESHOLD', 50),
 
         // data:git-summary (weekly) — alert if its config timestamp is older
         // than this many days.

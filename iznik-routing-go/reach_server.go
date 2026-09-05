@@ -20,43 +20,74 @@ package main
 
 import (
 	"container/heap"
+	"context"
+	"database/sql"
 	"encoding/base64"
 	"fmt"
 	"log"
-	"math"
+	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
 
-// reachLive is the engine serving the reach endpoints; nil = not configured.
-// Set once at boot before the server starts (or by tests).
-var reachLive *ReachEngine
+// reachLivePtr holds the engine serving the reach endpoints; nil = not configured.
+//
+// Atomic because it is no longer written only at boot: when the artifacts are
+// not loadable the server keeps retrying in the background (reachRetryLoop),
+// so a publish can land while handlers are reading. Before that, a failed boot
+// meant every /v1/reach-* answered 503 for the LIFETIME OF THE PROCESS and the
+// only cure was a restart - which is how the 2026-09-02 deploy lost reach for
+// ~16 hours. "Unavailable" must never be a permanent answer.
+var reachLivePtr atomic.Pointer[ReachEngine]
 
-// reachPrev is the PREVIOUS partition build (REACH_DIR_PREV), held so a map
+func reachEngine() *ReachEngine { return reachLivePtr.Load() }
+
+func setReachLive(e *ReachEngine) { reachLivePtr.Store(e) }
+
+// liveReachPartFP is the live engine's partition fingerprint, or 0 when no
+// engine is loaded. 0 is never a real fingerprint, so a SQL comparison
+// against a staged label's stamp simply fails to match.
+func liveReachPartFP() uint64 {
+	if e := reachEngine(); e != nil {
+		return e.partFP
+	}
+	return 0
+}
+
+// reachPrevPtr holds the PREVIOUS partition build (REACH_DIR_PREV), held so a map
 // refresh stops being a cliff: stored labels embed their build's fingerprint,
 // and every evaluator routes each blob to the build that can read it. The
 // re-backfill after a rebuild then becomes a rolling migration - old labels
 // keep answering until each post's new one lands - instead of a site-wide
 // "nolabels" window. nil = single-build operation, exactly as before.
-var reachPrev *ReachEngine
+var reachPrevPtr atomic.Pointer[ReachEngine]
+
+func reachPrevEngine() *ReachEngine { return reachPrevPtr.Load() }
+
+func setReachPrev(e *ReachEngine) { reachPrevPtr.Store(e) }
 
 // decodeLabelsAnyBuild decodes a stored blob against whichever loaded build
 // matches its embedded fingerprint, returning the engine that must evaluate
 // it (arrivals are only meaningful on the build that decoded the blob).
 func decodeLabelsAnyBuild(b []byte) (*ReachLabels, *ReachEngine, error) {
-	if reachLive == nil {
+	// Load each pointer ONCE: a background republish must not be able to hand
+	// back a label decoded by one engine and an engine that did not decode it.
+	live := reachEngine()
+	if live == nil {
 		return nil, nil, fmt.Errorf("reach engine not configured")
 	}
-	lbl, err := reachLive.DecodeLabels(b)
+	lbl, err := live.DecodeLabels(b)
 	if err == nil {
-		return lbl, reachLive, nil
+		return lbl, live, nil
 	}
-	if reachPrev != nil {
-		if lbl, perr := reachPrev.DecodeLabels(b); perr == nil {
-			return lbl, reachPrev, nil
+	if prev := reachPrevEngine(); prev != nil {
+		if lbl, perr := prev.DecodeLabels(b); perr == nil {
+			return lbl, prev, nil
 		}
 	}
 	return nil, nil, err
@@ -83,23 +114,189 @@ func loadReachEngineCore(dir string) (*ReachEngine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("graph snapshot: %w", err)
 	}
-	part, err := loadPartition(filepath.Join(dir, "partition.snap"))
+	// Both artifacts are stamped with the overlay they were built on (and the
+	// matrices with the partition too), so a stale one is refused and rebuilt
+	// rather than read through against a numbering it never matched.
+	ovFP := overlayFingerprint(ov)
+	part, err := loadPartition(filepath.Join(dir, "partition.snap"), ovFP)
 	if err != nil {
-		log.Printf("reach: partition artifact missing (%v): deriving at boot", err)
+		log.Printf("reach: partition artifact unusable (%v): deriving at boot", err)
 		part = PartitionOverlay(g, ov, 10000, 0.25)
-		if err := savePartition(filepath.Join(dir, "partition.snap"), part); err != nil {
+		if err := savePartition(filepath.Join(dir, "partition.snap"), part, ovFP); err != nil {
 			log.Printf("reach: WARNING: could not save derived partition: %v", err)
 		}
 	}
-	rm, err := loadMatrices(filepath.Join(dir, "matrices.snap"))
+	partFP := partitionFingerprint(part)
+	rm, err := loadMatrices(filepath.Join(dir, "matrices.snap"), ovFP, partFP)
 	if err != nil {
-		log.Printf("reach: matrices artifact missing (%v): deriving at boot", err)
+		log.Printf("reach: matrices artifact unusable (%v): deriving at boot", err)
 		rm = BuildRegionMatrices(ov, part)
-		if err := saveMatrices(filepath.Join(dir, "matrices.snap"), rm); err != nil {
+		if err := saveMatrices(filepath.Join(dir, "matrices.snap"), rm, ovFP, partFP); err != nil {
 			log.Printf("reach: WARNING: could not save derived matrices: %v", err)
 		}
 	}
 	return NewReachEngine(g, ov, part, rm), nil
+}
+
+// rebuildReachSnapshot regenerates graph.snap in dir from the PBF, for the
+// self-heal in reachBootFromEnv. It writes ONLY the graph snapshot; the
+// partition, matrices and leaf-table artifacts already self-heal at load time
+// once their fingerprints stop matching, so there is nothing else to do here.
+func rebuildReachSnapshot(dir string) error {
+	pbf := getenv("OSM_PBF_PATH", "data/uk-latest.osm.pbf")
+	if _, err := os.Stat(pbf); err != nil {
+		return fmt.Errorf("no PBF at %s: %w", pbf, err)
+	}
+	var dep *DeprivationIndex
+	if path := getenv("DEPRIVATION_CSV", ""); path != "" {
+		dep = LoadDeprivation(path)
+	}
+	start := time.Now()
+	g, err := BuildGraph(pbf, dep)
+	if err != nil {
+		return fmt.Errorf("BuildGraph: %w", err)
+	}
+	ov := BuildOverlay(g)
+	// Match reachLoadOrBuild: the three-mode edges only shaped the contraction
+	// and are not stored, so release them before the write.
+	g.releaseModalEdges()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", dir, err)
+	}
+	if err := SaveReachSnapshot(filepath.Join(dir, "graph.snap"), g, ov); err != nil {
+		return fmt.Errorf("save: %w", err)
+	}
+	log.Printf("reach: rebuilt graph.snap in %v", time.Since(start).Round(time.Second))
+	return nil
+}
+
+// reachPartFPConfigKey names the config row holding the partition fingerprint
+// that the STORED reach_labels blobs were computed against. The blobs and the
+// artifacts are one versioned pair: a partition rebuild renumbers the regions
+// every stored blob refers to, so loading new artifacts against old labels
+// silently empties every member's feed. It lives in `config` rather than on
+// rippling_reach because that table is 7.39 GB and DDL on it took a node down
+// on 2026-09-02.
+const reachPartFPConfigKey = "reach_partition_fp"
+
+// reachExpectedPartFP reads the fingerprint the stored labels were built
+// against. Opens its own connection: initGroupsDB runs inside startServer,
+// which is AFTER this. Returns ok=false when the row is absent or the database
+// cannot be reached - the guard then stays out of the way, so a deployment
+// that has never recorded a fingerprint behaves exactly as it does today.
+func reachExpectedPartFP() (uint64, bool) {
+	dsn := groupsDSN()
+	if dsn == "" {
+		return 0, false
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		log.Printf("reach: cannot open db to read %s: %v", reachPartFPConfigKey, err)
+		return 0, false
+	}
+	defer db.Close()
+	// Bounded: this runs before the listener starts, so an unreachable database
+	// must not be able to hold the whole server down. Timing out means "no
+	// fingerprint recorded", which leaves the guard out of the way.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var raw string
+	if err := db.QueryRowContext(ctx, "SELECT `value` FROM config WHERE `key` = ?", reachPartFPConfigKey).Scan(&raw); err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("reach: cannot read %s: %v", reachPartFPConfigKey, err)
+		}
+		return 0, false
+	}
+	fp, perr := strconv.ParseUint(raw, 10, 64)
+	if perr != nil {
+		log.Printf("reach: %s = %q is not a fingerprint: %v", reachPartFPConfigKey, raw, perr)
+		return 0, false
+	}
+	return fp, true
+}
+
+// reachPublish makes eng the live engine, unless its partition disagrees with
+// the fingerprint the stored labels were built against.
+//
+// This is the guard that was missing on 2026-09-02. Rebuilding the artifacts
+// produced a new partition (92 MB -> 66 MB, new fingerprint) and every one of
+// the 53,680 stored labels became meaningless the moment it loaded - not with
+// an error, but by quietly answering "not in reach" for everybody. Refusing to
+// publish turns that into a 503, which is loud, which the deploy gate already
+// fails on, and which the background retry can still heal from once the
+// matching labels are applied.
+func reachPublish(eng *ReachEngine, why string) bool {
+	if want, ok := reachExpectedPartFP(); ok && want != eng.partFP {
+		log.Printf("reach: REFUSING to serve %s: artifacts are partition %d but the stored labels "+
+			"were built against %d. Serving this engine would answer \"not in reach\" for every "+
+			"member. Apply labels for partition %d and set config[%s], or restore the matching "+
+			"artifacts.", why, eng.partFP, want, eng.partFP, reachPartFPConfigKey)
+		return false
+	}
+	setReachLive(eng)
+	return true
+}
+
+// reachRetryLoop keeps trying to load the engine after a failed boot.
+//
+// Without it, "reach unavailable" is cached for the lifetime of the process:
+// reachLivePtr was written once at boot, so a bad boot meant every /v1/reach-*
+// answered 503 until someone restarted the service - which is exactly how the
+// 2026-09-02 deploy lost reach for ~16 hours. With it, artifacts that land
+// late (an rsync still in flight, a fingerprint recorded after the fact) heal
+// on their own.
+//
+// It deliberately does NOT rebuild anything. The boot path may rebuild once,
+// under the reachPublish guard; a background rebuild would renumber the
+// partition unattended, which is the failure this whole mechanism exists to
+// prevent.
+func reachRetryLoop(dir string) {
+	const (
+		first = 30 * time.Second
+		max   = 10 * time.Minute
+	)
+	delay := first
+	for {
+		time.Sleep(delay)
+		if reachEngine() != nil {
+			return
+		}
+		eng, err := loadReachEngineFromDir(dir)
+		if err != nil {
+			log.Printf("reach: retry: still cannot load from %s (%v); next attempt in %v", dir, err, delay)
+		} else if reachPublish(eng, "on retry") {
+			log.Printf("reach: retry SUCCEEDED - engine now live (%d regions, partition %d)",
+				len(eng.Part.LeafNodes), eng.partFP)
+			return
+		}
+		if delay < max {
+			if delay *= 2; delay > max {
+				delay = max
+			}
+		}
+	}
+}
+
+// snapshotStaleAgainstPBF reports whether the graph snapshot at snapPath predates
+// the OSM extract it was built from. Nothing keys these artifacts to the extract,
+// so a refreshed map with an old snapshot serves the OLD road network and says
+// nothing about it - which is how a missing region survives its own fix. Returns
+// an empty string when the snapshot is current, or when either file is missing.
+func snapshotStaleAgainstPBF(snapPath string) string {
+	snap, err := os.Stat(snapPath)
+	if err != nil {
+		return ""
+	}
+	pbfPath := getenv("OSM_PBF_PATH", "data/uk-latest.osm.pbf")
+	pbf, err := os.Stat(pbfPath)
+	if err != nil {
+		return ""
+	}
+	if !pbf.ModTime().After(snap.ModTime()) {
+		return ""
+	}
+	return fmt.Sprintf("%s was built %s, before %s changed at %s",
+		snapPath, snap.ModTime().Format(time.RFC3339), pbfPath, pbf.ModTime().Format(time.RFC3339))
 }
 
 // reachBootFromEnv loads the engine when REACH_DIR is set. Returns the
@@ -109,15 +306,49 @@ func reachBootFromEnv() *Graph {
 	if dir == "" {
 		return nil
 	}
+	if stale := snapshotStaleAgainstPBF(filepath.Join(dir, "graph.snap")); stale != "" {
+		// Loud on purpose: the artifacts win over the extract at boot, so a map
+		// refresh that stops here changes nothing and reports nothing.
+		log.Printf("reach: WARNING: %s - serving the OLD road network until the artifacts are rebuilt", stale)
+	}
 	start := time.Now()
 	eng, err := loadReachEngineFromDir(dir)
 	if err != nil {
-		log.Printf("reach: boot from %s failed (%v); falling back to PBF build", dir, err)
-		return nil
+		// A stale or unreadable graph.snap used to mean "serve without a reach
+		// engine": the PBF fallback below produces a working graph, so /health
+		// and every non-reach route answer 200 while /v1/reach-* quietly 503.
+		// That is exactly what happened on 2026-09-02, when a binary carrying
+		// graphSnapVersion 2 met version-1 artifacts on all three db nodes and
+		// the deploy reported clean. Rebuild and save instead, then retry: the
+		// cost is one slow boot (~7 min, inside monit's 15-cycle grace) rather
+		// than silently losing reach until someone notices.
+		//
+		// The rebuild is safe to attempt ONLY because reachPublish below now
+		// refuses to serve a partition the stored labels do not match: on
+		// 2026-09-02 this same rebuild renumbered the regions and emptied every
+		// member's feed.
+		log.Printf("reach: boot from %s failed (%v); rebuilding artifacts", dir, err)
+		if rebuildErr := rebuildReachSnapshot(dir); rebuildErr != nil {
+			log.Printf("reach: rebuild failed (%v); falling back to PBF build", rebuildErr)
+			go reachRetryLoop(dir)
+			return nil
+		}
+		if eng, err = loadReachEngineFromDir(dir); err != nil {
+			log.Printf("reach: boot still failing after rebuild (%v); falling back to PBF build", err)
+			go reachRetryLoop(dir)
+			return nil
+		}
 	}
-	reachLive = eng
-	log.Printf("reach: engine ready in %v (%d regions, %d boundary nodes)",
-		time.Since(start).Round(time.Millisecond), len(eng.Part.LeafNodes), len(eng.BI.leafOf))
+	if !reachPublish(eng, "at boot") {
+		// The graph itself is fine - only the region numbering disagrees - so
+		// serve every non-reach route from it rather than spending ~7 minutes
+		// rebuilding from the PBF. Reach stays 503 until the pairing is fixed,
+		// and the deploy gate fails the node on exactly that.
+		go reachRetryLoop(dir)
+		return eng.G
+	}
+	log.Printf("reach: engine ready in %v (%d regions, %d boundary nodes, partition %d)",
+		time.Since(start).Round(time.Millisecond), len(eng.Part.LeafNodes), len(eng.BI.leafOf), eng.partFP)
 	if prevDir := getenv("REACH_DIR_PREV", ""); prevDir != "" {
 		pstart := time.Now()
 		if prev, err := loadReachEngineFromDir(prevDir); err != nil {
@@ -125,7 +356,7 @@ func reachBootFromEnv() *Graph {
 		} else if prev.partFP == eng.partFP {
 			log.Printf("reach: previous build %s is the same partition; ignoring", prevDir)
 		} else {
-			reachPrev = prev
+			setReachPrev(prev)
 			log.Printf("reach: previous build ready in %v (%d regions) - rolling label migration active",
 				time.Since(pstart).Round(time.Millisecond), len(prev.Part.LeafNodes))
 		}
@@ -135,14 +366,14 @@ func reachBootFromEnv() *Graph {
 
 func handleReachLabels() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		e := reachLive
+		e := reachEngine()
 		if e == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
 		}
 		lat := c.QueryFloat("lat")
 		lng := c.QueryFloat("lng")
 		minutes := c.QueryFloat("minutes")
-		if lat == 0 || lng == 0 || minutes <= 0 || minutes > 240 {
+		if !validLatLng(lat, lng) || minutes <= 0 || minutes > 240 {
 			return fiber.NewError(fiber.StatusBadRequest, "lat, lng and minutes (0-240) required")
 		}
 		start := time.Now()
@@ -211,7 +442,7 @@ func unionForMsgid(e *ReachEngine, lbl *ReachLabels, msgid uint64) (float32, []i
 // blob, compute origin_union_secs + union leaves, no label refetch.
 func handleReachUnion() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		e := reachLive
+		e := reachEngine()
 		if e == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
 		}
@@ -258,7 +489,7 @@ type reachArrivalReq struct {
 
 func handleReachArrival() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		e := reachLive
+		e := reachEngine()
 		if e == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
 		}
@@ -324,7 +555,7 @@ type driveMetricsReq struct {
 // "N miles by road" instead of crow-flies on post lists, chat and profiles.
 func handleDriveMetrics() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		e := reachLive
+		e := reachEngine()
 		if e == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
 		}
@@ -352,7 +583,7 @@ func handleDriveMetrics() fiber.Handler {
 		out := make([]res, len(req.Targets))
 		for i, tg := range req.Targets {
 			out[i] = res{ID: tg.ID}
-			v := nearestNodeForMode(e.G, tg.Lat, tg.Lng, Drive)
+			v := nearestDriveNode(e.G, tg.Lat, tg.Lng)
 			if v == noNode {
 				continue
 			}
@@ -375,14 +606,14 @@ func handleDriveMetrics() fiber.Handler {
 }
 
 // engineDriveTime is the fast path for /v1/drive-time when the reach engine
-// is live and the mode is drive: exact, and milliseconds instead of a bounded
-// sweep. Returns handled=false to fall through to the sweep.
-func engineDriveTime(lat, lng, toLat, toLng, minutes float64, mode Mode) (fiber.Map, bool) {
-	e := reachLive
-	if e == nil || mode != Drive {
+// is live: exact, and milliseconds instead of a bounded sweep. Returns
+// handled=false to fall through to the sweep.
+func engineDriveTime(lat, lng, toLat, toLng, minutes float64) (fiber.Map, bool) {
+	e := reachEngine()
+	if e == nil {
 		return nil, false
 	}
-	dest := nearestNodeForMode(e.G, toLat, toLng, Drive)
+	dest := nearestDriveNode(e.G, toLat, toLng)
 	if dest == noNode {
 		return fiber.Map{"reachable": false}, true
 	}
@@ -417,7 +648,7 @@ func engineDriveTime(lat, lng, toLat, toLng, minutes float64, mode Mode) (fiber.
 // metres/4. Returns the input unchanged (roadm 0) when there is no road
 // nearby or no candidate satisfies the floors.
 func roadBlurPoint(g *Graph, lat, lng, metres float64) (float64, float64, float64) {
-	origin := nearestNodeForMode(g, lat, lng, Drive)
+	origin := nearestDriveNode(g, lat, lng)
 	if origin == noNode {
 		return lat, lng, 0
 	}
@@ -446,9 +677,6 @@ func roadBlurPoint(g *Graph, lat, lng, metres float64) (float64, float64, float6
 		}
 		cn := g.Nodes[id]
 		for _, e := range g.EdgesFrom(id) {
-			if e.Seconds[Drive] < 0 {
-				continue
-			}
 			tn := g.Nodes[e.To]
 			nm := cur.c + float32(haversineM(float64(cn.Lat), float64(cn.Lng), float64(tn.Lat), float64(tn.Lng)))
 			if d, seen := dist[e.To]; !seen || nm < d {
@@ -505,7 +733,7 @@ func handleBlur(g *Graph) fiber.Handler {
 		lat := c.QueryFloat("lat")
 		lng := c.QueryFloat("lng")
 		metres := blurMetresOrDefault(c.QueryFloat("metres"))
-		if lat == 0 || lng == 0 || math.IsNaN(lat) || math.IsNaN(lng) || math.IsInf(lat, 0) || math.IsInf(lng, 0) {
+		if !validLatLng(lat, lng) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat and lng required")
 		}
 		blat, blng, roadm := roadBlurPoint(g, lat, lng, metres)
@@ -543,7 +771,7 @@ func handleBlurBatch(g *Graph) fiber.Handler {
 		}
 		out := make([]res, len(req.Points))
 		for i, p := range req.Points {
-			if p.Lat == 0 || p.Lng == 0 || math.IsNaN(p.Lat) || math.IsNaN(p.Lng) {
+			if !validLatLng(p.Lat, p.Lng) {
 				out[i] = res{ID: p.ID, Lat: p.Lat, Lng: p.Lng, Roadm: 0}
 				continue
 			}
@@ -555,12 +783,11 @@ func handleBlurBatch(g *Graph) fiber.Handler {
 }
 
 // engineGroupProximity is groupProximity answered from the reach engine when
-// it is live (drive mode): two label queries replace two bounded full-graph
-// sweeps. Returns handled=false to fall through to the sweep (engine off, or
-// a non-drive mode).
-func engineGroupProximity(lat, lng float64, seeds []NodeID, mode Mode, maxSecs float32) (ProxPoint, ProxPoint, bool, bool) {
-	e := reachLive
-	if e == nil || mode != Drive || len(seeds) == 0 {
+// it is live: two label queries replace two bounded full-graph sweeps.
+// Returns handled=false to fall through to the sweep when the engine is off.
+func engineGroupProximity(lat, lng float64, seeds []NodeID, maxSecs float32) (ProxPoint, ProxPoint, bool, bool) {
+	e := reachEngine()
+	if e == nil || len(seeds) == 0 {
 		return ProxPoint{}, ProxPoint{}, false, false
 	}
 
@@ -608,16 +835,16 @@ func engineGroupProximity(lat, lng float64, seeds []NodeID, mode Mode, maxSecs f
 // tag members/posts so feeds can prefilter road-aware with an IN clause.
 func handleLeaf() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		e := reachLive
+		e := reachEngine()
 		if e == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
 		}
 		lat := c.QueryFloat("lat")
 		lng := c.QueryFloat("lng")
-		if lat == 0 || lng == 0 || math.IsNaN(lat) || math.IsNaN(lng) {
+		if !validLatLng(lat, lng) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat and lng required")
 		}
-		v := nearestNodeForMode(e.G, lat, lng, Drive)
+		v := nearestDriveNode(e.G, lat, lng)
 		if v == noNode {
 			return c.JSON(fiber.Map{"leaves": []int32{}})
 		}
@@ -626,8 +853,8 @@ func handleLeaf() fiber.Handler {
 			if j == 0 {
 				return
 			}
-			if oi := e.Ov.Idx[j]; oi != 0 {
-				if l := e.Part.LeafOf[oi]; l >= 0 {
+			if oi := e.Ov.IdxOf(j); oi != 0 {
+				if l := e.Part.LeafAt(oi); l >= 0 {
 					for _, x := range leaves {
 						if x == l {
 							return
@@ -637,10 +864,10 @@ func handleLeaf() fiber.Handler {
 				}
 			}
 		}
-		if e.Ov.Idx[v] != 0 {
+		if e.Ov.IdxOf(v) != 0 {
 			add(v)
 		} else {
-			add(e.Ov.ChainEndA[v])
+			add(e.Ov.ChainA(v))
 			add(e.Ov.ChainEndB[v])
 		}
 		if leaves == nil {
@@ -652,23 +879,28 @@ func handleLeaf() fiber.Handler {
 
 // engineOrFlatIsochrone serves a drive isochrone from the reach engine when
 // it is live (label query + table expansion, no full-graph sweep), and the
-// classic Dijkstra otherwise or for other modes. Same reached-nodes contract
-// either way, so polygons/bands/bounds downstream are unchanged.
-func engineOrFlatIsochrone(g *Graph, lat, lng float64, secs float32, mode Mode) IsochroneResult {
-	if e := reachLive; e != nil && mode == Drive {
+// classic Dijkstra otherwise. Same reached-nodes contract either way, so
+// polygons/bands/bounds downstream are unchanged.
+func engineOrFlatIsochrone(g *Graph, lat, lng float64, secs float32) IsochroneResult {
+	if e := reachEngine(); e != nil {
 		lbl := e.QueryLabelsCached(lat, lng, secs)
-		return IsochroneResult{ReachedNodes: e.ReachedNodes(lbl, secs)}
+		// Same snap the engine did, read back so callers can tell an unmapped
+		// origin from a small reach (see IsochroneResult.OriginFound).
+		return IsochroneResult{
+			ReachedNodes: e.ReachedNodes(lbl, secs),
+			OriginFound:  nearestDriveNode(g, lat, lng) != noNode,
+		}
 	}
-	return Isochrone(g, lat, lng, secs, mode)
+	return Isochrone(g, lat, lng, secs)
 }
 
 // engineOrFlatMultiSource is the group-boundary form: one label query per
 // seed, min-merged at the LABEL level (a few KB each), then one expansion -
 // instead of one full-graph multi-source sweep.
-func engineOrFlatMultiSource(g *Graph, seeds []NodeID, secs float32, mode Mode) IsochroneResult {
-	e := reachLive
-	if e == nil || mode != Drive || len(seeds) == 0 {
-		return multiSourceIsochrone(g, seeds, secs, mode)
+func engineOrFlatMultiSource(g *Graph, seeds []NodeID, secs float32) IsochroneResult {
+	e := reachEngine()
+	if e == nil || len(seeds) == 0 {
+		return multiSourceIsochrone(g, seeds, secs)
 	}
 	var merged *ReachLabels
 	type chainSeed struct {
@@ -676,7 +908,11 @@ func engineOrFlatMultiSource(g *Graph, seeds []NodeID, secs float32, mode Mode) 
 		base float32
 	}
 	var chainSeeds []chainSeed
+	seeded := false
 	for _, s := range seeds {
+		if s != noNode {
+			seeded = true
+		}
 		lbl := e.QueryLabelsFromNode(s, secs)
 		// The merge collapses per-seed origin-chain info, so remember each
 		// mid-chain seed for the along-chain refinement after expansion.
@@ -694,5 +930,5 @@ func engineOrFlatMultiSource(g *Graph, seeds []NodeID, secs float32, mode Mode) 
 	for _, cs := range chainSeeds {
 		e.refineOriginChain(reached, cs.node, cs.base, secs)
 	}
-	return IsochroneResult{ReachedNodes: reached}
+	return IsochroneResult{ReachedNodes: reached, OriginFound: seeded}
 }

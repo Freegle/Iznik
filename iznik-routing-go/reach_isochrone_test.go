@@ -19,7 +19,7 @@ func TestEngineReachedNodesMatchesFlatIsochrone(t *testing.T) {
 	const lat, lng = 51.4545, -2.5879
 	const secs = float32(12 * 60)
 
-	flat := Isochrone(g, lat, lng, secs, Drive)
+	flat := Isochrone(g, lat, lng, secs)
 	lbl := eng.QueryLabels(lat, lng, secs)
 	engineReached := eng.ReachedNodes(lbl, secs)
 
@@ -39,7 +39,7 @@ func TestEngineMultiSourceMatchesFlat(t *testing.T) {
 	}
 	seeds := make([]NodeID, 0, len(coords))
 	for _, c := range coords {
-		if v := nearestNodeForMode(g, c[0], c[1], Drive); v != noNode {
+		if v := nearestDriveNode(g, c[0], c[1]); v != noNode {
 			seeds = append(seeds, v)
 		}
 	}
@@ -48,12 +48,12 @@ func TestEngineMultiSourceMatchesFlat(t *testing.T) {
 	}
 	const secs = float32(10 * 60)
 
-	flat := multiSourceIsochrone(g, seeds, secs, Drive)
+	flat := multiSourceIsochrone(g, seeds, secs)
 
-	prev := reachLive
-	reachLive = eng
-	defer func() { reachLive = prev }()
-	engineIso := engineOrFlatMultiSource(g, seeds, secs, Drive)
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
+	engineIso := engineOrFlatMultiSource(g, seeds, secs)
 
 	compareReached(t, flat.ReachedNodes, engineIso.ReachedNodes, secs, "multi")
 }
@@ -68,13 +68,13 @@ func TestEngineFairnessMatchesFlat(t *testing.T) {
 	const limitSecs = float32(10 * 60)
 	const weight = float32(0.5)
 
-	flat := FairnessIsochrone(g, lat, lng, limitSecs, Drive, weight)
+	flat := FairnessIsochrone(g, lat, lng, limitSecs, weight)
 
 	maxLimit := limitSecs * (1 + weight)
-	origin := nearestNodeForMode(g, lat, lng, Drive)
+	origin := nearestDriveNode(g, lat, lng)
 	lbl := eng.QueryLabelsFromNode(origin, maxLimit)
 	reached := eng.ReachedNodes(lbl, maxLimit)
-	engineRes := fairnessFromReached(g, origin, reached, limitSecs, Drive, weight)
+	engineRes := fairnessFromReached(g, origin, reached, limitSecs, weight)
 
 	// The reached-set sizes must agree to within boundary float noise.
 	if flat.NodesTouched == 0 {

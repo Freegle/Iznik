@@ -27,9 +27,11 @@ import (
 // endpoint so the SQL lives in exactly one place.
 //
 // Fail-open semantics (matching the existing guards): a msgid is blocked only
-// when a reach row exists AND its reach does not contain the point. Any error
-// (e.g. rippling_reach not yet deployed) yields an empty set, and a viewer with
-// no location (0,0) is never blocked.
+// when a reach row exists AND its reach is DECIDED not to contain the point. Any
+// error (e.g. rippling_reach not yet deployed) yields an empty set, a viewer with
+// no location (0,0) is never blocked, and a post the routing server could not
+// decide is not blocked either - see reachBlockedOrigins. ReachBlockedSetForMail
+// is the one strict caller.
 //
 // myid is the VIEWER, when there is one: a viewer an overflow ring admits (see
 // rippling.ViewerOverflowPaths) is not blocked, matching the feed, the badge
@@ -53,7 +55,22 @@ import (
 // The query itself is ReachBlockedOrigins; this is the membership-only view of
 // it for the callers that do not need the origins.
 func ReachBlockedSet(myid uint64, msgids []uint64, lat, lng float64) map[uint64]bool {
-	origins := ReachBlockedOrigins(myid, msgids, lat, lng)
+	return blockedSet(ReachBlockedOrigins(myid, msgids, lat, lng))
+}
+
+// ReachBlockedSetForMail is ReachBlockedSet for the match mailers, which check
+// reach from a POST's location rather than a viewer's and must stay strict: a
+// post whose reach cannot be decided is treated as NOT reaching the point, so an
+// outage suppresses mail rather than sending it to members the post has not
+// reached. Mail is the one surface where failing open is the worse failure - a
+// held reply arrives late, a wrong email cannot be recalled.
+//
+// Viewer-less by construction, so the rings never apply (see ViewerOverflowPaths).
+func ReachBlockedSetForMail(msgids []uint64, lat, lng float64) map[uint64]bool {
+	return blockedSet(reachBlockedOrigins(0, msgids, lat, lng, true))
+}
+
+func blockedSet(origins map[uint64]ReachOrigin) map[uint64]bool {
 	blocked := make(map[uint64]bool, len(origins))
 	for msgid := range origins {
 		blocked[msgid] = true
@@ -87,6 +104,13 @@ type ReachOrigin struct {
 // that needed its own query (or worse, a routing call) per post would not be
 // worth showing.
 func ReachBlockedOrigins(myid uint64, msgids []uint64, lat, lng float64) map[uint64]ReachOrigin {
+	return reachBlockedOrigins(myid, msgids, lat, lng, false)
+}
+
+// strict says what an undecided verdict means: false (every member-facing
+// caller) treats it as no refusal, true (ReachBlockedSetForMail) treats it as
+// out of reach.
+func reachBlockedOrigins(myid uint64, msgids []uint64, lat, lng float64, strict bool) map[uint64]ReachOrigin {
 	blocked := make(map[uint64]ReachOrigin)
 	if len(msgids) == 0 || (lat == 0 && lng == 0) {
 		return blocked
@@ -117,6 +141,18 @@ func ReachBlockedOrigins(myid uint64, msgids []uint64, lat, lng float64) map[uin
 	if err == nil {
 		for id, info := range membership {
 			if info.InReach {
+				continue
+			}
+			// The routing server did not answer for this row - no stored label
+			// yet, or it is down. That is not a refusal, and the member is not
+			// told a post near them has not reached them on the strength of it.
+			// The notice is worst exactly when it is wrong: it carries an
+			// arrival time from the drive-time estimate, which keeps working
+			// through a reach outage, so it can contradict itself.
+			//
+			// The mailers are strict instead: they would rather send nothing
+			// than send to someone the post has not reached.
+			if !info.Decided && !strict {
 				continue
 			}
 			// A ring admits them: the post is not blocked, whatever the

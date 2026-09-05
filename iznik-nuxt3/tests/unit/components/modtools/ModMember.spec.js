@@ -971,4 +971,23 @@ describe('ModMember', () => {
       expect(wrapper.find('.settings-group').exists()).toBe(true)
     })
   })
+
+  // A membership that exists only because rippling auto-joined the poster is not a
+  // relationship with this community, so its volunteers have no chat to start
+  // (Discourse 10102).
+  describe('ripple-created membership', () => {
+    it('offers no chat button', () => {
+      const wrapper = mountComponent({
+        member: createMember({ rippled: true }),
+      })
+      expect(wrapper.find('.chat-button').exists()).toBe(false)
+    })
+
+    it('still offers a chat button for an ordinary member', () => {
+      const wrapper = mountComponent({
+        member: createMember({ rippled: false }),
+      })
+      expect(wrapper.find('.chat-button').exists()).toBe(true)
+    })
+  })
 })

@@ -552,8 +552,15 @@ BACKFILL_PID=$!
 # IMPORTANT: close_write is essential - it signals when a file is fully written
 # Without it, we might sync files while they're still being written (empty/partial)
 # delete/moved_from are included so removals propagate to the containers too.
+#
+# --exclude is an unanchored regex over the WHOLE path, so each directory name
+# is written with slashes and each suffix is pinned to the end. A bare word
+# would also match inside a filename: "dist" hits newsfeed_distance_test.go,
+# which then never syncs while _PRUNE above, matching on -name, still copies it
+# in the back-fill. The two must agree, so edits to such a file reach the
+# container.
 inotifywait -m -r -e modify,create,move,close_write,delete \
-    --exclude '(node_modules|\.git|\.nuxt|\.output|dist|vendor|migrations|storage/spool|~|\.tmp|\.swp|\.log)' \
+    --exclude '(/node_modules/|/\.git/|/\.nuxt/|/\.output/|/dist/|/vendor/|/migrations/|/storage/spool/|~$|\.tmp$|\.swp$|\.log$)' \
     "$PROJECT_DIR/iznik-nuxt3" \
     "$PROJECT_DIR/iznik-server-go" \
     2>/dev/null | while read -r directory events filename; do

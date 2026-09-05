@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-28
+last_reviewed: 2026-09-03
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -76,6 +76,29 @@ The `sourceheader` field stores the message origin:
 - `TN-Web` - Posted via TN website
 - `TN-Mobile` - Posted via TN mobile app
 - `Platform` - Posted via Freegle directly
+
+### Group Membership (Subscribe Mail)
+
+TN keeps its members' Freegle group list in step by emailing
+`<groupname>-subscribe@groups.ilovefreegle.org` from the member's TN address, one mail per
+group. `IncomingMailService::handleSubscribe()` handles it: it finds the group by
+`nameshort`, finds or creates the user from the envelope-from, and adds an Approved
+membership on daily digest.
+
+Two things gate and record that join:
+
+- **A ban blocks it.** A row in `users_banned` for that (user, group) means the subscribe
+  mail is dropped. TN re-sends these mails routinely, so without the gate a member a
+  moderator had banned would simply reappear on the group at the next TN sync.
+- **The join is logged.** A `Group`/`Joined` row with text `Subscribed` goes into `logs`,
+  so the join shows in the modlog as "Joined by emailing the group's subscribe address"
+  and counts toward the "seen on many groups" check in `MembershipsProcessingService`.
+
+Removal is the mirror image: `<groupname>-unsubscribe@` drops the membership, except for
+moderators and owners.
+
+`membership:remove-banned` clears up any membership held by a member banned from that
+group, for the rows written before the gate existed.
 
 ### Photo Handling
 
@@ -268,7 +291,7 @@ The two are handled at different layers, deliberately.
 | Case | Same `tnpostid`? | Handled where | Result |
 |------|------------------|---------------|--------|
 | Cross-post: one item, N groups, N emails | Yes | Ingestion, `IncomingMailService::createGroupPostMessage` | One `messages` row with N `messages_groups` rows |
-| Repost: same item offered again later | No - new id each time | `UnifiedDigestService` content key | Collapsed within a digest; both remain live posts on the site |
+| Repost: same item offered again later | No - new id each time | `UnifiedDigestService` content key | One digest card, and one immediate mail, for the set; both remain live posts on the site |
 
 ### Cross-posts: one message, many groups
 
@@ -309,8 +332,16 @@ Keying on the post id alone was tried and reverted (`423c6b0e6`): because a repo
 fresh id, the digest listed the same item once per posting - "Small lamp" four times,
 27 such items in four days (Discourse 9808/#233).
 
-Note the deliberate asymmetry: a repost is **not** collapsed on the browse feed. Two
-postings days apart are two real posts, and the member meant to make both.
+The same key now decides the immediate mails too, over a seven-day window
+(`UnifiedDigestService::ITEM_DEDUP_DAYS`). Past that, a member re-offering the same thing is
+news again and gets a fresh mail.
+
+Note the deliberate asymmetry: a repost is **not** collapsed on the browse feed. The feed
+collapses on `msgid` and nothing else, so each posting is its own card. Two postings days
+apart are two real posts, and the member meant to make both. The same is true of a
+TrashNothing set that predates the merge above: until `tn:merge-crossposts` collapses it,
+each copy is its own card on browse, even though the mail paths now treat the set as one
+item.
 
 ### Merging copies created before this
 
@@ -333,12 +364,30 @@ excluded from rippling (below).
 
 ### Copies and mail
 
-A member gets one immediate email per post, however many of their groups it is on.
-`UnifiedDigestService::processGroupImmediate()` runs once per group, so without a check
-across groups a cross-posted item would be mailed to the same member once per group they
-share with it. It records each send in `rippling_reach_notified` and reads that back on a
-later group's pass, which is the same ledger that stops the reach mailer re-mailing
-someone this path has already reached.
+A member is mailed **once per item**, not once per message. That distinction matters because
+one item can exist as several messages: a hand cross-post to two groups, a repost, or a
+TrashNothing set that predates the merge above.
+
+The rule is the daily digest's, called rather than restated. `itemSiblingMsgids()` groups
+messages using `getDeduplicationKey()` and `bodiesMatch()`, the same two functions
+`deduplicatePosts()` uses, so the two cannot drift.
+
+| Path | What it mails | How it knows the member has had it |
+|------|---------------|------------------------------------|
+| `processGroupImmediate()` - non-rippling posts, per-group cursor | one message | `rippling_reach_notified`, read across every copy of the item |
+| `mailNewlyReachedForPost()` - rippling posts, reach-gated | one message | the same ledger, in the recipient query |
+| `mailPostToUsers()` - first-reply scouting | one message | the same ledger, in `spoolPostToRecipients()` |
+| daily digest and daily push | a roll-up | `deduplicatePosts()` within one send, the member's cursor across sends |
+
+The ledger is written against the message actually mailed, and read across the whole set, so
+a member who had the first copy is passed over when a second arrives, whichever path would
+have mailed it.
+
+The two daily channels have no per-send ledger, so their across-sends check uses the
+member's own cursor: a copy the cursor has already passed is one they were shown. That
+stands in closely because copies of an item share a poster and a location, so the two things
+that decide whether a post reaches a member at all - it being their own post, and their
+distance slider - treat every copy of it alike.
 
 ### Copies and rippling
 

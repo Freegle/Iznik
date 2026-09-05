@@ -4,16 +4,23 @@ package rippling
 // of the labels-truth cutover. One batched call answers "is this member
 // inside each of these posts' CURRENT reach" exactly from the road network,
 // for every post the backfill has labelled; the rest come back "nolabels"
-// and keep their cell-grid verdict. Fail-soft: any routing problem returns
-// nil and callers change nothing.
+// and keep their cell-grid verdict.
+//
+// Any routing problem returns nil, which reads as "no verdict" - and no
+// verdict is NOT a refusal. Callers fail open on it, so an outage here is
+// invisible from the outside; reportEvalUnavailable is what makes it visible.
 
 import (
 	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/freegle/iznik-server-go/roadblur"
+	"github.com/getsentry/sentry-go"
 )
 
 var labelEvalClient = &http.Client{Timeout: 3 * time.Second}
@@ -22,6 +29,40 @@ const (
 	LabelVerdictIn  = "in"
 	LabelVerdictOut = "out"
 )
+
+// How often one process may report that reach evaluation is unavailable. An
+// outage produces one of these per call otherwise, and the calls are on the
+// feed's hot path.
+const reachAlertInterval = time.Minute
+
+var (
+	reachAlertMu   sync.Mutex
+	reachAlertLast time.Time
+)
+
+// reportEvalUnavailable raises a Sentry alert when the routing server cannot
+// answer a reach question, at most once a minute per process.
+//
+// This is the ONLY thing that shows an outage while it is happening. Every gate
+// in front of these verdicts now fails open, deliberately: a reply goes
+// through, no "hasn't reached you yet" notice is shown, and the site therefore
+// looks entirely well to the members using it. On 2026-09-02 the engine was
+// down for 16 hours behind a gate that failed closed instead, and the way we
+// found out was a member asking why a post three miles away had not reached
+// her.
+func reportEvalUnavailable(reason string) {
+	reachAlertMu.Lock()
+	if !reachAlertLast.IsZero() && time.Since(reachAlertLast) < reachAlertInterval {
+		reachAlertMu.Unlock()
+		return
+	}
+	reachAlertLast = time.Now()
+	reachAlertMu.Unlock()
+
+	msg := "Rippling reach evaluation unavailable: " + reason
+	log.Println(msg)
+	sentry.CaptureMessage(msg)
+}
 
 // RescueUndecided returns the subset of ids whose stored label verdicts the
 // member IN. This is the degraded-path rescue: when the spatial index is down
@@ -87,7 +128,14 @@ func LabelVerdictsWithDiscover(lat, lng float64, msgids []uint64) (map[uint64]st
 func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) (map[uint64]string, []uint64) {
 	// An empty candidate list still discovers: a member covered by NO grid
 	// can still be admitted by a stored label (the under-coverage band).
-	if (len(msgids) == 0 && !discover) || (lat == 0 && lng == 0) || !roadblur.RoutingHealthy() {
+	if (len(msgids) == 0 && !discover) || (lat == 0 && lng == 0) {
+		return nil, nil
+	}
+	if !roadblur.RoutingHealthy() {
+		// The breaker is open, so nothing is asked and everything downstream
+		// fails open. Keep reporting it: an outage lasts hours, and this is
+		// the only alert during all of them.
+		reportEvalUnavailable("routing breaker open")
 		return nil, nil
 	}
 	out := make(map[uint64]string, len(msgids))
@@ -105,11 +153,13 @@ func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) 
 			"discover": discover && start == 0,
 		})
 		if err != nil {
+			reportEvalUnavailable("cannot build request: " + err.Error())
 			return nil, nil
 		}
 		resp, err := labelEvalClient.Post(roadblur.RoutingURL()+"/v1/reach-eval", "application/json", bytes.NewReader(body))
 		if err != nil {
 			roadblur.MarkRoutingFailure()
+			reportEvalUnavailable("routing server unreachable: " + err.Error())
 			return nil, nil
 		}
 		func() {
@@ -124,6 +174,7 @@ func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) 
 				if resp.StatusCode >= 500 && resp.StatusCode != http.StatusServiceUnavailable {
 					roadblur.MarkRoutingFailure()
 				}
+				reportEvalUnavailable("routing server returned HTTP " + strconv.Itoa(resp.StatusCode))
 				out = nil
 				return
 			}
@@ -138,6 +189,7 @@ func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) 
 				} `json:"discovered"`
 			}
 			if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+				reportEvalUnavailable("unreadable response from routing server: " + err.Error())
 				out = nil
 				return
 			}

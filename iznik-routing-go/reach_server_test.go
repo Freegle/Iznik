@@ -17,9 +17,9 @@ func TestReachEndpoints(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := reachLive
-	reachLive = eng
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
 
 	app := newApp(g, "", false)
 
@@ -117,9 +117,9 @@ func TestReachEndpoints(t *testing.T) {
 
 func TestReachEndpointsUnconfigured(t *testing.T) {
 	g := makeTestGrid(nil)
-	prev := reachLive
-	reachLive = nil
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	setReachLive(nil)
+	defer func() { setReachLive(prev) }()
 	app := newApp(g, "", false)
 	req := httptest.NewRequest("GET", "/v1/reach-labels?lat=51&lng=-2&minutes=10", nil)
 	resp, err := app.Test(req, 10000)
@@ -133,9 +133,9 @@ func TestDriveMetricsEndpoint(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := reachLive
-	reachLive = eng
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
 	app := newApp(g, "", false)
 
 	targets := []map[string]any{
@@ -165,7 +165,7 @@ func TestDriveMetricsEndpoint(t *testing.T) {
 	}
 	lbl := eng.QueryLabels(51.4545, -2.5879, 15*60)
 	for i, tg := range targets {
-		v := nearestNodeForMode(g, tg["lat"].(float64), tg["lng"].(float64), Drive)
+		v := nearestDriveNode(g, tg["lat"].(float64), tg["lng"].(float64))
 		want, wantM := eng.ArrivalAtBaseNodeM(lbl, v)
 		got := dm.Results[i]
 		if want == f32Inf || want > lbl.T {
@@ -190,8 +190,8 @@ func TestDriveTimeEngineFastPath(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := reachLive
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	defer func() { setReachLive(prev) }()
 	app := newApp(g, "", false)
 
 	url := "/v1/drive-time?lat=51.4545&lng=-2.5879&tolat=51.4700&tolng=-2.6000&max_minutes=30"
@@ -212,9 +212,9 @@ func TestDriveTimeEngineFastPath(t *testing.T) {
 		return r.Reachable, r.DriveMin, r.DriveMiles
 	}
 
-	reachLive = nil
+	setReachLive(nil)
 	okSweep, minSweep, _ := fetch()
-	reachLive = eng
+	setReachLive(eng)
 	okEng, minEng, milesEng := fetch()
 
 	if !okSweep || !okEng {
@@ -275,9 +275,9 @@ func TestBlurRoadAware(t *testing.T) {
 	// The property that matters: the blurred point is ROAD-connected to the
 	// original within the ring, verified with an independent search — a naive
 	// circular blur cannot guarantee this near water.
-	origin := nearestNodeForMode(g, 51.4545, -2.5879, Drive)
+	origin := nearestDriveNode(g, 51.4545, -2.5879)
 	_, baseM := baseDriveDijkstraM(g, origin, 0, 600)
-	blurred := nearestNodeForMode(g, la1, ln1, Drive)
+	blurred := nearestDriveNode(g, la1, ln1)
 	m, reached := baseM[blurred]
 	if !reached {
 		t.Fatal("blurred point not road-reachable from the original within the search bound")
@@ -348,9 +348,9 @@ func TestBlurNaNAndFloors(t *testing.T) {
 			t.Fatalf("blur %d: crow displacement %fm under the 100m floor", i, crow)
 		}
 		// Independent check: converged road distance from the origin snap.
-		origin := nearestNodeForMode(g, org[0], org[1], Drive)
+		origin := nearestDriveNode(g, org[0], org[1])
 		_, baseM := baseDriveDijkstraM(g, origin, 0, 900)
-		blurred := nearestNodeForMode(g, r.Lat, r.Lng, Drive)
+		blurred := nearestDriveNode(g, r.Lat, r.Lng)
 		m, ok := baseM[blurred]
 		if !ok || math.Abs(float64(m)-r.Roadm) > 50 {
 			t.Fatalf("blur %d: independent road distance %v (ok=%v) vs reported %f", i, m, ok, r.Roadm)
@@ -410,14 +410,14 @@ func TestGroupProximityEngineMatchesSweep(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := reachLive
-	reachLive = eng
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
 
 	// Synthetic "group": a spread of drive-snappable junctions east of centre.
 	var seeds []NodeID
 	for v := NodeID(1); v <= NodeID(g.NodeCount()) && len(seeds) < 120; v += 211 {
-		if eng.Ov.Idx[v] != 0 && (g.DriveSnappable == nil || g.DriveSnappable[v]) {
+		if eng.Ov.IdxOf(v) != 0 && (g.DriveSnappable == nil || g.DriveSnappable.Get(int(v))) {
 			nd := g.Nodes[v]
 			if nd.Lng > -2.58 && nd.Lat > 51.43 && nd.Lat < 51.49 {
 				seeds = append(seeds, v)
@@ -430,11 +430,11 @@ func TestGroupProximityEngineMatchesSweep(t *testing.T) {
 
 	for _, offer := range [][2]float64{{51.4545, -2.5879}, {51.4700, -2.6100}} {
 		maxSecs := float32(1800)
-		ec, ef, eok, handled := engineGroupProximity(offer[0], offer[1], seeds, Drive, maxSecs)
+		ec, ef, eok, handled := engineGroupProximity(offer[0], offer[1], seeds, maxSecs)
 		if !handled {
 			t.Fatal("engine path should handle drive mode")
 		}
-		fc, ff, fok := groupProximity(g, offer[0], offer[1], seeds, Drive, maxSecs)
+		fc, ff, fok := groupProximity(g, offer[0], offer[1], seeds, maxSecs)
 		if eok != fok {
 			t.Fatalf("reachable disagreement: engine %v sweep %v", eok, fok)
 		}
@@ -461,9 +461,9 @@ func TestLeafEndpointAndBudgetOverride(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := reachLive
-	reachLive = eng
-	defer func() { reachLive = prev }()
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
 	app := newApp(g, "", false)
 
 	// Leaf lookup for a junction point.

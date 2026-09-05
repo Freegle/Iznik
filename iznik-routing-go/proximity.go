@@ -27,10 +27,10 @@ const metresPerMile = 1609.344
 // Also returns the shortest-path-tree predecessor map (prev[node] = the node it was relaxed
 // from on its best-known path), so callers that need the actual route (not just its cost) can
 // walk it back to the origin with pathMetres.
-func costToTargets(g *Graph, lat, lng float64, targets []NodeID, maxSecs float32, mode Mode, bbox [4]float64) (map[NodeID]float32, map[NodeID]NodeID) {
+func costToTargets(g *Graph, lat, lng float64, targets []NodeID, maxSecs float32, bbox [4]float64) (map[NodeID]float32, map[NodeID]NodeID) {
 	out := make(map[NodeID]float32, len(targets))
 	prev := make(map[NodeID]NodeID, 4096)
-	origin := nearestNodeForMode(g, lat, lng, mode)
+	origin := nearestDriveNode(g, lat, lng)
 	if origin == noNode || len(targets) == 0 {
 		return out, prev
 	}
@@ -51,7 +51,7 @@ func costToTargets(g *Graph, lat, lng float64, targets []NodeID, maxSecs float32
 	// Seed the per-trip startup overhead exactly like Isochrone does: the
 	// reach tick polygons come from Isochrone, and /v1/drive-time's contract
 	// is to MATCH the reach, so both must count time from the same zero.
-	start := initialCostFor(mode)
+	start := driveStartupSecs
 	dist[origin] = start
 	q := &pq{}
 	heap.Push(q, &item{id: origin, cost: start})
@@ -70,11 +70,7 @@ func costToTargets(g *Graph, lat, lng float64, targets []NodeID, maxSecs float32
 			remaining--
 		}
 		for _, e := range g.EdgesFrom(cur.id) {
-			base := e.Seconds[mode]
-			if base < 0 {
-				continue
-			}
-			nc := cur.cost + base
+			nc := cur.cost + e.Sec()
 			if nc > maxSecs || !inBox(e.To) {
 				continue
 			}
@@ -140,9 +136,9 @@ func boundingBox(g *Graph, nodes []NodeID, lat, lng, margin float64) [4]float64 
 // and the shortest-path-tree predecessor map from this sweep (so the caller can reconstruct the
 // actual route to the farthest seed with pathMetres), searching only within `bbox`. Used by the
 // 2-sweep group-diameter estimate.
-func farthestSeedFrom(g *Graph, origin NodeID, seeds []NodeID, mode Mode, maxSecs float32, bbox [4]float64) (NodeID, float32, map[NodeID]NodeID) {
+func farthestSeedFrom(g *Graph, origin NodeID, seeds []NodeID, maxSecs float32, bbox [4]float64) (NodeID, float32, map[NodeID]NodeID) {
 	lat, lng := float64(g.Nodes[origin].Lat), float64(g.Nodes[origin].Lng)
-	costs, prev := costToTargets(g, lat, lng, seeds, maxSecs, mode, bbox)
+	costs, prev := costToTargets(g, lat, lng, seeds, maxSecs, bbox)
 	best := noNode
 	var bestCost float32 = -1
 	for _, s := range seeds {
@@ -161,7 +157,7 @@ func farthestSeedFrom(g *Graph, origin NodeID, seeds []NodeID, mode Mode, maxSec
 // to.DriveMin is the A→B road time (from.DriveMin is 0, the sweep origin). milesBetween is the
 // road distance (in miles) along that same A→B route (see pathMetres) — not a separately
 // shortest route, so it always describes the same physical path as to.DriveMin.
-func groupDiameter(g *Graph, seeds []NodeID, mode Mode, maxSecs float32) (from, to ProxPoint, milesBetween float64, ok bool) {
+func groupDiameter(g *Graph, seeds []NodeID, maxSecs float32) (from, to ProxPoint, milesBetween float64, ok bool) {
 	s0 := noNode
 	for _, s := range seeds {
 		if s != noNode {
@@ -174,11 +170,11 @@ func groupDiameter(g *Graph, seeds []NodeID, mode Mode, maxSecs float32) (from, 
 	}
 	bbox := boundingBox(g, seeds, float64(g.Nodes[s0].Lat), float64(g.Nodes[s0].Lng), 0.15)
 
-	aNode, _, _ := farthestSeedFrom(g, s0, seeds, mode, maxSecs, bbox)
+	aNode, _, _ := farthestSeedFrom(g, s0, seeds, maxSecs, bbox)
 	if aNode == noNode {
 		return
 	}
-	bNode, bCost, prev := farthestSeedFrom(g, aNode, seeds, mode, maxSecs, bbox)
+	bNode, bCost, prev := farthestSeedFrom(g, aNode, seeds, maxSecs, bbox)
 	if bNode == noNode {
 		return
 	}
@@ -197,7 +193,7 @@ func groupDiameter(g *Graph, seeds []NodeID, mode Mode, maxSecs float32) (from, 
 //
 // It backs the moderator line "this post is quicker to get to for Freeglers in {P} than {P} is
 // to {Q}", which should only be shown when closest.DriveMin < furthest.DriveMin.
-func groupProximity(g *Graph, offerLat, offerLng float64, seeds []NodeID, mode Mode, maxSecs float32) (closest, furthest ProxPoint, ok bool) {
+func groupProximity(g *Graph, offerLat, offerLng float64, seeds []NodeID, maxSecs float32) (closest, furthest ProxPoint, ok bool) {
 	if len(seeds) == 0 {
 		return
 	}
@@ -206,7 +202,7 @@ func groupProximity(g *Graph, offerLat, offerLng float64, seeds []NodeID, mode M
 	bbox := boundingBox(g, seeds, offerLat, offerLng, 0.15)
 
 	// P: the group point with the smallest road time from the offer.
-	toGroup, _ := costToTargets(g, offerLat, offerLng, seeds, maxSecs, mode, bbox)
+	toGroup, _ := costToTargets(g, offerLat, offerLng, seeds, maxSecs, bbox)
 	pNode := noNode
 	var pCost float32
 	for _, s := range seeds {
@@ -223,7 +219,7 @@ func groupProximity(g *Graph, offerLat, offerLng float64, seeds []NodeID, mode M
 	}
 
 	// Q: the group point with the largest road time FROM P.
-	fromP, _ := costToTargets(g, closest.Lat, closest.Lng, seeds, maxSecs, mode, bbox)
+	fromP, _ := costToTargets(g, closest.Lat, closest.Lng, seeds, maxSecs, bbox)
 	qNode := noNode
 	var qCost float32 = -1
 	for _, s := range seeds {

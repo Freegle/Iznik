@@ -130,7 +130,7 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 
 		// Build the isochrone polygon for the member.
 		maxSecs := float32(maxMinutes * 60)
-		iso := Isochrone(g, lat, lng, maxSecs, Drive)
+		iso := Isochrone(g, lat, lng, maxSecs)
 		if len(iso.ReachedNodes) == 0 {
 			return c.JSON(fiber.Map{
 				"pool_size": 0,
@@ -138,7 +138,7 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 				"deferred":  []any{},
 			})
 		}
-		res := NetworkResolution(g, iso.ReachedNodes, Drive)
+		res := NetworkResolution(g, iso.ReachedNodes)
 		poly := IsochronePolygon(g, iso.ReachedNodes, res)
 		ring := poly.Geometry.Coordinates
 		if len(ring) == 0 || len(ring[0]) < 4 {
@@ -301,7 +301,7 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 				continue
 			}
 			// Drive-time to this post via nearest reached node.
-			nid := nearestNodeForMode(g, p.Lat, p.Lng, Drive)
+			nid := nearestDriveNode(g, p.Lat, p.Lng)
 			if nid != noNode {
 				if secs, ok := iso.ReachedNodes[nid]; ok {
 					p.DriveMin = float64(secs) / 60.0

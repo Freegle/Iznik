@@ -10,7 +10,6 @@ use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 
 /**
  * Held external (email / TrashNothing) replies (#3 / PR C).
@@ -34,9 +33,6 @@ use Illuminate\Support\Facades\Schema;
  */
 class RippleReplyService
 {
-    /** Memoized rippling_held_replies.dueat column check, so a pre-migration deploy is safe. */
-    private static ?bool $dueAtColumn = null;
-
     private ?MaxReachService $maxReach;
 
     /**
@@ -77,9 +73,11 @@ class RippleReplyService
 
     /**
      * Should an external reply to post $msgid from (lat,lng) be held? Only when the
-     * post is actively rippling (has a reach row) AND the replier is outside the
-     * current reach. No reach row → not rippling → deliver normally. Unknown
-     * location → cannot test → deliver normally.
+     * post is actively rippling (has a reach row) AND the replier is decidedly
+     * outside the current reach. No reach row → not rippling → deliver normally.
+     * Unknown location → cannot test → deliver normally. Reach undecided → nothing
+     * has refused this reply → deliver normally, and count it, so the size of a
+     * reach outage can be read off afterwards as well as alerted at the time.
      *
      * One exception, the first-reply passthrough: a post that has no replies at all
      * yet does not hold its first one, provided the replier is inside the reach the
@@ -98,7 +96,13 @@ class RippleReplyService
         if (!$this->hasReach($msgid)) {
             return false;
         }
-        if ($this->reach->isWithinReach($msgid, $lat, $lng, $band)) {
+        $verdict = $this->reach->reachVerdict($msgid, $lat, $lng, $band);
+        if ($verdict === ReachQueryService::VERDICT_IN) {
+            return false;
+        }
+        if ($verdict !== ReachQueryService::VERDICT_OUT) {
+            $this->recordEvent('reply_undecided_passthrough');
+
             return false;
         }
 
@@ -201,11 +205,9 @@ class RippleReplyService
             'created_at' => $now,
         ];
 
-        // A hold is a delay, so it is stamped with when it comes off. Best-effort: an
-        // older schema (pre-migration) has no column to stamp, and that must not stop
-        // the hold - the sweep computes the due time from created_at either way.
+        // A hold is a delay, so it is stamped with when it comes off.
         $due = $this->dueAt($msgid, $now, $lat, $lng);
-        if ($due !== null && $this->dueAtAvailable()) {
+        if ($due !== null) {
             $row['dueat'] = $due;
         }
 
@@ -354,26 +356,6 @@ class RippleReplyService
         return ['lat' => (float) $row->lat, 'lng' => (float) $row->lng];
     }
 
-    /** Has the dueat migration run? Without it the sweep still works, off created_at. */
-    private function dueAtAvailable(): bool
-    {
-        if (self::$dueAtColumn === null) {
-            try {
-                self::$dueAtColumn = Schema::hasColumn('rippling_held_replies', 'dueat');
-            } catch (\Throwable) {
-                self::$dueAtColumn = false;
-            }
-        }
-
-        return self::$dueAtColumn;
-    }
-
-    /** Test-only: forget the memoized column check. */
-    public static function forgetDueAtAvailability(): void
-    {
-        self::$dueAtColumn = null;
-    }
-
     /**
      * Release every held reply for $msgid whose delay has run out, and stamp the due
      * time on any row that has not got one yet (the Go/web hold path does not compute
@@ -407,7 +389,6 @@ class RippleReplyService
         }
 
         $now = now();
-        $canStamp = $this->dueAtAvailable();
         $released = 0;
 
         foreach ($held as $row) {
@@ -421,12 +402,10 @@ class RippleReplyService
 
             // Keep the stamp in step with the policy, so changing the config re-dates
             // rows that have not come off hold rather than leaving a stale promise.
-            if ($canStamp) {
-                $stamped = $row->dueat === null ? null : Carbon::parse($row->dueat);
-                if ($stamped === null || !$stamped->equalTo($due)) {
-                    DB::table('rippling_held_replies')->where('id', $row->id)
-                        ->update(['dueat' => $due]);
-                }
+            $stamped = $row->dueat === null ? null : Carbon::parse($row->dueat);
+            if ($stamped === null || !$stamped->equalTo($due)) {
+                DB::table('rippling_held_replies')->where('id', $row->id)
+                    ->update(['dueat' => $due]);
             }
 
             if ($now->lt($due)) {

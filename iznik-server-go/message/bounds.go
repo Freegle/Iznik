@@ -2,6 +2,7 @@ package message
 
 import (
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -135,7 +136,10 @@ func Bounds(c *fiber.Ctx) error {
 		// The groups join no longer filters on visibility, but is kept so that a post whose
 		// group has been deleted doesn't show up.
 		"INNER JOIN `groups` ON groups.id = messages_spatial.groupid "+
-		"WHERE ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), point)",
+		"WHERE ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), point) "+
+		// A post is not live until its reach exists - see rippling.ReachPendingFilter.
+		// It exempts the viewer's own posts, as does the own-posts arm below.
+		"AND "+rippling.ReachPendingFilter("messages_spatial.msgid", myid),
 		swlng, swlat,
 		swlng, nelat,
 		nelng, nelat,

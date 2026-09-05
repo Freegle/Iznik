@@ -131,6 +131,11 @@ func TestMatchesReachFilter(t *testing.T) {
 		mustRasterize(t, "POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))"))
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", inID, outID)
 
+	// A decided OUT. The routing server holds no labels for a test fixture, and
+	// an undecided verdict is no longer a refusal, so without this stub nothing
+	// would be dropped and the assertion below would pass for the wrong reason.
+	stubReachEvalMax(t, "out")
+
 	// The poster's location (51.5,-0.1) is outside outID's reach polygon → outID blocked.
 	results := matchesReq(t, "/api/message/matches?query=sofa&lat=51.5&lng=-0.1", queryVec)
 	ids := map[uint64]bool{}

@@ -33,10 +33,10 @@ func TestReachQueryExactnessBristol(t *testing.T) {
 
 	// Add a chain-node origin: find an absorbed node with a drive chain.
 	for v := NodeID(1); v <= NodeID(g.NodeCount()); v++ {
-		if eng.Ov.Idx[v] == 0 && eng.Ov.ChainEndA[v] != 0 && eng.Ov.OffFromA[v] > 0 && eng.Ov.OffFromB[v] > 0 {
+		if eng.Ov.IdxOf(v) == 0 && eng.Ov.ChainA(v) != 0 && eng.Ov.OffFromA[v] > 0 && eng.Ov.OffFromB[v] > 0 {
 			nd := g.Nodes[v]
 			// Only use it if snapping from its own coords lands on it.
-			if nearestNodeForMode(g, float64(nd.Lat), float64(nd.Lng), Drive) == v {
+			if nearestDriveNode(g, float64(nd.Lat), float64(nd.Lng)) == v {
 				cases = append(cases, struct {
 					name     string
 					lat, lng float64
@@ -50,18 +50,18 @@ func TestReachQueryExactnessBristol(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			lbl := eng.QueryLabels(tc.lat, tc.lng, tc.T)
-			origin := nearestNodeForMode(g, tc.lat, tc.lng, Drive)
+			origin := nearestDriveNode(g, tc.lat, tc.lng)
 			if origin == noNode {
 				t.Fatal("no origin snap")
 			}
-			base := baseDriveDijkstra(g, origin, initialCostFor(Drive), tc.T)
+			base := baseDriveDijkstra(g, origin, driveStartupSecs, tc.T)
 
 			checked := 0
 			for id, want := range base {
 				got := eng.ArrivalAtBaseNode(lbl, id)
 				if math.Abs(float64(got-want)) > 0.01 {
 					t.Fatalf("node %d arrival mismatch: engine %.4f vs base %.4f (junction=%v)",
-						id, got, want, eng.Ov.Idx[id] != 0)
+						id, got, want, eng.Ov.IdxOf(id) != 0)
 				}
 				checked++
 			}
@@ -76,7 +76,7 @@ func TestReachQueryExactnessBristol(t *testing.T) {
 					continue
 				}
 				// Only drive-relevant nodes are meaningful probes.
-				if eng.Ov.Idx[id] == 0 && eng.Ov.ChainEndA[id] == 0 {
+				if eng.Ov.IdxOf(id) == 0 && eng.Ov.ChainA(id) == 0 {
 					continue
 				}
 				probes++
@@ -117,8 +117,8 @@ func TestReachMetresBristol(t *testing.T) {
 	}
 	g, eng := buildBristolEngine(t)
 	lbl := eng.QueryLabels(51.4545, -2.5879, 900)
-	origin := nearestNodeForMode(g, 51.4545, -2.5879, Drive)
-	base, baseM := baseDriveDijkstraM(g, origin, initialCostFor(Drive), 900)
+	origin := nearestDriveNode(g, 51.4545, -2.5879)
+	base, baseM := baseDriveDijkstraM(g, origin, driveStartupSecs, 900)
 
 	checked, noMet, bigDev := 0, 0, 0
 	var worstFrac float64
@@ -131,19 +131,19 @@ func TestReachMetresBristol(t *testing.T) {
 		if m == f32Inf {
 			noMet++
 			if noMet <= 5 {
-				if oi := eng.Ov.Idx[id]; oi != 0 {
-					leaf := eng.Part.LeafOf[oi]
+				if oi := eng.Ov.IdxOf(id); oi != 0 {
+					leaf := eng.Part.LeafAt(oi)
 					rl := lbl.Reached[leaf]
 					_, hasOA := lbl.OriginArr[oi]
 					t.Logf("noMet junction id=%d leaf=%d label=%v entryMet=%v originArr=%v secs=%.1f", id, leaf, rl != nil, rl != nil && rl.EntryMet != nil, hasOA, want)
 				} else {
-					a, b := eng.Ov.ChainEndA[id], eng.Ov.ChainEndB[id]
+					a, b := eng.Ov.ChainA(id), eng.Ov.ChainEndB[id]
 					ja, jma := eng.junctionArrivalM(lbl, a)
 					jb, jmb := eng.junctionArrivalM(lbl, b)
 					cma := chainMetresFromEnd(g, eng.Ov, a, id)
 					cmb := chainMetresFromEnd(g, eng.Ov, b, id)
 					t.Logf("noMet chain id=%d ends %d/%d endArr %.1f/%.1f endMet %.0f/%.0f chainMet %.0f/%.0f offs %.1f/%.1f secs=%.1f",
-						id, a, b, ja, jb, jma, jmb, cma, cmb, eng.Ov.OffFromA[id], eng.Ov.OffFromB[id], want)
+						id, a, b, ja, jb, jma, jmb, cma, cmb, offOf(eng.Ov.OffFromA[id]), offOf(eng.Ov.OffFromB[id]), want)
 				}
 			}
 			continue

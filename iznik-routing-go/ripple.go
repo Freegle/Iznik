@@ -80,20 +80,23 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 		if req.MaxMinutes <= 0 || req.MaxMinutes > 120 {
 			req.MaxMinutes = 30
 		}
-		var mode Mode
-		switch req.Mode {
-		case "walk":
-			mode = Walk
-		case "cycle":
-			mode = Cycle
-		default:
-			mode = Drive
-		}
 
 		empty := rippleEvalResponse{Results: make([]rippleEvalPoint, len(req.Points))}
 
 		maxSecs := float32(req.MaxMinutes * 60)
-		iso := Isochrone(g, req.Lat, req.Lng, maxSecs, mode)
+
+		// A pure per-point request (no rank, no frontier, no polygon) needs no reached-set at
+		// all, so when the reach engine is live it is answered from a label query plus one
+		// exact arrival lookup per point - milliseconds against the 1-2.6s a 45-minute drive
+		// sweep costs from a city centre. Everything else still needs the sweep's DistM or
+		// ReachedNodes below.
+		if req.PointsOnly && !req.Frontier && req.PolygonSimplifyM <= 0 {
+			if out, ok := rippleEvalPointsFromEngine(g, req, maxSecs); ok {
+				return c.JSON(out)
+			}
+		}
+
+		iso := Isochrone(g, req.Lat, req.Lng, maxSecs)
 		if len(iso.ReachedNodes) == 0 {
 			return c.JSON(empty)
 		}
@@ -143,7 +146,7 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 				if !ok1 || !ok2 {
 					continue
 				}
-				nid := nearestNodeForMode(g, lat, lng, mode)
+				nid := nearestDriveNode(g, lat, lng)
 				if nid == noNode {
 					continue
 				}
@@ -167,7 +170,7 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 			// unreachable (e.g. Plympton -> Plymstock).
 			var t float32
 			ok := false
-			for _, nid := range nearestNodesForMode(g, lat, lng, mode, 4) {
+			for _, nid := range nearestDriveNodes(g, lat, lng, 4) {
 				if tt, reached := iso.ReachedNodes[nid]; reached {
 					t = tt
 					ok = true
@@ -193,10 +196,36 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 			out.FrontierMaxMiles = &fmax
 		}
 		if req.PolygonSimplifyM > 0 {
-			out.Polygon = displayPolygonFor(g, iso.ReachedNodes, mode, req.PolygonSimplifyM)
+			out.Polygon = displayPolygonFor(g, iso.ReachedNodes, req.PolygonSimplifyM)
 		}
 		return c.JSON(out)
 	}
+}
+
+// rippleEvalPointsFromEngine is the points-only fast path: the post's labels (cached per
+// origin node and whole-minute budget, so a repeat post is free) and an exact arrival per point.
+// It keeps the sweep path's snap rule - the first of the nearest candidates that is reached, so
+// a point snapped to a one-way source is not misreported as unreachable - and the same
+// "unreachable within max_minutes" cut (arrival > T is null). ok is false with no engine live,
+// and the caller runs the sweep exactly as before.
+func rippleEvalPointsFromEngine(g *Graph, req rippleEvalRequest, maxSecs float32) (rippleEvalResponse, bool) {
+	e := reachEngine()
+	if e == nil {
+		return rippleEvalResponse{}, false
+	}
+	results := make([]rippleEvalPoint, len(req.Points))
+	lbl := e.QueryLabelsCached(req.Lat, req.Lng, maxSecs)
+	for i, p := range req.Points {
+		lng, lat := p[0], p[1]
+		for _, nid := range nearestDriveNodes(g, lat, lng, 4) {
+			if t := e.ArrivalAtBaseNode(lbl, nid); t != f32Inf && t <= lbl.T {
+				dMin := float64(t) / 60.0
+				results[i] = rippleEvalPoint{DriveMin: &dMin}
+				break
+			}
+		}
+	}
+	return rippleEvalResponse{Results: results}, true
 }
 
 // frontierMilesMedianMax summarises how far the isochrone reaches BY ROAD across directions: it
@@ -384,11 +413,11 @@ func wantClusterAnchor(v string) bool {
 // Returns nil on any failure (nothing routed, spatial unavailable) in the same soft-fail style
 // as the rest of this endpoint: the schedule itself has already been computed and must still
 // be returned regardless of what this lane finds.
-func fetchClusterOverflow(g *Graph, spatialURL string, lat, lng float64, mode Mode,
+func fetchClusterOverflow(g *Graph, spatialURL string, lat, lng float64,
 	committedMinutes, clusterMaxMinutes float64, cellK, maxWedges, floor, poolAtCeiling int) map[string]*GeoJSONPolygon {
 
 	clusterMaxSecs := float32(clusterMaxMinutes * 60)
-	iso2 := Isochrone(g, lat, lng, clusterMaxSecs, mode)
+	iso2 := Isochrone(g, lat, lng, clusterMaxSecs)
 	if len(iso2.ReachedNodes) == 0 {
 		return nil
 	}
@@ -435,7 +464,7 @@ func fetchClusterOverflow(g *Graph, spatialURL string, lat, lng float64, mode Mo
 		if !ok1 || !ok2 {
 			continue
 		}
-		nid := nearestNodeForMode(g, mLat, mLng, mode)
+		nid := nearestDriveNode(g, mLat, mLng)
 		if nid == noNode {
 			continue
 		}
@@ -446,7 +475,7 @@ func fetchClusterOverflow(g *Graph, spatialURL string, lat, lng float64, mode Mo
 		shellMembers = append(shellMembers, clusterMember{Lat: mLat, Lng: mLng, Secs: t})
 	}
 
-	return clusterOverflowWedges(g, iso2, lat, lng, mode, shellMembers, committedSecs, clusterMaxSecs,
+	return clusterOverflowWedges(g, iso2, lat, lng, shellMembers, committedSecs, clusterMaxSecs,
 		cellK, maxWedges, floor, poolAtCeiling)
 }
 
@@ -547,22 +576,11 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 			curve = "step-70"
 		}
 
-		modeStr := c.Query("mode", "drive")
-		var mode Mode
-		switch modeStr {
-		case "walk":
-			mode = Walk
-		case "cycle":
-			mode = Cycle
-		default:
-			mode = Drive
-		}
-
 		empty := rippleScheduleResponse{Schedule: []rippleScheduleEntry{}}
 
 		// --- Step 1: one Dijkstra to the maximum drive-time ---
 		maxSecs := float32(maxMinutes * 60)
-		iso := Isochrone(g, latF, lngF, maxSecs, mode)
+		iso := Isochrone(g, latF, lngF, maxSecs)
 		if len(iso.ReachedNodes) == 0 {
 			return c.JSON(empty)
 		}
@@ -578,7 +596,7 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 		if db := ensureGroupsDB(); db != nil {
 			minLat, maxLat, minLng, maxLng := reachedBBox(g, iso.ReachedNodes)
 			if members, err := queryActiveMembersInBox(db, minLat, maxLat, minLng, maxLng); err == nil {
-				memberSnaps = snapMembers(g, iso.ReachedNodes, members, mode)
+				memberSnaps = snapMembers(g, iso.ReachedNodes, members)
 			} else {
 				log.Printf("ripple-schedule: active-member query failed: %v", err)
 			}
@@ -597,7 +615,7 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 		includePolys := wantTickPolygons(c.Query("polygons", "1"))
 		var res float64
 		if includePolys {
-			res = NetworkResolution(g, iso.ReachedNodes, mode)
+			res = NetworkResolution(g, iso.ReachedNodes)
 		}
 		bMinLat, bMaxLat, bMinLng, bMaxLng := reachedBBox(g, iso.ReachedNodes)
 		wkt := bboxWKT(bMinLat, bMaxLat, bMinLng, bMaxLng)
@@ -642,7 +660,7 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 			if !ok1 || !ok2 {
 				continue
 			}
-			nid := nearestNodeForMode(g, lat, lng, mode)
+			nid := nearestDriveNode(g, lat, lng)
 			if nid == noNode {
 				continue
 			}
@@ -737,7 +755,7 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 				// Same derivation the tick polygons use, so the rings are on the same grid.
 				ringRes := res
 				if ringRes <= 0 {
-					ringRes = NetworkResolution(g, iso.ReachedNodes, mode)
+					ringRes = NetworkResolution(g, iso.ReachedNodes)
 				}
 				overflowRural = ruralOverflowRings(g, iso.ReachedNodes, ringRes, maxMinutes, maxDriveMin)
 			}
@@ -747,7 +765,7 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 				if err != nil {
 					maxQ = 1
 				}
-				overflowFairness = fairnessOverflowRings(g, latF, lngF, mode, maxMinutes, w, maxQ)
+				overflowFairness = fairnessOverflowRings(g, latF, lngF, maxMinutes, w, maxQ)
 			}
 
 			// The cluster lane needs its own second Isochrone AND its own spatial-KNN round
@@ -757,8 +775,9 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 			// firing condition (cluster_anchor requested, cap not bound, pool below
 			// cluster_floor) already holds.
 			if wantClusterAnchor(c.Query("cluster_anchor", "0")) && total < clusterFloor && clusterMaxWedges > 0 {
-				overflowCluster = fetchClusterOverflow(g, spatialURL, latF, lngF, mode,
+				overflowCluster = fetchClusterOverflow(g, spatialURL, latF, lngF,
 					maxMinutes, clusterMaxMinutes, clusterK, clusterMaxWedges, clusterFloor, total)
+
 			}
 		}
 

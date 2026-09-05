@@ -11,8 +11,8 @@ type catchmentBand struct {
 }
 
 // catchmentBands slices a reached-set into n nested drive-time contours (equal time steps).
-func catchmentBands(g *Graph, iso IsochroneResult, maxSecs float32, mode Mode, n int) []catchmentBand {
-	res := NetworkResolution(g, iso.ReachedNodes, mode)
+func catchmentBands(g *Graph, iso IsochroneResult, maxSecs float32, n int) []catchmentBand {
+	res := NetworkResolution(g, iso.ReachedNodes)
 	bands := make([]catchmentBand, 0, n)
 	for k := 1; k <= n; k++ {
 		t := maxSecs * float32(k) / float32(n)
@@ -32,14 +32,16 @@ func catchmentBands(g *Graph, iso IsochroneResult, maxSecs float32, mode Mode, n
 // per-group catchment: seeding from the whole group BOUNDARY (not a single centroid) is what
 // lets the catchment capture corridor reach into the group's edges — e.g. an M62 offer that
 // reaches HullFreegle's western strip near Goole, ~64km from the Hull centroid.
-func multiSourceIsochrone(g *Graph, origins []NodeID, limitSeconds float32, mode Mode) IsochroneResult {
+func multiSourceIsochrone(g *Graph, origins []NodeID, limitSeconds float32) IsochroneResult {
 	dist := make(map[NodeID]float32, 4096)
 	q := &pq{}
-	start := initialCostFor(mode)
+	start := driveStartupSecs
+	seeded := false
 	for _, o := range origins {
 		if o == noNode {
 			continue
 		}
+		seeded = true
 		if _, seen := dist[o]; !seen {
 			dist[o] = start
 			heap.Push(q, &item{id: o, cost: start})
@@ -55,11 +57,7 @@ func multiSourceIsochrone(g *Graph, origins []NodeID, limitSeconds float32, mode
 			break
 		}
 		for _, e := range g.EdgesFrom(cur.id) {
-			base := e.Seconds[mode]
-			if base < 0 {
-				continue
-			}
-			newCost := cur.cost + base
+			newCost := cur.cost + e.Sec()
 			if newCost > limitSeconds {
 				continue
 			}
@@ -70,5 +68,5 @@ func multiSourceIsochrone(g *Graph, origins []NodeID, limitSeconds float32, mode
 		}
 	}
 
-	return IsochroneResult{ReachedNodes: dist}
+	return IsochroneResult{ReachedNodes: dist, OriginFound: seeded}
 }

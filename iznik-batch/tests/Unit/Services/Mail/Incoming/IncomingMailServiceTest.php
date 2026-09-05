@@ -151,6 +151,107 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
     }
 
+    public function test_subscribe_records_the_join_in_the_modlog(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('joiner')]);
+        $userEmail = $user->emails->first()->email;
+
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $group->nameshort.'-subscribe@groups.ilovefreegle.org',
+            'Subject' => 'Subscribe',
+        ]);
+
+        $parsed = $this->parser->parse(
+            $email,
+            $userEmail,
+            $group->nameshort.'-subscribe@groups.ilovefreegle.org'
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+        $this->assertTrue(
+            DB::table('memberships')->where('userid', $user->id)->where('groupid', $group->id)->exists()
+        );
+        $this->assertTrue(
+            DB::table('logs')
+                ->where('type', 'Group')
+                ->where('subtype', 'Joined')
+                ->where('user', $user->id)
+                ->where('groupid', $group->id)
+                ->exists(),
+            'Subscribing by email should leave a Group/Joined log entry'
+        );
+    }
+
+    public function test_subscribe_from_banned_member_is_dropped(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('banned')]);
+        $userEmail = $user->emails->first()->email;
+
+        DB::table('users_banned')->insert([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'date' => now(),
+        ]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $group->nameshort.'-subscribe@groups.ilovefreegle.org',
+            'Subject' => 'Subscribe',
+        ]);
+
+        $parsed = $this->parser->parse(
+            $email,
+            $userEmail,
+            $group->nameshort.'-subscribe@groups.ilovefreegle.org'
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+        $this->assertFalse(
+            DB::table('memberships')->where('userid', $user->id)->where('groupid', $group->id)->exists(),
+            'A banned member must not be re-added to the group by a subscribe email'
+        );
+    }
+
+    public function test_subscribe_still_works_on_a_group_the_member_is_not_banned_from(): void
+    {
+        $bannedGroup = $this->createTestGroup();
+        $otherGroup = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('partban')]);
+        $userEmail = $user->emails->first()->email;
+
+        DB::table('users_banned')->insert([
+            'userid' => $user->id,
+            'groupid' => $bannedGroup->id,
+            'date' => now(),
+        ]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $otherGroup->nameshort.'-subscribe@groups.ilovefreegle.org',
+            'Subject' => 'Subscribe',
+        ]);
+
+        $parsed = $this->parser->parse(
+            $email,
+            $userEmail,
+            $otherGroup->nameshort.'-subscribe@groups.ilovefreegle.org'
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+        $this->assertTrue(
+            DB::table('memberships')->where('userid', $user->id)->where('groupid', $otherGroup->id)->exists()
+        );
+    }
+
     public function test_routes_unsubscribe_to_system(): void
     {
         $group = $this->createTestGroup();
@@ -1206,6 +1307,23 @@ class IncomingMailServiceTest extends TestCase
              VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))'), 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))']
         );
+
+        // The routing server refuses this replier. Being out of reach has to be
+        // a decided refusal here: an unanswerable question is no longer read as
+        // one, so without this the reply would pass through and the test would
+        // be proving the outage behaviour instead of the gate.
+        \Illuminate\Support\Facades\Http::fake(function ($request) {
+            if (!str_contains($request->url(), 'reach-eval')) {
+                return null;
+            }
+
+            return \Illuminate\Support\Facades\Http::response([
+                'results' => array_map(
+                    fn ($id) => ['msgid' => (int) $id, 'verdict' => 'out'],
+                    $request['msgids'] ?? []
+                ),
+            ]);
+        });
 
         $replierEmail = $replier->emails->first()->email;
         $posterSlugAddr = "someslug-{$poster->id}@users.ilovefreegle.org";

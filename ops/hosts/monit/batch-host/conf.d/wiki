@@ -1,0 +1,17 @@
+# The wiki is MediaWiki in containers (wiki-media/wiki-mysql/wiki-elastic)
+# behind host nginx, which carries the crawler wall and the 24h anonymous
+# microcache (see wiki-host-nginx.conf in the FreegleDocker repo). Monit's
+# nginx process check does not notice a dead upstream, so probe the full
+# stack over HTTP: an uncached path would only prove nginx, and a cached one
+# could mask a dead container for a day, so probe a page the cache serves -
+# a MISS exercises MediaWiki+MySQL, a HIT proves the front door - and let
+# the container restart policy do the healing; alert only.
+check host wiki with address wiki.ilovefreegle.org
+   group www
+   if failed
+      port 443 protocol https
+      request "/index.php?title=Main_Page"
+      status = 200
+      with timeout 20 seconds
+      for 3 cycles
+   then alert

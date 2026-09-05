@@ -2284,34 +2284,79 @@ jobs:
             git config --global --unset-all url.ssh://git@github.com.insteadOf 2>/dev/null || true
             git config --global url.https://github.com/.insteadOf git@github.com: 2>/dev/null || true
 
+            # Authenticate the fetch. Anonymous HTTPS to github.com from this runner has
+            # been answered with a credentials prompt and "expected flush after ref
+            # listing", which is what rate limiting looks like to git. The helper reads
+            # the token from the environment when it runs, so the token itself is never
+            # written to disk and never appears in a command line.
+            if [ -n "$GITHUB_TOKEN" ]; then
+              git config --global credential.helper \
+                '!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f'
+              echo "Fetching as an authenticated user"
+            else
+              echo "No GITHUB_TOKEN: fetching anonymously, which github.com may rate limit"
+            fi
+
             # Abort if transfer drops below 100 bytes/s for 60 seconds
             git config --global http.lowSpeedLimit 100
             git config --global http.lowSpeedTime 60
 
             checkout_code() {
-              if [ -d .git ]; then
-                git fetch --prune origin
-                # HEAD may be an orphan if a previous run failed mid-init; ignore the error.
-                git reset --hard HEAD 2>/dev/null || true
-                # -x also removes gitignored files (e.g. .claude/skills/ralph/) that
-                # would otherwise block checkout with "untracked files would be overwritten".
-                git clean -fdx
-                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH" || return 1
-                # Second clean: removes files from previous branch that git checkout couldn't
-                # delete (e.g., root-owned files created by Docker containers via bind mounts,
-                # or files left by concurrent builds sharing the workspace directory).
-                git clean -fd
-              else
+              if [ ! -d .git ]; then
                 # git clone fails when the directory isn't empty (leftover files from
                 # a previous build). Use git init + fetch instead, which works either way.
-                # git clean removes untracked files that would block git checkout.
                 git init
                 git remote add origin "$CIRCLE_REPOSITORY_URL" 2>/dev/null || git remote set-url origin "$CIRCLE_REPOSITORY_URL"
-                git fetch --prune origin
-                # -x also removes gitignored files that would block checkout.
-                git clean -fdx
+              fi
+
+              # A failed fetch must fail the attempt. It used to be allowed to fail: the
+              # checkout then succeeded against whatever refs the workspace already had,
+              # so master built green against the PREVIOUS commit and no new branch could
+              # be checked out at all. Silence here is worse than a red build.
+              #
+              # The repository is public, so an anonymous fetch is a real fallback rather
+              # than a courtesy: it means a token that has expired or lost its scope can
+              # never be the thing that stops CI.
+              if ! git fetch --prune origin; then
+                if [ -n "$GITHUB_TOKEN" ]; then
+                  echo "Authenticated fetch failed; trying anonymously"
+                  git -c credential.helper= fetch --prune origin || return 1
+                else
+                  return 1
+                fi
+              fi
+
+              # HEAD may be an orphan if a previous run failed mid-init; ignore the error.
+              git reset --hard HEAD 2>/dev/null || true
+              # -x also removes gitignored files (e.g. .claude/skills/ralph/) that
+              # would otherwise block checkout with "untracked files would be overwritten".
+              git clean -fdx
+              # Check out the commit this build is FOR, on a local branch of the
+              # branch's name (auto-merge and friends merge/inspect that branch).
+              # Checking out origin/$CIRCLE_BRANCH - the tip - used to fail the
+              # proof below whenever a second push landed before this job started:
+              # on 2026-09-03 job 34991 checked out f6666667 for a build of
+              # 76c291a9 and failed after three attempts, with nothing wrong.
+              # Every push then also tests only its own commit, so production
+              # only ever receives what was actually tested.
+              if [ -n "$CIRCLE_SHA1" ]; then
+                git checkout -B "$CIRCLE_BRANCH" "$CIRCLE_SHA1" || return 1
+              else
                 git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH" || return 1
-                git clean -fd
+              fi
+              # Second clean: removes files from previous branch that git checkout couldn't
+              # delete (e.g., root-owned files created by Docker containers via bind mounts,
+              # or files left by concurrent builds sharing the workspace directory).
+              git clean -fd
+
+              # The workspace is reused between builds, so prove we are testing the commit
+              # this build was triggered for rather than one left behind by an earlier run.
+              if [ -n "$CIRCLE_SHA1" ]; then
+                HEAD_SHA=$(git rev-parse HEAD)
+                if [ "$HEAD_SHA" != "$CIRCLE_SHA1" ]; then
+                  echo "Checked out $HEAD_SHA but this build is for $CIRCLE_SHA1"
+                  return 1
+                fi
               fi
             }
 
@@ -2319,7 +2364,10 @@ jobs:
               [ $attempt -gt 1 ] && echo "⚠️  Checkout attempt $attempt..." && sleep 15
               checkout_code && echo "✅ Checkout complete" && exit 0
               echo "Attempt $attempt failed"
-              rm -rf .git 2>/dev/null || true
+              # Keep .git on the first failure: a warm workspace is worth far more than a
+              # clean one, and re-cloning the repo is what makes a rate limit worse. Start
+              # from nothing only for the last attempt.
+              [ $attempt -ge 2 ] && rm -rf .git 2>/dev/null || true
             done
             echo "❌ Checkout failed after 3 attempts"
             exit 1

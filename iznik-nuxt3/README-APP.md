@@ -100,6 +100,20 @@ The mobile app supports multiple authentication methods with native implementati
    - Platform-specific client IDs for Android and iOS
    - Native sign-in UI; supports Facebook "Limited Login" on iOS
 
+   **Facebook Limited Login returns no access token.** The plugin sends
+   `accessToken: null` and puts the JWT in `idToken`, so read `idToken` and
+   never reach through `accessToken`. `isLimitedLogin` in the response says
+   which kind of session it is: trust it rather than the platform, because
+   Facebook downgrades to limited login whenever App Tracking Transparency is
+   refused, whatever we asked for. The `fblimited` flag we post decides how the
+   server verifies the token, so it has to describe the token we actually read.
+
+   The Facebook SDK version is pinned in `ios/App/Podfile`. The plugin's podspec
+   asks for `~> 18.0` and `Podfile.lock` is not in git, so without the pin every
+   iOS build picks up whatever 18.x is current that day, and sign-in can change
+   with no commit behind it. Bump the pin deliberately, and test Facebook
+   sign-in on a device when you do.
+
 2. **Apple Sign In**
    - Package: `@capacitor-community/apple-sign-in` (iOS only)
    - Native Sign in with Apple integration
@@ -917,7 +931,6 @@ From `capacitor.config.ts` comments:
 
 - [ ] Status bar shows correctly on Android pre-A15, A15+ and iOS
 - [ ] Camera: take photo and select one or more photos
-- [ ] Yahoo login works
 - [ ] Google login works (Android & iOS)
 - [ ] Facebook login works (Android & iOS)
 - [ ] Apple login works (iOS only)

@@ -163,26 +163,24 @@ Schedule::command('ripple:release-replies')
 //
 // Two passes, because they answer different questions.
 //
-// --missing-only: members with NOTHING recorded, which after the initial backfill is just
-// people who have joined since. Small, so it can run daily and no new member is ever left
-// uncovered. Without it the gap reopens the day after any manual pass, which is how 202,837
-// active members came to hold not one band radius between them (see the command's docblock).
-Schedule::command('browse:backfill-max-distance', ['--missing-only'])
-    ->dailyAt('04:20')
-    ->withoutOverlapping(360)
-    ->sendOutputTo(cronLog('browse:backfill-max-distance-missing'))
-    ->runInBackground();
-
-// The full pass, which also RECONCILES members who already have a value. Needed because
-// --missing-only never revisits anyone: it cannot follow a member who moves from a village to
-// a city, nor an area that has grown denser since its members were measured. Monthly and
-// off-peak because it walks every user (~2.9M rows) and makes a routing call per distinct
-// location, so it is far too heavy to run often.
+// The full pass: it gives a band default to members who have none, and RECONCILES the ones who
+// already have a value - following a member who moves from a village to a city, and an area
+// that has grown denser since its members were measured. It walks every user (~2.9M rows) and
+// makes a routing call per distinct location, but the memos make that far cheaper than the row
+// count suggests: measured on live 2026-09-01, 132,228 members scanned in 2h33m (02:40 to
+// 05:12). That fits inside a night, so it runs nightly rather than monthly - a member who joins
+// today should not wait weeks for the band that holds them to the distance their own
+// surroundings justify, and a stale band is the difference between a rural member seeing their
+// nearest town's posts and not.
+//
+// This replaces a separate daily --missing-only pass, which existed only because the full one
+// was thought too heavy to run often. The option is still there for a quick manual catch-up;
+// scheduling it alongside a nightly full pass would just do the same work twice.
 Schedule::command('browse:backfill-max-distance')
-    ->monthlyOn(1, '02:40')
+    ->dailyAt('02:40')
     // 12h, not the 24h default: a killed run's lock has to self-heal well inside a day
-    // (SchedulerResilienceTest, incident 2026-07-02). Measured, the full pass takes roughly
-    // six hours, so this leaves headroom without letting a dead run block the next month's.
+    // (SchedulerResilienceTest, incident 2026-07-02), and with a nightly schedule a longer
+    // lock would cost a night's run for nothing.
     ->withoutOverlapping(720)
     ->sendOutputTo(cronLog('browse:backfill-max-distance-full'))
     ->runInBackground();
@@ -1286,6 +1284,21 @@ Schedule::command('integrations:sync-whatjobs')
     ->dailyAt('05:00')
     ->withoutOverlapping(240)
     ->sendOutputTo(cronLog('integrations:sync-whatjobs'))
+    ->runInBackground();
+
+// Weekly full re-geocode of the jobs feed. Each sync seeds its geocoding from
+// the previous run's jobs table, so a tuple that was ever resolved wrongly
+// stays wrong forever (measured 2026-08-31: 2,341 jobs pinned on Glasgow
+// under a Belfast district name; 7.9% of the table >25km from its own city's
+// best match). The in-sync UK-bbox guard rejects out-of-UK poison at write
+// time; this clears the in-UK kind by re-resolving every tuple from scratch
+// against our own places geocoder (local, ~20ms a lookup). Sunday small
+// hours, clear of the 05:00 digest-prep sync; the command's own lock
+// serialises any overlap.
+Schedule::command('integrations:sync-whatjobs', ['--refresh-geocode'])
+    ->timezone(config('freegle.timezone'))
+    ->weeklyOn(0, '02:30')
+    ->sendOutputTo(cronLog('integrations:sync-whatjobs.refresh'))
     ->runInBackground();
 
 // Sync Freegle offers with LoveJunk - runs every minute.

@@ -342,12 +342,16 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, minutes uint64, all
 			if latlng.Lat != 0 && latlng.Lng != 0 {
 				userLat = float64(latlng.Lat)
 				userLng = float64(latlng.Lng)
-				// Get a bounding box for the distance.
+				// Get a bounding box for the distance, which arrives in METRES.
+				// The division has to be in floating point: rounding down to whole
+				// kilometres narrows every box, and anything under 1km becomes a
+				// zero-size box that matches nothing.
 				p := geo.NewPoint(userLat, userLng)
-				ne := p.PointAtDistanceAndBearing(float64(distance/1000), 45)
+				distKm := float64(distance) / 1000
+				ne := p.PointAtDistanceAndBearing(distKm, 45)
 				nelat = ne.Lat()
 				nelng = ne.Lng()
-				sw := p.PointAtDistanceAndBearing(float64(distance/1000), 225)
+				sw := p.PointAtDistanceAndBearing(distKm, 225)
 				swlat = sw.Lat()
 				swlng = sw.Lng()
 				gotLatLng = true
@@ -399,7 +403,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, minutes uint64, all
 	// pure radius behaviour.
 	leafSQL := ""
 	var leafArgs []interface{}
-	if gotLatLng && distance > 0 && minutes > 0 && hasLeafColumn() {
+	if gotLatLng && distance > 0 && minutes > 0 {
 		if leaves := memberReachableLeaves(myid, userLat, userLng, minutes); len(leaves) > 0 {
 			leafSQL = "AND (newsfeed.leaf IS NULL OR newsfeed.leaf IN (?)) "
 			leafArgs = []interface{}{leaves}
@@ -1515,9 +1519,7 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 	// Road-network region for the road-aware feed narrowing; NULL when the
 	// reach engine cannot answer (the backfill retries later). Only when the
 	// column exists - the code can deploy ahead of the migration.
-	if hasLeafColumn() {
-		row["leaf"] = leafFor(lat, lng)
-	}
+	row["leaf"] = leafFor(lat, lng)
 	if err := db.Table("newsfeed").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create newsfeed post")
 	}
@@ -1643,9 +1645,7 @@ func createRefer(db *gorm.DB, myid uint64, nfID uint64, referType string, msgid 
 		"msgid":    gorm.Expr("NULLIF(?, 0)", msgid),
 		"position": gorm.Expr("ST_GeomFromText(?, ?)", fmt.Sprintf("POINT(%f %f)", lng, lat), utils.SRID),
 	}
-	if hasLeafColumn() {
-		row["leaf"] = leafFor(lat, lng)
-	}
+	row["leaf"] = leafFor(lat, lng)
 	if err := db.Table("newsfeed").Create(row).Error; err != nil {
 		return
 	}

@@ -14,7 +14,7 @@ func TestGroupProximity_ClosestThenFurthestFromClosest(t *testing.T) {
 	group := []NodeID{3, 4, 5, 6, 7}
 	offerLat, offerLng := float64(g.Nodes[1].Lat), float64(g.Nodes[1].Lng) // node 1 = west, outside group
 
-	closest, furthest, ok := groupProximity(g, offerLat, offerLng, group, Walk, 1e9)
+	closest, furthest, ok := groupProximity(g, offerLat, offerLng, group, 1e9)
 	if !ok {
 		t.Fatal("groupProximity returned ok=false")
 	}
@@ -42,7 +42,7 @@ func TestGroupDiameter_LineGraphSpansEnds(t *testing.T) {
 	g := makeLineGraph(7)
 	group := []NodeID{3, 4, 5, 6, 7}
 
-	from, to, miles, ok := groupDiameter(g, group, Walk, 1e9)
+	from, to, miles, ok := groupDiameter(g, group, 1e9)
 	if !ok {
 		t.Fatal("groupDiameter returned ok=false")
 	}

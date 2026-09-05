@@ -6,7 +6,6 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 
 /**
  * Computes a post's rippled-out reach from the routing server
@@ -35,6 +34,84 @@ class ReachService
      * otherwise a routing restart would permanently suppress notes for rows checked during it.
      */
     public const PROX_ERROR = 'error';
+
+    /**
+     * config key holding the partition fingerprint the stored reach_labels
+     * were computed against - the pairing record. The routing server refuses
+     * to serve artifacts that disagree with it, and the readers below use it
+     * to pick between the live label and one staged for the NEXT partition.
+     */
+    public const PARTITION_FP_CONFIG_KEY = 'reach_partition_fp';
+
+    /** @var array{at:float, fp:?int}|null process-local memo of the pairing record */
+    private static ?array $partitionFpMemo = null;
+
+    /**
+     * The partition fingerprint the reach engine is expected to be serving,
+     * from config, or null when none is recorded (a single-partition world:
+     * the live column is the only one). Memoised for a minute per process -
+     * a digest run asks thousands of times, and the row changes once per
+     * cutover.
+     */
+    public static function livePartitionFp(): ?int
+    {
+        $now = microtime(true);
+        if (self::$partitionFpMemo !== null && $now - self::$partitionFpMemo['at'] < 60) {
+            return self::$partitionFpMemo['fp'];
+        }
+        $raw = DB::table('config')->where('key', self::PARTITION_FP_CONFIG_KEY)->value('value');
+        $fp = ($raw !== null && preg_match('/^\d{1,20}$/', (string) $raw)) ? (int) $raw : null;
+        self::$partitionFpMemo = ['at' => $now, 'fp' => $fp];
+
+        return $fp;
+    }
+
+    /** Tests only. */
+    public static function resetPartitionFpMemo(): void
+    {
+        self::$partitionFpMemo = null;
+    }
+
+    /**
+     * SQL for "the label blob to decode": the one staged for the next
+     * partition when its stamp equals the live fingerprint, else the live
+     * column. This is what makes a partition cutover atomic for every
+     * reader: nothing is rewritten, the pairing record changes and every
+     * staged post switches together. With no pairing record it is just the
+     * live column.
+     *
+     * $prefix is the table alias with its dot ("rr."), or '' for a bare
+     * single-table select. The fingerprint is validated numeric before it is
+     * interpolated.
+     */
+    public static function liveLabelsSql(string $prefix = ''): string
+    {
+        $fp = self::livePartitionFp();
+        if ($fp === null) {
+            return "{$prefix}reach_labels";
+        }
+
+        return "COALESCE(IF({$prefix}reach_labels_next_fp = {$fp}, {$prefix}reach_labels_next, NULL), {$prefix}reach_labels)";
+    }
+
+    /**
+     * The same choice made in PHP, for a row fetched with SELECT * (both
+     * label columns present). Null when the row has no usable label.
+     */
+    public static function pickLabels(?object $row): ?string
+    {
+        if ($row === null) {
+            return null;
+        }
+        $fp = self::livePartitionFp();
+        if ($fp !== null
+            && isset($row->reach_labels_next_fp, $row->reach_labels_next)
+            && (int) $row->reach_labels_next_fp === $fp) {
+            return (string) $row->reach_labels_next;
+        }
+
+        return $row->reach_labels ?? null;
+    }
 
     private string $url;
     private string $curve;
@@ -201,7 +278,14 @@ class ReachService
         $url = "{$this->url}/v1/ripple-schedule";
         try {
             $responses = Http::pool(fn ($pool) => array_map(
+                // Connection: close, because every Http::pool call builds a fresh
+                // Guzzle client whose keep-alive sockets are never reused by the
+                // NEXT pool call - they just accumulate as idle fds for the life
+                // of the process (observed: ~8 per chunk, marching toward the
+                // 1024 soft limit on a long drain run). A local handshake per
+                // request costs microseconds; leaking fds costs the run.
                 fn ($o) => $pool->timeout($this->requestTimeout)
+                    ->withHeaders(['Connection' => 'close'])
                     ->get($url, $this->scheduleParams(
                         (float) $o['lat'],
                         (float) $o['lng'],
@@ -584,7 +668,7 @@ class ReachService
      */
     public function storeReachLabels(int $msgid, float $lat, float $lng, float $maxMinutes): bool
     {
-        if ($maxMinutes <= 0 || !$this->reachLabelsReady()) {
+        if ($maxMinutes <= 0) {
             return false;
         }
         try {
@@ -619,17 +703,21 @@ class ReachService
             return false;
         }
         // Union-admitted regions ride along with the reached ones, so members
-        // the union admits DISCOVER the post; dedupe against the label's own.
+        // the union admits DISCOVER the post. Dedupe here, in PHP: the leaves
+        // table's unique key is (msgid, leaf, fp), and MySQL treats NULLs as
+        // distinct in a unique index, so a row without a fingerprint would
+        // not be deduped by INSERT IGNORE the way (msgid, leaf) once did it.
+        $leaves = array_values(array_unique(array_map('intval', $leaves)));
         foreach ($body['union_leaves'] ?? [] as $leaf) {
-            if (!in_array((int) $leaf, $leaves, false)) {
+            if (!in_array((int) $leaf, $leaves, true)) {
                 $leaves[] = (int) $leaf;
             }
         }
         $update = ['reach_labels' => $labels];
-        if (array_key_exists('origin_union_secs', $body) && self::unionColumnsReady()) {
+        if (array_key_exists('origin_union_secs', $body)) {
             $update['origin_union_secs'] = (float) $body['origin_union_secs'];
         }
-        $fp = self::unionColumnsReady() && !empty($body['fp']) ? (string) $body['fp'] : null;
+        $fp = !empty($body['fp']) ? (string) $body['fp'] : null;
         try {
             // One transaction: the blob and its leaves commit together. A blob
             // without its leaves would permanently hide the post from the leaf
@@ -657,23 +745,6 @@ class ReachService
         return true;
     }
 
-    /** Deploy-before-migrate guard for the endgame columns; checked once. */
-    private static ?bool $unionColsReady = null;
-
-    private static function unionColumnsReady(): bool
-    {
-        if (self::$unionColsReady === null) {
-            try {
-                self::$unionColsReady = Schema::hasColumn('rippling_reach', 'origin_union_secs')
-                    && Schema::hasColumn('rippling_reach_leaves', 'fp');
-            } catch (\Throwable) {
-                self::$unionColsReady = false;
-            }
-        }
-
-        return self::$unionColsReady;
-    }
-
     /**
      * The backfill face of the union computation, for a post whose labels are
      * ALREADY stored: one POST /v1/reach-union with the stored blob computes
@@ -684,10 +755,12 @@ class ReachService
      */
     public function storeUnionSecs(int $msgid): bool
     {
-        if (!self::unionColumnsReady()) {
-            return false;
-        }
-        $row = DB::table('rippling_reach')->select('reach_labels')->where('msgid', $msgid)->first();
+        // The blob the LIVE engine can decode - staged-next when its stamp is
+        // the live partition, else the live column (see liveLabelsSql).
+        $row = DB::table('rippling_reach')
+            ->select(DB::raw(self::liveLabelsSql().' AS reach_labels'))
+            ->where('msgid', $msgid)
+            ->first();
         if ($row === null || $row->reach_labels === null) {
             return false;
         }
@@ -716,7 +789,9 @@ class ReachService
             return false;
         }
         $secs = (float) $body['origin_union_secs'];
-        $unionLeaves = array_map('intval', $body['union_leaves'] ?? []);
+        // Deduped in PHP for the same reason as storeReachLabels: NULL-fp rows
+        // are not deduped by the (msgid, leaf, fp) key.
+        $unionLeaves = array_values(array_unique(array_map('intval', $body['union_leaves'] ?? [])));
         $fp = !empty($body['fp']) ? (string) $body['fp'] : null;
         try {
             DB::transaction(function () use ($msgid, $secs, $unionLeaves, $fp) {
@@ -770,9 +845,40 @@ class ReachService
      */
     private static float $labelEvalDownUntil = 0.0;
 
+    /** When this process last reported that reach evaluation was unavailable. */
+    private static float $labelEvalAlertedAt = 0.0;
+
+    /**
+     * Raise a Sentry alert when the routing server cannot answer a reach
+     * question, at most once a minute per process.
+     *
+     * This is the only thing that shows a reach outage while it is happening.
+     * Every gate on a member's path now fails open on an undecided verdict,
+     * deliberately: the reply goes through, no "hasn't reached you yet" notice
+     * is shown, and the site therefore looks entirely well to the people using
+     * it. On 2026-09-02 the engine was down for 16 hours behind gates that
+     * failed closed instead, and the way we found out was a member asking why
+     * a post three miles away had not reached her.
+     */
+    private static function reportEvalUnavailable(string $reason): void
+    {
+        $now = microtime(true);
+        if ($now - self::$labelEvalAlertedAt < 60.0) {
+            return;
+        }
+        self::$labelEvalAlertedAt = $now;
+
+        $msg = 'ripple: reach evaluation unavailable: ' . $reason;
+        Log::warning($msg);
+        if (function_exists('\Sentry\captureMessage')) {
+            \Sentry\captureMessage($msg);
+        }
+    }
+
     public static function resetLabelEvalBreaker(): void
     {
         self::$labelEvalDownUntil = 0.0;
+        self::$labelEvalAlertedAt = 0.0;
     }
 
     /** Tests only: a tripped breaker must not leak into later tests. */
@@ -865,6 +971,11 @@ class ReachService
             return $none;
         }
         if (microtime(true) < self::$labelEvalDownUntil) {
+            // Nothing is asked while the breaker holds, and everything on a
+            // member's path fails open on the silence. Keep reporting it: an
+            // outage lasts hours and this is the only alert during all of them.
+            self::reportEvalUnavailable('breaker open after an earlier failure');
+
             return $none;
         }
         $out = [];
@@ -883,18 +994,18 @@ class ReachService
                 ]);
             } catch (\Throwable $e) {
                 self::$labelEvalDownUntil = microtime(true) + 300;
-                Log::warning("ripple: reach-eval fetch failed: {$e->getMessage()}");
+                self::reportEvalUnavailable("routing server unreachable: {$e->getMessage()}");
 
                 return $none;
             }
             if (!$response->successful()) {
-                // 503 (engine not configured yet) and 404 (routing server
-                // predates the endpoint) are expected states, not outages -
-                // they answer instantly, so no breaker for them either.
+                // 404 (routing server predates the endpoint) answers instantly,
+                // so no breaker for it - but a 503 is the shape a stopped reach
+                // engine takes, which is the outage worth waking up for.
                 if (!in_array($response->status(), [503, 404], true)) {
                     self::$labelEvalDownUntil = microtime(true) + 300;
-                    Log::warning("ripple: reach-eval HTTP {$response->status()}");
                 }
+                self::reportEvalUnavailable("routing server returned HTTP {$response->status()}");
 
                 return $none;
             }
@@ -1004,35 +1115,29 @@ class ReachService
         return $maxDriveMin * 60.0;
     }
 
-    /** Both label stores exist (deploy can precede the schema change). */
-    private static ?bool $reachLabelsReady = null;
-
-    private function reachLabelsReady(): bool
-    {
-        if (self::$reachLabelsReady === null) {
-            try {
-                // Only a successful check is cached: a transient DB error here
-                // must not mark the schema absent for the rest of the process.
-                self::$reachLabelsReady = Schema::hasColumn('rippling_reach', 'reach_labels')
-                    && Schema::hasTable('rippling_reach_leaves');
-            } catch (\Throwable) {
-                return false;
-            }
-        }
-
-        return self::$reachLabelsReady;
-    }
-
-    public function catchmentGeometry(float $lat, float $lng, float $minutes): ?array
+    /**
+     * The catchment for a point, as WKT plus its sandwich bounds.
+     *
+     * $coarse asks the routing server for the region-scale form: the same reach drawn
+     * on a grid sized to a fixed cell budget instead of to the road network, so the
+     * call stops costing more as the drive-time budget grows (a 45-minute catchment is
+     * 2.5MB and several seconds at full resolution, and the routing server only has
+     * eight compute slots to serve them from). Ask for it only where the answer is used
+     * at region scale - see ExpandService::resolveTickGeometry, which is careful about
+     * when that is true. An older routing server ignores the parameter and returns the
+     * exact form, so a half-deployed fleet is slow rather than wrong.
+     */
+    public function catchmentGeometry(float $lat, float $lng, float $minutes, bool $coarse = false): ?array
     {
         try {
             $response = Http::timeout($this->requestTimeout)
-                ->get("{$this->url}/v1/catchment", [
+                ->get("{$this->url}/v1/catchment", array_filter([
                     'lat' => $lat,
                     'lng' => $lng,
                     'minutes' => $minutes,
                     'mode' => $this->mode,
-                ]);
+                    'coarse' => $coarse ? '1' : null,
+                ], fn ($v) => $v !== null));
         } catch (\Throwable $e) {
             Log::warning("ripple: catchment fetch failed: {$e->getMessage()}", ['lat' => $lat, 'lng' => $lng]);
             return null;
@@ -1044,6 +1149,17 @@ class ReachService
         $body = $response->json() ?? [];
         $wkt = $this->polygonToWkt($body['catchment'] ?? null);
         if ($wkt === null) {
+            // Distinguish the two ways this comes back empty. onGraph=false means the
+            // origin is outside the OSM extract the routing graph was built from, so no
+            // post from there can ever get reach until the extract is fixed - that is a
+            // data-coverage bug, not a quiet local answer. Older routing builds omit the
+            // field, so absent means "cannot tell" and keeps the general message.
+            if (($body['onGraph'] ?? true) === false) {
+                Log::warning('ripple: origin is outside the routing map, so no post from here can get reach', ['lat' => $lat, 'lng' => $lng]);
+            } else {
+                Log::warning('ripple: catchment came back empty', ['lat' => $lat, 'lng' => $lng, 'minutes' => $minutes]);
+            }
+
             return null;
         }
 
@@ -1052,6 +1168,82 @@ class ReachService
             'outer' => $this->polygonToWkt($body['catchment_outer'] ?? null),
             'inner' => $this->polygonToWkt($body['catchment_inner'] ?? null),
         ];
+    }
+
+    /**
+     * Fetch several catchment geometries CONCURRENTLY (one HTTP request per job,
+     * fanned out via Http::pool / curl_multi, same shape as computeSchedulesBatch),
+     * for callers holding a batch of independent rows that would otherwise pay one
+     * ~3-4s round trip each in series. Read-only: callers apply results to the DB
+     * serially afterwards. Returns one entry per input job, index-aligned, shaped
+     * exactly like catchmentGeometry()'s return, or null (unreachable / off-graph /
+     * failed - callers treat null as "retry next sweep", never as an empty reach).
+     *
+     * @param array<int,array{lat:float,lng:float,minutes:float,coarse?:bool}> $jobs
+     * @return array<int,?array{wkt:string,outer:?string,inner:?string}>
+     */
+    public function catchmentGeometriesBatch(array $jobs): array
+    {
+        if (empty($jobs)) {
+            return [];
+        }
+
+        $url = "{$this->url}/v1/catchment";
+        try {
+            $responses = Http::pool(fn ($pool) => array_map(
+                // Connection: close - same fd-leak reasoning as computeSchedulesBatch.
+                fn ($j) => $pool->timeout($this->requestTimeout)
+                    ->withHeaders(['Connection' => 'close'])
+                    ->get($url, array_filter([
+                        'lat' => (float) $j['lat'],
+                        'lng' => (float) $j['lng'],
+                        'minutes' => (float) $j['minutes'],
+                        'mode' => $this->mode,
+                        'coarse' => !empty($j['coarse']) ? '1' : null,
+                    ], fn ($v) => $v !== null)),
+                array_values($jobs)
+            ));
+        } catch (\Throwable $e) {
+            Log::warning("ripple: catchment pool failed: {$e->getMessage()}");
+
+            return array_fill(0, count($jobs), null);
+        }
+
+        $out = [];
+        foreach (array_values($jobs) as $i => $j) {
+            $resp = $responses[$i] ?? null;
+            if ($resp instanceof \Throwable) {
+                Log::warning("ripple: catchment fetch failed: {$resp->getMessage()}", ['lat' => $j['lat'], 'lng' => $j['lng']]);
+                $out[$i] = null;
+                continue;
+            }
+            if ($resp === null || !$resp->successful()) {
+                Log::warning('ripple: catchment HTTP ' . ($resp ? $resp->status() : 'no-response'), ['lat' => $j['lat'], 'lng' => $j['lng']]);
+                $out[$i] = null;
+                continue;
+            }
+            $body = $resp->json() ?? [];
+            $wkt = $this->polygonToWkt($body['catchment'] ?? null);
+            if ($wkt === null) {
+                // Off the map is not the same as nothing within the budget. onGraph=false
+                // means the origin has no road node in the extract the graph was built
+                // from, so retrying this post next sweep can never do better. Say so here
+                // rather than let it read as an ordinary empty answer. Older routing
+                // builds omit the field, so absent means "cannot tell".
+                if (($body['onGraph'] ?? true) === false) {
+                    Log::warning('ripple: origin is outside the routing map, so no post from here can get reach', ['lat' => $j['lat'], 'lng' => $j['lng']]);
+                }
+                $out[$i] = null;
+                continue;
+            }
+            $out[$i] = [
+                'wkt' => $wkt,
+                'outer' => $this->polygonToWkt($body['catchment_outer'] ?? null),
+                'inner' => $this->polygonToWkt($body['catchment_inner'] ?? null),
+            ];
+        }
+
+        return $out;
     }
 
     /**

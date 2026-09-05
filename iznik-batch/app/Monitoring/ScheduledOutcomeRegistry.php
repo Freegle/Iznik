@@ -80,6 +80,29 @@ class ScheduledOutcomeRegistry
                 ->describedAs('Go-API background task queue not backing up')
                 ->inCategory('cursor-staleness'),
 
+            // ripple:expand (every minute) advances rippling_reach rows whose
+            // next_expansion_at has come due. The failure mode this asserts
+            // against is real and went unnoticed for days (2026-08-31): the
+            // expander wedged (run stacking, engine swap-thrash) while posts
+            // kept arriving, and ~10k rows sat overdue with nothing alarming.
+            // Healthy operation never leaves a row a full DAY past due — the
+            // deliberate overnight pause plus the morning catch-up peaks far
+            // under that — so day-late rows mean the engine or its run lock is
+            // stalled, not scheduling jitter. The threshold rides over a
+            // handful of individually-wedged stragglers without masking a
+            // pipeline stall.
+            (new BacklogCheck(
+                'ripple:expand',
+                'rippling_reach',
+                'next_expansion_at',
+                (int) config('freegle.monitoring.ripple_backlog_max_age_minutes', 1440),
+                fn ($q) => $q->where('status', 'expanding'),
+                (int) config('freegle.monitoring.ripple_backlog_threshold', 50),
+            ))
+                ->describedAs('Ripple expansion backlog not silently rotting')
+                ->inCategory('cursor-staleness')
+                ->enabledWhen(fn () => (bool) config('freegle.ripple.enabled')),
+
             // messages:contentcheck (every minute) promotes/blocks Pending
             // posts and always stamps contentcheck_checked_at. A Pending,
             // un-checked, undeleted post whose message+user are live (mirrors

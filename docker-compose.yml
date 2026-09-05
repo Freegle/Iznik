@@ -845,8 +845,13 @@ services:
       - SPATIAL_INDEX_DIR=/data
       - SPATIAL_PORT=8194
       - SPATIAL_ADMIN_PORT=8195
+      # Photon-compatible /api place search. The artifact is built by
+      # iznik-routing-go/cmd/placesextract; where the file is absent the
+      # dataset skips loading and /api answers 503.
+      - PLACES_FILE=/places/places.jsonl.gz
     volumes:
       - spatial_data:/data
+      - ${SPATIAL_DATA_DIR:-./iznik-routing-go/data}:/places:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8194/health || exit 1"]
       interval: 30s
@@ -876,6 +881,16 @@ services:
         required: false
     restart: "no"
     environment:
+      # Bound the GC pacer by the container, not by GOGC's default doubling.
+      # With neither set, Go sizes the heap at ~2x the live set and the
+      # scavenger returns pages lazily, so anon RSS sat at 11.6GB against a
+      # 12GiB cgroup while the artifacts account for ~5.2GB of it, squeezing
+      # the mmap'd leaf tables down to 868MB resident and costing 93M file
+      # refaults. GOMEMLIMIT is a SOFT target: Go keeps serving above it, it
+      # only collects harder. Leave headroom below the cgroup ceiling for the
+      # leaf-table page cache, and tune with a load test rather than by feel.
+      - GOMEMLIMIT=${SPATIAL_GOMEMLIMIT:-9GiB}
+      - GOGC=${SPATIAL_GOGC:-50}
       - SPATIAL_PORT=8196
       - SPATIAL_INTERNAL_PORT=8194
       - SPATIAL_KNN_URL=http://spatial-knn:8194
@@ -1071,6 +1086,16 @@ services:
         required: false
     restart: "no"
     environment:
+      # Bound the GC pacer by the container, not by GOGC's default doubling.
+      # With neither set, Go sizes the heap at ~2x the live set and the
+      # scavenger returns pages lazily, so anon RSS sat at 11.6GB against a
+      # 12GiB cgroup while the artifacts account for ~5.2GB of it, squeezing
+      # the mmap'd leaf tables down to 868MB resident and costing 93M file
+      # refaults. GOMEMLIMIT is a SOFT target: Go keeps serving above it, it
+      # only collects harder. Leave headroom below the cgroup ceiling for the
+      # leaf-table page cache, and tune with a load test rather than by feel.
+      - GOMEMLIMIT=${SPATIAL_GOMEMLIMIT:-9GiB}
+      - GOGC=${SPATIAL_GOGC:-50}
       - SPATIAL_PORT=8196
       - SPATIAL_INTERNAL_PORT=8194
       - SPATIAL_KNN_URL=http://spatial-knn-live:8194
@@ -1670,7 +1695,7 @@ services:
       # all callers (no searchmode param) to the legacy keyword cascade. Default
       # (unset) = vector-hybrid search. Removed once keyword search is retired.
       - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
-      - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api/avatar
+      - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/avatar
       - SPATIAL_KNN_URL=http://spatial-knn:8194
       - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter,Reengage,CommunityNews
       # CI=true skips supervisor startup to prevent Laravel bootstrap race conditions.

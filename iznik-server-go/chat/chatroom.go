@@ -13,6 +13,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/firstreply"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -394,7 +395,8 @@ func PutChatRoom(c *fiber.Ctx) error {
 		// If a moderator provides userid, they want to open the MEMBER's existing
 		// chat (e.g. from ModTools Feedback page). Non-mods always get their own chat.
 		chatUserID := myid
-		if req.Userid > 0 && req.Userid != myid && auth.IsModOfGroup(myid, req.Groupid) {
+		modOpeningMembersChat := req.Userid > 0 && req.Userid != myid && auth.IsModOfGroup(myid, req.Groupid)
+		if modOpeningMembersChat {
 			chatUserID = req.Userid
 		}
 
@@ -405,6 +407,18 @@ func PutChatRoom(c *fiber.Ctx) error {
 
 		if existingID > 0 {
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": existingID})
+		}
+
+		// Rippling auto-joins a poster to every group their post reached
+		// (memberships.rippled = 1, ExpandService::addPosterMembershipToRippledGroups).
+		// That is a record of where a post travelled, not a relationship with the
+		// community, so it gives that group's moderators nobody to start a conversation
+		// with (Discourse 10102). Answering a chat the member started is unaffected: an
+		// existing room is returned above, before this runs. The member's own route to
+		// the volunteers is unaffected too — this only guards the mod-initiated branch.
+		if modOpeningMembersChat && rippling.IsRippleOnlyMembership(db, chatUserID, req.Groupid) {
+			return fiber.NewError(fiber.StatusForbidden,
+				"This member's only tie to the group is a post that rippled in, so there is no chat to start")
 		}
 
 		// Create new User2Mod chat.

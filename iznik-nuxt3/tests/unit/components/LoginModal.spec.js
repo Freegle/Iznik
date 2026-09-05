@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { shallowMount, flushPromises } from '@vue/test-utils'
 import { ref, defineComponent } from 'vue'
 import LoginModal from '~/components/LoginModal.vue'
+import { SocialLogin } from '@capgo/capacitor-social-login'
+import * as Sentry from '@sentry/browser'
 import { LoginError, SignUpError } from '~/api/APIErrors'
 
 // Mock defineAsyncComponent to return proper Vue components
@@ -212,6 +214,11 @@ vi.mock('@capgo/capacitor-social-login', () => ({
     initialize: vi.fn(),
     login: vi.fn(),
   },
+}))
+
+vi.mock('@sentry/browser', () => ({
+  captureException: vi.fn(),
+  captureMessage: vi.fn(),
 }))
 
 // Mock Apple sign in
@@ -764,6 +771,121 @@ describe('LoginModal', () => {
       await flushPromises()
       const googleButton = wrapper.find('.social-button--google-app')
       expect(googleButton.exists()).toBe(true)
+    })
+  })
+
+  describe('Facebook login in the app', () => {
+    beforeEach(() => {
+      mockForceLogin.value = true
+      mockIsApp.value = true
+    })
+
+    async function clickFacebook() {
+      const wrapper = createWrapper()
+      await flushPromises()
+      await wrapper.find('.social-button--facebook').trigger('click')
+      await flushPromises()
+      return wrapper
+    }
+
+    it('sends the JWT for an iOS Limited Login, which carries no access token', async () => {
+      // Limited Login has no Graph access token: the plugin sends
+      // accessToken: null. Reading .token off it threw, and the login died in
+      // the app without ever reaching our API.
+      mockIsiOS.value = true
+      SocialLogin.login.mockResolvedValue({
+        provider: 'facebook',
+        result: {
+          accessToken: null,
+          idToken: 'limited-login-jwt',
+          isLimitedLogin: true,
+        },
+      })
+
+      const wrapper = await clickFacebook()
+
+      expect(mockLogin).toHaveBeenCalledWith({
+        fblogin: 1,
+        fbaccesstoken: 'limited-login-jwt',
+        fblimited: true,
+      })
+      expect(wrapper.vm.socialLoginError).toBe(null)
+    })
+
+    it('sends the Graph token for a full login', async () => {
+      mockIsiOS.value = false
+      SocialLogin.login.mockResolvedValue({
+        provider: 'facebook',
+        result: {
+          accessToken: { token: 'graph-access-token' },
+          idToken: '',
+          isLimitedLogin: false,
+        },
+      })
+
+      const wrapper = await clickFacebook()
+
+      expect(mockLogin).toHaveBeenCalledWith({
+        fblogin: 1,
+        fbaccesstoken: 'graph-access-token',
+        fblimited: false,
+      })
+      expect(wrapper.vm.socialLoginError).toBe(null)
+    })
+
+    it('believes the response over the platform when Facebook forces limited login', async () => {
+      // Facebook downgrades to limited login whenever App Tracking
+      // Transparency is refused, whatever we asked for. The flag we send tells
+      // the server how to verify the token, so it has to match what we read.
+      mockIsiOS.value = false
+      SocialLogin.login.mockResolvedValue({
+        provider: 'facebook',
+        result: {
+          accessToken: null,
+          idToken: 'forced-limited-jwt',
+          isLimitedLogin: true,
+        },
+      })
+
+      await clickFacebook()
+
+      expect(mockLogin).toHaveBeenCalledWith({
+        fblogin: 1,
+        fbaccesstoken: 'forced-limited-jwt',
+        fblimited: true,
+      })
+    })
+
+    it('reports a failure to Sentry, because it never reaches our API', async () => {
+      mockIsiOS.value = true
+      SocialLogin.login.mockRejectedValue(new Error('plugin exploded'))
+
+      const wrapper = await clickFacebook()
+
+      expect(mockLogin).not.toHaveBeenCalled()
+      expect(wrapper.vm.socialLoginError).toBe(
+        'Facebook app login error: plugin exploded'
+      )
+      expect(Sentry.captureException).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          tags: expect.objectContaining({
+            social_login_provider: 'facebook',
+            social_login_platform: 'ios-app',
+          }),
+        })
+      )
+    })
+
+    it('reports a login that returns no token at all', async () => {
+      mockIsiOS.value = true
+      SocialLogin.login.mockResolvedValue({ provider: 'facebook', result: {} })
+
+      const wrapper = await clickFacebook()
+
+      expect(mockLogin).not.toHaveBeenCalled()
+      expect(wrapper.vm.socialLoginError).toBe('Facebook app login failed')
+      expect(Sentry.captureException).toHaveBeenCalled()
     })
   })
 

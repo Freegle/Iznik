@@ -31,6 +31,15 @@ target 'Freegle' do
   capacitor_pods
   # Add your Pods here
   pod 'Firebase/Messaging'
+
+  # Pin the Facebook SDK. CapgoCapacitorSocialLogin asks for '~> 18.0', and
+  # Podfile.lock is not in git, so every iOS build otherwise picks up whatever
+  # 18.x is current that day - login can change without a commit. 18.1.0 is what
+  # the builds in the field already resolved, so this freezes today's behaviour
+  # rather than adding an untested bump. Move it deliberately, and test Facebook
+  # sign-in on a device when you do.
+  pod 'FBSDKCoreKit', '18.1.0'
+  pod 'FBSDKLoginKit', '18.1.0'
 end
 
 #post_install do |installer|

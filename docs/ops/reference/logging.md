@@ -18,27 +18,21 @@ request that produced it.
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         Application Servers                                  │
-│   Go API (apiv2)  │  Laravel Batch  │  Browser (via apiv2)  │  Containers   │
-└────────┬────────┴───────┬───────┴────────┬────────┴───────────┬─────────────┘
-         │                │                │                     │
-         ▼                ▼                ▼                     ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Docker: Direct to Loki    │    Live: JSON files → Alloy → Loki            │
-└─────────────────────────────────────────────────────────────────────────────┘
-         │                                          │
-         ▼                                          ▼
-┌─────────────────────────┐            ┌─────────────────────────┐
-│        MySQL            │            │         Loki            │
-│   (Source of Truth)     │            │   (Primary for API)     │
-│   - logs table          │            │   - 7-day API retention │
-│                         │            │   - Grafana dashboards  │
-└─────────────────────────┘            └─────────────────────────┘
+```mermaid
+flowchart TD
+    GO["Go API (apiv2)"] --> SHIP
+    LAR["Laravel batch"] --> SHIP
+    BR["Browser, relayed via apiv2"] --> SHIP
+    CON["Container stdout and stderr"] --> SHIP
+    SHIP["In Docker: straight to Loki<br/>On live servers: JSON files, shipped by Alloy"]
+    SHIP --> LOKI[("Loki<br/>what the log viewer reads<br/>7 days for api and client, Grafana dashboards")]
+    GO --> SQL[("MySQL logs table<br/>source of truth")]
+    LAR --> SQL
 ```
 
-**Current Status:** MySQL and Loki run in parallel. MySQL remains source of truth until all read dependencies are migrated.
+MySQL and Loki run in parallel, and MySQL stays the source of truth until the remaining
+reads against it are migrated. What is left to do is in
+[Implementation status](#implementation-status).
 
 ## What we log
 
@@ -289,10 +283,8 @@ In Docker, `LOKI_ENABLED=true` is set in docker-compose.yml. Apps write directly
 
 Loki config: `conf/loki-config.yaml`
 
-Key settings:
-- Default retention: 31 days
-- Stream-specific retention per log category
-- Compaction runs every 10 minutes
+Compaction runs every 10 minutes. Retention is per stream; the table is under
+[Retention](#retention) rather than repeated here.
 
 </details>
 

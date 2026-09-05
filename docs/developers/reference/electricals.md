@@ -1,11 +1,13 @@
 ---
-last_reviewed: 2026-09-01
+last_reviewed: 2026-09-02
 covers:
   - iznik-batch/app/Services/EeeClassificationService.php
   - iznik-batch/app/Services/EeeComponentService.php
   - iznik-batch/app/Services/EeeProductionStore.php
   - iznik-batch/app/Services/ElectricalsStatsService.php
   - iznik-batch/app/Services/Electricals/ItemClusterService.php
+  - iznik-batch/app/Services/Desirability/TitleCanonicalService.php
+  - iznik-batch/resources/desirability/**
   - iznik-batch/app/Console/Commands/Eee/EeeClassifyNewCommand.php
   - iznik-batch/app/Console/Commands/ElectricalsStatsCommand.php
   - iznik-server-go/electricals/**
@@ -46,7 +48,11 @@ counting it as "not electrical".
   Approved group row), and a NOT EXISTS on `messages_eee` makes re-scanning the
   boundary safe. Results land in `messages_eee` via `EeeProductionStore` - the
   narrow production projection (verdict, reason, buckets), not the wide research
-  row, which stays in the dev-side SQLite store.
+  row, which stays in the dev-side SQLite store. Each classified attachment is
+  also recorded in `eee_classified_attachments`, an index for downstream serving.
+  That write is best-effort and its failure is logged rather than raised, so a
+  missing row there does not mean the classification failed - read
+  `messages_eee` to answer that.
 - **`electricals:stats`** (daily 05:10): builds the whole page payload as one JSON
   blob into `electricals_stats`. Rolling twelve-month window; only the newest row
   is served. Queries dedupe to the newest classification per message, since
@@ -100,13 +106,17 @@ unusual on a site where fridge freezers are among the commonest things offered.
 
 `ItemClusterService` folds the rows before either list is built:
 
-- **Grouping is by canonical title**, from `TitleCanonicalService` - the same
-  de-branding and de-pluralising pipeline the desirability work uses. Cosine
-  similarity is deliberately **not** used to group, because it measures topical
-  relatedness rather than sameness: "fridge freezer" and "freezer" score 0.93 and
-  "cd player" and "dvd player" 0.85, both above the 0.78 of a pair that genuinely
-  should merge. No threshold separates the right merges from the wrong ones, so
-  published counts are never merged on an embedding.
+- **Grouping is by canonical title**, from
+  `App\Services\Desirability\TitleCanonicalService` - a port of Clement Lee's
+  desirability research pipeline, which strips brands, un-pluralises and applies the
+  synonym tables in `iznik-batch/resources/desirability/`. Its behaviour is pinned by
+  `tests/fixtures/desirability/golden-titles.json`, so a change here has to be paired
+  with a regenerated fixture. Cosine similarity is deliberately **not** used to
+  group, because it measures topical relatedness rather than sameness: "fridge
+  freezer" and "freezer" score 0.93 and "cd player" and "dvd player" 0.85, both
+  above the 0.78 of a pair that genuinely should merge. No threshold separates the
+  right merges from the wrong ones, so published counts are never merged on an
+  embedding.
 - **Counts are of distinct posts, members and communities**, taken from the id sets,
   because a rippled post arrives once per group and summing would multiply it.
 - **The label is a name carrying no brand** where the cluster has one, even if a

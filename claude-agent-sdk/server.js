@@ -24,6 +24,11 @@ const { v4: uuidv4 } = require('uuid')
 const { execSync } = require('child_process')
 const fs = require('fs')
 const { preferSubscriptionToken } = require('./auth')
+const { syncCodebase } = require('./codebase')
+
+// Where the agent's checkout of the monorepo lives. Matches the default in tools.js and
+// support-agent.js, which read the same override.
+const CODEBASE_DIR = process.env.CODEBASE_DIR || '/app/codebase'
 // agent.js kept for searchCodebase utility but runAgent/warmupSession no longer used
 
 const app = express()
@@ -60,6 +65,7 @@ const SESSION_TIMEOUT = 5 * 60 * 1000
 // Track auth and codebase status
 let authStatus = { valid: false, checked: false, message: 'Not checked yet' }
 let lastCodeUpdate = null
+let codebaseStatus = { present: false, action: 'not-synced-yet', error: null }
 
 /**
  * Check if Anthropic API key is configured.
@@ -81,21 +87,23 @@ function checkAuth() {
 }
 
 /**
- * Update codebase from git.
+ * Bring the agent's checkout of the monorepo up to date, cloning it first if this container has
+ * never had one. Its subdirs are iznik-nuxt3/, iznik-server-go/, ... at /app/codebase/<name>.
+ *
+ * The clone lives here rather than in the Dockerfile so that building the image needs no network:
+ * see codebase.js.
  */
 function updateCodebase() {
-  // One monorepo clone (its subdirs are iznik-nuxt3/, iznik-server-go/, ...).
-  const repos = ['/app/codebase']
+  codebaseStatus = syncCodebase({
+    dir: CODEBASE_DIR,
+    run: (cmd, opts) => execSync(cmd, opts),
+    exists: (p) => fs.existsSync(p),
+  })
 
-  for (const repo of repos) {
-    if (fs.existsSync(repo)) {
-      try {
-        execSync('git pull --ff-only 2>&1', { cwd: repo, timeout: 30000 })
-        console.log(`Updated codebase: ${repo}`)
-      } catch (error) {
-        console.error(`Failed to update ${repo}:`, error.message)
-      }
-    }
+  if (codebaseStatus.error) {
+    console.error(`Codebase ${codebaseStatus.action}: ${codebaseStatus.error}`)
+  } else {
+    console.log(`Codebase ${codebaseStatus.action}: ${CODEBASE_DIR}`)
   }
 
   lastCodeUpdate = new Date().toISOString()
@@ -126,6 +134,9 @@ app.get('/health', (req, res) => {
     service: 'freegle-ai-support-helper',
     auth: authStatus,
     lastCodeUpdate,
+    // The agent answers from the code, so "is there a checkout" is a health question. A clone
+    // that could not reach github.com leaves a container that runs but cannot search.
+    codebase: codebaseStatus,
   })
 })
 

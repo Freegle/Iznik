@@ -1,10 +1,11 @@
 ---
-last_reviewed: 2026-08-28
+last_reviewed: 2026-09-04
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
   - iznik-batch/app/Console/Commands/Browse/**
   - iznik-server-go/rippling/**
+  - iznik-nuxt3/composables/rippleStatus.js
   - iznik-server-go/density/**
   - iznik-spatial-go/cellset/**
   - iznik-spatial-go/dataset_reachoverflow.go
@@ -86,6 +87,23 @@ design:
    excluded toll.
 2. **Each reached point has an exact travel time**, so "who is reachable within X minutes" is
    a lookup, not a new computation.
+
+### The map has edges, and a post outside them gets no reach
+
+The road network is built from Geofabrik extracts by
+`iznik-routing-go/scripts/build-osm-pbf.sh`. Great Britain and Ireland are separate
+downloads, and so are the Crown Dependencies (Isle of Man, Jersey, Guernsey), which are
+constitutionally not part of the UK and so appear in neither. The script probes every
+region it merges for a road network before installing the file, because a missing region
+does not look like an error at run time.
+
+An origin with no road within snapping range (about 11km) used to produce an empty reach
+with nothing logged, which reads exactly like "nowhere is reachable from here". Isle of
+Man Freegle, a live group with 825 members, got no reach on any post for a year that way.
+`IsochroneResult` now carries `OriginFound`, `/v1/isochrone` and `/v1/catchment` return
+`onGraph`, both handlers log the miss, and `ReachService` logs "origin is outside the
+routing map" from both its single and pooled catchment paths instead of the general
+empty-reach warning.
 
 ### 2a. Drawing the reach: reached points into a polygon
 
@@ -344,15 +362,39 @@ the durable record of a per-group mod retraction; POLYGON and MULTIPOLYGON areas
 evaluates at `budget:"max"` for eventual-reach questions, and with `discover:true` returns
 label-admitted posts the caller's candidate list MISSED (from `rippling_reach_leaves` - the
 band where grids under-cover the true road reach; the candidate list may be empty, and held
-posts are never discovered). An `out` for a member standing in the post's ORIGIN group's
+posts are never discovered). Since the grids retired (2026-08-28) discovery is the ONLY way a
+post reaches the nearby feed and badge, so it must never trim the wrong end: a region inside
+a city's 45-minute maximum reach holds thousands of live posts (682 regions exceed 1,000,
+the densest ~5,100), and when discovery shared the caller-chunk cap of 1,000 it kept the
+oldest thousand in id order - members in those regions saw no post from the last week
+(Bath, ChitChat 2026-08-31). Candidates are now evaluated newest-first under a separate
+valve (`discoverMaxItems`, 10,000, logged when reached), so any trim drops the oldest posts.
+An `out` for a member standing in the post's ORIGIN group's
 area carries `origin_area: true`: the stored reach deliberately unions that area in once the
 isochrone covers most of it (`ExpandService::unionWithOriginGroupArea`), so both clients
 treat out+origin_area as NO verdict and let the cell grid - which holds the union - decide.
 A member point that does not snap to the road network answers all-`nolabels` (200), and the
 Go client trips the shared routing breaker only on 5xx faults (404/503 are expected states);
 the PHP client carries the same 5-minute breaker the drive-metrics path uses, because the
-digest asks once per recipient. NO VERDICT MEANS NOT IN REACH on every deciding gate -
-there is no cell fallback anywhere.
+digest asks once per recipient.
+
+**No verdict is not a refusal.** A gate only refuses somebody the labels have actually
+ruled `out`. `nolabels`, a routing server that cannot be reached, a 503, a 4xx or an
+unreadable body all leave the row UNDECIDED, and every gate lets an undecided row through:
+the reply is sent rather than held, and no "hasn't reached your area yet" notice is shown.
+`rippling.ReachRowInfo.Decided` carries that distinction in Go, `ReachQueryService::reachVerdict`
+in PHP. Mail is the one exception (see below).
+
+That direction was chosen after 2026-09-02, when the reach engine was down for sixteen hours
+and the gates failed the other way. A member 13 minutes' drive from a post, in the post's own
+community since 2009, was told it had not reached her - beside an ETA, computed on a lane
+that still worked, saying she had been in reach from the first tick. Nothing else showed the
+outage, so it ran overnight.
+
+Failing open means an outage is now invisible from the outside, so it has to be visible from
+the inside instead: `reportEvalUnavailable` (Go `rippling/labelverdicts.go`, PHP
+`ReachService`) raises a Sentry event, at most one a minute per process, carrying the reason.
+That alert is the only sign of a reach outage while it is happening. Treat it as one.
 
 Client wiring: apiv2 `rippling/labelverdicts.go` (`LabelVerdicts`,
 `LabelVerdictsWithDiscover`, `DropLabelOut`) feeds `rippling.ReachMembership` (reply gate)
@@ -364,6 +406,32 @@ through, so they cannot disagree - plus `message/search.go` (same narrowing and 
 feed the daily digest's containment universe (same narrowing + union),
 `MaxReachService::isWithinMaxReach` and `MatchMailService::applyCellBand` (one
 reach-arrival call bands every candidate by seconds past the current edge).
+
+### A post is not live until its reach exists
+
+A post reaches the browse feeds the moment it is approved, but its `rippling_reach` row is
+written a beat later. In that gap the feeds have no reach to consult, so the post shows to
+everybody within the raw distance search - the wide audience the ripple exists to avoid.
+On live the gap is short: of 1,347 posts in a day, 788 had their row inside a minute and
+1,204 inside two, but 41 took longer than ten minutes.
+
+So the feeds hide a post that has no `rippling_reach` row for the first
+`rippling.ReachPendingGraceMinutes` (10) after `messages.arrival`, and show it regardless
+afterwards. The grace period is not a requirement because 132 browsable posts have no row
+and never will - their origin cannot snap to the road graph, the Isle of Man being the
+clearest case - and those posts must still be seen.
+
+- One shared SQL fragment, `rippling.ReachPendingFilter`, so no surface can drift: the
+  my-communities feed and its two counts (`isochrone/message.go`), the map-bounds feed
+  (`message/bounds.go`) and the groups feed (`message/groups.go`). Nearby and both search
+  arms already INNER JOIN `rippling_reach`, so they were never affected.
+- The clock is `messages.arrival`, NOT `messages_spatial.arrival`, which the reach engine
+  bumps on every tick - a post gated on that would keep restarting its own grace period.
+- A member always sees their own post, whatever its reach says.
+- `RIPPLE_HIDE_PENDING=0` turns the whole thing off without a deploy.
+
+Read-side, not write-side: `messages_spatial` has four writers, and a gate in each of them
+is four chances to disagree.
 
 ### The grid-removal endgame
 
@@ -395,9 +463,13 @@ evaluator answers everything the current-reach grid did, and the grid retires pe
   rolling label migration instead of a site-wide nolabels window.
 - **Routing is a dependency**: reach verdicts come from the stored labels and nowhere
   else - the cell fallbacks were removed (2026-08-28, "assume availability is fine...
-  remove any fallback code"). Routing down means reach-gated posts are hidden, replies to
-  them held, and reach mail skipped until it returns; breakers stop the callers paying
-  timeouts meanwhile. The grids' one remaining role is the candidate prefilter (the
+  remove any fallback code"). Routing down therefore decides nothing, and since 2026-09-03
+  deciding nothing lets members through: replies send, no not-reached notice appears, and
+  browse keeps serving whatever the prefilter found. Reach MAIL still skips, because a held
+  reply arrives late while a wrong email cannot be recalled (`ReachBlockedSetForMail`,
+  and PHP's `isWithinReach`, both stay strict). Breakers stop the callers paying timeouts
+  meanwhile, and Sentry carries the outage.
+ The grids' one remaining role is the candidate prefilter (the
   spatial containment index) until each post's discover arm replaces it. The moderator
   reach-map overlay draws the engine's drive isochrone for drained rows.
 
@@ -750,17 +822,17 @@ rows, its latest row states its outcome.
   the wider ripple would reach a city member with everything inside 45 minutes of a post.
 
   The same pass records the band NAME in `settings.browseDensityBand`, because the budget it
-  derives cannot be read backwards to recover it: an explicit choice is rescaled *within* the
-  band, so 20 minutes means either a dense member on their cap or a sparse member who asked
-  for less, and afterwards the two are the same number. Anything that has to admit a member
+  derives cannot be read backwards to recover it: 20 minutes means either a dense member on
+  their cap or a sparse member who asked for less, and the two are the same number. Anything
+  that has to admit a member
   against something chosen per band - the rural overflow lane, when enabled, picks one ring
   per band - needs the band itself. It is stamped for members whose budget needs no correction as well,
   which is most of them: a value written only alongside a correction would be missing for the
   bulk of the membership, which is the same shape of silent near-inertness as the two failure
   modes below.
 
-  **That pass is the single writer of `browseReachMaxDistance`, and it has two failure modes
-  worth knowing, because both were live for weeks and neither was visible.**
+  **That pass is the single writer of `browseReachMaxDistance`, and it has three failure modes
+  worth knowing, because each was live for weeks and none was visible.**
 
   *It can be pointed nowhere.* The radius comes from a `/town/near` call, and a member whose
   lookup fails is deliberately left alone rather than given a wrong cap - which means left with
@@ -774,12 +846,29 @@ rows, its latest row states its outcome.
   is loud. `batch-prod` must set `BROWSE_TOWN_NEAR_URL`; the compose default is unreachable
   from its network.
 
+  *It can be silenced by the towns table.* `/town/near` sizes a candidate box off the travel
+  time asked for - about 12 miles at the narrow end of the slider - and the towns table holds
+  only ~234 major places, so for much of the country that box is empty. The town names are
+  display material for the "Near: ..." hint, but the same response carries
+  `reach_radius_miles` (the isochrone road frontier) and `reach_polygon` (its shape), and the
+  handler used to return before its routing call when the box came back empty. A member whose
+  nearest curated town lay outside the box therefore got no radius at all, and both readers
+  treat a missing radius as a failed derivation: the backfill leaves them with no band limit,
+  and the slider stores the "no limit" sentinel - so dragging to "Nearer" switched every
+  distance filter off, on browse, on the unread-count badge, in search and in post emails.
+  Measured 2026-09-02: 91 members held the sentinel beside a budget below their own cap, 16%
+  of everyone sitting on the 5-minute stop; the reporter (Hastings, nearest curated town Lewes
+  at 27 miles) was being mailed Eastbourne posts 16 miles away. The routing call now runs
+  whether or not there are candidate towns, and `useReachDistance.loadCap` repairs the stored
+  pair on sight - the sentinel below a member's own cap cannot be a choice, because only the
+  top stop means "no limit" and only at the ceiling does it store the sentinel.
+
   *It decays.* Nothing else writes the key, so a member who joins after a run has no band
-  limit, ever. Two scheduled passes close that: `--missing-only` daily (members with nothing
-  recorded, which after a full pass is just new joiners) and the full pass monthly, which also
-  RECONCILES existing values - the narrow one never revisits anyone, so it cannot follow a
-  member who moves from a village to a city, nor an area that has grown denser since its
-  members were measured.
+  limit, ever - and a member who moves, or an area that grows denser, drifts away from the band
+  they are held to. The full pass runs NIGHTLY (02:40) and closes both: it gives new joiners a
+  default and reconciles everyone else. Measured on live 2026-09-01 it scanned 132,228 members
+  in 2h33m, which is what makes a nightly schedule affordable; a separate cheap `--missing-only`
+  pass is no longer scheduled, because a nightly full pass already covers what it covered.
 
   **`browseReachMaxDistance` is a separate key from `browseMaxDistance`, and the split is
   load-bearing.** `browseMaxDistance` is the member's own choice and applies in BOTH
@@ -823,12 +912,35 @@ rows, its latest row states its outcome.
   `NULLIF`/`COALESCE` chain, and the cast is `DECIMAL(30,6)` because the 16-digit sentinel does
   not fit in `DECIMAL(20,6)`.
 
-  The command also RESCALES an explicit choice rather than carrying it across. The old slider
-  was a fixed 5-30, so a stored value said what FRACTION of the range the member wanted, not an
-  absolute travel time: 15 was two fifths of the way up, and two fifths of a rural member's 5-45
-  is 20. It rescales proportionally and snaps to the slider's 5-minute step, and at or above the
-  old top stop the member lands on their new cap. No location, or a failed density or routing
-  lookup, means the member is skipped and left untouched.
+  An explicit choice is carried across as the travel time it says, clamped to the member's band
+  cap; only the derived radius is recomputed. A member who never chose is put ON their band cap
+  every run: their stored `browseMaxMinutes` is the pass's own output rather than a preference,
+  so it is re-derived rather than read back. Holding `browseMaxDistance` is what "chose" means
+  here, because the slider has always written both keys in the same save. No location, or a
+  failed density or routing lookup, means the member is skipped and left untouched.
+
+  **Everything the pass does has to be idempotent, because it runs over the whole membership
+  on a schedule.** It used to read a stored budget as a FRACTION of the old fixed 5-30 slider
+  and stretch it onto the member's 5-45 band range. That is the right thing to do exactly once,
+  on the day the slider changes. Re-applied on every run it is a ratchet: the pass reads its own
+  output as if it were still an old-scale value, so each run walks the member's chosen travel
+  time further in whichever direction their band points - a sparse member goes 15 → 20 → 30 →
+  45, and 45 for a band that earns the ceiling is the "no limit" sentinel, while a dense member
+  goes 20 → 15 → 10 down onto the narrowest stop. The 2026-09-01 run put 1,185 members on the
+  sentinel in one night, and the standing shape of the data is the same story: 31,916 sparse
+  members piled on 45 and 7,747 dense members on 10. A future scale change belongs in a one-off
+  command, not in the reconciler.
+
+  Dropping the rescale stopped the ratchet but did not undo it. The budget rule kept whatever it
+  read, so every member the ratchet had already moved stayed where it left them and nothing ever
+  widened them again. The narrowest went silent: a dense member on 10 minutes has a ~1.5 mile
+  radius, which empties their digest candidate set every morning, and the digest then stamps
+  `lastsent` and sends nothing, so the once-a-day guard blocks every later tick. No bounce, no
+  suppression, no `email_tracking` row - the member simply stops hearing from us (SR-8BWZ3). The
+  2026-09-01 run left 17,584 dense members below their 20-minute cap, and 11.8% of them had had
+  no daily digest since, against a 2.19% baseline. That is why a member who never chose is
+  re-derived rather than preserved: it puts about 21,300 of them back on their band cap through
+  the ordinary nightly pass, and it cannot freeze a future drift the same way.
 
   **The unlimited sentinel is no longer safe below the ceiling.** It means "defer to the
   server's own reach", and the server's own reach is now the ceiling - so it only says "as far
@@ -928,6 +1040,10 @@ ended when the ripple covered the replier, when the post's reach reached `done`,
 post went. Measured on live, **three in four held repliers live somewhere the ripple will never
 reach**, so for them the only exit was the backstop - days later, by which time a quarter to a
 third of items have already gone. In practice their reply was not delayed, it was discarded.
+
+Only a decided `out` holds anything. If the routing server cannot answer, the reply is sent,
+and the pass-through is counted as `reply_undecided_passthrough` in `rippling_event_metrics`
+so the cost of an outage can be read afterwards.
 
 So every hold now carries a due time, computed at hold time from how far the replier is from
 the item:
@@ -1087,6 +1203,8 @@ about travel time, so the reach wins wherever we have it.
   `max_minutes`) - how long an out-of-reach reply waits (§7a). Off reverts to release on
   coverage or backstop alone.
 - `reply_saturation_stop` (5), `hazard_hours`, `rippled_in_pending_hours` (0).
+- `RIPPLE_HIDE_PENDING` (apiv2 env, on by default) - hide a post that has no
+  `rippling_reach` row yet for its first ten minutes. Set to `0` to show every post at once.
 
 Per-community rather than config: `groups.settings.rippling.{out,in}` switches rippling off for
 one community in either direction (§4a), set only via `php artisan ripple:opt-out`.
@@ -1106,6 +1224,15 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   (§7a) and `releasedat`. Two similar names, one letter apart: `dueat` is when it becomes
   due, `releasedat` is when it actually went.
 - `messages_groups.rippled_in = 1` - marks a rippled-in copy (vs the origin membership).
+  It is also how the post's **origin group** is identified: `MessageOriginGroup`
+  (`iznik-server-go/message/message.go`) takes the earliest-arriving `rippled_in = 0` row,
+  and the client's `homeGroupId` (`composables/rippleStatus.js`) uses the same column.
+  Identify the origin from this column and nothing else. In particular an arrival window
+  (`messages_groups.arrival` close to `messages.arrival`) does not work: approving
+  re-stamps `messages_groups.arrival` to the approval time while `messages.arrival` keeps
+  the time the post was received, so any post moderated slowly has no row inside the
+  window and reads as having no origin at all - which silently opens everything gated on
+  "is this the home group?".
 - `rippling_proximity` - cached "quicker to get to" P/Q points per (msgid, groupid).
 - `logs` `text='Rippled'` - the ripple-join marker used for rejoin suppression.
 - `memberships.rippled = 1` - marks a membership rippling created, when the member's own post
@@ -1381,8 +1508,14 @@ inclusion-exclusion - `|A| + |B| - ST_Area(ST_Union(A, B))` - rather than by
 `ST_Area` rejects those outright with `ERROR 3516 ... unexpected type GEOMCOLLECTION`;
 real group boundaries follow shared edges, so on production data that is the common case,
 not a corner. `ST_Union` of two areal geometries is always areal, so the arithmetic is
-always defined - see
-[`VerifyCellsParityCommand`](../../../iznik-batch/app/Console/Commands/Ripple/VerifyCellsParityCommand.php).
+always defined.
+
+That one-off parity command has since been removed. The same `ERROR 3516` hazard is
+guarded in the live code by a different route: `unionWithOriginGroupArea()` in
+[`ExpandService.php`](../../../iznik-batch/app/Services/Ripple/ExpandService.php) wraps
+the coverage fraction in a `CASE WHEN ST_GeometryType(inter) IN ('POLYGON',
+'MULTIPOLYGON')` guard, so `ST_Area` only ever sees polygonal input and a
+`GEOMETRYCOLLECTION` yields a NULL fraction instead of an exception.
 
 Measured on eight real isochrones (2026-08-25): 640 containment probes, 88 differences -
 87 boundary probes at *exactly* 0.000m from the edge and one interior probe at 7.98m, none
@@ -1588,7 +1721,12 @@ timeout:
   which is cached per process because its query ORs three unindexed nullable columns and so
   full-scans `rippling_reply_attribution`.
 - `/rippling/analytics/drivetime[/score|/aggregate]` - the sampled routing pass, driven from the
-  client one chunk at a time.
+  client one chunk at a time. `/score` asks `/v1/ripple-eval` for `points_only` (it reads each
+  reply's `drive_min` and nothing else), and a points-only eval is answered from the reach engine
+  (`rippleEvalPointsFromEngine` in `iznik-routing-go/ripple.go`: one label query for the post, one
+  exact arrival per reply) rather than a full-graph 45-minute sweep. Measured on production from
+  a city centre: 2.6s per post with the sweep and its rank enumeration, ~10ms cold / ~1ms warm
+  from the engine, with identical answers to within the engine's quantisation (~0.3 min).
 
 **A gateway timeout here does not look like a timeout.** The 504 carries no
 `Access-Control-Allow-Origin` header, so the browser reports a CORS policy error and the real

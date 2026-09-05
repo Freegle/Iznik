@@ -1,10 +1,12 @@
 # Freegle Spatial KNN Index Service (`iznik-spatial-go`)
 
-A small Go HTTP service that keeps fast, queryable spatial indexes over six
-Freegle datasets and answers two kinds of question:
+A small Go HTTP service that keeps fast, queryable spatial indexes over
+Freegle's datasets and answers three kinds of question:
 
 - **Nearest-neighbour (KNN):** "what are the N nearest records to this lat/lng?"
 - **Within-polygon:** "which records fall inside this area (WKT polygon)?"
+- **Place search:** "where is 'Kendal'?" — the photon-compatible geocoder
+  behind `geocode.ilovefreegle.org` (see below)
 
 It is the **"finder"** half of Freegle's spatial system. The **"travel-time
 mapper"** half — isochrones, fairness, the Rippling Explorer — is a separate
@@ -44,6 +46,31 @@ force a full rebuild on startup.
 
 ---
 
+## Place search (photon-compatible `GET /api`)
+
+The replacement for the Photon geocoder that used to serve
+`geocode.ilovefreegle.org`. Unlike the datasets above it is **file-backed, not
+MySQL-backed**: it loads `PLACES_FILE` (default
+`$SPATIAL_INDEX_DIR/places.jsonl.gz`), an artifact of ~200k named UK places
+built by `iznik-routing-go/cmd/placesextract` from `uk-latest.osm.pbf`, into
+an in-memory token index (`places.go`, `places_search.go`, `places_api.go`).
+
+- Responses are GeoJSON FeatureCollections matching photon's shape byte-for-
+  byte where consumers care: `properties.extent` is `[W,N,E,S]`,
+  `geometry.coordinates` is `[lng,lat]`, `properties.type` uses photon's
+  layer names (`city`/`district`/`locality`/`county`/`state`/`other`).
+- Query semantics follow photon 0.5.0's builder: all terms must match with
+  the last as a prefix; on zero hits it relaxes (stopword stripping, then
+  edit-distance-1); `bbox` hard-filters on the point; `lat`/`lon`/`zoom`
+  bias the ranking with photon's zoom-scaled decay; `limit` defaults 15,
+  caps 50; repeated `layer=` params filter.
+- The file is polled by mtime every minute and swapped atomically; a corrupt
+  or empty replacement never displaces a working index. Where the file is
+  absent (db-node instances) `/api` answers 503 — production nginx only
+  caches 200s.
+
+---
+
 ## API endpoints
 
 ### Public API (`SPATIAL_PORT`, default `8194`)
@@ -54,6 +81,7 @@ trusted callers (`iznik-routing-go`, `apiv2`, batch).
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | `{"status":"ok"}` |
+| `GET` | `/api?q=&bbox=&layer=&lat=&lon=&zoom=&limit=` | Photon-compatible UK place search (see **Place search** below). This one **is** exposed publicly: production nginx proxies `geocode.ilovefreegle.org` to it, and it answers its own CORS |
 | `GET` | `/v1/datasets` | All datasets with name, record count, readiness |
 | `GET` | `/v1/{dataset}/status` | Readiness, row count, last sync time for one dataset |
 | `GET` | `/v1/{dataset}/knn?lat=&lng=&limit=&type=&polygon=` | Nearest records to a point. `limit` 1–1000 (default 1); optional `type` filter; optional WKT `polygon` to restrict results |

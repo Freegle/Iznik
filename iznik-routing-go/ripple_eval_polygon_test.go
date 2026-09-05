@@ -108,8 +108,8 @@ func TestRippleEval_NoPolygonUnlessRequested(t *testing.T) {
 // smaller than the exact one the same reach traces, or there is no reason to ship it.
 func TestRippleEval_SimplifiedPolygonIsMuchSmallerThanExact(t *testing.T) {
 	g := getTestGraph(t)
-	iso := Isochrone(g, 51.4545, -2.5879, 10*60, Drive)
-	res := NetworkResolution(g, iso.ReachedNodes, Drive)
+	iso := Isochrone(g, 51.4545, -2.5879, 10*60)
+	res := NetworkResolution(g, iso.ReachedNodes)
 	exact := IsochronePolygon(g, iso.ReachedNodes, res)
 	if len(exact.Geometry.Coordinates) == 0 {
 		t.Skip("test graph traced no exact polygon")

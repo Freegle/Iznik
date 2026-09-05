@@ -1217,6 +1217,25 @@ class IncomingMailService
             $user->save();
         }
 
+        // A ban is per-group and blocks rejoining. TrashNothing re-sends a Subscribe mail
+        // for every group its member is on, so without this check a banned member is put
+        // back on the group the next time TN syncs, with nothing in the modlog to explain
+        // how they returned (Discourse #10086).
+        $banned = DB::table('users_banned')
+            ->where('userid', $user->id)
+            ->where('groupid', $group->id)
+            ->exists();
+
+        if ($banned) {
+            Log::info('Subscribe from banned member - dropping', [
+                'user_id' => $user->id,
+                'group_id' => $group->id,
+                'group_name' => $groupName,
+            ]);
+
+            return $this->dropped("Subscribe from banned member");
+        }
+
         // Check if already a member
         $existingMembership = Membership::where('userid', $user->id)
             ->where('groupid', $group->id)
@@ -1239,6 +1258,19 @@ class IncomingMailService
             'collection' => 'Approved',
             'added' => now(),
             'emailfrequency' => 24, // Daily digest by default
+        ]);
+
+        // Record the join the way every other join path does, so moderators can see how
+        // the member arrived, and so the "seen on many groups" check in
+        // MembershipsProcessingService - which counts Group/Joined rows - takes it in.
+        DB::table('logs')->insert([
+            'timestamp' => now(),
+            'type' => 'Group',
+            'subtype' => 'Joined',
+            'user' => $user->id,
+            'byuser' => $user->id,
+            'groupid' => $group->id,
+            'text' => 'Subscribed',
         ]);
 
         Log::info('Added user to group', [

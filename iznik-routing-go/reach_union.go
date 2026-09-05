@@ -76,8 +76,8 @@ func sampleNodesInRings(g *Graph, rings [][][2]float64) []NodeID {
 	var nodes []NodeID
 	for ci := int16(minLat / gridRes); ci <= int16(maxLat/gridRes); ci++ {
 		for cj := int16(minLng / gridRes); cj <= int16(maxLng/gridRes); cj++ {
-			for _, id := range g.Grid.cells[[2]int16{ci, cj}] {
-				if g.DriveSnappable != nil && !g.DriveSnappable[id] {
+			for _, id := range g.Grid.at(ci, cj) {
+				if g.DriveSnappable != nil && !g.DriveSnappable.Get(int(id)) {
 					continue
 				}
 				n := g.Nodes[id]
@@ -113,16 +113,16 @@ func unionSecsForLabel(e *ReachEngine, lbl *ReachLabels, rings [][][2]float64) (
 	leafSeen := map[int32]bool{}
 	var leaves []int32
 	addLeaf := func(v NodeID) {
-		if oi := e.Ov.Idx[v]; oi != 0 {
-			if l := e.Part.LeafOf[oi]; l >= 0 && !leafSeen[l] {
+		if oi := e.Ov.IdxOf(v); oi != 0 {
+			if l := e.Part.LeafAt(oi); l >= 0 && !leafSeen[l] {
 				leafSeen[l] = true
 				leaves = append(leaves, l)
 			}
 		} else {
-			for _, j := range [2]NodeID{e.Ov.ChainEndA[v], e.Ov.ChainEndB[v]} {
+			for _, j := range [2]NodeID{e.Ov.ChainA(v), e.Ov.ChainEndB[v]} {
 				if j != 0 {
-					if oi := e.Ov.Idx[j]; oi != 0 {
-						if l := e.Part.LeafOf[oi]; l >= 0 && !leafSeen[l] {
+					if oi := e.Ov.IdxOf(j); oi != 0 {
+						if l := e.Part.LeafAt(oi); l >= 0 && !leafSeen[l] {
 							leafSeen[l] = true
 							leaves = append(leaves, l)
 						}

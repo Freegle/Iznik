@@ -14,21 +14,44 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 )
 
+// isochroneResponse keeps the "drive" key it always had, so apiv2's decoder
+// (which reads only that member) is unchanged. The walk and cycle members are
+// gone: nothing consumed them, and computing them cost two extra full-graph
+// Dijkstras on every call.
 type isochroneResponse struct {
-	Walk  GeoJSONPolygon `json:"walk"`
-	Cycle GeoJSONPolygon `json:"cycle"`
 	Drive GeoJSONPolygon `json:"drive"`
+
+	// OnGraph is false when the point snapped to no road at all, i.e. it is outside
+	// the loaded OSM extract. The polygon above is then empty for that reason and
+	// not because the place is genuinely cut off, and a caller that cannot tell
+	// those apart stores "no reach" forever. Answer honestly, the way
+	// handleQuintile answers "available": false.
+	OnGraph bool `json:"onGraph"`
+}
+
+// validLat, validLng and validLatLng say whether a coordinate is a real point on
+// the globe. Zero longitude is a real value - the Greenwich meridian runs up the
+// country through Essex and Lincolnshire - so a post from there is a genuine
+// location and used to be turned away. Both values being zero is how a caller
+// says "no location", so only that pair is rejected. Not-a-number fails every
+// comparison, so it fails these too.
+func validLat(lat float64) bool { return lat >= -90 && lat <= 90 }
+
+func validLng(lng float64) bool { return lng >= -180 && lng <= 180 }
+
+func validLatLng(lat, lng float64) bool {
+	return validLat(lat) && validLng(lng) && !(lat == 0 && lng == 0)
 }
 
 // handleIsochrone handles GET /v1/isochrone?lat=&lng=&minutes=
 func handleIsochrone(g *Graph) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
-		if err != nil || lat == 0 {
+		if err != nil || !validLat(lat) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat required")
 		}
 		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
-		if err != nil || lng == 0 {
+		if err != nil || !validLng(lng) {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
 		minutes, _ := strconv.ParseFloat(c.Query("minutes", "15"), 64)
@@ -37,33 +60,18 @@ func handleIsochrone(g *Graph) fiber.Handler {
 		}
 		secs := float32(minutes * 60)
 
-		type result struct {
-			mode Mode
-			poly GeoJSONPolygon
+		iso := Isochrone(g, lat, lng, secs)
+		res := NetworkResolution(g, iso.ReachedNodes)
+		if !iso.OriginFound {
+			// Loud on purpose: the only way this happens is a point outside the
+			// extract the graph was built from, which is a data-coverage bug that
+			// otherwise looks exactly like "nowhere is reachable from here".
+			log.Printf("isochrone: %.4f,%.4f is outside the loaded map - no road within snapping range", lat, lng)
 		}
-		ch := make(chan result, 3)
-
-		for _, m := range []Mode{Walk, Cycle, Drive} {
-			go func(m Mode) {
-				iso := Isochrone(g, lat, lng, secs, m)
-				res := NetworkResolution(g, iso.ReachedNodes, m)
-				ch <- result{m, IsochronePolygon(g, iso.ReachedNodes, res)}
-			}(m)
-		}
-
-		resp := isochroneResponse{}
-		for i := 0; i < 3; i++ {
-			r := <-ch
-			switch r.mode {
-			case Walk:
-				resp.Walk = r.poly
-			case Cycle:
-				resp.Cycle = r.poly
-			case Drive:
-				resp.Drive = r.poly
-			}
-		}
-		return c.JSON(resp)
+		return c.JSON(isochroneResponse{
+			Drive:   IsochronePolygon(g, iso.ReachedNodes, res),
+			OnGraph: iso.OriginFound,
+		})
 	}
 }
 
@@ -151,11 +159,11 @@ func handleQuintiles(g *Graph) fiber.Handler {
 func handleFairness(g *Graph) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
-		if err != nil || lat == 0 {
+		if err != nil || !validLat(lat) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat required")
 		}
 		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
-		if err != nil || lng == 0 {
+		if err != nil || !validLng(lng) {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
 		minutes, _ := strconv.ParseFloat(c.Query("minutes", "15"), 64)
@@ -170,35 +178,21 @@ func handleFairness(g *Graph) fiber.Handler {
 			fairness = 1
 		}
 
-		mode := parseMode(c.Query("mode", "walk"))
-
 		// Reach-engine fast path (drive): the label query + table expansion
 		// replaces the bounded full-graph sweep; the quintile weighting and
 		// polygons run unchanged on the same reached set.
-		if e := reachLive; e != nil && mode == Drive {
+		if e := reachEngine(); e != nil {
 			limitSecs := float32(minutes * 60)
 			maxLimit := limitSecs * (1 + float32(clampFairnessWeight(fairness)))
-			origin := nearestNodeForMode(g, lat, lng, Drive)
+			origin := nearestDriveNode(g, lat, lng)
 			if origin != noNode {
 				lbl := e.QueryLabelsFromNode(origin, maxLimit)
 				reached := e.ReachedNodes(lbl, maxLimit)
-				return c.JSON(fairnessFromReached(g, origin, reached, limitSecs, mode, float32(clampFairnessWeight(fairness))))
+				return c.JSON(fairnessFromReached(g, origin, reached, limitSecs, float32(clampFairnessWeight(fairness))))
 			}
 		}
-		result := FairnessIsochrone(g, lat, lng, float32(minutes*60), mode, float32(fairness))
+		result := FairnessIsochrone(g, lat, lng, float32(minutes*60), float32(fairness))
 		return c.JSON(result)
-	}
-}
-
-// parseMode maps a mode query value to a Mode, defaulting to Walk.
-func parseMode(s string) Mode {
-	switch s {
-	case "cycle":
-		return Cycle
-	case "drive":
-		return Drive
-	default:
-		return Walk
 	}
 }
 
@@ -214,42 +208,70 @@ func handleCatchment(g *Graph) fiber.Handler {
 			minutes = 30
 		}
 		secs := float32(minutes * 60)
-		mode := parseMode(c.Query("mode", "drive"))
 
 		if gidStr := c.Query("groupid"); gidStr != "" {
 			gid, err := strconv.ParseInt(gidStr, 10, 64)
 			if err != nil {
 				return fiber.NewError(fiber.StatusBadRequest, "invalid groupid")
 			}
-			seeds, ok := groupSeedNodes(g, gid, mode)
+			seeds, ok := groupSeedNodes(g, gid)
 			if !ok {
 				return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
 			}
-			iso := engineOrFlatMultiSource(g, seeds, secs, mode)
-			poly := IsochronePolygon(g, iso.ReachedNodes, NetworkResolution(g, iso.ReachedNodes, mode))
+			iso := engineOrFlatMultiSource(g, seeds, secs)
+			poly := IsochronePolygon(g, iso.ReachedNodes, NetworkResolution(g, iso.ReachedNodes))
 			// Drive-time bands (heatmap): how rapidly a post from each area would ripple in.
-			bands := catchmentBands(g, iso, secs, mode, 6)
+			bands := catchmentBands(g, iso, secs, 6)
 			return c.JSON(fiber.Map{"catchment": poly, "bands": bands, "seeds": len(seeds)})
 		}
 
 		// Point form (ad-hoc): catchment of a single location.
 		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
-		if err != nil || lat == 0 {
+		if err != nil || !validLat(lat) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat or groupid required")
 		}
 		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
-		if err != nil || lng == 0 {
+		if err != nil || !validLng(lng) {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
-		iso := engineOrFlatIsochrone(g, lat, lng, secs, mode)
-		res := NetworkResolution(g, iso.ReachedNodes, mode)
-		poly := IsochronePolygon(g, iso.ReachedNodes, res)
-		// Sandwich bounds for the reach containment queries (see bounds.go): derived on
-		// the same grid as the exact polygon, so the superset/subset guarantees hold by
-		// construction. Shipped only on the point form — it is what materialises
-		// rippling_reach tick polygons; the groupid form is a display view.
-		bounds := IsochroneBounds(g, iso.ReachedNodes, res)
-		resp := fiber.Map{"catchment": poly}
+		iso := engineOrFlatIsochrone(g, lat, lng, secs)
+
+		// coarse=1 asks for the region-scale form: same reach, drawn on a grid sized to
+		// a fixed cell budget rather than to the road network, so the cost stops growing
+		// with the area (see catchment_coarse.go). Ripple expansion asks for it because
+		// the three things it does with the answer - group intersection, sandwich bounds,
+		// origin-group union - cannot see the difference, and it walks every post up a
+		// schedule of ever-larger budgets. An older server ignores the parameter and
+		// returns the exact form, which is a slower right answer rather than a wrong one.
+		var (
+			poly   GeoJSONPolygon
+			bounds IsochroneBoundsResult
+		)
+		coarse := c.Query("coarse") == "1"
+		if coarse {
+			poly, bounds, _ = CoarseCatchment(g, iso.ReachedNodes)
+		} else {
+			res := NetworkResolution(g, iso.ReachedNodes)
+			poly = IsochronePolygon(g, iso.ReachedNodes, res)
+			// Sandwich bounds for the reach containment queries (see bounds.go): derived on
+			// the same grid as the exact polygon, so the superset/subset guarantees hold by
+			// construction. Shipped only on the point form — it is what materialises
+			// rippling_reach tick polygons; the groupid form is a display view.
+			bounds = IsochroneBounds(g, iso.ReachedNodes, res)
+		}
+
+		if !iso.OriginFound {
+			// This is the path that materialises reach for a rippling post, so an
+			// origin outside the extract means that post gets no reach at all - and
+			// says so nowhere. Tell the caller, and say it out loud here.
+			log.Printf("catchment: %.4f,%.4f is outside the loaded map - no road within snapping range, so this post gets no reach", lat, lng)
+		}
+		resp := fiber.Map{"catchment": poly, "onGraph": iso.OriginFound}
+		if coarse {
+			// Say so, so a caller can tell a coarse outline from an exact one without
+			// having to infer it from the vertex count.
+			resp["coarse"] = true
+		}
 		if bounds.Outer != nil {
 			resp["catchment_outer"] = bounds.Outer
 		}
@@ -284,19 +306,19 @@ func handleCatchment(g *Graph) fiber.Handler {
 func handleDriveTime(g *Graph) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
-		if err != nil || lat == 0 {
+		if err != nil || !validLat(lat) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat required")
 		}
 		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
-		if err != nil || lng == 0 {
+		if err != nil || !validLng(lng) {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
 		toLat, err := strconv.ParseFloat(c.Query("tolat"), 64)
-		if err != nil || toLat == 0 {
+		if err != nil || !validLat(toLat) {
 			return fiber.NewError(fiber.StatusBadRequest, "tolat required")
 		}
 		toLng, err := strconv.ParseFloat(c.Query("tolng"), 64)
-		if err != nil || toLng == 0 {
+		if err != nil || !validLng(toLng) {
 			return fiber.NewError(fiber.StatusBadRequest, "tolng required")
 		}
 
@@ -307,15 +329,14 @@ func handleDriveTime(g *Graph) fiber.Handler {
 		if minutes <= 0 || minutes > 120 {
 			minutes = 60
 		}
-		mode := parseMode(c.Query("mode", "drive"))
 
 		// Reach-engine fast path: exact answer in milliseconds, with road
 		// miles included, when the engine is live (drive mode only).
-		if resp, handled := engineDriveTime(lat, lng, toLat, toLng, minutes, mode); handled {
+		if resp, handled := engineDriveTime(lat, lng, toLat, toLng, minutes); handled {
 			return c.JSON(resp)
 		}
 
-		dest := nearestNodeForMode(g, toLat, toLng, mode)
+		dest := nearestDriveNode(g, toLat, toLng)
 		if dest == noNode {
 			// Off the road graph entirely (mid-sea coordinates, or a mode with no
 			// network here). Not reachable, and not an error.
@@ -324,7 +345,7 @@ func handleDriveTime(g *Graph) fiber.Handler {
 
 		targets := []NodeID{dest}
 		bbox := boundingBox(g, targets, lat, lng, 0.15)
-		costs, _ := costToTargets(g, lat, lng, targets, float32(minutes*60), mode, bbox)
+		costs, _ := costToTargets(g, lat, lng, targets, float32(minutes*60), bbox)
 
 		cost, reached := costs[dest]
 		if !reached {
@@ -351,13 +372,12 @@ func handleGroupExtent(g *Graph) fiber.Handler {
 		if minutes <= 0 || minutes > 480 {
 			minutes = 240
 		}
-		mode := parseMode(c.Query("mode", "drive"))
 
-		seeds, okS := groupSeedNodes(g, gid, mode)
+		seeds, okS := groupSeedNodes(g, gid)
 		if !okS {
 			return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
 		}
-		from, to, milesBetween, ok := groupDiameter(g, seeds, mode, float32(minutes*60))
+		from, to, milesBetween, ok := groupDiameter(g, seeds, float32(minutes*60))
 		if !ok {
 			return c.JSON(fiber.Map{"reachable": false})
 		}
@@ -386,11 +406,11 @@ func handleGroupExtent(g *Graph) fiber.Handler {
 func handleGroupProximity(g *Graph) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
-		if err != nil || lat == 0 {
+		if err != nil || !validLat(lat) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat required")
 		}
 		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
-		if err != nil || lng == 0 {
+		if err != nil || !validLng(lng) {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
 		gid, err := strconv.ParseInt(c.Query("groupid"), 10, 64)
@@ -401,18 +421,17 @@ func handleGroupProximity(g *Graph) fiber.Handler {
 		if minutes <= 0 || minutes > 240 {
 			minutes = 120
 		}
-		mode := parseMode(c.Query("mode", "drive"))
 
-		seeds, okS := groupSeedNodes(g, gid, mode)
+		seeds, okS := groupSeedNodes(g, gid)
 		if !okS {
 			return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
 		}
 		// Reach-engine fast path (drive): two label queries instead of two
 		// bounded full-graph sweeps — this call backs the proximity-notes
 		// cron, whose sweeps were a measured ~12 CPU-hours/day standing tax.
-		closest, furthest, ok, handled := engineGroupProximity(lat, lng, seeds, mode, float32(minutes*60))
+		closest, furthest, ok, handled := engineGroupProximity(lat, lng, seeds, float32(minutes*60))
 		if !handled {
-			closest, furthest, ok = groupProximity(g, lat, lng, seeds, mode, float32(minutes*60))
+			closest, furthest, ok = groupProximity(g, lat, lng, seeds, float32(minutes*60))
 		}
 		if !ok {
 			return c.JSON(fiber.Map{"reachable": false})
@@ -450,26 +469,15 @@ func handleNearbyFreeglers(g *Graph, spatialURL string) fiber.Handler {
 		if minutes <= 0 || minutes > 120 {
 			minutes = 15
 		}
-		modeStr := c.Query("mode", "walk")
-		var mode Mode
-		switch modeStr {
-		case "cycle":
-			mode = Cycle
-		case "drive":
-			mode = Drive
-		default:
-			mode = Walk
-		}
-
 		empty := fiber.Map{"freeglers": []interface{}{}}
 
 		// Compute the reachable polygon for the given location.
 		secs := float32(minutes * 60)
-		iso := Isochrone(g, latF, lngF, secs, mode)
+		iso := Isochrone(g, latF, lngF, secs)
 		if len(iso.ReachedNodes) == 0 {
 			return c.JSON(empty)
 		}
-		res := NetworkResolution(g, iso.ReachedNodes, mode)
+		res := NetworkResolution(g, iso.ReachedNodes)
 		poly := IsochronePolygon(g, iso.ReachedNodes, res)
 		ring := poly.Geometry.Coordinates
 		if len(ring) == 0 || len(ring[0]) < 4 {
@@ -577,6 +585,15 @@ func handleHealth(g *Graph) fiber.Handler {
 		if g.Deprivation != nil {
 			status["deprivation"] = "loaded"
 		}
+		// The reach engine's partition, as a string (JSON numbers lose
+		// precision above 2^53). The deploy gate compares it with
+		// config.reach_partition_fp - the pairing record for the stored
+		// labels - and stops a rollout whose artifacts the labels do not
+		// match. Absent = no engine loaded (reach endpoints answer 503).
+		if e := reachEngine(); e != nil {
+			status["reach_partition_fp"] = strconv.FormatUint(e.partFP, 10)
+			status["reach"] = "loaded"
+		}
 		return c.JSON(status)
 	}
 }
@@ -645,6 +662,7 @@ func startServer(g *Graph) {
 	spatialURL := getenv("SPATIAL_KNN_URL", "http://localhost:8194")
 
 	initGroupsDB()
+	startDebugListener()
 
 	// Internal port: no authentication — for trusted backend services.
 	internalAddr := ":" + getenv("SPATIAL_INTERNAL_PORT", "8194")

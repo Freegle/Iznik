@@ -5,6 +5,7 @@ namespace Tests\Unit\Services\Ripple;
 use App\Services\Ripple\ReachService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
 class ReachServiceTest extends TestCase
@@ -319,6 +320,31 @@ class ReachServiceTest extends TestCase
         $this->assertStringContainsString('-0.19 51.41', $geom['inner']);
     }
 
+    public function test_catchment_geometry_asks_for_the_coarse_form_only_when_told(): void
+    {
+        // The region-scale form is what stops a late tick costing seconds and megabytes
+        // on a shared compute slot, but it is opt-in per call: the ModTools reach map and
+        // the explorer's catchment tab want the real outline.
+        Http::fake(['*catchment*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+        ], 200)]);
+
+        $this->service()->catchmentGeometry(51.5, -0.1, 12.5, true);
+        Http::assertSent(fn ($request) => ($request->data()['coarse'] ?? null) === '1');
+    }
+
+    public function test_catchment_geometry_omits_the_coarse_parameter_by_default(): void
+    {
+        // Omitted rather than sent as 0, so the request an old routing server sees is
+        // byte-for-byte the one it saw before this existed.
+        Http::fake(['*catchment*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+        ], 200)]);
+
+        $this->service()->catchmentGeometry(51.5, -0.1, 12.5);
+        Http::assertSent(fn ($request) => !array_key_exists('coarse', $request->data()));
+    }
+
     public function test_catchment_geometry_tolerates_absent_bounds(): void
     {
         // Old routing servers (or an eroded-to-nothing inner) simply omit the bounds:
@@ -333,6 +359,58 @@ class ReachServiceTest extends TestCase
         $this->assertStringStartsWith('POLYGON((', $geom['wkt']);
         $this->assertNull($geom['outer']);
         $this->assertNull($geom['inner']);
+    }
+
+    public function test_catchment_geometry_says_so_when_the_origin_is_off_the_map(): void
+    {
+        Log::spy();
+        Http::fake(['*catchment*' => Http::response(['catchment' => null, 'onGraph' => false], 200)]);
+
+        $this->assertNull($this->service()->catchmentGeometry(54.1509, -4.4814, 30));
+
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message, $context = []) => str_contains((string) $message, 'outside the routing map'));
+    }
+
+    public function test_catchment_geometry_reports_an_empty_reach_on_the_map_differently(): void
+    {
+        Log::spy();
+        Http::fake(['*catchment*' => Http::response(['catchment' => null, 'onGraph' => true], 200)]);
+
+        $this->assertNull($this->service()->catchmentGeometry(51.5, -0.1, 30));
+
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message, $context = []) => str_contains((string) $message, 'came back empty'));
+    }
+
+    public function test_catchment_batch_says_so_when_an_origin_is_off_the_map(): void
+    {
+        Log::spy();
+        Http::fake(['*catchment*' => Http::response(['catchment' => null, 'onGraph' => false], 200)]);
+
+        $out = $this->service()->catchmentGeometriesBatch([['lat' => 54.1509, 'lng' => -4.4814, 'minutes' => 30]]);
+
+        $this->assertSame([null], $out);
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message, $context = []) => str_contains((string) $message, 'outside the routing map'));
+    }
+
+    public function test_catchment_batch_stays_quiet_for_an_empty_reach_on_the_map(): void
+    {
+        Log::spy();
+        Http::fake(['*catchment*' => Http::response(['catchment' => null, 'onGraph' => true], 200)]);
+
+        $out = $this->service()->catchmentGeometriesBatch([['lat' => 51.5, 'lng' => -0.1, 'minutes' => 30]]);
+
+        $this->assertSame([null], $out);
+        Log::shouldNotHaveReceived('warning');
+    }
+
+    public function test_catchment_geometry_does_not_guess_when_the_server_omits_ongraph(): void
+    {
+        Log::spy();
+        Http::fake(['*catchment*' => Http::response(['catchment' => null], 200)]);
+
+        $this->assertNull($this->service()->catchmentGeometry(51.5, -0.1, 30));
+
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message, $context = []) => str_contains((string) $message, 'came back empty'));
     }
 
     public function test_schedule_omits_both_overflow_lanes_by_default(): void
@@ -639,6 +717,60 @@ class ReachServiceTest extends TestCase
         $this->assertSame([7], $eval['discovered']);
     }
 
+
+
+    /**
+     * An outage has to be visible from outside the site.
+     *
+     * Every gate in front of these verdicts now fails open on purpose - a
+     * reply goes through, no "hasn't reached you yet" notice is shown - so
+     * nothing a member sees says anything is wrong. On 2026-09-02 the engine
+     * was down sixteen hours and the way we found out was a member asking why
+     * a post three miles away had not reached her.
+     */
+    public function test_an_unanswerable_reach_call_is_reported(): void
+    {
+        Log::spy();
+        Http::fake(['*reach-eval*' => Http::response(null, 503)]);
+
+        app(ReachService::class)->labelVerdicts(51.5, -0.1, [1]);
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($msg) => str_contains((string) $msg, 'reach evaluation unavailable'))
+            ->once();
+    }
+
+    /**
+     * One report a minute per process, no matter how many calls fail. These
+     * calls sit on the feed's hot path, so an outage would otherwise post
+     * thousands of identical alerts a minute and bury everything else.
+     */
+    public function test_repeated_failures_report_once_a_minute(): void
+    {
+        Log::spy();
+        Http::fake(['*reach-eval*' => Http::response(null, 503)]);
+
+        $svc = app(ReachService::class);
+        $svc->labelVerdicts(51.5, -0.1, [1]);
+        $svc->labelVerdicts(51.5, -0.1, [2]);
+        $svc->labelVerdicts(51.5, -0.1, [3]);
+
+        Http::assertSentCount(3);
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($msg) => str_contains((string) $msg, 'reach evaluation unavailable'))
+            ->once();
+    }
+
+    /** A working routing server reports nothing. */
+    public function test_a_successful_reach_call_reports_nothing(): void
+    {
+        Log::spy();
+        Http::fake(['*reach-eval*' => Http::response(['results' => [['msgid' => 1, 'verdict' => 'in']]])]);
+
+        app(ReachService::class)->labelVerdicts(51.5, -0.1, [1]);
+
+        Log::shouldNotHaveReceived('warning');
+    }
 
     public function test_label_eval_breaker_stops_calls_after_a_server_fault(): void
     {

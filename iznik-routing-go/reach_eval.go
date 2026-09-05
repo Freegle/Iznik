@@ -12,6 +12,8 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -61,6 +63,19 @@ const (
 	evalMaxItems  = 1000
 )
 
+// discoverMaxItems bounds how many leaf candidates one discover evaluates. It
+// is a var so a test can shrink it. It used to share evalMaxItems (1,000), which
+// is sized for a caller's candidate chunk, not for a region: once the cell grids
+// retired (2026-08-28) discovery became the ONLY way a post reaches the nearby
+// feed, and a region inside the 45-minute maximum reach of a city holds far more
+// live posts than that - 682 of the UK's ~23,700 regions exceed 1,000, the
+// densest ~5,100. The candidates were then trimmed in id order, so the thousand
+// kept were the OLDEST and members in those regions saw no post from the last
+// week at all (Bath, ChitChat 2026-08-31). Candidates are now evaluated newest
+// first and the valve sits at twice the densest region measured, so reaching it
+// drops the oldest posts, never this week's - and it logs, so it is never silent.
+var discoverMaxItems = 10000
+
 // evalRow is one candidate's stored state, however loaded.
 type evalRow struct {
 	msgid      uint64
@@ -75,31 +90,6 @@ type evalRow struct {
 	unionSecs  float32
 }
 
-// Schema guards: the columns land by migration after this code deploys, so
-// the loaders must work both ways (the same deploy-before-migrate posture as
-// newsfeed.leaf). Checked once per process.
-var (
-	schemaOnce      sync.Once
-	hasUnionSecsCol bool
-	hasLeavesFPCol  bool
-)
-
-func checkEvalSchema() {
-	schemaOnce.Do(func() {
-		db := groupsDB
-		if db == nil {
-			return
-		}
-		var n int
-		if err := db.QueryRow("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'origin_union_secs'").Scan(&n); err == nil {
-			hasUnionSecsCol = n > 0
-		}
-		if err := db.QueryRow("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'rippling_reach_leaves' AND column_name = 'fp'").Scan(&n); err == nil {
-			hasLeavesFPCol = n > 0
-		}
-	})
-}
-
 // evalRowLoader fetches candidate rows; a var so tests can inject rows
 // without a database. The default reads the same MySQL the spatial loaders
 // use; nil db means "unavailable".
@@ -108,19 +98,22 @@ var evalRowLoader = func(ids []uint64) ([]evalRow, error) {
 	if db == nil {
 		return nil, errNoEvalDB
 	}
-	checkEvalSchema()
 	ph := make([]string, len(ids))
-	args := make([]interface{}, len(ids))
+	args := make([]interface{}, 0, len(ids)+1)
+	// A label staged for the NEXT partition (reach_labels_next, stamped with
+	// reach_labels_next_fp) is used only when that stamp is THIS engine's
+	// partition; otherwise the live column decides, exactly as before. That
+	// is what makes a partition cutover atomic: the moment a node boots the
+	// new artifacts, every staged post switches with it, and nothing was
+	// mutated to get there. An engine with no fingerprint (nil) never matches.
+	args = append(args, liveReachPartFP())
 	for i, id := range ids {
 		ph[i] = "?"
-		args[i] = id
-	}
-	unionSel := "NULL"
-	if hasUnionSecsCol {
-		unionSel = "rr.origin_union_secs"
+		args = append(args, id)
 	}
 	rows, err := db.Query(
-		"SELECT rr.msgid, rr.reach_labels, rr.tick, rr.max_drive_min, rr.schedule, rr.rejected_groups, rr.status, "+unionSel+", "+
+		"SELECT rr.msgid, COALESCE(IF(rr.reach_labels_next_fp = ?, rr.reach_labels_next, NULL), rr.reach_labels), "+
+			"rr.tick, rr.max_drive_min, rr.schedule, rr.rejected_groups, rr.status, rr.origin_union_secs, "+
 			"(SELECT mg.groupid FROM messages_groups mg WHERE mg.msgid = rr.msgid AND mg.deleted = 0 ORDER BY mg.arrival ASC LIMIT 1) "+
 			"FROM rippling_reach rr WHERE rr.msgid IN ("+
 			strings.Join(ph, ",")+")", args...)
@@ -186,7 +179,7 @@ type reachEvalResult struct {
 // handleReachEval handles POST /v1/reach-eval.
 func handleReachEval() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		e := reachLive
+		e := reachEngine()
 		if e == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
 		}
@@ -208,10 +201,10 @@ func handleReachEval() fiber.Handler {
 		// the callers keep their cell-grid answers - the same graceful shape
 		// blur, leaf and drive-metrics use. A 4xx here would trip the
 		// callers' shared routing breaker on one member's ordinary location.
-		v := nearestNodeForMode(e.G, req.Lat, req.Lng, Drive)
+		v := nearestDriveNode(e.G, req.Lat, req.Lng)
 		vPrev := noNode
-		if reachPrev != nil {
-			vPrev = nearestNodeForMode(reachPrev.G, req.Lat, req.Lng, Drive)
+		if prev := reachPrevEngine(); prev != nil {
+			vPrev = nearestDriveNode(prev.G, req.Lat, req.Lng)
 		}
 		if v == noNode {
 			results := make([]reachEvalResult, 0, len(req.Msgids))
@@ -330,13 +323,23 @@ func handleReachEval() fiber.Handler {
 		var discovered []reachEvalResult
 		if req.Discover {
 			cands := leafCandidates(v, vPrev, e)
-			var fresh []uint64
+			// Newest first: msgids are allotted in posting order, so if the
+			// valve below trims anything it is the oldest posts that go, never
+			// the ones that arrived this week (see discoverMaxItems). A point
+			// straddling two regions can offer the same post twice; evaluate it
+			// once.
+			sort.Slice(cands, func(i, j int) bool { return cands[i] > cands[j] })
+			fresh := make([]uint64, 0, len(cands))
+			seen := make(map[uint64]bool, len(cands))
 			for _, id := range cands {
-				if !asked[id] {
-					fresh = append(fresh, id)
-					if len(fresh) == evalMaxItems {
-						break
-					}
+				if asked[id] || seen[id] {
+					continue
+				}
+				seen[id] = true
+				fresh = append(fresh, id)
+				if len(fresh) == discoverMaxItems {
+					log.Printf("reach-eval discover: region with %d candidates trimmed to the newest %d", len(cands), discoverMaxItems)
+					break
 				}
 			}
 			if len(fresh) > 0 {
@@ -553,16 +556,15 @@ var leafRowLoader = func(leaf int32) []uint64 {
 	if db == nil {
 		return nil
 	}
-	checkEvalSchema()
 	q := "SELECT msgid FROM rippling_reach_leaves WHERE leaf = ?"
 	args := []interface{}{leaf}
-	if hasLeavesFPCol && reachLive != nil {
-		if reachPrev != nil {
+	if live := reachEngine(); live != nil {
+		if prev := reachPrevEngine(); prev != nil {
 			q += " AND (fp IS NULL OR fp IN (?, ?))"
-			args = append(args, reachLive.partFP, reachPrev.partFP)
+			args = append(args, live.partFP, prev.partFP)
 		} else {
 			q += " AND (fp IS NULL OR fp = ?)"
-			args = append(args, reachLive.partFP)
+			args = append(args, live.partFP)
 		}
 	}
 	var ids []uint64
@@ -590,8 +592,8 @@ func leafCandidates(v, vPrev NodeID, e *ReachEngine) []uint64 {
 		if j == 0 {
 			return
 		}
-		if oi := eng.Ov.Idx[j]; oi != 0 {
-			if l := eng.Part.LeafOf[oi]; l >= 0 {
+		if oi := eng.Ov.IdxOf(j); oi != 0 {
+			if l := eng.Part.LeafAt(oi); l >= 0 {
 				for _, x := range leaves {
 					if x == l {
 						return
@@ -605,15 +607,15 @@ func leafCandidates(v, vPrev NodeID, e *ReachEngine) []uint64 {
 		if eng == nil || node == noNode {
 			return
 		}
-		if eng.Ov.Idx[node] != 0 {
+		if eng.Ov.IdxOf(node) != 0 {
 			addOn(eng, node)
 		} else {
-			addOn(eng, eng.Ov.ChainEndA[node])
+			addOn(eng, eng.Ov.ChainA(node))
 			addOn(eng, eng.Ov.ChainEndB[node])
 		}
 	}
 	forEngine(e, v)
-	forEngine(reachPrev, vPrev)
+	forEngine(reachPrevEngine(), vPrev)
 
 	now := time.Now()
 	var out []uint64

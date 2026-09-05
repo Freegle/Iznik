@@ -4,7 +4,6 @@ namespace App\Services\Ripple;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 
 /**
  * Sandwich bounds for rippling_reach.polygon, stored as same-row columns
@@ -48,9 +47,6 @@ class ReachBoundsService
      */
     public const INNER_MIN_AREA_RATIO = 0.5;
 
-    /** Cached column-existence check so a pre-migration deploy degrades to a no-op. */
-    private static ?bool $columnsExist = null;
-
     /**
      * SQL expression deriving the outer bound from a polygon expression, for embedding
      * in the same statement that writes the polygon.
@@ -64,35 +60,6 @@ class ReachBoundsService
     public static function innerExpr(string $polyExpr): string
     {
         return "ST_Buffer(ST_Simplify($polyExpr, " . self::TOLERANCE . '), -' . self::TOLERANCE . ')';
-    }
-
-    /** Deploy-tolerance: does the retired grid column still exist? Once. */
-    private static ?bool $gridColumn = null;
-
-    private function gridColumnReady(): bool
-    {
-        if (self::$gridColumn === null) {
-            try {
-                self::$gridColumn = Schema::hasColumn('rippling_reach', 'polygon_cells');
-            } catch (\Throwable) {
-                self::$gridColumn = false;
-            }
-        }
-
-        return self::$gridColumn;
-    }
-
-    public function ready(): bool
-    {
-        if (self::$columnsExist === null) {
-            try {
-                self::$columnsExist = Schema::hasColumn('rippling_reach', 'outer_bound');
-            } catch (\Throwable) {
-                self::$columnsExist = false;
-            }
-        }
-
-        return self::$columnsExist;
     }
 
     /**
@@ -110,9 +77,6 @@ class ReachBoundsService
      */
     public function sync(int $msgid, ?string $outerWkt = null, ?string $innerWkt = null, bool $retired = false): void
     {
-        if (!$this->ready()) {
-            return;
-        }
         if ($outerWkt === null) {
             $this->syncFromPolygon($msgid);
 
@@ -187,9 +151,6 @@ class ReachBoundsService
      */
     private function reachSource(int $msgid): ?array
     {
-        if (!$this->gridColumnReady()) {
-            return null;
-        }
         $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
         if ($cells === null || $cells === '') {
             return null;
@@ -210,10 +171,6 @@ class ReachBoundsService
      */
     public function ensureUsefulInner(int $msgid, float $minRatio = self::INNER_MIN_AREA_RATIO): string
     {
-        if (!$this->ready()) {
-            return 'skipped';
-        }
-
         // The source is the stored grid traced back to a scratch WKT param.
         $src = $this->reachSource($msgid);
         if ($src === null) {
@@ -280,10 +237,6 @@ class ReachBoundsService
      */
     public function syncFromPolygon(int $msgid): void
     {
-        if (!$this->ready()) {
-            return;
-        }
-
         // The exact geometry may live in rippling_reach_geom (content-addressed
         // dedup); post-drop the source is the traced grid as a scratch param.
         $src = $this->reachSource($msgid);
@@ -338,10 +291,6 @@ class ReachBoundsService
      */
     public function degradeForCompleted(int $msgid): void
     {
-        if (!$this->ready()) {
-            return;
-        }
-
         try {
             DB::update(
                 'UPDATE rippling_reach
@@ -431,9 +380,7 @@ class ReachBoundsService
             // form of ST_Envelope, needing neither a trace nor the spatial
             // server. No cells at all leaves the previous outer (safe-loose)
             // and clears the inner.
-            $cells = $this->gridColumnReady()
-                ? DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells')
-                : null;
+            $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
             $bbox = $cells === null || $cells === '' ? null : app(CellSetService::class)->boundsWkt($cells);
             if ($bbox === null) {
                 $this->nullInner($msgid);

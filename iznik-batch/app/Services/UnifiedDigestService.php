@@ -15,7 +15,6 @@ use App\Services\Ripple\RingIndex;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -54,9 +53,6 @@ class UnifiedDigestService
 
     /** Per-run cache of post reach radius in metres, keyed by msgid. */
     private array $reachRadiusCache = [];
-
-    /** Memoized once per run: whether the optional messages_pinned table exists. */
-    private ?bool $messagesPinnedTableExists = null;
 
     /**
      * Digest mode constants.
@@ -358,19 +354,34 @@ class UnifiedDigestService
             $recipientLatLng[$uid] = $this->resolveUserLatLng($recipientUser);
         }
 
-        // Who has already had an immediate email about each of these posts, from an earlier
-        // group's pass in this run or a previous one. One query for the whole batch rather
-        // than a lookup per (message, recipient).
+        // Who has already had an immediate email about each of these ITEMS, from an earlier
+        // group's pass in this run or a previous one. Keyed on the item rather than on the
+        // message, so a second copy of one thing - a hand cross-post, an unmerged
+        // TrashNothing copy, a repost - counts as something the member has already been told
+        // about. One query for the whole batch rather than a lookup per (message, recipient).
         $alreadyMailed = [];
+        $itemOf = [];
         $batchMsgids = $messages->pluck('mg_msgid')->map(fn ($v) => (int) $v)->all();
         if (!empty($batchMsgids)) {
+            // Every copy of a batch item maps to that item, so a ledger row written against
+            // any copy - including one that is not in this batch at all - is found.
+            $siblings = $this->itemSiblingMsgids($batchMsgids);
+            $ledgerItemOf = [];
+            foreach ($batchMsgids as $batchMsgid) {
+                $copies = $siblings[$batchMsgid] ?? [$batchMsgid];
+                $itemOf[$batchMsgid] = min($copies);
+                foreach ($copies as $copy) {
+                    $ledgerItemOf[$copy] = $itemOf[$batchMsgid];
+                }
+            }
             foreach (
                 DB::table('rippling_reach_notified')
-                    ->whereIn('msgid', $batchMsgids)
+                    ->whereIn('msgid', array_keys($ledgerItemOf))
                     ->whereIn('userid', $memberIds)
                     ->get(['msgid', 'userid']) as $row
             ) {
-                $alreadyMailed[(int) $row->msgid][(int) $row->userid] = true;
+                $item = $ledgerItemOf[(int) $row->msgid] ?? (int) $row->msgid;
+                $alreadyMailed[$item][(int) $row->userid] = true;
             }
         }
 
@@ -408,9 +419,12 @@ class UnifiedDigestService
                 if ($this->suppressions()->shouldSkip($user->email_preferred, (int) $uid, 'digest_immediate')) {
                     continue;
                 }
-                // Already mailed about this post from another of their groups. The item does
-                // not become two items by being posted to two groups the member is in.
-                if (isset($alreadyMailed[(int) $message->mg_msgid][(int) $uid])) {
+                // Already mailed about this item - from another of their groups, from an
+                // earlier run, or from another copy of the same thing. A thing does not become
+                // two things by being posted to two groups the member is in, nor by being
+                // posted twice.
+                $item = $itemOf[(int) $message->mg_msgid] ?? (int) $message->mg_msgid;
+                if (isset($alreadyMailed[$item][(int) $uid])) {
                     continue;
                 }
                 // Distance-preference filter (settings.browseMaxDistance) — skip
@@ -506,7 +520,7 @@ class UnifiedDigestService
                             ]);
                         }
 
-                        $alreadyMailed[(int) $message->mg_msgid][(int) $uid] = true;
+                        $alreadyMailed[$item][(int) $uid] = true;
                     }
                 }
                 $emailsSent++;
@@ -670,15 +684,6 @@ class UnifiedDigestService
      * haven't joined is not appropriate; non-members within reach discover the post via browse and
      * the daily digest. Do not "fix" the JOIN to include non-members.
      */
-    /** Memoized presence of rippling_reach.overflow_bounds. Null until first checked. */
-    private static ?bool $overflowColumn = null;
-
-    /** Test-only: forget the memoized overflow-column check. */
-    public static function forgetOverflowColumn(): void
-    {
-        self::$overflowColumn = null;
-    }
-
     /**
      * The ring's BOUNDING BOX as a widening of who this post's mail enumerates.
      *
@@ -711,10 +716,6 @@ class UnifiedDigestService
             // overflow_bounds lane keys by design and carries the bbox scalar
             // too (rows written before the drop lack it, and fall to the
             // widen-to-everyone branch, which is safe).
-            self::$overflowColumn ??= Schema::hasColumn('rippling_reach', 'overflow_cells');
-            if (! self::$overflowColumn) {
-                return $none;
-            }
             $raw = DB::table('rippling_reach')->where('msgid', $msgid)->value('overflow_cells');
             $bounds = is_string($raw) ? json_decode($raw, true) : null;
             if (! is_array($bounds)) {
@@ -927,7 +928,9 @@ class UnifiedDigestService
             // admitted, so that flag rides along per candidate.
             $reachSvc = app(\App\Services\Ripple\ReachService::class);
             $reachRow = DB::table('rippling_reach')->where('msgid', $msgid)->first();
-            $probeLabels = $reachRow->reach_labels ?? null;
+            // Staged-next label when its stamp is the live partition, else
+            // the live one - the routing server can only decode its own.
+            $probeLabels = \App\Services\Ripple\ReachService::pickLabels($reachRow);
             $currentSecs = $reachRow !== null
                 ? $reachSvc->currentBudgetSecs((int) ($reachRow->tick ?? 0), (float) ($reachRow->max_drive_min ?? 0), $reachRow->schedule ?? null)
                 : 0.0;
@@ -951,6 +954,13 @@ class UnifiedDigestService
                 . ", JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band"
                 . $originAreaFlag;
             $primaryParams = $unionActive ? [$srid, $srid] : [$srid];
+
+            // Every msgid that is the same item as this one. A member who already had an
+            // immediate mail about any copy has had this post, so the ledger is read across the
+            // whole set - otherwise a hand cross-post or an unmerged TrashNothing copy mails
+            // them again as its own reach grows over them.
+            $itemCopies = $this->itemSiblingMsgids([$msgid])[$msgid] ?? [$msgid];
+            $itemCopiesSql = implode(',', array_fill(0, count($itemCopies), '?'));
 
             // status <> 'held': a frozen reach belongs to a post whose origin copy has been
             // pulled back for moderation. Browse, the badge and search hide it, so mailing it
@@ -981,12 +991,14 @@ class UnifiedDigestService
                    AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)
                    AND ($containSql$overflowSql)
                    AND NOT EXISTS (
-                         SELECT 1 FROM rippling_reach_notified n WHERE n.msgid = mg.msgid AND n.userid = u.id
+                         SELECT 1 FROM rippling_reach_notified n
+                         WHERE n.msgid IN ($itemCopiesSql) AND n.userid = u.id
                        )",
                 array_merge(
                     $primaryParams,
                     [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90), $srid],
-                    $overflowParams
+                    $overflowParams,
+                    $itemCopies
                 )
             ));
 
@@ -1171,9 +1183,22 @@ class UnifiedDigestService
         $sponsorsCache = !empty($postedToGroups) ? $this->getSponsorsForGroup((int) $postedToGroups[0]) : null;
 
         $users = User::whereIn('id', $recipientIds)->with(['emails', 'memberships'])->get();
+
+        // Anyone who has already had an immediate mail about this ITEM - this message, or
+        // another copy of the same thing - is done. The reach query filters those members out
+        // before they reach here; first-reply scouting chooses its own recipients and does not,
+        // so without this a scouted member can be mailed a copy of something they have had.
+        $alreadyHadItem = DB::table('rippling_reach_notified')
+            ->whereIn('msgid', $this->itemSiblingMsgids([$msgid])[$msgid] ?? [$msgid])
+            ->whereIn('userid', $recipientIds)
+            ->pluck('userid')->map(fn ($v) => (int) $v)->flip()->all();
+
         $mailed = [];
         foreach ($users as $user) {
             if (!$user->email_preferred) {
+                continue;
+            }
+            if (isset($alreadyHadItem[(int) $user->id])) {
                 continue;
             }
             // Provider is deferring us. Skipping before spool deliberately
@@ -1697,12 +1722,13 @@ class UnifiedDigestService
     }
 
     /**
-     * Send a digest to a specific user.
+     * Send the daily roll-up to a specific user: every new post since their previous send,
+     * bundled into one email.
      *
-     * Immediate mode sends ONE email per post (V1 parity, and matches what
-     * "immediate" means to the recipient — each new post arrives as its own
-     * notification). Daily mode bundles every new post since the previous
-     * send into a single rolled-up digest.
+     * DAILY ONLY. sendDigests() routes immediate to sendImmediateDigests (the per-group cursor
+     * walk) and reach to sendReachDigests, and each of those mails one post at a time itself.
+     * $mode is still carried because the tracker row and the mailable are keyed on it, not
+     * because this method branches on it.
      *
      * @param User $user
      * @param string $mode
@@ -1710,6 +1736,12 @@ class UnifiedDigestService
      */
     protected function sendDigestToUser(User $user, string $mode, bool $dryRun = false): array
     {
+        if ($mode !== self::MODE_DAILY) {
+            // A wiring mistake, not a mode to handle. Loud, because the quiet alternative is
+            // mailing people the wrong shape of digest.
+            throw new \InvalidArgumentException("sendDigestToUser is daily-only, got '{$mode}'");
+        }
+
         $email = $user->email_preferred;
 
         if (!$email) {
@@ -1739,9 +1771,7 @@ class UnifiedDigestService
         // per-member reach-gate, so they recur every day until the goods are gone. Fetched and
         // deduplicated separately, and never fed to the cursor (updateDigestTracker uses only
         // $allPosts), so a pinned post never suppresses itself on the next run.
-        $pinnedCards = $mode === self::MODE_DAILY
-            ? $this->deduplicatePosts($this->getPinnedOpenPostsForUser($user))
-            : collect();
+        $pinnedCards = $this->deduplicatePosts($this->getPinnedOpenPostsForUser($user));
 
         if ($allPosts->isEmpty() && $pinnedCards->isEmpty()) {
             return ['status' => 'no_posts', 'count' => 0];
@@ -1754,24 +1784,21 @@ class UnifiedDigestService
 
         // Order the live posts by the rippling digest-preview score (nearer +
         // newer + less-seen float up), matching the /rippling "Digest preview".
-        // Daily only — immediate mode stays chronological (single-group, real-time).
         // Dedup runs after, so the kept cross-post representative is the top-scoring one.
-        if ($mode === self::MODE_DAILY) {
-            $latlng = $this->resolveUserLatLng($user);
-            $posts = $this->scoreAndSortAvailable($posts, $latlng);
-            // Distance-preference filter (settings.browseMaxDistance) — a pure narrowing
-            // step layered after scoring/sorting and before dedup, so the kept
-            // cross-post representative (picked in deduplicatePosts below) is both the
-            // top-scoring AND the in-range one. Deliberately independent of
-            // scoreAndSortAvailable's internal $post->_dist (which is only set when that
-            // method doesn't early-return) — see DistancePreferenceFilter and the design
-            // doc's "Insertion points" section.
-            $posts = $this->filterByDistancePreference($posts, $user, $latlng);
-        }
+        $latlng = $this->resolveUserLatLng($user);
+        $posts = $this->scoreAndSortAvailable($posts, $latlng);
+        // Distance-preference filter (settings.browseMaxDistance) — a pure narrowing
+        // step layered after scoring/sorting and before dedup, so the kept
+        // cross-post representative (picked in deduplicatePosts below) is both the
+        // top-scoring AND the in-range one. Deliberately independent of
+        // scoreAndSortAvailable's internal $post->_dist (which is only set when that
+        // method doesn't early-return) — see DistancePreferenceFilter and the design
+        // doc's "Insertion points" section.
+        $posts = $this->filterByDistancePreference($posts, $user, $latlng);
 
-        $completedPosts = $mode === self::MODE_DAILY
-            ? $this->deduplicateCompletedPosts($allPosts->filter(fn ($p) => $p->has_success)->values())
-            : collect();
+        $completedPosts = $this->deduplicateCompletedPosts(
+            $allPosts->filter(fn ($p) => $p->has_success)->values()
+        );
 
         if ($posts->isEmpty() && $pinnedCards->isEmpty()) {
             // No live posts to send. Still advance the cursor past everything
@@ -1786,6 +1813,15 @@ class UnifiedDigestService
         // Deduplicate cross-posted items.
         $deduplicatedPosts = $this->deduplicatePosts($posts);
 
+        // ...and drop the ones whose item went out in an earlier digest. deduplicatePosts
+        // collapses the copies that land in ONE digest; this is the same decision across
+        // digests, which is how one item reached members on four days running (Discourse 9808).
+        $deduplicatedPosts = $this->dropCardsAlreadyCovered(
+            $deduplicatedPosts,
+            $digestTracker->lastmsgdate,
+            $this->digestGroupIdsForUser($user, $mode)
+        );
+
         if ($deduplicatedPosts->isEmpty() && $pinnedCards->isEmpty()) {
             // Nothing to send, but still advance the tracker past these posts
             // so the next tick doesn't re-fetch and re-filter the same set.
@@ -1795,50 +1831,10 @@ class UnifiedDigestService
             return ['status' => 'no_posts', 'count' => 0];
         }
 
-        // Sponsors. The combined daily digest spans all the user's groups, so
-        // the cross-group union is right; the immediate path scopes per-post to
-        // that post's group below (V1 parity — one group's email, one group's
-        // sponsors).
-        $sponsors = $mode === self::MODE_IMMEDIATE
-            ? collect()
-            : $this->getSponsorsForUser($user);
-
-        if ($mode === self::MODE_IMMEDIATE) {
-            // One email per post. Advance the tracker after each send so a
-            // mid-loop crash doesn't cause us to re-mail already-sent posts
-            // on the next cron tick.
-            $sent = 0;
-            foreach ($deduplicatedPosts as $deduped) {
-                if (!$dryRun) {
-                    // Each immediate email is about one post; carry that post's
-                    // sponsors. For a cross-post, prefer a group the recipient is a
-                    // member of (matching the digest header/byline group) rather
-                    // than an arbitrary first group.
-                    $postGroupId = (int) (UnifiedDigest::selectPreferredGroup(
-                        $deduped['postedToGroups'] ?? [],
-                        $user->memberships->pluck('groupid')->all()
-                    ) ?? 0);
-                    $postSponsors = $this->getSponsorsForGroup($postGroupId);
-                    app(\App\Services\EmailSpoolerService::class)->spool(
-                        new UnifiedDigest($user, collect([$deduped]), $mode, $postSponsors),
-                        emailType: 'digest_immediate',
-                    );
-                    $this->advanceImmediateTracker($digestTracker, $deduped['message']);
-                }
-                $sent++;
-            }
-
-            // Mop up the trailing edge of the raw batch: cross-posted items
-            // merged into a single logical post may have raw rows with
-            // arrivals later than the representative we picked above. Ensure
-            // the tracker is past every raw row in this batch so the next
-            // tick doesn't refetch and treat them as fresh posts.
-            if (!$dryRun) {
-                $this->updateDigestTracker($digestTracker, $posts);
-            }
-
-            return ['status' => 'sent', 'count' => $sent];
-        }
+        // Sponsors. The roll-up spans all the user's groups, so the cross-group union is
+        // right. (The immediate paths scope sponsors per-post to that post's group instead -
+        // V1 parity, one group's email, one group's sponsors.)
+        $sponsors = $this->getSponsorsForUser($user);
 
         // Put the pinned posts (paid bulk-offer clearances) at the very TOP of the daily
         // digest, dropping any that also appear in the normal window set so they are not
@@ -1870,32 +1866,10 @@ class UnifiedDigestService
     }
 
     /**
-     * Move the tracker past a single immediate-mode post so a mid-loop
-     * crash doesn't cause re-mailing of already-sent posts.
-     */
-    protected function advanceImmediateTracker(UserDigest $tracker, Message $post): void
-    {
-        $tracker->update([
-            'lastmsgid' => $post->id,
-            'lastmsgdate' => $post->arrival,
-            'lastsent' => now(),
-        ]);
-    }
-
-    /**
      * Get or create a digest tracking record for a user.
      *
-     * Immediate mode: bootstrap fresh trackers with lastmsgdate=NOW so the
-     * user only receives notifications for posts arriving AFTER we start
-     * tracking them. The previous behaviour (null → "last 24h" window in
-     * getPostsForUser) caused a duplicate-flood the first time we processed
-     * each user: V1's bulk3 cron had been sending them immediate emails up
-     * to the moment we took over, so the 24h backlog we'd pull was every
-     * post V1 had just covered.
-     *
-     * Daily mode keeps the null sentinel so the existing "last 24h" first-
-     * tick behaviour still applies — a daily digest user genuinely expects
-     * a roll-up of what's new since yesterday on their first send.
+     * A fresh tracker keeps the null sentinel, which getPostsForUser reads as "the last 24
+     * hours", which is what a daily digest member expects on their first send.
      *
      * @param User $user
      * @param string $mode
@@ -1910,7 +1884,7 @@ class UnifiedDigestService
             ],
             [
                 'lastmsgid' => null,
-                'lastmsgdate' => $mode === self::MODE_IMMEDIATE ? now() : null,
+                'lastmsgdate' => null,
             ]
         );
     }
@@ -2017,14 +1991,7 @@ class UnifiedDigestService
      */
     public function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
     {
-        // Immediate pulls only the user's immediate (-1) groups; daily pulls
-        // every group on a periodic cadence (hourly/2h/4h/8h/daily), folding
-        // them all into the single daily roll-up. See applyDigestFrequency().
-        $membershipQuery = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED);
-        $this->applyDigestFrequency($membershipQuery, $mode);
-
-        $groupIds = $membershipQuery->pluck('groupid');
+        $groupIds = collect($this->digestGroupIdsForUser($user, $mode));
 
         if ($groupIds->isEmpty()) {
             return collect();
@@ -2152,21 +2119,12 @@ class UnifiedDigestService
      *
      * "Open" mirrors getPostsForUser: Approved on the group, not deleted, an Offer/Wanted, and
      * with NO outcome (Taken/Received/Withdrawn/Expired). Deliberately NOT window-limited and NOT
-     * reach-gated, so a pinned post recurs in every daily digest until it closes. Inert (returns
-     * empty) until the messages_pinned table exists, so it can never break digests before the
-     * migration has run.
+     * reach-gated, so a pinned post recurs in every daily digest until it closes.
      *
      * @return Collection of Message (each with ->groupid, ->arrival, and has_outcome/has_success=0)
      */
     private function getPinnedOpenPostsForUser(User $user): Collection
     {
-        if ($this->messagesPinnedTableExists === null) {
-            $this->messagesPinnedTableExists = Schema::hasTable('messages_pinned');
-        }
-        if (!$this->messagesPinnedTableExists) {
-            return collect();
-        }
-
         $groupIds = $user->memberships()
             ->where('collection', Membership::COLLECTION_APPROVED)
             ->pluck('groupid');
@@ -2633,8 +2591,11 @@ class UnifiedDigestService
      * - Same fromuser
      * - Same item name (from subject)
      * - Same location
-     * - Posted within 7 days of each other
-     * - Same tnpostid (if present) - definitive match for TN cross-posts
+     * - Same body, OR the same tnpostid (a definitive match for TN cross-posts)
+     *
+     * There is no time rule here: the window is whatever the caller passed, which for a digest
+     * is the digest's own window. The per-message paths, which have no such window of their
+     * own, get one from itemSiblingMsgids() (ITEM_DEDUP_DAYS).
      *
      * @param Collection $posts
      * @return Collection Collection of deduplicated posts with 'groups' array
@@ -2683,6 +2644,264 @@ class UnifiedDigestService
         }
 
         return $deduplicated;
+    }
+
+    /**
+     * How far back to look for other copies of an item when deciding whether a member has
+     * already had their immediate mail about it. The duplicates this catches are copies of one
+     * item - a hand cross-post, an unmerged TrashNothing copy, a repost a day or two later -
+     * and they all land close together. Past this a member re-offering the same thing is news
+     * again, and gets a fresh mail.
+     */
+    public const ITEM_DEDUP_DAYS = 7;
+
+    /**
+     * Ceiling on the copies considered in one lookup. Far above any real posting rate, so it
+     * only ever bites on a runaway poster, and when it does the cost is a duplicate mail
+     * slipping through - never a post going unmailed.
+     */
+    public const ITEM_DEDUP_CANDIDATE_CAP = 2000;
+
+    /**
+     * Group message ids by ITEM, the way the daily digest groups cards.
+     *
+     * The immediate paths mail one message at a time, so on their own they mail once per COPY:
+     * a member in two groups a poster hand-cross-posted to, or holding an unmerged
+     * TrashNothing set, gets the same thing twice within minutes. The daily digest already
+     * collapses copies (deduplicatePosts); this exposes the same decision to the per-message
+     * paths, reusing getDeduplicationKey() and bodiesMatch() rather than restating them, so the
+     * two can never drift.
+     *
+     * @param int[] $msgids
+     * @return array<int,int[]> msgid => the msgids that are the same item, including itself
+     */
+    public function itemSiblingMsgids(array $msgids): array
+    {
+        $msgids = array_values(array_unique(array_map('intval', $msgids)));
+        if (empty($msgids)) {
+            return [];
+        }
+
+        // Answer from the per-run memo where we can. This matters most for the daily digest,
+        // which asks about the same posts once per member of a group. Safe against a copy
+        // appearing mid-run: the copy is a new id, so it gets its own lookup, and that lookup
+        // sees the earlier post.
+        $wanted = array_values(array_filter($msgids, fn ($id) => !isset($this->itemSiblingMemo[$id])));
+
+        if (!empty($wanted)) {
+            $this->lookUpItemSiblings($wanted);
+        }
+
+        $siblings = [];
+        foreach ($msgids as $id) {
+            $siblings[$id] = $this->itemSiblingMemo[$id] ?? [$id];
+        }
+
+        return $siblings;
+    }
+
+    /**
+     * Do the lookup for msgids the memo does not hold yet, and memo the answers.
+     *
+     * @param int[] $msgids
+     */
+    private function lookUpItemSiblings(array $msgids): void
+    {
+        foreach ($msgids as $id) {
+            $this->itemSiblingMemo[$id] = [$id];
+        }
+
+        $cols = ['id', 'fromuser', 'subject', 'textbody', 'tnpostid', 'locationid'];
+        $targets = Message::whereIn('id', $msgids)->whereNotNull('subject')->get($cols);
+        $posters = $targets->pluck('fromuser')->filter()->unique()->values()->all();
+        if (empty($posters)) {
+            return;
+        }
+
+        // Same poster, same place, recent, and the same kinds of post the immediate paths mail.
+        // The (fromuser, arrival, type) index serves this directly, and the location narrowing
+        // is free: it is part of the dedup key, so a copy from anywhere else could never match.
+        $locations = $targets->pluck('locationid')->unique();
+        $candidates = Message::whereIn('fromuser', $posters)
+            ->where('arrival', '>=', now()->subDays(self::ITEM_DEDUP_DAYS))
+            ->whereNull('deleted')
+            ->whereNotNull('subject')
+            ->whereIn('type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
+            ->where(function ($q) use ($locations) {
+                $known = $locations->reject(fn ($v) => $v === null)->values()->all();
+                if (!empty($known)) {
+                    $q->orWhereIn('locationid', $known);
+                }
+                if ($locations->contains(null)) {
+                    $q->orWhereNull('locationid');
+                }
+            })
+            ->orderByDesc('arrival')
+            ->limit(self::ITEM_DEDUP_CANDIDATE_CAP)
+            ->get($cols);
+
+        if ($candidates->count() >= self::ITEM_DEDUP_CANDIDATE_CAP) {
+            // Newest first, and copies sit next to their originals in time, so a truncated
+            // lookup still finds the copies that matter. Worth knowing about all the same: it
+            // means someone is posting at a rate nobody anticipated.
+            Log::warning('UnifiedDigestService: item dedup candidate cap hit', [
+                'posters' => count($posters),
+                'cap' => self::ITEM_DEDUP_CANDIDATE_CAP,
+            ]);
+        }
+
+        // Bucket by dedup key once, so each message is a hash lookup rather than a scan of
+        // every candidate.
+        $byKey = [];
+        foreach ($candidates as $candidate) {
+            $byKey[$this->getDeduplicationKey($candidate)][] = $candidate;
+        }
+
+        foreach ($targets as $target) {
+            $id = (int) $target->id;
+            foreach ($byKey[$this->getDeduplicationKey($target)] ?? [] as $candidate) {
+                $candidateId = (int) $candidate->id;
+                if ($candidateId !== $id && $this->bodiesMatch($target, $candidate)) {
+                    $this->itemSiblingMemo[$id][] = $candidateId;
+                }
+            }
+        }
+    }
+
+    /** Per-run memo of msgid => the msgids that are the same item. See itemSiblingMsgids(). */
+    private array $itemSiblingMemo = [];
+
+    /**
+     * The groups a digest of this mode draws on for this member.
+     *
+     * Immediate pulls only the member's immediate (-1) groups; daily pulls every group on a
+     * periodic cadence (hourly/2h/4h/8h/daily), folding them all into the single daily roll-up.
+     * See applyDigestFrequency().
+     *
+     * @return int[]
+     */
+    public function digestGroupIdsForUser(User $user, string $mode): array
+    {
+        $membershipQuery = $user->memberships()
+            ->where('collection', Membership::COLLECTION_APPROVED);
+        $this->applyDigestFrequency($membershipQuery, $mode);
+
+        return $membershipQuery->pluck('groupid')->map(fn ($v) => (int) $v)->all();
+    }
+
+    /**
+     * Of these messages, the ones whose item this member has already been sent - an older copy
+     * of the same thing, from a run their cursor has already passed.
+     *
+     * deduplicatePosts() collapses copies that land in ONE digest; this catches the copy that
+     * lands in the NEXT one, which is how the same item reached members on four days running
+     * (Discourse 9808). The cursor stands in for a record of what was sent, and it is a close
+     * stand-in because copies of an item share a poster and a location: the two things that
+     * decide whether a post reaches a member at all - it being their own, and their distance
+     * slider - therefore treat every copy alike. A copy the cursor has passed is one the member
+     * either received or was never going to.
+     *
+     * @param int[] $msgids
+     * @param int[] $groupIds The member's groups for this digest mode.
+     * @param \DateTimeInterface|string|null $cursorMsgdate Where their mail got to last time.
+     * @return array<int,true> msgid => true for the ones already covered
+     */
+    public function itemsCoveredBeforeCursor(
+        array $msgids,
+        \DateTimeInterface|string|null $cursorMsgdate,
+        array $groupIds
+    ): array
+    {
+        if ($cursorMsgdate === null || empty($msgids) || empty($groupIds)) {
+            // No cursor means this is the member's first run: nothing has been covered yet, so
+            // suppressing anything here would silently lose them a post.
+            return [];
+        }
+
+        $siblings = $this->itemSiblingMsgids($msgids);
+        $inBatch = array_flip(array_map('intval', $msgids));
+
+        $olderCopies = [];
+        foreach ($siblings as $msgid => $copies) {
+            foreach ($copies as $copy) {
+                if ($copy !== $msgid && !isset($inBatch[$copy])) {
+                    $olderCopies[$copy] = true;
+                }
+            }
+        }
+
+        if (empty($olderCopies)) {
+            return [];
+        }
+
+        // Only copies on the member's own groups, and only those the cursor has passed.
+        $covered = DB::table('messages_groups')
+            ->whereIn('msgid', array_keys($olderCopies))
+            ->whereIn('groupid', $groupIds)
+            ->where('collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('deleted', 0)
+            ->where('arrival', '<=', $cursorMsgdate)
+            ->pluck('msgid')->map(fn ($v) => (int) $v)->flip()->all();
+
+        $alreadyCovered = [];
+        foreach ($siblings as $msgid => $copies) {
+            foreach ($copies as $copy) {
+                if ($copy !== $msgid && isset($covered[$copy])) {
+                    $alreadyCovered[$msgid] = true;
+                    break;
+                }
+            }
+        }
+
+        return $alreadyCovered;
+    }
+
+    /**
+     * Drop the deduplicated cards whose item the member has already been sent in an earlier
+     * run. Shared by the daily digest and the daily push so the inbox and the phone cannot
+     * disagree about what counts as something they have already seen.
+     *
+     * @param Collection $cards Entries of ['message' => Message, 'postedToGroups' => int[]]
+     */
+    public function dropCardsAlreadyCovered(
+        Collection $cards,
+        \DateTimeInterface|string|null $cursorMsgdate,
+        array $groupIds
+    ): Collection
+    {
+        if ($cards->isEmpty()) {
+            return $cards;
+        }
+
+        $covered = $this->itemsCoveredBeforeCursor(
+            $cards->map(fn ($card) => (int) $card['message']->id)->all(),
+            $cursorMsgdate,
+            $groupIds
+        );
+
+        if (empty($covered)) {
+            return $cards;
+        }
+
+        return $cards->reject(fn ($card) => isset($covered[(int) $card['message']->id]))->values();
+    }
+
+    /**
+     * The single id standing for each message's item, so "has this member already had this
+     * item?" is one array lookup. Stable across runs for every copy of an item (the lowest
+     * msgid in the set), so two copies seen in different runs land on the same entry.
+     *
+     * @param int[] $msgids
+     * @return array<int,int> msgid => item id
+     */
+    public function itemIdsForMsgids(array $msgids): array
+    {
+        $items = [];
+        foreach ($this->itemSiblingMsgids($msgids) as $msgid => $siblings) {
+            $items[$msgid] = min($siblings);
+        }
+
+        return $items;
     }
 
     /**
@@ -2771,9 +2990,11 @@ class UnifiedDigestService
         // Always key on CONTENT (fromuser + normalized subject + location), never
         // tnpostid. A TrashNothing item re-posted / re-crossposted on different days
         // gets a NEW tnpostid each time, so a "tn:{id}" key produced a distinct key
-        // per posting and the daily digest showed the same item N times while the
-        // website (which dedups by content) showed one (Neville Reid, Discourse
-        // 9808/#233 — "Small lamp" 4x; 27 such items in 4 days). bodiesMatch() still
+        // per posting and the digest listed the same item once per posting (Neville
+        // Reid, Discourse 9808/#233: "Small lamp" 4x, 27 such items in 4 days).
+        // (Browse is not the comparison to reach for here: it collapses on msgid and
+        // nothing else, so it shows every copy. That asymmetry is deliberate - see
+        // docs/developers/reference/trashnothing.md.) bodiesMatch() still
         // treats an equal tnpostid as a definitive duplicate and otherwise compares
         // normalized bodies, so genuine cross-posts (same tnpostid) AND same-item
         // reposts (different tnpostid, same body) both merge, while two different

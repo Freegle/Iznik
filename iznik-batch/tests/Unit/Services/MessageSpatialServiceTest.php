@@ -679,6 +679,53 @@ class MessageSpatialServiceTest extends TestCase
         $this->assertSame(1, (int) $check->i, 'restored inner bound is NULL or inside the reach');
     }
 
+    /**
+     * The origin membership a post is created with carries no msgtype: only the
+     * ripple, move and email paths fill that denormalised copy in. The spatial
+     * row must still record the type, because browse's type filter, the sitemap
+     * and vector search all read messages_spatial.msgtype and treat NULL as
+     * neither an Offer nor a Wanted.
+     */
+    public function test_upsert_takes_msgtype_from_the_message_not_the_membership(): void
+    {
+        $msgid = $this->eligiblePost();
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->value('msgtype'),
+            'the origin membership is expected to have no type of its own'
+        );
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertSame(
+            Message::TYPE_OFFER,
+            DB::table('messages_spatial')->where('msgid', $msgid)->value('msgtype')
+        );
+    }
+
+    /**
+     * A row that is already correct in every other respect but has lost its type
+     * must still be picked up. Comparing types needs a null-safe test: "msgtype
+     * != messages.type" is never true when the stored side is NULL, so such a row
+     * was never a candidate and stayed broken for as long as it was indexed.
+     */
+    public function test_upsert_heals_a_spatial_row_left_with_no_msgtype(): void
+    {
+        $msgid = $this->eligiblePost();
+        $mg = DB::table('messages_groups')->where('msgid', $msgid)->first(['groupid', 'arrival']);
+        DB::statement(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, NULL, ?)",
+            [$msgid, $mg->groupid, $mg->arrival]
+        );
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertSame(
+            Message::TYPE_OFFER,
+            DB::table('messages_spatial')->where('msgid', $msgid)->value('msgtype')
+        );
+    }
+
     /** Seed a live, approved, located post that fully qualifies for the index. Returns msgid. */
     private function eligiblePost(): int
     {

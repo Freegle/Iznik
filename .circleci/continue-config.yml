@@ -90,7 +90,7 @@ orbs:
   # repo already carries the fix (large + the improved logs): publish it as 1.1.386
   # from a machine with a CircleCI token (this host has none) and move this pin
   # forward again.
-  freegle: freegle/tests@1.1.383
+  freegle: freegle/tests@1.1.386
 
 jobs:
   mark-ci-passed:

@@ -6,7 +6,6 @@ use App\Models\Message;
 use App\Services\FirstReply\MaxReachService;
 use App\Services\FreegleApiClient;
 use App\Services\FirstReply\MatchMailService;
-use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\Support\FakesRingIndex;
@@ -276,9 +275,6 @@ class MatchMailServiceTest extends TestCase
     {
         $this->fakeRingIndex();
         config(['freegle.ripple.cluster.enabled' => true]);
-        // Memoised across tests, and false if an earlier one checked before the column existed.
-        UnifiedDigestService::forgetOverflowColumn();
-
         $message = $this->seedSilentOffer();
 
         // The same person as test_picks_someone_whose_open_wanted_matches: outside the current

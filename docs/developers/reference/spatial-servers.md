@@ -1,13 +1,19 @@
 ---
-last_reviewed: 2026-08-27
+last_reviewed: 2026-09-04
 covers:
   - iznik-routing-go/graph.go
   - iznik-routing-go/dijkstra.go
   - iznik-routing-go/cmd/calibrate/**
+  - iznik-routing-go/cmd/placesextract/**
   - iznik-routing-go/reach_overlay.go
   - iznik-routing-go/reach_partition.go
   - iznik-routing-go/reach_query.go
   - iznik-routing-go/reach_server.go
+  - iznik-routing-go/reach_labels_export.go
+  - iznik-routing-go/reach_labels_apply.go
+  - iznik-spatial-go/places.go
+  - iznik-spatial-go/places_search.go
+  - iznik-spatial-go/places_api.go
 ---
 
 # Freegle's spatial servers — a plain-English overview
@@ -60,9 +66,15 @@ for answering "which freeglers are inside this area?".
 ### 2. The "travel-time mapper" — how far can you reach
 
 Give it a spot and a number of minutes and it draws the area you could actually
-reach in that time on foot, by bike, or by car — following real roads and paths,
-not just a circle on a map. (That reachable-area shape is called an
-**isochrone**.)
+drive in that time — following real roads, not just a circle on a map. (That
+reachable-area shape is called an **isochrone**.)
+
+It used to answer for walking and cycling too, and worked all three out on every
+single call. Nothing asked for them: rippling is a drive-time model, the Rippling
+Explorer only ever requests drive, and the API that fetches an isochrone reads
+only the drive answer. Carrying them cost two extra searches per call and, more
+expensively, a third of the road network in memory — footpaths, steps and
+cycleways that no car can use. The mapper is drive-only now.
 
 This is what lets Freegle think in terms of "20 minutes away" instead of "in the
 same group", which is much closer to how people actually decide whether to go and
@@ -71,7 +83,8 @@ collect something.
 It also has a **fairness** setting. Members in more deprived areas are less likely
 to have a car, so the mapper can stretch the reachable area for them — a small,
 deliberate thumb on the scale so the service works for people who rely on walking
-and public transport, not just drivers.
+and public transport, not just drivers. (That stretch is applied to the drive-time
+budget; it is not a walking route.)
 
 ### How accurate are the travel times?
 
@@ -104,6 +117,20 @@ whatever the signs say; and unpaved lanes are slower still.
 
 The calibration tooling lives in `iznik-routing-go/cmd/calibrate` and can be
 re-run if road conditions or OpenStreetMap data shift materially.
+
+### Which map does it know?
+
+The travel-time mapper can only answer for places on the map it loaded. That map is
+stitched together from several OpenStreetMap downloads: Great Britain, Ireland and
+Northern Ireland, and the Crown Dependencies (Isle of Man, Jersey and Guernsey), which
+are separate downloads because they are not constitutionally part of the UK.
+
+Getting that stitching wrong used to be invisible. With a town missing from the map, the
+mapper simply answered "nothing is reachable", which looks the same as a genuinely
+cut-off spot, and Freegle stored that silence as the answer. Isle of Man Freegle lost a
+year of rippling to exactly that. The build script now refuses to install a map unless
+every region in it has roads, and the mapper says out loud when it is asked about a place
+it does not have.
 
 ## How this adds up: "rippling out"
 
@@ -138,6 +165,63 @@ it, or explicitly with `reach leaftables`) and memory-mapped, so the answer
 speed is the same everywhere, first question included, without the server
 holding the whole file in memory.
 
+### What the artifacts cost, and why they are small
+
+The mapper holds the whole road network in memory, so the shape of that data is
+the difference between a server that fits and one that does not. Every number in
+the artifacts is stored at the precision that is actually used and no more: travel
+times to a tenth of a second, road distances to the metre, and one array rather
+than two wherever two facts can never both apply to the same road junction. Roads
+no car can use are not stored at all.
+
+Together those took the artifact set on the test extract from 17.7MB to 9.1MB, a
+48.8% cut, with the same reduction expected on the real one. The travel times
+themselves are unchanged: the search still adds up in full precision, and the
+engine is still checked against a plain, slow, exhaustive search for agreement to
+within a hundredth of a second.
+
+Each artifact records which build it came from. The region layout is not
+deterministic — building it twice from the same road network gives two different
+but equally valid layouts — so a file left over from an earlier build has to be
+detected rather than assumed compatible, and is rebuilt instead of being read
+against a layout it never matched.
+
+### The artifacts and the stored notes are one versioned pair
+
+Every post's per-region notes are stored in the database (`reach_labels`), and
+they only mean anything against the region layout they were written for. Load a
+different layout and every stored note silently answers "not reached" — on
+2026-09-03 that emptied every member's nearby feed at once. So the server treats
+the two as a pair, and three things enforce it (`reach_server.go`):
+
+- **The pairing record.** `config.reach_partition_fp` holds the layout
+  fingerprint the stored notes were built against. At boot the server compares
+  its own fingerprint with it and **refuses to serve** a layout that disagrees
+  (`reachPublish`) — a loud 503 rather than a quiet wrong answer, which the
+  deploy gate stops on. No record means no guard.
+- **"Unavailable" is never permanent.** A boot that cannot load its artifacts
+  used to answer 503 for the life of the process; it now keeps retrying in the
+  background (30 s, doubling to 10 min). The retry never rebuilds — an
+  unattended rebuild is exactly what renumbers the regions.
+- **Changing layout without a gap.** Notes for the *next* layout are computed
+  offline (`reach labels-export`, minutes for the whole country) and staged
+  beside the live ones (`reach labels-apply`, into `reach_labels_next` stamped
+  with their fingerprint; region rows for both layouts coexist in
+  `rippling_reach_leaves` because its key includes the fingerprint). Every
+  reader — the server's own row loader, and the batch paths that hand a note to
+  it — picks the staged note **only when its stamp is the live fingerprint**, so
+  the cutover is the pairing record changing and the artifacts swapping: every
+  post switches together, and nothing is rewritten to get there. Posts keep
+  arriving while the notes are staged, so the switch is preceded by a top-up:
+  re-export, then `labels-apply --skip-staged`, which reads the already-staged
+  set once and passes those posts without touching the database, so the top-up
+  takes seconds and the switch can follow at once. A post initialised in the
+  remaining gap carries a note for the old layout; clearing its note makes it
+  new again to the online path, which re-labels it against the live layout.
+
+`/health` reports `reach_partition_fp` so an operator can see every node serving
+the same layout as the notes.
+
 The road network also fixed a small unfairness in privacy blurring: locations
 shown to other members are deliberately made approximate, and the old circular
 blur could accidentally move a point across a river it has no bridge over —
@@ -150,6 +234,45 @@ The full plain-English walkthrough, with the measurements and the
 multi-million-check verification against both a plain road search and
 production's stored answers, is in
 [`iznik-routing-go/REACH-ENGINE.md`](../../../iznik-routing-go/REACH-ENGINE.md).
+
+## Looking up place names (the geocoder)
+
+When a member types a town into the place box, or the jobs feed says a
+vacancy is in "Kendal", something has to turn that name into a spot on the
+map. That used to be a separate third-party program (Photon, with its own
+search database — two large Java services on the production host). It is now
+part of the finder.
+
+How it works: every time the map data for the travel-time mapper is
+refreshed, a small extraction tool (`cmd/placesextract` in
+`iznik-routing-go`) reads the same map file and writes out every named UK
+place — cities, towns, villages, hamlets, suburbs, counties and regions,
+about 200,000 in all — with its position, its bounding box where it has one,
+and which county and nation it sits in. The finder loads that file into
+memory (a second or so, a couple of hundred MB) and answers name searches
+from it directly: exact names first, then "starts with" for as-you-type
+searching, then a little typo tolerance. Searches can be limited to a box on
+the map, to certain kinds of place, or nudged towards the map's current
+centre, because that is what the website's search boxes ask for.
+
+The answers come out in exactly the format the old geocoder used, so nothing
+that asks the question — the member site's place search, the maps, the jobs
+feed import — needed to change. Instances without the places file (the
+database servers run a copy of the finder too) simply say "not available" if
+asked.
+
+Regenerating the file after a map refresh:
+
+```
+docker exec freegle-spatial go run ./cmd/placesextract \
+    -pbf /data/uk-latest.osm.pbf -out - | gzip > iznik-routing-go/data/places.jsonl.gz
+```
+
+(With `-out -` the tool streams plain JSONL to stdout — the container's data
+folder is mounted read-only, so the compressed file is written host-side; a
+direct `-out something.gz` compresses itself.) The finder notices the changed
+file within a minute and reloads it without a restart, and will not replace a
+working index with a truncated or unreadable file.
 
 ## What it does **not** do
 

@@ -202,7 +202,10 @@ class MessageSpatialService
                     ->orWhereRaw('ST_Y(messages_spatial.point) != messages.lat')
                     ->orWhereNull('messages_spatial.groupid')
                     ->orWhereRaw('messages_spatial.groupid != messages_groups.groupid')
-                    ->orWhereRaw('messages_groups.arrival != messages_spatial.arrival');
+                    ->orWhereRaw('messages_groups.arrival != messages_spatial.arrival')
+                    // Null-safe: the type is nullable on both sides, so a plain !=
+                    // never matches a row that needs correcting.
+                    ->orWhereRaw('NOT (messages_spatial.msgtype <=> messages.type)');
             })
             ->select(
                 'messages.id',
@@ -210,7 +213,10 @@ class MessageSpatialService
                 'messages.lng',
                 'messages_groups.groupid',
                 'messages_groups.arrival',
-                'messages_groups.msgtype',
+                // messages.type, not the denormalised messages_groups.msgtype: the
+                // latter is NULL on the origin membership of a web-posted message,
+                // and this row is what browse, search and the sitemap filter on.
+                DB::raw('messages.type as msgtype'),
             )
             ->distinct()
             ->get();
