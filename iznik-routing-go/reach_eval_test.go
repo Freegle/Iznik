@@ -570,6 +570,13 @@ func TestReachEvalCacheCapDoesNotEvictWhatThisRequestLoaded(t *testing.T) {
 		evalBudgets[id] = be
 	}
 	evalMu.Unlock()
+	// Only the region cache is dropped here (not the label cache being aged):
+	// otherwise the region re-offers its six posts, they reload as FRESH
+	// entries, and the bound rightly keeps them - which is not what this
+	// step measures.
+	leafCandMu.Lock()
+	leafCandCache = map[int32]leafCandEntry{}
+	leafCandMu.Unlock()
 	leafRowLoader = func(leaf int32) ([]uint64, error) { return nil, nil }
 	got, _ = call([]uint64{99})
 	if got[99] != "in" {
