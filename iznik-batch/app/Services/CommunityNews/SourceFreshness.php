@@ -42,6 +42,15 @@ use Illuminate\Support\Facades\Log;
  * no published date, no credentials, a vision call that fails) returns null,
  * meaning "no evidence of staleness", and the item flows through exactly as it
  * does today. It only ever rejects on positive proof.
+ *
+ * The cost of that is a blind spot worth knowing the size of. Measured over the
+ * 120 busiest source domains on 2026-09-05, 17 still cannot be read at all -
+ * 11 answer with a 403, 5 are gone (404/410), and 1 redirects to a page that
+ * fails in its own right - so for items from those the check is off. They are
+ * logged rather than left invisible.
+ * The archive is not a way round it: of the pages we cannot fetch, most are not
+ * archived, and only one of them carried the og:type=article and published_time
+ * this rule needs, so reading the archive would have rejected nothing.
  */
 final class SourceFreshness
 {
@@ -258,25 +267,74 @@ final class SourceFreshness
 
     private function fetch(string $url): ?string
     {
-        try {
-            // Redirects stay off so a public URL cannot bounce the fetch to an
-            // internal one behind the SSRF check. Measured on 200 real sources:
-            // only 3 redirect, so this costs the check almost nothing.
-            $response = Http::timeout(15)
-                ->withOptions(['allow_redirects' => false])
-                ->withHeaders(['User-Agent' => 'Mozilla/5.0 (compatible; Freegle/1.0)'])
-                ->get($url);
-        } catch (\Throwable $e) {
+        // Redirects stay off so a public URL cannot bounce the fetch to an
+        // internal one behind the SSRF check. We do follow a redirect that stays
+        // on the same host, because refusing those was costing us the page for
+        // no safety gain: measured over the 120 busiest source domains on
+        // 2026-09-05, 5 answer with a redirect and every one of them was the
+        // site tidying its own URL (a canonical slug, a trailing slash), landing
+        // on the host we already cleared.
+        for ($hop = 0; $hop < 3; $hop++) {
+            try {
+                $response = Http::timeout(15)
+                    ->withOptions(['allow_redirects' => false])
+                    ->withHeaders(['User-Agent' => 'Mozilla/5.0 (compatible; Freegle/1.0)'])
+                    ->get($url);
+            } catch (\Throwable $e) {
+                return null;
+            }
+
+            if ($response->successful()) {
+                $body = $response->body();
+
+                return trim($body) === '' ? null : $body;
+            }
+
+            $next = $response->redirect() ? $this->sameHostTarget($url, (string) $response->header('Location')) : null;
+            if ($next === null) {
+                Log::info('CommunityNews: could not read a source, so it goes unchecked', [
+                    'url' => $url,
+                    'status' => $response->status(),
+                ]);
+
+                return null;
+            }
+
+            $url = $next;
+        }
+
+        Log::info('CommunityNews: source redirected too many times to read', ['url' => $url]);
+
+        return null;
+    }
+
+    /**
+     * Where a redirect points, but only when that is the same host we already
+     * cleared - anything else we decline to follow.
+     */
+    private function sameHostTarget(string $from, string $location): ?string
+    {
+        $location = trim($location);
+        if ($location === '') {
             return null;
         }
 
-        if (!$response->successful()) {
+        $fromHost = strtolower((string) parse_url($from, PHP_URL_HOST));
+        if ($fromHost === '') {
             return null;
         }
 
-        $body = $response->body();
+        // A relative Location stays on this host by definition.
+        if (!preg_match('#^https?://#i', $location)) {
+            $scheme = parse_url($from, PHP_URL_SCHEME) ?: 'https';
+            $location = $scheme . '://' . $fromHost . '/' . ltrim($location, '/');
+        }
 
-        return trim($body) === '' ? null : $body;
+        if (strtolower((string) parse_url($location, PHP_URL_HOST)) !== $fromHost) {
+            return null;
+        }
+
+        return $this->previews->isFetchableUrl($location) ? $location : null;
     }
 
     /**
