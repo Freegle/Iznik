@@ -11,13 +11,12 @@
       <h3 class="d-flex justify-content-between">
         {{ message.subject }}
         <div>
-          <b-badge
-            v-if="message.availablenow > 1"
-            variant="info"
-            class="lg ms-2"
-          >
-            {{ message.availablenow }} left
-          </b-badge>
+          <MessageAvailability
+            :availablenow="message.availablenow"
+            :availableinitially="message.availableinitially"
+            :bulkcount="message.bulkcount"
+            badge-class="lg ms-2"
+          />
         </div>
       </h3>
     </template>
@@ -57,6 +56,30 @@
           :invalid="submittedWithNoSelectedUser"
           @took-users="took"
         />
+        <div v-if="showSplitChoice" class="mt-3">
+          <label class="strong">Is that everything?</label>
+          <b-button-group class="d-block mt-1">
+            <b-button
+              :variant="allGone ? 'primary' : 'secondary'"
+              :pressed="allGone"
+              class="all-gone"
+              @click="allGone = true"
+            >
+              That's everything gone
+            </b-button>
+            <b-button
+              :variant="allGone ? 'secondary' : 'primary'"
+              :pressed="!allGone"
+              class="some-left"
+              @click="allGone = false"
+            >
+              There's still some left
+            </b-button>
+          </b-button-group>
+          <p v-if="!allGone" class="text-muted small mt-2">
+            We'll leave your post up, and show it as part gone.
+          </p>
+        </div>
       </div>
       <div v-if="showCompletion">
         <div
@@ -174,7 +197,7 @@
         </div>
       </div>
       <NoticeMessage
-        v-if="message.availableinitially > 1 && left > 0"
+        v-if="isBulk && message.availableinitially > 1 && left > 0"
         variant="warning"
       >
         There will still be some left. If you're giving them all away now,
@@ -200,6 +223,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import OutcomeBy from './OutcomeBy'
+import MessageAvailability from './MessageAvailability'
 import SpinButton from './SpinButton'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
@@ -238,16 +262,32 @@ const chooseError = ref(false)
 const submittedWithNoSelectedUser = ref(false)
 const completionMessage = ref(null)
 
+// Marking a post TAKEN usually means it has all gone, so that is where this
+// starts; the choice below is how you say otherwise.
+const allGone = ref(true)
+
 const message = computed(() => {
   return messageStore?.byId(props.id)
 })
+
+// Bulk clearance offers still count items out one by one. Ordinary posts do
+// not: we ask who took some and whether any are left, and never make the
+// member reconcile numbers.
+const isBulk = computed(() => (message.value?.bulkcount ?? 0) > 0)
+
+const showSplitChoice = computed(
+  () =>
+    props.type === 'Taken' &&
+    !isBulk.value &&
+    message.value.availableinitially > 1
+)
 
 const left = computed(() => {
   let leftVal = message.value.availablenow ? message.value.availablenow : 1
 
   for (const u of tookUsers.value) {
     if (u.userid >= 0) {
-      leftVal -= u.count
+      leftVal -= u.count || 0
     }
   }
 
@@ -255,12 +295,14 @@ const left = computed(() => {
 })
 
 const showCompletion = computed(() => {
-  // We show for taken/received only when there are none left.
-  return (
-    props.type === 'Withdrawn' ||
-    message.value.availableinitially === 1 ||
-    left.value === 0
-  )
+  // We ask how it went once the post is finished with: on withdrawal, on a
+  // single item, when a bulk offer has counted down to nothing, and on an
+  // ordinary post when the member says everything has gone.
+  if (props.type === 'Withdrawn' || message.value.availableinitially === 1) {
+    return true
+  }
+
+  return isBulk.value ? left.value === 0 : allGone.value
 })
 
 const otherRepliers = computed(() => {
@@ -292,7 +334,11 @@ const otherRepliers = computed(() => {
 })
 
 const submitDisabled = computed(() => {
+  // Only meaningful while counts exist: it catches a bulk single-item post
+  // where nobody has actually been given anything. On an ordinary post the
+  // empty-selection check in submit() does that job.
   const ret =
+    isBulk.value &&
     props.type === 'Taken' &&
     message.value.availableinitially === 1 &&
     left.value === 1
@@ -350,20 +396,19 @@ async function submit(callback) {
     if (props.type === 'Withdrawn' || props.type === 'Received') {
       complete = true
     } else {
-      complete = left.value === 0
+      complete = isBulk.value ? left.value === 0 : allGone.value
 
       for (const u of tookUsers.value) {
-        if (u.count > 0) {
-          await messageStore.addBy(
-            message.value.id,
-            u.userid > 0 ? u.userid : null,
-            u.count
-          )
+        const userid = u.userid > 0 ? u.userid : null
+
+        if (!isBulk.value) {
+          // No count: the server records one against the taker, which is all
+          // the "part gone" badge needs to know.
+          await messageStore.addBy(message.value.id, userid)
+        } else if (u.count > 0) {
+          await messageStore.addBy(message.value.id, userid, u.count)
         } else {
-          await messageStore.removeBy(
-            message.value.id,
-            u.userid > 0 ? u.userid : null
-          )
+          await messageStore.removeBy(message.value.id, userid)
         }
       }
     }
@@ -410,12 +455,14 @@ function onHide() {
 
   tookUsers.value = []
   happiness.value = null
+  allGone.value = true
   emit('hidden')
 }
 
 function cancel() {
   tookUsers.value = []
   happiness.value = null
+  allGone.value = true
   hide()
 }
 </script>
