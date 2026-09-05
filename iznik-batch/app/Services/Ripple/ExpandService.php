@@ -25,6 +25,11 @@ use Illuminate\Support\Facades\Log;
 class ExpandService
 {
     /**
+     * Where the leave-check keeps its place in `logs`. See pullRippledPostsFromLeftGroups.
+     */
+    private const LEAVE_CHECK_WATERMARK_KEY = 'ripple_leave_check_last_log_id';
+
+    /**
      * The wall-clock moment this run must stop taking new rows, or null when
      * unboxed. Set per process() call from freegle.ripple.expand_time_box_seconds;
      * see the comment there for why runs are bounded (the single-instance lock's
@@ -2284,16 +2289,32 @@ class ExpandService
             // shape scanned all rippled_in=1 rows (10k+ and growing daily) and ran the
             // nested logs subquery per row — O(all rippled copies ever), which crept past
             // 80s and hung every tick once the experiment had rippled enough. Leaves are
-            // the trigger and are rare, so we start from the (index-supported, via
-            // logs.timestamp_2) recent Left logs and only touch a rippled copy when its
-            // poster actually left that group. Cost is now bounded by leave volume, not by
-            // the rippled-copy population. This per-tick run only needs to cover leaves
-            // since the last successful run (seconds ago); a 2-day window is a generous
-            // safety margin covering brief stalls while keeping the scan fast (~3s vs the
-            // unbounded original's 80s+, which hung every tick). Idempotent — a copy
-            // already pulled (deleted=1) is simply skipped.
+            // the trigger and are rare, so we start from the recent Left logs and only touch
+            // a rippled copy when its poster actually left that group. Cost is bounded by
+            // leave volume, not by the rippled-copy population. Idempotent — a copy already
+            // pulled (deleted=1) is simply skipped.
+            //
+            // Two bounds, doing different jobs:
+            //
+            //   ll.id > watermark   is the scan bound. Without it every tick re-examined the
+            //                       whole window - ~1,200 log rows, each driving the two
+            //                       nested EXISTS below against a 42.6M-row table, to act on
+            //                       about one an hour.
+            //   ll.timestamp >= ?   is the STALL BACKSTOP, and stays at two days. It is what
+            //                       bounds a cold start (watermark 0 reads only the window,
+            //                       exactly as before), and what recovers leaves missed while
+            //                       the job was stopped. Narrowing it would not save anything
+            //                       the watermark has not already saved, and would strand
+            //                       rippled copies outright after any stall longer than the
+            //                       window: nothing else revisits a copy whose poster left.
+            $watermark = $this->getLeaveCheckWatermark();
+
+            // Read the high-water mark BEFORE the query so leaves arriving mid-run land above
+            // it and are picked up next tick rather than skipped.
+            $highWater = (int) (DB::table('logs')->max('id') ?? 0);
+
             $scopeSql = '';
-            $params = [now()->subDays(2)->toDateTimeString()];
+            $params = [now()->subDays(2)->toDateTimeString(), $watermark];
             if ($onlyMsgid !== null) {
                 $scopeSql = ' AND mg.msgid = ?';
                 $params[] = $onlyMsgid;
@@ -2304,7 +2325,8 @@ class ExpandService
                  FROM logs ll
                  JOIN messages_groups mg ON mg.groupid = ll.groupid AND mg.rippled_in = 1 AND mg.deleted = 0
                  JOIN messages m ON m.id = mg.msgid AND m.fromuser = ll.user
-                 WHERE ll.type = 'Group' AND ll.subtype = 'Left' AND ll.timestamp >= ?" . $scopeSql . "
+                 WHERE ll.type = 'Group' AND ll.subtype = 'Left' AND ll.timestamp >= ?
+                   AND ll.id > ?" . $scopeSql . "
                    AND EXISTS (
                        SELECT 1 FROM logs lj
                        WHERE lj.user = ll.user AND lj.groupid = ll.groupid
@@ -2320,7 +2342,15 @@ class ExpandService
                 $params
             );
 
+            // A scoped run examined a single post, so it has not covered the leaves it
+            // filtered out - moving the shared mark would make the next global tick skip them.
+            $mayAdvance = $onlyMsgid === null && ! $dryRun;
+
             if (empty($rows)) {
+                if ($mayAdvance) {
+                    $this->setLeaveCheckWatermark($highWater);
+                }
+
                 return;
             }
 
@@ -2349,10 +2379,30 @@ class ExpandService
                     $stats['pulled_on_leave']++;
                 }
             }
+
+            // Only after the pulls have been written, so a throw mid-loop leaves the mark
+            // where it was and the next tick redoes the batch.
+            if ($mayAdvance) {
+                $this->setLeaveCheckWatermark($highWater);
+            }
         } catch (\Throwable $e) {
             $stats['errors']++;
             Log::warning("ripple: pull-on-leave failed: {$e->getMessage()}");
         }
+    }
+
+    private function getLeaveCheckWatermark(): int
+    {
+        return (int) (DB::table('config')->where('key', self::LEAVE_CHECK_WATERMARK_KEY)->value('value') ?? 0);
+    }
+
+    private function setLeaveCheckWatermark(int $id): void
+    {
+        DB::table('config')->upsert(
+            ['key' => self::LEAVE_CHECK_WATERMARK_KEY, 'value' => (string) $id],
+            ['key'],
+            ['value']
+        );
     }
 
     /**
