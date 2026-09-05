@@ -81,6 +81,10 @@ describe('OutcomeBy', () => {
             ],
             emits: ['update:modelValue'],
           },
+          'v-icon': {
+            template: '<span class="v-icon" :data-icon="icon" />',
+            props: ['icon', 'scale', 'color'],
+          },
           'b-form-select': {
             template:
               '<select class="b-form-select" :value="modelValue" @change="$emit(\'update:modelValue\', parseInt($event.target.value))"><option v-for="opt in options" :key="opt.value" :value="opt.value">{{ opt.text || opt.html }}</option></select>',
@@ -142,21 +146,113 @@ describe('OutcomeBy', () => {
       expect(wrapper.text()).toContain('split these between several people')
     })
 
-    it('shows Number taken control for multiple items', async () => {
-      const wrapper = await createWrapper({ availablenow: 3, left: 3 })
-      expect(wrapper.find('.number-increment').exists()).toBe(true)
-    })
-
-    it('hides took control for single item', async () => {
-      const wrapper = await createWrapper({ availablenow: 1, left: 1 })
-      const tookControl = wrapper.find('.took')
-      expect(tookControl.classes()).toContain('d-none')
-    })
-
     it('shows Other people option for multiple items', async () => {
       const wrapper = await createWrapper({ availablenow: 3, left: 3 })
       const select = wrapper.find('.b-form-select')
       expect(select.text()).toContain('Other people')
+    })
+  })
+
+  describe('ordinary post with several items', () => {
+    it('asks nobody how many they took', async () => {
+      const wrapper = await createWrapper({ availablenow: 3, left: 3 })
+      expect(wrapper.find('.number-increment').exists()).toBe(false)
+    })
+
+    it('asks nobody how many they took for a single item either', async () => {
+      const wrapper = await createWrapper({ availablenow: 1, left: 1 })
+      expect(wrapper.find('.number-increment').exists()).toBe(false)
+    })
+
+    it('emits the people taken with no per-person count', async () => {
+      const wrapper = await createWrapper({ availablenow: 3, left: 3 })
+      const inner = wrapper.findComponent(OutcomeBy)
+      const emitted = inner.emitted('tookUsers')
+      const last = emitted[emitted.length - 1][0]
+      expect(last.length).toBeGreaterThan(0)
+      last.forEach((u) => {
+        expect(u.count).toBeUndefined()
+      })
+    })
+
+    it('lets you take someone off the list again', async () => {
+      const wrapper = await createWrapper({ availablenow: 3, left: 3 })
+      expect(wrapper.find('.remove-taker').exists()).toBe(true)
+    })
+
+    it('drops the person when you take them off the list', async () => {
+      const wrapper = await createWrapper({ availablenow: 3, left: 3 })
+      const inner = wrapper.findComponent(OutcomeBy)
+      const before = inner.emitted('tookUsers').slice(-1)[0][0].length
+
+      await wrapper.find('.remove-taker').trigger('click')
+      await flushPromises()
+
+      const after = inner.emitted('tookUsers').slice(-1)[0][0].length
+      expect(after).toBe(before - 1)
+    })
+  })
+
+  describe('a post that is already part gone', () => {
+    async function partGone() {
+      const msg = { ...mockMessage, availableinitially: 3 }
+      mockMessageStore.byId.mockReturnValue(msg)
+      mockMessageStore.fetch.mockResolvedValue(msg)
+      // One left of the three originally offered.
+      return await createWrapper({ availablenow: 1, left: 1 })
+    }
+
+    it('still invites you to add more people', async () => {
+      const wrapper = await partGone()
+      expect(wrapper.text()).toContain('split these between several people')
+    })
+
+    it('still offers to let you come back later', async () => {
+      const wrapper = await partGone()
+      expect(wrapper.text()).toContain('come back later')
+    })
+
+    it('does not switch to single-item wording', async () => {
+      const wrapper = await partGone()
+      expect(wrapper.text()).not.toContain('who took this item')
+    })
+
+    it('still says Other people rather than Someone else', async () => {
+      const wrapper = await partGone()
+      expect(wrapper.find('.b-form-select').text()).toContain('Other people')
+    })
+  })
+
+  describe('bulk clearance offer', () => {
+    async function createBulkWrapper(props = {}) {
+      const bulkMessage = { ...mockMessage, bulkcount: 4 }
+      mockMessageStore.byId.mockReturnValue(bulkMessage)
+      mockMessageStore.fetch.mockResolvedValue(bulkMessage)
+      return await createWrapper(props)
+    }
+
+    it('keeps the per-person number control', async () => {
+      const wrapper = await createBulkWrapper({ availablenow: 3, left: 3 })
+      expect(wrapper.find('.number-increment').exists()).toBe(true)
+    })
+
+    it('hides the number control for a single item', async () => {
+      const wrapper = await createBulkWrapper({ availablenow: 1, left: 1 })
+      const tookControl = wrapper.find('.took')
+      expect(tookControl.classes()).toContain('d-none')
+    })
+
+    it('keeps counts on the emitted people', async () => {
+      const wrapper = await createBulkWrapper({ availablenow: 3, left: 3 })
+      const inner = wrapper.findComponent(OutcomeBy)
+      const emitted = inner.emitted('tookUsers')
+      const last = emitted[emitted.length - 1][0]
+      expect(last.some((u) => typeof u.count === 'number')).toBe(true)
+    })
+
+    it('offers no remove control', async () => {
+      const wrapper = await createBulkWrapper({ availablenow: 3, left: 3 })
+      expect(wrapper.find('.remove-taker').exists()).toBe(false)
     })
   })
 

@@ -188,7 +188,23 @@ describe('OutcomeModal', () => {
       })
       const wrapper = createWrapper()
       expect(wrapper.find('.b-badge').exists()).toBe(true)
-      expect(wrapper.text()).toContain('3 left')
+      expect(wrapper.text()).toContain('3 available')
+    })
+
+    it('says part gone rather than a number once giving has started', () => {
+      mockById.mockReturnValue({
+        id: 123,
+        subject: 'Test Item',
+        type: 'Offer',
+        availablenow: 2,
+        availableinitially: 5,
+        groups: [{ groupid: 456 }],
+        replies: [],
+      })
+      const wrapper = createWrapper()
+      expect(wrapper.find('.b-badge').text()).toContain(
+        'Part gone, some still available'
+      )
     })
   })
 
@@ -346,13 +362,14 @@ describe('OutcomeModal', () => {
         expect(wrapper.vm.showCompletion).toBe(true)
       })
 
-      it('returns true when left is 0', () => {
+      it('returns true when left is 0 on a bulk offer', () => {
         mockById.mockReturnValue({
           id: 123,
           subject: 'Test Item',
           type: 'Offer',
           availablenow: 2,
           availableinitially: 2,
+          bulkcount: 3,
           groups: [{ groupid: 456 }],
           replies: [],
         })
@@ -504,6 +521,138 @@ describe('OutcomeModal', () => {
       const takenBy = { userid: 1, displayname: 'John' }
       const wrapper = createWrapper({ takenBy })
       expect(wrapper.props('takenBy')).toEqual(takenBy)
+    })
+  })
+  describe('some left or everything gone', () => {
+    function multiItem(extra = {}) {
+      mockById.mockReturnValue({
+        id: 123,
+        subject: 'Test Item',
+        type: 'Offer',
+        availablenow: 5,
+        availableinitially: 5,
+        groups: [{ groupid: 456 }],
+        replies: [],
+        ...extra,
+      })
+    }
+
+    it('offers the choice when several were on offer', () => {
+      multiItem()
+      const wrapper = createWrapper()
+      expect(wrapper.find('.all-gone').exists()).toBe(true)
+      expect(wrapper.find('.some-left').exists()).toBe(true)
+    })
+
+    it('does not offer the choice for a single item', () => {
+      const wrapper = createWrapper()
+      expect(wrapper.find('.some-left').exists()).toBe(false)
+    })
+
+    it('does not offer the choice on a bulk offer', () => {
+      multiItem({ bulkcount: 3 })
+      const wrapper = createWrapper()
+      expect(wrapper.find('.some-left').exists()).toBe(false)
+    })
+
+    it('assumes everything has gone until told otherwise', () => {
+      multiItem()
+      const wrapper = createWrapper()
+      expect(wrapper.vm.allGone).toBe(true)
+    })
+
+    it('never warns that some will be left', async () => {
+      multiItem()
+      const wrapper = createWrapper()
+      await wrapper.find('.some-left').trigger('click')
+      expect(wrapper.text()).not.toContain('please adjust the numbers')
+    })
+
+    it('asks how it went when everything has gone', () => {
+      multiItem()
+      const wrapper = createWrapper()
+      expect(wrapper.vm.showCompletion).toBe(true)
+    })
+
+    it('does not ask how it went when some are left', async () => {
+      multiItem()
+      const wrapper = createWrapper()
+      await wrapper.find('.some-left').trigger('click')
+      expect(wrapper.vm.showCompletion).toBe(false)
+    })
+
+    it('records the takers with no count', async () => {
+      multiItem()
+      const wrapper = createWrapper()
+      wrapper.vm.tookUsers = [{ userid: 7 }, { userid: 8 }]
+      await wrapper.vm.submit(() => {})
+      expect(mockAddBy).toHaveBeenCalledTimes(2)
+      expect(mockAddBy).toHaveBeenCalledWith(123, 7)
+      expect(mockAddBy).toHaveBeenCalledWith(123, 8)
+    })
+
+    it('ends the post when everything has gone', async () => {
+      multiItem()
+      const wrapper = createWrapper()
+      wrapper.vm.tookUsers = [{ userid: 7 }]
+      await wrapper.vm.submit(() => {})
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'Outcome', outcome: 'Taken' })
+      )
+    })
+
+    it('leaves the post up when some are left', async () => {
+      multiItem()
+      const wrapper = createWrapper()
+      wrapper.vm.tookUsers = [{ userid: 7 }]
+      await wrapper.find('.some-left').trigger('click')
+      await wrapper.vm.submit(() => {})
+      expect(mockAddBy).toHaveBeenCalledWith(123, 7)
+      expect(mockUpdate).not.toHaveBeenCalled()
+    })
+
+    it('passes a null userid through for someone else', async () => {
+      multiItem()
+      const wrapper = createWrapper()
+      wrapper.vm.tookUsers = [{ userid: null }]
+      await wrapper.vm.submit(() => {})
+      expect(mockAddBy).toHaveBeenCalledWith(123, null)
+    })
+  })
+
+  describe('bulk clearance offer', () => {
+    it('still sends the per-person counts', async () => {
+      mockById.mockReturnValue({
+        id: 123,
+        subject: 'Test Item',
+        type: 'Offer',
+        availablenow: 5,
+        availableinitially: 5,
+        bulkcount: 3,
+        groups: [{ groupid: 456 }],
+        replies: [],
+      })
+      const wrapper = createWrapper()
+      wrapper.vm.tookUsers = [{ userid: 7, count: 2 }]
+      await wrapper.vm.submit(() => {})
+      expect(mockAddBy).toHaveBeenCalledWith(123, 7, 2)
+    })
+
+    it('still completes only when the arithmetic says so', async () => {
+      mockById.mockReturnValue({
+        id: 123,
+        subject: 'Test Item',
+        type: 'Offer',
+        availablenow: 5,
+        availableinitially: 5,
+        bulkcount: 3,
+        groups: [{ groupid: 456 }],
+        replies: [],
+      })
+      const wrapper = createWrapper()
+      wrapper.vm.tookUsers = [{ userid: 7, count: 2 }]
+      await wrapper.vm.submit(() => {})
+      expect(mockUpdate).not.toHaveBeenCalled()
     })
   })
 })

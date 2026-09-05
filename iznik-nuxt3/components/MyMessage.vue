@@ -101,15 +101,13 @@
                       />
                       <span class="title-subject"
                         >{{ strippedSubject }}
-                        <b-badge
-                          v-if="message.availablenow > 1"
-                          variant="info"
-                          class="ms-1"
-                          style="font-size: 0.55em; vertical-align: middle"
-                        >
-                          {{ message.availablenow }} available
-                        </b-badge></span
-                      >
+                        <MessageAvailability
+                          :availablenow="message.availablenow"
+                          :availableinitially="message.availableinitially"
+                          :bulkcount="message.bulkcount"
+                          badge-class="ms-1"
+                          badge-style="font-size: 0.55em; vertical-align: middle"
+                      /></span>
                     </div>
                     <div class="photo-actions">
                       <button class="photo-action-btn" @click.stop="share">
@@ -174,15 +172,13 @@
                     />
                     <span class="desktop-subject"
                       >{{ strippedSubject }}
-                      <b-badge
-                        v-if="message.availablenow > 1"
-                        variant="info"
-                        class="ms-1"
-                        style="font-size: 0.7em; vertical-align: middle"
-                      >
-                        {{ message.availablenow }} available
-                      </b-badge></span
-                    >
+                      <MessageAvailability
+                        :availablenow="message.availablenow"
+                        :availableinitially="message.availableinitially"
+                        :bulkcount="message.bulkcount"
+                        badge-class="ms-1"
+                        badge-style="font-size: 0.7em; vertical-align: middle"
+                    /></span>
                   </div>
                   <div class="desktop-info">
                     <template v-if="message.area">
@@ -507,6 +503,7 @@
 
 <script setup>
 import dayjs from 'dayjs'
+import MessageAvailability from './MessageAvailability'
 import { useComposeStore } from '~/stores/compose'
 import { useMessageStore } from '~/stores/message'
 import { useChatStore } from '~/stores/chat'
@@ -697,7 +694,10 @@ const closestUser = computed(() => {
         const measure =
           road?.mins != null
             ? { known: 1, value: road.mins }
-            : { known: 0, value: milesAway(u.lat, u.lng, me.value.lat, me.value.lng) }
+            : {
+                known: 0,
+                value: milesAway(u.lat, u.lng, me.value.lat, me.value.lng),
+              }
         if (
           dist === null ||
           measure.known > dist.known ||

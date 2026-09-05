@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div v-if="availablenow <= 1">
+    <div v-if="!several">
       <label :class="'strong ' + (chooseError ? 'text-danger' : '')">
         Please tell us who took this item:
       </label>
@@ -17,7 +17,7 @@
         {{ user.displayname }}
       </span>
       <span v-else class="text--large fw-bold mt-1 text-start select">
-        <span v-if="availablenow === 1">Someone else</span>
+        <span v-if="!several">Someone else</span>
         <span v-else>Other people</span>
       </span>
       <div class="ratings">
@@ -28,7 +28,10 @@
           <UserRatings v-if="user.userid > 0" :id="user.userid" size="md" />
         </div>
       </div>
-      <div :class="'ms-1 took ' + (availablenow <= 1 ? 'd-none' : '')">
+      <div
+        v-if="isBulk"
+        :class="'ms-1 took ' + (availablenow <= 1 ? 'd-none' : '')"
+      >
         <NumberIncrementDecrement
           v-model="user.count"
           label="Number taken"
@@ -38,8 +41,17 @@
           :max="left + user.count"
         />
       </div>
+      <button
+        v-else
+        type="button"
+        class="remove-taker ms-1"
+        :aria-label="'Remove ' + (user.displayname || 'this person')"
+        @click="removeTaker(user)"
+      >
+        <v-icon icon="times" />
+      </button>
     </div>
-    <div v-if="availablenow > 1">
+    <div v-if="several">
       <p>
         If you split these between several people, you can add more people here:
       </p>
@@ -72,7 +84,7 @@
     </div>
     <p class="mt-2 text-muted small">
       This helps us identify reliable freeglers.
-      <span v-if="availablenow > 1"
+      <span v-if="several"
         >You can save and come back later if you like.</span
       >
     </p>
@@ -132,6 +144,22 @@ const message = computed(() =>
   props.msgid ? messageStore.byId(props.msgid) : null
 )
 
+// Bulk clearance offers keep the per-person counts: those posters are working
+// through a catalogue and the arithmetic is the point. On an ordinary post we
+// only ask who took some, never how many each of them took.
+const isBulk = computed(() => (message.value?.bulkcount ?? 0) > 0)
+
+// Was this post offering more than one thing? For a bulk offer that is a live
+// count, so availablenow is right. For an ordinary post the pool size is what
+// matters and it does not change as items go: keying the copy off availablenow
+// would switch a half-given-away post back to singular wording and hide the
+// invitation to add more people, in the middle of splitting it.
+const several = computed(() =>
+  isBulk.value
+    ? props.availablenow > 1
+    : (message.value?.availableinitially || props.availablenow) > 1
+)
+
 const selectUser = ref(-1)
 
 const initiallySelectedUsers = computed(() => {
@@ -145,6 +173,12 @@ const initiallySelectedUsers = computed(() => {
     if (props.takenBy) {
       ret.push(props.takenBy)
     }
+  }
+
+  if (!isBulk.value) {
+    // Drop any count that came with them - nothing downstream should be able to
+    // read a per-person number on an ordinary post.
+    ret = ret.map(({ count, ...user }) => user)
   }
 
   return ret
@@ -205,6 +239,14 @@ const moreUsersToSelect = computed(() => {
   )
 })
 
+function removeTaker(user) {
+  // Reassign rather than splice so the watcher below sees the change and
+  // re-emits: without a count there is no other way to undo a mis-pick.
+  currentlySelectedUsers.value = currentlySelectedUsers.value.filter(
+    (u) => u !== user
+  )
+}
+
 function userOptionsChoose(small) {
   return small
     ? '<em>-- Please choose --</em>'
@@ -233,9 +275,7 @@ function userOptions(small) {
     options.push({
       value: 0,
       html:
-        props.availablenow === 1
-          ? '<em>Someone else</em>'
-          : '<em>Other people</em>',
+        several.value ? '<em>Other people</em>' : '<em>Someone else</em>',
     })
   }
 
@@ -267,37 +307,34 @@ watch(selectUser, (userid) => {
   let user = null
 
   if (userid === 0) {
-    user = {
-      userid: null,
-      count: props.left,
-    }
+    user = { userid: null }
   } else if (userid > 0) {
     user = availableUsers.value.find((u) => u.userid === userid)
-
-    // Default to assuming they took all the remaining ones. This particularly helps when there were
-    // multiple items which all went to a single person.
-    user.count = props.left
   }
 
   if (user) {
-    if (user.count === 0) {
-      // None left. But they wouldn't have added them unless they wanted to give them at least one. So
-      // steal one from the last person who had a count > 1.
-      console.log('Steal one', JSON.stringify(currentlySelectedUsers.value))
-      const last = currentlySelectedUsers.value
-        .slice()
-        .reverse()
-        .findIndex((u) => u.count > 1)
-      console.log('Last', last)
+    if (isBulk.value) {
+      // Default to assuming they took all the remaining ones. This particularly helps when there were
+      // multiple items which all went to a single person.
+      user.count = props.left
 
-      if (last >= 0) {
-        console.log('Last user has', currentlySelectedUsers.value[last].count)
-        currentlySelectedUsers.value[last].count--
-        user.count++
+      if (user.count === 0) {
+        // None left. But they wouldn't have added them unless they wanted to give them at least one. So
+        // steal one from the last person who had a count > 1.
+        const last = currentlySelectedUsers.value
+          .slice()
+          .reverse()
+          .findIndex((u) => u.count > 1)
+
+        if (last >= 0) {
+          currentlySelectedUsers.value[last].count--
+          user.count++
+        }
       }
     }
 
-    currentlySelectedUsers.value.push(user)
+    // Reassign so the watcher above re-emits; pushing in place does not.
+    currentlySelectedUsers.value = [...currentlySelectedUsers.value, user]
   }
 
   nextTick(() => {
@@ -369,6 +406,30 @@ select {
 
     grid-column: 3 / 4;
     grid-row: 2 / 3;
+
+    @include media-breakpoint-up(md) {
+      margin-top: 0;
+      grid-column: 4 / 5;
+      grid-row: 1;
+    }
+  }
+
+  .remove-taker {
+    justify-self: end;
+    align-self: center;
+    margin-top: 1rem;
+    padding: 0 0.5rem;
+    background: none;
+    border: none;
+    color: $color-gray--dark;
+
+    grid-column: 3 / 4;
+    grid-row: 2 / 3;
+
+    &:hover,
+    &:focus {
+      color: $color-red;
+    }
 
     @include media-breakpoint-up(md) {
       margin-top: 0;
