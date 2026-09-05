@@ -59,9 +59,16 @@ var (
 const (
 	evalLabelTTL  = 10 * time.Minute
 	evalBudgetTTL = time.Minute
-	evalCacheCap  = 20000
 	evalMaxItems  = 1000
 )
+
+// evalCacheCap bounds the label cache; a var so a test can cross it cheaply.
+var evalCacheCap = 20000
+
+// evalRecentGrace is how long a freshly loaded entry is immune from eviction:
+// the window between a request loading its entries (evalLoad) and reading
+// them (the verdict loop), which resolveAreas' MySQL round trips sit inside.
+const evalRecentGrace = 10 * time.Second
 
 // discoverMaxItems bounds how many leaf candidates one discover evaluates. It
 // is a var so a test can shrink it. It used to share evalMaxItems (1,000), which
@@ -453,12 +460,50 @@ func evalLoad(e *ReachEngine, ids []uint64) error {
 			evalBudgets[id] = evalBudgetEntry{expires: now.Add(evalBudgetTTL)}
 		}
 	}
-	// Crude bound: reset rather than LRU - refilled in one query per feed.
 	if len(evalLabels) > evalCacheCap {
-		evalLabels = map[uint64]evalLabelEntry{}
-		evalBudgets = map[uint64]evalBudgetEntry{}
+		evictEvalEntries(now)
 	}
 	return nil
+}
+
+// evictEvalEntries brings the label cache back under its cap without touching
+// anything loaded in the last evalRecentGrace - the entries some request is
+// between loading and reading. Oldest first, down to half the cap so it runs
+// rarely. Callers must hold evalMu.
+//
+// The bound used to be a reset of both maps, applied inside evalLoad right
+// after it had filled them. The request that crossed the cap therefore found
+// none of its own entries a moment later and answered "nolabels" for every
+// post it had just loaded - and so did any other request caught between its
+// load and its verdict loop. Discovery serialised that as nothing found, the
+// badge read zero, the feed painted "You're up to date", and a poll later it
+// was all back: the 2, 0, 2 flicker of 2026-09-05, which nothing logged
+// because nothing had failed. With ~600 candidates a discover and ~27k live
+// posts, the cap was crossed every few minutes under load.
+func evictEvalEntries(now time.Time) {
+	type aged struct {
+		id     uint64
+		loaded time.Time
+	}
+	cands := make([]aged, 0, len(evalBudgets))
+	for id, be := range evalBudgets {
+		// Every budget entry is stamped now+evalBudgetTTL when written, so its
+		// load time is recoverable without another field.
+		loaded := be.expires.Add(-evalBudgetTTL)
+		if now.Sub(loaded) >= evalRecentGrace {
+			cands = append(cands, aged{id, loaded})
+		}
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].loaded.Before(cands[j].loaded) })
+	excess := len(evalLabels) - evalCacheCap/2
+	for _, c := range cands {
+		if excess <= 0 {
+			break
+		}
+		delete(evalLabels, c.id)
+		delete(evalBudgets, c.id)
+		excess--
+	}
 }
 
 // currentBudgetSecs is the post's CURRENT drive-time budget: the schedule

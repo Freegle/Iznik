@@ -478,3 +478,109 @@ func TestReachEvalDiscoverFailsClosedWhenTheStoreIsUnreadable(t *testing.T) {
 		t.Fatalf("empty region must serialise discovered as [], got %v", body["discovered"])
 	}
 }
+
+// Crossing the cache cap inside one request must not cost that request its
+// own answers. The bound used to reset both maps right after evalLoad had
+// filled them, so the crossing request found nothing and answered "nolabels"
+// for every post - discovery then serialised as nothing found, and a member's
+// badge read zero for one poll. Aged entries are what the bound evicts, and
+// only once the cap is crossed.
+func TestReachEvalCacheCapDoesNotEvictWhatThisRequestLoaded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	g, eng := buildBristolEngine(t)
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
+	resetReachEvalForTest()
+
+	const postLat, postLng = 51.4545, -2.5879
+	blob := eng.EncodeLabels(eng.QueryLabels(postLat, postLng, 30*60))
+	schedule := `[{"tick":1,"drive_min":5},{"tick":2,"drive_min":30}]`
+
+	prevLoader := evalRowLoader
+	prevLeaf := leafRowLoader
+	prevCap := evalCacheCap
+	evalRowLoader = func(ids []uint64) ([]evalRow, error) {
+		out := make([]evalRow, 0, len(ids))
+		for _, id := range ids {
+			out = append(out, evalRow{msgid: id, blob: blob, tick: 2, maxMin: 30, schedule: schedule})
+		}
+		return out, nil
+	}
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return []uint64{11, 12, 13, 14, 15, 16}, nil }
+	evalCacheCap = 4
+	defer func() {
+		evalRowLoader = prevLoader
+		leafRowLoader = prevLeaf
+		evalCacheCap = prevCap
+		resetReachEvalForTest()
+	}()
+
+	const memberLat, memberLng = 51.47, -2.60
+	app := newApp(g, "", false)
+	call := func(msgids []uint64) (map[uint64]string, []uint64) {
+		b, _ := json.Marshal(map[string]any{"lat": memberLat, "lng": memberLng, "msgids": msgids, "discover": true})
+		req := httptest.NewRequest("POST", "/v1/reach-eval", bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req, 60000)
+		if err != nil || resp.StatusCode != 200 {
+			t.Fatalf("reach-eval: err=%v status=%v", err, resp.StatusCode)
+		}
+		var parsed struct {
+			Results    []reachEvalResult `json:"results"`
+			Discovered []reachEvalResult `json:"discovered"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		got := map[uint64]string{}
+		for _, r := range parsed.Results {
+			got[r.Msgid] = r.Verdict
+		}
+		var disc []uint64
+		for _, r := range parsed.Discovered {
+			disc = append(disc, r.Msgid)
+		}
+		return got, disc
+	}
+
+	// Two asked posts plus six discovered: eight entries against a cap of
+	// four, crossed twice within this one request. Every answer must stand.
+	got, disc := call([]uint64{1, 2})
+	if got[1] != "in" || got[2] != "in" {
+		t.Fatalf("asked posts after crossing the cap: got %v want in/in", got)
+	}
+	if len(disc) != 6 {
+		t.Fatalf("discovered after crossing the cap: got %v want all 6 region posts", disc)
+	}
+
+	// Nothing loaded in the last few seconds is evicted, however far over the
+	// cap that leaves the cache: those entries may be mid-flight elsewhere.
+	evalMu.Lock()
+	if n := len(evalLabels); n != 8 {
+		t.Fatalf("fresh entries must survive the bound, have %d want 8", n)
+	}
+	// Age everything past the grace, then one more load crosses the cap again
+	// and this time the bound has something it may evict: the oldest, down to
+	// half the cap, never the entry just loaded.
+	for id, be := range evalBudgets {
+		be.expires = be.expires.Add(-evalRecentGrace)
+		evalBudgets[id] = be
+	}
+	evalMu.Unlock()
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return nil, nil }
+	got, _ = call([]uint64{99})
+	if got[99] != "in" {
+		t.Fatalf("the post loaded by the evicting request must keep its verdict, got %v", got)
+	}
+	evalMu.Lock()
+	defer evalMu.Unlock()
+	if _, kept := evalLabels[99]; !kept {
+		t.Fatalf("the entry loaded by the evicting request must not be evicted")
+	}
+	if n := len(evalLabels); n > evalCacheCap {
+		t.Fatalf("aged entries must be evicted back under the cap, have %d", n)
+	}
+}
