@@ -12,6 +12,8 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +62,19 @@ const (
 	evalCacheCap  = 20000
 	evalMaxItems  = 1000
 )
+
+// discoverMaxItems bounds how many leaf candidates one discover evaluates. It
+// is a var so a test can shrink it. It used to share evalMaxItems (1,000), which
+// is sized for a caller's candidate chunk, not for a region: once the cell grids
+// retired (2026-08-28) discovery became the ONLY way a post reaches the nearby
+// feed, and a region inside the 45-minute maximum reach of a city holds far more
+// live posts than that - 682 of the UK's ~23,700 regions exceed 1,000, the
+// densest ~5,100. The candidates were then trimmed in id order, so the thousand
+// kept were the OLDEST and members in those regions saw no post from the last
+// week at all (Bath, ChitChat 2026-08-31). Candidates are now evaluated newest
+// first and the valve sits at twice the densest region measured, so reaching it
+// drops the oldest posts, never this week's - and it logs, so it is never silent.
+var discoverMaxItems = 10000
 
 // evalRow is one candidate's stored state, however loaded.
 type evalRow struct {
@@ -308,13 +323,23 @@ func handleReachEval() fiber.Handler {
 		var discovered []reachEvalResult
 		if req.Discover {
 			cands := leafCandidates(v, vPrev, e)
-			var fresh []uint64
+			// Newest first: msgids are allotted in posting order, so if the
+			// valve below trims anything it is the oldest posts that go, never
+			// the ones that arrived this week (see discoverMaxItems). A point
+			// straddling two regions can offer the same post twice; evaluate it
+			// once.
+			sort.Slice(cands, func(i, j int) bool { return cands[i] > cands[j] })
+			fresh := make([]uint64, 0, len(cands))
+			seen := make(map[uint64]bool, len(cands))
 			for _, id := range cands {
-				if !asked[id] {
-					fresh = append(fresh, id)
-					if len(fresh) == evalMaxItems {
-						break
-					}
+				if asked[id] || seen[id] {
+					continue
+				}
+				seen[id] = true
+				fresh = append(fresh, id)
+				if len(fresh) == discoverMaxItems {
+					log.Printf("reach-eval discover: region with %d candidates trimmed to the newest %d", len(cands), discoverMaxItems)
+					break
 				}
 			}
 			if len(fresh) > 0 {

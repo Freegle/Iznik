@@ -362,7 +362,14 @@ the durable record of a per-group mod retraction; POLYGON and MULTIPOLYGON areas
 evaluates at `budget:"max"` for eventual-reach questions, and with `discover:true` returns
 label-admitted posts the caller's candidate list MISSED (from `rippling_reach_leaves` - the
 band where grids under-cover the true road reach; the candidate list may be empty, and held
-posts are never discovered). An `out` for a member standing in the post's ORIGIN group's
+posts are never discovered). Since the grids retired (2026-08-28) discovery is the ONLY way a
+post reaches the nearby feed and badge, so it must never trim the wrong end: a region inside
+a city's 45-minute maximum reach holds thousands of live posts (682 regions exceed 1,000,
+the densest ~5,100), and when discovery shared the caller-chunk cap of 1,000 it kept the
+oldest thousand in id order - members in those regions saw no post from the last week
+(Bath, ChitChat 2026-08-31). Candidates are now evaluated newest-first under a separate
+valve (`discoverMaxItems`, 10,000, logged when reached), so any trim drops the oldest posts.
+An `out` for a member standing in the post's ORIGIN group's
 area carries `origin_area: true`: the stored reach deliberately unions that area in once the
 isochrone covers most of it (`ExpandService::unionWithOriginGroupArea`), so both clients
 treat out+origin_area as NO verdict and let the cell grid - which holds the union - decide.

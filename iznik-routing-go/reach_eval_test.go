@@ -272,6 +272,82 @@ func TestReachEvalMaxRejectedDiscover(t *testing.T) {
 	fmt.Println("max/rejected/discover/held/empty/origin/ocean ok")
 }
 
+// A region with more live posts than discover will evaluate must lose its OLDEST
+// posts to the cap, never its newest: msgids are allotted in posting order, and
+// the leaf loader hands them back in index (ascending) order, which is exactly
+// how the nearby feed came to show a city member nothing from the last week.
+// A post offered twice (a point straddling two regions) is evaluated once.
+func TestReachEvalDiscoverNewestFirstBeyondCap(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	g, eng := buildBristolEngine(t)
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
+	resetReachEvalForTest()
+
+	const postLat, postLng = 51.4545, -2.5879
+	blob := eng.EncodeLabels(eng.QueryLabels(postLat, postLng, 30*60))
+	schedule := `[{"tick":1,"drive_min":5},{"tick":2,"drive_min":30}]`
+
+	// Every candidate's label admits the member at its current budget.
+	prevLoader := evalRowLoader
+	evalRowLoader = func(ids []uint64) ([]evalRow, error) {
+		out := make([]evalRow, 0, len(ids))
+		for _, id := range ids {
+			out = append(out, evalRow{msgid: id, blob: blob, tick: 2, maxMin: 30, schedule: schedule})
+		}
+		return out, nil
+	}
+	prevLeaf := leafRowLoader
+	leafRowLoader = func(leaf int32) []uint64 { return []uint64{1, 2, 3, 4, 5, 6, 7, 8, 8, 7} }
+	prevCap := discoverMaxItems
+	discoverMaxItems = 5
+	defer func() {
+		evalRowLoader = prevLoader
+		leafRowLoader = prevLeaf
+		discoverMaxItems = prevCap
+		resetReachEvalForTest()
+	}()
+
+	const memberLat, memberLng = 51.47, -2.60
+	app := newApp(g, "", false)
+	b, _ := json.Marshal(map[string]any{"lat": memberLat, "lng": memberLng, "msgids": []uint64{}, "discover": true})
+	req := httptest.NewRequest("POST", "/v1/reach-eval", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, 60000)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("reach-eval: err=%v status=%v", err, resp.StatusCode)
+	}
+	var parsed struct {
+		Discovered []reachEvalResult `json:"discovered"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := map[uint64]bool{}
+	for _, r := range parsed.Discovered {
+		if got[r.Msgid] {
+			t.Fatalf("msgid %d discovered twice", r.Msgid)
+		}
+		got[r.Msgid] = true
+	}
+	if len(got) != 5 {
+		t.Fatalf("discovered %d posts, want the cap of 5: %v", len(got), got)
+	}
+	for _, want := range []uint64{8, 7, 6, 5, 4} {
+		if !got[want] {
+			t.Fatalf("newest post %d not discovered; got %v - the cap cut the wrong end", want, got)
+		}
+	}
+	for _, old := range []uint64{1, 2, 3} {
+		if got[old] {
+			t.Fatalf("oldest post %d discovered ahead of a newer one: %v", old, got)
+		}
+	}
+}
+
 // POLYGON and MULTIPOLYGON group areas both subtract, including even-odd
 // holes - a MULTIPOLYGON that silently parsed to nothing would let a
 // moderator's per-group retraction leak.
