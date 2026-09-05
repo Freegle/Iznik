@@ -317,7 +317,10 @@ class DeprivationDataService
      */
     private function writeCsv(string $path, array $rows): void
     {
-        $handle = fopen($path, 'w');
+        // fopen() raises a warning for a bad path, which Laravel turns into an
+        // ErrorException before the check below can run. Suppress it so callers get
+        // the RuntimeException this method promises.
+        $handle = @fopen($path, 'w');
         if (!$handle) {
             throw new RuntimeException("Cannot open CSV output path: {$path}");
         }

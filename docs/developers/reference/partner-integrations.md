@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-05
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Console/Commands/Integrations
@@ -113,6 +113,8 @@ A job-listing feed, shown on Freegle as a small revenue stream (see
 - Config: `freegle.whatjobs.feed1`, `feed2`; geocoding via `freegle.geocoder`
 - Monitoring: `freegle.monitoring.whatjobs_max_age_hours` (24) alerts if `jobs.seenat`
   stops advancing
+- A feed file that will not open is logged as a warning and skipped, so one bad feed
+  does not stop the other one
 
 **The cautionary tale.** The geocoder URL was parameterised into an env var that
 `.env.background` never set, so `geocodeAddress()` silently returned null and the live

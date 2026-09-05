@@ -256,9 +256,11 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
 
     public function test_parse_html_handles_empty_string(): void
     {
-        // TODO: latent bug — DOMDocument::loadHTML() throws ValueError on empty string;
-        // parseHtml() should guard against this and return ['title'=>null,'description'=>null,'image'=>null].
-        $this->markTestSkipped('Latent bug: parseHtml() does not guard against empty input (throws ValueError)');
+        $result = $this->service->parseHtmlPublic('');
+
+        $this->assertNull($result['title']);
+        $this->assertNull($result['description']);
+        $this->assertNull($result['image']);
     }
 
     public function test_parse_html_handles_malformed_html(): void

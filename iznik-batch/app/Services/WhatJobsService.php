@@ -883,7 +883,10 @@ class WhatJobsService
         $cutoff = now()->subDays(self::MAX_AGE_DAYS)->timestamp;
 
         $reader = new \XMLReader();
-        if (!$reader->open($filePath)) {
+        // open() raises a warning for a missing file, which Laravel turns into an
+        // ErrorException before this check can run. Suppress it so the warning
+        // logged below is what callers actually see.
+        if (!@$reader->open($filePath)) {
             Log::warning('WhatJobs: failed to open feed file', ['path' => $filePath]);
             return;
         }

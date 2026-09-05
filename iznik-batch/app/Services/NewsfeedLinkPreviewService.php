@@ -195,6 +195,12 @@ class NewsfeedLinkPreviewService
 
     protected function parseHtml(string $html): array
     {
+        // DOMDocument::loadHTML() throws a ValueError when handed an empty string,
+        // so answer directly rather than letting it reach the parser.
+        if (trim($html) === '') {
+            return ['title' => null, 'description' => null, 'image' => null];
+        }
+
         libxml_use_internal_errors(true);
         $dom = new DOMDocument();
         $dom->loadHTML($html, LIBXML_NOERROR);
