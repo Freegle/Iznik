@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-04
+last_reviewed: 2026-09-05
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -395,6 +395,25 @@ Failing open means an outage is now invisible from the outside, so it has to be 
 the inside instead: `reportEvalUnavailable` (Go `rippling/labelverdicts.go`, PHP
 `ReachService`) raises a Sentry event, at most one a minute per process, carrying the reason.
 That alert is the only sign of a reach outage while it is happening. Treat it as one.
+
+The unread badge is the one surface that must NOT fail open, because for it "open" is a
+number. Since the grids retired, discovery is the badge's only source of posts, so an
+unanswered evaluation leaves it nothing to count - and nothing to count is not nothing to
+see. On 2026-09-05 the routing server's two label-store reads (`reach_eval.go`
+`leafRowLoader` and `evalRowLoader`) swallowed a dropped MySQL connection and answered 200
+with `discovered: null` or a truncated region; apiv2 counted that as zero, cached it for 30
+seconds, and members watched their badge flick 2, 0, 2 at every poll (153 members in three
+hours). Now: the routing server's discover fails CLOSED with a 503 and logs the error text;
+apiv2 retries one 503 (`labelEvalAttempts`) before reporting; `LabelVerdictsWithDiscover`
+returns an `ok` flag; and `nearbyCount` answers 503 on `!ok` and caches nothing, so the
+client keeps the number it has. The feed keeps its degraded empty page on the same failure
+(the client's in-flight guard cannot recover from a rejected fetch until reload).
+
+The badge's spatial arm (`isochrone/reachspatial.go` `fromIDsWhere`) also carries the
+member's mark-all-seen watermark (`browse_cleared`), as every other unseen count and the
+feed's own `unseen` column do. It was written without it, so a member who had cleared their
+feed kept a badge counting posts below the clear - posts the feed already rendered as seen -
+which nothing they viewed could drain.
 
 Client wiring: apiv2 `rippling/labelverdicts.go` (`LabelVerdicts`,
 `LabelVerdictsWithDiscover`, `DropLabelOut`) feeds `rippling.ReachMembership` (reply gate)

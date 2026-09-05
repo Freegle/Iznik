@@ -129,7 +129,10 @@ var evalRowLoader = func(ids []uint64) ([]evalRow, error) {
 		var origin sql.NullInt64
 		var schedule, rejected, status sql.NullString
 		if err := rows.Scan(&r.msgid, &blob, &r.tick, &maxMin, &schedule, &rejected, &status, &unionSecs, &origin); err != nil {
-			continue
+			// Every column is NOT NULL or scanned through a Null type, so a scan
+			// error is the connection failing under us, not a row's data. Dropping
+			// the row would let the caller cache "no reach row" for it.
+			return nil, err
 		}
 		r.blob = blob
 		r.maxMin = maxMin.Float64
@@ -140,6 +143,13 @@ var evalRowLoader = func(ids []uint64) ([]evalRow, error) {
 		r.unionKnown = unionSecs.Valid
 		r.unionSecs = float32(unionSecs.Float64)
 		out = append(out, r)
+	}
+	// A result set cut short by a dropped connection ends the loop exactly like
+	// a complete one: only rows.Err tells them apart. Without this check the
+	// posts that never arrived were cached as having no reach row, and vanished
+	// from every member's feed and badge for a minute.
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -215,6 +225,7 @@ func handleReachEval() fiber.Handler {
 		}
 
 		if err := evalLoad(e, req.Msgids); err != nil {
+			log.Printf("reach-eval: labels unavailable for %d candidates: %v", len(req.Msgids), err)
 			return fiber.NewError(fiber.StatusServiceUnavailable, "labels unavailable: "+err.Error())
 		}
 
@@ -320,9 +331,23 @@ func handleReachEval() fiber.Handler {
 		// the label evaluation above then answers exactly at the requested
 		// budget. Bounded like the candidate list itself - a region with more
 		// live posts than the cap is one no feed page would exhaust anyway.
-		var discovered []reachEvalResult
+		// Serialised as [] rather than null when nothing is discovered: the
+		// callers read null and [] the same way, but a null answer is what a
+		// swallowed failure used to look like, and the distinction has to be
+		// visible in a captured response.
+		discovered := []reachEvalResult{}
 		if req.Discover {
-			cands := leafCandidates(v, vPrev, e)
+			// Discovery fails CLOSED, with a 503 the caller can see. Since the
+			// cell grids retired it is the only way a post reaches the nearby
+			// feed and badge, so "the label store could not be read" must never
+			// be served as "nothing is in reach": that answer was cached by
+			// the badge for 30s and painted "You're up to date" over a feed
+			// that was simply not loaded.
+			cands, err := leafCandidates(v, vPrev, e)
+			if err != nil {
+				log.Printf("reach-eval discover: region candidates unavailable: %v", err)
+				return fiber.NewError(fiber.StatusServiceUnavailable, "labels unavailable: "+err.Error())
+			}
 			// Newest first: msgids are allotted in posting order, so if the
 			// valve below trims anything it is the oldest posts that go, never
 			// the ones that arrived this week (see discoverMaxItems). A point
@@ -343,16 +368,18 @@ func handleReachEval() fiber.Handler {
 				}
 			}
 			if len(fresh) > 0 {
-				if err := evalLoad(e, fresh); err == nil {
-					resolveAreas(fresh)
-					evalMu.Lock()
-					for _, id := range fresh {
-						if r := verdictFor(id, true); r.Verdict == "in" {
-							discovered = append(discovered, r)
-						}
-					}
-					evalMu.Unlock()
+				if err := evalLoad(e, fresh); err != nil {
+					log.Printf("reach-eval discover: labels unavailable for %d region candidates: %v", len(fresh), err)
+					return fiber.NewError(fiber.StatusServiceUnavailable, "labels unavailable: "+err.Error())
 				}
+				resolveAreas(fresh)
+				evalMu.Lock()
+				for _, id := range fresh {
+					if r := verdictFor(id, true); r.Verdict == "in" {
+						discovered = append(discovered, r)
+					}
+				}
+				evalMu.Unlock()
 			}
 		}
 
@@ -551,10 +578,10 @@ var (
 // builds - NULL fp (rows from before the column, or whose blob predates the
 // stamp) matches loosely: a false candidate only costs a lookup, because the
 // verdict still comes from the blob itself.
-var leafRowLoader = func(leaf int32) []uint64 {
+var leafRowLoader = func(leaf int32) ([]uint64, error) {
 	db := groupsDB
 	if db == nil {
-		return nil
+		return nil, errNoEvalDB
 	}
 	q := "SELECT msgid FROM rippling_reach_leaves WHERE leaf = ?"
 	args := []interface{}{leaf}
@@ -567,21 +594,30 @@ var leafRowLoader = func(leaf int32) []uint64 {
 			args = append(args, live.partFP)
 		}
 	}
-	var ids []uint64
 	rows, err := db.Query(q, args...)
-	if err == nil {
-		for rows.Next() {
-			var id uint64
-			if rows.Scan(&id) == nil {
-				ids = append(ids, id)
-			}
-		}
-		rows.Close()
+	if err != nil {
+		return nil, err
 	}
-	return ids
+	defer rows.Close()
+	var ids []uint64
+	for rows.Next() {
+		var id uint64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	// The loop ends the same way whether the region was read in full or the
+	// connection dropped part-way; rows.Err is the only thing that says which.
+	// This loader used to swallow both, and the caller then served the
+	// truncated - or empty - region as the truth for a minute.
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
-func leafCandidates(v, vPrev NodeID, e *ReachEngine) []uint64 {
+func leafCandidates(v, vPrev NodeID, e *ReachEngine) ([]uint64, error) {
 	// The member's region(s) on EVERY loaded build: one per junction, up to
 	// two for a mid-chain point straddling a cut (same rule as /v1/leaf).
 	// Leaf numbers are build-local; querying the union of both builds' leaf
@@ -624,7 +660,14 @@ func leafCandidates(v, vPrev NodeID, e *ReachEngine) []uint64 {
 		entry, ok := leafCandCache[leaf]
 		leafCandMu.Unlock()
 		if !ok || now.After(entry.expires) {
-			entry = leafCandEntry{ids: leafRowLoader(leaf), expires: now.Add(time.Minute)}
+			ids, err := leafRowLoader(leaf)
+			if err != nil {
+				// Not cached: the next request asks again. Caching a failed read
+				// as an empty region is how one dropped connection emptied a
+				// member's feed and zeroed their badge for the next minute.
+				return nil, err
+			}
+			entry = leafCandEntry{ids: ids, expires: now.Add(time.Minute)}
 			leafCandMu.Lock()
 			leafCandCache[leaf] = entry
 			if len(leafCandCache) > 5000 {
@@ -634,5 +677,5 @@ func leafCandidates(v, vPrev NodeID, e *ReachEngine) []uint64 {
 		}
 		out = append(out, entry.ids...)
 	}
-	return out
+	return out, nil
 }

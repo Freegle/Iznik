@@ -6,9 +6,13 @@ package rippling
 // for every post the backfill has labelled; the rest come back "nolabels"
 // and keep their cell-grid verdict.
 //
-// Any routing problem returns nil, which reads as "no verdict" - and no
-// verdict is NOT a refusal. Callers fail open on it, so an outage here is
-// invisible from the outside; reportEvalUnavailable is what makes it visible.
+// Any routing problem returns nil with ok=false, which reads as "no verdict"
+// - and no verdict is NOT a refusal. Gate callers fail open on it, so an
+// outage here is invisible from the outside; reportEvalUnavailable is what
+// makes it visible. The badge count is the exception: since the cell grids
+// retired, discovery is its only source of posts, so for it "unanswered" must
+// not be served as "none" - it refuses (503) and the client keeps the number
+// it has. The ok flag is what lets it tell the two apart.
 
 import (
 	"bytes"
@@ -24,6 +28,17 @@ import (
 )
 
 var labelEvalClient = &http.Client{Timeout: 3 * time.Second}
+
+// A 503 from reach-eval is the routing server saying its label store could
+// not be read for THIS request (a dropped MySQL connection mid-read, not an
+// outage: the server is up and answered). One immediate retry is what turns
+// that from an empty feed and a refused badge into an answer, and it costs
+// nothing when the store is healthy. Never more than one: an outage must
+// still show up as one, promptly, rather than as a slow feed.
+const labelEvalAttempts = 2
+
+// labelEvalRetryDelay is the pause before that retry; a var so tests can zero it.
+var labelEvalRetryDelay = 100 * time.Millisecond
 
 const (
 	LabelVerdictIn  = "in"
@@ -114,29 +129,76 @@ func LabelVerdicts[T int64 | uint64](lat, lng float64, msgids []T) map[uint64]st
 // "current") = the post's current tick, "max" = the label's full budget (the
 // maximum reach, which is what first-reply targeting asks about).
 func LabelVerdictsAtBudget(lat, lng float64, msgids []uint64, budget string) map[uint64]string {
-	verdicts, _ := labelEval(lat, lng, msgids, budget, false)
+	verdicts, _, _ := labelEval(lat, lng, msgids, budget, false)
 	return verdicts
 }
 
 // LabelVerdictsWithDiscover additionally returns posts the candidate list
 // MISSED whose stored labels admit this member - covering the band where the
-// grid prefilter under-covers the true road reach.
-func LabelVerdictsWithDiscover(lat, lng float64, msgids []uint64) (map[uint64]string, []uint64) {
+// grid prefilter under-covers the true road reach. ok=false means the
+// question was not answered at all (routing unreachable, breaker open, a
+// 503 that survived the retry): the caller must not read the empty result as
+// "nothing admits this member".
+func LabelVerdictsWithDiscover(lat, lng float64, msgids []uint64) (map[uint64]string, []uint64, bool) {
 	return labelEval(lat, lng, msgids, "", true)
 }
 
-func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) (map[uint64]string, []uint64) {
+// labelEvalResponse is the reach-eval wire shape apiv2 reads.
+type labelEvalResponse struct {
+	Results []struct {
+		Msgid      uint64 `json:"msgid"`
+		Verdict    string `json:"verdict"`
+		OriginArea bool   `json:"origin_area"`
+	} `json:"results"`
+	Discovered []struct {
+		Msgid uint64 `json:"msgid"`
+	} `json:"discovered"`
+}
+
+// postLabelEval asks the routing server once. reason is empty on success.
+// retry says whether asking again could plausibly succeed: only a 503, the
+// server's own "could not read the store for this request". A transport error
+// opens the shared breaker, and retrying would contradict it; a 4xx is this
+// request's fault and repeats identically.
+func postLabelEval(body []byte) (parsed labelEvalResponse, retry bool, reason string) {
+	resp, err := labelEvalClient.Post(roadblur.RoutingURL()+"/v1/reach-eval", "application/json", bytes.NewReader(body))
+	if err != nil {
+		roadblur.MarkRoutingFailure()
+		return parsed, false, "routing server unreachable: " + err.Error()
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		// The breaker is SHARED with blur and drive-time display, so only a
+		// server-side fault may trip it. 503 = the engine or its label store
+		// could not answer this request (or is not configured, before the
+		// artifacts deploy); any 4xx = this request (a 404 routing server
+		// that predates the endpoint, a rejected body) - neither says the
+		// routing server is unhealthy.
+		if resp.StatusCode >= 500 && resp.StatusCode != http.StatusServiceUnavailable {
+			roadblur.MarkRoutingFailure()
+		}
+		return parsed, resp.StatusCode == http.StatusServiceUnavailable,
+			"routing server returned HTTP " + strconv.Itoa(resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return parsed, false, "unreadable response from routing server: " + err.Error()
+	}
+	return parsed, false, ""
+}
+
+func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) (map[uint64]string, []uint64, bool) {
 	// An empty candidate list still discovers: a member covered by NO grid
 	// can still be admitted by a stored label (the under-coverage band).
+	// Nothing to ask is an answered question, not a failed one.
 	if (len(msgids) == 0 && !discover) || (lat == 0 && lng == 0) {
-		return nil, nil
+		return nil, nil, true
 	}
 	if !roadblur.RoutingHealthy() {
 		// The breaker is open, so nothing is asked and everything downstream
 		// fails open. Keep reporting it: an outage lasts hours, and this is
 		// the only alert during all of them.
 		reportEvalUnavailable("routing breaker open")
-		return nil, nil
+		return nil, nil, false
 	}
 	out := make(map[uint64]string, len(msgids))
 	var discovered []uint64
@@ -154,63 +216,36 @@ func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) 
 		})
 		if err != nil {
 			reportEvalUnavailable("cannot build request: " + err.Error())
-			return nil, nil
+			return nil, nil, false
 		}
-		resp, err := labelEvalClient.Post(roadblur.RoutingURL()+"/v1/reach-eval", "application/json", bytes.NewReader(body))
-		if err != nil {
-			roadblur.MarkRoutingFailure()
-			reportEvalUnavailable("routing server unreachable: " + err.Error())
-			return nil, nil
+		var parsed labelEvalResponse
+		var reason string
+		for attempt := 1; attempt <= labelEvalAttempts; attempt++ {
+			var retry bool
+			parsed, retry, reason = postLabelEval(body)
+			if reason == "" || !retry || attempt == labelEvalAttempts {
+				break
+			}
+			time.Sleep(labelEvalRetryDelay)
 		}
-		func() {
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				// The breaker is SHARED with blur and drive-time display, so
-				// only a server-side fault may trip it. 503 = engine or
-				// labels store not configured (expected until the artifacts
-				// deploy); any 4xx = this request (a 404 routing server that
-				// predates the endpoint, a rejected body) - neither says the
-				// routing server is unhealthy.
-				if resp.StatusCode >= 500 && resp.StatusCode != http.StatusServiceUnavailable {
-					roadblur.MarkRoutingFailure()
-				}
-				reportEvalUnavailable("routing server returned HTTP " + strconv.Itoa(resp.StatusCode))
-				out = nil
-				return
+		if reason != "" {
+			reportEvalUnavailable(reason)
+			return nil, nil, false
+		}
+		for _, r := range parsed.Results {
+			// out+origin_area = the member stands in the post's origin
+			// group's area, which the stored reach deliberately unions
+			// in: treat as NO verdict, so the cell grid (which holds
+			// that union) decides - on every surface.
+			if r.Verdict == LabelVerdictOut && r.OriginArea {
+				continue
 			}
-			var parsed struct {
-				Results []struct {
-					Msgid      uint64 `json:"msgid"`
-					Verdict    string `json:"verdict"`
-					OriginArea bool   `json:"origin_area"`
-				} `json:"results"`
-				Discovered []struct {
-					Msgid uint64 `json:"msgid"`
-				} `json:"discovered"`
+			if r.Verdict == LabelVerdictIn || r.Verdict == LabelVerdictOut {
+				out[r.Msgid] = r.Verdict
 			}
-			if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-				reportEvalUnavailable("unreadable response from routing server: " + err.Error())
-				out = nil
-				return
-			}
-			for _, r := range parsed.Results {
-				// out+origin_area = the member stands in the post's origin
-				// group's area, which the stored reach deliberately unions
-				// in: treat as NO verdict, so the cell grid (which holds
-				// that union) decides - on every surface.
-				if r.Verdict == LabelVerdictOut && r.OriginArea {
-					continue
-				}
-				if r.Verdict == LabelVerdictIn || r.Verdict == LabelVerdictOut {
-					out[r.Msgid] = r.Verdict
-				}
-			}
-			for _, d := range parsed.Discovered {
-				discovered = append(discovered, d.Msgid)
-			}
-		}()
-		if out == nil {
-			return nil, nil
+		}
+		for _, d := range parsed.Discovered {
+			discovered = append(discovered, d.Msgid)
 		}
 	}
 	// A discovered id can also ride in a LATER chunk of the candidate list,
@@ -226,5 +261,5 @@ func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) 
 		}
 		discovered = kept
 	}
-	return out, discovered
+	return out, discovered, true
 }

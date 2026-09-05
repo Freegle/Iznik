@@ -202,7 +202,7 @@ func TestReachEvalMaxRejectedDiscover(t *testing.T) {
 	// frozen posts are hidden on every surface and must not be resurrected).
 	// Only 6 comes back.
 	prevLeaf := leafRowLoader
-	leafRowLoader = func(leaf int32) []uint64 { return []uint64{1, 6, 7, 8} }
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return []uint64{1, 6, 7, 8}, nil }
 	defer func() { leafRowLoader = prevLeaf }()
 	got, disc := call(map[string]any{
 		"lat": memberLat, "lng": memberLng, "msgids": []uint64{1}, "discover": true,
@@ -301,7 +301,7 @@ func TestReachEvalDiscoverNewestFirstBeyondCap(t *testing.T) {
 		return out, nil
 	}
 	prevLeaf := leafRowLoader
-	leafRowLoader = func(leaf int32) []uint64 { return []uint64{1, 2, 3, 4, 5, 6, 7, 8, 8, 7} }
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return []uint64{1, 2, 3, 4, 5, 6, 7, 8, 8, 7}, nil }
 	prevCap := discoverMaxItems
 	discoverMaxItems = 5
 	defer func() {
@@ -382,5 +382,96 @@ func TestWktAreaRings(t *testing.T) {
 		if got := evenOdd(multi, c.lng, c.lat); got != c.want {
 			t.Fatalf("(%v,%v): got %v want %v", c.lng, c.lat, got, c.want)
 		}
+	}
+}
+
+// A discover request whose label store cannot be read must fail CLOSED with a
+// 503 the caller can see - never a 200 with nothing discovered. Since the cell
+// grids retired, discovery is the only way a post reaches the nearby feed and
+// badge; a 200-with-nothing was read as "nothing in reach", cached by the badge
+// for 30 seconds, and painted "You're up to date" over a feed that had simply
+// not been loaded. Both loaders are covered: the region candidates and the
+// labels for them.
+func TestReachEvalDiscoverFailsClosedWhenTheStoreIsUnreadable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	g, eng := buildBristolEngine(t)
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
+	resetReachEvalForTest()
+
+	const postLat, postLng = 51.4545, -2.5879
+	blob := eng.EncodeLabels(eng.QueryLabels(postLat, postLng, 30*60))
+	schedule := `[{"tick":1,"drive_min":5},{"tick":2,"drive_min":30}]`
+
+	prevLoader := evalRowLoader
+	prevLeaf := leafRowLoader
+	defer func() {
+		evalRowLoader = prevLoader
+		leafRowLoader = prevLeaf
+		resetReachEvalForTest()
+	}()
+
+	const memberLat, memberLng = 51.47, -2.60
+	app := newApp(g, "", false)
+	discover := func() (int, map[string]any) {
+		b, _ := json.Marshal(map[string]any{"lat": memberLat, "lng": memberLng, "msgids": []uint64{}, "discover": true})
+		req := httptest.NewRequest("POST", "/v1/reach-eval", bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req, 60000)
+		if err != nil {
+			t.Fatalf("reach-eval: %v", err)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		return resp.StatusCode, body
+	}
+
+	// The region read fails: 503, and nothing is cached for the region.
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return nil, fmt.Errorf("driver: bad connection") }
+	evalRowLoader = func(ids []uint64) ([]evalRow, error) {
+		t.Fatalf("labels must not be asked for when the region read failed")
+		return nil, nil
+	}
+	if status, _ := discover(); status != 503 {
+		t.Fatalf("region read failure: status %d, want 503", status)
+	}
+
+	// The region reads but its labels do not: 503 again, never an empty 200.
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return []uint64{1, 2, 3}, nil }
+	evalRowLoader = func(ids []uint64) ([]evalRow, error) { return nil, fmt.Errorf("driver: bad connection") }
+	if status, _ := discover(); status != 503 {
+		t.Fatalf("label read failure: status %d, want 503", status)
+	}
+
+	// The same member, once the store answers: a normal 200 with the posts -
+	// the failures above cached nothing that would hide them now.
+	evalRowLoader = func(ids []uint64) ([]evalRow, error) {
+		out := make([]evalRow, 0, len(ids))
+		for _, id := range ids {
+			out = append(out, evalRow{msgid: id, blob: blob, tick: 2, maxMin: 30, schedule: schedule})
+		}
+		return out, nil
+	}
+	status, body := discover()
+	if status != 200 {
+		t.Fatalf("recovered read: status %d, want 200", status)
+	}
+	disc, _ := body["discovered"].([]any)
+	if len(disc) != 3 {
+		t.Fatalf("recovered read: discovered %v, want the 3 region posts", body["discovered"])
+	}
+
+	// Nothing discovered is an empty list, not null: null is what a swallowed
+	// failure used to look like, and a captured response must tell them apart.
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return nil, nil }
+	status, body = discover()
+	if status != 200 {
+		t.Fatalf("empty region: status %d, want 200", status)
+	}
+	if v, ok := body["discovered"].([]any); !ok || v == nil || len(v) != 0 {
+		t.Fatalf("empty region must serialise discovered as [], got %v", body["discovered"])
 	}
 }

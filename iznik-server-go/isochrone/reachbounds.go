@@ -43,7 +43,11 @@ func reachContainmentSQL(db *gorm.DB, lng, lat float32) (where string, args []in
 		// and everything when routing is unavailable, keep the grid verdict;
 		// overflow rings re-admit on top of this list exactly as they always
 		// have (composeReachOverflow).
-		in = labelNarrowAndDiscover(lat, lng, in)
+		// The FEED keeps the grid list when the evaluation is unanswered: an
+		// empty page is the degraded shape it has always had, and the client's
+		// in-flight guard cannot recover from a rejected fetch until the page
+		// is reloaded. The BADGE refuses instead (nearbyCount) - see there.
+		in, _ = labelNarrowAndDiscover(lat, lng, in)
 		// GORM renders an empty slice as IN (NULL) — matches nothing — which
 		// is right for a viewer no reach covers (the ring arm may still admit).
 		return "AND ms.msgid IN (?) ", []interface{}{in}, false
@@ -104,17 +108,26 @@ func (p *reachProbe) keep(msgid uint64, cells []byte) bool {
 // here, so they can never disagree about which posts the labels admit. The
 // SQL's own visibility conjuncts (held status, spatial joins) still apply
 // to every id, discovered ones included.
-func labelNarrowAndDiscover(lat, lng float32, in []int64) []int64 {
+//
+// ok=false means the question went unanswered (routing unreachable, breaker
+// open, a 503 that survived the retry) and the list comes back untouched.
+// Since the grids retired that list is empty, so an unanswered question
+// looks exactly like "nothing is in reach" - which is why the flag exists:
+// each caller decides what unanswered means for its surface.
+func labelNarrowAndDiscover(lat, lng float32, in []int64) ([]int64, bool) {
 	ids := make([]uint64, len(in))
 	for i, id := range in {
 		ids[i] = uint64(id)
 	}
-	verdicts, discovered := rippling.LabelVerdictsWithDiscover(float64(lat), float64(lng), ids)
+	verdicts, discovered, ok := rippling.LabelVerdictsWithDiscover(float64(lat), float64(lng), ids)
+	if !ok {
+		return in, false
+	}
 	in = rippling.DropLabelOut(in, verdicts)
 	for _, id := range discovered {
 		in = append(in, int64(id))
 	}
-	return in
+	return in, true
 }
 
 // reachOrOverflowSQL is reachContainmentSQL plus, when any overflow ring applies to this
