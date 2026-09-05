@@ -35,11 +35,12 @@ type evalLabelEntry struct {
 // retraction (rejected), a freeze (held) and the advancing tick must all
 // bite within a minute, where the immutable label blob can cache for ten.
 type evalBudgetEntry struct {
-	secs      float32 // current tick budget
-	maxSecs   float32 // the row's maximum budget
-	rejected  []int64 // group ids whose areas are subtracted from this reach
-	held      bool    // frozen (back in moderation): never discoverable
-	originGid int64   // the post's origin group (its area is union-admitted)
+	used      time.Time // last time a request loaded or relied on this entry; the eviction order
+	secs      float32   // current tick budget
+	maxSecs   float32   // the row's maximum budget
+	rejected  []int64   // group ids whose areas are subtracted from this reach
+	held      bool      // frozen (back in moderation): never discoverable
+	originGid int64     // the post's origin group (its area is union-admitted)
 	// Road-native origin-group union threshold (reach_union.go):
 	// unionKnown=false (column NULL) = not computed yet, keep the
 	// transitional origin_area no-verdict behaviour; unionSecs=unionNever =
@@ -59,9 +60,17 @@ var (
 const (
 	evalLabelTTL  = 10 * time.Minute
 	evalBudgetTTL = time.Minute
-	evalCacheCap  = 20000
 	evalMaxItems  = 1000
 )
+
+// evalCacheCap bounds the label cache; a var so a test can cross it cheaply.
+var evalCacheCap = 20000
+
+// evalRecentGrace is how long an entry a request has just loaded OR relied on
+// is immune from eviction: the window between evalLoad (which touches every
+// entry the request will read, reloaded or not) and the verdict loop, which
+// resolveAreas' MySQL round trips sit inside.
+const evalRecentGrace = 10 * time.Second
 
 // discoverMaxItems bounds how many leaf candidates one discover evaluates. It
 // is a var so a test can shrink it. It used to share evalMaxItems (1,000), which
@@ -129,7 +138,10 @@ var evalRowLoader = func(ids []uint64) ([]evalRow, error) {
 		var origin sql.NullInt64
 		var schedule, rejected, status sql.NullString
 		if err := rows.Scan(&r.msgid, &blob, &r.tick, &maxMin, &schedule, &rejected, &status, &unionSecs, &origin); err != nil {
-			continue
+			// Every column is NOT NULL or scanned through a Null type, so a scan
+			// error is the connection failing under us, not a row's data. Dropping
+			// the row would let the caller cache "no reach row" for it.
+			return nil, err
 		}
 		r.blob = blob
 		r.maxMin = maxMin.Float64
@@ -140,6 +152,13 @@ var evalRowLoader = func(ids []uint64) ([]evalRow, error) {
 		r.unionKnown = unionSecs.Valid
 		r.unionSecs = float32(unionSecs.Float64)
 		out = append(out, r)
+	}
+	// A result set cut short by a dropped connection ends the loop exactly like
+	// a complete one: only rows.Err tells them apart. Without this check the
+	// posts that never arrived were cached as having no reach row, and vanished
+	// from every member's feed and badge for a minute.
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -181,7 +200,13 @@ func handleReachEval() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		e := reachEngine()
 		if e == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
+			// 501, not 503: this server has no reach engine at all (no REACH_DIR
+			// - dev and CI), which is a permanent shape the callers fail OPEN on.
+			// 503 is reserved for a configured engine that could not read its
+			// label store for THIS request, which they retry and then refuse
+			// - the badge must never confuse "no engine here" with "nothing in
+			// reach", nor sit at 503 forever in an environment without one.
+			return fiber.NewError(fiber.StatusNotImplemented, "reach engine not configured (REACH_DIR)")
 		}
 		var req reachEvalReq
 		if err := c.BodyParser(&req); err != nil {
@@ -215,6 +240,7 @@ func handleReachEval() fiber.Handler {
 		}
 
 		if err := evalLoad(e, req.Msgids); err != nil {
+			log.Printf("reach-eval: labels unavailable for %d candidates: %v", len(req.Msgids), err)
 			return fiber.NewError(fiber.StatusServiceUnavailable, "labels unavailable: "+err.Error())
 		}
 
@@ -320,9 +346,23 @@ func handleReachEval() fiber.Handler {
 		// the label evaluation above then answers exactly at the requested
 		// budget. Bounded like the candidate list itself - a region with more
 		// live posts than the cap is one no feed page would exhaust anyway.
-		var discovered []reachEvalResult
+		// Serialised as [] rather than null when nothing is discovered: the
+		// callers read null and [] the same way, but a null answer is what a
+		// swallowed failure used to look like, and the distinction has to be
+		// visible in a captured response.
+		discovered := []reachEvalResult{}
 		if req.Discover {
-			cands := leafCandidates(v, vPrev, e)
+			// Discovery fails CLOSED, with a 503 the caller can see. Since the
+			// cell grids retired it is the only way a post reaches the nearby
+			// feed and badge, so "the label store could not be read" must never
+			// be served as "nothing is in reach": that answer was cached by
+			// the badge for 30s and painted "You're up to date" over a feed
+			// that was simply not loaded.
+			cands, err := leafCandidates(v, vPrev, e)
+			if err != nil {
+				log.Printf("reach-eval discover: region candidates unavailable: %v", err)
+				return fiber.NewError(fiber.StatusServiceUnavailable, "labels unavailable: "+err.Error())
+			}
 			// Newest first: msgids are allotted in posting order, so if the
 			// valve below trims anything it is the oldest posts that go, never
 			// the ones that arrived this week (see discoverMaxItems). A point
@@ -343,16 +383,18 @@ func handleReachEval() fiber.Handler {
 				}
 			}
 			if len(fresh) > 0 {
-				if err := evalLoad(e, fresh); err == nil {
-					resolveAreas(fresh)
-					evalMu.Lock()
-					for _, id := range fresh {
-						if r := verdictFor(id, true); r.Verdict == "in" {
-							discovered = append(discovered, r)
-						}
-					}
-					evalMu.Unlock()
+				if err := evalLoad(e, fresh); err != nil {
+					log.Printf("reach-eval discover: labels unavailable for %d region candidates: %v", len(fresh), err)
+					return fiber.NewError(fiber.StatusServiceUnavailable, "labels unavailable: "+err.Error())
 				}
+				resolveAreas(fresh)
+				evalMu.Lock()
+				for _, id := range fresh {
+					if r := verdictFor(id, true); r.Verdict == "in" {
+						discovered = append(discovered, r)
+					}
+				}
+				evalMu.Unlock()
 			}
 		}
 
@@ -372,7 +414,15 @@ func evalLoad(e *ReachEngine, ids []uint64) error {
 		be, okB := evalBudgets[id]
 		if !okL || now.After(le.expires) || !okB || now.After(be.expires) {
 			missing = append(missing, id)
+			continue
 		}
+		// Still valid, so not reloaded - but this request is about to read it.
+		// Marking it used is what keeps the bound below from evicting it
+		// between here and the verdict loop; without this, a request that
+		// crossed the cap lost the cached part of its own candidate set and
+		// answered a partial discover (34 of 591 posts, 2026-09-05 20:16).
+		be.used = now
+		evalBudgets[id] = be
 	}
 	evalMu.Unlock()
 	if len(missing) == 0 {
@@ -409,6 +459,7 @@ func evalLoad(e *ReachEngine, ids []uint64) error {
 		}
 		evalLabels[r.msgid] = evalLabelEntry{lbl: lbl, eng: lblEng, expires: now.Add(ttl)}
 		evalBudgets[r.msgid] = evalBudgetEntry{
+			used:       now,
 			secs:       currentBudgetSecs(r.tick, r.maxMin, r.schedule),
 			maxSecs:    float32(r.maxMin * 60),
 			rejected:   rejected,
@@ -423,15 +474,50 @@ func evalLoad(e *ReachEngine, ids []uint64) error {
 	for _, id := range missing {
 		if !seen[id] {
 			evalLabels[id] = evalLabelEntry{lbl: nil, expires: now.Add(evalBudgetTTL)}
-			evalBudgets[id] = evalBudgetEntry{expires: now.Add(evalBudgetTTL)}
+			evalBudgets[id] = evalBudgetEntry{used: now, expires: now.Add(evalBudgetTTL)}
 		}
 	}
-	// Crude bound: reset rather than LRU - refilled in one query per feed.
 	if len(evalLabels) > evalCacheCap {
-		evalLabels = map[uint64]evalLabelEntry{}
-		evalBudgets = map[uint64]evalBudgetEntry{}
+		evictEvalEntries(now)
 	}
 	return nil
+}
+
+// evictEvalEntries brings the label cache back under its cap without touching
+// anything used in the last evalRecentGrace - the entries some request is
+// between loading (or finding still valid) and reading. Least recently used
+// first, down to half the cap so it runs rarely. Callers must hold evalMu.
+//
+// The bound used to be a reset of both maps, applied inside evalLoad right
+// after it had filled them. The request that crossed the cap therefore found
+// none of its own entries a moment later and answered "nolabels" for every
+// post it had just loaded - and so did any other request caught between its
+// load and its verdict loop. Discovery serialised that as nothing found, the
+// badge read zero, the feed painted "You're up to date", and a poll later it
+// was all back: the 2, 0, 2 flicker of 2026-09-05, which nothing logged
+// because nothing had failed. With ~600 candidates a discover and ~27k live
+// posts, the cap was crossed every few minutes under load.
+func evictEvalEntries(now time.Time) {
+	type aged struct {
+		id   uint64
+		used time.Time
+	}
+	cands := make([]aged, 0, len(evalBudgets))
+	for id, be := range evalBudgets {
+		if now.Sub(be.used) >= evalRecentGrace {
+			cands = append(cands, aged{id, be.used})
+		}
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].used.Before(cands[j].used) })
+	excess := len(evalLabels) - evalCacheCap/2
+	for _, c := range cands {
+		if excess <= 0 {
+			break
+		}
+		delete(evalLabels, c.id)
+		delete(evalBudgets, c.id)
+		excess--
+	}
 }
 
 // currentBudgetSecs is the post's CURRENT drive-time budget: the schedule
@@ -551,10 +637,10 @@ var (
 // builds - NULL fp (rows from before the column, or whose blob predates the
 // stamp) matches loosely: a false candidate only costs a lookup, because the
 // verdict still comes from the blob itself.
-var leafRowLoader = func(leaf int32) []uint64 {
+var leafRowLoader = func(leaf int32) ([]uint64, error) {
 	db := groupsDB
 	if db == nil {
-		return nil
+		return nil, errNoEvalDB
 	}
 	q := "SELECT msgid FROM rippling_reach_leaves WHERE leaf = ?"
 	args := []interface{}{leaf}
@@ -567,21 +653,30 @@ var leafRowLoader = func(leaf int32) []uint64 {
 			args = append(args, live.partFP)
 		}
 	}
-	var ids []uint64
 	rows, err := db.Query(q, args...)
-	if err == nil {
-		for rows.Next() {
-			var id uint64
-			if rows.Scan(&id) == nil {
-				ids = append(ids, id)
-			}
-		}
-		rows.Close()
+	if err != nil {
+		return nil, err
 	}
-	return ids
+	defer rows.Close()
+	var ids []uint64
+	for rows.Next() {
+		var id uint64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	// The loop ends the same way whether the region was read in full or the
+	// connection dropped part-way; rows.Err is the only thing that says which.
+	// This loader used to swallow both, and the caller then served the
+	// truncated - or empty - region as the truth for a minute.
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
-func leafCandidates(v, vPrev NodeID, e *ReachEngine) []uint64 {
+func leafCandidates(v, vPrev NodeID, e *ReachEngine) ([]uint64, error) {
 	// The member's region(s) on EVERY loaded build: one per junction, up to
 	// two for a mid-chain point straddling a cut (same rule as /v1/leaf).
 	// Leaf numbers are build-local; querying the union of both builds' leaf
@@ -624,7 +719,14 @@ func leafCandidates(v, vPrev NodeID, e *ReachEngine) []uint64 {
 		entry, ok := leafCandCache[leaf]
 		leafCandMu.Unlock()
 		if !ok || now.After(entry.expires) {
-			entry = leafCandEntry{ids: leafRowLoader(leaf), expires: now.Add(time.Minute)}
+			ids, err := leafRowLoader(leaf)
+			if err != nil {
+				// Not cached: the next request asks again. Caching a failed read
+				// as an empty region is how one dropped connection emptied a
+				// member's feed and zeroed their badge for the next minute.
+				return nil, err
+			}
+			entry = leafCandEntry{ids: ids, expires: now.Add(time.Minute)}
 			leafCandMu.Lock()
 			leafCandCache[leaf] = entry
 			if len(leafCandCache) > 5000 {
@@ -634,5 +736,5 @@ func leafCandidates(v, vPrev NodeID, e *ReachEngine) []uint64 {
 		}
 		out = append(out, entry.ids...)
 	}
-	return out
+	return out, nil
 }

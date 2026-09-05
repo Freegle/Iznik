@@ -664,7 +664,7 @@ func searchReachArmIDs(db *gorm.DB, lng, lat float64) []uint64 {
 		for i, id := range in {
 			ids[i] = uint64(id)
 		}
-		verdicts, discovered := rippling.LabelVerdictsWithDiscover(lat, lng, ids)
+		verdicts, discovered, _ := rippling.LabelVerdictsWithDiscover(lat, lng, ids)
 		in = rippling.DropLabelOut(in, verdicts)
 		for _, id := range discovered {
 			in = append(in, int64(id))

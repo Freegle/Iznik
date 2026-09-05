@@ -118,7 +118,8 @@ func TestLabelVerdictsWithDiscover(t *testing.T) {
 	os.Setenv("ROUTING_EVAL_URL", srv.URL)
 	roadblur.ResetRoutingBreaker()
 
-	verdicts, discovered := rippling.LabelVerdictsWithDiscover(51.5, -0.1, []uint64{1, 2, 9})
+	verdicts, discovered, ok := rippling.LabelVerdictsWithDiscover(51.5, -0.1, []uint64{1, 2, 9})
+	assert.True(t, ok, "an answered evaluation reports ok")
 	assert.Equal(t, rippling.LabelVerdictOut, verdicts[1])
 	_, has9 := verdicts[9]
 	assert.False(t, has9, "out+origin_area is NO verdict - the cell grid holds the union and decides")
@@ -127,7 +128,7 @@ func TestLabelVerdictsWithDiscover(t *testing.T) {
 
 	// Empty candidate list: the call still happens and still discovers.
 	lastBody = nil
-	verdicts, discovered = rippling.LabelVerdictsWithDiscover(51.5, -0.1, nil)
+	verdicts, discovered, _ = rippling.LabelVerdictsWithDiscover(51.5, -0.1, nil)
 	assert.Empty(t, verdicts)
 	assert.Equal(t, []uint64{7, 1}, discovered, "no verdicts were asked, so nothing narrows the discoveries")
 	assert.NotNil(t, lastBody, "an empty candidate list must still ask the server")

@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -645,4 +647,125 @@ func TestNearbyCountSpatialReach(t *testing.T) {
 	stub.Close()
 	assert.Equal(t, float64(2), countOf(),
 		"spatial failure falls back to the outer-bound + cells-probe path with the same result")
+}
+
+// TestNearbyCountRefusesWhenReachEvalUnanswered: the badge's nearby count must
+// answer 503 - and cache nothing - when the routing server cannot evaluate the
+// stored labels, rather than 0. Since the cell grids retired, discovery is the
+// badge's only source of posts, so an unanswered evaluation leaves nothing to
+// count; answering 0 was cached for 30 seconds and repainted "You're up to
+// date" on a badge that read 2 a minute earlier. A 503 from reach-eval (the
+// server's "could not read the store for THIS request") is retried once
+// before giving up, so a single dropped read costs nothing visible.
+func TestNearbyCountRefusesWhenReachEvalUnanswered(t *testing.T) {
+	db := database.DBConn
+
+	prefix := uniquePrefix("nearbyevalunavail")
+	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
+	group := CreateTestGroup(t, prefix)
+	covered := CreateTestMessage(t, posterID, group, "OFFER: eval unavailable (nearbyevalunavail)", 51.5, -0.1)
+	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid = ?", covered)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", covered)
+
+	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
+
+	coveringWKT := "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_Envelope(ST_GeomFromText('"+coveringWKT+"', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE status = VALUES(status)", covered)
+
+	// The spatial index (grids retired) offers nothing; discovery is the only way in.
+	spatial := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"in":[],"partial":[]}`)
+	}))
+	defer spatial.Close()
+	t.Setenv("SPATIAL_KNN_URL", spatial.URL)
+
+	// The routing server: a scripted sequence of answers, one per call.
+	var mu sync.Mutex
+	var script []int
+	calls := 0
+	routing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/reach-eval" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		status := http.StatusOK
+		if calls < len(script) {
+			status = script[calls]
+		}
+		calls++
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"results":[],"discovered":[{"msgid":%d,"verdict":"in"}]}`, covered)
+	}))
+	defer routing.Close()
+	t.Setenv("ROUTING_EVAL_URL", routing.URL)
+	roadblur.ResetRoutingBreaker()
+
+	ask := func(seq ...int) (int, float64) {
+		mu.Lock()
+		script, calls = seq, 0
+		mu.Unlock()
+		browsecount.Invalidate(viewerID)
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
+		var body map[string]interface{}
+		json2.Unmarshal(rsp(resp), &body)
+		c, _ := body["count"].(float64)
+		return resp.StatusCode, c
+	}
+
+	// Healthy: the discovered post counts.
+	status, c := ask()
+	assert.Equal(t, 200, status)
+	assert.Equal(t, float64(1), c, "the discovered post counts")
+
+	// One dropped read: the retry answers, and nothing visible happens.
+	status, c = ask(http.StatusServiceUnavailable)
+	assert.Equal(t, 200, status, "a single 503 is retried")
+	assert.Equal(t, float64(1), c)
+	mu.Lock()
+	assert.Equal(t, 2, calls, "exactly one retry")
+	mu.Unlock()
+
+	// The store stays unreadable: refuse, never answer 0.
+	status, _ = ask(http.StatusServiceUnavailable, http.StatusServiceUnavailable)
+	assert.Equal(t, 503, status, "an unanswered evaluation is refused, not counted as zero")
+	mu.Lock()
+	assert.Equal(t, 2, calls, "never more than one retry")
+	mu.Unlock()
+	assert.True(t, roadblur.RoutingHealthy(), "a 503 is the server answering; it must not open the shared breaker")
+
+	// A routing server with NO reach engine (501: dev, CI, a node before the
+	// artifacts deploy) is an answer, not a failure: the badge fails open on
+	// its grid verdict - here nothing - rather than refusing forever.
+	status, c = ask(http.StatusNotImplemented)
+	assert.Equal(t, 200, status, "no engine at all is an answered question")
+	assert.Equal(t, float64(0), c, "nothing discovered and nothing in the grid counts as zero")
+	mu.Lock()
+	assert.Equal(t, 1, calls, "a 501 is never retried")
+	mu.Unlock()
+	assert.True(t, roadblur.RoutingHealthy(), "a 501 must not open the shared breaker")
+
+	// And a refusal cached nothing: the next poll asks again and gets the real
+	// answer, with no Invalidate in between.
+	status, _ = ask(http.StatusServiceUnavailable, http.StatusServiceUnavailable)
+	assert.Equal(t, 503, status)
+	mu.Lock()
+	script, calls = nil, 0
+	mu.Unlock()
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var body map[string]interface{}
+	json2.Unmarshal(rsp(resp), &body)
+	assert.Equal(t, float64(1), body["count"], "a refusal must not be cached as a count")
+	roadblur.ResetRoutingBreaker()
 }

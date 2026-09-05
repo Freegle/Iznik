@@ -202,7 +202,7 @@ func TestReachEvalMaxRejectedDiscover(t *testing.T) {
 	// frozen posts are hidden on every surface and must not be resurrected).
 	// Only 6 comes back.
 	prevLeaf := leafRowLoader
-	leafRowLoader = func(leaf int32) []uint64 { return []uint64{1, 6, 7, 8} }
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return []uint64{1, 6, 7, 8}, nil }
 	defer func() { leafRowLoader = prevLeaf }()
 	got, disc := call(map[string]any{
 		"lat": memberLat, "lng": memberLng, "msgids": []uint64{1}, "discover": true,
@@ -301,7 +301,7 @@ func TestReachEvalDiscoverNewestFirstBeyondCap(t *testing.T) {
 		return out, nil
 	}
 	prevLeaf := leafRowLoader
-	leafRowLoader = func(leaf int32) []uint64 { return []uint64{1, 2, 3, 4, 5, 6, 7, 8, 8, 7} }
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return []uint64{1, 2, 3, 4, 5, 6, 7, 8, 8, 7}, nil }
 	prevCap := discoverMaxItems
 	discoverMaxItems = 5
 	defer func() {
@@ -382,5 +382,255 @@ func TestWktAreaRings(t *testing.T) {
 		if got := evenOdd(multi, c.lng, c.lat); got != c.want {
 			t.Fatalf("(%v,%v): got %v want %v", c.lng, c.lat, got, c.want)
 		}
+	}
+}
+
+// A discover request whose label store cannot be read must fail CLOSED with a
+// 503 the caller can see - never a 200 with nothing discovered. Since the cell
+// grids retired, discovery is the only way a post reaches the nearby feed and
+// badge; a 200-with-nothing was read as "nothing in reach", cached by the badge
+// for 30 seconds, and painted "You're up to date" over a feed that had simply
+// not been loaded. Both loaders are covered: the region candidates and the
+// labels for them.
+func TestReachEvalDiscoverFailsClosedWhenTheStoreIsUnreadable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	g, eng := buildBristolEngine(t)
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
+	resetReachEvalForTest()
+
+	const postLat, postLng = 51.4545, -2.5879
+	blob := eng.EncodeLabels(eng.QueryLabels(postLat, postLng, 30*60))
+	schedule := `[{"tick":1,"drive_min":5},{"tick":2,"drive_min":30}]`
+
+	prevLoader := evalRowLoader
+	prevLeaf := leafRowLoader
+	defer func() {
+		evalRowLoader = prevLoader
+		leafRowLoader = prevLeaf
+		resetReachEvalForTest()
+	}()
+
+	const memberLat, memberLng = 51.47, -2.60
+	app := newApp(g, "", false)
+	discover := func() (int, map[string]any) {
+		b, _ := json.Marshal(map[string]any{"lat": memberLat, "lng": memberLng, "msgids": []uint64{}, "discover": true})
+		req := httptest.NewRequest("POST", "/v1/reach-eval", bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req, 60000)
+		if err != nil {
+			t.Fatalf("reach-eval: %v", err)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		return resp.StatusCode, body
+	}
+
+	// The region read fails: 503, and nothing is cached for the region.
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return nil, fmt.Errorf("driver: bad connection") }
+	evalRowLoader = func(ids []uint64) ([]evalRow, error) {
+		t.Fatalf("labels must not be asked for when the region read failed")
+		return nil, nil
+	}
+	if status, _ := discover(); status != 503 {
+		t.Fatalf("region read failure: status %d, want 503", status)
+	}
+
+	// The region reads but its labels do not: 503 again, never an empty 200.
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return []uint64{1, 2, 3}, nil }
+	evalRowLoader = func(ids []uint64) ([]evalRow, error) { return nil, fmt.Errorf("driver: bad connection") }
+	if status, _ := discover(); status != 503 {
+		t.Fatalf("label read failure: status %d, want 503", status)
+	}
+
+	// The same member, once the store answers: a normal 200 with the posts -
+	// the failures above cached nothing that would hide them now.
+	evalRowLoader = func(ids []uint64) ([]evalRow, error) {
+		out := make([]evalRow, 0, len(ids))
+		for _, id := range ids {
+			out = append(out, evalRow{msgid: id, blob: blob, tick: 2, maxMin: 30, schedule: schedule})
+		}
+		return out, nil
+	}
+	status, body := discover()
+	if status != 200 {
+		t.Fatalf("recovered read: status %d, want 200", status)
+	}
+	disc, _ := body["discovered"].([]any)
+	if len(disc) != 3 {
+		t.Fatalf("recovered read: discovered %v, want the 3 region posts", body["discovered"])
+	}
+
+	// Nothing discovered is an empty list, not null: null is what a swallowed
+	// failure used to look like, and a captured response must tell them apart.
+	// The region read above is cached for a minute, so drop it first - the
+	// empty region must come from the loader, not from the cache.
+	resetReachEvalForTest()
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return nil, nil }
+	status, body = discover()
+	if status != 200 {
+		t.Fatalf("empty region: status %d, want 200", status)
+	}
+	if v, ok := body["discovered"].([]any); !ok || v == nil || len(v) != 0 {
+		t.Fatalf("empty region must serialise discovered as [], got %v", body["discovered"])
+	}
+}
+
+// Crossing the cache cap inside one request must not cost that request its
+// own answers. The bound used to reset both maps right after evalLoad had
+// filled them, so the crossing request found nothing and answered "nolabels"
+// for every post - discovery then serialised as nothing found, and a member's
+// badge read zero for one poll. Aged entries are what the bound evicts, and
+// only once the cap is crossed.
+func TestReachEvalCacheCapDoesNotEvictWhatThisRequestLoaded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	g, eng := buildBristolEngine(t)
+	prev := reachEngine()
+	setReachLive(eng)
+	defer func() { setReachLive(prev) }()
+	resetReachEvalForTest()
+
+	const postLat, postLng = 51.4545, -2.5879
+	blob := eng.EncodeLabels(eng.QueryLabels(postLat, postLng, 30*60))
+	schedule := `[{"tick":1,"drive_min":5},{"tick":2,"drive_min":30}]`
+
+	prevLoader := evalRowLoader
+	prevLeaf := leafRowLoader
+	prevCap := evalCacheCap
+	evalRowLoader = func(ids []uint64) ([]evalRow, error) {
+		out := make([]evalRow, 0, len(ids))
+		for _, id := range ids {
+			out = append(out, evalRow{msgid: id, blob: blob, tick: 2, maxMin: 30, schedule: schedule})
+		}
+		return out, nil
+	}
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return []uint64{11, 12, 13, 14, 15, 16}, nil }
+	evalCacheCap = 4
+	defer func() {
+		evalRowLoader = prevLoader
+		leafRowLoader = prevLeaf
+		evalCacheCap = prevCap
+		resetReachEvalForTest()
+	}()
+
+	const memberLat, memberLng = 51.47, -2.60
+	app := newApp(g, "", false)
+	call := func(msgids []uint64) (map[uint64]string, []uint64) {
+		b, _ := json.Marshal(map[string]any{"lat": memberLat, "lng": memberLng, "msgids": msgids, "discover": true})
+		req := httptest.NewRequest("POST", "/v1/reach-eval", bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req, 60000)
+		if err != nil || resp.StatusCode != 200 {
+			t.Fatalf("reach-eval: err=%v status=%v", err, resp.StatusCode)
+		}
+		var parsed struct {
+			Results    []reachEvalResult `json:"results"`
+			Discovered []reachEvalResult `json:"discovered"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		got := map[uint64]string{}
+		for _, r := range parsed.Results {
+			got[r.Msgid] = r.Verdict
+		}
+		var disc []uint64
+		for _, r := range parsed.Discovered {
+			disc = append(disc, r.Msgid)
+		}
+		return got, disc
+	}
+
+	// Two asked posts plus six discovered: eight entries against a cap of
+	// four, crossed twice within this one request. Every answer must stand.
+	got, disc := call([]uint64{1, 2})
+	if got[1] != "in" || got[2] != "in" {
+		t.Fatalf("asked posts after crossing the cap: got %v want in/in", got)
+	}
+	if len(disc) != 6 {
+		t.Fatalf("discovered after crossing the cap: got %v want all 6 region posts", disc)
+	}
+
+	// Nothing loaded in the last few seconds is evicted, however far over the
+	// cap that leaves the cache: those entries may be mid-flight elsewhere.
+	evalMu.Lock()
+	if n := len(evalLabels); n != 8 {
+		t.Fatalf("fresh entries must survive the bound, have %d want 8", n)
+	}
+	// Age everything past the grace, then one more load crosses the cap again
+	// and this time the bound has something it may evict: the least recently
+	// used, down to half the cap, never the entry just loaded.
+	for id, be := range evalBudgets {
+		be.used = be.used.Add(-evalRecentGrace)
+		evalBudgets[id] = be
+	}
+	evalMu.Unlock()
+	// Only the region cache is dropped here (not the label cache being aged):
+	// otherwise the region re-offers its six posts, they reload as FRESH
+	// entries, and the bound rightly keeps them - which is not what this
+	// step measures.
+	leafCandMu.Lock()
+	leafCandCache = map[int32]leafCandEntry{}
+	leafCandMu.Unlock()
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return nil, nil }
+	got, _ = call([]uint64{99})
+	if got[99] != "in" {
+		t.Fatalf("the post loaded by the evicting request must keep its verdict, got %v", got)
+	}
+	evalMu.Lock()
+	if _, kept := evalLabels[99]; !kept {
+		t.Fatalf("the entry loaded by the evicting request must not be evicted")
+	}
+	if n := len(evalLabels); n > evalCacheCap {
+		t.Fatalf("aged entries must be evicted back under the cap, have %d", n)
+	}
+	// An entry a request RELIES on but did not reload - cached earlier, still
+	// valid - is just as much part of its answer as one it loaded. Age all of
+	// them again, then ask about 99 while the region offers six new posts:
+	// the cap is crossed, and the aged-but-relied-on 99 must survive it.
+	for id, be := range evalBudgets {
+		be.used = be.used.Add(-evalRecentGrace)
+		evalBudgets[id] = be
+	}
+	evalMu.Unlock()
+	leafCandMu.Lock()
+	leafCandCache = map[int32]leafCandEntry{}
+	leafCandMu.Unlock()
+	leafRowLoader = func(leaf int32) ([]uint64, error) { return []uint64{21, 22, 23, 24, 25, 26}, nil }
+	got, disc = call([]uint64{99})
+	if got[99] != "in" {
+		t.Fatalf("a relied-on cached entry must survive the bound, got %v", got)
+	}
+	if len(disc) != 6 {
+		t.Fatalf("the six fresh region posts must all answer, got %v", disc)
+	}
+	evalMu.Lock()
+	defer evalMu.Unlock()
+	if _, kept := evalLabels[99]; !kept {
+		t.Fatalf("the relied-on entry must not be evicted by the request that used it")
+	}
+}
+
+// A routing server with no reach engine answers reach-eval 501, not 503: the
+// callers fail open on 501 (no engine here - dev, CI) and treat 503 as a
+// configured engine's transient read failure (retry, then refuse). Sharing one
+// status would leave every badge in an engine-less environment at 503 forever.
+func TestReachEvalUnconfiguredIs501(t *testing.T) {
+	g := makeTestGrid(nil)
+	prev := reachEngine()
+	setReachLive(nil)
+	defer func() { setReachLive(prev) }()
+	app := newApp(g, "", false)
+	b, _ := json.Marshal(map[string]any{"lat": 51.0, "lng": -2.0, "msgids": []uint64{1}, "discover": true})
+	req := httptest.NewRequest("POST", "/v1/reach-eval", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, 10000)
+	if err != nil || resp.StatusCode != 501 {
+		t.Fatalf("expected 501 when no engine is configured, got err=%v status=%v", err, resp.StatusCode)
 	}
 }

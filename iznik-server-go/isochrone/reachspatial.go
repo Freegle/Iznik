@@ -18,6 +18,7 @@ package isochrone
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/utils"
@@ -73,7 +74,7 @@ func spatialReachIDs(db *gorm.DB, latlng utils.LatLng) (in []int64, partial []in
 // ids    -> ms type=range key=msgid rows=22.
 // EXISTS -> ms type=ALL   key=NULL  rows=58,348, with the JSON parse and the
 // geometry build repeated per row, on a badge that polls ~2/s.
-func fromIDsWhere(in []int64, latlng utils.LatLng, admitted []uint64) (string, []interface{}) {
+func fromIDsWhere(in []int64, latlng utils.LatLng, admitted []uint64, watermark uint64) (string, []interface{}) {
 	ringArm := ""
 	var ringArgs []interface{}
 	if len(admitted) > 0 {
@@ -88,7 +89,15 @@ func fromIDsWhere(in []int64, latlng utils.LatLng, admitted []uint64) (string, [
 		ringArgs = []interface{}{admitted}
 	}
 
+	// Unseen = no impression AND above the member's mark-all-seen watermark -
+	// the same definition reachCandidateQuery's unseenFilter, both mygroups
+	// counts and the feed's own `unseen` column use. This arm was written
+	// without the watermark, so a member who had cleared their feed kept a
+	// badge counting posts below the clear: posts the feed already rendered as
+	// seen, sorted by date far down the list, which nothing they viewed could
+	// ever drain. Inlined like the other paths because the args are positional.
 	whereSQL := "ms.successful = 0 AND ml.msgid IS NULL " +
+		"AND ms.id > " + strconv.FormatUint(watermark, 10) + " " +
 		"AND ((ms.msgid IN (?) AND EXISTS (" +
 		"SELECT 1 FROM rippling_reach r1 WHERE r1.msgid = ms.msgid " +
 		"AND r1.status != 'held')) " +
@@ -113,7 +122,7 @@ func reachCandidateQueryFromIDs(db *gorm.DB, myid uint64, latlng utils.LatLng, i
 	}
 	// One concatenated WHERE string in a single Where() call — same GORM
 	// extra-paren gotcha as reachCandidateQuery (see there).
-	whereSQL, whereArgs := fromIDsWhere(in, latlng, admitted)
+	whereSQL, whereArgs := fromIDsWhere(in, latlng, admitted, browseClearedWatermark(db, myid))
 
 	return db.Table("messages_spatial ms").
 		Joins("INNER JOIN messages m ON m.id = ms.msgid").

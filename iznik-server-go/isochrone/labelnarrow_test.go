@@ -37,15 +37,19 @@ func TestLabelNarrowAndDiscover(t *testing.T) {
 	os.Setenv("ROUTING_EVAL_URL", srv.URL)
 	roadblur.ResetRoutingBreaker()
 
-	got := labelNarrowAndDiscover(51.5, -0.1, []int64{1, 2, 3, 4})
+	got, ok := labelNarrowAndDiscover(51.5, -0.1, []int64{1, 2, 3, 4})
 	// 2 drops (label-out); 4 stays (out but inside the origin group's
 	// union-admitted area); 7 appends (grid missed it, label admits).
 	assert.Equal(t, []int64{1, 3, 4, 7}, got)
+	assert.True(t, ok, "an answered evaluation reports ok")
 
-	// Routing down: the grid list passes through untouched.
+	// Routing down: the grid list passes through untouched, and the caller is
+	// told the question went unanswered - an empty list here is NOT "nothing
+	// is in reach", and the badge must not count it as such.
 	os.Setenv("ROUTING_EVAL_URL", "http://127.0.0.1:1")
 	roadblur.ResetRoutingBreaker()
-	got = labelNarrowAndDiscover(51.5, -0.1, []int64{1, 2, 3})
+	got, ok = labelNarrowAndDiscover(51.5, -0.1, []int64{1, 2, 3})
 	assert.Equal(t, []int64{1, 2, 3}, got)
+	assert.False(t, ok, "an unanswered evaluation must say so")
 	roadblur.ResetRoutingBreaker()
 }

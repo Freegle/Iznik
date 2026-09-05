@@ -108,7 +108,12 @@ and per-group membership and roles are the ones you will meet first.
   here are expensive precisely because each half looks correct on its own: a live one had the
   mail inviting members the website then refused, so people were emailed a post they could
   not find, and their replies were held indefinitely. See section 3b of the algorithm
-  reference for the lanes and the table of where each is honoured.
+  reference for the lanes and the table of where each is honoured. The unread badge is the
+  one surface where "unanswered" must not fail open, because for it open is a number: it
+  refuses (503, nothing cached) when a configured reach engine cannot answer, fails open
+  where no engine exists at all (dev, CI: every reach endpoint answers 501 and no routing
+  client opens the shared breaker on it), and honours the member's mark-all-seen watermark
+  like every other unseen count - see section 3c.
 
   Agreeing on the answer is not sufficient: how a surface ASKS costs as much as what it
   concludes. The lane rings WERE 37,000-vertex polygons stored as JSON, so the read question

@@ -37,9 +37,7 @@ func leafFor(lat, lng float64) *int32 {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode != http.StatusServiceUnavailable {
-			roadblur.MarkRoutingFailure()
-		}
+		roadblur.MarkRoutingFailureFor(resp.StatusCode)
 		return nil
 	}
 	var parsed struct {
@@ -93,9 +91,7 @@ func memberReachableLeaves(myid uint64, lat, lng float64, minutes uint64) []int3
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode != http.StatusServiceUnavailable {
-			roadblur.MarkRoutingFailure()
-		}
+		roadblur.MarkRoutingFailureFor(resp.StatusCode)
 		return nil
 	}
 	var parsed struct {

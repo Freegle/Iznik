@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-04
+last_reviewed: 2026-09-05
 covers:
   - iznik-routing-go/graph.go
   - iznik-routing-go/dijkstra.go
@@ -203,6 +203,11 @@ the two as a pair, and three things enforce it (`reach_server.go`):
   used to answer 503 for the life of the process; it now keeps retrying in the
   background (30 s, doubling to 10 min). The retry never rebuilds — an
   unattended rebuild is exactly what renumbers the regions.
+- **No engine at all is 501, not 503.** A server started without `REACH_DIR`
+  (dev, CI) answers every reach endpoint 501 Not Implemented. apiv2's routing
+  clients read that as "no labels here, keep the grid verdict" and never open
+  their shared breaker on it; 503 is reserved for a configured engine that could
+  not answer one request, which the badge retries once and then refuses.
 - **Changing layout without a gap.** Notes for the *next* layout are computed
   offline (`reach labels-export`, minutes for the whole country) and staged
   beside the live ones (`reach labels-apply`, into `reach_labels_next` stamped
