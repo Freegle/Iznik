@@ -624,21 +624,30 @@ class UnifiedDigestService
      */
     public function sendReachDigests(?int $limit = null, bool $dryRun = false, int $shard = 0, int $shards = 1, ?callable $shouldStop = null): array
     {
-        $stats = ['posts_processed' => 0, 'emails_sent' => 0, 'errors' => 0];
+        $stats = ['posts_processed' => 0, 'members_processed' => 0, 'emails_sent' => 0, 'errors' => 0];
 
         if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
             return $stats;
         }
 
-        // Only posts whose reach changed recently need a mail check — an unchanged polygon has no
-        // newly-inside members the ledger hasn't already covered. This mirrors the old inline
-        // trigger (mail fired on each init/advance). The window overlaps the cron interval so a
-        // post is never dropped between ticks; overlap is harmless because the ledger dedupes.
-        $windowMinutes = (int) config('freegle.ripple.reach_mail_window_minutes', 60);
+        // Only posts whose reach changed since the last pass need a mail check: an unchanged
+        // polygon has no newly-inside members the ledger has not already covered. Each shard
+        // resumes from a stored mark rather than re-reading a 60-minute window every minute.
+        // That window was 47-68% of db2, ~95% of it re-doing unchanged work, and it doubled as
+        // the only grace period for members who became eligible after a post's reach settled.
+        // That job now belongs to the member queue (drainMemberQueue), so the mark can be exact.
+        //
+        // The mark is the time this pass STARTED, taken before the query. Timestamps are
+        // second-granular, so storing the newest updated_at seen would skip a row written in
+        // the same second after the read; pass-start guarantees it is >= mark next tick. The
+        // small overlap is harmless because the ledger dedupes. A cold start (no mark) reads
+        // the last hour, which is what the window read, so it costs what today costs.
+        $passStart = now();
+        $mark = $this->reachMailMark($shard) ?? now()->subMinutes(60);
 
         $query = DB::table('rippling_reach')
             ->whereIn('status', ['expanding', 'done'])
-            ->where('updated_at', '>=', now()->subMinutes($windowMinutes));
+            ->where('updated_at', '>=', $mark->toDateTimeString());
 
         // Disjoint MOD(msgid, shards) partition — same model as sendImmediateDigests' MOD(groupid,
         // shards); each post is owned by exactly one shard, so shards run concurrently safely.
@@ -665,7 +674,123 @@ class UnifiedDigestService
             }
         }
 
+        // The other direction: members whose eligibility changed since the last pass.
+        $this->drainMemberQueue($stats, $dryRun, $shard, $shards, $shouldStop);
+
+        // Advance only after a complete, clean, real pass. A dry run must leave the mark where
+        // it is or the next real pass skips what it previewed; a pass stopped early or with a
+        // failed post must too, so the next pass re-examines from the old mark. Re-examining is
+        // free of side effects (the ledger dedupes); a post silently dropped is not.
+        if (! $dryRun && $stats['errors'] === 0 && empty($stats['stopped'])) {
+            $this->setReachMailMark($shard, $passStart);
+        }
+
         return $stats;
+    }
+
+    /**
+     * Drain the member side of reach mail: members queued in rippling_reach_member_pending
+     * because they joined a group, moved, returned after a long absence or switched to
+     * immediate mail (see ReachMemberQueueService and iznik-server-go's reachqueue). For
+     * each, find the live posts whose reach might cover them and ask mailNewlyReachedForPost
+     * about that one member - the same containment test and the same ledger the post side
+     * uses, so there is one definition of "in reach" and nobody is mailed twice.
+     *
+     * Candidates are posts on a group the member belongs to with immediate mail, whose stored
+     * outer bound contains the member's point (the spatial index does that), plus any post
+     * whose overflow ring admits the point per the ring index. mailNewlyReachedForPost then
+     * applies the exact label test, so a candidate the bound admits but the label does not
+     * is simply not mailed.
+     *
+     * Partitioned by MOD(userid, shards) like posts are by msgid, so concurrent shards drain
+     * disjoint members. The row is removed once the member has been evaluated, mailed or
+     * not: a member no live reach covers has nothing to wait for. A dry run leaves the queue
+     * as it found it.
+     */
+    private function drainMemberQueue(array &$stats, bool $dryRun, int $shard, int $shards, ?callable $shouldStop): void
+    {
+        $srid = (int) config('freegle.srid', 3857);
+
+        $pending = DB::table('rippling_reach_member_pending')->orderBy('id');
+        if ($shards > 1) {
+            $pending->whereRaw('MOD(userid, ?) = ?', [$shards, $shard]);
+        }
+
+        foreach ($pending->limit(500)->get(['id', 'userid']) as $row) {
+            if ($shouldStop && $shouldStop()) {
+                $stats['stopped'] = true;
+                break;
+            }
+
+            try {
+                $user = User::find($row->userid);
+                $point = $user ? $this->resolveUserLatLng($user) : null;
+
+                if ($point !== null) {
+                    [$lat, $lng] = $point;
+
+                    $candidates = DB::table('rippling_reach as mr')
+                        ->whereIn('mr.status', ['expanding', 'done'])
+                        ->whereRaw("ST_GeometryType(mr.outer_bound) <> 'POINT'")
+                        ->whereRaw('ST_Contains(mr.outer_bound, ST_SRID(POINT(?, ?), ?))', [$lng, $lat, $srid])
+                        ->whereExists(function ($q) use ($row) {
+                            $q->select(DB::raw(1))
+                                ->from('messages_groups as mg')
+                                ->join('memberships as m', 'm.groupid', '=', 'mg.groupid')
+                                ->whereColumn('mg.msgid', 'mr.msgid')
+                                ->where('mg.collection', 'Approved')
+                                ->where('mg.deleted', 0)
+                                ->where('m.userid', $row->userid)
+                                ->where('m.emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+                                ->where('m.collection', 'Approved');
+                        })
+                        ->pluck('mr.msgid')
+                        ->map(fn ($id) => (int) $id)
+                        ->all();
+
+                    $settings = is_string($user->settings) ? (json_decode($user->settings, true) ?: []) : (array) $user->settings;
+                    $band = $settings['browseDensityBand'] ?? null;
+                    $ringAdmitted = RingIndex::admittedFor($lat, $lng, RingIndex::lanesFor(is_string($band) ? $band : null));
+
+                    foreach (array_unique(array_merge($candidates, $ringAdmitted)) as $msgid) {
+                        $stats['emails_sent'] += $this->mailNewlyReachedForPost((int) $msgid, $dryRun, (int) $row->userid);
+                    }
+                }
+
+                $stats['members_processed']++;
+                if (! $dryRun) {
+                    DB::table('rippling_reach_member_pending')->where('id', $row->id)->delete();
+                }
+            } catch (\Throwable $e) {
+                $stats['errors']++;
+                Log::warning('reach-mail: failed for queued member', ['userid' => $row->userid, 'error' => $e->getMessage()]);
+            }
+        }
+    }
+
+    /**
+     * Where shard N of the reach pass keeps its mark. Shards partition posts by MOD(msgid, N)
+     * and run concurrently, so each has its own.
+     */
+    public static function reachMailMarkKey(int $shard): string
+    {
+        return "reach_mail_mark_shard{$shard}";
+    }
+
+    private function reachMailMark(int $shard): ?\Illuminate\Support\Carbon
+    {
+        $raw = DB::table('config')->where('key', self::reachMailMarkKey($shard))->value('value');
+
+        return $raw ? \Illuminate\Support\Carbon::parse($raw) : null;
+    }
+
+    private function setReachMailMark(int $shard, \Illuminate\Support\Carbon $at): void
+    {
+        DB::table('config')->upsert(
+            ['key' => self::reachMailMarkKey($shard), 'value' => $at->toDateTimeString()],
+            ['key'],
+            ['value']
+        );
     }
 
     /**
@@ -871,7 +996,7 @@ class UnifiedDigestService
         return (int) config('freegle.srid', 3857);
     }
 
-    public function mailNewlyReachedForPost(int $msgid, bool $dryRun = false): int
+    public function mailNewlyReachedForPost(int $msgid, bool $dryRun = false, ?int $onlyUserid = null): int
     {
         if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
             return 0;
@@ -962,6 +1087,12 @@ class UnifiedDigestService
             $itemCopies = $this->itemSiblingMsgids([$msgid])[$msgid] ?? [$msgid];
             $itemCopiesSql = implode(',', array_fill(0, count($itemCopies), '?'));
 
+            // The member-queue drain asks about ONE member. Same query, same containment,
+            // same ledger - keyed to that member rather than enumerating everyone on the
+            // post, which at ~0.7s a post would cost about what the pass's mark saves.
+            $onlySql = $onlyUserid !== null ? ' AND u.id = ?' : '';
+            $onlyParams = $onlyUserid !== null ? [$onlyUserid] : [];
+
             // status <> 'held': a frozen reach belongs to a post whose origin copy has been
             // pulled back for moderation. Browse, the badge and search hide it, so mailing it
             // would be the one surface still pushing a post that is under review. Freezing is
@@ -988,7 +1119,7 @@ class UnifiedDigestService
                          SELECT 1 FROM messages_outcomes mo
                          WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received', 'Withdrawn')
                        )
-                   AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)
+                   AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)$onlySql
                    AND ($containSql$overflowSql)
                    AND NOT EXISTS (
                          SELECT 1 FROM rippling_reach_notified n
@@ -996,7 +1127,9 @@ class UnifiedDigestService
                        )",
                 array_merge(
                     $primaryParams,
-                    [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90), $srid],
+                    [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90)],
+                    $onlyParams,
+                    [$srid],
                     $overflowParams,
                     $itemCopies
                 )

@@ -9,6 +9,7 @@ use App\Models\MessageAttachment;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
+use App\Services\Ripple\ReachMemberQueueService;
 use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -4162,5 +4163,283 @@ class UnifiedDigestServiceTest extends TestCase
             DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $member->id)->exists(),
             'the label admitted the member, so they are mailed and ledgered'
         );
+    }
+
+    /**
+     * Seed a reach row whose updated_at is $minutesAgo old, for the watermark tests.
+     */
+    private function seedReachUpdatedAgo(int $minutesAgo): int
+    {
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: mark (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update(['updated_at' => now()->subMinutes($minutesAgo)]);
+
+        return $msg->id;
+    }
+
+    /**
+     * Capture the reach pass's post-selection query.
+     *
+     * @return array<int, array{sql: string, bindings: array}>
+     */
+    private function captureReachSelects(callable $fn): array
+    {
+        $seen = [];
+        DB::listen(function ($query) use (&$seen) {
+            if (stripos($query->sql, 'rippling_reach') !== false && stripos($query->sql, 'updated_at') !== false && stripos($query->sql, 'select') === 0) {
+                $seen[] = ['sql' => $query->sql, 'bindings' => $query->bindings];
+            }
+        });
+        $fn();
+
+        return $seen;
+    }
+
+    /**
+     * The reach pass used to re-read every post whose reach changed in the last 60 minutes,
+     * every minute: 47-68% of db2, ~95% of it re-doing unchanged work. It now resumes from
+     * where the previous pass started. A post updated two hours ago, beyond any window, is
+     * still picked up when the stored mark is older than it - a stall loses nothing.
+     */
+    public function test_reach_pass_resumes_from_its_stored_mark_not_a_window(): void
+    {
+        $mark = now()->subHours(3);
+        DB::table('config')->upsert(
+            ['key' => UnifiedDigestService::reachMailMarkKey(0), 'value' => $mark->toDateTimeString()],
+            ['key'], ['value']
+        );
+        $msgid = $this->seedReachUpdatedAgo(120);
+
+        $stats = null;
+        $selects = $this->captureReachSelects(function () use (&$stats) {
+            $stats = $this->service->sendReachDigests(null, true, 0, 1);
+        });
+
+        $this->assertNotEmpty($selects, 'expected the post-selection query');
+        $bound = array_values(array_filter($selects[0]['bindings'], fn ($b) => is_string($b) && strtotime($b) !== false));
+        $this->assertNotEmpty($bound, 'the selection must be bounded by a datetime');
+        $this->assertSame($mark->toDateTimeString(), $bound[0], 'the bound is the stored mark');
+        $this->assertSame(1, $stats['posts_processed'], 'a post updated after the mark is processed, however old');
+    }
+
+    /**
+     * With no mark stored the pass must not sweep the whole table. It starts from an hour ago,
+     * which is what the old window did, so a cold start costs what today costs and no more.
+     */
+    public function test_reach_pass_cold_start_reads_only_the_last_hour(): void
+    {
+        DB::table('config')->where('key', UnifiedDigestService::reachMailMarkKey(0))->delete();
+        $old = $this->seedReachUpdatedAgo(180);
+        $recent = $this->seedReachUpdatedAgo(30);
+
+        $stats = $this->service->sendReachDigests(null, true, 0, 1);
+
+        $this->assertSame(1, $stats['posts_processed'], 'only the post inside the last hour is read on a cold start');
+    }
+
+    /**
+     * The mark stored after a pass is the time the pass STARTED, not the newest updated_at it
+     * saw. Timestamps are second-granular, so storing max-seen would skip a row that landed in
+     * the same second after the read; pass-start guarantees it is >= mark next tick. The
+     * overlap this leaves is harmless because the notified ledger dedupes.
+     */
+    public function test_reach_pass_stores_the_pass_start_as_its_mark(): void
+    {
+        DB::table('config')->where('key', UnifiedDigestService::reachMailMarkKey(0))->delete();
+        $this->seedReachUpdatedAgo(30);
+
+        $before = now()->subSecond();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $after = now()->addSecond();
+
+        $stored = DB::table('config')->where('key', UnifiedDigestService::reachMailMarkKey(0))->value('value');
+        $this->assertNotNull($stored, 'the pass must store a mark');
+        $storedAt = \Carbon\Carbon::parse($stored);
+        $this->assertTrue($storedAt->between($before, $after), "mark {$stored} must be the pass start, not the 30-minute-old row");
+    }
+
+    /**
+     * Shards partition posts by MOD(msgid, N) and run concurrently, so each keeps its own mark.
+     */
+    public function test_reach_pass_marks_are_per_shard(): void
+    {
+        $other = now()->subHours(5)->toDateTimeString();
+        DB::table('config')->upsert(
+            ['key' => UnifiedDigestService::reachMailMarkKey(1), 'value' => $other],
+            ['key'], ['value']
+        );
+        $this->seedReachUpdatedAgo(30);
+
+        $this->service->sendReachDigests(null, false, 0, 2);
+
+        $this->assertSame(
+            $other,
+            DB::table('config')->where('key', UnifiedDigestService::reachMailMarkKey(1))->value('value'),
+            'running shard 0 must not move shard 1 mark'
+        );
+    }
+
+    /**
+     * A dry run previews the pass and must leave the mark alone: advancing it would make the
+     * next real pass skip everything the preview showed.
+     */
+    public function test_reach_pass_dry_run_does_not_advance_the_mark(): void
+    {
+        $mark = now()->subHours(3)->toDateTimeString();
+        DB::table('config')->upsert(
+            ['key' => UnifiedDigestService::reachMailMarkKey(0), 'value' => $mark],
+            ['key'], ['value']
+        );
+        $this->seedReachUpdatedAgo(30);
+
+        $this->service->sendReachDigests(null, true, 0, 1);
+
+        $this->assertSame($mark, DB::table('config')->where('key', UnifiedDigestService::reachMailMarkKey(0))->value('value'));
+    }
+
+    /**
+     * A settled post: approved, attached, reach seeded over a box, and OUTSIDE the post-side
+     * pass (updated_at three hours ago, mark one hour ago). Only the member queue can reach it.
+     *
+     * @return array{0: int, 1: \App\Models\Group}
+     */
+    private function seedSettledPostOutsideThePostPass(): array
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: queue drain (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('b', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update(['updated_at' => now()->subHours(3)]);
+        DB::table('config')->upsert(
+            ['key' => UnifiedDigestService::reachMailMarkKey(0), 'value' => now()->subHour()->toDateTimeString()],
+            ['key'], ['value']
+        );
+
+        return [$msg->id, $group];
+    }
+
+    private function ledgered(int $msgid, int $userid): bool
+    {
+        return DB::table('rippling_reach_notified')->where('msgid', $msgid)->where('userid', $userid)->exists();
+    }
+
+    /**
+     * The member side of reach mail. A member who joins a group after a post's reach has
+     * settled is queued by the join, and the next pass mails them about the posts that cover
+     * them, then drops the queue row. Today they are mailed only if the join happens to land
+     * inside 60 minutes of the post's last reach change.
+     */
+    public function test_queued_member_inside_a_settled_reach_is_mailed_and_dequeued(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+
+        $stats = $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertSame(0, $stats['posts_processed'], 'precondition: the post side did not reach this post');
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'the queued member is mailed about the post now covering them');
+        $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count(), 'the queue row is consumed');
+        $this->assertSame(1, $stats['members_processed']);
+    }
+
+    /**
+     * A queued member no live reach covers is simply dequeued.
+     */
+    public function test_queued_member_outside_every_reach_is_dequeued_without_mail(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 55.0, -3.0);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_MOVED);
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertFalse($this->ledgered($msgid, $member->id));
+        $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count());
+    }
+
+    /**
+     * The ledger still dedupes: a member mailed in the post-side pass and later queued is not
+     * mailed again.
+     */
+    public function test_drain_does_not_mail_a_member_already_in_the_ledger(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        $this->service->mailNewlyReachedForPost($msgid);
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'precondition: mailed once by the post side');
+        $before = DB::table('rippling_reach_notified')->where('msgid', $msgid)->count();
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_RETURNED);
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertSame($before, DB::table('rippling_reach_notified')->where('msgid', $msgid)->count());
+    }
+
+    /**
+     * Draining a member must evaluate that member only. Re-enumerating every member of every
+     * candidate post per queued member would cost about what the mark saves. Two members sit
+     * inside the reach; only the queued one is mailed.
+     */
+    public function test_drain_evaluates_only_the_queued_member(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $queued = $this->createTestUser();
+        $this->createMembership($queued, $group);
+        $this->setMyLocation($queued, 51.5, -0.1);
+        $bystander = $this->createTestUser();
+        $this->createMembership($bystander, $group);
+        $this->setMyLocation($bystander, 51.45, -0.15);
+        ReachMemberQueueService::enqueue($queued->id, ReachMemberQueueService::REASON_FREQUENCY);
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $queued->id));
+        $this->assertFalse($this->ledgered($msgid, $bystander->id), 'a member nobody queued is not evaluated by the drain');
+    }
+
+    /**
+     * Queued members are partitioned across shards by MOD(userid, N) like posts are by msgid,
+     * so shards drain disjoint sets and never race on one row.
+     */
+    public function test_drain_is_partitioned_by_shard(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+        $mine = (int) ($member->id % 2);
+        $other = 1 - $mine;
+        DB::table('config')->upsert(
+            ['key' => UnifiedDigestService::reachMailMarkKey($other), 'value' => now()->subHour()->toDateTimeString()],
+            ['key'], ['value']
+        );
+
+        $this->service->sendReachDigests(null, false, $other, 2);
+        $this->assertSame(1, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count(), 'the other shard leaves the row alone');
+
+        $this->service->sendReachDigests(null, false, $mine, 2);
+        $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count());
+        $this->assertTrue($this->ledgered($msgid, $member->id));
     }
 }
