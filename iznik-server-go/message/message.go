@@ -296,6 +296,12 @@ type Message struct {
 	// finishes early when the post gathers enough repliers or is taken.
 	ReachesYouAt    *time.Time `json:"reachesyouat,omitempty" gorm:"-"`
 	ReachesYouFully *bool      `json:"reachesyoufully,omitempty" gorm:"-"`
+	// ReachFinished: the post's reach has stopped expanding (rippling_reach.status
+	// 'done') without covering the viewer, so it is never going to. Set instead of
+	// ReachesYouAt, whose final-tick date would already be in the past and read as
+	// "any moment now" about a reach that ended weeks ago (Discourse 9808/797). The
+	// reply is still held for the moment and released by the finished-reach sweep.
+	ReachFinished *bool `json:"reachfinished,omitempty" gorm:"-"`
 	// BulkItems is the structured catalogue for a bulk offer ("clearance"). Nil
 	// (and omitted) for ordinary single-item posts. Bulkcount is len(BulkItems),
 	// exposed so list/summary views can flag a bulk offer cheaply.
@@ -1127,6 +1133,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		// posts costs one search's latency rather than the sum. Only blocked posts
 		// pay it, which is a small minority of any feed.
 		coverage := make(map[uint64]rippling.Coverage, len(reachBlocked))
+		finished := make(map[uint64]bool, len(reachBlocked))
 		if len(reachBlocked) > 0 {
 			hazard := rippling.LoadHazardHours(db)
 
@@ -1142,6 +1149,12 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			var covMu sync.Mutex
 			var covWg sync.WaitGroup
 			for msgid, origin := range reachBlocked {
+				// A finished reach is not coming. No routing search and no date:
+				// the member is told the reach has ended instead (ReachFinished).
+				if origin.Finished {
+					finished[msgid] = true
+					continue
+				}
 				if !origin.Ok || origin.Arrival == nil || len(origin.Schedule) == 0 {
 					continue
 				}
@@ -1221,6 +1234,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// be a promise we have no intention of keeping, so drop any
 				// estimate the reach check produced for the same post.
 				delete(coverage, b.Msgid)
+				delete(finished, b.Msgid)
 			}
 		}
 
@@ -1232,7 +1246,10 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 
 					// Only the reach reason carries an arrival. A ban also lands in
 					// blockedSet and has no coverage entry, so it stays nil.
-					if cov, found := coverage[messages[ix].ID]; found {
+					if finished[messages[ix].ID] {
+						done := true
+						messages[ix].ReachFinished = &done
+					} else if cov, found := coverage[messages[ix].ID]; found {
 						at := cov.At
 						fully := cov.Covered
 						messages[ix].ReachesYouAt = &at
@@ -1796,6 +1813,18 @@ func Search(c *fiber.Ctx) error {
 		}
 	}
 
+	// ?originonly=true is the Approved Messages "Only this group's own posts (hide
+	// rippled-in)" box. The listing honoured it and a search with a term dropped it, so
+	// every result of a search could be a rippled-in copy (Discourse 9808/798). Applied
+	// at every return that carries results, like applyBrowseFilters.
+	originOnly := c.Query("originonly") == "true"
+	applyOriginOnly := func(rs []SearchResult) []SearchResult {
+		if !originOnly {
+			return rs
+		}
+		return dropRippledIn(db, rs, groupids)
+	}
+
 	// If groupids contains 0 ("All my communities" in ModTools), handle based on role:
 	// - Admin/Support: clear groupids so the search covers all groups (no filter).
 	// - Everyone else: replace with the user's actual memberships so they only see
@@ -1854,7 +1883,7 @@ func Search(c *fiber.Ctx) error {
 			byID := SearchByMsgID(db, msgid, groupids)
 			if len(byID) > 0 {
 				wg.Wait()
-				return c.JSON(byID)
+				return c.JSON(applyOriginOnly(byID))
 			}
 		}
 	}
@@ -2084,7 +2113,7 @@ func Search(c *fiber.Ctx) error {
 
 			if len(merged) > 0 {
 				wg.Wait()
-				return c.JSON(applyBrowseFilters(merged))
+				return c.JSON(applyOriginOnly(applyBrowseFilters(merged)))
 			}
 			// Both vector and keyword exact/starts returned nothing; fall through to
 			// typo and soundex cascade.
@@ -2150,7 +2179,7 @@ func Search(c *fiber.Ctx) error {
 
 	wg.Wait()
 
-	return c.JSON(applyBrowseFilters(filtered))
+	return c.JSON(applyOriginOnly(applyBrowseFilters(filtered)))
 }
 
 // Activity represents a recent activity in groups
@@ -2648,7 +2677,7 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// A standard message attached to an approval is the third route by which a
 	// moderator's words reach the poster, so it is gated the same way: a group the post
 	// rippled into approves its own copy without writing to the freegler.
-	originGid := MessageOriginGroup(db, req.ID)
+	home := HomeGroups(db, req.ID)
 
 	for _, gid := range authorizedGroups {
 		// Identical golden to
@@ -2656,7 +2685,7 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		db.Table("background_tasks").Create(map[string]interface{}{
 			"task_type": "email_message_approved",
 			"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
-				req.ID, gid, myid, subject, body, stdmsgid, "Approve", NotifyPosterFlag(originGid, gid)),
+				req.ID, gid, myid, subject, body, stdmsgid, "Approve", NotifyPosterFlag(home, gid)),
 		})
 	}
 
@@ -2679,56 +2708,57 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 }
 
 // handleReject rejects a pending message.
-// MessageOriginGroup returns the group a message was first posted to — the one it was not
-// rippled into. Rippling-out adds a messages_groups row per group a post reaches, flagged
-// rippled_in = 1; the poster's own group keeps rippled_in = 0. Only the origin group's
-// moderators correspond with the poster (#6, Discourse 10102); a rippled-in group's
-// moderators administer their copy in silence.
+// HomeGroups is the set of communities a post was posted to DIRECTLY: every
+// messages_groups row with rippled_in = 0, soft-deleted rows included. It is what
+// every poster-facing decision reads ("may this group's action be relayed to the
+// freegler?"), and it is a SET because a TrashNothing cross-post is one post sent to
+// several communities, whose per-group mails arrive a second apart (Discourse 10115).
+// Modelling home as the single earliest row told every other community it was
+// rejecting a rippled-in copy, and dropped its mail to the member.
 //
-// rippled_in is the only sound test. It is written by ExpandService at ripple time and
-// never moves, and is the same column the client marks the home group with
-// (composables/rippleStatus.js homeGroupId). An arrival window (mg.arrival close to
+// rippled_in is the only column consulted. An arrival window (mg.arrival close to
 // messages.arrival) does NOT work: handleApprove re-stamps messages_groups.arrival to the
 // approval time while messages.arrival keeps the time the post was received, so any post
 // moderated more slowly than the window has no row inside it and reads as having no
-// origin — which silently opens everything gated on "is this the home group?".
+// home at all - which silently opens everything gated on "is this the home group?".
 //
-// Returns 0 when the origin cannot be determined — the origin row was HARD-deleted
+// Empty when no direct row survives - the direct rows were HARD-deleted
 // (handleDeleteMessage / handleMove) leaving only rippled-in rows, or the message has no
-// rows at all. Callers then fall back to notifying (the safe direction — notify rather
-// than silently drop). Soft-deleted (deleted=1) origin rows from a plain-delete rejection
-// still persist and are still matched, so a later secondary rejection stays silent.
-//
-// messages_groups has no surrogate id column (its key is the composite (msgid, groupid)),
-// so groupid is the tiebreak when two rows share the same arrival second: lowest groupid
-// wins, deterministically. Manual cross-posting is retired by #10, so same-second ties are
-// rare (TN same-second import order).
-func MessageOriginGroup(db *gorm.DB, msgid uint64) uint64 {
-	var gid uint64
+// rows at all. Callers then fall back to notifying (the safe direction - notify rather
+// than silently drop). Soft-deleted (deleted=1) direct rows from a plain-delete rejection
+// still persist and still count, so a later secondary rejection stays silent.
+func HomeGroups(db *gorm.DB, msgid uint64) map[uint64]bool {
+	var gids []uint64
 	db.Table("messages_groups").
 		Select("groupid").
 		Where("msgid = ? AND rippled_in = 0", msgid).
-		Order("arrival ASC, groupid ASC").
-		Limit(1).
-		Scan(&gid)
-	return gid
+		Scan(&gids)
+
+	home := make(map[uint64]bool, len(gids))
+	for _, gid := range gids {
+		home[gid] = true
+	}
+
+	return home
 }
 
 // NotifyPosterFlag reports whether a moderation action taken on group gid may be relayed
-// to the poster: 1 for the post's home group, 0 for a group it merely rippled into. It is
-// written into the poster-email background task, which the batch reads before sending
-// anything to the freegler (ProcessBackgroundTasksCommand::handleModStdMessage).
+// to the poster: 1 for a community the post was posted to (HomeGroups), 0 for one it
+// merely rippled into. It is written into the poster-email background task, which the
+// batch reads before sending anything to the freegler
+// (ProcessBackgroundTasksCommand::handleModStdMessage).
 //
 // The task is queued either way, because the action DID happen on that group and its
 // moderation log entry and moderator push are its own business. It is only the
 // correspondence that belongs to the home community.
 //
-// An unknown origin yields 1: better a message the poster did not need than a rejection
+// No known home group yields 1: better a message the poster did not need than a rejection
 // they never hear about on the group they actually posted to.
-func NotifyPosterFlag(originGid, gid uint64) int {
-	if originGid != 0 && gid != originGid {
+func NotifyPosterFlag(home map[uint64]bool, gid uint64) int {
+	if len(home) > 0 && !home[gid] {
 		return 0
 	}
+
 	return 1
 }
 
@@ -2830,18 +2860,18 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// showing in that group's area and must NOT be sent back to the poster (#6): they
 	// posted it on their origin group and it remains available there, so a secondary
 	// "out of area" rejection is not their concern.
-	originGid := MessageOriginGroup(db, req.ID)
+	home := HomeGroups(db, req.ID)
 
 	// Queue the rejection task for every group actually rejected here (Pending at the
 	// time) so a group where the post had already gone live gets no phantom log (#9815).
-	// notifyposter carries whether the batch may relay it to the freegler: only the origin
-	// group may. A secondary group's rejection still queues its task, so that group keeps
-	// its own moderation log entry and its mods get their push — the task carries
+	// notifyposter carries whether the batch may relay it to the freegler: only a community
+	// the post was posted to may. A secondary group's rejection still queues its task, so
+	// that group keeps its own moderation log entry and its mods get their push — the task carries
 	// notifyposter 0 and the batch sends no mail and opens no modmail chat. Secondary
 	// rejections are also logged for #9 observability (how often rippling pushes a post
 	// somewhere a group rejects it).
 	for _, gid := range pendingGroups {
-		notifyPoster := NotifyPosterFlag(originGid, gid)
+		notifyPoster := NotifyPosterFlag(home, gid)
 		if notifyPoster == 0 {
 			log.Printf("ripple: secondary-group reject msgid=%d groupid=%d byuser=%d (poster not notified)", req.ID, gid, myid)
 			RecordRippleEvent(db, "secondary_reject")
@@ -2995,7 +3025,7 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// misfired in Discourse 10102: the shared "Animals (Delete)" standard message has
 	// action "Delete Approved Message", so it never went near handleReject's suppression
 	// and a Walsall moderator's note reached a Potteries poster.
-	originGid := MessageOriginGroup(db, req.ID)
+	home := HomeGroups(db, req.ID)
 
 	// Per-group delete: remove only the authorized groups' rows.
 	// Identical golden to f90b6df0a3bb
@@ -3042,7 +3072,7 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// Queue email+log+push via background task for each authorized group.
 	// The batch processor will create the mod log entry and notify group moderators.
 	for _, gid := range authorizedGroups {
-		notifyPoster := NotifyPosterFlag(originGid, gid)
+		notifyPoster := NotifyPosterFlag(home, gid)
 		if notifyPoster == 0 {
 			log.Printf("ripple: secondary-group delete msgid=%d groupid=%d byuser=%d (poster not notified)", req.ID, gid, myid)
 			RecordRippleEvent(db, "secondary_delete")
@@ -3414,7 +3444,7 @@ func handleReply(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// to the community it was posted on (Discourse 10102). Refuse rather than accept and
 	// silently drop it — the moderator wrote those words deliberately and must be told
 	// they did not go.
-	if NotifyPosterFlag(MessageOriginGroup(db, req.ID), ctx.Groupid) == 0 {
+	if NotifyPosterFlag(HomeGroups(db, req.ID), ctx.Groupid) == 0 {
 		return fiber.NewError(fiber.StatusForbidden,
 			"Only the community this was posted on can message the freegler about it")
 	}

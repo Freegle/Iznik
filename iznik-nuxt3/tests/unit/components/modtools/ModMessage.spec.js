@@ -1947,6 +1947,42 @@ describe('ModMessage', () => {
       }
     })
 
+    // Discourse 10115: a TrashNothing cross-post is one post the member sent DIRECTLY to
+    // several communities, whose mails land a second apart. Every direct copy is home: the
+    // mod of the second community to receive it gets the full Reject (with a message to
+    // the member), not the silent "rippled in" removal. Only rippling's own copy is not.
+    it('treats every direct copy of a cross-post as home, not just the first to arrive', () => {
+      const groups = [
+        {
+          groupid: 555,
+          namedisplay: 'First',
+          collection: 'Pending',
+          arrival: '2026-09-06T19:41:34Z',
+          rippled_in: 0,
+        },
+        {
+          groupid: 789,
+          namedisplay: 'Second',
+          collection: 'Pending',
+          arrival: '2026-09-06T19:41:35Z',
+          rippled_in: 0,
+        },
+        {
+          groupid: 111,
+          namedisplay: 'Rippled',
+          collection: 'Approved',
+          arrival: '2026-09-06T20:21:38Z',
+          rippled_in: 1,
+        },
+      ]
+      expect(
+        mountComponent({ contextGroupid: 789 }, { groups }).vm.isHomeGroup
+      ).toBe(true)
+      expect(
+        mountComponent({ contextGroupid: 111 }, { groups }).vm.isHomeGroup
+      ).toBe(false)
+    })
+
     // Discourse 9862/15: a mod found a standard message configured only for other
     // groups (Newham/Hackney) available on a rippled post, auto-signed as Tower
     // Hamlets (the group they were actually moderating it under). configid drives

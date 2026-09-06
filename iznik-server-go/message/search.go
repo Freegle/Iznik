@@ -713,3 +713,39 @@ func searchReachArmIDs(db *gorm.DB, lng, lat float64) []uint64 {
 	reachIDs = append(reachIDs, rippling.RescueUndecided(lat, lng, undecided)...)
 	return reachIDs
 }
+
+// dropRippledIn keeps only the results one of the given groups holds as its OWN post:
+// a messages_groups row with rippled_in = 0 on that group. It is the search arm of the
+// Approved Messages "Only this group's own posts (hide rippled-in)" filter
+// (?originonly=true), whose listing arm is the mg.rippled_in = 0 clause in
+// message_list.go. No groups means nothing to scope to, so nothing is dropped.
+func dropRippledIn(db *gorm.DB, results []SearchResult, groupids []uint64) []SearchResult {
+	if len(results) == 0 || len(groupids) == 0 {
+		return results
+	}
+
+	ids := make([]uint64, 0, len(results))
+	for _, r := range results {
+		ids = append(ids, r.Msgid)
+	}
+
+	var own []uint64
+	db.Table("messages_groups").
+		Select("DISTINCT msgid").
+		Where("msgid IN ? AND groupid IN ? AND rippled_in = 0 AND deleted = 0", ids, groupids).
+		Scan(&own)
+
+	keep := make(map[uint64]bool, len(own))
+	for _, id := range own {
+		keep[id] = true
+	}
+
+	kept := results[:0]
+	for _, r := range results {
+		if keep[r.Msgid] {
+			kept = append(kept, r)
+		}
+	}
+
+	return kept
+}

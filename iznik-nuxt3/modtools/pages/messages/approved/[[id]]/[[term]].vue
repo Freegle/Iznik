@@ -265,9 +265,12 @@ async function loadMore($state) {
     if (messageTerm.value) {
       // Message-term search is always semantic now: it goes through the V2
       // vector search API via searchMT (the keyword toggle has been retired).
+      // 9808/798: the own-posts box applies here too. This branch returns before the
+      // listing params are built, so the filter has to ride the search request itself.
       const ids = await messageStore.searchMT({
         term: messageTerm.value,
         groupid: groupid.value,
+        originonly: originOnly.value,
       })
       if (ids) {
         ids.forEach((id) => modMessages.listingIds.value.add(id))

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-04
+last_reviewed: 2026-09-06
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -111,6 +111,11 @@ the poster is not told. Approve, Hold and Release stay as plain buttons. A rippl
 can also arrive Pending because it breaks your own keyword or worry-word rules, with the
 reason shown on the post. The whole picture is in [rippling out](rippling-out.md).
 
+Only a copy rippling created counts as rippled in. A post a TrashNothing member sent to
+your community directly, as well as to others, is yours to moderate in full, and the
+member is told when you reject it - it makes no difference which community's copy
+happened to arrive first.
+
 ### Fill-in boxes and optional bits
 
 A standard message can mark parts of its wording with `<editthis>...</editthis>` (something
@@ -142,7 +147,9 @@ shows these with an old-to-new difference, and you **Accept Edit** or **Reject E
 **Messages > Approved** (`/messages/approved`) lets you browse posts that are already
 live, search by id, subject or member, and mark OFFERs and WANTEDs as **Taken**,
 **Received** or **Withdrawn** on the member's behalf when needed. You can also move a post
-**Back to Pending** for another look.
+**Back to Pending** for another look. Tick **Only this group's own posts (hide
+rippled-in)** to leave out copies that rippled in from elsewhere; it applies to a search
+by subject as well as to the plain list.
 
 ## Marking as spam versus deleting
 

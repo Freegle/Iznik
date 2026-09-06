@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-05
+last_reviewed: 2026-09-06
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -384,6 +384,14 @@ unreadable body all leave the row UNDECIDED, and every gate lets an undecided ro
 the reply is sent rather than held, and no "hasn't reached your area yet" notice is shown.
 `rippling.ReachRowInfo.Decided` carries that distinction in Go, `ReachQueryService::reachVerdict`
 in PHP. Mail is the one exception (see below).
+
+**A finished reach is not "on its way".** An `out` on a row whose `status` is `done` (the
+schedule ran out, or the extent governor stopped it) is permanent, so the message page says
+so (`reachfinished`, `message/reach.go` `ReachOrigin.Finished`) instead of dating an
+arrival: the only date `CoverageAt` could give is the final tick's, already in the past,
+which the client rendered as "any moment now" about a reach that had ended weeks earlier
+(Discourse 9808/797). The reply is still held and `ripple:release-replies` releases it on
+its next pass through the `done` branch, so "straight away" is what the member is told.
 
 That direction was chosen after 2026-09-02, when the reach engine was down for sixteen hours
 and the gates failed the other way. A member 13 minutes' drive from a post, in the post's own
@@ -1248,10 +1256,16 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   (§7a) and `releasedat`. Two similar names, one letter apart: `dueat` is when it becomes
   due, `releasedat` is when it actually went.
 - `messages_groups.rippled_in = 1` - marks a rippled-in copy (vs the origin membership).
-  It is also how the post's **origin group** is identified: `MessageOriginGroup`
-  (`iznik-server-go/message/message.go`) takes the earliest-arriving `rippled_in = 0` row,
-  and the client's `homeGroupId` (`composables/rippleStatus.js`) uses the same column.
-  Identify the origin from this column and nothing else. In particular an arrival window
+  It is also how the post's **home groups** are identified, and they are a SET: `HomeGroups`
+  (`iznik-server-go/message/message.go`) is every `rippled_in = 0` row, and
+  `NotifyPosterFlag` relays a moderation action to the poster only from one of them. The
+  client's `isHomeGroupRow` (`composables/rippleStatus.js`) reads the same column per row;
+  `homeGroupId` still picks the earliest of them where ONE anchor is needed (which chat a
+  Blank Reply joins). A TrashNothing cross-post is one post sent directly to several
+  communities, whose mails arrive a second apart, and every one of those copies is home -
+  modelling home as the single earliest row told the others they were rejecting a
+  rippled-in copy and dropped their mail to the member (Discourse 10115).
+  Identify home from this column and nothing else. In particular an arrival window
   (`messages_groups.arrival` close to `messages.arrival`) does not work: approving
   re-stamps `messages_groups.arrival` to the approval time while `messages.arrival` keeps
   the time the post was received, so any post moderated slowly has no row inside the

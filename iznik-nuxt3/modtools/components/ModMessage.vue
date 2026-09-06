@@ -832,6 +832,7 @@ import { useModGroupStore } from '@/stores/modgroup'
 import { twem } from '~/composables/useTwem'
 import {
   isRippledInToContextGroup as isRippledIn,
+  isHomeGroupRow,
   earliestArrivalGroupId,
   homeGroupId,
 } from '~/composables/rippleStatus'
@@ -1126,12 +1127,14 @@ const currentGroupName = computed(() => {
   return gid ? groupStore.get(parseInt(gid))?.namedisplay : null
 })
 
-// Whether the copy being administered is the post's home/origin group. Delete and Delete
-// as Spam (which remove the post itself) are only offered here, not on a rippled-in copy.
-const isHomeGroup = computed(() => {
-  const origin = originGroupid.value
-  return origin == null || currentGroupid.value === origin
-})
+// Whether the copy being administered is one the member posted DIRECTLY (rippled_in = 0),
+// as opposed to one rippling created. Per row, not "the single earliest group": a
+// TrashNothing cross-post has several direct copies and every one of them is home
+// (Discourse 10115). Delete and Delete as Spam (which remove the post itself) are only
+// offered here, not on a rippled-in copy, and only a home copy's removal tells the poster.
+const isHomeGroup = computed(() =>
+  isHomeGroupRow(message.value?.groups, currentGroupid.value)
+)
 
 // Rippling-out: only OFFER/WANTED posts ripple, so only offer the reach map for those.
 // The modal itself explains when a post isn't rippling yet.
