@@ -17,6 +17,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/location"
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/queue"
@@ -2170,6 +2171,7 @@ func PutUser(c *fiber.Ctx) error {
 			"collection": utils.COLLECTION_APPROVED,
 		})
 		if result.RowsAffected > 0 {
+			reachqueue.QueueMember(db, newUserID, reachqueue.ReasonJoined)
 			db.Table("logs").Create(map[string]interface{}{
 				"timestamp": gorm.Expr("NOW()"),
 				"type":      log2.LOG_TYPE_GROUP,
@@ -2372,6 +2374,9 @@ func ProcessSettingsUpdate(settingsJSON []byte, myid uint64, setClauses *[]strin
 				Byuser:  &myid,
 				Text:    textPtr,
 			})
+
+			// A new location can put the member inside reaches that never covered them.
+			reachqueue.QueueMember(db, myid, reachqueue.ReasonMoved)
 
 			// Rippling-out: reach now follows declared location, so flag rapid location-hopping
 			// for moderator review (non-destructive).

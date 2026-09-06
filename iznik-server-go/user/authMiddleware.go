@@ -3,6 +3,7 @@ package user
 import (
 	"fmt"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/getsentry/sentry-go"
 	"github.com/gofiber/fiber/v2"
@@ -109,8 +110,16 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 		// statement at all when the auth SELECT already saw a fresh value.
 		if userIdInJWT > 0 && userIdInDB.Id > 0 && (userIdInDB.Lastaccess.IsZero() || userIdInDB.Lastaccess.Before(time.Now().Add(-10*time.Minute))) {
 			db := database.DBConn
-			db.Table("users").Where("id = ? AND (lastaccess IS NULL OR lastaccess < DATE_SUB(NOW(), INTERVAL 10 MINUTE))", userIdInDB.Id).
+			res := db.Table("users").Where("id = ? AND (lastaccess IS NULL OR lastaccess < DATE_SUB(NOW(), INTERVAL 10 MINUTE))", userIdInDB.Id).
 				Update("lastaccess", gorm.Expr("NOW()"))
+
+			// A member back after 90 days away is newly eligible for reach mail (the mail's
+			// lastaccess test), and nothing else ever signals that. The OLD lastaccess is in
+			// hand here, and the guarded UPDATE above is won by exactly one of N parallel
+			// requests, so the member is queued once per return, not once per request.
+			if res.RowsAffected > 0 && !userIdInDB.Lastaccess.IsZero() && userIdInDB.Lastaccess.Before(time.Now().Add(-90*24*time.Hour)) {
+				reachqueue.QueueMember(db, userIdInDB.Id, reachqueue.ReasonReturned)
+			}
 		}
 
 		// Refresh sessions.lastactive if older than 10 minutes — this gives the session
