@@ -2,7 +2,9 @@
 
 *Evidence base: 158,349 Offer conversations on 76,663 posts, March–July 2026, from a production database restore; plus a 26,486-room stratified sample annotated by a local model on the analysis machine. Aggregate figures only; no member text or identifiers. September 2026.*
 
-A Freegle conversation fails at several distinct points, and each has its own evidence and its own fix. The candidates are grouped by the stage they act on. *Product* = a form or flow change with no model in the loop. *Assistant* = something that reads or writes in a conversation. Each candidate carries plausibility, evidence strength, and reach.
+A Freegle conversation fails at several distinct points, and each has its own evidence and its own fix. The candidates are grouped by the stage they act on.
+
+Every intervention is a message or a control that **one side, the other, or both** can see, and that is part of the design, not an implementation detail. A conversation has two people in it; an intervention that helps one of them silently can look like ghosting or interference to the other. So each candidate below states **who sees it** — *offerer*, *replier*, or *both* — and what the other side experiences if anything. *Product* = a form or flow change with no model in the loop. *Assistant* = something that reads or writes in a conversation.
 
 ---
 
@@ -12,9 +14,13 @@ The taker's opener is the one thing in the conversation that precedes any decisi
 
 ### A1. Structured collection-time slots at reply time — *product · strongest evidence · ~3,700 avoidable round-trips/month*
 
+**Visible to:** the replier, as part of the reply form. The offerer sees a first message with concrete times in it instead of "sometime this week".
+
 Replace or precede the free-text collection question with day chips and morning/afternoon/evening, multi-select, plus "I'm flexible"; append the result as text so nothing downstream changes. Measure with the existing giver-asks-for-time detector; guardrail on reply rate. Expect less than the correlation — a form cannot manufacture organised people.
 
 ### A2. Transport prompt at reply time, heavy items only — *product · conditional evidence · ~3,600 heavy rooms/month*
+
+**Visible to:** the replier, as a question on the reply form for items in the heavy category. The offerer sees the answer in the first message and never has to ask.
 
 Cut by item weight:
 
@@ -27,9 +33,11 @@ Cut by item weight:
 
 **When the offerer's first reply is a transport question on a ≥25 kg item, the taker goes silent 17.4% of the time — against 3.4% for a time question.** A transport question is five times as likely to end the conversation. Asking it at reply time, before the offerer has invested, lets a would-be-silent taker self-select out at no cost. ≥25 kg only: on light items volunteered transport shows no benefit, and mentioning it in the opener is associated with slightly *worse* outcomes overall. If trialled, measure whether it changes who replies, not just completion given a reply.
 
-### A3. Size/transport category at posting time — *product · removes a selection bias · every post*
+### A3. A weight basis for the heavy-item gate — *dependency on the EEE work, not a new build*
 
-Only 40–44% of posts resolve a weight via word-matching against the FRN table, and unresolved posts convert *better* (23.3% vs 18.4%). A posting-time dropdown gives every post a bulk category and makes A2's ≥25 kg gate real rather than inferred.
+A2 needs to know which items are ≥25 kg. Only 40–44% of posts resolve a weight by word-matching against the FRN table, and unresolved posts convert *better* (23.3% vs 18.4%), so the current basis is both incomplete and biased.
+
+The electricals pipeline (`plans/active/2026-08-27-electricals-pipeline-and-page.md`) has already settled this question for its own purposes: it uses the `impact.go` cascade — exact `items.weight`, then fuzzy match against the `weights` reference table, then a popularity-weighted population mean — and explicitly rejects the per-item model estimate at 65% accuracy against human quorum. Size is published only as a coarse small/medium/large split (72%). A2's gate should use the same cascade, with the coarse size band as a tie-breaker, and inherit whatever improves it. No separate posting-time dropdown is proposed here.
 
 ---
 
@@ -51,9 +59,13 @@ The post is taken ~92% of the time regardless; offerers cope by triage, not conv
 
 ### B1. Triage assistant for overloaded offerers — *assistant · strong evidence · ~2,900 posts/month*
 
-When a post passes 4 replies, give the offerer a summary of who has replied — stated time, transport where the item is heavy, distance, charity/organisation, track record — and a one-click holding message for everyone they will not pick. The Helper does this for bulk offers behind an opt-in; this is the ordinary busy post. 13,400 posts in five months had 4+ replies (~72,000 rooms). Untested: whether a summary changes who gets picked or how many get a reply. Trial metrics: reply rate and time-to-first-reply on busy posts.
+**Visible to:** the offerer, as a summary panel on a post with 4+ replies. Repliers see nothing until the offerer acts; those the offerer does not pick receive the holding message (B3) rather than silence.
+
+Summarise who has replied — stated time, transport where the item is heavy, distance, charity/organisation, track record — with a one-click holding message for everyone the offerer will not pick. The Helper does this for bulk offers behind an opt-in; this is the ordinary busy post. 13,400 posts in five months had 4+ replies (~72,000 rooms). Untested: whether a summary changes who gets picked or how many get a reply. Trial metrics: reply rate and time-to-first-reply on busy posts.
 
 ### B2. Surface the structural repliers the offerer would want — *assistant · weak-to-moderate evidence · ~1,400 rooms/month*
+
+**Visible to:** the offerer only, as annotations in B1's summary. The replier is not told they have been tagged.
 
 Regex over 156,107 openers:
 
@@ -65,11 +77,13 @@ Regex over 156,107 openers:
 | offers to take multiple / all / has a van | 0.6% | 67.4% | 22.4% (×1.05) |
 | demanding tone | 0.5% | 57.7% | 16.4% (×0.77) |
 
-Small populations, conservative regexes. The bulk collector on a 7+-reply post is answered 46% of the time versus 38% for everyone else — better, but still a 54% chance the person with the van hears nothing. Connectors are the likeliest match for a "charities preferred" criterion and the likeliest to be lost in a pile. Household pairs collect at the highest rate of any pattern and are the case to consolidate ("can one of you collect all three?"). These feed B1's summary.
+Small populations, conservative regexes. The bulk collector on a 7+-reply post is answered 46% of the time versus 38% for everyone else — better, but still a 54% chance the person with the van hears nothing. Connectors are the likeliest match for a "charities preferred" criterion and the likeliest to be lost in a pile. Household pairs collect at the highest rate of any pattern and are the case to consolidate ("can one of you collect all three?").
 
-### B3. Stop the taker chasing into silence — *assistant · moderate evidence · ~2,000 rooms/month*
+### B3. A holding message instead of silence — *assistant · moderate evidence · ~11,000 rooms/month*
 
-17.7% of ghosted takers send a second, third, fourth message anyway — ~2,000 people a month sending follow-ups nobody reads. An assistant that knows the post is promised elsewhere can say so. Chasers who *do* get a reply collect at 47% vs 22%, but that is engagement, not a lever — do not reward chasing. Demanding tone in the opener does not help the sender (×0.77); quick replies prevent it.
+**Visible to:** the replier, as a message in the chat. The offerer sees that it was sent on their behalf.
+
+Two forms. On a post where the offerer has replied to some people and not others, a message to the rest: thanks, the offerer has several replies and will be in touch if it works out. On a post that has been promised elsewhere, a message saying so. The second stops the chase: **17.7% of ghosted takers send a second, third, fourth message** — ~2,000 people a month sending follow-ups nobody reads. Chasers who *do* get a reply collect at 47% vs 22%, but that is engagement, not a lever — do not reward chasing. Demanding tone in the opener does not help the sender (×0.77); an early holding message prevents it.
 
 ---
 
@@ -87,9 +101,11 @@ Offerer first-reply latency predicts collection **within every load stratum**, s
 
 A reply inside an hour is worth roughly double a reply after a day at every level of competition. Median offerer latency on quiet posts is 16 hours; 37% take over a day. The taker still comes back 81% of the time after a 1–3 day wait, so most of the loss is momentum, not departure.
 
-### C1. Get the replier an answer within the hour — *assistant · strong evidence · every conversation*
+### C1. Acknowledge the replier within the hour — *assistant · strong evidence · every conversation*
 
-An automated acknowledgement, an answer to a factual question drawn from the listing (D1), or a nudge to the offerer. Observational — fast repliers are likely organised in other ways — but the gradient is large, consistent, and cheap to test. This is the Helper's rule 1 ("answer factual questions immediately") generalised.
+**Visible to:** both. The replier gets a chat message: thanks, your reply has been passed to the offerer. The offerer sees, in the same chat, that it was sent for them, and gets a nudge if they have not replied within a threshold.
+
+This is an acknowledgement, not an answer — it does not pretend the offerer has read anything, and it does not commit them to anything. Where the replier's message contains a factual question the listing can answer, D1 supplies the answer in the same message. The evidence is observational — fast repliers are likely organised in other ways — but the gradient is large and consistent at every level of competition, and the intervention is cheap to test. This is the Helper's rule 1 ("answer factual questions immediately") generalised, with the disclosure the Helper's prompt already specifies.
 
 ---
 
@@ -97,21 +113,31 @@ An automated acknowledgement, an answer to a factual question drawn from the lis
 
 44% of openers contain a question; 29.7% are never answered — 13.1% of all Offer conversations. Collected: **38.4% when answered, 6.6% when not**, against 15.5% with no question. In the other direction, after an offerer's question the taker goes silent 14–24% of the time and those rooms complete at 5–10%. Median reply time when people *do* answer is about an hour, so the dropped thread is the problem, not the delay.
 
-### D1. Answer the taker's factual question from the listing — *assistant · strong evidence · ~4,100 rooms/month*
+### D1. Answer the replier's factual question from the listing — *assistant · strong evidence · ~4,100 rooms/month*
 
-Where the question is factual (dimensions, condition, "will it fit in a car", "how many"), answer it from the post or tell the offerer a question is waiting. Detector already measured: on 500 real last-messages, `qwen2.5:14b` finds a question at precision **0.972** (recall 0.733) versus 0.815 for a question-mark regex at the same recall — one spurious flag in 35 against one in five — at 527 messages/minute, reading only the single last message. ~8 GPU-minutes a month. Precision was scored against a larger model, not people; check a sample by eye before switching on.
+**Visible to:** both. The answer goes to the replier as a chat message, marked as drawn from the listing; the offerer sees it in the chat and can correct it.
+
+Where the question is factual (dimensions, condition, "will it fit in a car", "how many"), answer from the post; where it is not, tell the offerer a question is waiting. Detector already measured: on 500 real last-messages, `qwen2.5:14b` finds a question at precision **0.972** (recall 0.733) versus 0.815 for a question-mark regex at the same recall — one spurious flag in 35 against one in five — at 527 messages/minute, reading only the single last message. ~8 GPU-minutes a month. Precision was scored against a larger model, not people; check a sample by eye before switching on.
 
 ### D2. Nudge whichever side has left a question unanswered — *product (existing reminder rail) · moderate evidence · ~5,600 rooms/month*
 
-Taker's question unanswered (~4,100/month): nudge the offerer. Offerer's question unanswered (~1,300 time + ~300 transport/contact/location): nudge the taker. Extend the existing chase-up machinery; no new rail; one per conversation; respect the chat opt-out.
+**Visible to:** the side being nudged only. The other side sees nothing unless a reply results.
+
+Replier's question unanswered (~4,100/month): nudge the offerer. Offerer's question unanswered (~1,300 time + ~300 transport/contact/location): nudge the replier. Extend the existing chase-up machinery; no new rail; one per conversation; respect the chat opt-out.
 
 ---
 
 ## E. After a promise: the arrangement falls through
 
-### E1. Renege → auto-offer to the runner-up — *assistant · design exists, unevaluated · ~1,000 rooms/month*
+Promise-to-collection timing is well defined: **median 21 hours; 57% within a day, 83% within three, 94% within seven.** After three days, most collections that are going to happen have happened. Only 17.6% of promises have an arranged date recorded, so the platform usually cannot use the agreed date and has to fall back on this distribution.
 
-Generalise the Helper's bulk reallocation ("revoke the allocation and offer to the next candidate") to ordinary single-item Promise→Renege. ~1,068 reneged rooms a month; ~94% get no proactive handling. Reneges are terminal — only 5.7% re-promise — so the runner-up is otherwise lost. Draws on B1's triage data.
+When a promise is reneged, the runner-up is worth something: on the 2,868 reneged posts that had another replier, **a sibling was later promised 54% of the time and collected 56.5% of the time**, with a mean of 2.6 other repliers to choose from. A further 1,217 reneged posts had no other replier at all. Reneges are terminal for the person who reneged — only 5.7% re-promise — and today ~94% of the ~1,068 reneged rooms a month get no proactive handling. The reneged post is still eventually taken 63.5% of the time, which means the offerer usually has to start again by hand.
+
+### E1. Tell the offerer how long is reasonable to wait, and who is next — *assistant · strong timing evidence · ~1,000 rooms/month*
+
+**Visible to:** the offerer, as a prompt in the promised chat once the promise has aged past the threshold. The promised replier sees nothing until the offerer acts.
+
+Once a promise passes the 3-day mark with no collection recorded and no arranged date in the future, tell the offerer: most collections happen within three days; this one has not; here is the next-best replier from B1's triage (time stated, transport, distance), and a one-click way to ask the promised person whether they are still coming. If the offerer reneges, offer to message the runner-up. This is the Helper's bulk reallocation ("revoke the allocation and offer to the next candidate") generalised to the single-item case, with the offerer making the decision rather than the assistant. Where there is no other replier (1,217 posts), the prompt is simply the wait-time reminder and the option to repost.
 
 ---
 
@@ -119,13 +145,19 @@ Generalise the Helper's bulk reallocation ("revoke the allocation and offer to t
 
 ### F1. Silent extraction of the states that have no button — *background job · high agreement · every conversation*
 
+**Visible to:** nobody. Rows in a dedicated table.
+
 Address shared in text (34% of rooms vs 6% clicking the button), contact exchange, gone-elsewhere/declined/withdrew, agreed time (22% vs 3.7% trysts). Nothing is shown to a member, so a wrong guess costs a wrong row. Today the "stalled" bucket mixes real failures with unrecorded successes; these separate them. Write to a dedicated table with model and prompt version — never into `messages_by`/`messages_outcomes` (§H). Partial collection has a schema outcome no button can write; treat as a candidate measure until a second model has checked it. Detected agreed-times are not yet fit for a "shall I set a reminder?" prompt: text-vs-click precision on that field has a measured lower bound of 0.11, pending the larger-model overlap check.
 
 ### F2. Recognise off-platform completion — *background job · strong evidence · ~600 rooms/month*
 
+**Visible to:** nobody directly; it changes what the dashboards and any trial guardrail count as a failure.
+
 Openers with a phone number or email get 37% fewer chat replies — because the arrangement moves to the phone and succeeds. Silent rooms *with* contact details collected at **8.1% vs 1.3%** without; overall 24.2% vs 21.3%. ~3,000 conversations in five months complete off-platform and look like total failures in every dashboard, which biases any chat-activity metric (including A1's reply-rate guardrail) against them. Detect "contact shared, then silence" and stop counting it as ghosting.
 
 ### F3. Instrumentation — *migration · time-critical · every conversation*
+
+**Visible to:** nobody. Columns.
 
 There is no per-conversation timing metric: no first-reply-at, promised-at, collected-at, no experiment-bucket column. At 35–42k rooms/month, every week without them is unrecoverable trial data. One migration on `chat_rooms`, following the reengage-table experiment-column pattern. Nothing above reads out cleanly without it.
 
@@ -145,6 +177,8 @@ There is no per-conversation timing metric: no first-reply-at, promised-at, coll
 
 **Treating the "sorry, it's gone" fan-out as the failure.** 96.3% of ghosted repliers receive it. The failure is the silence before it.
 
+**Any intervention visible to one side that the other side cannot see or would misread.** An acknowledgement the offerer does not know was sent reads, to them, as the replier being oddly patient; a runner-up contacted without the promised person knowing reads as a double-booking. Each candidate above states who sees it for that reason.
+
 ---
 
 ## H. Governance owed before any assistant ships
@@ -152,7 +186,8 @@ There is no per-conversation timing metric: no first-reply-at, promised-at, coll
 - **No model-inferred label may be written into `messages_by` or `messages_outcomes`.** `AuthorityStatsService` and `ElectricalsStatsService` join those as ground truth for council reports and the public `/electricals` page. The electricals service's own docblock ("72%/65% accuracy … may not become a published number") is the precedent.
 - **A member-facing explanation** of what reads chat text and why, before it does. The reengagement and ripple docs carry the template line ("this improves visibility; it should not be presented as closing that gap").
 - **DPIA / legitimate-interest sign-off** for LLM reading of private chat text. The privacy policy names only human spam checks. Cleared for the analysis; not for a live assistant.
-- **A delivery rail.** The in-chat question rail (`chat_prompts`) has never sent a message in production — zero rows all-time — and neither has the Helper's send-as-offerer path. B1, B3, C1 and D1 need a rail that exists; the reminder channel is the only one that does.
+- **A delivery rail.** The in-chat question rail (`chat_prompts`) has never sent a message in production — zero rows all-time — and neither has the Helper's send-as-offerer path. B1, B3, C1, D1 and E1 need a rail that exists; the reminder channel is the only one that does.
+- **Disclosure.** Every assistant message a member sees carries the disclosure the Helper's prompt already specifies ("some of these messages may come from our automated assistant"), once per conversation.
 
 ---
 
@@ -164,16 +199,17 @@ There is no per-conversation timing metric: no first-reply-at, promised-at, coll
 4. **WANTED's 38% ghost rate** — over 3× Offer's, ~1,200 rooms/month of giver-side silence, no taxonomy row. Separately, Wanted's Promise→Collected click is used in 0.69% of rooms vs Offer's 18.6% — a 27× gap that may be a UI bug under Wanted's reversed roles rather than a measurement artefact.
 5. **Language-barrier cohort** — `reportreason LIKE '%Language%'` against ghosting and reneging, as an equity question.
 6. **Density band as a confounder** — the routing engine's rural/urban band is a more direct confound for transport than the IMD quintile.
+7. **Promise-to-renege timing directly.** The promise-to-collection distribution in §E is measured; the promise-to-renege distribution is not, because `messages_reneged` does not join to `messages_promises` on the keys tried. Worth one query with the right join, to set E1's threshold from renege behaviour rather than collection behaviour.
 
 ---
 
 ## J. Inconsistencies in the Helper's own documents
 
-- `helper/prompt.md` says the API appends *"some of these messages may come from our automated assistant"* to the first auto-sent message so the conversation is never silently automated. `plans/active/freegle-helper-concierge.md` Open Question 1 says **"RESOLVED. Messages sent as the offerer (invisible)"** and the tone guidelines say the replier thinks they are talking to the offerer. Opposite policies. The prompt is the safer one; the design doc still reads as the decision of record.
+- `helper/prompt.md` says the API appends *"some of these messages may come from our automated assistant"* to the first auto-sent message so the conversation is never silently automated. `plans/active/freegle-helper-concierge.md` Open Question 1 says **"RESOLVED. Messages sent as the offerer (invisible)"** and the tone guidelines say the replier thinks they are talking to the offerer. Opposite policies. The prompt is the safer one and is the one §H adopts; the design doc still reads as the decision of record.
 - The `related_to` knowledge-record field the retrospective proposed for household pairs does not appear in the schema.
 
 ---
 
 ## K. Reproducibility
 
-Scripts `overload.py`, `structural.py`, `chase.py`, `interaction.py`, `confounds.py`, `friction.py`, `opener.py`, `analyse.py`, `question_test.py`, reading the `scratch.rooms` / `scratch.turns` / `scratch.friction` tables built from a production restore. Re-runnable against any such restore. Member chat text was read only by a local model on the analysis machine and never left it.
+Scripts `overload.py`, `structural.py`, `chase.py`, `interaction.py`, `confounds.py`, `renege_timing.py`, `friction.py`, `opener.py`, `analyse.py`, `question_test.py`, reading the `scratch.rooms` / `scratch.turns` / `scratch.friction` tables built from a production restore. Re-runnable against any such restore. Member chat text was read only by a local model on the analysis machine and never left it.
