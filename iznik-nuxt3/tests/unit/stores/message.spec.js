@@ -227,6 +227,41 @@ describe('message store - searchMT()', () => {
     expect(ids).toEqual(expect.arrayContaining([101, 102]))
   })
 
+  // 9808/798: the Approved Messages own-posts filter rides the search request as
+  // originonly=true; off, the parameter is not sent at all.
+  it('passes the own-posts filter to the search API', async () => {
+    useAuthStore.mockReturnValue({ user: { id: 1 } })
+    mockSearch.mockClear()
+    mockSearch.mockResolvedValue([])
+
+    const store = useMessageStore()
+    await store.searchMT({ term: 'sofa', groupid: 123, originonly: true })
+
+    expect(mockSearch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        search: 'sofa',
+        groupids: '123',
+        originonly: 'true',
+      })
+    )
+  })
+
+  it('omits the own-posts filter when it is off', async () => {
+    useAuthStore.mockReturnValue({ user: { id: 1 } })
+    mockSearch.mockClear()
+    mockSearch.mockResolvedValue([])
+
+    const store = useMessageStore()
+    await store.searchMT({ term: 'sofa', groupid: 123 })
+
+    expect(mockSearch).toHaveBeenCalledWith({
+      search: 'sofa',
+      messagetype: 'All',
+      groupids: '123',
+      searchmode: 'vector',
+    })
+  })
+
   it('preserves score order from API response', async () => {
     useAuthStore.mockReturnValue({ user: { id: 1 } })
     mockSearch.mockResolvedValue([

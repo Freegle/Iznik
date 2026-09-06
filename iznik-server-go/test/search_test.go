@@ -261,3 +261,38 @@ func TestSearchByMessageID(t *testing.T) {
 	assert.True(t, findsIt(fmt.Sprintf("%%23%d", msgID)), "#<id> should return that message")
 	assert.True(t, findsIt(fmt.Sprintf("%d", msgID)), "a bare numeric id should also return that message")
 }
+
+// The Approved Messages "Only this group's own posts (hide rippled-in)" filter reaches
+// the search endpoint as ?originonly=true. It was honoured by the listing but dropped by
+// a search with a term, so every result of a search could be a rippled-in copy
+// (Discourse 9808/798).
+func TestAPISearch_OriginOnlyExcludesRippledIn(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("searchorigin")
+	_, token := CreateFullTestUser(t, prefix)
+
+	origin := CreateTestGroup(t, prefix+"_origin")
+	rippled := CreateTestGroup(t, prefix+"_rippled")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	msgID := CreateTestMessage(t, posterID, origin, "Origin only search test", 51.5, -0.1)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
+		"VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, rippled)
+
+	// A numeric term is a message id, so the result set is exact.
+	search := func(query string) []message.SearchResult {
+		t.Helper()
+		resp, _ := getApp().Test(httptest.NewRequest("GET",
+			fmt.Sprintf("/api/message/search/%d?jwt=%s&%s", msgID, token, query), nil), 60000)
+		assert.Equal(t, 200, resp.StatusCode)
+		var results []message.SearchResult
+		json2.Unmarshal(rsp(resp), &results)
+		return results
+	}
+
+	assert.Len(t, search(fmt.Sprintf("groupids=%d", rippled)), 1,
+		"the rippled-in copy is found on the group it rippled into")
+	assert.Len(t, search(fmt.Sprintf("groupids=%d&originonly=true", rippled)), 0,
+		"but not when only that group's own posts are asked for")
+	assert.Len(t, search(fmt.Sprintf("groupids=%d&originonly=true", origin)), 1,
+		"the origin group's own post survives the filter")
+}
