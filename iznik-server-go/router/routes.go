@@ -1058,7 +1058,7 @@ func SetupRoutes(app *fiber.App) {
 		// Message Actions (POST)
 		// @Router /message [post]
 		// @Summary Message actions
-		// @Description Handles message actions: Promise, Renege, OutcomeIntended, Outcome, AddBy, RemoveBy, View, Approve, Reject, Delete, Spam, Hold, Release, ApproveEdits, RevertEdits, PartnerConsent, Reply, JoinAndPost, Move, BackToPending, RejectToDraft. When tnpostid is supplied instead of id, the action is applied to ALL Freegle messages sharing that TN post ID.
+		// @Description Handles message actions: Promise, AcceptAgreement, Renege, OutcomeIntended, Outcome, AddBy, RemoveBy, View, Approve, Reject, Delete, Spam, Hold, Release, ApproveEdits, RevertEdits, PartnerConsent, Reply, JoinAndPost, Move, BackToPending, RejectToDraft. When tnpostid is supplied instead of id, the action is applied to ALL Freegle messages sharing that TN post ID.
 		// @Tags message
 		// @Accept json
 		// @Produce json
