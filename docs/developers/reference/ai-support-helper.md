@@ -145,7 +145,8 @@ release. Either input missing yields `unknown`, which shows no badge rather than
 **Where the app version comes from.** Only the native app knows its installed version, and
 only after Capacitor's `App.getInfo()` returns — long after the client-logging plugin starts.
 So the app logs `session_start` **twice** for one session: once immediately (no app version
-yet), then again from `stores/mobile.js` `logAppSession()` once `App.getInfo()` and
+yet), then again from `stores/mobile.js` (which also owns deep-link handling, see the mobile
+app page) `logAppSession()` once `App.getInfo()` and
 `Device.getInfo()` have answered. Both carry the same `session_id`, so `dedupeSessions()`
 merges them into one record — keeping the session count honest and making the app version
 independent of the order Loki returns the lines in.

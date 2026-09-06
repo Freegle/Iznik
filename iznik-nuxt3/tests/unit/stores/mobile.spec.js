@@ -135,7 +135,10 @@ vi.mock('~/stores/debug', () => ({
 
 let mockMobileVersion = '1.0.0'
 vi.stubGlobal('useRuntimeConfig', () => ({
-  public: { MOBILE_VERSION: mockMobileVersion },
+  public: {
+    MOBILE_VERSION: mockMobileVersion,
+    APIv2: 'https://api.ilovefreegle.org/apiv2',
+  },
 }))
 
 const mockRouterPush = vi.fn()
@@ -939,6 +942,44 @@ describe('mobile store', () => {
       await triggerDeepLink('https://www.ilovefreegle.org/chat/12345')
 
       expect(mockRouterPush).toHaveBeenCalledWith('/chats/12345')
+      logSpy.mockRestore()
+    })
+
+    it('resolves a tracked email link through the API and routes to where it points', async () => {
+      // The Reply button in a chat notification is a tracked link. iOS hands
+      // the app that URL untouched; pushing it as a route landed on the error
+      // page and then ChitChat, where one member typed her chat reply.
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue({
+          ok: true,
+          json: async () => ({ url: 'https://www.ilovefreegle.org/chats/21116632' }),
+        })
+
+      await triggerDeepLink('https://www.ilovefreegle.org/e/d/r/abc123456789/reply/AQ/p0')
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      const asked = new URL(fetchSpy.mock.calls[0][0])
+      expect(asked.pathname).toBe('/e/d/r/abc123456789/reply/AQ/p0')
+      expect(asked.searchParams.get('format')).toBe('json')
+      expect(mockRouterPush).toHaveBeenCalledWith('/chats/21116632')
+      expect(mockRouterPush).not.toHaveBeenCalledWith(expect.stringContaining('/e/'))
+      fetchSpy.mockRestore()
+      logSpy.mockRestore()
+    })
+
+    it('falls back to the home route when a tracked link cannot be resolved', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockRejectedValue(new Error('offline'))
+
+      await triggerDeepLink('https://www.ilovefreegle.org/e/d/r/abc123456789/reply/AQ/p0')
+
+      expect(mockRouterPush).toHaveBeenCalledWith('/')
+      expect(mockRouterPush).not.toHaveBeenCalledWith(expect.stringContaining('/e/'))
+      fetchSpy.mockRestore()
       logSpy.mockRestore()
     })
 
