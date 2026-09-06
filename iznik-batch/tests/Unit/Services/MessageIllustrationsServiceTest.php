@@ -15,6 +15,7 @@ class MessageIllustrationsServiceTest extends TestCase
     {
         parent::setUp();
         DB::table('config')->where('key', 'illustrations_last_arrival')->delete();
+        DB::table('config')->where('key', 'illustrations_cleanup_last_id')->delete();
         DB::table('messages_ai_declined')->delete();
         DB::table('messages_attachments')->delete();
         DB::table('messages_spatial')->delete();
@@ -206,5 +207,146 @@ class MessageIllustrationsServiceTest extends TestCase
 
         $lastArrival = DB::table('config')->where('key', 'illustrations_last_arrival')->value('value');
         $this->assertNotNull($lastArrival, 'Config should have last arrival set after processing');
+    }
+
+    /**
+     * Build a message with the given attachments. Returns [messageId, attachmentIds].
+     *
+     * @param  array<int, array{ai: bool, uid: string}>  $attachments
+     * @return array{0: int, 1: array<string, int>}
+     */
+    private function messageWithAttachments(array $attachments): array
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: Kettle (TestTown)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+        ]);
+
+        $ids = [];
+        foreach ($attachments as $attachment) {
+            $ids[$attachment['uid']] = DB::table('messages_attachments')->insertGetId([
+                'msgid' => $message->id,
+                'externaluid' => $attachment['uid'],
+                'externalmods' => $attachment['ai'] ? json_encode(['ai' => true]) : null,
+                'contenttype' => 'image/jpeg',
+            ]);
+        }
+
+        return [$message->id, $ids];
+    }
+
+    /**
+     * Record the cleanup query's SQL.
+     *
+     * @return array<int, array{sql: string, bindings: array}>
+     */
+    private function captureCleanupQueries(callable $fn): array
+    {
+        $seen = [];
+        DB::listen(function ($query) use (&$seen) {
+            if (stripos($query->sql, 'ma_ai') !== false) {
+                $seen[] = ['sql' => $query->sql, 'bindings' => $query->bindings];
+            }
+        });
+
+        $fn();
+
+        return $seen;
+    }
+
+    /**
+     * The cleanup runs every minute and its current form drives a full scan of
+     * messages_attachments (39.6M rows in production) to return, in the steady state, nothing.
+     * It must be bounded by an id watermark.
+     *
+     * Both sides have to be bounded, not just the photo side. An illustration can be written
+     * after the member's own photo - the generator races the upload - and a watermark on the
+     * photo alone would leave that pair permanently invisible, because the photo's id is
+     * already below the mark by the time the illustration arrives.
+     */
+    public function test_cleanup_is_bounded_by_a_watermark_on_both_sides(): void
+    {
+        $this->messageWithAttachments([
+            ['ai' => true, 'uid' => 'freegletusd-ai-bound'],
+            ['ai' => false, 'uid' => 'freegletusd-real-bound'],
+        ]);
+
+        $queries = $this->captureCleanupQueries(function () {
+            $this->makeService()->processIllustrations();
+        });
+
+        $this->assertNotEmpty($queries, 'expected the cleanup query to run');
+        $sql = $queries[0]['sql'];
+
+        $this->assertMatchesRegularExpression(
+            '/ma_real\.id\s*>\s*\?/i',
+            $sql,
+            'the photo side must be bounded so new photos are found by a primary-key range scan'
+        );
+        $this->assertMatchesRegularExpression(
+            '/ma_ai\.id\s*>\s*\?/i',
+            $sql,
+            'the illustration side must be bounded too, or illustrations written after the photo are never cleaned up'
+        );
+    }
+
+    /**
+     * The case a photo-side-only watermark loses: the member's photo arrives and is consumed by
+     * a run, and only then does the illustration land. The pair must still be cleaned up.
+     */
+    public function test_cleanup_removes_an_illustration_added_after_the_photo_watermark_passed(): void
+    {
+        [$msgid, $ids] = $this->messageWithAttachments([
+            ['ai' => false, 'uid' => 'freegletusd-real-late'],
+        ]);
+
+        // First run consumes the photo and advances the watermark past it.
+        $this->makeService()->processIllustrations();
+
+        // The illustration lands afterwards, so its own id is above the mark but the photo's is not.
+        $aiId = DB::table('messages_attachments')->insertGetId([
+            'msgid' => $msgid,
+            'externaluid' => 'freegletusd-ai-late',
+            'externalmods' => json_encode(['ai' => true]),
+            'contenttype' => 'image/jpeg',
+        ]);
+
+        $this->makeService()->processIllustrations();
+
+        $this->assertFalse(
+            DB::table('messages_attachments')->where('id', $aiId)->exists(),
+            'the illustration must be cleaned up even though the photo predates the watermark'
+        );
+        $this->assertTrue(
+            DB::table('messages_attachments')->where('id', $ids['freegletusd-real-late'])->exists(),
+            'the photo must remain'
+        );
+    }
+
+    /**
+     * A message that has only an illustration keeps it - the cleanup exists to drop the
+     * illustration once a real photo turns up, not before.
+     */
+    public function test_cleanup_keeps_an_illustration_when_there_is_no_photo(): void
+    {
+        [, $ids] = $this->messageWithAttachments([
+            ['ai' => true, 'uid' => 'freegletusd-ai-only'],
+        ]);
+
+        $this->makeService()->processIllustrations();
+
+        $this->assertTrue(
+            DB::table('messages_attachments')->where('id', $ids['freegletusd-ai-only'])->exists(),
+            'an illustration with no competing photo must be left alone'
+        );
     }
 }
