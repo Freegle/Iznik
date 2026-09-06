@@ -2178,6 +2178,9 @@ class ExpandService
                 if ($added > 0) {
                     $addedThisCall++;
                     $stats['memberships_added'] = ($stats['memberships_added'] ?? 0) + 1;
+                    // A rippled-in membership is a join like any other for reach mail: the
+                    // poster may now be inside the reach of other posts on this group.
+                    ReachMemberQueueService::enqueue((int) $posterId, ReachMemberQueueService::REASON_JOINED);
                     // memberships_history with rippled=1: abuse detection still runs (processingrequired=1),
                     // but MembershipsProcessingService reads rippled to SUPPRESS the per-group welcome -
                     // a single bundled intro email (RippleIntroMail) is sent below instead.

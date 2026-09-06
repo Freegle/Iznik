@@ -4648,4 +4648,20 @@ class ExpandServiceTest extends TestCase
             'the scoped run must not have advanced the watermark past the other leave'
         );
     }
+
+    /**
+     * The ripple auto-join makes the poster a member of each group their post rippled into,
+     * which can make them newly eligible for reach mail about OTHER posts on those groups.
+     * Like every other join path, it queues them for the member side of reach mail.
+     */
+    public function test_ripple_auto_join_queues_the_poster_for_reach_mail(): void
+    {
+        [, $posterId] = $this->rippleIntoOneGroup();
+
+        $this->assertSame(
+            'joined',
+            DB::table('rippling_reach_member_pending')->where('userid', $posterId)->value('reason'),
+            'a rippled-in membership queues the poster like any other join'
+        );
+    }
 }

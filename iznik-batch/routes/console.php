@@ -825,6 +825,16 @@ foreach (range(0, $reachMailShardCount - 1) as $reachShard) {
         ->runInBackground();
 }
 
+// The daily backstop for reach mail's member queue: re-queue anyone whose join or postcode
+// change since yesterday was not followed by reach mail, so a hook that is missed or wrong
+// costs a day rather than the mail. Two indexed queries over the last day; the reach pass's
+// drain does the containment work.
+Schedule::command('ripple:reconcile-reach-members')
+    ->dailyAt('05:23')
+    ->withoutOverlapping(360)
+    ->sendOutputTo(cronLog('ripple:reconcile-reach-members'))
+    ->runInBackground();
+
 // Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')
     ->dailyAt('09:00')
