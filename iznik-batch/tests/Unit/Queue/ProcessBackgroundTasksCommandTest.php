@@ -7,6 +7,7 @@ use App\Mail\Chat\ReferToSupportMail;
 use App\Mail\Donation\DonateExternalMail;
 use App\Mail\Newsfeed\ChitchatReportMail;
 use App\Mail\Session\ForgotPasswordMail;
+use App\Mail\Session\LoginLinkMail;
 use App\Mail\Session\MergeOfferMail;
 use App\Mail\Session\UnsubscribeConfirmMail;
 use App\Mail\Session\VerifyEmailMail;
@@ -539,6 +540,66 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         // Verify task was marked as processed.
         $task = DB::table('background_tasks')->first();
         $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_forgot_password_sends_sign_in_link_when_passwordless(): void
+    {
+        Mail::fake();
+        config([
+            'freegle.auth.passwordless' => true,
+            'freegle.auth.login_link_path' => '/',
+            'freegle.sites.user' => 'https://www.example.org',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_forgot_password',
+            'data' => json_encode([
+                'user_id' => 11111,
+                'email' => 'forgetful@test.com',
+                // The host the API baked in is deliberately NOT the configured site.
+                'reset_url' => 'http://localhost:4001/settings?u=11111&k=abc%2B123&src=forgotpass',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertNotSent(ForgotPasswordMail::class);
+        Mail::assertSent(LoginLinkMail::class, function (LoginLinkMail $mail) {
+            return $mail->userId === 11111
+                && $mail->email === 'forgetful@test.com'
+                // Same u/k credentials, on the configured site and sign-in path.
+                && $mail->loginUrl === 'https://www.example.org/?u=11111&k=abc%2B123';
+        });
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+
+        config(['freegle.auth.passwordless' => false]);
+    }
+
+    public function test_sign_in_link_honours_a_custom_landing_path(): void
+    {
+        config([
+            'freegle.auth.login_link_path' => 'signin',
+            'freegle.sites.user' => 'https://www.example.org/',
+        ]);
+
+        $command = new \App\Console\Commands\Queue\ProcessBackgroundTasksCommand();
+        $method = new \ReflectionMethod($command, 'signInLinkFromResetUrl');
+        $method->setAccessible(true);
+
+        $this->assertSame(
+            'https://www.example.org/signin?u=42&k=key',
+            $method->invoke($command, 'https://www.ilovefreegle.org/settings?u=42&k=key&src=forgotpass')
+        );
     }
 
     public function test_processes_email_unsubscribe_task(): void

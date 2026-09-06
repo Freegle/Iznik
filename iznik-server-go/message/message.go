@@ -5423,6 +5423,11 @@ type PostMessageRequest struct {
 	// Bulk-offer interest state change (action "BulkInterestState").
 	Bulkitemid *uint64 `json:"bulkitemid"`
 	State      *string `json:"state"`
+	// Optional structured terms attached to a promise (action "Promise"). Stored
+	// as JSON on messages_promises.terms and returned on the message's promises;
+	// omit it and nothing changes. Deployments that turn a promise into a formal
+	// agreement (see "AcceptAgreement") use it; Freegle's own clients do not send it.
+	Terms *json.RawMessage `json:"terms"`
 }
 
 // BulkInterestInput is one item the caller is expressing interest in.
@@ -5634,6 +5639,8 @@ func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest
 	switch req.Action {
 	case "Promise":
 		return handlePromise(c, myid, req)
+	case "AcceptAgreement":
+		return handleAcceptAgreement(c, myid, req)
 	case "Renege":
 		return handleRenege(c, myid, req)
 	case "OutcomeIntended":
@@ -5706,13 +5713,48 @@ func handlePromise(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		promisedTo = *req.Userid
 	}
 
-	// REPLACE INTO - idempotent.
+	// REPLACE INTO - idempotent. Terms are optional: absent means NULL, exactly
+	// as before this column existed.
+	promise := map[string]interface{}{"msgid": req.ID, "userid": promisedTo}
+	if req.Terms != nil && len(*req.Terms) > 0 && string(*req.Terms) != "null" {
+		promise["terms"] = string(*req.Terms)
+	}
 	db.Table("messages_promises").Clauses(clause.Insert{Modifier: "REPLACE"}).
-		Create(map[string]interface{}{"msgid": req.ID, "userid": promisedTo})
+		Create(promise)
 
 	// Create a chat message of type Promised if promising to another user.
 	if req.Userid != nil && *req.Userid > 0 && *req.Userid != myid {
 		createSystemChatMessage(db, myid, *req.Userid, req.ID, utils.CHAT_MESSAGE_PROMISED)
+	}
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// handleAcceptAgreement lets the person a message was promised TO accept it,
+// turning the promise into an agreement between the two members: it stamps
+// messages_promises.acceptedat/acceptedby on the caller's own promise row.
+//
+// This is an opt-in step that Freegle's own clients never take - a Freegle
+// promise is complete when the owner makes it. Deployments built on this
+// codebase that need a two-sided agreement (terms proposed by the owner, then
+// accepted by the other party) call it after "Promise". Only the promised-to
+// member can accept, only once, and only while a promise exists; every other
+// case is a 404 so nothing is ever created here.
+func handleAcceptAgreement(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
+	db := database.DBConn
+
+	if req.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "id is required")
+	}
+
+	result := db.Table("messages_promises").
+		Where("msgid = ? AND userid = ? AND acceptedat IS NULL", req.ID, myid).
+		Updates(map[string]interface{}{"acceptedat": gorm.Expr("NOW()"), "acceptedby": myid})
+	if result.Error != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to accept")
+	}
+	if result.RowsAffected == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "No unaccepted promise to you on this message")
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

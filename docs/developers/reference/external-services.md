@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-06
 owner: Freegle dev team
 covers:
   - .env.example
@@ -20,6 +20,10 @@ Two rules apply throughout:
 - **We prefer to self-host** where a dependency is heavily used, for cost and for control.
   The reasoning is in
   [../../getting-started/decisions-and-rationale.md](../../getting-started/decisions-and-rationale.md).
+
+The settings that let another service run on this codebase without editing it (passwordless
+sign-in, mail tracking, the schedule overlay) are not external services; they are in
+[./deployment-switches.md](./deployment-switches.md).
 
 ## What would break the site
 

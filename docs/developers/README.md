@@ -42,6 +42,7 @@ Read these directly; the pages above link into them rather than copy them:
 | Spatial services (plain English) | [./reference/spatial-servers.md](./reference/spatial-servers.md) |
 | Rippling out algorithm | [./reference/rippling-algorithm.md](./reference/rippling-algorithm.md) |
 | Third-party services we depend on | [./reference/external-services.md](./reference/external-services.md) |
+| Deployment switches (running another service on this code) | [./reference/deployment-switches.md](./reference/deployment-switches.md) |
 | Partner integrations (TrashNothing, LoveJunk, and others) | [./reference/partner-integrations.md](./reference/partner-integrations.md) |
 | Advertising | [./reference/ads.md](./reference/ads.md) |
 | Donations and Gift Aid | [./reference/donations-and-gift-aid.md](./reference/donations-and-gift-aid.md) |
