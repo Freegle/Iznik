@@ -1,6 +1,8 @@
 # Chat signals: candidates for what to build
 
-*Evidence base: 158,349 Offer conversations on 76,663 posts, March–July 2026, from a production database restore; plus a 26,486-room stratified sample annotated by a local model on the analysis machine. Aggregate figures only; no member text or identifiers. September 2026.*
+*Evidence base: 158,349 Offer conversations on 76,663 posts, March–July 2026, from a production database restore; plus a 26,486-room stratified sample annotated by a local model. September 2026.*
+
+*Confidentiality: private member chats were analysed without any of the text leaving Freegle's control. The production database was restored onto a rented GPU machine (an NVIDIA GB10 with 128 GB of unified memory), and every model that read chat text — the annotation model, the question detector, the adjudicator — ran locally on that machine under open-weight licences. No chat text was sent to any third-party API. Only aggregate counts and the analysis scripts left the machine, and the machine is wiped at the end of the rental. This document contains aggregate figures only; no member text or identifiers.*
 
 A Freegle conversation fails at several distinct points, and each has its own evidence and its own fix. The candidates are grouped by the stage they act on.
 
@@ -55,7 +57,7 @@ The electricals pipeline (`plans/active/2026-08-27-electricals-pipeline-and-page
 | 21–40 | 260 | 23.4% | 2.6% |
 | 41+ | 26 | **11.3%** | 0.9% |
 
-The post is taken ~92% of the time regardless; offerers cope by triage, not conversation. On 11+-reply posts 70% of repliers hear nothing; 857 such posts had the offerer answer two people or fewer, ghosting 9,992 repliers between them. The only structure currently deciding who gets answered is reply rank (first replier 60%, eleventh-or-later 21%). The Freegle Helper trial reached the same conclusion for bulk offers — its main value is stopping good candidates falling through the cracks — and the corpus shows that holds for ordinary busy posts.
+The post is taken ~92% of the time regardless; offerers cope by triage, not conversation. This is a decision, not an unread inbox: in 84% of silent rooms the offerer had read the message and chose not to answer (98% on busy posts — I.1). On 11+-reply posts 70% of repliers hear nothing; 857 such posts had the offerer answer two people or fewer, ghosting 9,992 repliers between them. The only structure currently deciding who gets answered is reply rank (first replier 60%, eleventh-or-later 21%). The Freegle Helper trial reached the same conclusion for bulk offers — its main value is stopping good candidates falling through the cracks — and the corpus shows that holds for ordinary busy posts.
 
 ### B1. Triage assistant for overloaded offerers — *assistant · strong evidence · ~2,900 posts/month*
 
@@ -101,11 +103,13 @@ Offerer first-reply latency predicts collection **within every load stratum**, s
 
 A reply inside an hour is worth roughly double a reply after a day at every level of competition. Median offerer latency on quiet posts is 16 hours; 37% take over a day. The taker still comes back 81% of the time after a 1–3 day wait, so most of the loss is momentum, not departure.
 
+The obvious objection — that fast repliers are simply better organised, and it is the organisation rather than the speed that collects — is answered by the ripple hold (I.2). Where the engine delayed delivery of the opener for reasons unrelated to the replier, collection roughly halved in every load stratum (27% vs 39% at one reply; 12% vs 26% at two or three). Delay alone does the damage.
+
 ### C1. Acknowledge the replier within the hour — *assistant · strong evidence · every conversation*
 
 **Visible to:** both. The replier gets a chat message: thanks, your reply has been passed to the offerer. The offerer sees, in the same chat, that it was sent for them, and gets a nudge if they have not replied within a threshold.
 
-This is an acknowledgement, not an answer — it does not pretend the offerer has read anything, and it does not commit them to anything. Where the replier's message contains a factual question the listing can answer, D1 supplies the answer in the same message. The evidence is observational — fast repliers are likely organised in other ways — but the gradient is large and consistent at every level of competition, and the intervention is cheap to test. This is the Helper's rule 1 ("answer factual questions immediately") generalised, with the disclosure the Helper's prompt already specifies.
+This is an acknowledgement, not an answer — it does not pretend the offerer has read anything, and it does not commit them to anything. It comes from Freegle, in the open (§J). Where the replier's message contains a factual question the listing can answer, D1 supplies the answer in the same message. The evidence is observational — fast repliers are likely organised in other ways — but the gradient is large and consistent at every level of competition, and the intervention is cheap to test. This is the Helper's rule 1 ("answer factual questions immediately") generalised.
 
 ---
 
@@ -129,7 +133,7 @@ Replier's question unanswered (~4,100/month): nudge the offerer. Offerer's quest
 
 ## E. After a promise: the arrangement falls through
 
-Promise-to-collection timing is well defined: **median 21 hours; 57% within a day, 83% within three, 94% within seven.** After three days, most collections that are going to happen have happened. Only 17.6% of promises have an arranged date recorded, so the platform usually cannot use the agreed date and has to fall back on this distribution.
+Promise-to-collection timing is well defined: **median 21 hours; 57% within a day, 83% within three, 94% within seven.** Promise-to-renege runs slower: **median 36 hours; 70% within three days, 87% within seven** (I.7). After three days, most collections that will happen have happened and most reneges have been declared, so a promise still open at day 3 with no collection is a real signal, not noise. Only 17.6% of promises have an arranged date recorded, so the platform usually cannot use the agreed date and has to fall back on these distributions.
 
 When a promise is reneged, the runner-up is worth something: on the 2,868 reneged posts that had another replier, **a sibling was later promised 54% of the time and collected 56.5% of the time**, with a mean of 2.6 other repliers to choose from. A further 1,217 reneged posts had no other replier at all. Reneges are terminal for the person who reneged — only 5.7% re-promise — and today ~94% of the ~1,068 reneged rooms a month get no proactive handling. The reneged post is still eventually taken 63.5% of the time, which means the offerer usually has to start again by hand.
 
@@ -187,29 +191,51 @@ There is no per-conversation timing metric: no first-reply-at, promised-at, coll
 - **A member-facing explanation** of what reads chat text and why, before it does. The reengagement and ripple docs carry the template line ("this improves visibility; it should not be presented as closing that gap").
 - **DPIA / legitimate-interest sign-off** for LLM reading of private chat text. The privacy policy names only human spam checks. Cleared for the analysis; not for a live assistant.
 - **A delivery rail.** The in-chat question rail (`chat_prompts`) has never sent a message in production — zero rows all-time — and neither has the Helper's send-as-offerer path. B1, B3, C1, D1 and E1 need a rail that exists; the reminder channel is the only one that does.
-- **Disclosure.** Every assistant message a member sees carries the disclosure the Helper's prompt already specifies ("some of these messages may come from our automated assistant"), once per conversation.
+- **Identity.** In ordinary freegling the assistant speaks as Freegle, in the open (§J); in bulk clearance it speaks as the offerer with a disclosure line. Neither may be blurred into the other.
 
 ---
 
-## I. Analyses still worth running (data already on hand, no product change)
+## I. Supporting analyses
 
-1. **Split Ghosted by read receipt** — "opened the room, then silent" vs "never opened it", from `giver_read_last`/`taker_read_last` already on the room table. Changes the meaning of every ghosting figure in §B.
-2. **Held-reply artefacts vs Ghosted/Stalled** — the ripple hold (up to 47 h) is a candidate instrument for reply latency that is exogenous to the replier, and would give §C a causal read without a trial.
-3. **Seasonal drift** — the window is March–July; August (41,644 rooms, the single highest month) is in the same restore and unchecked.
-4. **WANTED's 38% ghost rate** — over 3× Offer's, ~1,200 rooms/month of giver-side silence, no taxonomy row. Separately, Wanted's Promise→Collected click is used in 0.69% of rooms vs Offer's 18.6% — a 27× gap that may be a UI bug under Wanted's reversed roles rather than a measurement artefact.
-5. **Language-barrier cohort** — `reportreason LIKE '%Language%'` against ghosting and reneging, as an equity question.
-6. **Density band as a confounder** — the routing engine's rural/urban band is a more direct confound for transport than the IMD quintile.
-7. **Promise-to-renege timing directly.** The promise-to-collection distribution in §E is measured; the promise-to-renege distribution is not, because `messages_reneged` does not join to `messages_promises` on the keys tried. Worth one query with the right join, to set E1's threshold from renege behaviour rather than collection behaviour.
+Run against the same restore; results folded into the candidates above where they bear on one.
+
+**I.1 Ghosting is read-and-ignored, not unread.** Of the 56,164 silent rooms, the giver had **read the replier's message in 84.3%** (unknown 13.5%, genuinely unread 2.2%). On busy posts it is 98%. It is not neglect of the inbox; it is a decision not to reply, made after reading — which is what B1 and B3 are for. It holds on single-reply posts too: 4,128 rooms (~825/month) where the giver read the only reply they got and never answered it, though the post went on to some outcome 97% of the time. Folded into §B.
+
+**I.2 The ripple hold isolates latency from replier quality.** 7,046 rooms had the replier's opener held by the ripple engine before the giver could see it (mean 53 h). The hold is assigned by geography, not by anything about the replier, so it is a natural experiment on delay alone. Within every load stratum, held rooms do markedly worse:
+
+| replies on post | held: replied / promised / collected | not held: replied / promised / collected |
+|---|---|---|
+| 1 | 67.9% / 23.4% / **27.1%** | 85.2% / 32.5% / **39.0%** |
+| 2–3 | 45.4% / 11.5% / **11.8%** | 76.2% / 22.9% / **25.7%** |
+| 4–10 | 34.6% / 5.0% / **5.8%** | 55.5% / 11.5% / **12.7%** |
+| 11+ | 21.7% / 3.0% / **2.7%** | 30.3% / 3.8% / **4.2%** |
+
+A delay the replier did nothing to cause roughly halves their chance of collection. That is the causal support §C's latency gradient needed. Folded into §C.
+
+**I.3 No seasonal drift.** Promise rate by month, January–August, from the raw tables: 18.5, 18.1, 19.0, 18.8, 18.9, 17.8, 17.9, 17.3%. August (37,739 Offer rooms, the largest month) is the lowest but within the range. The March–July window is representative.
+
+**I.4 WANTED.** 13,548 rooms, 8% of volume. Roles reverse: the post owner is the taker and the replier is the giver. The wanter replies in 58.5% of rooms (Offer 64.5%), and 37.5% of the silent wanters had read the offer. Promise is clicked in 0.7% of Wanted rooms vs 18.6% of Offer — but the outcome path is not broken: 22.2% of Wanted posts record a `Received` outcome, so the item changes hands at a comparable rate and only the Promise step is bypassed. Wanted has the same triage problem as Offer at a smaller scale, and none of the candidates above would need changing to apply; B1's triage summary and C1's acknowledgement are the ones that transfer directly.
+
+**I.5 Language barrier — not analysable.** The language-flag report reason matches 22 Offer rooms in the window. Nothing can be said at that n.
+
+**I.6 Density band — not analysable at this coverage.** `rippling_reach` carries a density band, but joining it to heavy-item rooms yields 378 rows, most with no band. The ripple engine has not run on enough of the corpus for the band to serve as a confounder. When coverage grows, rerun.
+
+**I.7 Promise-to-renege timing.** From the chat event rows (the `messages_promises` row is deleted on renege, so the DB tables cannot be joined): n = 5,021, **median 36 h; 39% within a day, 70% within three, 87% within seven**. Against promise-to-collection (median 21 h; 83% within three days), the two distributions diverge from day 3: by then most collections that will happen have happened, and most reneges too. A promise still outstanding at day 3 is therefore a real signal rather than noise. Folded into §E.
 
 ---
 
-## J. Inconsistencies in the Helper's own documents
+## J. Who the assistant is, in each product
 
-- `helper/prompt.md` says the API appends *"some of these messages may come from our automated assistant"* to the first auto-sent message so the conversation is never silently automated. `plans/active/freegle-helper-concierge.md` Open Question 1 says **"RESOLVED. Messages sent as the offerer (invisible)"** and the tone guidelines say the replier thinks they are talking to the offerer. Opposite policies. The prompt is the safer one and is the one §H adopts; the design doc still reads as the decision of record.
-- The `related_to` knowledge-record field the retrospective proposed for household pairs does not appear in the schema.
+Two products, two identities, and the difference is deliberate.
+
+**Ordinary freegling** — every candidate in §A–§F. Assistant messages come from Freegle's own name and avatar, in a three-way chat: the offerer, the replier, and Freegle. Nothing is sent as either member. The replier sees "Freegle" thank them or answer a question; the offerer sees the same message in the same chat. There is no disclosure line because there is nothing to disclose — the sender is visibly Freegle. *(Still being worked through: exactly how a third participant renders in the existing two-party chat UI, and which of the candidates above are one-off Freegle messages versus Freegle staying in the room.)*
+
+**Automated bulk clearance** — the Helper. Messages are sent *as the offerer*, and the API appends a one-line disclosure to the first auto-sent message in each conversation ("some of these messages may come from our automated assistant"). That is the model `helper/prompt.md` specifies. The Helper design doc's Open Question 1 ("RESOLVED. Messages sent as the offerer (invisible)") predates the disclosure line and should be updated to match the prompt.
+
+The `related_to` knowledge-record field the Helper retrospective proposed for household pairs does not appear in the schema.
 
 ---
 
 ## K. Reproducibility
 
-Scripts `overload.py`, `structural.py`, `chase.py`, `interaction.py`, `confounds.py`, `renege_timing.py`, `friction.py`, `opener.py`, `analyse.py`, `question_test.py`, reading the `scratch.rooms` / `scratch.turns` / `scratch.friction` tables built from a production restore. Re-runnable against any such restore. Member chat text was read only by a local model on the analysis machine and never left it.
+Scripts `overload.py`, `structural.py`, `chase.py`, `interaction.py`, `confounds.py`, `renege_timing.py`, `section_i.py`, `friction.py`, `opener.py`, `analyse.py`, `question_test.py`, reading the `scratch.rooms` / `scratch.turns` / `scratch.friction` tables built from a production restore. Re-runnable against any such restore on any machine that can host the local models; nothing in the pipeline calls an external API.
