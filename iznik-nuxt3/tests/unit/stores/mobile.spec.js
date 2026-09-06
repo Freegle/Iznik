@@ -1100,10 +1100,11 @@ describe('mobile store', () => {
 
       store.initWakeUpActions(mockApp)
       await capturedListener({})
-      // The refresh goes through a dynamic import; let it settle.
-      for (let i = 0; i < 10; i++) await Promise.resolve()
-
-      expect(mockRefreshNavbarCounts).toHaveBeenCalledTimes(1)
+      // The refresh goes through a dynamic import, which settles on its own
+      // schedule rather than within a few microtasks.
+      await vi.waitFor(() =>
+        expect(mockRefreshNavbarCounts).toHaveBeenCalledTimes(1)
+      )
     })
   })
 

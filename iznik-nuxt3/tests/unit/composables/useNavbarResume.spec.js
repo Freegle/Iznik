@@ -68,11 +68,15 @@ vi.mock('~/stores/mobile', () => ({
 vi.mock('~/composables/useMe', () => ({ fetchMe: vi.fn() }))
 
 let hidden = false
+let mod
 
 async function mountNavbar() {
-  // A fresh module per test: the loop's "initialised once" flag is module state.
-  vi.resetModules()
-  const mod = await import('~/composables/useNavbar')
+  // One module for the file: the loop's "initialised once" flag and its
+  // visibility listener are module state, reset between tests so each mount
+  // is the first - and the previous test's listener is gone from the shared
+  // document rather than firing alongside the new one.
+  mod = mod || (await import('~/composables/useNavbar'))
+  mod.resetNavbarCountsForTest()
   mod.useNavbar()
   for (const cb of mountedCallbacks) cb()
   await flush()
@@ -176,8 +180,8 @@ describe('navbar counts refresh when the page comes back to life', () => {
   })
 
   it('refreshNavbarCounts() is harmless before any navbar has mounted', async () => {
-    vi.resetModules()
-    const mod = await import('~/composables/useNavbar')
+    mod = mod || (await import('~/composables/useNavbar'))
+    mod.resetNavbarCountsForTest()
     expect(() => mod.refreshNavbarCounts()).not.toThrow()
     expect(mockMessageFetchCount).not.toHaveBeenCalled()
   })

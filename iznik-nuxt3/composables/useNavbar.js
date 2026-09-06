@@ -25,7 +25,7 @@ let countsInitialized = false
 // handler in stores/mobile.js, the visibility listener below - asks that loop
 // to go early instead of starting a second one.
 let refreshCountsNow = null
-let visibilityHooked = false
+let visibilityHandler = null
 
 // refreshNavbarCounts fetches every navbar count immediately and restarts the
 // 60s cycle from now. Call it whenever the page comes back to life after a
@@ -38,6 +38,18 @@ export function refreshNavbarCounts() {
   if (refreshCountsNow) {
     refreshCountsNow()
   }
+}
+
+// resetNavbarCountsForTest forgets the running loop and its visibility hook,
+// so a test can mount a fresh navbar without the previous one's listener
+// still attached to the shared document. Tests only.
+export function resetNavbarCountsForTest() {
+  if (visibilityHandler && typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', visibilityHandler)
+  }
+  visibilityHandler = null
+  refreshCountsNow = null
+  countsInitialized = false
 }
 
 export function clearNavBarTimeout() {
@@ -235,13 +247,13 @@ export function useNavbar() {
     // A tab (or the app's WebView) that was hidden has had its timer throttled
     // or suspended; the moment it is visible again the counts are stale by
     // however long that was. Hooked once for the process, like the loop.
-    if (!visibilityHooked && typeof document !== 'undefined') {
-      visibilityHooked = true
-      document.addEventListener('visibilitychange', () => {
+    if (!visibilityHandler && typeof document !== 'undefined') {
+      visibilityHandler = () => {
         if (!document.hidden) {
           refreshNavbarCounts()
         }
-      })
+      }
+      document.addEventListener('visibilitychange', visibilityHandler)
     }
   })
 
