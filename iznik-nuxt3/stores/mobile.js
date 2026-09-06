@@ -338,6 +338,13 @@ export const useMobileStore = defineStore('mobile', {
             const chatStore = useChatStore()
             chatStore.fetchChats(null, false)
 
+            // The navbar's 60s count loop slept with the app, so the unread
+            // badge is as stale as the background was long. Fetch every navbar
+            // count now (dynamic import: useNavbar imports this store).
+            import('~/composables/useNavbar')
+              .then((m) => m.refreshNavbarCounts())
+              .catch((e) => console.log('Failed to refresh navbar counts', e))
+
             // Re-trigger push registration on resume so that a missed/failed
             // initial registration or a rotated FCM/APNs token recovers. The
             // existing 'registration' listener re-fires with the current token

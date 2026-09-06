@@ -20,6 +20,26 @@ let navBarTimeout = null
 let lastScrollTime = 0
 let countsInitialized = false
 
+// The running instance's "fetch the counts now": one loop owns the 60s timer
+// (countsInitialized), and this is how anything outside it - the app's resume
+// handler in stores/mobile.js, the visibility listener below - asks that loop
+// to go early instead of starting a second one.
+let refreshCountsNow = null
+let visibilityHooked = false
+
+// refreshNavbarCounts fetches every navbar count immediately and restarts the
+// 60s cycle from now. Call it whenever the page comes back to life after a
+// gap the timer slept through: the app resuming from the background, a tab
+// becoming visible again. Without it the unread badge showed whatever the
+// last poll before the phone slept had found - a member's badge read 0 for
+// half an hour of ChitChat while two new posts sat in reach, until Browse
+// fetched its own count (2026-09-06).
+export function refreshNavbarCounts() {
+  if (refreshCountsNow) {
+    refreshCountsNow()
+  }
+}
+
 export function clearNavBarTimeout() {
   if (navBarTimeout) {
     clearTimeout(navBarTimeout)
@@ -208,7 +228,20 @@ export function useNavbar() {
     // Only fetch counts once, even if multiple components use useNavbar().
     if (!countsInitialized) {
       countsInitialized = true
+      refreshCountsNow = refreshCounts
       getCounts()
+    }
+
+    // A tab (or the app's WebView) that was hidden has had its timer throttled
+    // or suspended; the moment it is visible again the counts are stale by
+    // however long that was. Hooked once for the process, like the loop.
+    if (!visibilityHooked && typeof document !== 'undefined') {
+      visibilityHooked = true
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+          refreshNavbarCounts()
+        }
+      })
     }
   })
 
@@ -262,7 +295,9 @@ export function useNavbar() {
     }
   }
 
-  const getCounts = async () => {
+  // fetchAllCounts is one pass over every navbar count; getCounts below owns
+  // the cadence (one in flight at a time, then the 60s timer).
+  const fetchAllCounts = async () => {
     if (myid.value) {
       try {
         // We sometimes might not yet have figured out if we're logged in, so catch exceptions otherwise they
@@ -360,8 +395,43 @@ export function useNavbar() {
         console.log('Ignore error fetching counts', e)
       }
     }
+  }
 
-    countTimer.value = setTimeout(getCounts, 60000)
+  // One pass in flight at a time. A refresh that lands mid-pass (resume,
+  // visibility, login) is queued and runs as soon as the pass ends, so it is
+  // never lost and never starts a second 60s loop alongside the first.
+  let countsInFlight = false
+  let countsRefreshQueued = false
+  const getCounts = async () => {
+    if (countsInFlight) {
+      countsRefreshQueued = true
+      return
+    }
+    countsInFlight = true
+    try {
+      await fetchAllCounts()
+    } finally {
+      countsInFlight = false
+    }
+
+    if (countTimer.value) {
+      clearTimeout(countTimer.value)
+    }
+    if (countsRefreshQueued) {
+      countsRefreshQueued = false
+      countTimer.value = setTimeout(getCounts, 0)
+    } else {
+      countTimer.value = setTimeout(getCounts, 60000)
+    }
+  }
+
+  // refreshCounts drops the pending timer and fetches now; the pass reschedules.
+  const refreshCounts = () => {
+    if (countTimer.value) {
+      clearTimeout(countTimer.value)
+      countTimer.value = null
+    }
+    return getCounts()
   }
 
   watch(myid, (newVal, oldVal) => {

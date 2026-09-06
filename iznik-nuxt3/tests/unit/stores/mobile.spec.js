@@ -112,6 +112,11 @@ vi.mock('~/stores/notification', () => ({
 
 const mockSessionStart = vi.fn()
 const mockSetAppVersion = vi.fn()
+const mockRefreshNavbarCounts = vi.fn()
+vi.mock('~/composables/useNavbar', () => ({
+  refreshNavbarCounts: (...args) => mockRefreshNavbarCounts(...args),
+}))
+
 vi.mock('~/composables/useClientLog', () => ({
   setAppVersion: (...args) => mockSetAppVersion(...args),
   useClientLog: () => ({
@@ -1083,6 +1088,22 @@ describe('mobile store', () => {
       expect(mockFetchChats).toHaveBeenCalledWith(null, false)
       // But registration is not re-triggered off-app.
       expect(plugin.register).not.toHaveBeenCalled()
+    })
+
+    it('refreshes the navbar counts on resume, so the unread badge is not as stale as the background was long', async () => {
+      store.isApp = true
+      store.pushPlugin = {
+        checkPermissions: vi.fn().mockResolvedValue({ receive: 'granted' }),
+        register: vi.fn().mockResolvedValue(undefined),
+      }
+      mockRefreshNavbarCounts.mockClear()
+
+      store.initWakeUpActions(mockApp)
+      await capturedListener({})
+      // The refresh goes through a dynamic import; let it settle.
+      for (let i = 0; i < 10; i++) await Promise.resolve()
+
+      expect(mockRefreshNavbarCounts).toHaveBeenCalledTimes(1)
     })
   })
 
