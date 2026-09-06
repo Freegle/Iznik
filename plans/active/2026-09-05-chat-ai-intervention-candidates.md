@@ -103,7 +103,7 @@ Offerer first-reply latency predicts collection **within every load stratum**, s
 
 A reply inside an hour is worth roughly double a reply after a day at every level of competition. Median offerer latency on quiet posts is 16 hours; 37% take over a day. The taker still comes back 81% of the time after a 1–3 day wait, so most of the loss is momentum, not departure.
 
-The obvious objection — that fast repliers are simply better organised, and it is the organisation rather than the speed that collects — is answered by the ripple hold (I.2). Where the engine delayed delivery of the opener for reasons unrelated to the replier, collection roughly halved in every load stratum (27% vs 39% at one reply; 12% vs 26% at two or three). Delay alone does the damage.
+This is observational. The obvious rival explanation — that fast repliers are simply better organised, and it is the organisation that collects — is not ruled out by anything in the data. The ripple hold looked like a natural experiment on delay and is not one (I.2). The gradient is large and consistent enough to be worth a trial, and a trial is the only thing that will settle it.
 
 ### C1. Acknowledge the replier within the hour — *assistant · strong evidence · every conversation*
 
@@ -201,16 +201,9 @@ Run against the same restore; results folded into the candidates above where the
 
 **I.1 Ghosting is read-and-ignored, not unread.** Of the 56,164 silent rooms, the giver had **read the replier's message in 84.3%** (unknown 13.5%, genuinely unread 2.2%). On busy posts it is 98%. It is not neglect of the inbox; it is a decision not to reply, made after reading — which is what B1 and B3 are for. It holds on single-reply posts too: 4,128 rooms (~825/month) where the giver read the only reply they got and never answered it, though the post went on to some outcome 97% of the time. Folded into §B.
 
-**I.2 The ripple hold isolates latency from replier quality.** 7,046 rooms had the replier's opener held by the ripple engine before the giver could see it (mean 53 h). The hold is assigned by geography, not by anything about the replier, so it is a natural experiment on delay alone. Within every load stratum, held rooms do markedly worse:
+**I.2 The ripple hold is not a latency instrument; it is the ripple working as designed.** 7,046 rooms had the replier's opener held by the ripple engine (mean 53 h). The hold is deliberate: distant repliers are delayed so that closer, on-average-more-reliable ones get a head start. It is therefore not assigned independently of the replier — hold rate runs from 0.2% under 2 km to 14.6% at 20 km+ — and distant repliers collect less anyway (35% under 2 km, 28% at 20 km+).
 
-| replies on post | held: replied / promised / collected | not held: replied / promised / collected |
-|---|---|---|
-| 1 | 67.9% / 23.4% / **27.1%** | 85.2% / 32.5% / **39.0%** |
-| 2–3 | 45.4% / 11.5% / **11.8%** | 76.2% / 22.9% / **25.7%** |
-| 4–10 | 34.6% / 5.0% / **5.8%** | 55.5% / 11.5% / **12.7%** |
-| 11+ | 21.7% / 3.0% / **2.7%** | 30.3% / 3.8% / **4.2%** |
-
-A delay the replier did nothing to cause roughly halves their chance of collection. That is the causal support §C's latency gradient needed. Folded into §C.
+Within a distance band, held rooms still collect at roughly half the unheld rate (×0.37–0.51 across bands; ×0.40–0.59 splitting further by load), so distance alone does not explain the gap. But **longer holds do not do worse**: in the 10–20 km and 20 km+ bands, holds over 48 h collect at 13.9% and 12.2% against 8.7% and 9.9% for holds under 6 h. If delay itself were the mechanism, more of it would hurt more. It does not. What a held replier loses is not time but the race — by release, a closer replier has often already been chosen, which is what the hold is for. This analysis supports the ripple design and says nothing causal about reply latency. §C's latency finding remains observational.
 
 **I.3 No seasonal drift.** Promise rate by month, January–August, from the raw tables: 18.5, 18.1, 19.0, 18.8, 18.9, 17.8, 17.9, 17.3%. August (37,739 Offer rooms, the largest month) is the lowest but within the range. The March–July window is representative.
 
