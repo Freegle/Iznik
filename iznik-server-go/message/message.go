@@ -1951,6 +1951,22 @@ func Search(c *fiber.Ctx) error {
 	// rule as the feed, the badge and the digest - and order by "Sort by". (The universe
 	// itself is enforced at candidate selection above.) Applied at every return.
 	applyBrowseFilters := func(rs []SearchResult) []SearchResult {
+		// Every result, browse-scoped or not, carries the two dates the browse card and its
+		// order are built from (SearchResult.Posted/VisibleSince) - stamped before the
+		// browse-only work below so no return path leaves them zero.
+		if len(rs) > 0 {
+			ids := make([]uint64, 0, len(rs))
+			for _, r := range rs {
+				ids = append(ids, r.Msgid)
+			}
+			when := whenVisible(db, ids)
+			for i := range rs {
+				if w, ok := when[rs[i].Msgid]; ok {
+					rs[i].Posted = w.Posted
+					rs[i].VisibleSince = w.VisibleSince
+				}
+			}
+		}
 		if !browseScoped || (memberLat == 0 && memberLng == 0) {
 			return rs
 		}
@@ -2003,25 +2019,12 @@ func Search(c *fiber.Ctx) error {
 				return di < dj
 			})
 		case "Newest":
-			// Sort by ORIGINAL post time (messages.arrival), not SearchResult.Arrival, which is
-			// the ripple-bumped messages_spatial arrival - ordering by that floats days-old posts
-			// to the top whenever their reach grows (same trap as Discourse 9844 on the feed).
-			if len(rs) > 0 {
-				ids := make([]uint64, 0, len(rs))
-				for _, r := range rs {
-					ids = append(ids, r.Msgid)
-				}
-				var rows []struct {
-					ID      uint64    `gorm:"column:id"`
-					Arrival time.Time `gorm:"column:arrival"`
-				}
-				db.Table("messages").Select("id, arrival").Where("id IN ?", ids).Scan(&rows)
-				posted := make(map[uint64]time.Time, len(rows))
-				for _, row := range rows {
-					posted[row.ID] = row.Arrival
-				}
-				sort.SliceStable(rs, func(i, j int) bool { return posted[rs[i].Msgid].After(posted[rs[j].Msgid]) })
-			}
+			// The feed's clock, VisibleSince (stamped above) - NOT SearchResult.Arrival, the
+			// ripple-bumped messages_spatial arrival, which floats days-old posts to the top
+			// whenever their reach grows (Discourse 9844), and not the write time either,
+			// which is what the client's fallback sorted by while the cards showed the
+			// repost date (Discourse 9808/801). Same key the client re-sorts on.
+			sort.SliceStable(rs, func(i, j int) bool { return rs[i].VisibleSince.After(rs[j].VisibleSince) })
 		}
 		return rs
 	}

@@ -98,6 +98,17 @@ func Groups(c *fiber.Ctx) error {
 		// selected sort appeared not to be applied (Discourse 9844, mygroups variant).
 		// Mirrors the nearby/reach feed (isochrone/message.go).
 		"m.arrival AS posted, " +
+		// visible_since = the ONE clock the browse list orders by and dates its cards from
+		// (message.MessageSummary.VisibleSince): the oldest arrival across the groups the
+		// post is live on, which a repost or an onward ripple moves forward. This feed is
+		// what "All my communities" and a single community render, and it answered with a
+		// zero here while the reach feed and the full message record carried the real
+		// value - so "Newest posted" fell back to `posted` (the write time) and ordered
+		// 27, 7, 3, 28 days against cards dated from the group arrival (Discourse 9808/801).
+		// The list locks its order at first paint, so the full records loading later could
+		// not repair it: the field has to ship on the summary. Same expression as
+		// isochrone/message.go and message.go's full-record select.
+		"COALESCE((SELECT MIN(mgv.arrival) FROM messages_groups mgv WHERE mgv.msgid = messages_spatial.msgid AND mgv.deleted = 0), m.arrival) AS visible_since, " +
 		"CASE WHEN messages_likes.msgid IS NULL AND messages_spatial.id > " + watermark + " THEN 1 ELSE 0 END AS unseen " +
 		"FROM messages_spatial " +
 		"INNER JOIN messages m ON m.id = messages_spatial.msgid " +
@@ -116,6 +127,9 @@ func Groups(c *fiber.Ctx) error {
 		"messages.fromuser AS fromuser, " +
 		"MAX(messages_groups.arrival) AS arrival, " +
 		"messages.arrival AS posted, " +
+		// Same clock for the own-posts arm (UNION columns must line up): the oldest live
+		// group arrival, falling back to the write time for a post with no live group row.
+		"COALESCE(MIN(CASE WHEN messages_groups.deleted = 0 THEN messages_groups.arrival END), messages.arrival) AS visible_since, " +
 		"ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen " +
 		"FROM messages " +
 		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id " +

@@ -92,6 +92,64 @@ func ownMessageIDs(db *gorm.DB, ids []uint64, userid uint64) map[uint64]bool {
 	return own
 }
 
+// whenVisibleRow is one answer from stampWhenVisible's batched lookup.
+type whenVisibleRow struct {
+	ID           uint64
+	Posted       time.Time
+	VisibleSince time.Time
+}
+
+// stampWhenVisible fills Posted (when the post was written, messages.arrival) and VisibleSince
+// (the oldest arrival across the groups the post is live on) on every summary - the two clocks
+// the browse list needs: the client's "Newest posted" sort and each card's age badge both read
+// VisibleSince, and the badge adds "first posted N days" from Posted (message.MessageSummary).
+//
+// This feed answered with neither, so a member who moved the map and sorted by Newest posted
+// got the ripple-bumped spatial arrival as the order while the cards, re-rendered from the
+// full message record, printed the group arrival - the same two-clock contradiction the reach
+// feed fixed (Discourse 9844, 9808/801). The list locks its order at first paint, so the field
+// has to be on the summary, not repaired later from the full record.
+//
+// Batched in boundsLikesChunk-sized IN (...) lookups, for the same reason viewedMessageIDs is:
+// the no-location country-wide fallback can match most of messages_spatial, and a correlated
+// subquery inside that SELECT would turn into one messages_groups probe per matched row.
+func stampWhenVisible(db *gorm.DB, msgs []MessageSummary) {
+	ids := make([]uint64, len(msgs))
+	for ix, m := range msgs {
+		ids[ix] = m.ID
+	}
+
+	when := whenVisible(db, ids)
+	for ix := range msgs {
+		if r, ok := when[msgs[ix].ID]; ok {
+			msgs[ix].Posted = r.Posted
+			msgs[ix].VisibleSince = r.VisibleSince
+		}
+	}
+}
+
+// whenVisible answers Posted and VisibleSince for each id, in boundsLikesChunk-sized batches.
+// Shared by the in-bounds feed and search results, which both need the same two dates the
+// browse card is built from.
+func whenVisible(db *gorm.DB, ids []uint64) map[uint64]whenVisibleRow {
+	when := make(map[uint64]whenVisibleRow, len(ids))
+	for _, chunk := range chunkWindows(ids, boundsLikesChunk) {
+		var rows []whenVisibleRow
+		// Same expression as message.go's full-record select and message/groups.go, so every
+		// surface the card is built from agrees. A post with no live group row dates from
+		// its write time.
+		db.Raw("SELECT m.id, m.arrival AS posted, "+
+			"COALESCE(MIN(mg.arrival), m.arrival) AS visible_since "+
+			"FROM messages m "+
+			"LEFT JOIN messages_groups mg ON mg.msgid = m.id AND mg.deleted = 0 "+
+			"WHERE m.id IN (?) GROUP BY m.id, m.arrival", chunk).Scan(&rows)
+		for _, r := range rows {
+			when[r.ID] = r
+		}
+	}
+	return when
+}
+
 func Bounds(c *fiber.Ctx) error {
 	db := database.DBConn
 
@@ -250,6 +308,11 @@ func Bounds(c *fiber.Ctx) error {
 				msgs[ix].Mine = true
 			}
 		}
+	}
+
+	// Date every summary the way the card will: see stampWhenVisible.
+	if len(msgs) > 0 {
+		stampWhenVisible(db, msgs)
 	}
 
 	// Order to match the old combined SQL: unseen first, then most-recent arrival, then highest id.
