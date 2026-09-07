@@ -210,6 +210,71 @@ class StatsGenerationServiceTest extends TestCase
         $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 2);
     }
 
+    public function test_replies_excludes_senders_on_the_spammer_list(): void
+    {
+        // On 2026-09-06 one throwaway account sent 2,155 blank replies in twenty minutes;
+        // every one was rejected and the account listed, and the day's Replies stat still
+        // more than doubled. The listing is the verdict the stat honours.
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $genuine = $this->createTestUser();
+        $spammer = $this->createTestUser();
+        $msg = $this->createTestMessage($poster, $group);
+
+        $genuineRoom = $this->createTestChatRoom($poster, $genuine);
+        $spamRoom = $this->createTestChatRoom($poster, $spammer);
+        $this->createTestChatMessage($genuineRoom, $genuine, [
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $msg->id,
+            'date' => $this->date.' 10:00:00',
+        ]);
+        foreach (['10:20:00', '10:21:00', '10:22:00'] as $t) {
+            $this->createTestChatMessage($spamRoom, $spammer, [
+                'type' => ChatMessage::TYPE_INTERESTED,
+                'refmsgid' => $msg->id,
+                'date' => $this->date.' '.$t,
+            ]);
+        }
+        DB::table('spam_users')->insert([
+            'userid' => $spammer->id,
+            'byuserid' => $poster->id,
+            'collection' => 'Spammer',
+            'reason' => 'Spam messages in multiple chats',
+        ]);
+
+        $this->service->generate($group->id, $this->date);
+
+        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 1);
+        // Activity is approved messages + replies, so it must not carry the spam either.
+        $this->assertStat($group->id, StatsGenerationService::TYPE_ACTIVITY, 2);
+    }
+
+    public function test_replies_still_counts_a_whitelisted_or_pending_listing(): void
+    {
+        // Only the Spammer collection is a verdict; Whitelisted and the pending states
+        // are not, and a reply from such a member counts as it always did.
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $replier = $this->createTestUser();
+        $msg = $this->createTestMessage($poster, $group);
+        $room = $this->createTestChatRoom($poster, $replier);
+        $this->createTestChatMessage($room, $replier, [
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $msg->id,
+            'date' => $this->date.' 10:00:00',
+        ]);
+        DB::table('spam_users')->insert([
+            'userid' => $replier->id,
+            'byuserid' => $poster->id,
+            'collection' => 'Whitelisted',
+            'reason' => 'Trusted',
+        ]);
+
+        $this->service->generate($group->id, $this->date);
+
+        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 1);
+    }
+
     public function test_activity_is_approved_message_count_plus_replies(): void
     {
         $group = $this->createTestGroup();
