@@ -1186,7 +1186,8 @@ is built from must carry it - the reach feed and `browseView=mygroups` (`isochro
 `/message/mygroups` behind "All my communities" and a single community (`message/groups.go`),
 and `/message/inbounds` after a map move (`message/bounds.go`). The last two shipped a zero
 until 2026-09-07, and "All my communities" on Newest posted read 27, 7, 3, 28 days
-(Discourse 9808/801). Search results (`message/search.go`) still carry only the spatial arrival.
+(Discourse 9808/801). Search results (`message/search.go` `SearchResult`) carry the same two
+dates, stamped by the Search handler, and its server-side "Newest" order uses `visibleSince` too.
 
 **Weights are per-consumer and env-tunable without a deploy** (defaults `close=1, fresh=0,
 budget=1, anchor=0` for both today - closeness × engagement-decay):

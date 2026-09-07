@@ -112,6 +112,14 @@ type SearchResult struct {
 	// server filtered and ordered by. Nil when not fetched or the engine had no answer.
 	Roadmins  *float64 `json:"roadmins,omitempty" gorm:"-"`
 	Roadmiles *float64 `json:"roadmiles,omitempty" gorm:"-"`
+	// Posted and VisibleSince are the two dates every browse summary carries
+	// (MessageSummary): when the post was written, and the oldest live group arrival - the
+	// ONE clock the client's "Newest posted" sort and each card's age badge read. Search
+	// results are sorted by the same client code as the feed, and without these they sorted
+	// by Arrival (the ripple-bumped spatial arrival) against cards dated from the full
+	// record. Stamped by the Search handler on every result (message.whenVisible).
+	Posted       time.Time `json:"posted,omitempty" gorm:"-"`
+	VisibleSince time.Time `json:"visibleSince,omitempty" gorm:"-"`
 }
 
 func GetWords(search string) []string {

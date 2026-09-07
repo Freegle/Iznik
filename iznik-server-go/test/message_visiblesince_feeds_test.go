@@ -2,6 +2,7 @@ package test
 
 import (
 	json2 "encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -26,7 +27,9 @@ import (
 // group row's arrival moved, as AutoRepostService does), rippled into a further group the
 // viewer is not in 1 day ago, with a deleted group row from 20 days ago that must not count,
 // and a spatial arrival bumped to now by that ripple.
-func visibleSinceFixture(t *testing.T, prefix string) (viewerToken string, msgID uint64, cleanup func()) {
+//
+// The subject is "OFFER: <word> gadget" so the search test can find it by that coined word.
+func visibleSinceFixture(t *testing.T, prefix string, word string) (viewerToken string, msgID uint64, cleanup func()) {
 	db := database.DBConn
 
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
@@ -38,7 +41,7 @@ func visibleSinceFixture(t *testing.T, prefix string) (viewerToken string, msgID
 	CreateTestMembership(t, viewerID, origin, "Member")
 	CreateTestMembership(t, posterID, origin, "Member")
 
-	msgID = CreateTestMessage(t, posterID, origin, prefix+" reposted offer", 51.5, -0.1)
+	msgID = CreateTestMessage(t, posterID, origin, "OFFER: "+word+" gadget", 51.5, -0.1)
 
 	db.Exec("UPDATE messages SET arrival = DATE_SUB(NOW(), INTERVAL 30 DAY) WHERE id = ?", msgID)
 	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 3 DAY) WHERE msgid = ? AND groupid = ?", msgID, origin)
@@ -49,10 +52,18 @@ func visibleSinceFixture(t *testing.T, prefix string) (viewerToken string, msgID
 	db.Exec("UPDATE messages_spatial SET arrival = NOW() WHERE msgid = ?", msgID)
 
 	cleanup = func() {
+		db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
 	}
 	return token, msgID, cleanup
+}
+
+// coinedWord is a rare, short word (<=10 chars) so a search hit is deterministic and stays
+// within SEARCH_LIMIT in the shared DB - the same trick as TestAPISearch_DedupsExactAndStartsMatch.
+func coinedWord() string {
+	return fmt.Sprintf("zv%d", time.Now().UnixNano()%100000)
 }
 
 func assertOneClock(t *testing.T, feed string, msgs []message.MessageSummary, msgID uint64) {
@@ -82,7 +93,7 @@ func assertOneClock(t *testing.T, feed string, msgs []message.MessageSummary, ms
 // behind "All my communities" and a single community - dates each post by the same clock the
 // card prints.
 func TestMyGroupsVisibleSinceIsOldestGroupArrival(t *testing.T) {
-	token, msgID, cleanup := visibleSinceFixture(t, uniquePrefix("mygroups_visiblesince"))
+	token, msgID, cleanup := visibleSinceFixture(t, uniquePrefix("mygroups_visiblesince"), coinedWord())
 	defer cleanup()
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/mygroups?jwt="+token, nil))
@@ -96,7 +107,7 @@ func TestMyGroupsVisibleSinceIsOldestGroupArrival(t *testing.T) {
 // TestBoundsVisibleSinceIsOldestGroupArrival: /message/inbounds (message.Bounds) - what browse
 // switches to the moment the member moves the map - dates each post by the same clock too.
 func TestBoundsVisibleSinceIsOldestGroupArrival(t *testing.T) {
-	token, msgID, cleanup := visibleSinceFixture(t, uniquePrefix("bounds_visiblesince"))
+	token, msgID, cleanup := visibleSinceFixture(t, uniquePrefix("bounds_visiblesince"), coinedWord())
 	defer cleanup()
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET",
@@ -106,4 +117,25 @@ func TestBoundsVisibleSinceIsOldestGroupArrival(t *testing.T) {
 	var msgs []message.MessageSummary
 	json2.Unmarshal(rsp(resp), &msgs)
 	assertOneClock(t, "/message/inbounds", msgs, msgID)
+}
+
+// TestSearchVisibleSinceIsOldestGroupArrival: search results are sorted by the same client
+// code as the feed, so /message/search must carry the same two dates. It carried only the
+// spatial arrival, so "Newest posted" on a browse search ordered by ripple time.
+func TestSearchVisibleSinceIsOldestGroupArrival(t *testing.T) {
+	word := coinedWord()
+	token, msgID, cleanup := visibleSinceFixture(t, uniquePrefix("search_visiblesince"), word)
+	defer cleanup()
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/search/"+word+"?jwt="+token, nil), 60000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var results []message.SearchResult
+	json2.Unmarshal(rsp(resp), &results)
+
+	msgs := make([]message.MessageSummary, 0, len(results))
+	for _, r := range results {
+		msgs = append(msgs, message.MessageSummary{ID: r.Msgid, Posted: r.Posted, VisibleSince: r.VisibleSince})
+	}
+	assertOneClock(t, "/message/search", msgs, msgID)
 }

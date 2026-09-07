@@ -119,7 +119,20 @@ func stampWhenVisible(db *gorm.DB, msgs []MessageSummary) {
 		ids[ix] = m.ID
 	}
 
-	when := make(map[uint64]whenVisibleRow, len(msgs))
+	when := whenVisible(db, ids)
+	for ix := range msgs {
+		if r, ok := when[msgs[ix].ID]; ok {
+			msgs[ix].Posted = r.Posted
+			msgs[ix].VisibleSince = r.VisibleSince
+		}
+	}
+}
+
+// whenVisible answers Posted and VisibleSince for each id, in boundsLikesChunk-sized batches.
+// Shared by the in-bounds feed and search results, which both need the same two dates the
+// browse card is built from.
+func whenVisible(db *gorm.DB, ids []uint64) map[uint64]whenVisibleRow {
+	when := make(map[uint64]whenVisibleRow, len(ids))
 	for _, chunk := range chunkWindows(ids, boundsLikesChunk) {
 		var rows []whenVisibleRow
 		// Same expression as message.go's full-record select and message/groups.go, so every
@@ -134,13 +147,7 @@ func stampWhenVisible(db *gorm.DB, msgs []MessageSummary) {
 			when[r.ID] = r
 		}
 	}
-
-	for ix := range msgs {
-		if r, ok := when[msgs[ix].ID]; ok {
-			msgs[ix].Posted = r.Posted
-			msgs[ix].VisibleSince = r.VisibleSince
-		}
-	}
+	return when
 }
 
 func Bounds(c *fiber.Ctx) error {
