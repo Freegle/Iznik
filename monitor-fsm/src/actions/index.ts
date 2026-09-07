@@ -1,5 +1,5 @@
 import type { ActionDefinition } from 'ai-flower'
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { promisify } from 'node:util'
 import { readFile, writeFile } from 'node:fs/promises'
 import { existsSync, readdirSync, readlinkSync } from 'node:fs'
@@ -108,6 +108,17 @@ async function sh(cmd: string, args: string[], cwd?: string): Promise<{ stdout: 
  * older than any stamped one: the only unstamped returns are the error paths, whose
  * empty PR lists must never win over a real reading.
  */
+// Bases to try, in order, when cutting a delegate worktree. The local `master` ref is only as
+// fresh as the last pull in the main checkout - it was 209 commits behind on 2026-09-07 - so a
+// best-effort fetch puts origin/master first. The delegates fetch again before they push, so
+// this only decides which tree they read while diagnosing.
+function worktreeBases(repoCwd: string): string[] {
+  try {
+    execFileSync('git', ['fetch', '--quiet', 'origin', 'master'], { cwd: repoCwd, stdio: 'pipe', timeout: 60_000 })
+  } catch { /* offline or slow: fall through to whatever is local */ }
+  return ['origin/master', 'master', 'HEAD']
+}
+
 export function freshestCICheck(ctx: any): any {
   const direct = ctx?._action_check_my_open_pr_ci ?? {}
   const viaGate = ctx?._action_coverage_gate_decide?.red ?? {}
@@ -337,7 +348,7 @@ export async function runFixExpansion(
 
   const worktreeDir = `/tmp/monitor-fsm-expand-${process.pid}-${Date.now()}`
   let worktreeCreated = false
-  for (const base of ['master', 'HEAD']) {
+  for (const base of worktreeBases(repoCwd)) {
     try {
       execFileSync('git', ['worktree', 'add', '--detach', worktreeDir, base], { cwd: repoCwd, stdio: 'pipe' })
       worktreeCreated = true
@@ -458,6 +469,13 @@ export async function postDiscourseReply(
   replyToPostNumber?: number,
   opts: { maxRetries?: number; sleepFn?: (ms: number) => Promise<void> } = {},
 ): Promise<{ ok: boolean; error?: string }> {
+  // Operator kill-switch: SKIP_DISCOURSE_POSTS=1 makes every reply post fail
+  // closed. Both callers treat a failed post as "retry next iteration", so
+  // nothing is lost - the replies go out on the first run without the switch.
+  if (process.env.SKIP_DISCOURSE_POSTS) {
+    return { ok: false, error: 'Discourse posting disabled by SKIP_DISCOURSE_POSTS' }
+  }
+
   // HARD INVARIANT: never post a reply without quoted text. This is the single
   // chokepoint for the auto-post path, so the check here makes a context-less
   // post impossible regardless of any upstream bug in how `raw` was built.
@@ -2480,7 +2498,7 @@ print(urllib.request.urlopen(req).read().decode())
       const worktreeDir = `/tmp/monitor-fsm-delegate-${process.pid}-${Date.now()}`
       let worktreeCreated = false
       let worktreeError: string | null = null
-      for (const base of ['master', 'HEAD']) {
+      for (const base of worktreeBases(repoCwd)) {
         try {
           execFileSync('git', ['worktree', 'add', '--detach', worktreeDir, base], {
             cwd: repoCwd, stdio: 'pipe',
@@ -2829,7 +2847,7 @@ If you omit the marker, your work is considered failed regardless of what actual
         const HARD_CAP_MS = Math.max(timeoutSec * 1000, 3_600_000)
         const worktreeDir = `/tmp/monitor-fsm-parallel-${process.pid}-${Date.now()}-${idx}`
         let worktreeCreated = false
-        for (const base of ['master', 'HEAD']) {
+        for (const base of worktreeBases(repoCwd)) {
           try {
             execFileSync('git', ['worktree', 'add', '--detach', worktreeDir, base], {
               cwd: repoCwd, stdio: 'pipe',

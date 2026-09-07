@@ -921,8 +921,9 @@ async function main() {
 
   // Edit the Discourse "Monitor Status — Live Summary" wiki post so moderators
   // see the current picture without developer jargon. Optional — skipped if
-  // SKIP_DISCOURSE_STATUS is set (local dev) or the API key is missing.
-  if (!process.env.SKIP_DISCOURSE_STATUS) {
+  // SKIP_DISCOURSE_STATUS is set (local dev), SKIP_DISCOURSE_POSTS is set (no
+  // Discourse writes at all this run) or the API key is missing.
+  if (!process.env.SKIP_DISCOURSE_STATUS && !process.env.SKIP_DISCOURSE_POSTS) {
     try {
       const result = await putStatusPost(db)
       if (result.posted) {
