@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-05
+last_reviewed: 2026-09-06
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -1044,7 +1044,24 @@ rows, its latest row states its outcome.
   `updated_at` delta catch-up, then an atomic RENAME swap. Dev/CI just run the Laravel
   migration (small tables).
 - **Unified digest distance scoring:** the reach polygon feeds each post's closeness score.
-- **Reach mail:** the join notification when a post ripples to within reach.
+- **Reach mail:** the join notification when a post ripples to within reach. Two change feeds
+  drive it, one per direction, and neither uses a time window:
+  - *The post's reach moved.* `UnifiedDigestService::sendReachDigests` resumes from a per-shard
+    mark on `rippling_reach.updated_at` (`config` key `reach_mail_mark_shard{N}`), stored as the
+    time the pass started so a row written in the same second is caught next tick. A dry run,
+    a pass stopped early, or a pass with a failed post leaves the mark alone. A cold start reads
+    the last hour. A repost of a Taken or Received post bumps `updated_at` (`JoinAndPostAs` in
+    iznik-server-go), since its reach row survives with its old stamp.
+  - *The member changed.* Joining a group, changing postcode, returning after 90 days away, or
+    switching to immediate mail queues the member in `rippling_reach_member_pending` (written
+    through iznik-server-go's `reachqueue` package by `authMiddleware`, `ProcessSettingsUpdate`, `addMemberToGroup`,
+    `putMembershipsPartner`, `PutUser`, `PatchMemberships`; and by `ExpandService`'s ripple
+    auto-join and `user:add-membership` in PHP - see `ReachMemberQueueService`). The same pass
+    drains the queue, partitioned by `MOD(userid, shards)`, asking `mailNewlyReachedForPost`
+    about each candidate post scoped to that one member. `ripple:reconcile-reach-members` runs
+    daily and re-queues anyone whose join or postcode change since yesterday has no ledger row
+    after it, so a missed hook costs a day, not the mail.
+  The `rippling_reach_notified` ledger dedupes both feeds, so their overlap is harmless.
 - **Held replies:** a reply from outside the post's current reach is parked in
   `rippling_held_replies` rather than delivered, so local people keep first chance. Every hold
   is a **delay with a due time** rather than an open-ended wait - see §7a. One exception: a

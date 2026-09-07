@@ -379,4 +379,73 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
             'seen' => 1,
         ]);
     }
+
+    /**
+     * The anti-join correlates users_notifications to the message by a computed string, and
+     * ran every five minutes as `LIKE CONCAT(...)`. The pattern carries no wildcard, so it is
+     * an equality already - but MySQL cannot use an index for LIKE against a non-constant
+     * pattern, so it scanned the whole candidate set per message. Writing it as `=` is what
+     * lets an index on users_notifications.url serve it as a ref lookup.
+     *
+     * The index itself is a schema change and is not in this branch; without it this is
+     * preparation rather than a saving.
+     */
+    public function test_notification_anti_join_uses_equality_so_an_index_can_serve_it(): void
+    {
+        $groupId  = $this->createGroup();
+        $fromUser = $this->createUser('Basic');
+        $this->addMembership($fromUser, $groupId);
+        $this->createMessage($groupId, $fromUser, 'Pending');
+
+        $seen = [];
+        DB::listen(function ($query) use (&$seen) {
+            // Only the candidate-message anti-join, which correlates by a per-row CONCAT.
+            // A separate query prefix-matches the same urls with a constant LIKE pattern;
+            // that one is already index-usable and must be left alone.
+            if (stripos($query->sql, "CONCAT('/microvolunteering/message/") !== false) {
+                $seen[] = $query->sql;
+            }
+        });
+
+        (new MicrovolunteeringNotifyService())->notifyForMessages();
+
+        $this->assertNotEmpty($seen, 'expected the candidate-message query to run');
+
+        $this->assertMatchesRegularExpression(
+            "/url\s*=\s*CONCAT\(/i",
+            $seen[0],
+            'the url correlation must be an equality'
+        );
+        $this->assertDoesNotMatchRegularExpression(
+            "/url\s+LIKE\s+CONCAT\(/i",
+            $seen[0],
+            'LIKE against a computed pattern cannot use an index'
+        );
+    }
+
+    /**
+     * Behaviour guard for the same change: a message that already has its own Exhort
+     * notification must stay out of the candidate set.
+     */
+    public function test_message_with_its_own_notification_is_not_considered_again(): void
+    {
+        $groupId  = $this->createGroup();
+        $fromUser = $this->createUser('Basic');
+        $reviewer = $this->createUser('Moderate');
+        $this->addMembership($fromUser, $groupId);
+        $this->addMembership($reviewer, $groupId);
+
+        $msgId = $this->createMessage($groupId, $fromUser, 'Pending');
+
+        DB::table('users_notifications')->insert([
+            'touser'    => $reviewer,
+            'type'      => 'Exhort',
+            'url'       => '/microvolunteering/message/' . $msgId,
+            'timestamp' => now(),
+        ]);
+
+        $stats = (new MicrovolunteeringNotifyService())->notifyForMessages();
+
+        $this->assertSame(0, $stats['messages_considered'], 'a message already exhorted must not be offered again');
+    }
 }

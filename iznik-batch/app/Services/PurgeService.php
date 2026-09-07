@@ -66,17 +66,26 @@ class PurgeService
 
         $total = 0;
 
+        // Keyset watermark, for the same reason as purgeOrphanedUserLogs: this anti-join drives a
+        // range scan of chat_rooms on `typelatest` (3.8M rows in production), and without an id
+        // bound every chunk repeats that scan from the start to refill the LIMIT.
+        $lastId = 0;
+
         do {
             $emptyRooms = ChatRoom::leftJoin('chat_messages', 'chat_rooms.id', '=', 'chat_messages.chatid')
                 ->whereNull('chat_messages.chatid')
                 ->whereIn('chat_rooms.chattype', [ChatRoom::TYPE_USER2USER, ChatRoom::TYPE_USER2MOD])
+                ->where('chat_rooms.id', '>', $lastId)
                 ->select('chat_rooms.id')
+                ->orderBy('chat_rooms.id')
                 ->limit($this->chunkSize)
                 ->pluck('id');
 
             if ($emptyRooms->isEmpty()) {
                 break;
             }
+
+            $lastId = (int) $emptyRooms->last();
 
             ChatRoom::whereIn('id', $emptyRooms)->delete();
             $total += $emptyRooms->count();
@@ -983,15 +992,25 @@ class PurgeService
 
         $total = 0;
 
+        // Keyset watermark. Without `logs.id > ?` every chunk re-runs the anti-join from the
+        // start of the table, so the cost is O(chunks x table) and rises as the run proceeds:
+        // LIMIT bounds the result, not the scan, so once the remaining orphans are sparse each
+        // chunk reads further to fill it. Measured on production at 2.9M rows read per row
+        // deleted, with one chunk taking 640s. Resuming from the last id turns the sweep into a
+        // single pass. ORDER BY is what makes the keyset sound - without it LIMIT could return
+        // rows in any order and the watermark would skip unprocessed ones.
+        $lastId = 0;
+
         do {
             $logs = DB::select(
-                "SELECT logs.id FROM logs LEFT JOIN users ON users.id = logs.user WHERE `timestamp` < ? AND logs.user IS NOT NULL AND users.id IS NULL LIMIT {$this->chunkSize}",
-                [$cutoff]
+                "SELECT logs.id FROM logs LEFT JOIN users ON users.id = logs.user WHERE `timestamp` < ? AND logs.user IS NOT NULL AND users.id IS NULL AND logs.id > ? ORDER BY logs.id LIMIT {$this->chunkSize}",
+                [$cutoff, $lastId]
             );
 
             foreach ($logs as $log) {
                 DB::delete("DELETE FROM logs WHERE id = ?", [$log->id]);
                 $total++;
+                $lastId = (int) $log->id;
             }
         } while (count($logs) > 0);
 

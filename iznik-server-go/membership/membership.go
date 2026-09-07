@@ -10,6 +10,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
@@ -1361,12 +1362,15 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 	// values before comparing (the retired ormharness's normalise_test.go
 	// TestNormaliseColumnOrder_Insert, removed in d22ba1d6c),
 	// so the map-Create reorder is harmless. Identical twin: addMemberToGroup (27aa0e237120).
-	db.Table("memberships").Create(map[string]interface{}{
+	partnerJoin := db.Table("memberships").Create(map[string]interface{}{
 		"userid":     userid,
 		"groupid":    groupid,
 		"role":       utils.ROLE_MEMBER,
 		"collection": utils.COLLECTION_APPROVED,
 	})
+	if partnerJoin.RowsAffected > 0 {
+		reachqueue.QueueMember(db, userid, reachqueue.ReasonJoined)
+	}
 
 	// Record in memberships_history with processingrequired=1 so the
 	// Laravel batch (memberships:process) sends the group welcome email,
@@ -1430,6 +1434,9 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 	})
 
 	if result.RowsAffected > 0 {
+		// A new membership can make the member eligible for reach mail about posts on this
+		// group whose reach already covers them.
+		reachqueue.QueueMember(db, userid, reachqueue.ReasonJoined)
 		// Record in memberships_history with processingrequired=1 so the
 		// Laravel batch (memberships:process) sends the group welcome email,
 		// runs spam checks, and applies review flags. Without this row the
@@ -1679,6 +1686,11 @@ func PatchMemberships(c *fiber.Ctx) error {
 	if req.Emailfrequency != nil {
 		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
 			Update("emailfrequency", int(*req.Emailfrequency))
+		// Reach mail goes to immediate members only, so switching to immediate is the moment
+		// a member becomes eligible for it.
+		if int(*req.Emailfrequency) == utils.FREQUENCY_IMMEDIATE {
+			reachqueue.QueueMember(db, userid, reachqueue.ReasonFrequency)
+		}
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_OUR_EMAIL_FREQUENCY, req.Groupid, userid, myid,
 			fmt.Sprintf("emailfrequency=%d", int(*req.Emailfrequency)))
 	}

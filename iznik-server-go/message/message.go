@@ -19,6 +19,7 @@ import (
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/driving"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/group"
@@ -3765,6 +3766,7 @@ func JoinAndPostAs(c *fiber.Ctx, caller uint64, author uint64, req PostMessageRe
 	// Identical golden to 854c7e93efe3
 	// and a08c7f4426c7; converted together per gate (h).
 	db.Table("messages_outcomes").Where("msgid = ?", req.ID).Delete(nil)
+	reachqueue.BumpReachForRepost(db, req.ID)
 	// Identical golden to 0486830f6eda
 	// and 4064113639bf; converted together per gate (h).
 	db.Table("messages_outcomes_intended").Where("msgid = ?", req.ID).Delete(nil)
