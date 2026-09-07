@@ -21,11 +21,13 @@
             <exclude>tests/Feature/Mail/WelcomeMailIntegrationTest.php</exclude>
             <exclude>tests/Feature/Mail/ChatNotificationIntegrationTest.php</exclude>
             <exclude>tests/Feature/Mail/AmpEmailSpoolIntegrationTest.php</exclude>
+            <exclude>tests/Feature/Data/CPIOnsFetchIntegrationTest.php</exclude>
         </testsuite>
         <testsuite name="Integration">
             <file>tests/Feature/Mail/WelcomeMailIntegrationTest.php</file>
             <file>tests/Feature/Mail/ChatNotificationIntegrationTest.php</file>
             <file>tests/Feature/Mail/AmpEmailSpoolIntegrationTest.php</file>
+            <file>tests/Feature/Data/CPIOnsFetchIntegrationTest.php</file>
         </testsuite>
     </testsuites>
     <source>
