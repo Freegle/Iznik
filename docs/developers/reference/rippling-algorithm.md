@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-05
+last_reviewed: 2026-09-07
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -1173,6 +1173,20 @@ unit-tested against the Go reference values).
 `messages_pinned` row - paid bulk-offer clearances floated to the top), **then Score descending**,
 **then arrival (newest)** as the tiebreak. The score is exposed as `MessageSummary.Score` and the
 `nearby` store preserves that server order.
+
+**One clock on every browse feed.** The client re-sorts the list it is given
+(`composables/useMessageSort.js`: "New to you" = unseen by score then seen newest-first,
+"Newest posted", "Closest"), and every summary it sorts carries two dates: `posted` (when the
+post was written, `messages.arrival`) and `visibleSince` (the oldest live `messages_groups.arrival`,
+which a repost or an onward ripple moves forward). "Newest posted" orders by `visibleSince` and
+each card's age badge reads the same field (adding "first posted N days" from `posted`), so the
+order can never contradict the ages printed on it. The list locks its order at first paint, so a
+feed that omits the field is not repaired when the full records load: all three feeds the list
+is built from must carry it - the reach feed and `browseView=mygroups` (`isochrone/message.go`),
+`/message/mygroups` behind "All my communities" and a single community (`message/groups.go`),
+and `/message/inbounds` after a map move (`message/bounds.go`). The last two shipped a zero
+until 2026-09-07, and "All my communities" on Newest posted read 27, 7, 3, 28 days
+(Discourse 9808/801). Search results (`message/search.go`) still carry only the spatial arrival.
 
 **Weights are per-consumer and env-tunable without a deploy** (defaults `close=1, fresh=0,
 budget=1, anchor=0` for both today - closeness × engagement-decay):
