@@ -219,7 +219,8 @@ class StatsGenerationServiceTest extends TestCase
         $poster = $this->createTestUser();
         $genuine = $this->createTestUser();
         $spammer = $this->createTestUser();
-        $msg = $this->createTestMessage($poster, $group);
+        // Arrives on $date so Activity (approved messages + replies) has both terms.
+        $msg = $this->createTestMessage($poster, $group, ['arrival' => $this->date.' 09:00:00']);
 
         $genuineRoom = $this->createTestChatRoom($poster, $genuine);
         $spamRoom = $this->createTestChatRoom($poster, $spammer);
