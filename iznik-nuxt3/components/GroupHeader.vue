@@ -1,6 +1,35 @@
 <template>
+  <!-- Compact bar. A member of more than a week has seen the full header enough, so on a
+       feed filtered to their community it starts folded up to logo + name, with the full
+       detail a click away. Someone who has not joined always gets the full header: that is
+       where the Join button and the description are. -->
+  <div v-if="startsCollapsed" class="group-compact">
+    <b-img
+      rounded
+      alt=""
+      :src="group.profile ? group.profile : '/icon.png'"
+      class="group-compact__logo"
+    />
+    <span class="group-compact__name">
+      {{ group.namedisplay }}
+      <v-icon
+        v-if="amAMember === 'Owner' || amAMember === 'Moderator'"
+        icon="crown"
+        class="text-success"
+      />
+    </span>
+    <b-button
+      variant="link"
+      size="sm"
+      class="group-compact__toggle"
+      :aria-expanded="expanded ? 'true' : 'false'"
+      @click="expanded = !expanded"
+    >
+      {{ expanded ? 'Hide details' : 'Show details' }}
+    </b-button>
+  </div>
   <!-- Mobile/Tablet Layout -->
-  <div class="d-block d-lg-none mobile-group-header">
+  <div v-if="showFull" class="d-block d-lg-none mobile-group-header">
     <div class="mobile-hero">
       <div class="mobile-hero__top">
         <div class="mobile-hero__content">
@@ -99,7 +128,7 @@
           you don't need, and ask for things you'd like.
         </span>
         <!-- eslint-disable-next-line -->
-        <span v-else v-html="description"/>
+        <span v-else v-html="description" />
       </span>
       <a
         v-if="description && description.length > 400 && !descriptionExpanded"
@@ -193,7 +222,7 @@
   </div>
 
   <!-- Desktop Layout (large screens only) -->
-  <b-card bg-light class="d-none d-lg-block">
+  <b-card v-if="showFull" bg-light class="d-none d-lg-block">
     <div class="group mb-3">
       <div class="group__image">
         <b-img
@@ -224,13 +253,21 @@
       <div class="group__links text-muted small">
         See
         <!--eslint-disable-next-line-->
-        <nuxt-link no-prefetch :to="{ path: '/communityevents/' + group.id }">community events</nuxt-link>,
+        <nuxt-link no-prefetch :to="{ path: '/communityevents/' + group.id }"
+          >community events</nuxt-link
+        >,
         <!--eslint-disable-next-line-->
-        <nuxt-link no-prefetch :to="{ path: '/volunteerings/' + group.id }">volunteer opportunities</nuxt-link>,
+        <nuxt-link no-prefetch :to="{ path: '/volunteerings/' + group.id }"
+          >volunteer opportunities</nuxt-link
+        >,
         <!--eslint-disable-next-line-->
-        <nuxt-link no-prefetch :to="{ path: '/stories/' + group.id }">stories</nuxt-link>, or
+        <nuxt-link no-prefetch :to="{ path: '/stories/' + group.id }"
+          >stories</nuxt-link
+        >, or
         <!--eslint-disable-next-line-->
-        <nuxt-link no-prefetch :to="{ path: '/stats/' + group.nameshort }">stats</nuxt-link>
+        <nuxt-link no-prefetch :to="{ path: '/stats/' + group.nameshort }"
+          >stats</nuxt-link
+        >
       </div>
       <div class="mt-2 group__buttons">
         <div class="button__items">
@@ -260,7 +297,7 @@
         reuse with Freegle!
       </p>
       <!-- eslint-disable-next-line -->
-      <span v-else="description" v-html="description"/>
+      <span v-else="description" v-html="description" />
     </div>
     <div v-if="showGiveAsk" class="d-flex justify-content-between flex-wrap">
       <b-button to="/give" class="mt-1" size="lg" block variant="primary">
@@ -354,11 +391,12 @@
   </b-card>
 </template>
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import SpinButton from './SpinButton'
 import { useRouter } from '#imports'
 import ChatButton from '~/components/ChatButton'
 import { useAuthStore } from '~/stores/auth'
+import { groupHeaderStartsCollapsed } from '~/composables/groupHeaderCollapse'
 
 const props = defineProps({
   group: {
@@ -370,6 +408,13 @@ const props = defineProps({
     required: true,
   },
   showGiveAsk: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
+  // Fold the header up to a compact bar for an established member (see the template).
+  // Off by default: on the community's own page the header is the content.
+  collapsible: {
     type: Boolean,
     required: false,
     default: false,
@@ -386,6 +431,30 @@ const myid = computed(() => authStore?.user?.id)
 const amAMember = computed(() => {
   return authStore?.member(props.group?.id)
 })
+
+// The viewer's own membership row, for its join date.
+const myMembership = computed(() => {
+  const id = parseInt(props.group?.id)
+  return (
+    (authStore?.groups || []).find((g) => parseInt(g.groupid) === id) || null
+  )
+})
+
+const startsCollapsed = computed(
+  () => props.collapsible && groupHeaderStartsCollapsed(myMembership.value)
+)
+
+// Whether the member has asked for the full detail. Reset when the feed moves to another
+// community, so one "Show details" does not carry over to the next.
+const expanded = ref(false)
+watch(
+  () => props.group?.id,
+  () => {
+    expanded.value = false
+  }
+)
+
+const showFull = computed(() => !startsCollapsed.value || expanded.value)
 
 const contactLabel = computed(() => {
   // Normalize caretaker-type groups to display as 'volunteers'
@@ -837,6 +906,43 @@ async function join(callback) {
   &__label {
     color: var(--color-gray-600);
     display: block;
+  }
+}
+
+.group-compact {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+  background: $color-white;
+  border-bottom: 1px solid $color-gray--light;
+
+  @include media-breakpoint-up(lg) {
+    border: 1px solid $color-gray--light;
+    border-radius: 0.25rem;
+  }
+
+  &__logo {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    object-fit: cover;
+  }
+
+  &__name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 700;
+    color: $color-header;
+  }
+
+  &__toggle {
+    flex-shrink: 0;
+    padding: 0;
   }
 }
 </style>

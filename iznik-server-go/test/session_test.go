@@ -229,6 +229,10 @@ func TestGetSession(t *testing.T) {
 	assert.True(t, ok, "group entry should be a map")
 	assert.NotNil(t, g0["groupid"], "should have groupid")
 	assert.NotNil(t, g0["role"], "should have role")
+	// Join date is membership-specific: the feed uses it to fold a community's header up after the first week.
+	assert.NotNil(t, g0["added"], "should have added")
+	_, addedErr := time.Parse(time.RFC3339, g0["added"].(string))
+	assert.NoError(t, addedErr, "added should be an RFC3339 timestamp")
 	assert.Nil(t, g0["nameshort"], "should NOT have nameshort (group-level)")
 	assert.Nil(t, g0["namedisplay"], "should NOT have namedisplay (group-level)")
 	assert.Nil(t, g0["type"], "should NOT have type (group-level)")

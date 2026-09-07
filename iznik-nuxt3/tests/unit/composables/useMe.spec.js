@@ -239,7 +239,9 @@ describe('useMe — myGroups', () => {
 
   it('merges membership and group store data', () => {
     mockAuthState.user = makeUser()
-    mockAuthState.groups = [makeMembership(10, 'Member')]
+    mockAuthState.groups = [
+      makeMembership(10, 'Member', { added: '2026-07-09T10:01:21Z' }),
+    ]
     mockGroupGet.mockImplementation((id) =>
       id === 10
         ? { nameshort: 'FreegleA', namedisplay: 'Freegle A', type: 'Reuse' }
@@ -252,6 +254,8 @@ describe('useMe — myGroups', () => {
     expect(groups).toHaveLength(1)
     expect(groups[0].id).toBe(10)
     expect(groups[0].role).toBe('Member')
+    // The join date rides along: the feed folds a community header up after the first week.
+    expect(groups[0].added).toBe('2026-07-09T10:01:21Z')
     expect(groups[0].namedisplay).toBe('Freegle A')
     expect(groups[0].nameshort).toBe('FreegleA')
     expect(groups[0].type).toBe('Reuse')

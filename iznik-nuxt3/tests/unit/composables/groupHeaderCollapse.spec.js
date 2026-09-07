@@ -1,0 +1,61 @@
+import { describe, it, expect } from 'vitest'
+import {
+  groupHeaderStartsCollapsed,
+  GROUP_HEADER_FULL_DAYS,
+} from '~/composables/groupHeaderCollapse'
+
+// A feed filtered to one community shows that community's full header. After the first
+// week of membership it starts collapsed to a small bar instead.
+describe('groupHeaderStartsCollapsed', () => {
+  const now = new Date('2026-09-07T09:00:00Z')
+  const daysAgo = (days) =>
+    new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString()
+
+  it('shows the full header to someone who is not a member', () => {
+    expect(groupHeaderStartsCollapsed(null, now)).toBe(false)
+    expect(groupHeaderStartsCollapsed(undefined, now)).toBe(false)
+  })
+
+  it('shows the full header during the first week after joining', () => {
+    expect(groupHeaderStartsCollapsed({ added: daysAgo(0) }, now)).toBe(false)
+    expect(groupHeaderStartsCollapsed({ added: daysAgo(3) }, now)).toBe(false)
+    expect(groupHeaderStartsCollapsed({ added: daysAgo(6.9) }, now)).toBe(false)
+  })
+
+  it('collapses once the first week is over', () => {
+    expect(
+      groupHeaderStartsCollapsed(
+        { added: daysAgo(GROUP_HEADER_FULL_DAYS) },
+        now
+      )
+    ).toBe(true)
+    expect(groupHeaderStartsCollapsed({ added: daysAgo(8) }, now)).toBe(true)
+    expect(
+      groupHeaderStartsCollapsed({ added: '2010-11-02T15:55:30Z' }, now)
+    ).toBe(true)
+  })
+
+  it('accepts the MySQL-style date string the API sends', () => {
+    expect(
+      groupHeaderStartsCollapsed({ added: '2026-09-05 08:00:00' }, now)
+    ).toBe(false)
+    expect(
+      groupHeaderStartsCollapsed({ added: '2026-08-01 08:00:00' }, now)
+    ).toBe(true)
+  })
+
+  it('treats a membership with no join date as long-standing', () => {
+    expect(groupHeaderStartsCollapsed({ added: null }, now)).toBe(true)
+    expect(groupHeaderStartsCollapsed({}, now)).toBe(true)
+    expect(groupHeaderStartsCollapsed({ added: 'not a date' }, now)).toBe(true)
+  })
+
+  it('defaults the clock to now', () => {
+    expect(groupHeaderStartsCollapsed({ added: '2010-11-02T15:55:30Z' })).toBe(
+      true
+    )
+    expect(
+      groupHeaderStartsCollapsed({ added: new Date().toISOString() })
+    ).toBe(false)
+  })
+})

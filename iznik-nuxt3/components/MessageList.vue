@@ -8,6 +8,7 @@
       :group="group"
       show-join
       :show-give-ask="showGiveAsk"
+      collapsible
     />
     <h2 class="visually-hidden">List of wanteds and offers</h2>
     <div id="visobserver" v-observe-visibility="visibilityChanged" />
