@@ -693,6 +693,20 @@ describe('MyMessage', () => {
       await flushPromises()
       expect(wrapper.find('.renege-modal').exists()).toBe(true)
     })
+
+    it('clicking Unpromise button shows renege modal when promisee profile is not yet resolved', async () => {
+      mockData.message.promised = true
+      mockData.message.outcomes = []
+      mockData.message.promises = [{ userid: 2 }]
+      // mockUserStore.byId is left at its default (null) from beforeEach - the
+      // promisee's profile hasn't loaded into the store yet.
+      const wrapper = await createWrapper()
+      const unpromiseBtn = wrapper.find('.unpromise-btn')
+      expect(unpromiseBtn.exists()).toBe(true)
+      await unpromiseBtn.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.renege-modal').exists()).toBe(true)
+    })
   })
 
   describe('Replies Section', () => {

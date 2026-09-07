@@ -768,17 +768,15 @@ const promisedTo = computed(() => {
     message.value.promises.forEach((p) => {
       const isSomeone = p.userid === me.value?.id
       const user = userStore?.byId(p.userid)
-      if (isSomeone || user) {
-        const tryst = trystStore?.getByUser(p.userid)
-        const date = tryst
-          ? dayjs(tryst.arrangedfor).format('ddd Do HH:mm')
-          : null
-        ret.push({
-          id: p.userid,
-          name: isSomeone ? 'Someone' : user.displayname,
-          trystdate: date,
-        })
-      }
+      const tryst = trystStore?.getByUser(p.userid)
+      const date = tryst
+        ? dayjs(tryst.arrangedfor).format('ddd Do HH:mm')
+        : null
+      ret.push({
+        id: p.userid,
+        name: isSomeone ? 'Someone' : user?.displayname || 'Freegler',
+        trystdate: date,
+      })
     })
   }
   return ret
