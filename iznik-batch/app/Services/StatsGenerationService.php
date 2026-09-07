@@ -781,6 +781,19 @@ class StatsGenerationService
     private function writeCount(string $date, int $groupId, string $type, int $val, bool $dryRun): int
     {
         if ($val === 0) {
+            // No row for a zero count - and no STALE row either. A regeneration
+            // that brings a count down to nothing must take the old row with it,
+            // or the old figure stands: after the 2026-09-06 spam wave was
+            // excluded, 117 groups whose only "replies" had been the bot's kept
+            // their inflated Replies rows through the re-run.
+            if (! $dryRun) {
+                DB::table('stats')
+                    ->where('date', $date)
+                    ->where('groupid', $groupId)
+                    ->where('type', $type)
+                    ->delete();
+            }
+
             return 0;
         }
         if ($dryRun) {

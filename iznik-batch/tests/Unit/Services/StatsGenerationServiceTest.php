@@ -392,6 +392,43 @@ class StatsGenerationServiceTest extends TestCase
         $this->assertEquals(1, $rows, 'REPLACE INTO should leave exactly one row per (date,group,type)');
     }
 
+    public function test_regeneration_removes_a_row_whose_count_fell_to_zero(): void
+    {
+        // A re-run that brings a count down to nothing must take the old row with
+        // it: after the 2026-09-06 spam wave was excluded, 117 groups whose only
+        // "replies" had been the bot's kept their inflated Replies rows through
+        // the regeneration, because a zero count was skipped rather than written.
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $replier = $this->createTestUser();
+        $msg = $this->createTestMessage($poster, $group, ['arrival' => '2026-03-20 09:00:00']);
+        $room = $this->createTestChatRoom($poster, $replier);
+        $this->createTestChatMessage($room, $replier, [
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $msg->id,
+            'date' => $this->date.' 10:00:00',
+        ]);
+
+        $this->service->generate($group->id, $this->date);
+        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 1);
+
+        DB::table('spam_users')->insert([
+            'userid' => $replier->id,
+            'byuserid' => $poster->id,
+            'collection' => 'Spammer',
+            'reason' => 'Spam messages in multiple chats',
+        ]);
+
+        // A dry run reports what it would do and touches nothing, stale row included.
+        $this->service->generate($group->id, $this->date, true);
+        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 1);
+
+        $this->service->generate($group->id, $this->date);
+        $this->assertNoStat($group->id, StatsGenerationService::TYPE_REPLIES);
+        // Activity is approved messages + replies; with no post on $date it is zero too.
+        $this->assertNoStat($group->id, StatsGenerationService::TYPE_ACTIVITY);
+    }
+
     public function test_generate_for_all_groups_returns_counts(): void
     {
         // Just confirm the orchestrator returns the right shape.
