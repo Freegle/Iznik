@@ -1266,8 +1266,15 @@ const heldbyName = computed(() => {
 const membership = computed(() => {
   let ret = null
 
-  if (groupid.value && fromUser.value?.memberships) {
-    ret = fromUser.value.memberships.find((g) => g.groupid === groupid.value)
+  // Anchor to the group actually being administered, not groups[0] (messages_groups
+  // has no ORDER BY, so a crosspost's direct and rippled-in copies can sort either way)
+  // - same fix already applied to `group`, `configid` and `editgroup` in this file
+  // (Discourse 9808/303, 9808/305, 9862/15). Otherwise the per-member posting-status
+  // notice, mail settings, and cantpost gating can all reflect the wrong group's copy.
+  if (currentGroupid.value && fromUser.value?.memberships) {
+    ret = fromUser.value.memberships.find(
+      (g) => g.groupid === currentGroupid.value
+    )
   }
 
   return ret

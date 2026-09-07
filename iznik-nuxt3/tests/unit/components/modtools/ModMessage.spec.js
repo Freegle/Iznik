@@ -890,6 +890,52 @@ describe('ModMessage', () => {
       const wrapper = mountComponent()
       expect(wrapper.vm.membership).toBe(undefined)
     })
+
+    // Discourse 10115/2: a crosspost has a direct copy and a rippled-in copy of the
+    // same message. messages_groups is fetched with no ORDER BY (message.go), so
+    // message.groups[0] can be either copy. membership must anchor to currentGroupid
+    // (the group actually being administered - here the mod's own direct group, 789)
+    // rather than groups[0], the same fix already applied to `group`, `configid` and
+    // `editgroup` in this file for Discourse 9808/303, 9808/305 and 9862/15.
+    it('resolves membership for currentGroupid, not groups[0], when a rippled copy sorts first', async () => {
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'Updated User',
+        memberships: [
+          { id: 790, groupid: 790, ourpostingstatus: 'PROHIBITED' },
+          { id: 789, groupid: 789, ourpostingstatus: 'DEFAULT' },
+        ],
+      })
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            {
+              groupid: 790,
+              collection: 'Approved',
+              rippled_in: 1,
+              arrival: '2024-01-02T00:00:00Z',
+            },
+            {
+              groupid: 789,
+              collection: 'Pending',
+              rippled_in: 0,
+              arrival: '2024-01-01T00:00:00Z',
+            },
+          ],
+        }
+      )
+      await flushPromises()
+
+      // The mod only moderates group 789, so currentGroupid resolves to it regardless
+      // of array order.
+      expect(wrapper.vm.currentGroupid).toBe(789)
+      expect(wrapper.vm.membership).toEqual({
+        id: 789,
+        groupid: 789,
+        ourpostingstatus: 'DEFAULT',
+      })
+    })
   })
 
   describe('Computed: subjectClass', () => {
