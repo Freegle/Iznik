@@ -3,7 +3,7 @@
        feed filtered to their community it starts folded up to logo + name, with the full
        detail a click away. Someone who has not joined always gets the full header: that is
        where the Join button and the description are. -->
-  <div v-if="startsCollapsed" class="group-compact">
+  <div v-if="collapsible && collapsed" class="group-compact">
     <b-img
       rounded
       alt=""
@@ -22,10 +22,9 @@
       variant="link"
       size="sm"
       class="group-compact__toggle"
-      :aria-expanded="expanded ? 'true' : 'false'"
-      @click="expanded = !expanded"
+      @click="emit('update:collapsed', false)"
     >
-      {{ expanded ? 'Hide details' : 'Show details' }}
+      Show details
     </b-button>
   </div>
   <!-- Mobile/Tablet Layout -->
@@ -85,6 +84,15 @@
             label="Leave"
             @handle="leave"
           />
+          <b-button
+            v-if="collapsible"
+            variant="link"
+            size="sm"
+            class="d-block mt-1 ms-auto mobile-hero__hide"
+            @click="emit('update:collapsed', true)"
+          >
+            Hide details
+          </b-button>
         </div>
       </div>
     </div>
@@ -107,6 +115,15 @@
         label="Leave"
         @handle="leave"
       />
+      <b-button
+        v-if="collapsible"
+        variant="link"
+        size="sm"
+        class="d-block mt-1 mobile-actions__hide"
+        @click="emit('update:collapsed', true)"
+      >
+        Hide details
+      </b-button>
     </div>
 
     <div v-if="showGiveAsk" class="mobile-give-ask">
@@ -288,6 +305,15 @@
             @handle="leave"
           />
         </div>
+        <div v-if="collapsible" class="group__hide">
+          <b-button
+            variant="link"
+            size="sm"
+            @click="emit('update:collapsed', true)"
+          >
+            Hide details
+          </b-button>
+        </div>
       </div>
     </div>
     <div class="group-description">
@@ -391,12 +417,11 @@
   </b-card>
 </template>
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import SpinButton from './SpinButton'
 import { useRouter } from '#imports'
 import ChatButton from '~/components/ChatButton'
 import { useAuthStore } from '~/stores/auth'
-import { groupHeaderStartsCollapsed } from '~/composables/groupHeaderCollapse'
 
 const props = defineProps({
   group: {
@@ -412,14 +437,23 @@ const props = defineProps({
     required: false,
     default: false,
   },
-  // Fold the header up to a compact bar for an established member (see the template).
-  // Off by default: on the community's own page the header is the content.
+  // Whether the feed may fold this header up to a compact bar (see the template). Off by
+  // default: on the community's own page the header is the content.
   collapsible: {
     type: Boolean,
     required: false,
     default: false,
   },
+  // Folded or not. The parent owns this (v-model:collapsed) so it can decide the starting
+  // state from the viewer's membership and reset it when the feed moves to another community.
+  collapsed: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
 })
+
+const emit = defineEmits(['update:collapsed'])
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -432,29 +466,7 @@ const amAMember = computed(() => {
   return authStore?.member(props.group?.id)
 })
 
-// The viewer's own membership row, for its join date.
-const myMembership = computed(() => {
-  const id = parseInt(props.group?.id)
-  return (
-    (authStore?.groups || []).find((g) => parseInt(g.groupid) === id) || null
-  )
-})
-
-const startsCollapsed = computed(
-  () => props.collapsible && groupHeaderStartsCollapsed(myMembership.value)
-)
-
-// Whether the member has asked for the full detail. Reset when the feed moves to another
-// community, so one "Show details" does not carry over to the next.
-const expanded = ref(false)
-watch(
-  () => props.group?.id,
-  () => {
-    expanded.value = false
-  }
-)
-
-const showFull = computed(() => !startsCollapsed.value || expanded.value)
+const showFull = computed(() => !(props.collapsible && props.collapsed))
 
 const contactLabel = computed(() => {
   // Normalize caretaker-type groups to display as 'volunteers'
@@ -610,6 +622,23 @@ async function join(callback) {
     grid-column: 3 / 4;
     grid-row: 1 / 2;
     justify-self: end;
+  }
+}
+
+.group__hide {
+  display: flex;
+  justify-content: flex-start;
+
+  @include media-breakpoint-up(md) {
+    justify-content: flex-end;
+  }
+
+  @include media-breakpoint-up(lg) {
+    justify-content: flex-start;
+  }
+
+  @include media-breakpoint-up(xl) {
+    justify-content: flex-end;
   }
 }
 

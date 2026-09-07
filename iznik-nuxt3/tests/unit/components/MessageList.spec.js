@@ -121,6 +121,7 @@ describe('MessageList', () => {
       )
       const tag = src.match(/<GroupHeader[\s\S]*?\/>/)[0]
       expect(tag).toMatch(/\bcollapsible\b/)
+      expect(tag).toMatch(/v-model:collapsed="groupHeaderCollapsed"/)
     })
   })
 

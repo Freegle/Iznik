@@ -28,21 +28,17 @@ const mockGroup = {
   ],
 }
 
-const { mockUser, mockMember, mockGroups } = vi.hoisted(() => {
+const { mockUser, mockMember } = vi.hoisted(() => {
   const { ref } = require('vue')
   return {
     mockUser: ref({ id: 456, displayname: 'Test User' }),
     mockMember: ref(null),
-    mockGroups: ref([]),
   }
 })
 
 const mockAuthStore = {
   get user() {
     return mockUser.value
-  },
-  get groups() {
-    return mockGroups.value
   },
   member: vi.fn(() => mockMember.value),
   joinGroup: vi.fn().mockResolvedValue(undefined),
@@ -76,7 +72,6 @@ describe('GroupHeader', () => {
     vi.clearAllMocks()
     mockUser.value = { id: 456, displayname: 'Test User' }
     mockMember.value = null
-    mockGroups.value = []
     mockAuthStore.member.mockReturnValue(null)
   })
 
@@ -425,22 +420,15 @@ describe('GroupHeader', () => {
     })
   })
 
-  // A feed filtered to one community shows this header above the posts. After the first
-  // week of membership it starts as a small bar - logo, name, "Show details" - so the full
-  // card stops standing between an established member and the posts.
+  // A feed filtered to one community shows this header above the posts. The feed decides
+  // whether it is folded up (v-model:collapsed); the header only renders that state and
+  // asks to change it, so the compact bar and the full card never show together.
   describe('collapsible', () => {
-    const daysAgo = (days) =>
-      new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
-
-    function memberSince(added) {
+    it('shows only the compact bar when folded, and asks to open on "Show details"', async () => {
       mockMember.value = 'Member'
       mockAuthStore.member.mockReturnValue('Member')
-      mockGroups.value = [{ groupid: 123, role: 'Member', added }]
-    }
+      const wrapper = createWrapper({ collapsible: true, collapsed: true })
 
-    it('starts as a compact bar for a member of more than a week', () => {
-      memberSince(daysAgo(30))
-      const wrapper = createWrapper({ collapsible: true })
       const bar = wrapper.find('.group-compact')
       expect(bar.exists()).toBe(true)
       expect(bar.text()).toContain('Test Community')
@@ -448,75 +436,50 @@ describe('GroupHeader', () => {
       expect(bar.find('.group-compact__toggle').text()).toBe('Show details')
       expect(wrapper.find('.mobile-group-header').exists()).toBe(false)
       expect(wrapper.find('.group-description').exists()).toBe(false)
+
+      await bar.find('.group-compact__toggle').trigger('click')
+      expect(wrapper.emitted('update:collapsed')).toEqual([[false]])
     })
 
-    it('shows the full header during the first week after joining', () => {
-      memberSince(daysAgo(2))
-      const wrapper = createWrapper({ collapsible: true })
-      expect(wrapper.find('.group-compact').exists()).toBe(false)
-      expect(wrapper.find('.mobile-group-header').exists()).toBe(true)
-    })
-
-    it('expands to the full detail on request, and hides it again', async () => {
-      memberSince('2010-11-02 15:55:30')
-      const wrapper = createWrapper({ collapsible: true })
-      const toggle = () => wrapper.find('.group-compact__toggle')
-      expect(toggle().attributes('aria-expanded')).toBe('false')
-
-      await toggle().trigger('click')
-      expect(wrapper.find('.mobile-group-header').exists()).toBe(true)
-      expect(wrapper.find('.group-description').exists()).toBe(true)
-      expect(toggle().text()).toBe('Hide details')
-      expect(toggle().attributes('aria-expanded')).toBe('true')
-      // The bar stays, so the member can put the detail away again.
-      expect(wrapper.find('.group-compact').exists()).toBe(true)
-
-      await toggle().trigger('click')
-      expect(wrapper.find('.mobile-group-header').exists()).toBe(false)
-      expect(toggle().text()).toBe('Show details')
-    })
-
-    it('shows the full header to someone who has not joined', () => {
-      mockMember.value = null
-      mockGroups.value = [{ groupid: 999, role: 'Member', added: daysAgo(400) }]
-      const wrapper = createWrapper({ collapsible: true })
-      expect(wrapper.find('.group-compact').exists()).toBe(false)
-      expect(wrapper.find('.mobile-group-header').exists()).toBe(true)
-      expect(wrapper.find('[data-label="Join community"]').exists()).toBe(true)
-    })
-
-    it('never collapses unless asked to', () => {
-      memberSince(daysAgo(400))
-      const wrapper = createWrapper()
-      expect(wrapper.find('.group-compact').exists()).toBe(false)
-      expect(wrapper.find('.mobile-group-header').exists()).toBe(true)
-    })
-
-    it('matches the membership by group id however it is typed', () => {
+    it('shows the full header with "Hide details" under the Leave button when open', async () => {
       mockMember.value = 'Member'
       mockAuthStore.member.mockReturnValue('Member')
-      mockGroups.value = [
-        { groupid: '123', role: 'Member', added: daysAgo(30) },
-      ]
-      const wrapper = createWrapper({ collapsible: true })
-      expect(wrapper.find('.group-compact').exists()).toBe(true)
+      const wrapper = createWrapper({ collapsible: true, collapsed: false })
+
+      expect(wrapper.find('.group-compact').exists()).toBe(false)
+      expect(wrapper.find('.mobile-group-header').exists()).toBe(true)
+      expect(wrapper.find('.group-description').exists()).toBe(true)
+
+      // One per layout: desktop card, tablet action block, mobile full-width actions.
+      const desktop = wrapper.find('.group__hide')
+      expect(desktop.text()).toBe('Hide details')
+      expect(wrapper.find('.mobile-hero__hide').text()).toBe('Hide details')
+      expect(wrapper.find('.mobile-actions__hide').text()).toBe('Hide details')
+      // The desktop one sits inside the buttons cell, after the Leave button.
+      const buttonsCell = wrapper.find('.group__buttons')
+      const html = buttonsCell.html()
+      expect(html.indexOf('Leave')).toBeLessThan(html.indexOf('Hide details'))
+
+      await desktop.find('button').trigger('click')
+      expect(wrapper.emitted('update:collapsed')).toEqual([[true]])
     })
 
-    it('puts the detail away again when the feed moves to another community', async () => {
-      memberSince(daysAgo(30))
-      const wrapper = createWrapper({ collapsible: true })
-      await wrapper.find('.group-compact__toggle').trigger('click')
-      expect(wrapper.find('.mobile-group-header').exists()).toBe(true)
+    it('shows neither the compact bar nor "Hide details" unless collapsible', () => {
+      mockMember.value = 'Member'
+      mockAuthStore.member.mockReturnValue('Member')
+      const wrapper = createWrapper({ collapsed: true })
 
-      mockGroups.value = [
-        { groupid: 123, role: 'Member', added: daysAgo(30) },
-        { groupid: 124, role: 'Member', added: daysAgo(30) },
-      ]
-      await wrapper.setProps({
-        group: { ...mockGroup, id: 124, namedisplay: 'Other Community' },
-      })
-      expect(wrapper.find('.group-compact').text()).toContain('Other Community')
-      expect(wrapper.find('.mobile-group-header').exists()).toBe(false)
+      expect(wrapper.find('.group-compact').exists()).toBe(false)
+      expect(wrapper.find('.group__hide').exists()).toBe(false)
+      expect(wrapper.find('.mobile-hero__hide').exists()).toBe(false)
+      expect(wrapper.find('.mobile-actions__hide').exists()).toBe(false)
+      expect(wrapper.find('.mobile-group-header').exists()).toBe(true)
+    })
+
+    it('keeps the Join button for someone who has not joined, with "Hide details" beneath it', () => {
+      const wrapper = createWrapper({ collapsible: true, collapsed: false })
+      expect(wrapper.find('[data-label="Join community"]').exists()).toBe(true)
+      expect(wrapper.find('.mobile-actions__hide').exists()).toBe(true)
     })
   })
 })
