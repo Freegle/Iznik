@@ -40,6 +40,24 @@ jobs:
             # This step runs early (before VM provisioning) to quickly kill setup jobs
             # for older builds. A second cancel runs just before continuation/continue
             # to catch continuation pipelines from builds that finished setup concurrently.
+            #
+            # The project's built-in "Auto-cancel redundant workflows" setting
+            # (advanced.autocancel_builds) is now OFF — this script is the only
+            # cancellation mechanism. It was still ON until 2026-09-06, and at the
+            # top-level-pipeline layer (as opposed to continuations, above) it worked
+            # fine independently of this script, including in a case this script
+            # explicitly guards against below: on cdf243390 (a "hotfix:" commit),
+            # freegle/check-hotfix-promote detected the prefix and POSTed a new
+            # production pipeline (run_manual_promote: true) to submit the build
+            # immediately. CircleCI's built-in auto-cancel then killed the OLDER
+            # deploy-apps pipeline still running that same check-hotfix-promote job on
+            # the same branch, marking a successful release trigger as a CI error.
+            # The promotion itself completed fine in the new pipeline (auto-promote-
+            # production etc. all succeeded) — only the GitHub status was wrong.
+            # Since built-in auto-cancel can't distinguish this self-triggered,
+            # want-it-to-coexist case (the "manual API trigger" guard just below
+            # is exactly that distinction, but it only controls THIS script), it is
+            # now disabled at the project level and this script is relied on alone.
             if [ -z "$CIRCLE_TOKEN" ]; then
               echo "CIRCLE_TOKEN not set — skipping"
               exit 0
