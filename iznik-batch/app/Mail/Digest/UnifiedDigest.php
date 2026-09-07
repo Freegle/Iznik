@@ -531,10 +531,12 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // posts and get clipped by Gmail (~102KB) mid-post with no graceful overflow. When the
         // cap bites, the template shows an intro under "In this digest" sending the reader to
         // the website for the rest. (Immediate digests are single-post, so this never bites.)
+        // The recipient's own post(s) are always reserved a slot rather than being subject to
+        // the same score-ordered cut as everyone else's — see capPreservingOwnPosts().
         $postCap = DigestStyle::DIGEST_POST_CAP;
         $liveMorePosts = max(0, $this->preparedPosts->count() - $postCap);
         $livePosts = $liveMorePosts > 0
-            ? $this->preparedPosts->take($postCap)->values()
+            ? $this->capPreservingOwnPosts($this->preparedPosts, $postCap)
             : $this->preparedPosts;
 
         $result = $this->mjmlView('emails.mjml.digest.unified', array_merge([
@@ -626,12 +628,15 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             // rejects the WHOLE AMP. Cap the cards here (the summary and the
             // <amp-state> map are derived from $ampPosts too, so capping once
             // shrinks all three) and surface an "and N more — browse all" link.
-            // The HTML and text parts still carry EVERY post; this cap is AMP
-            // only. applyAmpToMessage()'s 199KB guard remains the final backstop.
+            // This is a separate truncation of the AMP-specific $ampPosts collection
+            // from the HTML/text cap above — both are independently capped at the
+            // same DIGEST_POST_CAP, and both reserve the recipient's own post(s) via
+            // capPreservingOwnPosts(). applyAmpToMessage()'s 199KB guard remains the
+            // final backstop.
             $ampCap = DigestStyle::DIGEST_POST_CAP;
             $ampMorePosts = max(0, $ampPosts->count() - $ampCap);
             if ($ampMorePosts > 0) {
-                $ampPosts = $ampPosts->take($ampCap)->values();
+                $ampPosts = $this->capPreservingOwnPosts($ampPosts, $ampCap);
             }
 
             // Build the shared per-post metadata map for the AMP template.
@@ -918,6 +923,41 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             $userLat,
             $userLng
         ));
+    }
+
+    /**
+     * Apply DIGEST_POST_CAP to a prepared card collection without letting it
+     * drop the recipient's own post(s). The cap exists purely to keep the
+     * rendered email under a provider's size limit (Gmail clipping the HTML
+     * body, or the AMP 200KB ceiling) — it was never meant to make a member's
+     * own post vanish from their own digest on a day busy enough with
+     * rippled-in posts to overflow the cap (Discourse 10029/17). Every card
+     * with isOwnPost=true is reserved a slot; the best-scoring "other" cards
+     * (original order is score order) fill whatever room is left. Cards that
+     * do survive keep their original relative order, so an own post that was
+     * already ranked inside the cap stays at its ranked position rather than
+     * being pushed to the end alongside lower-ranked own posts.
+     */
+    private function capPreservingOwnPosts(Collection $cards, int $limit): Collection
+    {
+        if ($cards->count() <= $limit) {
+            return $cards;
+        }
+        $othersBudget = max(0, $limit - $cards->filter(fn ($c) => $c['isOwnPost'] ?? false)->count());
+        $othersSeen = 0;
+
+        return $cards->filter(function ($c) use (&$othersSeen, $othersBudget) {
+            if ($c['isOwnPost'] ?? false) {
+                return true;
+            }
+            if ($othersSeen < $othersBudget) {
+                $othersSeen++;
+
+                return true;
+            }
+
+            return false;
+        })->values();
     }
 
     /**

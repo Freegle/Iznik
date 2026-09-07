@@ -292,6 +292,48 @@ class UnifiedDigestTest extends TestCase
         $this->assertStringStartsWith("What's New ({$cap} posts)", $envelope->subject);
     }
 
+    public function test_own_post_survives_body_cap_even_when_ranked_last(): void
+    {
+        // Discourse 10029/17: on a bank-holiday-busy day, enough rippled-in
+        // posts pushed the recipient's own post past DIGEST_POST_CAP and it
+        // was silently absent from the digest entirely. The cap exists to
+        // stop Gmail clipping the body, not to hide a member's own post from
+        // their own digest, so it must always be reserved a slot — even when
+        // (as here) it's the very last post in the collection, i.e. exactly
+        // where a plain take($cap) would cut it.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $fillerMessage = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (London)']);
+
+        $posts = collect(array_fill(0, $cap, [
+            'message' => $fillerMessage,
+            'postedToGroups' => [$group->id],
+        ]));
+
+        // The recipient's own post, appended last — past the cap.
+        $ownMessage = $this->createTestMessage($user, $group, [
+            'subject' => 'OFFER: RecipientsOwnUniqueSofa (London)',
+        ]);
+        $posts->push(['message' => $ownMessage, 'postedToGroups' => [$group->id]]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $html = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled digest HTML should not be empty');
+        $this->assertStringContainsString(
+            'RecipientsOwnUniqueSofa',
+            $html,
+            "The recipient's own post must survive DIGEST_POST_CAP truncation even when it sorts past the cap"
+        );
+    }
+
     public function test_tracked_urls_contain_post_positions(): void
     {
         $user = $this->createTestUser();
