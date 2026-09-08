@@ -243,14 +243,17 @@ type Message struct {
 	MessageAttachments []MessageAttachment `gorm:"-" json:"attachments"`
 	MessageOutcomes    []MessageOutcome    `gorm:"-" json:"outcomes"`
 	MessagePromises    []MessagePromise    `gorm:"-" json:"promises"`
-	Promisecount       int                 `json:"promisecount"`
-	Promised           bool                `json:"promised"`
-	PromisedToYou      bool                `json:"promisedtoyou"`
-	MessageReply       []MessageReply      `gorm:"ForeignKey:refmsgid" json:"replies"`
-	Replycount         int                 `json:"replycount"`
-	MessageURL         string              `json:"url"`
-	Successful         bool                `json:"successful"`
-	Refchatids         []uint64            `json:"refchatids" gorm:"-"`
+	// Replies held for a volunteer to check, shown only to the poster so "no replies
+	// yet" is never said over a reply the site is sitting on.
+	Heldreplies   int            `gorm:"-" json:"heldreplies,omitempty"`
+	Promisecount  int            `json:"promisecount"`
+	Promised      bool           `json:"promised"`
+	PromisedToYou bool           `json:"promisedtoyou"`
+	MessageReply  []MessageReply `gorm:"ForeignKey:refmsgid" json:"replies"`
+	Replycount    int            `json:"replycount"`
+	MessageURL    string         `json:"url"`
+	Successful    bool           `json:"successful"`
+	Refchatids    []uint64       `json:"refchatids" gorm:"-"`
 	// Road drive time/distance from the VIEWER's home to this post's blurred
 	// location, filled by one batched routing call per message fetch (nil when
 	// the viewer is logged out, has no location, or the reach engine cannot
@@ -799,6 +802,11 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 
 			if found && (len(messageGroups) > 0 || isMod) {
 				message.Replycount = len(message.MessageReply)
+				if myid > 0 && myid == message.Fromuser {
+					var held int64
+					db.Table("chat_messages").Where("refmsgid = ? AND type = ? AND userid != ? AND (reviewrequired = 1 OR (processingrequired = 1 AND processingsuccessful = 0))", message.ID, utils.CHAT_MESSAGE_INTERESTED, myid).Count(&held)
+					message.Heldreplies = int(held)
+				}
 				message.MessageURL = "https://" + os.Getenv("USER_SITE") + "/message/" + strconv.FormatUint(message.ID, 10)
 
 				// Populate location with precise coords and nearby groups (mod-only).
@@ -5967,9 +5975,12 @@ func handlePromise(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}
 	}
 
-	// REPLACE INTO - idempotent. Terms are optional: absent means NULL, exactly
-	// as before this column existed.
+	// REPLACE INTO - idempotent. count is how many of a multi-quantity post were
+	// promised to this person; NULL reads as 1. Terms are optional: absent means NULL.
 	promise := map[string]interface{}{"msgid": req.ID, "userid": promisedTo}
+	if req.Count != nil && *req.Count > 0 {
+		promise["count"] = *req.Count
+	}
 	if req.Terms != nil && len(*req.Terms) > 0 && string(*req.Terms) != "null" {
 		promise["terms"] = string(*req.Terms)
 	}
