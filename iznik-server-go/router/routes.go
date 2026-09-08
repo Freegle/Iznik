@@ -28,6 +28,7 @@ import (
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/amp"
+	"github.com/freegle/iznik-server-go/assistant"
 	"github.com/freegle/iznik-server-go/authority"
 	"github.com/freegle/iznik-server-go/avatar"
 	"github.com/freegle/iznik-server-go/browse"
@@ -480,6 +481,20 @@ func SetupRoutes(app *fiber.App) {
 		// @Param logs body clientlog.ClientLogRequest true "Client log entries"
 		// @Success 204 "No Content"
 		rg.Post("/clientlog", clientlog.ReceiveClientLogs)
+
+		// Freegle chat assistant
+		// @Router /assistant/turn [post]
+		// @Summary One turn of the Freegle chat assistant, streamed as server-sent events
+		// @Tags assistant
+		rg.Post("/assistant/turn", assistant.Turn)
+		// @Router /assistant/workflow [get]
+		// @Summary The ai-flower workflow definition the assistant runs
+		// @Tags assistant
+		rg.Get("/assistant/workflow", assistant.Workflow)
+		// @Router /assistant/widgets [get]
+		// @Summary Chips and cards attached to assistant chat messages
+		// @Tags assistant
+		rg.Get("/assistant/widgets", assistant.Widgets)
 
 		// Dashboard
 		// @Router /dashboard [get]
