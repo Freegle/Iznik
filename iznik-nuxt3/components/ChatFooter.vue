@@ -388,6 +388,8 @@ import ChatNotice from '~/components/ChatNotice.vue'
 // Define props
 const props = defineProps({
   id: { type: Number, required: true },
+  // Inside the chat shell the growing text area is sized by the column, not the viewport.
+  embedded: { type: Boolean, required: false, default: false },
 })
 
 // iOS auto-capitalise engages the virtual Shift key, so Return at a sentence
