@@ -120,3 +120,21 @@ func TestAssistantMemberWorryWordLineIsHeldForReview(t *testing.T) {
 	database.DBConn.Raw("SELECT reviewrequired FROM chat_messages WHERE userid = ? AND message = 'a grey sofa' ORDER BY id DESC LIMIT 1", userID).Scan(&review)
 	assert.Equal(t, 0, review)
 }
+
+// A visitor who signs in part way through (posting creates the account) keeps the chat:
+// the browser sends the member's token and the anonymous one together.
+func TestAssistantVisitorKeepsChatAfterSigningIn(t *testing.T) {
+	status, body, hdr := assistantTurn(t, `{"tap":"give"}`, nil)
+	assert.Equal(t, 200, status)
+	anon := hdr.Get("X-Assistant-Anon")
+	conv := extractConversation(body)
+	assert.NotEmpty(t, anon)
+	assert.NotEmpty(t, conv)
+
+	userID := CreateTestUser(t, "assistantadopt", "User")
+	token := getToken(t, userID)
+	status2, body2, _ := assistantTurn(t, `{"conversation":"`+conv+`","tap":"no_photo"}`, map[string]string{"Authorization": token, "X-Assistant-Anon": anon})
+	assert.Equal(t, 200, status2)
+	assert.Equal(t, conv, extractConversation(body2), "same chat, now the member's")
+	assert.Contains(t, body2, `"state":"GIVE_ITEM"`)
+}
