@@ -762,7 +762,17 @@ async function loginViaHomepage(
   // waitUntil 'domcontentloaded': homepage GSI/FedCM scripts sometimes never
   // fire `load` in CI — see signUpViaHomepage for the full rationale.
   const currentUrl = page.url()
-  if (!currentUrl.endsWith('/') && !currentUrl.endsWith('/?')) {
+  // Already on the homepage is only good enough if it is the classic homepage: the
+  // chat shell may have been rendered before the classic cookie went back.
+  const onChatShell =
+    (await page
+      .locator('[data-testid="chat-shell"]')
+      .count()
+      .catch(() => 0)) > 0
+  if (
+    onChatShell ||
+    (!currentUrl.endsWith('/') && !currentUrl.endsWith('/?'))
+  ) {
     await page.gotoAndVerify('/', {
       timeout: timeouts.navigation.initial,
       waitUntil: 'domcontentloaded',

@@ -12,8 +12,10 @@ const CHAT_COOKIE = (baseURL) => ({
 })
 
 test.describe('Chat shell landing', () => {
-  test.beforeEach(async ({ context, baseURL }) => {
-    await context.clearCookies()
+  // page is asked for first so the page fixture's sign-out (which puts the classic
+  // cookie back) has run before the chat choice is set.
+  test.beforeEach(async ({ page, context, baseURL }) => {
+    await page.context().clearCookies()
     await context.addCookies([CHAT_COOKIE(baseURL)])
   })
 

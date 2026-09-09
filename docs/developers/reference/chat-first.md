@@ -14,6 +14,7 @@ covers:
   - iznik-nuxt3/tests/e2e/test-chat-shell-landing.spec.js
   - iznik-nuxt3/tests/e2e/test-chat-shell-give.spec.js
   - iznik-nuxt3/tests/e2e/test-chat-shell-chats.spec.js
+  - iznik-nuxt3/tests/e2e/utils/uiMode.js
   - iznik-server-go/test/assistant_test.go
   - iznik-server-go/test/assistant_schema_test.go
   - iznik-server-go/newsfeed/newsfeed.go
@@ -159,4 +160,5 @@ through the app), `test/assistant_schema_test.go`. Vitest: `tests/unit/component
 `stores/assistant`, `api/AssistantAPI`, `composables/{useUiMode,yourposts,useNavbarVisibility}`.
 Laravel: `PurgeServiceTest::test_purge_assistant_instances_removes_only_idle_ones`.
 Playwright: `tests/e2e/test-chat-shell-*.spec.js` run on the chat front door; every other
-spec starts with the classic cookie (`fixtures.js`, `classicModeCookie`).
+spec starts with the classic cookie (`tests/e2e/utils/uiMode.js`, set by the fixtures and put back
+whenever the helpers clear cookies).
