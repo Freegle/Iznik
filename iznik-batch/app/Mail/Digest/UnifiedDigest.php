@@ -534,10 +534,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // The recipient's own post(s) are always reserved a slot rather than being subject to
         // the same score-ordered cut as everyone else's — see capPreservingOwnPosts().
         $postCap = DigestStyle::DIGEST_POST_CAP;
-        $liveMorePosts = max(0, $this->preparedPosts->count() - $postCap);
-        $livePosts = $liveMorePosts > 0
-            ? $this->capPreservingOwnPosts($this->preparedPosts, $postCap)
-            : $this->preparedPosts;
+        $livePosts = $this->capPreservingOwnPosts($this->preparedPosts, $postCap);
+        $liveMorePosts = $this->preparedPosts->count() - $livePosts->count();
 
         $result = $this->mjmlView('emails.mjml.digest.unified', array_merge([
             'user' => $this->user,
@@ -634,10 +632,9 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             // capPreservingOwnPosts(). applyAmpToMessage()'s 199KB guard remains the
             // final backstop.
             $ampCap = DigestStyle::DIGEST_POST_CAP;
-            $ampMorePosts = max(0, $ampPosts->count() - $ampCap);
-            if ($ampMorePosts > 0) {
-                $ampPosts = $this->capPreservingOwnPosts($ampPosts, $ampCap);
-            }
+            $ampTotal = $ampPosts->count();
+            $ampPosts = $this->capPreservingOwnPosts($ampPosts, $ampCap);
+            $ampMorePosts = $ampTotal - $ampPosts->count();
 
             // Build the shared per-post metadata map for the AMP template.
             // Storing {title, token, expiry} once per message in an
@@ -937,27 +934,26 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
      * do survive keep their original relative order, so an own post that was
      * already ranked inside the cap stays at its ranked position rather than
      * being pushed to the end alongside lower-ranked own posts.
+     *
+     * The cap is never exceeded: a member with more own posts than the cap gets
+     * the first $limit of them and no others, because the whole point of the cap
+     * is the provider size limit, which does not care whose posts they are.
+     * Returns a re-indexed collection; callers take the difference in count as
+     * the number of posts the email had to leave out.
      */
     private function capPreservingOwnPosts(Collection $cards, int $limit): Collection
     {
         if ($cards->count() <= $limit) {
-            return $cards;
+            return $cards->values();
         }
-        $othersBudget = max(0, $limit - $cards->filter(fn ($c) => $c['isOwnPost'] ?? false)->count());
-        $othersSeen = 0;
 
-        return $cards->filter(function ($c) use (&$othersSeen, $othersBudget) {
-            if ($c['isOwnPost'] ?? false) {
-                return true;
-            }
-            if ($othersSeen < $othersBudget) {
-                $othersSeen++;
+        $isOwn = fn ($c) => (bool) ($c['isOwnPost'] ?? false);
+        [$own, $others] = $cards->partition($isOwn);
+        $keep = $own->take($limit)->keys()
+            ->merge($others->take(max(0, $limit - $own->count()))->keys())
+            ->flip();
 
-                return true;
-            }
-
-            return false;
-        })->values();
+        return $cards->filter(fn ($c, $key) => $keep->has($key))->values();
     }
 
     /**

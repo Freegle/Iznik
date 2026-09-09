@@ -332,6 +332,56 @@ class UnifiedDigestTest extends TestCase
             $html,
             "The recipient's own post must survive DIGEST_POST_CAP truncation even when it sorts past the cap"
         );
+        // Reserving the own post must not stretch the cap: one filler gave way to it.
+        $this->assertSame($cap, $this->countCards($spooled['text'] ?? ''));
+        $this->assertStringContainsString("We've limited this to {$cap} posts", $spooled['text'] ?? '');
+    }
+
+    public function test_cap_holds_when_own_posts_alone_exceed_it(): void
+    {
+        // A member with more live posts of their own than the cap (a reseller, or
+        // someone whose posts rippled into many groups) must still get a digest
+        // that fits: the first $cap own posts and none of the others. Before this
+        // the reservation kept every own post and the email grew past the cap,
+        // which is the Gmail-clipping failure the cap exists to prevent.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $posts = collect();
+        for ($i = 1; $i <= $cap + 3; $i++) {
+            $own = $this->createTestMessage($user, $group, ['subject' => "OFFER: OwnItem{$i}Zq (London)"]);
+            $posts->push(['message' => $own, 'postedToGroups' => [$group->id]]);
+        }
+        for ($i = 1; $i <= 2; $i++) {
+            $other = $this->createTestMessage($poster, $group, ['subject' => "OFFER: OtherItem{$i}Zq (London)"]);
+            $posts->push(['message' => $other, 'postedToGroups' => [$group->id]]);
+        }
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $text = $spooled['text'] ?? '';
+
+        $this->assertSame($cap, $this->countCards($text));
+        $this->assertStringContainsString('OwnItem1Zq', $text);
+        $this->assertStringContainsString("OwnItem{$cap}Zq", $text);
+        $this->assertStringNotContainsString('OwnItem' . ($cap + 1) . 'Zq', $text);
+        $this->assertStringNotContainsString('OtherItem1Zq', $text);
+        $this->assertStringContainsString("We've limited this to {$cap} posts", $text);
+    }
+
+    /**
+     * Number of post cards in the plain-text part: one "OFFER:"/"WANTED:" line per card.
+     * The "In this digest" summary lists subjects with a leading "- ", so it is not counted.
+     */
+    private function countCards(string $text): int
+    {
+        return preg_match_all('/^(OFFER|WANTED): /m', $text);
     }
 
     public function test_tracked_urls_contain_post_positions(): void
