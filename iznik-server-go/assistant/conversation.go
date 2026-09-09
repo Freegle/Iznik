@@ -484,11 +484,16 @@ func (s *Service) Turn(ctx context.Context, id Identity, in TurnInput, onDelta f
 		}
 		delete(facts, "emailInUse")
 	}
-	if facts.truthy("cancelled") {
+	wasCancelled := facts.truthy("cancelled")
+	if wasCancelled {
 		instruction += " They stopped what they were doing. Acknowledge in a few words and mention the main things you can help with."
 		delete(facts, "cancelled")
 	}
 	say, fb := s.compose(ctx, inst, id, in.IP, slots, facts, recent, instruction, onDelta)
+	if fb && wasCancelled {
+		// The hub line reads oddly straight after a cancel; the cancelled line fits.
+		say = TemplateFor("CANCELLED")
+	}
 	return s.finish(inst, id, slots, facts, recent, memberLine, say, hostAction, unclassified, fallback || fb)
 }
 

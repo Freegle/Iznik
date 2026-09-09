@@ -82,7 +82,7 @@
     </div>
 
     <ShellComposer
-      placeholder="Type to the person you're dealing with"
+      placeholder="Type a message"
       :actions="[]"
       :allow-photo="false"
       :busy="sending"

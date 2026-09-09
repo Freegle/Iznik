@@ -49,7 +49,7 @@ test.describe('Chat shell landing', () => {
     await expect(page.getByTestId('chip-add_photo')).toBeVisible()
     await page.getByTestId('chip-no_photo').click()
     // The next question is what the item is; the member's own tap is echoed as a bubble.
-    await expect(page.getByTestId('flow-progress')).toContainText('2 of 5', {
+    await expect(page.getByTestId('flow-progress')).toContainText('2 of 7', {
       timeout: timeouts.ui.appearance,
     })
     await expect(
@@ -68,7 +68,7 @@ test.describe('Chat shell landing', () => {
     await page.goto('/', { timeout: timeouts.navigation.initial })
     await page.getByTestId('chip-give').click()
     await page.getByTestId('chip-no_photo').click()
-    await expect(page.getByTestId('flow-progress')).toContainText('2 of 5', {
+    await expect(page.getByTestId('flow-progress')).toContainText('2 of 7', {
       timeout: timeouts.ui.appearance,
     })
     await page.getByTestId('composer-input').fill('grey three seater sofa')
