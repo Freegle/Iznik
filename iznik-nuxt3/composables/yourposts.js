@@ -143,7 +143,9 @@ export function eventsFor(
     kind: 'posted',
     ts: baseTs,
     id,
-    text: pending ? `Posted: ${title}` : `Posted: ${title}`,
+    text: pending
+      ? 'Posted. The volunteers will check it before it goes out.'
+      : 'Posted, and out to people nearby.',
     chips: [],
   })
 
