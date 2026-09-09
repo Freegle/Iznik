@@ -239,6 +239,9 @@ func CreateTryst(c *fiber.Ctx) error {
 		DoUpdates: clause.Set{
 			{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
 			{Column: clause.Column{Name: "arrangedat"}, Value: gorm.Expr("NOW()")},
+			// The same two people arranging the same time for a different post: the
+			// newer post wins, and a create without one leaves the old one alone.
+			{Column: clause.Column{Name: "msgid"}, Value: gorm.Expr("COALESCE(VALUES(msgid), msgid)")},
 		},
 	}).Create(trystRow(req.User1, req.User2, req.Arrangedfor, req.Msgid))
 	if tx.Error != nil {
@@ -297,6 +300,9 @@ func PatchTryst(c *fiber.Ctx) error {
 
 	if req.Arrangedfor != "" {
 		db.Table("trysts").Where("id = ?", req.ID).Update("arrangedfor", req.Arrangedfor)
+	}
+	if req.Msgid != 0 {
+		db.Table("trysts").Where("id = ?", req.ID).Update("msgid", req.Msgid)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

@@ -45,7 +45,10 @@
     height: min(844px, 92vh);
     margin-top: 3vh;
     border-radius: 36px;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18), 0 0 0 10px #1f2427, 0 0 0 12px #3a4145;
+    box-shadow:
+      0 20px 60px rgba(0, 0, 0, 0.18),
+      0 0 0 10px #1f2427,
+      0 0 0 12px #3a4145;
   }
 }
 

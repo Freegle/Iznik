@@ -32,6 +32,17 @@
                 <span>Ask</span>
               </NuxtLink>
             </div>
+            <p class="chat-switch">
+              <button
+                type="button"
+                class="chat-switch-btn"
+                data-testid="switch-to-chat"
+                @click="switchToChat"
+              >
+                <v-icon icon="comments" class="chat-switch-icon" />
+                Prefer a chat? Try Freegle as a chat.
+              </button>
+            </p>
             <p class="browse-label">
               <v-icon icon="map-marker-alt" class="browse-icon" />
               Just browsing? See what's near you.
@@ -127,6 +138,7 @@ import {
 import Api from '~/api'
 
 import PlaceAutocomplete from '~/components/PlaceAutocomplete.vue'
+import { useUiMode } from '~/composables/useUiMode'
 import ExternalLink from '~/components/ExternalLink.vue'
 
 // Setup
@@ -134,6 +146,13 @@ const runtimeConfig = useRuntimeConfig()
 const api = Api(runtimeConfig)
 const route = useRoute()
 const router = useRouter()
+const uiMode = useUiMode()
+
+// The reverse of "Classic Freegle" in the chat shell's menu.
+async function switchToChat() {
+  await uiMode.setMode('chat')
+  router.push('/')
+}
 const miscStore = useMiscStore()
 const mobileStore = useMobileStore()
 const messageStore = useMessageStore()
@@ -417,6 +436,28 @@ onBeforeUnmount(() => {
   justify-content: center;
   position: relative;
   top: -1px;
+}
+
+.chat-switch {
+  margin: 0.6rem 0 0;
+  text-align: center;
+}
+
+.chat-switch-btn {
+  background: none;
+  border: 0;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-green-dark, #2d6a4f);
+  text-decoration: underline;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.chat-switch-icon {
+  font-size: 0.9rem;
 }
 
 .browse-label {

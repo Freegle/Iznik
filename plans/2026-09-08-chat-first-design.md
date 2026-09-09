@@ -401,7 +401,7 @@ Still to confirm:
 | 6 | Ask shows up to three matching offers as soon as the item is known | Only after posting, as today |
 | 9 | Post-chat unread lives in the room like any chat | Settings watermark |
 | 10 | Chooser ordered by the owned score with reasons; never auto-picks | Plain reply order |
-| 11 | ChitChat posts screened like chat messages and held on a hit | Inherit today's unscreened ChitChat |
+| 11 | ChitChat posts and edits run through the worry-word check; a hit goes down the existing report path (out of the feeds, ChitChat volunteers emailed, the words named) | Inherit today's unscreened ChitChat |
 | 12 | Landing bandit continues on the chips | Retire it |
 | 13 | Schema: `messages_promises.count`, `trysts.msgid`, widget side table | Allocation recorded only at outcome |
 | 14 | App share sheet opens the chat Give flow for chat members | App keeps the classic wizard |

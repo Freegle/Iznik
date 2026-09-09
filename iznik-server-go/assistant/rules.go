@@ -46,12 +46,15 @@ func IsUnpostableItem(item string) bool {
 	return HasNoDescriptiveText(item) || IsVagueItem(item)
 }
 
-var pluralHints = regexp.MustCompile(`(?i)\b(\d+\s*x|x\s*\d+|set of|pair of|\d+\s+(of|off)\b|several|some|lots of|a few|bags? of|boxes? of)\b`)
+var pluralHints = regexp.MustCompile(`(?i)\b(\d+\s*x|x\s*\d+|set of|pair of|couple of|\d+\s+(of|off)\b|several|some|lots of|loads? of|a few|few|multiple|various|assorted|bundle of|pile of|stack of|selection of|collection of|bags? of|boxes? of|\d+\s*(pcs|pieces|items))\b`)
+
+// pluralWord is the last word ending in s, less the singulars that happen to (glass, bus, tennis).
+var pluralWord = regexp.MustCompile(`(?i)\b[a-z]{3,}[^sui\s]s\s*$`)
 var pluralNouns = regexp.MustCompile(`(?i)\b(chairs|books|toys|clothes|plates|cups|mugs|glasses|tiles|bricks|plants|pots|jars|bottles|records|cds|dvds|games|shoes|boots|towels|sheets|pillows|cushions|curtains|frames|bags|boxes)\b`)
 
 // LooksPlural says whether the text suggests more than one of something.
 func LooksPlural(text string) bool {
-	return pluralHints.MatchString(text) || pluralNouns.MatchString(text)
+	return pluralHints.MatchString(text) || pluralNouns.MatchString(text) || pluralWord.MatchString(strings.TrimSpace(text))
 }
 
 var wordNumbers = map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "couple": 2, "pair": 2}

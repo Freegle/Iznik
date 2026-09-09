@@ -2,15 +2,16 @@ package test
 
 import (
 	"bytes"
+	"fmt"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/assistant"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/stretchr/testify/assert"
+	"net/http"
+	"net/http/httptest"
 )
 
 func assistantTurn(t *testing.T, body string, headers map[string]string) (int, string, http.Header) {
@@ -96,4 +97,26 @@ func extractConversation(sse string) string {
 		return ""
 	}
 	return rest[:j]
+}
+
+// What a member types to Freegle gets the worry-word check any chat message gets.
+func TestAssistantMemberWorryWordLineIsHeldForReview(t *testing.T) {
+	userID := CreateTestUser(t, "assistantworry", "User")
+	token := getToken(t, userID)
+	word := "zzassistworry" + lettersFromDigits(fmt.Sprint(userID))
+	database.DBConn.Exec("INSERT IGNORE INTO concern_keywords (keyword, category, match_mode, scope, group_id) VALUES (?, 'review', 'fuzzy', 'global', 0)", word)
+
+	status, body, _ := assistantTurn(t, fmt.Sprintf(`{"text":"I have some %s to give away"}`, word), map[string]string{"Authorization": token})
+	assert.Equal(t, 200, status)
+	if assistant.Default().Transcript == nil || !strings.Contains(body, `"chatid":`) {
+		t.Skip("no system user in this database, so no transcript to check")
+	}
+	var review int
+	database.DBConn.Raw("SELECT reviewrequired FROM chat_messages WHERE userid = ? AND message LIKE ? ORDER BY id DESC LIMIT 1", userID, "%"+word+"%").Scan(&review)
+	assert.Equal(t, 1, review, "a member's worrying line is held for the volunteers like any chat message")
+
+	status, body, _ = assistantTurn(t, `{"text":"a grey sofa"}`, map[string]string{"Authorization": token})
+	assert.Equal(t, 200, status)
+	database.DBConn.Raw("SELECT reviewrequired FROM chat_messages WHERE userid = ? AND message = 'a grey sofa' ORDER BY id DESC LIMIT 1", userID).Scan(&review)
+	assert.Equal(t, 0, review)
 }

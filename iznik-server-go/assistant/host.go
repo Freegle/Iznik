@@ -28,7 +28,9 @@ type HostAction struct {
 	Item     string                 `json:"item,omitempty"`
 	Term     string                 `json:"term,omitempty"`
 	Target   string                 `json:"target,omitempty"`
-	Filter   string                 `json:"filter,omitempty"`
+	// Key makes an action idempotent: the browser runs each key once.
+	Key    string `json:"key,omitempty"`
+	Filter string `json:"filter,omitempty"`
 }
 
 // Progress is the small line above the composer during a flow.
@@ -294,7 +296,13 @@ func TargetForChip(state, value string, slots Slots, facts Facts) *TapResult {
 			return &TapResult{HostAction: &HostAction{Type: "edit"}}
 		}
 		if strings.HasPrefix(value, "edit:") {
-			return &TapResult{To: strings.Replace(state, "CONFIRM", strings.ToUpper(strings.TrimPrefix(value, "edit:")), 1)}
+			// Only the questions of the flow can be revisited; anything else is not a tap we offer.
+			field := strings.ToUpper(strings.TrimPrefix(value, "edit:"))
+			switch field {
+			case "PHOTO", "ITEM", "DESCRIPTION", "QUANTITY", "WHERE", "EMAIL":
+				return &TapResult{To: strings.Replace(state, "CONFIRM", field, 1)}
+			}
+			return nil
 		}
 	case "ASK_MATCHES":
 		if value == "carry_on" {
@@ -383,17 +391,21 @@ func ApplyEvent(state string, ev Event, slots Slots, facts Facts) EventResult {
 		if ev.Community != "" {
 			f["community"] = ev.Community
 		}
-		switch state {
-		case "NEARBY_WHERE":
+		switch {
+		case state == "NEARBY_WHERE":
 			r.To = "NEARBY"
-		case "COMMUNITY_WHERE":
+		case state == "COMMUNITY_WHERE":
 			r.To = "COMMUNITY"
-		default:
+		case IsQuestion(state):
+			// A postcode typed while another question was open: kept, and the flow
+			// moves on only past questions now answered.
 			r.To = NextAfter(state, s, f)
 		}
 	case "email_confirmed":
 		s["email"] = ev.Email
-		r.To = NextAfter(state, s, f)
+		if IsQuestion(state) {
+			r.To = NextAfter(state, s, f)
+		}
 	case "email_in_use":
 		f["emailInUse"] = ev.Email
 	case "posted":
@@ -414,6 +426,8 @@ func ApplyEvent(state string, ev Event, slots Slots, facts Facts) EventResult {
 			reason = "failed"
 		}
 		f["postFailed"] = reason
+		// Back to the card, where Post it is the way to try again.
+		r.To = strings.Replace(state, "POST", "CONFIRM", 1)
 	case "matches":
 		m := capMaps(ev.Matches, 3)
 		f["matches"] = m
@@ -500,23 +514,90 @@ func flowIndex(state string) int {
 }
 
 // ProgressFor returns the progress line inside a flow, nil elsewhere.
-func ProgressFor(state string, slots Slots) *Progress {
+// IsQuestion says whether a state asks the member something a flow needs (so an answer
+// arriving by event may move it on). Hubs, lists, posting and done states are not.
+func IsQuestion(state string) bool {
+	if state == "ASK_MATCHES" {
+		return true
+	}
+	for _, s := range giveSteps {
+		if s == state {
+			return true
+		}
+	}
+	for _, s := range askSteps {
+		if s == state {
+			return true
+		}
+	}
+	return false
+}
+
+// The questions of each flow, in the order they are asked.
+var giveSteps = []string{"GIVE_PHOTO", "GIVE_ITEM", "GIVE_DESCRIPTION", "GIVE_QUANTITY", "GIVE_WHERE", "GIVE_EMAIL", "GIVE_CONFIRM"}
+var askSteps = []string{"ASK_ITEM", "ASK_DESCRIPTION", "ASK_WHERE", "ASK_EMAIL", "ASK_CONFIRM"}
+
+// answered reports whether the member has given the answer a step asks for.
+func answered(state string, slots Slots) bool {
+	switch state {
+	case "GIVE_PHOTO":
+		return slots.has("photoDecided")
+	case "GIVE_ITEM", "ASK_ITEM":
+		return slots.str("item") != ""
+	case "GIVE_DESCRIPTION", "ASK_DESCRIPTION":
+		return slots.has("description")
+	case "GIVE_QUANTITY":
+		return slots.has("quantity")
+	case "GIVE_WHERE", "ASK_WHERE":
+		return slots.str("postcode") != ""
+	case "GIVE_EMAIL", "ASK_EMAIL":
+		return slots.str("email") != ""
+	}
+	return false
+}
+
+// ProgressFor is the "Giving · sofa · 3 of 6" line under the transcript. The total is the
+// number of questions this member will actually meet: steps already answered and steps still
+// needed count, steps that will be skipped (email when signed in, where when the location is
+// already known) do not. Nil once the post has gone, so the composer's actions come back.
+func ProgressFor(state string, slots Slots, facts Facts) *Progress {
 	if !InFlow(state) {
 		return nil
 	}
-	steps := []string{"ASK_ITEM", "ASK_DESCRIPTION", "ASK_WHERE", "ASK_CONFIRM"}
-	label := "Asking"
+	steps, label := askSteps, "Asking"
 	if strings.HasPrefix(state, "GIVE_") {
-		steps = []string{"GIVE_PHOTO", "GIVE_ITEM", "GIVE_DESCRIPTION", "GIVE_WHERE", "GIVE_CONFIRM"}
-		label = "Giving"
+		steps, label = giveSteps, "Giving"
 	}
-	idx := 0
+	probe := state
+	switch state {
+	case "ASK_MATCHES":
+		probe = "ASK_ITEM"
+	case "GIVE_POST":
+		probe = "GIVE_CONFIRM"
+	case "ASK_POST":
+		probe = "ASK_CONFIRM"
+	}
+	cur := -1
 	for i, s := range steps {
-		if s == state {
-			idx = i
+		if s == probe {
+			cur = i
 		}
 	}
-	return &Progress{Label: label, Item: slots.str("item"), Step: idx + 1, Total: len(steps)}
+	if cur < 0 {
+		return nil
+	}
+	step, total := 0, 0
+	for i, s := range steps {
+		counts := i == cur || (i < cur && answered(s, slots)) || (i > cur && StateNeeded(s, slots, facts))
+		if !counts {
+			continue
+		}
+		total++
+		if i <= cur {
+			step++
+		}
+	}
+	return &Progress{Label: label, Item: slots.str("item"), Step: step, Total: total}
 }
 
 func cloneSlots(s Slots) Slots {

@@ -1,13 +1,22 @@
 // Chat or classic. A member's choice is remembered in their settings; a visitor's in the
 // browser. Anyone who has not chosen gets the runtime default, which can be a fixed mode
 // or a percentage of members by user id, and which is also the kill switch.
+import { useAuthStore } from '~/stores/auth'
+
 export const UI_MODE_KEY = 'freegle-ui-mode'
 
 // Pure: work out the mode from what we know. Exported for tests.
-export function resolveUiMode({ settingsMode, storedMode, defaultMode, userId }) {
+export function resolveUiMode({
+  settingsMode,
+  storedMode,
+  defaultMode,
+  userId,
+}) {
   if (settingsMode === 'chat' || settingsMode === 'classic') return settingsMode
   if (storedMode === 'chat' || storedMode === 'classic') return storedMode
-  const d = String(defaultMode ?? 'classic').trim().toLowerCase()
+  const d = String(defaultMode ?? 'classic')
+    .trim()
+    .toLowerCase()
   if (d === 'chat' || d === 'classic') return d
   const pct = parseInt(d, 10)
   if (Number.isFinite(pct) && pct > 0) {
@@ -42,7 +51,10 @@ export function useUiMode() {
   const me = computed(() => authStore.user)
   // A cookie rather than localStorage so the server renders the same choice as the
   // browser and nobody sees the other version flash first.
-  const cookie = useCookie(UI_MODE_KEY, { maxAge: 60 * 60 * 24 * 365, sameSite: 'lax' })
+  const cookie = useCookie(UI_MODE_KEY, {
+    maxAge: 60 * 60 * 24 * 365,
+    sameSite: 'lax',
+  })
   const stored = computed(() => cookie.value || readStoredMode())
 
   const mode = computed(() =>

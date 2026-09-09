@@ -1,8 +1,11 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-08
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/index.vue
+  - iznik-nuxt3/components/ClassicLanding.vue
+  - iznik-nuxt3/components/chatshell/FreegleChat.vue
+  - iznik-nuxt3/components/chatshell/ShellComposer.vue
   - iznik-nuxt3/components/LoginModal.vue
   - iznik-nuxt3/pages/explore/**
   - iznik-nuxt3/pages/browse/**
@@ -10,12 +13,36 @@ covers:
   - iznik-nuxt3/tests/e2e/test-browse.spec.js
   - iznik-nuxt3/tests/e2e/test-explore.spec.js
   - iznik-nuxt3/tests/e2e/test-homepage.spec.js
+  - iznik-nuxt3/tests/e2e/test-chat-shell-landing.spec.js
 ---
 
 # Getting started
 
 This guide gets you from never having used Freegle to browsing your local community and
 ready to give or get your first item.
+
+## Chat or website
+
+![Freegle as a chat](assets/chat-home.png)
+
+Freegle comes in two shapes, and you can switch between them whenever you like.
+
+**The chat.** Open [ilovefreegle.org](https://www.ilovefreegle.org) and you land in a chat
+with Freegle, laid out like a messaging app. Tap **Give**, **Ask** or **Nearby** under the
+chat, or just type what you want to do, and Freegle asks you one thing at a time. Your
+chat list holds the chat with Freegle, **Your posts** (everything about what you have
+offered or asked for), your chats with other freeglers, and your local **ChitChat**. On a
+computer the chat sits in a phone-sized window in the middle of the page.
+
+**The website.** The pages the rest of this guide describes, with a Browse page, a Give
+page, a My Posts page and so on. Choose **Classic Freegle** from the menu at the top of the
+chat to use it, and **Freegle chat** from the website's menu, or the link on its front
+page, to come back. Freegle remembers your choice, on your account if you are signed in
+and otherwise in your browser.
+
+Everything you can do on the website you can do in the chat, and the two share the same
+posts, chats and account. This guide describes the website, and says where the chat does
+something differently.
 
 ## Creating an account
 

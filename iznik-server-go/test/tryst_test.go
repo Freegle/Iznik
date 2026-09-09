@@ -357,3 +357,64 @@ func TestGetTrystV2Path(t *testing.T) {
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 401, resp.StatusCode)
 }
+
+func TestPatchTrystUpdatesMsgid(t *testing.T) {
+	prefix := uniquePrefix("TrystPatchMsg")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	_, token := CreateTestSession(t, user1ID)
+
+	db := database.DBConn
+	db.Exec("INSERT INTO trysts (user1, user2, arrangedfor) VALUES (?, ?, '2038-01-19 03:14:06')",
+		user1ID, user2ID)
+	var trystID uint64
+	db.Raw("SELECT id FROM trysts WHERE user1 = ? ORDER BY id DESC LIMIT 1", user1ID).Scan(&trystID)
+
+	body := fmt.Sprintf(`{"id":%d,"msgid":123456}`, trystID)
+	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/tryst?jwt=%s", token), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msgid *uint64
+	db.Raw("SELECT msgid FROM trysts WHERE id = ?", trystID).Scan(&msgid)
+	if assert.NotNil(t, msgid, "PATCH with msgid must record which post the time is for") {
+		assert.Equal(t, uint64(123456), *msgid)
+	}
+}
+
+func TestCreateTrystSameTimeDifferentPostKeepsNewMsgid(t *testing.T) {
+	prefix := uniquePrefix("TrystDupMsg")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	_, token := CreateTestSession(t, user1ID)
+	CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+
+	create := func(body string) float64 {
+		req := httptest.NewRequest("PUT", fmt.Sprintf("/api/tryst?jwt=%s", token), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		assert.Equal(t, 200, resp.StatusCode)
+		var result map[string]interface{}
+		json2.Unmarshal(rsp(resp), &result)
+		return result["id"].(float64)
+	}
+	when := "2038-01-19T03:14:06+00:00"
+	id1 := create(fmt.Sprintf(`{"user1":%d,"user2":%d,"arrangedfor":"%s","msgid":11}`, user1ID, user2ID, when))
+	id2 := create(fmt.Sprintf(`{"user1":%d,"user2":%d,"arrangedfor":"%s","msgid":22}`, user1ID, user2ID, when))
+	assert.Equal(t, id1, id2, "same two people, same time: one row")
+
+	db := database.DBConn
+	var msgid *uint64
+	db.Raw("SELECT msgid FROM trysts WHERE id = ?", uint64(id1)).Scan(&msgid)
+	if assert.NotNil(t, msgid) {
+		assert.Equal(t, uint64(22), *msgid, "the newer post wins the duplicate-key path")
+	}
+
+	// A create without a post leaves the recorded one alone.
+	create(fmt.Sprintf(`{"user1":%d,"user2":%d,"arrangedfor":"%s"}`, user1ID, user2ID, when))
+	db.Raw("SELECT msgid FROM trysts WHERE id = ?", uint64(id1)).Scan(&msgid)
+	if assert.NotNil(t, msgid) {
+		assert.Equal(t, uint64(22), *msgid)
+	}
+}

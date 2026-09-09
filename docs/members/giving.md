@@ -1,14 +1,19 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-08
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
   - iznik-nuxt3/pages/myposts.vue
   - iznik-nuxt3/pages/mypost/**
   - iznik-nuxt3/components/MyMessage.vue
+  - iznik-nuxt3/components/chatshell/YourPosts.vue
+  - iznik-nuxt3/components/chatshell/ChooserSheet.vue
+  - iznik-nuxt3/components/chatshell/ConfirmCard.vue
+  - iznik-nuxt3/composables/yourposts.js
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-post-flow.spec.js
   - iznik-nuxt3/tests/e2e/test-bulk-offer-flow.spec.js
+  - iznik-nuxt3/tests/e2e/test-chat-shell-give.spec.js
   - iznik-server-go/test/message_test.go
 ---
 
@@ -37,6 +42,18 @@ reply, you pick someone, and they collect. This guide walks through the whole th
 
 On a phone the steps are the same but split into photo, details, options and location
 screens.
+
+### Giving from the chat
+
+In the chat, tap **Give** under the chat, or just type what you have. Freegle asks for
+the same things one at a time: a photo (tap **No photo** to skip it), what the item is,
+a line or two about it, how many you have, your postcode, and your email if you are not
+signed in. Type your answer or tap one of the suggestions under the question. Freegle
+checks each answer as you go, so a postcode we do not know or a name too vague to help
+anyone gets a friendly question rather than a rejected post. When it has everything you
+see a card with the whole post to read over; tap any part of it to change it, then tap
+**Post it**. Freegle tells you it has gone out to people nearby, and it appears in
+**Your posts**.
 
 ### Tips for a good OFFER
 
@@ -74,6 +91,18 @@ its interval, you can repost.
 
 Freegle is first come, not an auction. It is good manners to reply to everyone, even if
 just to say it has gone.
+
+### Choosing someone in the chat
+
+In the chat, replies to all your posts arrive in one chat called **Your posts**, so
+nothing is scattered across many chats however many things you are giving away. When
+someone replies you can tap straight through to chat with them. Once two or more people
+have asked, Freegle offers to help you choose: a sheet lists everyone who replied, in a
+suggested order with the reasons shown (who replied first, how near they are, their
+ratings), and how many of the item each asked for. Give the lot to one person, or split
+it between several by setting a number against each; the total stays in view so you cannot
+promise more than you have. Everyone you promise something to gets a message, and Your
+posts keeps track of who is collecting what and when.
 
 ## When it is gone: marking it TAKEN
 

@@ -31,7 +31,8 @@ export function useHostActions() {
     if (pc?.lat && pc?.lng) return pc
     const loc = me.value?.settings?.mylocation
     if (loc?.lat && loc?.lng) return { lat: loc.lat, lng: loc.lng }
-    if (me.value?.lat && me.value?.lng) return { lat: me.value.lat, lng: me.value.lng }
+    if (me.value?.lat && me.value?.lng)
+      return { lat: me.value.lat, lng: me.value.lng }
     return null
   }
 
@@ -52,7 +53,12 @@ export function useHostActions() {
     assistant.slots.postcodeLatLng = { lat: pc.lat, lng: pc.lng }
     const community = pc.groupsnear?.[0]?.namedisplay || null
     return assistant.sendEvent(
-      { type: 'postcode_confirmed', postcode: pc.name, name: pc.area?.name || pc.name, community },
+      {
+        type: 'postcode_confirmed',
+        postcode: pc.name,
+        name: pc.area?.name || pc.name,
+        community,
+      },
       pc.name
     )
   }
@@ -72,7 +78,8 @@ export function useHostActions() {
     composeStore.setType({ id, type: postType })
     composeStore.setItem({ id, item: slots.item })
     composeStore.setDescription({ id, description: slots.description || '' })
-    if (postType === 'Offer') composeStore.setAvailableNow(id, slots.quantity || 1)
+    if (postType === 'Offer')
+      composeStore.setAvailableNow(id, slots.quantity || 1)
     if (slots.delivery) composeStore.setDeliveryPossible(id, true)
     for (const attid of slots.attachments || []) {
       const att = assistant.photos?.find?.((p) => p.id === attid)
@@ -90,7 +97,10 @@ export function useHostActions() {
       let newuser = false
       if (first?.newuser) {
         newuser = true
-        await authStore.login({ email: composeStore.email, password: first.newpassword })
+        await authStore.login({
+          email: composeStore.email,
+          password: first.newpassword,
+        })
         if (composeStore.postcode?.id) {
           const settings = authStore.user?.settings || {}
           settings.mylocation = composeStore.postcode
@@ -104,10 +114,16 @@ export function useHostActions() {
       if (first?.id) {
         const msg = await messageStore.fetch(first.id, true)
         pending = !!msg?.groups?.some((g) => g.collection === 'Pending')
-        community = msg?.groups?.[0]?.namedisplay || groupStore.get(first.groupid)?.namedisplay || null
+        community =
+          msg?.groups?.[0]?.namedisplay ||
+          groupStore.get(first.groupid)?.namedisplay ||
+          null
       }
       assistant.lastPosted = { id: first?.id, type: postType }
-      return assistant.sendEvent({ type: 'posted', msgid: first?.id, community, pending, newuser }, null)
+      return assistant.sendEvent(
+        { type: 'posted', msgid: first?.id, community, pending, newuser },
+        null
+      )
     } catch (e) {
       console.error('Posting from chat failed', e)
       const reason = e?.response?.status === 403 ? 'not allowed' : 'failed'
@@ -118,7 +134,7 @@ export function useHostActions() {
   async function findMatches(item) {
     const at = myLatLng()
     if (!at) return assistant.sendEvent({ type: 'matches', matches: [] }, null)
-    let list = []
+    let list
     try {
       list = (await messageStore.matches(item, at.lat, at.lng, 3)) || []
     } catch (e) {
@@ -127,7 +143,13 @@ export function useHostActions() {
     await Promise.all(list.map((m) => messageStore.fetch(m.id)))
     const matches = list.map((m) => {
       const full = messageStore.byId(m.id)
-      return { id: m.id, title: full?.subject || item, miles: at ? Math.round(milesAway(at.lat, at.lng, full?.lat, full?.lng) || 0) : null }
+      return {
+        id: m.id,
+        title: full?.subject || item,
+        miles: at
+          ? Math.round(milesAway(at.lat, at.lng, full?.lat, full?.lng) || 0)
+          : null,
+      }
     })
     assistant.cards = { kind: 'posts', ids: matches.map((m) => m.id) }
     return assistant.sendEvent({ type: 'matches', matches }, null)
@@ -137,26 +159,47 @@ export function useHostActions() {
     const at = myLatLng()
     if (!at) return assistant.sendEvent({ type: 'nearby', posts: [] }, null)
     const box = 0.15
-    let list = []
+    let list
     try {
-      list = (await messageStore.fetchInBounds(at.lat - box, at.lng - box, at.lat + box, at.lng + box, null, 40, true)) || []
+      list =
+        (await messageStore.fetchInBounds(
+          at.lat - box,
+          at.lng - box,
+          at.lat + box,
+          at.lng + box,
+          null,
+          40,
+          true
+        )) || []
     } catch (e) {
       list = []
     }
     if (filter === 'offers') list = list.filter((m) => m.type === 'Offer')
     if (filter === 'wanted') list = list.filter((m) => m.type === 'Wanted')
-    list = list.map((m) => ({ ...m, miles: milesAway(at.lat, at.lng, m.lat, m.lng) }))
-    if (filter === 'nearest') list.sort((a, b) => (a.miles ?? 999) - (b.miles ?? 999))
+    list = list.map((m) => ({
+      ...m,
+      miles: milesAway(at.lat, at.lng, m.lat, m.lng),
+    }))
+    if (filter === 'nearest')
+      list.sort((a, b) => (a.miles ?? 999) - (b.miles ?? 999))
     const top = list.slice(0, 8)
     await Promise.all(top.map((m) => messageStore.fetch(m.id)))
     assistant.cards = { kind: 'posts', ids: top.map((m) => m.id) }
-    const posts = top.map((m) => ({ id: m.id, title: messageStore.byId(m.id)?.subject || '', type: m.type, miles: m.miles == null ? null : Math.round(m.miles) }))
-    return assistant.sendEvent({ type: 'nearby', posts, filter: filter || '' }, null)
+    const posts = top.map((m) => ({
+      id: m.id,
+      title: messageStore.byId(m.id)?.subject || '',
+      type: m.type,
+      miles: m.miles == null ? null : Math.round(m.miles),
+    }))
+    return assistant.sendEvent(
+      { type: 'nearby', posts, filter: filter || '' },
+      null
+    )
   }
 
   async function search(term) {
     const at = myLatLng()
-    let list = []
+    let list
     try {
       const params = { search: term }
       if (at) {
@@ -172,19 +215,40 @@ export function useHostActions() {
     const top = list.slice(0, 8)
     await Promise.all(top.map((m) => messageStore.fetch(m.id)))
     assistant.cards = { kind: 'posts', ids: top.map((m) => m.id) }
-    const posts = top.map((m) => ({ id: m.id, title: messageStore.byId(m.id)?.subject || '', type: m.type, miles: at && m.lat ? Math.round(milesAway(at.lat, at.lng, m.lat, m.lng)) : null }))
-    return assistant.sendEvent({ type: 'nearby', posts, filter: 'search:' + term }, null)
+    const posts = top.map((m) => ({
+      id: m.id,
+      title: messageStore.byId(m.id)?.subject || '',
+      type: m.type,
+      miles:
+        at && m.lat
+          ? Math.round(milesAway(at.lat, at.lng, m.lat, m.lng))
+          : null,
+    }))
+    return assistant.sendEvent(
+      { type: 'nearby', posts, filter: 'search:' + term },
+      null
+    )
   }
 
   async function listCommunities() {
     await groupStore.fetch()
     const at = myLatLng()
-    const all = (groupStore.summaryList || []).filter((g) => g.onmap && g.publish && g.lat && g.lng)
-    const withMiles = all.map((g) => ({ ...g, miles: at ? milesAway(at.lat, at.lng, g.lat, g.lng) : null }))
+    const all = (groupStore.summaryList || []).filter(
+      (g) => g.onmap && g.publish && g.lat && g.lng
+    )
+    const withMiles = all.map((g) => ({
+      ...g,
+      miles: at ? milesAway(at.lat, at.lng, g.lat, g.lng) : null,
+    }))
     withMiles.sort((a, b) => (a.miles ?? 9999) - (b.miles ?? 9999))
     const top = withMiles.slice(0, 5)
     assistant.cards = { kind: 'groups', ids: top.map((g) => g.id) }
-    const communities = top.map((g) => ({ id: g.id, name: g.namedisplay, members: g.membercount, miles: g.miles == null ? null : Math.round(g.miles) }))
+    const communities = top.map((g) => ({
+      id: g.id,
+      name: g.namedisplay,
+      members: g.membercount,
+      miles: g.miles == null ? null : Math.round(g.miles),
+    }))
     return assistant.sendEvent({ type: 'communities', communities }, null)
   }
 
@@ -195,7 +259,10 @@ export function useHostActions() {
     }
     await authStore.joinGroup(me.value.id, groupid, true)
     const g = groupStore.get(groupid)
-    return assistant.sendEvent({ type: 'joined', community: g?.namedisplay || null }, 'Joined ' + (g?.namedisplay || 'the community'))
+    return assistant.sendEvent(
+      { type: 'joined', community: g?.namedisplay || null },
+      'Joined ' + (g?.namedisplay || 'the community')
+    )
   }
 
   function replyTo(msgid) {
@@ -209,6 +276,11 @@ export function useHostActions() {
   // Run whatever the last turn asked for. Returns true when something was started.
   async function run(action) {
     if (!action) return false
+    if (action.key) {
+      // The same post asked for twice (a retried turn, two tabs) is posted once.
+      if (assistant.done.includes(action.key)) return false
+      assistant.done = [...assistant.done.slice(-19), action.key]
+    }
     switch (action.type) {
       case 'lookup_postcode':
         await lookupPostcode(action.text)
@@ -242,5 +314,19 @@ export function useHostActions() {
     }
   }
 
-  return { run, lookupPostcode, postcodeChosen, checkEmail, createPost, findMatches, listNearby, search, listCommunities, joinCommunity, replyTo, signIn, myLatLng }
+  return {
+    run,
+    lookupPostcode,
+    postcodeChosen,
+    checkEmail,
+    createPost,
+    findMatches,
+    listNearby,
+    search,
+    listCommunities,
+    joinCommunity,
+    replyTo,
+    signIn,
+    myLatLng,
+  }
 }

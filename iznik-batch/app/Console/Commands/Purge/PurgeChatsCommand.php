@@ -67,6 +67,16 @@ class PurgeChatsCommand extends Command
         $results['orphaned_images'] = $purgeService->purgeOrphanedChatImages($dryRun);
         $this->info("  Purged {$results['orphaned_images']} orphaned images");
 
+        if ($this->shouldAbort()) {
+            $this->warn('Aborting due to shutdown signal.');
+            return Command::SUCCESS;
+        }
+
+        // Purge stale Freegle assistant conversations.
+        $this->line('Purging idle assistant conversations...');
+        $results['assistant_instances'] = $purgeService->purgeAssistantInstances(30, $dryRun);
+        $this->info("  Purged {$results['assistant_instances']} assistant conversations");
+
         $this->newLine();
         $this->info('Chat purge complete.');
         $this->table(

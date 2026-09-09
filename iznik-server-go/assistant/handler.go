@@ -75,7 +75,7 @@ type turnRequest struct {
 
 // identityFor resolves the member from the JWT, or the anonymous token, minting one
 // when needed.
-func identityFor(c *fiber.Ctx) Identity {
+func identityFor(c *fiber.Ctx, ip string) Identity {
 	if myid := user.WhoAmI(c); myid > 0 {
 		id := Identity{Key: "u:" + strconv.FormatUint(myid, 10), UserID: myid}
 		db := database.DBConn
@@ -106,8 +106,50 @@ func identityFor(c *fiber.Ctx) Identity {
 	if anon := VerifyAnon(given); anon != "" {
 		return Identity{Key: "a:" + anon, AnonToken: given}
 	}
+	if !Default().Quota.AllowMint(ip) {
+		// Too many new identities from this address: one shared, model-free identity.
+		return Identity{Key: "a:throttled:" + ip, Throttled: true}
+	}
 	tok := MintAnon()
 	return Identity{Key: "a:" + strings.SplitN(tok, ".", 2)[0], AnonToken: tok}
+}
+
+// clientAddress is the hop our own proxy recorded: the last entry of X-Forwarded-For,
+// else the remote address. The first entry is whatever the client chose to claim.
+func clientAddress(c *fiber.Ctx) string {
+	if xff := c.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		return strings.TrimSpace(parts[len(parts)-1])
+	}
+	return c.Context().RemoteIP().String()
+}
+
+// At most this many streams open at once per identity; the hourly bucket only counts
+// new turns, not ones still running.
+const maxInflight = 2
+
+var inflight = struct {
+	sync.Mutex
+	m map[string]int
+}{m: map[string]int{}}
+
+func acquire(key string) bool {
+	inflight.Lock()
+	defer inflight.Unlock()
+	if inflight.m[key] >= maxInflight {
+		return false
+	}
+	inflight.m[key]++
+	return true
+}
+
+func release(key string) {
+	inflight.Lock()
+	defer inflight.Unlock()
+	inflight.m[key]--
+	if inflight.m[key] <= 0 {
+		delete(inflight.m, key)
+	}
 }
 
 // Turn handles POST /assistant/turn.
@@ -125,12 +167,11 @@ func Turn(c *fiber.Ctx) error {
 	if len(req.Text) > 6000 {
 		req.Text = req.Text[:6000]
 	}
-	id := identityFor(c)
-	ip := c.Get("X-Forwarded-For")
-	if ip == "" {
-		ip = c.IP()
+	ip := clientAddress(c)
+	id := identityFor(c, ip)
+	if !acquire(id.Key) {
+		return fiber.NewError(fiber.StatusTooManyRequests, "Still answering your last message")
 	}
-	ip = strings.TrimSpace(strings.Split(ip, ",")[0])
 	svc := Default()
 	c.Set("Content-Type", "text/event-stream")
 	c.Set("Cache-Control", "no-cache, no-transform")
@@ -140,6 +181,7 @@ func Turn(c *fiber.Ctx) error {
 	}
 	ctx := c.UserContext()
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		defer release(id.Key)
 		send := func(event string, data interface{}) {
 			b, _ := json.Marshal(data)
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, string(b))

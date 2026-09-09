@@ -21,7 +21,9 @@ import { ref, computed } from '#imports'
 // An email field inside a bubble, for replies to reach a visitor.
 const emit = defineEmits(['submit'])
 const email = ref('')
-const valid = computed(() => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.value.trim()))
+const valid = computed(() =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.value.trim())
+)
 function submit() {
   if (valid.value) emit('submit', email.value.trim().toLowerCase())
 }

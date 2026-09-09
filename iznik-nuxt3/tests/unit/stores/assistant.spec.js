@@ -1,12 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-
-const turnMock = vi.fn()
-vi.mock('~/api', () => ({
-  default: () => ({ assistant: { turn: turnMock } }),
-}))
+import { reactive, nextTick } from 'vue'
 
 import { useAssistantStore, MAX_LINES } from '~/stores/assistant'
+
+const turnMock = vi.fn()
+const clearAnonMock = vi.fn()
+vi.mock('~/api', () => ({
+  default: () => ({
+    assistant: { turn: turnMock, clearAnonToken: clearAnonMock },
+  }),
+}))
 
 describe('assistant store', () => {
   beforeEach(() => {
@@ -21,7 +25,16 @@ describe('assistant store', () => {
       expect(body.text).toBe('grey sofa')
       onDelta('A grey ')
       onDelta('sofa, lovely.')
-      return { conversation: 'c1', state: 'GIVE_PHOTO', say: 'A grey sofa, lovely.', chips: [{ value: 'no_photo', label: 'No photo' }], progress: { label: 'Giving', step: 1, total: 5 }, slots: { item: 'grey sofa' }, facts: {}, widget: {} }
+      return {
+        conversation: 'c1',
+        state: 'GIVE_PHOTO',
+        say: 'A grey sofa, lovely.',
+        chips: [{ value: 'no_photo', label: 'No photo' }],
+        progress: { label: 'Giving', step: 1, total: 5 },
+        slots: { item: 'grey sofa' },
+        facts: {},
+        widget: {},
+      }
     })
     const p = store.sendText('grey sofa')
     expect(store.lines[0]).toMatchObject({ who: 'member', text: 'grey sofa' })
@@ -49,13 +62,47 @@ describe('assistant store', () => {
     const store = useAssistantStore()
     store.init({})
     store.conversation = 'c9'
-    turnMock.mockResolvedValue({ conversation: 'c9', state: 'HUB', say: 'ok', chips: [] })
+    turnMock.mockResolvedValue({
+      conversation: 'c9',
+      state: 'HUB',
+      say: 'ok',
+      chips: [],
+    })
     await store.sendEvent({ type: 'posted', msgid: 5 }, null)
-    expect(turnMock.mock.calls[0][0]).toEqual({ event: { type: 'posted', msgid: 5 }, conversation: 'c9' })
-    for (let i = 0; i < MAX_LINES + 20; i++) store.push({ who: 'member', text: 'x' })
+    expect(turnMock.mock.calls[0][0]).toEqual({
+      event: { type: 'posted', msgid: 5 },
+      conversation: 'c9',
+    })
+    for (let i = 0; i < MAX_LINES + 20; i++)
+      store.push({ who: 'member', text: 'x' })
     expect(store.lines.length).toBe(MAX_LINES)
     store.reset()
     expect(store.lines).toHaveLength(0)
     expect(store.conversation).toBeNull()
+  })
+  it('forgets everything when the signed-in member changes, whichever way they left', async () => {
+    const auth = reactive({ user: { id: 1 } })
+    globalThis.__mockAuthStore = auth
+    const store = useAssistantStore()
+    store.init({})
+    store.push({ who: 'member', text: 'grey sofa' })
+    store.conversation = 'c1'
+    store.done = ['k1']
+    auth.user = null
+    await nextTick()
+    expect(store.lines).toEqual([])
+    expect(store.conversation).toBeNull()
+    expect(store.done).toEqual([])
+    expect(clearAnonMock).toHaveBeenCalled()
+    // A visitor who then signs in keeps their chat: that is the flow continuing.
+    auth.user = { id: 2 }
+    await nextTick()
+    store.push({ who: 'member', text: 'hello' })
+    expect(store.lines).toHaveLength(1)
+    // Straight from one member to another: the first one's chat goes.
+    auth.user = { id: 3 }
+    await nextTick()
+    expect(store.lines).toEqual([])
+    globalThis.__mockAuthStore = undefined
   })
 })

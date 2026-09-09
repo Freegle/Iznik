@@ -14,11 +14,25 @@ export function cleanTitle(subject) {
 // How many the reply asked for, from its text ("could I have two", "2 please").
 export function wantedCountFrom(text) {
   const t = String(text || '').toLowerCase()
-  const words = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, a: 1, couple: 2, pair: 2 }
-  const m = t.match(/\b(?:have|take|get|want|like|need|after)\s+(?:the\s+)?(\d{1,2}|one|two|three|four|five|six|a couple|a pair|couple|pair)\b/)
+  const words = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    a: 1,
+    couple: 2,
+    pair: 2,
+  }
+  const m = t.match(
+    /\b(?:have|take|get|want|like|need|after)\s+(?:the\s+)?(\d{1,2}|one|two|three|four|five|six|a couple|a pair|couple|pair)\b/
+  )
   if (m) {
     const w = m[1].replace(/^a /, '')
-    return /^\d+$/.test(w) ? Math.max(1, Math.min(99, parseInt(w, 10))) : words[w] || 1
+    return /^\d+$/.test(w)
+      ? Math.max(1, Math.min(99, parseInt(w, 10)))
+      : words[w] || 1
   }
   const n = t.match(/\b(\d{1,2})\s*(?:of them|please|pls|would be great)\b/)
   if (n) return Math.max(1, Math.min(99, parseInt(n[1], 10)))
@@ -29,7 +43,11 @@ export function wantedCountFrom(text) {
 export function scoreReplier(reply, post, ctx = {}) {
   const reasons = []
   let score = 0
-  const posted = post?.arrival ? new Date(post.arrival).getTime() : post?.date ? new Date(post.date).getTime() : null
+  const posted = post?.arrival
+    ? new Date(post.arrival).getTime()
+    : post?.date
+      ? new Date(post.date).getTime()
+      : null
   const replied = reply?.date ? new Date(reply.date).getTime() : null
   if (posted && replied) {
     const hours = (replied - posted) / 3600000
@@ -59,7 +77,12 @@ export function scoreReplier(reply, post, ctx = {}) {
     }
   }
   const text = String(reply?.snippet || '')
-  if (text.length > 40 || /\b(collect|pick up|tonight|tomorrow|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|evening)\b/i.test(text)) {
+  if (
+    text.length > 40 ||
+    /\b(collect|pick up|tonight|tomorrow|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|evening)\b/i.test(
+      text
+    )
+  ) {
     score += 1
     reasons.push({ text: 'Said when they can collect', weight: 1 })
   }
@@ -93,14 +116,20 @@ export function allocate(available, repliers) {
 // Left after promises and outcomes.
 export function remaining(post) {
   const total = post?.availablenow ?? 1
-  const promised = (post?.promises || []).reduce((n, p) => n + (p.count || 1), 0)
+  const promised = (post?.promises || []).reduce(
+    (n, p) => n + (p.count || 1),
+    0
+  )
   return Math.max(0, total - promised)
 }
 
 // The events for one post, oldest first. Each has a kind, a text the shell renders
 // (plain and factual; Freegle's composed line comes from the assistant), the post id and
 // the chips that make sense.
-export function eventsFor(post, { replies = [], trysts = [], now = Date.now() } = {}) {
+export function eventsFor(
+  post,
+  { replies = [], trysts = [], now = Date.now() } = {}
+) {
   const events = []
   const id = post.id
   const title = cleanTitle(post.subject)
@@ -110,11 +139,26 @@ export function eventsFor(post, { replies = [], trysts = [], now = Date.now() } 
   const reposted = post.repostedat || null
 
   const baseTs = posted ? new Date(posted).getTime() : now
-  events.push({ kind: 'posted', ts: baseTs, id, text: pending ? `Posted: ${title}` : `Posted: ${title}`, chips: [] })
+  events.push({
+    kind: 'posted',
+    ts: baseTs,
+    id,
+    text: pending ? `Posted: ${title}` : `Posted: ${title}`,
+    chips: [],
+  })
 
-  const activeReplies = replies.filter((r) => !reposted || new Date(r.date).getTime() >= new Date(reposted).getTime())
+  const activeReplies = replies.filter(
+    (r) =>
+      !reposted || new Date(r.date).getTime() >= new Date(reposted).getTime()
+  )
   if (reposted) {
-    events.push({ kind: 'reposted', ts: new Date(reposted).getTime(), id, text: 'Reposted', chips: [] })
+    events.push({
+      kind: 'reposted',
+      ts: new Date(reposted).getTime(),
+      id,
+      text: 'Reposted',
+      chips: [],
+    })
   }
   for (const r of activeReplies) {
     events.push({
@@ -128,20 +172,44 @@ export function eventsFor(post, { replies = [], trysts = [], now = Date.now() } 
       miles: r.miles ?? null,
       text: `${r.displayname} ${isOffer ? 'is interested in' : 'has'} your ${title}`,
       chips: [
-        { value: `promise:${id}:${r.userid}`, label: isOffer ? `Promise to ${r.displayname}` : `Choose ${r.displayname}` },
+        {
+          value: `promise:${id}:${r.userid}`,
+          label: isOffer
+            ? `Promise to ${r.displayname}`
+            : `Choose ${r.displayname}`,
+        },
         { value: `chat:${r.chatid}`, label: 'Reply' },
       ],
     })
   }
   if (post.heldreplies > 0) {
-    events.push({ kind: 'held', ts: now, id, text: `${post.heldreplies} ${post.heldreplies === 1 ? 'reply is' : 'replies are'} waiting for a volunteer to check`, chips: [] })
+    events.push({
+      kind: 'held',
+      ts: now,
+      id,
+      text: `${post.heldreplies} ${post.heldreplies === 1 ? 'reply is' : 'replies are'} waiting for a volunteer to check`,
+      chips: [],
+    })
   }
   if (activeReplies.length >= 2 && !post.outcomes?.length) {
-    events.push({ kind: 'chooser', ts: Math.max(...activeReplies.map((r) => new Date(r.date).getTime())) + 1, id, count: activeReplies.length, text: `${activeReplies.length} people interested`, chips: [{ value: `choose:${id}`, label: 'Who should have it?' }] })
+    events.push({
+      kind: 'chooser',
+      ts: Math.max(...activeReplies.map((r) => new Date(r.date).getTime())) + 1,
+      id,
+      count: activeReplies.length,
+      text: `${activeReplies.length} people interested`,
+      chips: [{ value: `choose:${id}`, label: 'Who should have it?' }],
+    })
   }
   for (const p of post.promises || []) {
     const who = activeReplies.find((r) => r.userid === p.userid)
-    const tryst = trysts.find((t) => t.msgid === id && (t.user1 === p.userid || t.user2 === p.userid)) || trysts.find((t) => !t.msgid && (t.user1 === p.userid || t.user2 === p.userid))
+    const tryst =
+      trysts.find(
+        (t) => t.msgid === id && (t.user1 === p.userid || t.user2 === p.userid)
+      ) ||
+      trysts.find(
+        (t) => !t.msgid && (t.user1 === p.userid || t.user2 === p.userid)
+      )
     const when = tryst?.arrangedfor ? new Date(tryst.arrangedfor) : null
     const name = who?.displayname || 'someone'
     const countText = p.count > 1 ? ` (${p.count})` : ''
@@ -152,10 +220,18 @@ export function eventsFor(post, { replies = [], trysts = [], now = Date.now() } 
       userid: p.userid,
       name,
       when: when ? when.getTime() : null,
-      text: when ? `Promised to ${name}${countText}, ${when.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}` : `Promised to ${name}${countText}`,
+      text: when
+        ? `Promised to ${name}${countText}, ${when.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`
+        : `Promised to ${name}${countText}`,
       chips: [
-        { value: `tryst:${id}:${p.userid}`, label: when ? 'Change time' : 'Set a time' },
-        { value: `taken:${id}:${p.userid}`, label: isOffer ? 'Taken' : 'Received' },
+        {
+          value: `tryst:${id}:${p.userid}`,
+          label: when ? 'Change time' : 'Set a time',
+        },
+        {
+          value: `taken:${id}:${p.userid}`,
+          label: isOffer ? 'Taken' : 'Received',
+        },
         { value: `unpromise:${id}:${p.userid}`, label: 'Unpromise' },
       ],
     })
@@ -177,10 +253,37 @@ export function eventsFor(post, { replies = [], trysts = [], now = Date.now() } 
   }
   const outcomes = post.outcomes || []
   for (const o of outcomes) {
-    events.push({ kind: 'outcome', ts: new Date(o.timestamp || now).getTime(), id, text: o.outcome === 'Withdrawn' ? 'Withdrawn' : isOffer ? 'All gone' : 'Received', chips: [] })
+    events.push({
+      kind: 'outcome',
+      ts: new Date(o.timestamp || now).getTime(),
+      id,
+      text:
+        o.outcome === 'Withdrawn'
+          ? 'Withdrawn'
+          : isOffer
+            ? 'All gone'
+            : 'Received',
+      chips: [],
+    })
   }
-  if (!activeReplies.length && !post.heldreplies && !outcomes.length && baseTs && now - baseTs > 3 * DAY) {
-    events.push({ kind: 'quiet', ts: baseTs + 3 * DAY, id, text: `No one has asked about the ${title} yet`, chips: [{ value: `repost:${id}`, label: 'Repost' }, { value: `withdraw:${id}`, label: 'Withdraw' }, { value: `edit:${id}`, label: 'Edit' }] })
+  if (
+    !activeReplies.length &&
+    !post.heldreplies &&
+    !outcomes.length &&
+    baseTs &&
+    now - baseTs > 3 * DAY
+  ) {
+    events.push({
+      kind: 'quiet',
+      ts: baseTs + 3 * DAY,
+      id,
+      text: `No one has asked about the ${title} yet`,
+      chips: [
+        { value: `repost:${id}`, label: 'Repost' },
+        { value: `withdraw:${id}`, label: 'Withdraw' },
+        { value: `edit:${id}`, label: 'Edit' },
+      ],
+    })
   }
   return events.sort((a, b) => a.ts - b.ts)
 }
@@ -189,7 +292,8 @@ export function eventsFor(post, { replies = [], trysts = [], now = Date.now() } 
 export function timeline(posts, ctxFor, now = Date.now()) {
   const all = []
   for (const post of posts) {
-    for (const ev of eventsFor(post, { ...(ctxFor(post) || {}), now })) all.push({ ...ev, post })
+    for (const ev of eventsFor(post, { ...(ctxFor(post) || {}), now }))
+      all.push({ ...ev, post })
   }
   return all.sort((a, b) => a.ts - b.ts)
 }

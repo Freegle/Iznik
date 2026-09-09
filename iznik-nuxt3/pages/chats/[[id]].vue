@@ -4,10 +4,20 @@
       <MemberChat v-if="me && id" :id="id" />
       <ChatList v-else-if="me" />
       <div v-else class="signin-prompt">
-        <ShellHeader title="Chats" subtitle="Freegle" avatar="/icon.png" back="/" />
+        <ShellHeader
+          title="Chats"
+          subtitle="Freegle"
+          avatar="/icon.png"
+          back="/"
+        />
         <div class="signin-body">
           <p>Sign in to see your chats.</p>
-          <b-button variant="primary" data-testid="signin-button" @click="signIn">Sign in</b-button>
+          <b-button
+            variant="primary"
+            data-testid="signin-button"
+            @click="signIn"
+            >Sign in</b-button
+          >
         </div>
       </div>
     </client-only>
@@ -28,7 +38,7 @@ import { useUiMode } from '~/composables/useUiMode'
 import { useAuthStore } from '~/stores/auth'
 import { buildHead } from '~/composables/useBuildHead'
 
-definePageMeta({ layout: false, key: 'chats' })
+definePageMeta({ layout: false, key: 'chats', chatShell: true })
 
 const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
@@ -37,7 +47,14 @@ const { isChat } = useUiMode()
 const me = computed(() => authStore.user)
 const id = computed(() => (route.params.id ? parseInt(route.params.id) : 0))
 
-useHead(buildHead(route, runtimeConfig, 'Chats', "See the conversations you're having with other freeglers."))
+useHead(
+  buildHead(
+    route,
+    runtimeConfig,
+    'Chats',
+    "See the conversations you're having with other freeglers."
+  )
+)
 
 function signIn() {
   authStore.forceLogin = true

@@ -75,6 +75,12 @@
             />
             <v-icon v-else icon="user" size="2x" />
           </template>
+          <b-dropdown-item data-testid="switch-to-chat" @click="switchToChat">
+            <div class="d-flex align-items-center clickme">
+              <v-icon icon="comments" class="menu-icon" />
+              <span class="menu-text">Freegle chat</span>
+            </div>
+          </b-dropdown-item>
           <b-dropdown-item
             href="/settings"
             @click="clickedMobileNav"
@@ -189,6 +195,7 @@ const {
   backButtonCount,
   requestLogin,
   logout,
+  switchToChat,
   showAboutMe,
   maybeReload,
   backButton,

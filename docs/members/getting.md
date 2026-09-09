@@ -1,13 +1,16 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-08
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/ask/**
   - iznik-nuxt3/pages/chats/**
   - iznik-nuxt3/pages/message/**
+  - iznik-nuxt3/components/chatshell/MemberChat.vue
+  - iznik-nuxt3/components/chatshell/PostCard.vue
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-reply-flow-logged-in.spec.js
   - iznik-nuxt3/tests/e2e/test-reply-to-chat.spec.js
+  - iznik-nuxt3/tests/e2e/test-chat-shell-chats.spec.js
   - iznik-server-go/test/chatmessage_rippling_held_test.go
 ---
 
@@ -37,6 +40,14 @@ you when: either when the post is due to reach your area, or, if it is never goi
 spread quite that far, when it stops spreading and your reply goes anyway. It shows as
 "waiting to send" until it has gone.
 
+### Finding and replying in the chat
+
+In the chat, tap **Nearby** under the chat, or type what you are after, and Freegle shows
+what is on offer near you as cards in the chat, closest first. Tap **Offers**, **Wanted**
+or **Nearest** to narrow them down. Tap a card to read more, and **Reply** to start a chat
+with the person giving it away. Your chats with other freeglers sit in the same list as
+your chat with Freegle, and arranging collection works exactly as described below.
+
 ## Posting a WANTED
 
 If nobody is offering what you need, post a WANTED and let it find you.
@@ -47,6 +58,12 @@ If nobody is offering what you need, post a WANTED and let it find you.
 4. Confirm your email if you are not logged in, then click **Freegle it!**
 
 A WANTED has no delivery or deadline step. People who have the item can reply to you.
+
+In the chat, tap **Ask** and answer Freegle's questions in turn: what you are looking
+for, a word about why or what would do, your postcode, and your email if you are not
+signed in. Before posting, Freegle looks for matching offers nearby and shows any it finds,
+so you may not need to post at all. Tap **Carry on asking** to post anyway. Replies come to
+**Your posts**, and people offering you the item appear there with a **Reply** button.
 
 ## The chat: arranging collection
 

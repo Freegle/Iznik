@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/firstreply"
+	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 )
@@ -62,13 +63,20 @@ func (t *Transcript) Write(userid uint64, turns []TranscriptTurn) (uint64, []uin
 		if turn.Who == "freegle" {
 			author = freegleID
 		}
+		// A member's own words get the same worry-word check as any chat message, so
+		// something concerning said to Freegle reaches the volunteers as it would
+		// said to a person.
+		review := "0"
+		if turn.Who != "freegle" && len(message.WorryMatchesForText(t.DB, turn.Text)) > 0 {
+			review = "1"
+		}
 		row := map[string]interface{}{
 			"chatid":               roomID,
 			"userid":               author,
 			"type":                 utils.CHAT_MESSAGE_DEFAULT,
 			"date":                 time.Now(),
 			"message":              turn.Text,
-			"reviewrequired":       gorm.Expr("0"),
+			"reviewrequired":       gorm.Expr(review),
 			"reviewrejected":       gorm.Expr("0"),
 			"processingrequired":   gorm.Expr("0"),
 			"processingsuccessful": gorm.Expr("1"),

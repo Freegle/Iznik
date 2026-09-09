@@ -667,6 +667,153 @@
       "to": "CANCELLED",
       "trigger": "llm_decision",
       "condition": "They said cancel or stop with nothing in progress"
+    },
+    {
+      "id": "gconfirm_qty",
+      "from": "GIVE_CONFIRM",
+      "to": "GIVE_QUANTITY",
+      "trigger": "llm_decision",
+      "condition": "They want to change how many there are"
+    },
+    {
+      "id": "gconfirm_email",
+      "from": "GIVE_CONFIRM",
+      "to": "GIVE_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "They want to change the email replies go to"
+    },
+    {
+      "id": "aconfirm_email",
+      "from": "ASK_CONFIRM",
+      "to": "ASK_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "They want to change the email replies go to"
+    },
+    {
+      "id": "gpost_failed",
+      "from": "GIVE_POST",
+      "to": "GIVE_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Posting did not go through; back to the card to try again"
+    },
+    {
+      "id": "apost_failed",
+      "from": "ASK_POST",
+      "to": "ASK_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Posting did not go through; back to the card to try again"
+    },
+    {
+      "id": "gphoto_skip_qty",
+      "from": "GIVE_PHOTO",
+      "to": "GIVE_QUANTITY",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "gphoto_skip_where",
+      "from": "GIVE_PHOTO",
+      "to": "GIVE_WHERE",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "gphoto_skip_email",
+      "from": "GIVE_PHOTO",
+      "to": "GIVE_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "gphoto_skip_confirm",
+      "from": "GIVE_PHOTO",
+      "to": "GIVE_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "gitem_skip_qty",
+      "from": "GIVE_ITEM",
+      "to": "GIVE_QUANTITY",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "gitem_skip_where",
+      "from": "GIVE_ITEM",
+      "to": "GIVE_WHERE",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "gitem_skip_email",
+      "from": "GIVE_ITEM",
+      "to": "GIVE_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "gitem_skip_confirm",
+      "from": "GIVE_ITEM",
+      "to": "GIVE_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "aitem_skip_where",
+      "from": "ASK_ITEM",
+      "to": "ASK_WHERE",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "aitem_skip_email",
+      "from": "ASK_ITEM",
+      "to": "ASK_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "aitem_skip_confirm",
+      "from": "ASK_ITEM",
+      "to": "ASK_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "amatches_skip_where",
+      "from": "ASK_MATCHES",
+      "to": "ASK_WHERE",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "amatches_skip_email",
+      "from": "ASK_MATCHES",
+      "to": "ASK_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "amatches_skip_confirm",
+      "from": "ASK_MATCHES",
+      "to": "ASK_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "amatches_item",
+      "from": "ASK_MATCHES",
+      "to": "ASK_ITEM",
+      "trigger": "llm_decision",
+      "condition": "They want to change what they are asking for"
+    },
+    {
+      "id": "adone_nearby_where",
+      "from": "ASK_DONE",
+      "to": "NEARBY_WHERE",
+      "trigger": "llm_decision",
+      "condition": "They want to see what is nearby and we do not know where they are"
     }
   ]
 }

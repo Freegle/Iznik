@@ -1,14 +1,18 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-08
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/settings/**
   - iznik-nuxt3/components/settings/**
   - iznik-nuxt3/pages/unsubscribe/**
   - iznik-nuxt3/pages/mydata.vue
+  - iznik-nuxt3/pages/chitchat/**
+  - iznik-nuxt3/components/chatshell/ChatList.vue
+  - iznik-nuxt3/components/chatshell/ChitChatGroup.vue
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-settings.spec.js
   - iznik-nuxt3/tests/e2e/test-register-unsubscribe.spec.js
+  - iznik-nuxt3/tests/e2e/test-chat-shell-chats.spec.js
 ---
 
 # Your account
@@ -97,6 +101,10 @@ You can change any of it, or turn everything off, on the Settings page.
 and old. From here you edit, repost, promise, and mark items TAKEN or RECEIVED. See
 [Giving something away](giving.md) and [Getting something](getting.md).
 
+In the chat, this is the **Your posts** chat, pinned near the top of your chat list.
+Replies to all your posts, the people you have promised things to, collection times and
+reminders arrive there as messages, with the same buttons a tap away.
+
 Note that old posts stay in your history and cannot be deleted. They are kept for
 community statistics and so you always have a record of what you gave or received.
 
@@ -121,11 +129,20 @@ community statistics and so you always have a record of what you gave or receive
   removed automatically after six months. See
   [/privacy](https://www.ilovefreegle.org/privacy) for the full policy.
 
+## Chat or website
+
+Freegle can look like a chat app or like a website, and the two share the same account,
+posts and chats. Choose **Classic Freegle** from the menu at the top of the chat to use
+the website; the classic pages have a link back to the chat. Freegle saves the choice with
+your account, and in your browser if you are not signed in. See
+[Getting started](getting-started.md#chat-or-website).
+
 ## More things members do
 
 - **ChitChat** (`/chitchat`): a community discussion feed, separate from OFFER and WANTED
   posts. Chat about local goings-on, ask for recommendations, and so on. If a ChitChat
-  post looks like an item request, Freegle nudges you to use Give or Ask instead.
+  post looks like an item request, Freegle nudges you to use Give or Ask instead. In the
+  chat, ChitChat is a group chat in your chat list, named after your area.
 - **Stories** (`/stories`): share why you freegle. Good stories may feature in a
   community newsletter.
 - **Community events** (`/communityevents`) and **volunteering** (`/volunteerings`):

@@ -1,24 +1,61 @@
 <template>
   <div class="confirm-card" data-testid="confirm-card">
-    <div class="confirm-type">{{ postType === 'Wanted' ? 'Wanted' : 'Offer' }}</div>
-    <div v-if="photos.length" class="confirm-photos">
-      <ProxyImage v-for="p in photos" :key="p.id" :src="p.paththumb || p.path" alt="" :width="72" :height="72" sizes="72px" class="confirm-photo" />
+    <div class="confirm-type">
+      {{ postType === 'Wanted' ? 'Wanted' : 'Offer' }}
     </div>
-    <button type="button" class="confirm-field" data-testid="confirm-item" @click="$emit('edit', 'item')">
+    <div v-if="photos.length" class="confirm-photos">
+      <ProxyImage
+        v-for="p in photos"
+        :key="p.id"
+        :src="p.paththumb || p.path"
+        alt=""
+        :width="72"
+        :height="72"
+        sizes="72px"
+        class="confirm-photo"
+      />
+    </div>
+    <button
+      type="button"
+      class="confirm-field"
+      data-testid="confirm-item"
+      @click="$emit('edit', 'item')"
+    >
       <span class="confirm-label">What</span>
-      <span class="confirm-value">{{ slots.item }}<span v-if="slots.quantity > 1"> · {{ slots.quantity }} available</span></span>
+      <span class="confirm-value"
+        >{{ slots.item
+        }}<span v-if="slots.quantity > 1">
+          · {{ slots.quantity }} available</span
+        ></span
+      >
     </button>
-    <button type="button" class="confirm-field" data-testid="confirm-description" @click="$emit('edit', 'description')">
+    <button
+      type="button"
+      class="confirm-field"
+      data-testid="confirm-description"
+      @click="$emit('edit', 'description')"
+    >
       <span class="confirm-label">Details</span>
-      <span class="confirm-value" :class="{ muted: !slots.description }">{{ slots.description || 'None added' }}</span>
+      <span class="confirm-value" :class="{ muted: !slots.description }">{{
+        slots.description || 'None added'
+      }}</span>
     </button>
-    <button type="button" class="confirm-field" data-testid="confirm-where" @click="$emit('edit', 'where')">
+    <button
+      type="button"
+      class="confirm-field"
+      data-testid="confirm-where"
+      @click="$emit('edit', 'where')"
+    >
       <span class="confirm-label">Where</span>
       <span class="confirm-value">{{ whereText }}</span>
     </button>
     <div v-if="postType === 'Offer'" class="confirm-toggles">
       <label class="confirm-toggle">
-        <input type="checkbox" :checked="!!slots.delivery" @change="$emit('toggle', 'delivery', $event.target.checked)" />
+        <input
+          type="checkbox"
+          :checked="!!slots.delivery"
+          @change="$emit('toggle', 'delivery', $event.target.checked)"
+        />
         Could deliver
       </label>
     </div>

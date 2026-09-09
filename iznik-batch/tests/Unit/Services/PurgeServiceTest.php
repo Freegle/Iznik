@@ -713,4 +713,39 @@ class PurgeServiceTest extends TestCase
         $this->assertArrayHasKey('user_activity_logs', $results);
         $this->assertArrayHasKey('orphaned_user_logs', $results);
     }
+
+    public function test_purge_assistant_instances_removes_only_idle_ones(): void
+    {
+        $stale = DB::table('assistant_instances')->insertGetId([
+            'uuid' => (string) \Illuminate\Support\Str::uuid(),
+            'owner' => 'a:stale',
+            'workflow' => 'freegle',
+            'state' => 'HUB',
+            'status' => 'active',
+            'context' => '{}',
+            'history' => '[]',
+            'created_at' => now()->subDays(40),
+            'updated_at' => now()->subDays(40),
+        ]);
+        $fresh = DB::table('assistant_instances')->insertGetId([
+            'uuid' => (string) \Illuminate\Support\Str::uuid(),
+            'owner' => 'a:fresh',
+            'workflow' => 'freegle',
+            'state' => 'GIVE_ITEM',
+            'status' => 'active',
+            'context' => '{}',
+            'history' => '[]',
+            'created_at' => now()->subDays(2),
+            'updated_at' => now()->subDays(2),
+        ]);
+
+        $this->assertGreaterThanOrEqual(1, $this->service->purgeAssistantInstances(30, dryRun: true));
+        $this->assertDatabaseHas('assistant_instances', ['id' => $stale]);
+
+        $count = $this->service->purgeAssistantInstances(30);
+
+        $this->assertGreaterThanOrEqual(1, $count);
+        $this->assertDatabaseMissing('assistant_instances', ['id' => $stale]);
+        $this->assertDatabaseHas('assistant_instances', ['id' => $fresh]);
+    }
 }
