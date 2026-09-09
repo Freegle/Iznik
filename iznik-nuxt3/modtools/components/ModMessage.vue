@@ -1036,9 +1036,18 @@ const currentGroupid = computed(() => {
     if (home != null) return home
     return parseInt(pool[0].groupid)
   }
+  // I moderate none of this post's groups (the Support page, or a post shown outside my
+  // queues). Anchor to the origin group, not to whichever row the API returned first.
+  const home = homeGroupId(message.value?.groups)
+  if (home != null) return home
   const gid = parseInt(groupid.value)
   return gid || null
 })
+
+// One predicate for "this row belongs to the group being administered", so the lookups
+// below cannot drift in how they compare ids. Rows arrive as numbers from the Go API
+// today; a stringified id from any other source must match just the same.
+const isCurrentGroup = (id) => parseInt(id) === currentGroupid.value
 
 // Get the group info for the group being administered (multi-group support).
 const contextGroup = computed(() => {
@@ -1182,9 +1191,8 @@ const group = computed(() => {
   // groupid/groups[0]. For a rippled post the first/unordered group may be the origin
   // group, which would draw the wrong community's boundary on the map and centre it on
   // the wrong place (Discourse 9808/305).
-  const gid = currentGroupid.value
-  if (!gid) return null
-  return myModGroups.value.find((g) => parseInt(g.id) === gid) || null
+  if (!currentGroupid.value) return null
+  return myModGroups.value.find((g) => isCurrentGroup(g.id)) || null
 })
 
 const position = computed(() => {
@@ -1272,9 +1280,7 @@ const membership = computed(() => {
   // (Discourse 9808/303, 9808/305, 9862/15). Otherwise the per-member posting-status
   // notice, mail settings, and cantpost gating can all reflect the wrong group's copy.
   if (currentGroupid.value && fromUser.value?.memberships) {
-    ret = fromUser.value.memberships.find(
-      (g) => g.groupid === currentGroupid.value
-    )
+    ret = fromUser.value.memberships.find((g) => isCurrentGroup(g.groupid))
   }
 
   return ret
@@ -1293,9 +1299,7 @@ const configid = computed(() => {
   // ($groupname etc.) come from a different group's config than the one shown
   // as "moderating for" and used to send/sign the reply (Discourse 9862/15).
   if (currentGroupid.value && authStore.groups) {
-    const sessionGroup = authStore.groups.find(
-      (g) => parseInt(g.groupid) === parseInt(currentGroupid.value)
-    )
+    const sessionGroup = authStore.groups.find((g) => isCurrentGroup(g.groupid))
     if (sessionGroup?.configid) {
       id = sessionGroup.configid
     }

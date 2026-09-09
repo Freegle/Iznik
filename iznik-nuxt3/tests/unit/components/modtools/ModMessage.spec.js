@@ -936,6 +936,94 @@ describe('ModMessage', () => {
         ourpostingstatus: 'DEFAULT',
       })
     })
+
+    const crosspostGroups = [
+      {
+        groupid: 790,
+        collection: 'Approved',
+        rippled_in: 1,
+        arrival: '2024-01-02T00:00:00Z',
+      },
+      {
+        groupid: 789,
+        collection: 'Approved',
+        rippled_in: 0,
+        arrival: '2024-01-01T00:00:00Z',
+      },
+    ]
+    const bothMemberships = [
+      { id: 790, groupid: 790, ourpostingstatus: 'PROHIBITED' },
+      { id: 789, groupid: 789, ourpostingstatus: 'DEFAULT' },
+    ]
+
+    it('anchors membership to the origin copy when the mod moderates both groups', async () => {
+      // Here the pool really has two candidates, so the tie-break inside currentGroupid
+      // (home group first, by rippled_in) is what decides - not the array order.
+      mockMyModGroups.push({
+        id: 790,
+        lat: 52.0,
+        lng: -1.0,
+        polygon: null,
+        mysettings: { configid: 1 },
+        settings: {},
+      })
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'Updated User',
+        memberships: bothMemberships,
+      })
+      try {
+        const wrapper = mountComponent({}, { groups: crosspostGroups })
+        await flushPromises()
+        expect(wrapper.vm.currentGroupid).toBe(789)
+        expect(wrapper.vm.membership).toEqual({
+          id: 789,
+          groupid: 789,
+          ourpostingstatus: 'DEFAULT',
+        })
+      } finally {
+        mockMyModGroups.pop()
+      }
+    })
+
+    it('falls back to the origin copy, not the first row, when the mod moderates neither group', async () => {
+      // The Support page mounts this with no moderated groups at all (a Support viewer
+      // is not a Moderator on the post's groups), which used to leave membership on
+      // whichever row the API happened to return first.
+      const saved = mockMyModGroups.splice(0, mockMyModGroups.length)
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'Updated User',
+        memberships: bothMemberships,
+      })
+      try {
+        const wrapper = mountComponent({}, { groups: crosspostGroups })
+        await flushPromises()
+        expect(wrapper.vm.currentGroupid).toBe(789)
+        expect(wrapper.vm.membership).toEqual({
+          id: 789,
+          groupid: 789,
+          ourpostingstatus: 'DEFAULT',
+        })
+      } finally {
+        mockMyModGroups.push(...saved)
+      }
+    })
+
+    it('matches a membership whose groupid arrives as a string', async () => {
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'Updated User',
+        memberships: [{ id: 789, groupid: '789', ourpostingstatus: 'DEFAULT' }],
+      })
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.vm.membership).toEqual({
+        id: 789,
+        groupid: '789',
+        ourpostingstatus: 'DEFAULT',
+      })
+    })
   })
 
   describe('Computed: subjectClass', () => {
