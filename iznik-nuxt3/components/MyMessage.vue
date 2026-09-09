@@ -790,7 +790,12 @@ const promisedToName = computed(() => {
 })
 
 const promisedToUsers = computed(() => {
-  return promisedTo.value.map((p) => userStore?.byId(p.id)).filter((u) => u)
+  // Mirror promisedTo: a promisee whose profile has not loaded yet is still a promisee,
+  // so the Renege dialog's "to:" list carries them under the same placeholder name the
+  // button already shows, rather than coming up empty.
+  return promisedTo.value.map(
+    (p) => userStore?.byId(p.id) || { id: p.id, displayname: p.name }
+  )
 })
 
 const isPromised = computed(() => {
