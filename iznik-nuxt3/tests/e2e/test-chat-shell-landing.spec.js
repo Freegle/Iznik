@@ -76,7 +76,7 @@ test.describe('Chat shell landing', () => {
     await expect(page.getByTestId('flow-progress')).toContainText('sofa', {
       timeout: timeouts.ui.appearance,
     })
-    await expect(page.getByTestId('flow-progress')).toContainText('3 of 5')
+    await expect(page.getByTestId('flow-progress')).toContainText('3 of 7')
     await expect(page.getByTestId('chip-skip')).toHaveCount(0) // no real photo, so the description is required
   })
 

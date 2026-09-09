@@ -17,6 +17,7 @@ import { buildHead } from '~/composables/useBuildHead'
 import { useUiMode } from '~/composables/useUiMode'
 import { useAuthStore } from '~/stores/auth'
 import { useMessageStore } from '~/stores/message'
+import { useAssistantStore } from '~/stores/assistant'
 
 definePageMeta({ layout: false, chatShell: true })
 
@@ -61,13 +62,21 @@ if (isChat.value && !me.value) {
 }
 
 // A signed-in member on chat lands on their chat list, as every WhatsApp session
-// starts on the list. Visitors and first-timers land in the Freegle chat.
+// starts on the list. Visitors and first-timers land in the Freegle chat, and so does
+// anyone in the middle of one: a visitor who becomes a member by posting stays put.
+const assistant = useAssistantStore()
+const midChat = computed(() => {
+  if (assistant.progress) return true
+  const last = assistant.lines[assistant.lines.length - 1]
+  return !!last && Date.now() - (last.ts || 0) < 10 * 60 * 1000
+})
 if (
   import.meta.client &&
   isChat.value &&
   me.value &&
   route.path === '/' &&
-  !route.query.chat
+  !route.query.chat &&
+  !midChat.value
 ) {
   navigateTo('/chats', { replace: true })
 }
