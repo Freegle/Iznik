@@ -407,6 +407,10 @@ func (s *Service) Turn(ctx context.Context, id Identity, in TurnInput, onDelta f
 				move(tr.To, "tap:"+in.Tap)
 			}
 		}
+	case in.Event != nil && in.Event.Type == "resume":
+		// The browser lost the end of a reply (a dropped connection) and asks where things
+		// stand. Nothing is said or moved: the current state, chips and progress come back.
+		return s.finish(inst, id, slots, facts, recent, "", "", nil, unclassified, false)
 	case in.Event != nil:
 		memberLine = describeEvent(*in.Event)
 		r := ApplyEvent(inst.State, *in.Event, slots, facts)

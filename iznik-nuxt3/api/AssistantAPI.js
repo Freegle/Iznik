@@ -49,8 +49,24 @@ export default class AssistantAPI extends BaseAPI {
   }
 
   // One turn. body: { conversation?, text?, tap?, event? }. onDelta gets fragments of
-  // Freegle's reply. Resolves to the turn record.
-  async turn(body, { onDelta, signal } = {}) {
+  // Freegle's reply. Resolves to the turn record. A stream that breaks before the turn
+  // arrives (a phone changing network, a proxy giving up) is followed once by a resume,
+  // which asks where things stand without saying or moving anything.
+  async turn(body, { onDelta, signal, resumed } = {}) {
+    try {
+      return await this.stream(body, { onDelta, signal })
+    } catch (e) {
+      const conversation = body?.conversation
+      if (resumed || !conversation || signal?.aborted || !e?.streamBroke)
+        throw e
+      return this.turn(
+        { conversation, event: { type: 'resume' } },
+        { onDelta, signal, resumed: true }
+      )
+    }
+  }
+
+  async stream(body, { onDelta, signal } = {}) {
     const res = await fetch(`${this.config.public.APIv2}/assistant/turn`, {
       method: 'POST',
       headers: this.headers(),
@@ -74,20 +90,30 @@ export default class AssistantAPI extends BaseAPI {
       else if (event === 'error') error = data?.message || 'error'
     }
 
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      let idx
-      while ((idx = buffer.indexOf('\n\n')) !== -1) {
-        const chunk = buffer.slice(0, idx)
-        buffer = buffer.slice(idx + 2)
-        parseSse(chunk, handle)
+    try {
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let idx
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const chunk = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 2)
+          parseSse(chunk, handle)
+        }
       }
+    } catch (e) {
+      const broke = new Error('assistant: stream broke')
+      broke.streamBroke = true
+      throw broke
     }
     if (buffer.trim()) parseSse(buffer, handle)
     if (error) throw new Error(error)
-    if (!turn) throw new Error('assistant: no turn')
+    if (!turn) {
+      const broke = new Error('assistant: no turn')
+      broke.streamBroke = true
+      throw broke
+    }
     return turn
   }
 

@@ -55,12 +55,14 @@ export function useUiMode() {
     maxAge: 60 * 60 * 24 * 365,
     sameSite: 'lax',
   })
-  const stored = computed(() => cookie.value || readStoredMode())
-
-  const mode = computed(() =>
+  // Decided once per page load, shared by every caller, and carried from the server to
+  // the browser in the payload so both render the same thing. After that only setMode
+  // changes it: a cookie coming or going mid-page (the browser tidying up, a member
+  // signing in with a different saved choice) must not flip the interface under them.
+  const mode = useState(UI_MODE_KEY, () =>
     resolveUiMode({
       settingsMode: me.value?.settings?.uiMode,
-      storedMode: stored.value,
+      storedMode: cookie.value || readStoredMode(),
       defaultMode: runtimeConfig.public.CHAT_FIRST_DEFAULT,
       userId: me.value?.id,
     })
@@ -68,6 +70,7 @@ export function useUiMode() {
   const isChat = computed(() => mode.value === 'chat')
 
   async function setMode(next) {
+    mode.value = next
     cookie.value = next
     writeStoredMode(next)
     if (me.value) {
