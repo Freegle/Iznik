@@ -23,12 +23,23 @@ export default class AssistantAPI extends BaseAPI {
     }
   }
 
+  // On sign-out: the next person on this device starts as a stranger.
+  clearAnonToken() {
+    try {
+      localStorage.removeItem(ANON_KEY)
+    } catch (e) {
+      // ignore
+    }
+  }
+
   headers() {
     const headers = { 'Content-Type': 'application/json' }
     try {
       const authStore = useAuthStore()
-      if (authStore?.auth?.jwt) headers.Authorization = JSON.stringify(authStore.auth.jwt)
-      if (authStore?.auth?.persistent) headers.Authorization2 = JSON.stringify(authStore.auth.persistent)
+      if (authStore?.auth?.jwt)
+        headers.Authorization = JSON.stringify(authStore.auth.jwt)
+      if (authStore?.auth?.persistent)
+        headers.Authorization2 = JSON.stringify(authStore.auth.persistent)
     } catch (e) {
       // no store on the server
     }
@@ -40,7 +51,7 @@ export default class AssistantAPI extends BaseAPI {
   // One turn. body: { conversation?, text?, tap?, event? }. onDelta gets fragments of
   // Freegle's reply. Resolves to the turn record.
   async turn(body, { onDelta, signal } = {}) {
-    const res = await fetch(`${this.config.APIv2}/assistant/turn`, {
+    const res = await fetch(`${this.config.public.APIv2}/assistant/turn`, {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify(body || {}),
@@ -62,7 +73,7 @@ export default class AssistantAPI extends BaseAPI {
       else if (event === 'turn') turn = data
       else if (event === 'error') error = data?.message || 'error'
     }
-    // eslint-disable-next-line no-constant-condition
+
     while (true) {
       const { value, done } = await reader.read()
       if (done) break
@@ -97,7 +108,7 @@ export function parseSse(chunk, handle) {
     else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
   }
   if (!dataLines.length) return
-  let data = null
+  let data
   try {
     data = JSON.parse(dataLines.join('\n'))
   } catch (e) {

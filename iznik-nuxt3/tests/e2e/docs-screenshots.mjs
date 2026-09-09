@@ -53,6 +53,8 @@ const cfg = {
 /**
  * The manifest. Each entry maps one screenshot to one place in the docs.
  * auth: 'none' logged out, 'member' logged in as a freegler, 'mod' logged in to ModTools.
+ * ui: 'chat' shoots the chat shell; anything else shoots the classic pages the member
+ * guides describe (the chat shell is the default front door, so classic needs the cookie).
  * Add a shot here rather than capturing images by hand.
  */
 const SHOTS = [
@@ -62,6 +64,14 @@ const SHOTS = [
     name: 'homepage',
     auth: 'none',
     app: 'member',
+    path: '/',
+  },
+  {
+    audience: 'members',
+    name: 'chat-home',
+    auth: 'none',
+    app: 'member',
+    ui: 'chat',
     path: '/',
   },
   {
@@ -105,6 +115,22 @@ const SHOTS = [
     auth: 'member',
     app: 'member',
     path: '/chats',
+  },
+  {
+    audience: 'members',
+    name: 'chat-list',
+    auth: 'member',
+    app: 'member',
+    ui: 'chat',
+    path: '/chats',
+  },
+  {
+    audience: 'members',
+    name: 'chat-your-posts',
+    auth: 'member',
+    app: 'member',
+    ui: 'chat',
+    path: '/chats/posts',
   },
   {
     audience: 'members',
@@ -206,11 +232,21 @@ async function loginMod(page) {
   await fillLogin(page, cfg.modEmail, cfg.modPassword)
 }
 
+// The chat shell is the default front door; the cookie picks which one a shot sees.
+function uiModeCookie(base, ui) {
+  return {
+    name: 'freegle-ui-mode',
+    value: ui === 'chat' ? 'chat' : 'classic',
+    url: base,
+  }
+}
+
 async function capture(context, shot) {
   const base = shot.app === 'mod' ? cfg.modBase : cfg.memberBase
   const outDir = resolve(DOCS_ROOT, shot.audience, 'assets')
   await mkdir(outDir, { recursive: true })
   const page = context.page
+  await context.addCookies([uiModeCookie(base, shot.ui)])
   await page.goto(base + shot.path, {
     waitUntil: 'networkidle',
     timeout: cfg.navTimeout,
@@ -259,6 +295,8 @@ async function run() {
         if (!memberCtx) {
           memberCtx = await browser.newContext(ctxOpts)
           memberCtx.page = await memberCtx.newPage()
+          // Log in on the classic browse page, whichever shot comes first.
+          await memberCtx.addCookies([uiModeCookie(cfg.memberBase, 'classic')])
           await loginMember(memberCtx.page)
         }
         ctx = memberCtx

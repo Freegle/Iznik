@@ -1,6 +1,9 @@
 package assistant
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestAsstAnonTokens(t *testing.T) {
 	secret := []byte("s3cret")
@@ -20,5 +23,23 @@ func TestAsstAnonTokens(t *testing.T) {
 	}
 	if verifyAnonWith(tok, []byte("other")) != "" {
 		t.Fatal("wrong secret verified")
+	}
+}
+
+func TestAsstAnonTokenExpires(t *testing.T) {
+	secret := []byte("s")
+	now := time.Now()
+	fresh := mintAnonAt(secret, now)
+	if verifyAnonAt(fresh, secret, now) == "" {
+		t.Fatal("a fresh token verifies")
+	}
+	if verifyAnonAt(fresh, secret, now.Add(29*24*time.Hour)) == "" {
+		t.Fatal("a token under a month old still verifies")
+	}
+	if verifyAnonAt(fresh, secret, now.Add(31*24*time.Hour)) != "" {
+		t.Fatal("a month-old token lapses")
+	}
+	if verifyAnonAt(fresh, secret, now.Add(-2*time.Hour)) != "" {
+		t.Fatal("a token from the future is not ours")
 	}
 }

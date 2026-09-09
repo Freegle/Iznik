@@ -40,3 +40,16 @@ func TestAsstCommandsAndIntents(t *testing.T) {
 		}
 	}
 }
+
+func TestAsstLooksPluralCastsAWiderNet(t *testing.T) {
+	for _, s := range []string{"a couple of lamps", "sofas", "kids bikes", "few plates", "6 pieces", "assorted tools"} {
+		if !LooksPlural(s) {
+			t.Errorf("%q should read as more than one", s)
+		}
+	}
+	for _, s := range []string{"glass vase", "bus pass", "chess set", "christmas tree", "tennis racket", "mattress", "grey sofa"} {
+		if LooksPlural(s) {
+			t.Errorf("%q is one thing", s)
+		}
+	}
+}

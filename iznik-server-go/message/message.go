@@ -6744,3 +6744,24 @@ func withdrawRippledCopiesAndBlock(db *gorm.DB, msgid, myid uint64) {
 
 	db.Exec("INSERT IGNORE INTO rippling_blocked (msgid, byuser, reason) VALUES (?, ?, ?)", msgid, myid, rippleBlockedReason)
 }
+
+// WorryMatchesForText checks free text against the global concern keywords, the same
+// check posts get, for callers that have a piece of text rather than a message: a line
+// typed to the Freegle assistant, a ChitChat post.
+func WorryMatchesForText(db *gorm.DB, text string) []WorryMatch {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	var words []WorryWord
+	db.Table("concern_keywords").
+		Select("id, keyword, CASE category " +
+			"WHEN 'substance_regulated' THEN 'Regulated' " +
+			"WHEN 'substance_reportable' THEN 'Reportable' " +
+			"WHEN 'substance_medicine' THEN 'Medicine' " +
+			"WHEN 'review' THEN 'Review' " +
+			"WHEN 'allowed' THEN 'Allowed' " +
+			"ELSE 'Review' END AS type").
+		Where("match_mode = 'fuzzy' AND scope = 'global'").
+		Scan(&words)
+	return matchWorryWords("", text, words)
+}

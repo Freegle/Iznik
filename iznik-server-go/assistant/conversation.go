@@ -5,6 +5,8 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 )
 
 // One turn of the conversation. The host (browser) sends typed text, a chip tap, or an
@@ -21,6 +23,47 @@ type Identity struct {
 	LocationName string
 	Community    string
 	AnonToken    string
+	// Throttled marks a visitor who could not be issued an identity (too many minted from
+	// their address); they get the template lines and no model calls.
+	Throttled bool
+}
+
+// Turns on one conversation run one at a time, so two taps in quick succession or two
+// tabs cannot each load the same instance and overwrite the other's update.
+type convLocks struct {
+	mu sync.Mutex
+	m  map[string]*convLock
+}
+
+type convLock struct {
+	mu sync.Mutex
+	n  int
+}
+
+var conversationLocks = &convLocks{m: map[string]*convLock{}}
+
+// llmDeadline bounds one model call, and with it how long a stream can stay open.
+const llmDeadline = 60 * time.Second
+
+func (l *convLocks) lock(key string) func() {
+	l.mu.Lock()
+	e := l.m[key]
+	if e == nil {
+		e = &convLock{}
+		l.m[key] = e
+	}
+	e.n++
+	l.mu.Unlock()
+	e.mu.Lock()
+	return func() {
+		e.mu.Unlock()
+		l.mu.Lock()
+		e.n--
+		if e.n == 0 {
+			delete(l.m, key)
+		}
+		l.mu.Unlock()
+	}
 }
 
 // TurnInput is what the browser sent.
@@ -274,6 +317,10 @@ func (s *Service) parseTyped(state, t string, slots Slots, facts Facts) parsed {
 
 // Turn runs one turn. onDelta receives fragments of Freegle's reply as they arrive.
 func (s *Service) Turn(ctx context.Context, id Identity, in TurnInput, onDelta func(string)) (*TurnResult, error) {
+	if in.ConversationID != "" {
+		unlock := conversationLocks.lock(in.ConversationID)
+		defer unlock()
+	}
 	inst, err := s.instanceFor(id, in.ConversationID)
 	if err != nil {
 		return nil, err
@@ -302,13 +349,20 @@ func (s *Service) Turn(ctx context.Context, id Identity, in TurnInput, onDelta f
 		}
 		if s.Engine.Workflow.States[to].NodeType == "end" {
 			// End states would close the conversation; keep it alive at the hub with a note.
+			// The hub is the start node, the one place every flow may return to.
 			facts["cancelled"] = true
 			_ = s.Engine.Force(inst, "HUB", reason)
+			unclassified = 0
 			return
 		}
 		if err := s.Engine.Transition(inst, to, reason); err != nil {
-			_ = s.Engine.Force(inst, to, reason)
+			// The graph is the contract. An edge the workflow does not define is not
+			// taken, whoever asked for it: not a tap, not a browser event, not a rule.
+			s.logf("refused %s: %v", reason, err)
+			return
 		}
+		// Moving on by tap, event or rule means they are on track again.
+		unclassified = 0
 	}
 
 	switch {
@@ -452,7 +506,7 @@ func (s *Service) allowed(id Identity, ip string) bool {
 	if s.Strikes.Locked(id.Key) {
 		return false
 	}
-	return s.Quota.Allow(id.Key, ip, id.UserID > 0)
+	return !id.Throttled && s.Quota.Allow(id.Key, ip, id.UserID > 0)
 }
 
 // decide runs a decision turn through the engine.
@@ -470,6 +524,8 @@ func (s *Service) decide(ctx context.Context, inst *Instance, id Identity, ip, t
 	inst.Context["recent"] = recentToAny(recent)
 	inst.Context["lastMember"] = text
 	before := inst.State
+	ctx, cancel := context.WithTimeout(ctx, llmDeadline)
+	defer cancel()
 	d, err := s.Engine.Decide(ctx, inst, map[string]interface{}{"type": "message", "text": text}, onDelta)
 	if err != nil {
 		s.logf("decision failed: %v", err)
@@ -477,6 +533,11 @@ func (s *Service) decide(ctx context.Context, inst *Instance, id Identity, ip, t
 		return out
 	}
 	out.decided = true
+	if s.Engine.Workflow.States[inst.State].NodeType == "end" {
+		// The model may end a flow; the conversation itself stays open at the hub.
+		facts["cancelled"] = true
+		_ = s.Engine.Force(inst, "HUB", "end")
+	}
 	if u, ok := d.ContextUpdates["understood"].(bool); ok {
 		out.understood = u
 	}
@@ -497,9 +558,10 @@ func (s *Service) decide(ctx context.Context, inst *Instance, id Identity, ip, t
 		next := NextAfter(inst.State, merged, facts)
 		if flowIndex(next) > flowIndex(inst.State) {
 			if err := s.Engine.Transition(inst, next, "slots"); err != nil {
-				_ = s.Engine.Force(inst, next, "slots")
+				s.logf("refused slots move: %v", err)
+			} else {
+				say = "" // compose afresh in the new state
 			}
-			say = "" // compose afresh in the new state
 		}
 	}
 	if say != "" && inst.State != before && !InFlow(before) && InFlow(inst.State) && len(newSlots) > 0 {
@@ -526,20 +588,24 @@ func (s *Service) decide(ctx context.Context, inst *Instance, id Identity, ip, t
 // retrying once before falling back to the template line.
 func (s *Service) compose(ctx context.Context, inst *Instance, id Identity, ip string, slots Slots, facts Facts, recent []recentLine, instruction string, onDelta func(string)) (string, bool) {
 	state := inst.State
+	lastMember, lastSaid := "", ""
+	for i := len(recent) - 1; i >= 0; i-- {
+		if recent[i].Who == "member" && lastMember == "" {
+			lastMember = recent[i].Text
+		}
+		if recent[i].Who == "freegle" && lastSaid == "" {
+			lastSaid = recent[i].Text
+		}
+	}
 	if s.Strikes.Locked(id.Key) {
 		return templateAbuse, true
 	}
-	if !s.Quota.Allow(id.Key, ip, id.UserID > 0) {
-		return TemplateFor(state), true
+	if id.Throttled || !s.Quota.Allow(id.Key, ip, id.UserID > 0) {
+		return TemplateAfter(state, lastSaid), true
 	}
+	ctx, cancel := context.WithTimeout(ctx, llmDeadline)
+	defer cancel()
 	context := map[string]interface{}{"facts": facts, "slots": slots, "recent": recentToAny(recent)}
-	lastMember := ""
-	for i := len(recent) - 1; i >= 0; i-- {
-		if recent[i].Who == "member" {
-			lastMember = recent[i].Text
-			break
-		}
-	}
 	note := instruction
 	for attempt := 0; attempt < 2; attempt++ {
 		system, user := BuildComposePrompt(s.Engine.Workflow, state, context, note)
@@ -550,7 +616,7 @@ func (s *Service) compose(ctx context.Context, inst *Instance, id Identity, ip s
 		raw, err := s.Engine.LLM.Call(ctx, system, user, deltaFn)
 		if err != nil {
 			s.logf("compose failed: %v", err)
-			return TemplateFor(state), true
+			return TemplateAfter(state, lastSaid), true
 		}
 		say := ParseSay(raw)
 		if say == "" {
@@ -564,7 +630,7 @@ func (s *Service) compose(ctx context.Context, inst *Instance, id Identity, ip s
 		s.logf("compose reply failed check: %v", reasons)
 		note = instruction + " Your previous reply was rejected for: " + strings.Join(reasons, ", ") + ". Write it again using only the facts given, no exclamation marks, no promises."
 	}
-	return TemplateFor(state), true
+	return TemplateAfter(state, lastSaid), true
 }
 
 func (s *Service) finish(inst *Instance, id Identity, slots Slots, facts Facts, recent []recentLine, memberLine, say string, hostAction *HostAction, unclassified int, fallback bool) (*TurnResult, error) {
@@ -574,7 +640,11 @@ func (s *Service) finish(inst *Instance, id Identity, slots Slots, facts Facts, 
 	if action == nil {
 		action = HostActionForState(state, slots, facts)
 	}
-	progress := ProgressFor(state, slots)
+	if action != nil && action.Type == "create_post" {
+		// The browser posts once per key, however many turns re-ask while posting.
+		action.Key = inst.UUID + ":" + state
+	}
+	progress := ProgressFor(state, slots, facts)
 	if memberLine != "" {
 		recent = append(recent, recentLine{"member", memberLine})
 	}

@@ -1,13 +1,34 @@
 <template>
-  <div class="sheet-backdrop" data-testid="chooser-sheet" @click.self="$emit('close')">
-    <div class="sheet" role="dialog" aria-modal="true" :aria-label="'Who should have the ' + title">
+  <div
+    class="sheet-backdrop"
+    data-testid="chooser-sheet"
+    @click.self="$emit('close')"
+  >
+    <div
+      class="sheet"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="'Who should have the ' + title"
+    >
       <div class="sheet-header">
         <div>
           <div class="sheet-title">Who should have the {{ title }}?</div>
-          <div v-if="available > 1" class="sheet-sub" data-testid="sheet-pool">{{ available }} available · {{ allocated }} allocated</div>
-          <div v-else class="sheet-sub">Tap someone to promise it to them. You decide; it needn't be whoever replied first.</div>
+          <div v-if="available > 1" class="sheet-sub" data-testid="sheet-pool">
+            {{ available }} available · {{ allocated }} allocated
+          </div>
+          <div v-else class="sheet-sub">
+            Tap someone to promise it to them. You decide; it needn't be whoever
+            replied first.
+          </div>
         </div>
-        <button type="button" class="sheet-close" aria-label="Close" @click="$emit('close')">✕</button>
+        <button
+          type="button"
+          class="sheet-close"
+          aria-label="Close"
+          @click="$emit('close')"
+        >
+          ✕
+        </button>
       </div>
       <div class="sheet-body">
         <div v-for="r in ordered" :key="r.userid" class="sheet-row">
@@ -16,22 +37,61 @@
               <div class="sheet-actions">
                 <template v-if="available > 1">
                   <div class="stepper" :aria-label="'How many for ' + r.name">
-                    <button type="button" class="step" :aria-label="'Fewer for ' + r.name" :disabled="counts[r.userid] <= 0" @click="change(r.userid, -1)">−</button>
-                    <span class="step-value" :data-testid="'count-' + r.userid">{{ counts[r.userid] }}</span>
-                    <button type="button" class="step" :aria-label="'More for ' + r.name" :disabled="allocated >= available" @click="change(r.userid, 1)">+</button>
+                    <button
+                      type="button"
+                      class="step"
+                      :aria-label="'Fewer for ' + r.name"
+                      :disabled="counts[r.userid] <= 0"
+                      @click="change(r.userid, -1)"
+                    >
+                      −
+                    </button>
+                    <span
+                      class="step-value"
+                      :data-testid="'count-' + r.userid"
+                      >{{ counts[r.userid] }}</span
+                    >
+                    <button
+                      type="button"
+                      class="step"
+                      :aria-label="'More for ' + r.name"
+                      :disabled="allocated >= available"
+                      @click="change(r.userid, 1)"
+                    >
+                      +
+                    </button>
                   </div>
                 </template>
-                <button v-else type="button" class="choose-btn" :data-testid="'choose-' + r.userid" @click="$emit('promise', [{ userid: r.userid, count: 1 }])">
+                <button
+                  v-else
+                  type="button"
+                  class="choose-btn"
+                  :data-testid="'choose-' + r.userid"
+                  :disabled="busy"
+                  @click="choose(r.userid)"
+                >
                   {{ isOffer ? 'Promise' : 'Choose' }}
                 </button>
-                <button type="button" class="chat-btn" @click="$emit('chat', r.chatid)">Chat</button>
+                <button
+                  type="button"
+                  class="chat-btn"
+                  @click="$emit('chat', r.chatid)"
+                >
+                  Chat
+                </button>
               </div>
             </template>
           </PersonCard>
         </div>
       </div>
       <div v-if="available > 1" class="sheet-footer">
-        <button type="button" class="confirm-btn" data-testid="chooser-confirm" :disabled="!allocated" @click="confirm">
+        <button
+          type="button"
+          class="confirm-btn"
+          data-testid="chooser-confirm"
+          :disabled="!allocated || busy"
+          @click="confirm"
+        >
           Promise {{ allocated }} {{ allocated === 1 ? 'item' : 'items' }}
         </button>
       </div>
@@ -39,7 +99,7 @@
   </div>
 </template>
 <script setup>
-import { computed } from '#imports'
+import { computed, ref } from '#imports'
 import { reactive } from 'vue'
 import PersonCard from '~/components/chatshell/PersonCard.vue'
 import { orderRepliers, allocate } from '~/composables/yourposts'
@@ -53,13 +113,22 @@ const props = defineProps({
   available: { type: Number, required: false, default: 1 },
 })
 const emit = defineEmits(['promise', 'chat', 'close'])
+// One promise per opening of the sheet: a second tap before it closes does nothing.
+const busy = ref(false)
 
 const isOffer = computed(() => props.post?.type !== 'Wanted')
-const title = computed(() => String(props.post?.subject || 'item').replace(/^(OFFER|WANTED):\s*/i, '').replace(/\s*\([^)]*\)\s*$/, ''))
+const title = computed(() =>
+  String(props.post?.subject || 'item')
+    .replace(/^(OFFER|WANTED):\s*/i, '')
+    .replace(/\s*\([^)]*\)\s*$/, '')
+)
 const ordered = computed(() => orderRepliers(props.replies, props.post))
 const counts = reactive({})
-for (const a of allocate(props.available, ordered.value)) counts[a.userid] = a.count
-const allocated = computed(() => Object.values(counts).reduce((n, c) => n + c, 0))
+for (const a of allocate(props.available, ordered.value))
+  counts[a.userid] = a.count
+const allocated = computed(() =>
+  Object.values(counts).reduce((n, c) => n + c, 0)
+)
 
 function change(userid, delta) {
   const next = (counts[userid] || 0) + delta
@@ -68,7 +137,15 @@ function change(userid, delta) {
   counts[userid] = next
 }
 
+function choose(userid) {
+  if (busy.value) return
+  busy.value = true
+  emit('promise', [{ userid, count: 1 }])
+}
+
 function confirm() {
+  if (busy.value) return
+  busy.value = true
   emit(
     'promise',
     Object.entries(counts)

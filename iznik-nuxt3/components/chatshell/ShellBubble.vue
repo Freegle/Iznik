@@ -1,7 +1,15 @@
 <template>
-  <div class="bubble-row" :class="'from-' + from" :data-testid="'bubble-' + from">
+  <div
+    class="bubble-row"
+    :class="'from-' + from"
+    :data-testid="'bubble-' + from"
+  >
     <div class="bubble">
-      <div v-if="name && from === 'them'" class="bubble-name" :style="{ color: colour }">
+      <div
+        v-if="name && from === 'them'"
+        class="bubble-name"
+        :style="{ color: colour }"
+      >
         {{ name }}
       </div>
       <div class="bubble-body"><slot /></div>

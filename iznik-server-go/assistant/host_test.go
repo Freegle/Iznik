@@ -1,6 +1,9 @@
 package assistant
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestAsstChipsAtMostThree(t *testing.T) {
 	slots := Slots{"typedItem": "old sofa", "suggestions": []interface{}{"Sofa", "3-seater sofa"}}
@@ -94,11 +97,102 @@ func TestAsstEvents(t *testing.T) {
 }
 
 func TestAsstProgress(t *testing.T) {
-	if ProgressFor("HUB", Slots{}) != nil {
+	if ProgressFor("HUB", Slots{}, Facts{}) != nil {
 		t.Fatal("no progress outside a flow")
 	}
-	p := ProgressFor("GIVE_DESCRIPTION", Slots{"item": "sofa"})
-	if p.Label != "Giving" || p.Item != "sofa" || p.Step != 3 || p.Total != 5 {
-		t.Fatalf("progress %+v", p)
+	if ProgressFor("GIVE_DONE", Slots{}, Facts{}) != nil {
+		t.Fatal("no progress once the post has gone")
+	}
+	// A visitor meets every question.
+	p := ProgressFor("GIVE_DESCRIPTION", Slots{"item": "sofa", "photoDecided": true}, Facts{})
+	if p.Label != "Giving" || p.Item != "sofa" || p.Step != 3 || p.Total != 7 {
+		t.Fatalf("visitor progress %+v", p)
+	}
+	// A signed-in member whose location is known skips where and email, and the count
+	// must not go backwards between questions.
+	member := Facts{"signedIn": true, "locationKnown": true}
+	q := ProgressFor("GIVE_QUANTITY", Slots{"item": "sofa", "photoDecided": true, "description": "comfy"}, member)
+	if q.Step != 4 || q.Total != 5 {
+		t.Fatalf("member quantity progress %+v", q)
+	}
+	c := ProgressFor("GIVE_CONFIRM", Slots{"item": "sofa", "photoDecided": true, "description": "comfy", "quantity": 1}, member)
+	if c.Step != 5 || c.Total != 5 {
+		t.Fatalf("member confirm progress %+v", c)
+	}
+	// Matches shown for an ask sit at the item step.
+	m := ProgressFor("ASK_MATCHES", Slots{"item": "bike"}, Facts{})
+	if m.Label != "Asking" || m.Step != 1 || m.Total != 5 {
+		t.Fatalf("ask matches progress %+v", m)
+	}
+}
+
+// Every move the host can make on its own must be an edge the workflow defines (or an
+// end state, which the conversation turns into a return to the hub). The engine now
+// refuses anything else, so a gap here would be a dead button, not a bypass.
+func TestAsstHostMovesAreLegal(t *testing.T) {
+	wf := newTestEngine(&FakeLLM{}).Workflow
+	legal := func(from, to string) bool {
+		return to == "" || to == from || wf.IsValidTransition(from, to) || wf.States[to].NodeType == "end"
+	}
+	combos := []struct {
+		slots Slots
+		facts Facts
+	}{
+		{Slots{}, Facts{}},
+		{Slots{"item": "chairs", "photoDecided": true, "description": "four of them", "quantity": 4, "postcode": "EH3 6SS", "email": "a@b.com"}, Facts{}},
+		{Slots{"item": "sofa", "photoDecided": true, "description": "comfy"}, Facts{"signedIn": true, "locationKnown": true}},
+		{Slots{"item": "bike"}, Facts{"signedIn": true, "locationKnown": true, "matches": []interface{}{map[string]interface{}{"id": 1.0}}, "postFailed": "x"}},
+	}
+	for state, def := range wf.States {
+		if def.NodeType == "end" {
+			continue
+		}
+		for _, c := range combos {
+			for _, chip := range ChipsFor(state, c.slots, c.facts) {
+				if tr := TargetForChip(state, chip.Value, c.slots, c.facts); tr != nil && !legal(state, tr.To) {
+					t.Errorf("chip %s in %s leads to %s, which the workflow does not allow", chip.Value, state, tr.To)
+				}
+			}
+			if IsQuestion(state) {
+				if next := NextAfter(state, c.slots, c.facts); !legal(state, next) {
+					t.Errorf("NextAfter(%s) = %s is not an edge", state, next)
+				}
+			}
+			for _, ev := range []Event{{Type: "photo_added", AttachmentID: 1}, {Type: "postcode_confirmed", Postcode: "EH3 6SS", Name: "Edinburgh"}, {Type: "email_confirmed", Email: "a@b.com"}, {Type: "posted", Msgid: 5}, {Type: "post_failed"}, {Type: "matches"}, {Type: "nearby"}, {Type: "communities"}, {Type: "joined"}, {Type: "signed_in"}} {
+				if r := ApplyEvent(state, ev, c.slots, c.facts); !legal(state, r.To) {
+					t.Errorf("event %s in %s leads to %s, which the workflow does not allow", ev.Type, state, r.To)
+				}
+			}
+		}
+		if strings.HasSuffix(state, "_CONFIRM") {
+			for _, f := range []string{"photo", "item", "description", "quantity", "where", "email"} {
+				tr := TargetForChip(state, "edit:"+f, Slots{}, Facts{})
+				if tr == nil {
+					continue // asks have no photo or quantity
+				}
+				if _, ok := wf.States[tr.To]; ok && !legal(state, tr.To) {
+					t.Errorf("edit:%s from %s leads to %s without an edge", f, state, tr.To)
+				}
+			}
+		}
+	}
+}
+
+func TestAsstEditTapAcceptsOnlyFlowQuestions(t *testing.T) {
+	if tr := TargetForChip("ASK_CONFIRM", "edit:done", Slots{}, Facts{}); tr != nil {
+		t.Fatalf("edit:done is not a question, got %+v", tr)
+	}
+	if tr := TargetForChip("ASK_CONFIRM", "edit:item", Slots{}, Facts{}); tr == nil || tr.To != "ASK_ITEM" {
+		t.Fatalf("edit:item should revisit the item, got %+v", tr)
+	}
+}
+
+func TestAsstPostFailedReturnsToTheCard(t *testing.T) {
+	r := ApplyEvent("GIVE_POST", Event{Type: "post_failed", Reason: "network"}, Slots{"item": "sofa"}, Facts{})
+	if r.To != "GIVE_CONFIRM" {
+		t.Fatalf("post_failed should go back to the card, got %q", r.To)
+	}
+	if r.Facts["postFailed"] != "network" {
+		t.Fatalf("reason kept for the composed line: %+v", r.Facts)
 	}
 }

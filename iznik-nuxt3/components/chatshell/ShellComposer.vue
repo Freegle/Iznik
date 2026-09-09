@@ -2,7 +2,8 @@
   <div class="composer-wrap">
     <div v-if="progress" class="progress-line" data-testid="flow-progress">
       <span class="progress-text">
-        {{ progress.label }}<span v-if="progress.item"> · {{ progress.item }}</span> ·
+        {{ progress.label
+        }}<span v-if="progress.item"> · {{ progress.item }}</span> ·
         {{ progress.step }} of {{ progress.total }}
       </span>
       <button
@@ -15,7 +16,7 @@
         ✕
       </button>
     </div>
-    <Chips
+    <ShellChips
       v-if="actions?.length"
       :options="actions"
       class="action-row"
@@ -61,13 +62,17 @@
 </template>
 <script setup>
 import { ref } from '#imports'
-import Chips from '~/components/chatshell/Chips.vue'
+import ShellChips from '~/components/chatshell/ShellChips.vue'
 
 // The bottom of the phone: the persistent action row, the progress line during a
 // flow, and the box. Typing always works; sending is only held while Freegle is
 // composing so replies do not overlap.
 defineProps({
-  placeholder: { type: String, required: false, default: 'Type or tap a button' },
+  placeholder: {
+    type: String,
+    required: false,
+    default: 'Type or tap a button',
+  },
   progress: { type: Object, required: false, default: null },
   actions: { type: Array, required: false, default: () => [] },
   allowPhoto: { type: Boolean, required: false, default: true },

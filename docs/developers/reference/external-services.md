@@ -49,6 +49,7 @@ Visible, annoying, not fatal.
 | **Google Cloud Vision** | Checks uploaded photos for unsuitable images |
 | **Google Perspective** | Scores text for abuse, feeding moderation |
 | **Google Gemini** | The AI features (support helper, classification experiments) |
+| **Anthropic Claude** | Composes the Freegle assistant's replies in the chat shell (`ANTHROPIC_API_KEY` on apiv2). Without a key the chat still works, on fixed lines. See [chat-first.md](chat-first.md) |
 | **Firebase Cloud Messaging** | Push notifications to the apps (`GOOGLE_PUSH_KEY`) |
 | **MaxMind** | Turns an IP address into a rough location, used in anti-abuse |
 | **Playwire** | Advert delivery ([ads.md](ads.md)) |
@@ -120,3 +121,7 @@ server is `dev`. Server-side secrets go in `.env` (development, see `.env.exampl
 are read through `iznik-batch/config/freegle.php` rather than `env()` at the point of use.
 `.env.example` also holds settings for the local stack itself that are not services, such
 as `PERCONA_STORAGE`, which keeps the development database in memory or on disk.
+
+`CHAT_FIRST_DEFAULT` (public) picks the front door for anyone who has not chosen: `chat`,
+`classic`, or a percentage of members by user id. Setting it to `classic` is the kill
+switch for the chat shell ([chat-first.md](chat-first.md)).

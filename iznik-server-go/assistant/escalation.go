@@ -56,7 +56,12 @@ func (s *Strikes) prune(key string, t time.Time) []time.Time {
 			keep = append(keep, x)
 		}
 	}
-	s.m[key] = keep
+	// Only identities with a live strike take up room; checking is free.
+	if len(keep) == 0 {
+		delete(s.m, key)
+	} else {
+		s.m[key] = keep
+	}
 	return keep
 }
 
@@ -65,6 +70,10 @@ func (s *Strikes) Record(key string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t := s.now()
+	if len(s.m) > 50000 {
+		// Bound memory the same way the quota buckets do.
+		s.m = map[string][]time.Time{}
+	}
 	list := append(s.prune(key, t), t)
 	s.m[key] = list
 	return len(list)

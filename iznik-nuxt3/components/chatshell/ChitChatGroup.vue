@@ -7,23 +7,36 @@
             <v-icon icon="ellipsis-v" />
             <span class="visually-hidden">Menu</span>
           </template>
-          <b-dropdown-item v-for="d in distances" :key="d.value" :data-testid="'distance-' + d.value" @click="setDistance(d)">
+          <b-dropdown-item
+            v-for="d in distances"
+            :key="d.value"
+            :data-testid="'distance-' + d.value"
+            @click="setDistance(d)"
+          >
             {{ d.label }}<span v-if="d.value === minutes"> ✓</span>
           </b-dropdown-item>
           <b-dropdown-divider />
-          <b-dropdown-item to="/communityevents">Community events</b-dropdown-item>
+          <b-dropdown-item to="/communityevents"
+            >Community events</b-dropdown-item
+          >
           <b-dropdown-item to="/volunteerings">Volunteering</b-dropdown-item>
         </b-dropdown>
       </template>
     </ShellHeader>
 
     <div v-if="!me" class="cc-signin">
-      <Bubble from="freegle">Sign in to join the chit-chat.</Bubble>
-      <div class="px-3 pb-3"><b-button variant="primary" data-testid="signin-button" @click="signIn">Sign in</b-button></div>
+      <ShellBubble from="freegle">Sign in to join the chit-chat.</ShellBubble>
+      <div class="px-3 pb-3">
+        <b-button variant="primary" data-testid="signin-button" @click="signIn"
+          >Sign in</b-button
+        >
+      </div>
     </div>
 
     <div v-else ref="scroller" class="cc-scroll" data-testid="chitchat-stream">
-      <div v-if="!stream.length && loaded" class="cc-empty">Nothing here yet. Say hello to your neighbours.</div>
+      <div v-if="!stream.length && loaded" class="cc-empty">
+        Nothing here yet. Say hello to your neighbours.
+      </div>
       <template v-for="entry in stream" :key="entry.item.id">
         <div v-if="entry.dayLabel" class="cc-day">{{ entry.dayLabel }}</div>
         <ChitChatBubble
@@ -42,21 +55,40 @@
     </div>
 
     <div v-if="replyTo" class="cc-replying" data-testid="cc-replying">
-      <span>Replying to <strong>{{ replyTo.displayname }}</strong></span>
-      <button type="button" class="cc-cancel" aria-label="Cancel reply" @click="replyTo = null">✕</button>
+      <span
+        >Replying to <strong>{{ replyTo.displayname }}</strong></span
+      >
+      <button
+        type="button"
+        class="cc-cancel"
+        aria-label="Cancel reply"
+        @click="replyTo = null"
+      >
+        ✕
+      </button>
     </div>
     <ShellComposer
       v-if="me"
       ref="composer"
-      :placeholder="replyTo ? 'Your reply' : 'Say something to people nearby'"
+      :placeholder="replyTo ? 'Your reply' : 'Say something'"
       :actions="[]"
       :allow-photo="!replyTo"
       :busy="sending"
       @send="send"
       @photo="uploading = true"
     />
-    <OurUploader v-if="uploading" v-model="photos" type="Newsfeed" :start-open="true" @closed="uploading = false" />
-    <NewsReportModal v-if="reporting" :id="reporting" @hidden="reporting = null" />
+    <OurUploader
+      v-if="uploading"
+      v-model="photos"
+      type="Newsfeed"
+      :start-open="true"
+      @closed="uploading = false"
+    />
+    <NewsReportModal
+      v-if="reporting"
+      :id="reporting"
+      @hidden="reporting = null"
+    />
   </div>
 </template>
 <script setup>
@@ -64,13 +96,17 @@ import { computed, ref, onMounted, watch } from '#imports'
 import { nextTick } from 'vue'
 import ShellHeader from '~/components/chatshell/ShellHeader.vue'
 import ShellComposer from '~/components/chatshell/ShellComposer.vue'
-import Bubble from '~/components/chatshell/Bubble.vue'
+import ShellBubble from '~/components/chatshell/ShellBubble.vue'
 import ChitChatBubble from '~/components/chatshell/ChitChatBubble.vue'
 import { useAuthStore } from '~/stores/auth'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { untwem } from '~/composables/useTwem'
-const OurUploader = defineAsyncComponent(() => import('~/components/OurUploader'))
-const NewsReportModal = defineAsyncComponent(() => import('~/components/NewsReportModal'))
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
+)
+const NewsReportModal = defineAsyncComponent(
+  () => import('~/components/NewsReportModal')
+)
 
 // Your local chit-chat as a group chat: one stream of bubbles, replies quoting what
 // they answer, ❤ to love, long-press style menu for report and hide. The distance is
@@ -107,7 +143,11 @@ const title = computed(() => {
   const area = me.value?.settings?.mylocation?.area?.name
   return area ? `${area} ChitChat` : 'ChitChat'
 })
-const subtitle = computed(() => (minutes.value === 0 ? 'Anywhere · tap ⋮ to change' : `Within ${minutes.value} min · tap ⋮ to change`))
+const subtitle = computed(() =>
+  minutes.value === 0
+    ? 'Anywhere · tap ⋮ to change'
+    : `People within ${minutes.value} min · tap ⋮ to change`
+)
 
 // Flatten each thread: the head, then its replies (in time order) quoting the head or
 // the reply they answer.
@@ -120,7 +160,14 @@ const stream = computed(() => {
     let dayLabel = null
     if (day && day !== lastDay) {
       lastDay = day
-      dayLabel = day === new Date().toDateString() ? 'Today' : new Date(t).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })
+      dayLabel =
+        day === new Date().toDateString()
+          ? 'Today'
+          : new Date(t).toLocaleDateString([], {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'short',
+            })
     }
     out.push({ item, quote, dayLabel })
   }
@@ -135,7 +182,20 @@ const stream = computed(() => {
   for (const head of newsfeedStore.feed || []) {
     const full = newsfeedStore.list?.[head.id]
     if (!full || full.deleted || full.hidden || full.unfollowed) continue
-    if (full.type && !['Message', 'AboutMe', 'CommunityEvent', 'VolunteerOpportunity', 'Story', 'Alert', 'Noticeboard', 'ConvertedToPost'].includes(full.type)) continue
+    if (
+      full.type &&
+      ![
+        'Message',
+        'AboutMe',
+        'CommunityEvent',
+        'VolunteerOpportunity',
+        'Story',
+        'Alert',
+        'Noticeboard',
+        'ConvertedToPost',
+      ].includes(full.type)
+    )
+      continue
     push(full, null)
     walk(full.replies, full)
   }
@@ -145,7 +205,11 @@ const stream = computed(() => {
 async function load() {
   const area = me.value?.settings?.newsfeedarea
   await newsfeedStore.fetchFeed(area === undefined ? 0 : area)
-  await Promise.all((newsfeedStore.feed || []).slice(0, 30).map((h) => newsfeedStore.fetch(h.id)))
+  await Promise.all(
+    (newsfeedStore.feed || [])
+      .slice(0, 30)
+      .map((h) => newsfeedStore.fetch(h.id))
+  )
   loaded.value = true
   await nextTick()
   if (props.focus) jump(props.focus)
@@ -204,7 +268,11 @@ async function send(text) {
 }
 
 async function setDistance(d) {
-  const settings = { ...(me.value?.settings || {}), newsfeedMinutes: d.value || 45, newsfeedarea: d.metres }
+  const settings = {
+    ...(me.value?.settings || {}),
+    newsfeedMinutes: d.value || 45,
+    newsfeedarea: d.metres,
+  }
   await authStore.saveAndGet({ settings })
   await newsfeedStore.reset?.()
   await load()

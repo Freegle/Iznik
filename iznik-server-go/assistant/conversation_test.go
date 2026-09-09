@@ -159,3 +159,64 @@ func TestAsstQuotaExhaustedUsesTemplates(t *testing.T) {
 		t.Fatal("anonymous daily cap of 0 means no model call")
 	}
 }
+
+func TestAsstIllegalTapIsRefusedNotForced(t *testing.T) {
+	llm := &FakeLLM{Responses: []string{say("Have you got a photo?"), say("Anything people should know?"), say("Here's what will go up. Happy with it?"), say("Happy with it?"), say("Happy with it?")}}
+	s := newTestService(llm)
+	ctx := context.Background()
+	r1, _ := s.Turn(ctx, member, TurnInput{Tap: "give"}, nil)
+	s.Turn(ctx, member, TurnInput{ConversationID: r1.Conversation, Tap: "no_photo"}, nil)
+	s.Turn(ctx, member, TurnInput{ConversationID: r1.Conversation, Text: "grey sofa"}, nil)
+	r4, _ := s.Turn(ctx, member, TurnInput{ConversationID: r1.Conversation, Text: "Good condition"}, nil)
+	if r4.State != "GIVE_CONFIRM" {
+		t.Fatalf("expected the card, got %s", r4.State)
+	}
+	// A hand-made tap naming a real state the card has no edge to.
+	r5, err := s.Turn(ctx, member, TurnInput{ConversationID: r1.Conversation, Tap: "edit:done"}, nil)
+	if err != nil || r5.State != "GIVE_CONFIRM" {
+		t.Fatalf("undefined edge must not be taken: %v %s", err, r5.State)
+	}
+	if r5.HostAction != nil && r5.HostAction.Type == "create_post" {
+		t.Fatal("nothing may be posted by an illegal tap")
+	}
+	// A legal edit still works.
+	r6, err := s.Turn(ctx, member, TurnInput{ConversationID: r1.Conversation, Tap: "edit:item"}, nil)
+	if err != nil || r6.State != "GIVE_ITEM" {
+		t.Fatalf("edit item: %v %s", err, r6.State)
+	}
+}
+
+func TestAsstPostActionCarriesAnIdempotencyKey(t *testing.T) {
+	llm := &FakeLLM{Responses: []string{say("Have you got a photo?"), say("Anything people should know?"), say("Happy with it?"), say("Posting that for you now."), say("Posting that for you now.")}}
+	s := newTestService(llm)
+	ctx := context.Background()
+	r1, _ := s.Turn(ctx, member, TurnInput{Tap: "give"}, nil)
+	s.Turn(ctx, member, TurnInput{ConversationID: r1.Conversation, Tap: "no_photo"}, nil)
+	s.Turn(ctx, member, TurnInput{ConversationID: r1.Conversation, Text: "grey sofa"}, nil)
+	s.Turn(ctx, member, TurnInput{ConversationID: r1.Conversation, Text: "Good condition"}, nil)
+	r5, err := s.Turn(ctx, member, TurnInput{ConversationID: r1.Conversation, Tap: "post"}, nil)
+	if err != nil || r5.State != "GIVE_POST" || r5.HostAction == nil || r5.HostAction.Type != "create_post" {
+		t.Fatalf("post tap: %v %+v", err, r5)
+	}
+	if r5.HostAction.Key == "" {
+		t.Fatal("create_post needs a key so the browser posts once")
+	}
+	// Posting failed: back to the card, where Post it tries again.
+	r6, err := s.Turn(ctx, member, TurnInput{ConversationID: r1.Conversation, Event: &Event{Type: "post_failed", Reason: "network"}}, nil)
+	if err != nil || r6.State != "GIVE_CONFIRM" {
+		t.Fatalf("post_failed should return to the card: %v %s", err, r6.State)
+	}
+}
+
+func TestAsstThrottledIdentityGetsTemplatesOnly(t *testing.T) {
+	llm := &FakeLLM{Responses: []string{say("Composed line that must not be used.")}}
+	s := newTestService(llm)
+	throttled := Identity{Key: "a:throttled:1.2.3.4", Throttled: true}
+	r, err := s.Turn(context.Background(), throttled, TurnInput{Tap: "give"}, nil)
+	if err != nil || !r.Fallback || r.Say != TemplateFor("GIVE_PHOTO") {
+		t.Fatalf("throttled visitor: %v %+v", err, r)
+	}
+	if len(llm.Calls) != 0 {
+		t.Fatalf("no model calls for a throttled identity, got %d", len(llm.Calls))
+	}
+}

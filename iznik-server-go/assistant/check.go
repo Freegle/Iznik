@@ -3,6 +3,7 @@ package assistant
 import (
 	"encoding/json"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -167,6 +168,16 @@ func CheckReply(say string, vocab Vocabulary, state string) (bool, []string) {
 		}
 		if !vocab[strings.ToLower(n)] {
 			reasons = append(reasons, "number:"+n)
+		}
+	}
+	// Numbers written as words count too: "four people" is as much a claim as "4 people".
+	for _, w := range wordSplit.Split(strings.ToLower(text), -1) {
+		n, ok := wordNumbers[w]
+		if !ok || n <= 3 {
+			continue
+		}
+		if !vocab[strconv.Itoa(n)] && !vocab[w] {
+			reasons = append(reasons, "number:"+w)
 		}
 	}
 	for _, name := range properNounsIn(text, vocab) {

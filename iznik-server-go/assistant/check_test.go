@@ -72,3 +72,22 @@ func TestAsstLengthLimit(t *testing.T) {
 		t.Fatal("HELP allows longer replies")
 	}
 }
+
+func TestAsstSpelledOutNumbersAreChecked(t *testing.T) {
+	ok, reasons := CheckReply("Four people are interested already.", vocab("", nil), "GIVE_DONE")
+	if ok {
+		t.Fatal("four is as much a claim as 4")
+	}
+	found := false
+	for _, r := range reasons {
+		if r == "number:four" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("reasons %v", reasons)
+	}
+	if ok, reasons := CheckReply("A couple of people nearby may have one.", vocab("", nil), ""); !ok {
+		t.Fatalf("small numbers in words are fine: %v", reasons)
+	}
+}

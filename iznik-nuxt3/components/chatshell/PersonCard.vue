@@ -1,17 +1,35 @@
 <template>
   <div class="person-card" :data-testid="'person-card-' + reply.userid">
     <div class="person-row">
-      <ProfileImage v-if="user?.profile?.turl || user?.profile?.url" :image="user.profile.turl || user.profile.url" :name="reply.name" class="person-avatar" is-thumbnail size="lg" />
-      <div v-else class="person-avatar person-fallback">{{ (reply.name || '?').slice(0, 1) }}</div>
+      <ProfileImage
+        v-if="user?.profile?.turl || user?.profile?.url"
+        :image="user.profile.turl || user.profile.url"
+        :name="reply.name"
+        class="person-avatar"
+        is-thumbnail
+        size="lg"
+      />
+      <div v-else class="person-avatar person-fallback">
+        {{ (reply.name || '?').slice(0, 1) }}
+      </div>
       <div class="person-body">
         <div class="person-name">{{ reply.name }}</div>
         <div class="person-meta">
-          <span v-if="reply.miles !== null && reply.miles !== undefined">about {{ Math.round(reply.miles) }} mile{{ Math.round(reply.miles) === 1 ? '' : 's' }} away</span>
+          <span v-if="reply.miles !== null && reply.miles !== undefined"
+            >about {{ Math.round(reply.miles) }} mile{{
+              Math.round(reply.miles) === 1 ? '' : 's'
+            }}
+            away</span
+          >
           <span v-if="ratings">· {{ ratings }}</span>
         </div>
-        <div v-if="reply.snippet" class="person-snippet">"{{ reply.snippet }}"</div>
+        <div v-if="reply.snippet" class="person-snippet">
+          "{{ reply.snippet }}"
+        </div>
         <div v-if="reasons?.length" class="person-reasons">
-          <span v-for="r in reasons" :key="r" class="person-reason">{{ r }}</span>
+          <span v-for="r in reasons" :key="r" class="person-reason">{{
+            r
+          }}</span>
         </div>
       </div>
     </div>

@@ -10,14 +10,23 @@
           <b-dropdown-item @click="markAllRead">Mark all read</b-dropdown-item>
           <b-dropdown-item to="/settings">Settings</b-dropdown-item>
           <b-dropdown-item to="/help">Help</b-dropdown-item>
-          <b-dropdown-item data-testid="menu-classic" @click="goClassic">Classic Freegle</b-dropdown-item>
+          <b-dropdown-item data-testid="menu-classic" @click="goClassic"
+            >Classic Freegle</b-dropdown-item
+          >
           <b-dropdown-item @click="logout">Sign out</b-dropdown-item>
         </b-dropdown>
       </template>
     </ShellHeader>
     <div class="list-tools">
       <label for="chat-search" class="visually-hidden">Search chats</label>
-      <input id="chat-search" v-model="search" type="search" class="list-search" placeholder="Search chats" data-testid="chat-search" />
+      <input
+        id="chat-search"
+        v-model="search"
+        type="search"
+        class="list-search"
+        placeholder="Search chats"
+        data-testid="chat-search"
+      />
       <div class="list-filters" role="tablist" aria-label="Filter chats">
         <button
           v-for="f in filters"
@@ -31,49 +40,86 @@
           @click="filter = f.value"
         >
           {{ f.label }}
-          <span v-if="f.value === 'unread' && unread > 0" class="list-count">{{ unread }}</span>
+          <span v-if="f.value === 'unread' && unread > 0" class="list-count">{{
+            unread
+          }}</span>
         </button>
       </div>
     </div>
     <div class="list-scroll" data-testid="chat-rows">
       <template v-if="filter !== 'people' && !search">
-        <nuxt-link no-prefetch to="/?chat=1" class="list-row pinned" data-testid="row-freegle">
+        <nuxt-link
+          no-prefetch
+          to="/?chat=1"
+          class="list-row pinned"
+          data-testid="row-freegle"
+        >
           <img src="/icon.png" alt="" class="row-avatar" />
           <div class="row-body">
-            <div class="row-name">Freegle <v-icon icon="thumbtack" class="row-pin" /></div>
+            <div class="row-name">
+              Freegle <v-icon icon="thumbtack" class="row-pin" />
+            </div>
             <div class="row-snippet">{{ freegleSnippet }}</div>
           </div>
         </nuxt-link>
-        <nuxt-link v-if="openPosts.length" no-prefetch to="/chats/posts" class="list-row pinned" data-testid="row-yourposts">
+        <nuxt-link
+          v-if="openPosts.length"
+          no-prefetch
+          to="/chats/posts"
+          class="list-row pinned"
+          data-testid="row-yourposts"
+        >
           <div class="row-avatar row-avatar-posts"><v-icon icon="gift" /></div>
           <div class="row-body">
-            <div class="row-name">Your posts <v-icon icon="thumbtack" class="row-pin" /></div>
+            <div class="row-name">
+              Your posts <v-icon icon="thumbtack" class="row-pin" />
+            </div>
             <div class="row-snippet">{{ postsSnippet }}</div>
           </div>
           <span v-if="postsUnread" class="row-badge">{{ postsUnread }}</span>
         </nuxt-link>
-        <nuxt-link no-prefetch to="/chitchat" class="list-row" data-testid="row-chitchat">
+        <nuxt-link
+          no-prefetch
+          to="/chitchat"
+          class="list-row"
+          data-testid="row-chitchat"
+        >
           <div class="row-avatar row-avatar-group"><v-icon icon="users" /></div>
           <div class="row-body">
             <div class="row-name">{{ chitchatName }}</div>
             <div class="row-snippet">Your local chit-chat</div>
           </div>
-          <span v-if="newsfeedCount" class="row-badge">{{ newsfeedCount }}</span>
+          <span v-if="newsfeedCount" class="row-badge">{{
+            newsfeedCount
+          }}</span>
         </nuxt-link>
       </template>
-      <div v-for="c in rows" :key="'chat-' + c.id" class="list-row-wrap" @click="open(c.id)">
+      <div
+        v-for="c in rows"
+        :key="'chat-' + c.id"
+        class="list-row-wrap"
+        @click="open(c.id)"
+      >
         <ChatListEntry :id="c.id" class="list-entry" />
       </div>
-      <div v-if="!rows.length && filter === 'unread'" class="list-empty">Nothing unread.</div>
-      <div v-if="!rows.length && search" class="list-empty">No chats match.</div>
-      <div v-if="!rows.length && !search && filter === 'people'" class="list-empty">
-        When you reply to a post, or someone replies to yours, the chat appears here.
+      <div v-if="!rows.length && filter === 'unread'" class="list-empty">
+        Nothing unread.
+      </div>
+      <div v-if="!rows.length && search" class="list-empty">
+        No chats match.
+      </div>
+      <div
+        v-if="!rows.length && !search && filter === 'people'"
+        class="list-empty"
+      >
+        When you reply to a post, or someone replies to yours, the chat appears
+        here.
       </div>
     </div>
   </div>
 </template>
 <script setup>
-import { computed, ref, onMounted } from '#imports'
+import { computed, ref, onMounted, useRouter } from '#imports'
 import ShellHeader from '~/components/chatshell/ShellHeader.vue'
 import ChatListEntry from '~/components/ChatListEntry.vue'
 import { useChatStore } from '~/stores/chat'
@@ -105,26 +151,48 @@ const filters = [
 
 const unread = computed(() => chatStore.unreadCount || 0)
 const chats = computed(() => {
-  const list = Object.values(chatStore.list || {}).filter((c) => c && !c.systemchat)
+  const list = Object.values(chatStore.list || {}).filter(
+    (c) => c && !c.systemchat
+  )
   return list.filter((c) => c.status !== 'Closed' && c.status !== 'Blocked')
 })
 const rows = computed(() => {
   let list = chats.value
   if (filter.value === 'unread') list = list.filter((c) => c.unseen > 0)
   const s = search.value.trim().toLowerCase()
-  if (s) list = list.filter((c) => (c.name || '').toLowerCase().includes(s) || (c.snippet || '').toLowerCase().includes(s))
-  return [...list].sort((a, b) => new Date(b.lastdate || 0) - new Date(a.lastdate || 0))
+  if (s)
+    list = list.filter(
+      (c) =>
+        (c.name || '').toLowerCase().includes(s) ||
+        (c.snippet || '').toLowerCase().includes(s)
+    )
+  return [...list].sort(
+    (a, b) => new Date(b.lastdate || 0) - new Date(a.lastdate || 0)
+  )
 })
 
-const freegleSnippet = computed(() => assistant.lastFreegleLine?.text || 'Give and get stuff for free, near you')
-const openPosts = computed(() => (messageStore.byUserList || []).filter((m) => m && !m.outcomes?.length && !m.deleted))
+const freegleSnippet = computed(
+  () =>
+    assistant.lastFreegleLine?.text || 'Give and get stuff for free, near you'
+)
+// byUserList holds lean summaries; the full records (replies, promises, outcomes) are
+// loaded alongside by loadOwnActivePosts and win where present.
+const openPosts = computed(() =>
+  (messageStore.byUserList[me.value?.id] || [])
+    .filter(Boolean)
+    .map((m) => ({ ...m, ...(messageStore.byId(m.id) || {}) }))
+    .filter((m) => !m.outcomes?.length && !m.deleted)
+)
 const postsSnippet = computed(() => {
   const withReplies = openPosts.value.filter((m) => m.replycount > 0).length
   if (!openPosts.value.length) return 'Nothing open just now'
-  if (withReplies) return `${withReplies} of your ${openPosts.value.length} posts ${withReplies === 1 ? 'has' : 'have'} replies`
+  if (withReplies)
+    return `${withReplies} of your ${openPosts.value.length} posts ${withReplies === 1 ? 'has' : 'have'} replies`
   return `${openPosts.value.length} open post${openPosts.value.length === 1 ? '' : 's'}`
 })
-const postsUnread = computed(() => openPosts.value.reduce((n, m) => n + (m.unseenreplies || 0), 0))
+const postsUnread = computed(() =>
+  openPosts.value.reduce((n, m) => n + (m.unseenreplies || 0), 0)
+)
 const newsfeedCount = computed(() => newsfeedStore.count || 0)
 const chitchatName = computed(() => {
   const area = me.value?.settings?.mylocation?.area?.name

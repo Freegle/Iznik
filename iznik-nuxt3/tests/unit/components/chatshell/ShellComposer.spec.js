@@ -14,13 +14,24 @@ describe('ShellComposer', () => {
     expect(ta.element.value).toBe('')
   })
   it('shows the progress line with a stop button during a flow and hides the action row', async () => {
-    const w = mount(ShellComposer, { props: { progress: { label: 'Giving', item: 'sofa', step: 2, total: 5 }, actions: [] }, global: { stubs } })
-    expect(w.find('[data-testid="flow-progress"]').text()).toContain('Giving · sofa · 2 of 5')
+    const w = mount(ShellComposer, {
+      props: {
+        progress: { label: 'Giving', item: 'sofa', step: 2, total: 5 },
+        actions: [],
+      },
+      global: { stubs },
+    })
+    expect(w.find('[data-testid="flow-progress"]').text()).toContain(
+      'Giving · sofa · 2 of 5'
+    )
     await w.find('[data-testid="flow-cancel"]').trigger('click')
     expect(w.emitted('cancel')).toHaveLength(1)
   })
   it('shows the persistent action chips and emits action on tap', async () => {
-    const w = mount(ShellComposer, { props: { actions: [{ value: 'give', label: 'Give' }] }, global: { stubs } })
+    const w = mount(ShellComposer, {
+      props: { actions: [{ value: 'give', label: 'Give' }] },
+      global: { stubs },
+    })
     await w.find('[data-testid="chip-give"]').trigger('click')
     expect(w.emitted('action')[0][0]).toEqual({ value: 'give', label: 'Give' })
   })
@@ -29,6 +40,8 @@ describe('ShellComposer', () => {
     const ta = w.find('[data-testid="composer-input"]')
     expect(ta.attributes('disabled')).toBeUndefined()
     await ta.setValue('hello')
-    expect(w.find('[data-testid="composer-send"]').attributes('disabled')).toBeDefined()
+    expect(
+      w.find('[data-testid="composer-send"]').attributes('disabled')
+    ).toBeDefined()
   })
 })

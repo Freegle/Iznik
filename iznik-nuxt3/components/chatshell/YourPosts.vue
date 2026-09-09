@@ -1,6 +1,12 @@
 <template>
   <div class="your-posts">
-    <ShellHeader title="Your posts" :subtitle="subtitle" avatar="/icon.png" back="/chats" :badge="unread">
+    <ShellHeader
+      title="Your posts"
+      :subtitle="subtitle"
+      avatar="/icon.png"
+      back="/chats"
+      :badge="unread"
+    >
       <template #menu>
         <b-dropdown variant="link" no-caret toggle-class="shell-menu-btn" right>
           <template #button-content>
@@ -8,31 +14,68 @@
             <span class="visually-hidden">Menu</span>
           </template>
           <b-dropdown-item to="/myposts">Classic My Posts</b-dropdown-item>
-          <b-dropdown-item to="/?chat=1">Give or ask for something</b-dropdown-item>
+          <b-dropdown-item to="/?chat=1"
+            >Give or ask for something</b-dropdown-item
+          >
         </b-dropdown>
       </template>
     </ShellHeader>
 
     <div ref="scroller" class="posts-scroll" data-testid="yourposts-transcript">
       <div v-if="!posts.length && loaded" class="posts-empty">
-        <Bubble from="freegle">Nothing open just now. When you give or ask for something, it turns up here, and so do the replies.</Bubble>
-        <div class="chips-wrap"><Chips :options="[{ value: 'give', label: 'Give something' }, { value: 'ask', label: 'Ask for something' }]" @pick="goFreegle" /></div>
+        <ShellBubble from="freegle"
+          >Nothing open just now. When you give or ask for something, it turns
+          up here, and so do the replies.</ShellBubble
+        >
+        <div class="chips-wrap">
+          <ShellChips
+            :options="[
+              { value: 'give', label: 'Give something' },
+              { value: 'ask', label: 'Ask for something' },
+            ]"
+            @pick="goFreegle"
+          />
+        </div>
       </div>
-      <template v-for="ev in events" :key="ev.kind + ev.id + ev.ts + (ev.userid || '')">
-        <div class="event-day" v-if="dayLabel(ev)">{{ dayLabel(ev) }}</div>
+      <template
+        v-for="ev in events"
+        :key="ev.kind + ev.id + ev.ts + (ev.userid || '')"
+      >
+        <div v-if="dayLabel(ev)" class="event-day">{{ dayLabel(ev) }}</div>
         <div class="event" :data-testid="'event-' + ev.kind + '-' + ev.id">
           <div class="event-card" :class="'event-' + ev.kind">
             <button type="button" class="event-post" @click="openPost(ev.post)">
-              <ProxyImage v-if="photoOf(ev.post)" :src="photoOf(ev.post)" alt="" :width="40" :height="40" sizes="40px" class="event-thumb" />
-              <span v-else class="event-thumb event-thumb-fallback"><v-icon :icon="ev.post.type === 'Wanted' ? 'shopping-cart' : 'gift'" /></span>
+              <ProxyImage
+                v-if="photoOf(ev.post)"
+                :src="photoOf(ev.post)"
+                alt=""
+                :width="40"
+                :height="40"
+                sizes="40px"
+                class="event-thumb"
+              />
+              <span v-else class="event-thumb event-thumb-fallback"
+                ><v-icon
+                  :icon="ev.post.type === 'Wanted' ? 'shopping-cart' : 'gift'"
+              /></span>
               <span class="event-title">{{ cleanTitle(ev.post.subject) }}</span>
               <span class="event-status">{{ statusOf(ev.post) }}</span>
             </button>
-            <PersonCard v-if="ev.kind === 'reply'" :reply="replyFor(ev)" :reasons="[]" />
+            <PersonCard
+              v-if="ev.kind === 'reply'"
+              :reply="replyFor(ev)"
+              :reasons="[]"
+            />
             <div v-else class="event-text">{{ ev.text }}</div>
             <div class="event-time">{{ timeOf(ev.ts) }}</div>
           </div>
-          <div class="chips-wrap"><Chips :options="ev.chips" :label="ev.text" @pick="(chip) => act(chip, ev)" /></div>
+          <div class="chips-wrap">
+            <ShellChips
+              :options="ev.chips"
+              :label="ev.text"
+              @pick="(chip) => act(chip, ev)"
+            />
+          </div>
         </div>
       </template>
       <div class="chat-end" />
@@ -48,7 +91,7 @@
 
     <div v-if="sendTo" class="sendto" data-testid="sendto">
       <span>Send to:</span>
-      <Chips :options="sendTo.options" @pick="sendToPick" />
+      <ShellChips :options="sendTo.options" @pick="sendToPick" />
     </div>
 
     <ChooserSheet
@@ -60,7 +103,12 @@
       @chat="openChat"
       @close="chooser = null"
     />
-    <OutcomeModal v-if="outcome" :id="outcome.id" :type="outcome.type" @hidden="outcomeDone" />
+    <OutcomeModal
+      v-if="outcome"
+      :id="outcome.id"
+      :type="outcome.type"
+      @hidden="outcomeDone"
+    />
     <MessageEditModal v-if="editing" :id="editing" @hidden="editDone" />
     <PromiseModal
       v-if="tryst"
@@ -73,12 +121,12 @@
   </div>
 </template>
 <script setup>
-import { computed, ref, onMounted, watch } from '#imports'
+import { computed, ref, onMounted, watch, useRouter } from '#imports'
 import { nextTick } from 'vue'
 import ShellHeader from '~/components/chatshell/ShellHeader.vue'
 import ShellComposer from '~/components/chatshell/ShellComposer.vue'
-import Bubble from '~/components/chatshell/Bubble.vue'
-import Chips from '~/components/chatshell/Chips.vue'
+import ShellBubble from '~/components/chatshell/ShellBubble.vue'
+import ShellChips from '~/components/chatshell/ShellChips.vue'
 import PersonCard from '~/components/chatshell/PersonCard.vue'
 import ChooserSheet from '~/components/chatshell/ChooserSheet.vue'
 import ProxyImage from '~/components/ProxyImage.vue'
@@ -90,11 +138,23 @@ import { useTrystStore } from '~/stores/tryst'
 import { useComposeStore } from '~/stores/compose'
 import { useLocationStore } from '~/stores/location'
 import { loadOwnActivePosts } from '~/composables/useCompose'
-import { timeline, cleanTitle, wantedCountFrom, unreadCount, remaining } from '~/composables/yourposts'
+import {
+  timeline,
+  cleanTitle,
+  wantedCountFrom,
+  unreadCount,
+  remaining,
+} from '~/composables/yourposts'
 import { milesAway } from '~/composables/useDistance'
-const OutcomeModal = defineAsyncComponent(() => import('~/components/OutcomeModal'))
-const MessageEditModal = defineAsyncComponent(() => import('~/components/MessageEditModal'))
-const PromiseModal = defineAsyncComponent(() => import('~/components/PromiseModal'))
+const OutcomeModal = defineAsyncComponent(
+  () => import('~/components/OutcomeModal')
+)
+const MessageEditModal = defineAsyncComponent(
+  () => import('~/components/MessageEditModal')
+)
+const PromiseModal = defineAsyncComponent(
+  () => import('~/components/PromiseModal')
+)
 
 // One chat about all your posts: what happened, who is interested, who gets what.
 // Everything shown comes from the post records, the replies' chats, the repliers and
@@ -120,9 +180,17 @@ const sending = ref(false)
 const seen = ref({})
 const now = ref(Date.now())
 
-const SEEN_KEY = 'freegle-yourposts-seen'
+// Per member, so a shared device does not carry one person's read marks to the next.
+const seenKey = computed(() => 'freegle-yourposts-seen:' + (me.value?.id || 0))
 
-const posts = computed(() => (messageStore.byUserList || []).filter((m) => m && !m.deleted && (!m.outcomes?.length || isRecent(m))))
+// byUserList holds lean summaries; the full records (subject, replies, promises,
+// outcomes) are loaded alongside by loadOwnActivePosts and win where present.
+const posts = computed(() =>
+  (messageStore.byUserList[me.value?.id] || [])
+    .filter(Boolean)
+    .map((m) => ({ ...m, ...(messageStore.byId(m.id) || {}) }))
+    .filter((m) => !m.deleted && (!m.outcomes?.length || isRecent(m)))
+)
 
 function isRecent(m) {
   const t = m.outcomes?.[0]?.timestamp
@@ -139,7 +207,9 @@ function myLatLng() {
 function repliesFor(post) {
   const at = myLatLng()
   return (post.replies || []).map((r) => {
-    const chat = chatStore.toUser?.(r.userid) || Object.values(chatStore.list || {}).find((c) => c?.otheruid === r.userid)
+    const chat =
+      chatStore.toUser?.(r.userid) ||
+      Object.values(chatStore.list || {}).find((c) => c?.otheruid === r.userid)
     const u = userStore.byId(r.userid)
     const miles = at && u?.lat ? milesAway(at.lat, at.lng, u.lat, u.lng) : null
     const snippet = chat?.snippet || ''
@@ -164,7 +234,9 @@ function ctxFor(post) {
 }
 
 const events = computed(() => timeline(posts.value, ctxFor, now.value))
-const unread = computed(() => unreadCount(posts.value, ctxFor, seen.value, now.value))
+const unread = computed(() =>
+  unreadCount(posts.value, ctxFor, seen.value, now.value)
+)
 const subtitle = computed(() => {
   const open = posts.value.filter((p) => !p.outcomes?.length).length
   if (!open) return 'Nothing open'
@@ -173,16 +245,33 @@ const subtitle = computed(() => {
 })
 
 function replyFor(ev) {
-  return repliesFor(ev.post).find((r) => r.userid === ev.userid) || { userid: ev.userid, name: ev.name, snippet: ev.snippet, miles: ev.miles }
+  return (
+    repliesFor(ev.post).find((r) => r.userid === ev.userid) || {
+      userid: ev.userid,
+      name: ev.name,
+      snippet: ev.snippet,
+      miles: ev.miles,
+    }
+  )
 }
 
 function photoOf(post) {
-  return post?.attachments?.[0]?.paththumb || post?.attachments?.[0]?.path || null
+  return (
+    post?.attachments?.[0]?.paththumb || post?.attachments?.[0]?.path || null
+  )
 }
 
 function statusOf(post) {
-  if (post.outcomes?.length) return post.outcomes[0].outcome === 'Withdrawn' ? 'Withdrawn' : post.type === 'Wanted' ? 'Received' : 'Taken'
-  if (post.promises?.length) return remaining(post) > 0 ? `${remaining(post)} still available` : 'Promised'
+  if (post.outcomes?.length)
+    return post.outcomes[0].outcome === 'Withdrawn'
+      ? 'Withdrawn'
+      : post.type === 'Wanted'
+        ? 'Received'
+        : 'Taken'
+  if (post.promises?.length)
+    return remaining(post) > 0
+      ? `${remaining(post)} still available`
+      : 'Promised'
   if (post.replycount > 0) return `${post.replycount} interested`
   return 'Waiting'
 }
@@ -193,11 +282,20 @@ function dayLabel(ev) {
   if (d === lastDay) return null
   lastDay = d
   const today = new Date().toDateString()
-  return d === today ? 'Today' : new Date(ev.ts).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })
+  return d === today
+    ? 'Today'
+    : new Date(ev.ts).toLocaleDateString([], {
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short',
+      })
 }
 
 function timeOf(ts) {
-  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return new Date(ts).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function openPost(post) {
@@ -225,10 +323,17 @@ async function act(chip, ev) {
       openChat(id)
       break
     case 'choose':
-      chooser.value = { post, replies: repliesFor(post), available: remaining(post) || 1 }
+      chooser.value = {
+        post,
+        replies: repliesFor(post),
+        available: remaining(post) || 1,
+      }
       break
     case 'taken':
-      outcome.value = { id, type: post.type === 'Wanted' ? 'Received' : 'Taken' }
+      outcome.value = {
+        id,
+        type: post.type === 'Wanted' ? 'Received' : 'Taken',
+      }
       break
     case 'notyet':
       break
@@ -239,7 +344,10 @@ async function act(chip, ev) {
       break
     case 'tryst': {
       await userStore.fetch(uid)
-      tryst.value = { post, user: userStore.byId(uid) || { id: uid, displayname: 'them' } }
+      tryst.value = {
+        post,
+        user: userStore.byId(uid) || { id: uid, displayname: 'them' },
+      }
       break
     }
     case 'repost':
@@ -263,7 +371,12 @@ async function promiseMany(allocs, post) {
   if (!p) return
   for (const a of allocs) {
     if (!a.count) continue
-    await messageStore.update({ id: p.id, action: 'Promise', userid: a.userid, count: a.count })
+    await messageStore.update({
+      id: p.id,
+      action: 'Promise',
+      userid: a.userid,
+      count: a.count,
+    })
   }
   await messageStore.fetch(p.id, true)
   markSeen(p.id)
@@ -273,12 +386,28 @@ async function repost(post) {
   const msg = await messageStore.fetch(post.id, true)
   if (!msg) return
   await composeStore.clearMessages()
-  await composeStore.setMessage(0, { id: msg.id, savedBy: msg.fromuser, item: msg.item?.name?.trim(), description: msg.textbody?.trim() || null, availablenow: msg.availablenow, type: msg.type, repostof: post.id, deadline: null }, me.value)
+  await composeStore.setMessage(
+    0,
+    {
+      id: msg.id,
+      savedBy: msg.fromuser,
+      item: msg.item?.name?.trim(),
+      description: msg.textbody?.trim() || null,
+      availablenow: msg.availablenow,
+      type: msg.type,
+      repostof: post.id,
+      deadline: null,
+    },
+    me.value
+  )
   if (msg.location?.name) {
     const locs = await locationStore.typeahead(msg.location.name)
     composeStore.postcode = locs[0]
   }
-  if (msg.groups?.length) composeStore.group = [...msg.groups].sort((a, b) => new Date(b.arrival || 0) - new Date(a.arrival || 0))[0].groupid
+  if (msg.groups?.length)
+    composeStore.group = [...msg.groups].sort(
+      (a, b) => new Date(b.arrival || 0) - new Date(a.arrival || 0)
+    )[0].groupid
   await composeStore.setAttachmentsForMessage(0, msg.attachments)
   await composeStore.submit({ type: msg.type })
   await messageStore.fetch(post.id, true)
@@ -312,7 +441,12 @@ async function typed(text) {
     await sendChat(unique[0].chatid, text)
     return
   }
-  sendTo.value = { text, options: unique.slice(0, 3).map((r) => ({ value: String(r.chatid), label: r.name })) }
+  sendTo.value = {
+    text,
+    options: unique
+      .slice(0, 3)
+      .map((r) => ({ value: String(r.chatid), label: r.name })),
+  }
 }
 
 async function sendToPick(chip) {
@@ -334,7 +468,7 @@ async function sendChat(chatid, text) {
 function markSeen(id) {
   seen.value = { ...seen.value, [id]: Date.now() }
   try {
-    localStorage.setItem(SEEN_KEY, JSON.stringify(seen.value))
+    localStorage.setItem(seenKey.value, JSON.stringify(seen.value))
   } catch (e) {
     // ignore
   }
@@ -353,14 +487,22 @@ watch(() => events.value.length, scrollToEnd)
 
 onMounted(async () => {
   try {
-    seen.value = { ...(me.value?.settings?.postChatSeen || {}), ...JSON.parse(localStorage.getItem(SEEN_KEY) || '{}') }
+    seen.value = {
+      ...(me.value?.settings?.postChatSeen || {}),
+      ...JSON.parse(localStorage.getItem(seenKey.value) || '{}'),
+    }
   } catch (e) {
     seen.value = me.value?.settings?.postChatSeen || {}
   }
   if (me.value) {
-    await Promise.all([loadOwnActivePosts(messageStore, me.value.id), chatStore.listChats?.(), trystStore.fetch()])
+    await Promise.all([
+      loadOwnActivePosts(messageStore, me.value.id),
+      chatStore.listChats?.(),
+      trystStore.fetch(),
+    ])
     const ids = new Set()
-    for (const p of posts.value) for (const r of p.replies || []) ids.add(r.userid)
+    for (const p of posts.value)
+      for (const r of p.replies || []) ids.add(r.userid)
     await Promise.all([...ids].map((id) => userStore.fetch(id)))
   }
   loaded.value = true

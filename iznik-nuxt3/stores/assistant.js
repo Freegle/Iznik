@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
+import { watch } from 'vue'
 import api from '~/api'
+import { useAuthStore } from '~/stores/auth'
 
 // The Freegle chat as the browser sees it: the lines on screen, the conversation the
 // server is running, and what Freegle is saying right now. For a member the lines are
@@ -23,10 +25,25 @@ export const useAssistantStore = defineStore('assistant', {
     error: null,
     lastChatId: null,
     nextId: 1,
+    cards: null,
+    photos: [],
+    // Host action keys already run, so a repeated turn cannot post twice.
+    done: [],
+    bound: false,
   }),
   persist: {
     storage: piniaPluginPersistedstate.localStorage(),
-    pick: ['conversation', 'lines', 'state', 'chips', 'progress', 'slots', 'facts', 'nextId', 'lastChatId'],
+    pick: [
+      'conversation',
+      'lines',
+      'state',
+      'chips',
+      'progress',
+      'slots',
+      'facts',
+      'nextId',
+      'lastChatId',
+    ],
   },
   getters: {
     lastFreegleLine: (state) => {
@@ -40,6 +57,29 @@ export const useAssistantStore = defineStore('assistant', {
   actions: {
     init(config) {
       this.config = config
+      if (this.bound) return
+      this.bound = true
+      // Whoever signs out, or signs in as someone else, on this device: nothing of the
+      // last person's chat stays behind, whichever menu they used to leave.
+      const auth = useAuthStore()
+      watch(
+        () => auth.user?.id,
+        (now, before) => {
+          if (before && now !== before) this.forget()
+        }
+      )
+    },
+    forget() {
+      this.reset()
+      this.cards = null
+      this.photos = []
+      this.lastChatId = null
+      this.done = []
+      try {
+        api(this.config).assistant.clearAnonToken()
+      } catch (e) {
+        // no browser storage
+      }
     },
     push(line) {
       this.lines.push({ id: this.nextId++, ts: Date.now(), ...line })
@@ -68,7 +108,12 @@ export const useAssistantStore = defineStore('assistant', {
       this.facts = turn.facts || {}
       if (turn.chatid) this.lastChatId = turn.chatid
       if (turn.say) {
-        this.push({ who: 'freegle', text: turn.say, widget: turn.widget || null, fallback: !!turn.fallback })
+        this.push({
+          who: 'freegle',
+          text: turn.say,
+          widget: turn.widget || null,
+          fallback: !!turn.fallback,
+        })
       }
     },
     // Send something to Freegle: { text } | { tap } | { event }. The member's line is

@@ -1,27 +1,83 @@
 <template>
-  <div class="cc-row" :class="{ mine, reply: !!quote }" :data-testid="'cc-' + item.id">
-    <ProfileImage v-if="!mine" :image="item.profile?.paththumb || item.profile?.url" :name="item.displayname" class="cc-avatar" is-thumbnail size="sm" />
+  <div
+    class="cc-row"
+    :class="{ mine, reply: !!quote }"
+    :data-testid="'cc-' + item.id"
+  >
+    <ProfileImage
+      v-if="!mine"
+      :image="item.profile?.paththumb || item.profile?.url"
+      :name="item.displayname"
+      class="cc-avatar"
+      is-thumbnail
+      size="sm"
+    />
     <div class="cc-bubble">
-      <div v-if="!mine" class="cc-name" :style="{ color: colour }">{{ item.displayname }}</div>
-      <button v-if="quote" type="button" class="cc-quote" :data-testid="'cc-quote-' + item.id" @click="$emit('jump', quote.id)">
+      <div v-if="!mine" class="cc-name" :style="{ color: colour }">
+        {{ item.displayname }}
+      </div>
+      <button
+        v-if="quote"
+        type="button"
+        class="cc-quote"
+        :data-testid="'cc-quote-' + item.id"
+        @click="$emit('jump', quote.id)"
+      >
         <span class="cc-quote-name">{{ quote.displayname }}</span>
         <span class="cc-quote-text">{{ excerpt(quote.message) }}</span>
       </button>
       <div v-if="item.image" class="cc-image">
-        <OurUploadedImage v-if="item.image.ouruid" :src="item.image.ouruid" :modifiers="item.image.externalmods" alt="" width="240" />
-        <ProxyImage v-else-if="item.image.paththumb" :src="item.image.paththumb" alt="" :width="240" :height="180" sizes="240px" />
+        <OurUploadedImage
+          v-if="item.image.ouruid"
+          :src="item.image.ouruid"
+          :modifiers="item.image.externalmods"
+          alt=""
+          width="240"
+        />
+        <ProxyImage
+          v-else-if="item.image.paththumb"
+          :src="item.image.paththumb"
+          alt=""
+          :width="240"
+          :height="180"
+          sizes="240px"
+        />
       </div>
       <div class="cc-text">{{ item.message }}</div>
       <div class="cc-foot">
         <span class="cc-time">{{ time }}</span>
-        <button type="button" class="cc-love" :class="{ loved: item.loved }" :aria-label="item.loved ? 'Unlove' : 'Love'" :data-testid="'cc-love-' + item.id" @click="$emit('love', item)">
+        <button
+          type="button"
+          class="cc-love"
+          :class="{ loved: item.loved }"
+          :aria-label="item.loved ? 'Unlove' : 'Love'"
+          :data-testid="'cc-love-' + item.id"
+          @click="$emit('love', item)"
+        >
           ❤<span v-if="item.loves"> {{ item.loves }}</span>
         </button>
-        <button type="button" class="cc-action" :data-testid="'cc-reply-' + item.id" @click="$emit('reply', item)">Reply</button>
-        <b-dropdown variant="link" no-caret toggle-class="cc-more" size="sm" right>
+        <button
+          type="button"
+          class="cc-action"
+          :data-testid="'cc-reply-' + item.id"
+          @click="$emit('reply', item)"
+        >
+          Reply
+        </button>
+        <b-dropdown
+          variant="link"
+          no-caret
+          toggle-class="cc-more"
+          size="sm"
+          right
+        >
           <template #button-content><span aria-label="More">⋯</span></template>
-          <b-dropdown-item @click="$emit('report', item)">Report</b-dropdown-item>
-          <b-dropdown-item v-if="!quote" @click="$emit('hide', item)">Hide</b-dropdown-item>
+          <b-dropdown-item @click="$emit('report', item)"
+            >Report</b-dropdown-item
+          >
+          <b-dropdown-item v-if="!quote" @click="$emit('hide', item)"
+            >Hide</b-dropdown-item
+          >
         </b-dropdown>
       </div>
     </div>
@@ -42,12 +98,26 @@ const props = defineProps({
 })
 defineEmits(['love', 'reply', 'report', 'hide', 'jump'])
 
-const COLOURS = ['#1e7c4f', '#8e44ad', '#c0392b', '#2471a3', '#b9770e', '#117a65', '#884ea0', '#a04000']
-const colour = computed(() => COLOURS[(props.item.userid || 0) % COLOURS.length])
+const COLOURS = [
+  '#1e7c4f',
+  '#8e44ad',
+  '#c0392b',
+  '#2471a3',
+  '#b9770e',
+  '#117a65',
+  '#884ea0',
+  '#a04000',
+]
+const colour = computed(
+  () => COLOURS[(props.item.userid || 0) % COLOURS.length]
+)
 const time = computed(() => {
   const t = props.item.timestamp || props.item.added
   if (!t) return ''
-  return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return new Date(t).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 })
 function excerpt(s) {
   const t = String(s || '').replace(/\s+/g, ' ')

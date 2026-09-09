@@ -2,22 +2,50 @@
   <div v-if="group" class="group-card" :data-testid="'group-card-' + id">
     <div class="group-card-row">
       <div class="group-card-icon">
-        <ProxyImage v-if="group.profile" :src="group.profile" alt="" :width="48" :height="48" sizes="48px" class="group-card-img" />
-        <div v-else class="group-card-fallback">{{ (group.namedisplay || '?').slice(0, 1) }}</div>
+        <ProxyImage
+          v-if="group.profile"
+          :src="group.profile"
+          alt=""
+          :width="48"
+          :height="48"
+          sizes="48px"
+          class="group-card-img"
+        />
+        <div v-else class="group-card-fallback">
+          {{ (group.namedisplay || '?').slice(0, 1) }}
+        </div>
       </div>
       <div class="group-card-body">
         <div class="group-card-name">{{ group.namedisplay }}</div>
         <div class="group-card-meta">
-          <span v-if="group.membercount">{{ group.membercount.toLocaleString() }} freeglers</span>
-          <span v-if="miles !== null">· about {{ Math.round(miles) }} mile{{ Math.round(miles) === 1 ? '' : 's' }}</span>
+          <span v-if="group.membercount"
+            >{{ group.membercount.toLocaleString() }} freeglers</span
+          >
+          <span v-if="miles !== null"
+            >· about {{ Math.round(miles) }} mile{{
+              Math.round(miles) === 1 ? '' : 's'
+            }}</span
+          >
         </div>
-        <div v-if="expanded && group.tagline" class="group-card-tagline">{{ group.tagline }}</div>
+        <div v-if="expanded && group.tagline" class="group-card-tagline">
+          {{ group.tagline }}
+        </div>
       </div>
     </div>
     <div class="group-card-actions">
-      <button v-if="!joined" type="button" class="group-card-btn" :data-testid="'group-join-' + id" @click="$emit('join', id)">Join</button>
+      <button
+        v-if="!joined"
+        type="button"
+        class="group-card-btn"
+        :data-testid="'group-join-' + id"
+        @click="$emit('join', id)"
+      >
+        Join
+      </button>
       <span v-else class="group-card-joined">Joined</span>
-      <button type="button" class="group-card-link" @click="$emit('about', id)">{{ expanded ? 'Less' : 'About' }}</button>
+      <button type="button" class="group-card-link" @click="$emit('about', id)">
+        {{ expanded ? 'Less' : 'About' }}
+      </button>
     </div>
   </div>
 </template>
@@ -37,8 +65,17 @@ defineEmits(['join', 'about'])
 
 const groupStore = useGroupStore()
 const authStore = useAuthStore()
-const group = computed(() => groupStore.get(props.id) || groupStore.summaryList?.find?.((g) => g.id === props.id))
-const joined = computed(() => !!authStore.user?.memberships?.some?.((m) => m.groupid === props.id || m.id === props.id))
+const group = computed(
+  () =>
+    groupStore.get(props.id) ||
+    groupStore.summaryList?.find?.((g) => g.id === props.id)
+)
+const joined = computed(
+  () =>
+    !!authStore.user?.memberships?.some?.(
+      (m) => m.groupid === props.id || m.id === props.id
+    )
+)
 </script>
 <style scoped lang="scss">
 .group-card {

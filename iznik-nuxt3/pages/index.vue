@@ -18,7 +18,7 @@ import { useUiMode } from '~/composables/useUiMode'
 import { useAuthStore } from '~/stores/auth'
 import { useMessageStore } from '~/stores/message'
 
-definePageMeta({ layout: false })
+definePageMeta({ layout: false, chatShell: true })
 
 const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
@@ -43,7 +43,15 @@ useHead(
 const samples = ref([])
 if (isChat.value && !me.value) {
   try {
-    const list = await messageStore.fetchInBounds(49.45, -9, 61, 2, null, 12, true)
+    const list = await messageStore.fetchInBounds(
+      49.45,
+      -9,
+      61,
+      2,
+      null,
+      12,
+      true
+    )
     const offers = (list || []).filter((m) => m.type === 'Offer').slice(0, 4)
     await Promise.all(offers.map((o) => messageStore.fetch(o.id)))
     samples.value = offers.map((o) => o.id)
@@ -54,7 +62,13 @@ if (isChat.value && !me.value) {
 
 // A signed-in member on chat lands on their chat list, as every WhatsApp session
 // starts on the list. Visitors and first-timers land in the Freegle chat.
-if (import.meta.client && isChat.value && me.value && route.path === '/' && !route.query.chat) {
+if (
+  import.meta.client &&
+  isChat.value &&
+  me.value &&
+  route.path === '/' &&
+  !route.query.chat
+) {
   navigateTo('/chats', { replace: true })
 }
 </script>

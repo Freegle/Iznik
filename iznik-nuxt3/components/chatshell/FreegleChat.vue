@@ -14,33 +14,60 @@
             <span class="visually-hidden">Menu</span>
           </template>
           <b-dropdown-item @click="startAgain">Start again</b-dropdown-item>
-          <b-dropdown-item v-if="me" to="/chats/posts">Your posts</b-dropdown-item>
+          <b-dropdown-item v-if="me" to="/chats/posts"
+            >Your posts</b-dropdown-item
+          >
           <b-dropdown-item v-if="me" to="/settings">Settings</b-dropdown-item>
           <b-dropdown-item to="/help">Help</b-dropdown-item>
           <b-dropdown-item to="/about">About</b-dropdown-item>
-          <b-dropdown-item data-testid="menu-classic" @click="goClassic">Classic Freegle</b-dropdown-item>
+          <b-dropdown-item data-testid="menu-classic" @click="goClassic"
+            >Classic Freegle</b-dropdown-item
+          >
           <b-dropdown-item v-if="!me" @click="signIn">Sign in</b-dropdown-item>
           <b-dropdown-item v-else @click="logout">Sign out</b-dropdown-item>
         </b-dropdown>
       </template>
     </ShellHeader>
 
-    <div ref="scroller" class="chat-scroll" aria-live="polite" data-testid="chat-transcript">
+    <div
+      ref="scroller"
+      class="chat-scroll"
+      aria-live="polite"
+      data-testid="chat-transcript"
+    >
       <div class="chat-day">Today</div>
       <template v-if="!assistant.lines.length">
-        <Bubble from="freegle">Give and get stuff for free, near you.</Bubble>
-        <div v-if="samples.length" class="sample-strip" data-testid="sample-offers">
+        <ShellBubble from="freegle"
+          >Hello. Got something to give away, or after something?</ShellBubble
+        >
+        <div
+          v-if="samples.length"
+          class="sample-strip"
+          data-testid="sample-offers"
+        >
           <div class="sample-title">Offered near you recently</div>
-          <PostCard v-for="id in samples" :id="id" :key="'sample-' + id" @reply="reply" @expand="expand" />
+          <PostCard
+            v-for="id in samples"
+            :id="id"
+            :key="'sample-' + id"
+            @reply="reply"
+            @expand="expand"
+          />
         </div>
       </template>
       <template v-for="line in assistant.lines" :key="line.id">
-        <Bubble :from="line.who === 'freegle' ? 'freegle' : 'me'" :time="timeOf(line)">{{ line.text }}</Bubble>
+        <ShellBubble
+          :from="line.who === 'freegle' ? 'freegle' : 'me'"
+          :time="timeOf(line)"
+          >{{ line.text }}</ShellBubble
+        >
       </template>
-      <Bubble v-if="assistant.streaming" from="freegle">
+      <ShellBubble v-if="assistant.streaming" from="freegle">
         <span v-if="assistant.streamText">{{ assistant.streamText }}</span>
-        <span v-else class="typing" aria-label="Freegle is typing"><span /><span /><span /></span>
-      </Bubble>
+        <span v-else class="typing" aria-label="Freegle is typing"
+          ><span /><span /><span
+        /></span>
+      </ShellBubble>
 
       <!-- Widgets for where the conversation is now. -->
       <div v-if="!assistant.streaming" class="widgets">
@@ -64,7 +91,9 @@
             @reply="reply"
             @expand="expand"
           />
-          <div v-if="!assistant.cards.ids.length" class="nothing-here">Nothing nearby just now.</div>
+          <div v-if="!assistant.cards.ids.length" class="nothing-here">
+            Nothing nearby just now.
+          </div>
         </template>
         <template v-if="assistant.cards?.kind === 'groups'">
           <GroupCard
@@ -77,13 +106,21 @@
             @about="expand"
           />
         </template>
-        <PostcodeInput v-if="inputKind === 'postcode'" @selected="postcodeChosen" />
+        <PostcodeInput
+          v-if="inputKind === 'postcode'"
+          @selected="postcodeChosen"
+        />
         <EmailInput v-if="inputKind === 'email'" @submit="emailEntered" />
         <div v-if="editing" class="edit-chips">
-          <Chips :options="editChips" label="Change" @pick="editPick" />
+          <ShellChips :options="editChips" label="Change" @pick="editPick" />
         </div>
         <div v-else class="chips-wrap">
-          <Chips :options="chips" :disabled="assistant.busy" label="Reply options" @pick="tap" />
+          <ShellChips
+            :options="chips"
+            :disabled="assistant.busy"
+            label="Reply options"
+            @pick="tap"
+          />
         </div>
         <div v-if="assistant.error" class="chat-error" data-testid="chat-error">
           That didn't go through.
@@ -116,12 +153,12 @@
   </div>
 </template>
 <script setup>
-import { computed, ref, watch, onMounted } from '#imports'
+import { computed, ref, watch, onMounted, useRoute, useRouter } from '#imports'
 import { nextTick } from 'vue'
 import ShellHeader from '~/components/chatshell/ShellHeader.vue'
 import ShellComposer from '~/components/chatshell/ShellComposer.vue'
-import Bubble from '~/components/chatshell/Bubble.vue'
-import Chips from '~/components/chatshell/Chips.vue'
+import ShellBubble from '~/components/chatshell/ShellBubble.vue'
+import ShellChips from '~/components/chatshell/ShellChips.vue'
 import PostCard from '~/components/chatshell/PostCard.vue'
 import GroupCard from '~/components/chatshell/GroupCard.vue'
 import ConfirmCard from '~/components/chatshell/ConfirmCard.vue'
@@ -135,11 +172,13 @@ import { useGroupStore } from '~/stores/group'
 import { useHostActions } from '~/composables/useHostActions'
 import { useUiMode } from '~/composables/useUiMode'
 import { milesAway } from '~/composables/useDistance'
-const OurUploader = defineAsyncComponent(() => import('~/components/OurUploader'))
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
+)
 
 // The chat with Freegle. The store holds the lines; the service decides; this renders
 // and does what Freegle asks the browser to do.
-const props = defineProps({
+defineProps({
   samples: { type: Array, required: false, default: () => [] },
 })
 
@@ -151,6 +190,7 @@ const groupStore = useGroupStore()
 const host = useHostActions()
 const uiMode = useUiMode()
 const router = useRouter()
+const route = useRoute()
 
 const me = computed(() => authStore.user)
 const unread = computed(() => chatStore.unreadCount || 0)
@@ -168,8 +208,20 @@ const MAIN = [
 ]
 const mainChips = computed(() => (assistant.progress ? [] : MAIN))
 const hostAction = computed(() => assistant.hostAction)
-const chips = computed(() => (assistant.chips || []).filter((c) => !c.kind || c.kind === 'photo'))
-const inputKind = computed(() => (assistant.chips || []).find((c) => c.kind === 'postcode' || c.kind === 'email')?.kind || null)
+// Chips the composer row already offers (Give, Ask, Nearby) are not repeated in the
+// transcript: two rows of the same buttons is clutter.
+const chips = computed(() => {
+  const composerHas = new Set(mainChips.value.map((c) => c.value))
+  return (assistant.chips || []).filter(
+    (c) => (!c.kind || c.kind === 'photo') && !composerHas.has(c.value)
+  )
+})
+const inputKind = computed(
+  () =>
+    (assistant.chips || []).find(
+      (c) => c.kind === 'postcode' || c.kind === 'email'
+    )?.kind || null
+)
 const editChips = [
   { value: 'edit:item', label: 'What it is' },
   { value: 'edit:description', label: 'Details' },
@@ -191,14 +243,33 @@ async function scrollToEnd() {
   if (el) el.scrollTop = el.scrollHeight
 }
 
-watch(() => [assistant.lines.length, assistant.streamText, assistant.chips, assistant.cards], scrollToEnd, { deep: true })
+watch(
+  () => [
+    assistant.lines.length,
+    assistant.streamText,
+    assistant.chips,
+    assistant.cards,
+  ],
+  scrollToEnd,
+  { deep: true }
+)
 
 // Freegle asked the browser to do something: do it.
 watch(
   () => assistant.hostAction,
   async (action) => {
     if (!action || assistant.busy) return
-    const autonomous = ['lookup_postcode', 'check_email', 'create_post', 'find_matches', 'list_nearby', 'list_communities', 'search', 'sign_in', 'open']
+    const autonomous = [
+      'lookup_postcode',
+      'check_email',
+      'create_post',
+      'find_matches',
+      'list_nearby',
+      'list_communities',
+      'search',
+      'sign_in',
+      'open',
+    ]
     if (!autonomous.includes(action.type)) return
     if (action.type === 'create_post' && !assistant.slots?.item) return
     assistant.hostAction = null
@@ -242,7 +313,10 @@ async function tap(chip) {
 async function editPick(chip) {
   editing.value = false
   lastBody.value = { tap: chip.value }
-  await assistant.sendTap({ value: chip.value, label: 'Change ' + chip.label.toLowerCase() })
+  await assistant.sendTap({
+    value: chip.value,
+    label: 'Change ' + chip.label.toLowerCase(),
+  })
 }
 
 function editField(field) {
@@ -254,7 +328,8 @@ function toggleField(field, value) {
 }
 
 async function cancel() {
-  await assistant.sendText('cancel')
+  // A tap, not a typed word: nothing to show as the member's line.
+  await assistant.send({ tap: 'cancel' }, null)
 }
 
 function startAgain() {
@@ -280,7 +355,14 @@ async function photoProcessed(id) {
   uploading.value = false
   const att = assistant.photos?.find?.((p) => p.id === id)
   const recognised = att?.info?.recognised || att?.info?.labels || []
-  await assistant.sendEvent({ type: 'photo_added', attachmentId: id, recognised: Array.isArray(recognised) ? recognised.slice(0, 3) : [] }, 'Added a photo')
+  await assistant.sendEvent(
+    {
+      type: 'photo_added',
+      attachmentId: id,
+      recognised: Array.isArray(recognised) ? recognised.slice(0, 3) : [],
+    },
+    'Added a photo'
+  )
 }
 
 async function postcodeChosen(pc) {
@@ -312,7 +394,8 @@ function milesFor(id) {
 
 function groupMiles(id) {
   const at = host.myLatLng()
-  const g = groupStore.get(id) || groupStore.summaryList?.find?.((x) => x.id === id)
+  const g =
+    groupStore.get(id) || groupStore.summaryList?.find?.((x) => x.id === id)
   if (!at || !g?.lat) return null
   return milesAway(at.lat, at.lng, g.lat, g.lng)
 }
@@ -333,12 +416,20 @@ async function goClassic() {
 
 onMounted(() => {
   scrollToEnd()
+  // Your posts can send someone here to start something: /?do=give.
+  const wanted = MAIN.find((c) => c.value === route.query.do)
+  if (wanted && !assistant.busy && !assistant.progress) tap(wanted)
   // A member who signs in mid-conversation: tell Freegle so the flow can skip what
   // it now knows.
   watch(me, async (now, before) => {
     if (now && !before && assistant.conversation) {
       await assistant.sendEvent(
-        { type: 'signed_in', name: now.displayname, locationName: now.settings?.mylocation?.name || '', community: now.memberships?.[0]?.namedisplay || '' },
+        {
+          type: 'signed_in',
+          name: now.displayname,
+          locationName: now.settings?.mylocation?.name || '',
+          community: now.memberships?.[0]?.namedisplay || '',
+        },
         null
       )
     }
@@ -351,7 +442,8 @@ onMounted(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: #e5ddd5 url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><circle cx="20" cy="20" r="1" fill="%23d7cfc6"/></svg>');
+  background: #e5ddd5
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><circle cx="20" cy="20" r="1" fill="%23d7cfc6"/></svg>');
 }
 
 .chat-scroll {

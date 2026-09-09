@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -48,5 +49,49 @@ func TestAsstStrikes(t *testing.T) {
 func TestAsstEscalationLevels(t *testing.T) {
 	if EscalationLevel(0) != 0 || EscalationLevel(1) != 1 || EscalationLevel(3) != 2 || EscalationLevel(5) != 3 {
 		t.Fatal("levels")
+	}
+}
+
+func TestAsstDailyCapIsPerIdentity(t *testing.T) {
+	q := NewQuota(100000, 100000, 100000, nil)
+	for i := 0; i < anonIdentityDailyCap; i++ {
+		if !q.Allow("a:one", "", false) {
+			t.Fatalf("call %d refused before the identity's daily cap", i)
+		}
+	}
+	if q.Allow("a:one", "", false) {
+		t.Fatal("over the identity's day")
+	}
+	if !q.Allow("a:two", "", false) {
+		t.Fatal("one identity's day is nobody else's")
+	}
+}
+
+func TestAsstMintingIsRationedPerAddress(t *testing.T) {
+	q := NewQuota(10, 10, 10, nil)
+	for i := 0; i < mintPerAddressHour; i++ {
+		if !q.AllowMint("1.2.3.4") {
+			t.Fatalf("mint %d refused early", i)
+		}
+	}
+	if q.AllowMint("1.2.3.4") {
+		t.Fatal("an address cannot mint identities without end")
+	}
+	if !q.AllowMint("5.6.7.8") {
+		t.Fatal("another address is unaffected")
+	}
+}
+
+func TestAsstLockedDoesNotRememberTheInnocent(t *testing.T) {
+	s := NewStrikes(3, time.Hour, nil)
+	for i := 0; i < 500; i++ {
+		s.Locked(fmt.Sprintf("a:%d", i))
+	}
+	if len(s.m) != 0 {
+		t.Fatalf("checking must not grow the strikes map, got %d entries", len(s.m))
+	}
+	s.Record("a:bad")
+	if len(s.m) != 1 {
+		t.Fatalf("a strike is remembered, got %d", len(s.m))
 	}
 }

@@ -54,7 +54,7 @@ describe('every mark-read control uses a red treatment', () => {
     /* These two predate the shared class and keep bespoke shapes - a pill in
      * the chat list search row, a circle in the mobile navbar - but the same
      * red language. Named here so the sweep stays complete. */
-    ['pages/chats/[[id]].vue', 'Mark all read', 'mark-read-btn'],
+    ['components/ClassicChats.vue', 'Mark all read', 'mark-read-btn'],
     ['components/ChatMobileNavbar.vue', 'Mark read', 'action-btn--mark-read'],
   ])('%s styles its "%s" with %s', (file, label, cls) => {
     const src = read(file)
@@ -68,7 +68,7 @@ describe('every mark-read control uses a red treatment', () => {
       'components/ChatPane.vue',
       'components/ChatMobileNavbar.vue',
       'modtools/components/ModChatHeader.vue',
-      'pages/chats/[[id]].vue',
+      'components/ClassicChats.vue',
     ]) {
       expect(read(file), file).toMatch(/variant="danger"/)
     }

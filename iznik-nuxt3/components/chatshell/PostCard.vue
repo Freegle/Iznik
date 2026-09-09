@@ -12,24 +12,44 @@
           sizes="96px"
         />
         <div v-else class="post-card-placeholder">
-          <v-icon :icon="message.type === 'Wanted' ? 'shopping-cart' : 'gift'" />
+          <v-icon
+            :icon="message.type === 'Wanted' ? 'shopping-cart' : 'gift'"
+          />
         </div>
       </div>
       <div class="post-card-body">
-        <div class="post-card-type">{{ message.type === 'Wanted' ? 'Wanted' : 'Offer' }}</div>
+        <div class="post-card-type">
+          {{ message.type === 'Wanted' ? 'Wanted' : 'Offer' }}
+        </div>
         <div class="post-card-title">{{ title }}</div>
         <div class="post-card-meta">
           <span v-if="miles !== null">{{ milesText }}</span>
-          <span v-if="message.area?.name || message.location">{{ message.area?.name || message.location }}</span>
+          <span v-if="message.area?.name || message.location">{{
+            message.area?.name || message.location
+          }}</span>
         </div>
-        <div v-if="expanded && message.textbody" class="post-card-text">{{ message.textbody }}</div>
+        <div v-if="expanded && message.textbody" class="post-card-text">
+          {{ message.textbody }}
+        </div>
       </div>
     </button>
     <div class="post-card-actions">
-      <button type="button" class="post-card-btn" :data-testid="'post-reply-' + id" @click="$emit('reply', id)">
+      <button
+        type="button"
+        class="post-card-btn"
+        :data-testid="'post-reply-' + id"
+        @click="$emit('reply', id)"
+      >
         {{ message.type === 'Wanted' ? 'I have one' : 'Reply' }}
       </button>
-      <button v-if="!expanded" type="button" class="post-card-link" @click="$emit('expand', id)">More</button>
+      <button
+        v-if="!expanded"
+        type="button"
+        class="post-card-link"
+        @click="$emit('expand', id)"
+      >
+        More
+      </button>
     </div>
   </div>
 </template>
@@ -49,10 +69,17 @@ defineEmits(['reply', 'expand'])
 
 const messageStore = useMessageStore()
 const message = computed(() => messageStore.byId(props.id))
-const photo = computed(() => message.value?.attachments?.[0]?.paththumb || message.value?.attachments?.[0]?.path || null)
+const photo = computed(
+  () =>
+    message.value?.attachments?.[0]?.paththumb ||
+    message.value?.attachments?.[0]?.path ||
+    null
+)
 const title = computed(() => {
   const s = message.value?.subject || ''
-  return s.replace(/^(OFFER|WANTED|TAKEN|RECEIVED):\s*/i, '').replace(/\s*\([^)]*\)\s*$/, '')
+  return s
+    .replace(/^(OFFER|WANTED|TAKEN|RECEIVED):\s*/i, '')
+    .replace(/\s*\([^)]*\)\s*$/, '')
 })
 const milesText = computed(() => {
   if (props.miles === null) return ''

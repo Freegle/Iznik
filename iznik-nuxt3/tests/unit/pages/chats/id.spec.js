@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref, computed, defineComponent, h, Suspense, nextTick } from 'vue'
 
-import ChatsPage from '~/pages/chats/[[id]].vue'
+import ChatsPage from '~/components/ClassicChats.vue'
 
 // Mock dayjs with extend support (needed by transitive imports like useTimeFormat)
 vi.mock('dayjs', () => {
