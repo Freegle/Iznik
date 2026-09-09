@@ -220,3 +220,25 @@ func TestAsstThrottledIdentityGetsTemplatesOnly(t *testing.T) {
 		t.Fatalf("no model calls for a throttled identity, got %d", len(llm.Calls))
 	}
 }
+
+func TestAsstVisitorWhoSignsInKeepsTheChat(t *testing.T) {
+	llm := &FakeLLM{Responses: []string{say("Have you got a photo?"), say("What is it, in a few words?"), say("What is it?")}}
+	s := newTestService(llm)
+	ctx := context.Background()
+	r1, err := s.Turn(ctx, visitor, TurnInput{Tap: "give"}, nil)
+	if err != nil || r1.State != "GIVE_PHOTO" {
+		t.Fatalf("visitor give: %v %+v", err, r1)
+	}
+	// The same browser, now signed in, still sends the anonymous token it was given.
+	member := Identity{Key: "u:9", UserID: 9, Name: "Sam", WasKey: visitor.Key}
+	r2, err := s.Turn(ctx, member, TurnInput{ConversationID: r1.Conversation, Tap: "no_photo"}, nil)
+	if err != nil || r2.Conversation != r1.Conversation || r2.State != "GIVE_ITEM" {
+		t.Fatalf("the chat should carry on as the member: %v %+v", err, r2)
+	}
+	// Somebody else's token does not hand over the chat.
+	stranger := Identity{Key: "u:10", UserID: 10, WasKey: "a:someone-else"}
+	r3, err := s.Turn(ctx, stranger, TurnInput{ConversationID: r1.Conversation, Tap: "give"}, nil)
+	if err != nil || r3.Conversation == r1.Conversation {
+		t.Fatalf("a stranger gets a fresh chat: %v %+v", err, r3)
+	}
+}

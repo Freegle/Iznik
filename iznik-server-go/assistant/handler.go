@@ -100,6 +100,9 @@ func identityFor(c *fiber.Ctx, ip string) Identity {
 			Where("memberships.userid = ? AND groups.type = 'Freegle'", myid).
 			Order("memberships.added DESC").Limit(1).Scan(&community)
 		id.Community = community
+		if anon := VerifyAnon(c.Get("X-Assistant-Anon")); anon != "" {
+			id.WasKey = "a:" + anon
+		}
 		return id
 	}
 	given := c.Get("X-Assistant-Anon")

@@ -23,6 +23,9 @@ type Identity struct {
 	LocationName string
 	Community    string
 	AnonToken    string
+	// WasKey is the anonymous key this browser used before signing in, so a visitor who
+	// becomes a member in the middle of a chat keeps that chat.
+	WasKey string
 	// Throttled marks a visitor who could not be issued an identity (too many minted from
 	// their address); they get the template lines and no model calls.
 	Throttled bool
@@ -132,6 +135,13 @@ func (s *Service) instanceFor(id Identity, conversationID string) (*Instance, er
 			if inst.Status != "active" {
 				inst.Status = "active"
 			}
+			return inst, nil
+		}
+		if err == nil && id.UserID > 0 && id.WasKey != "" && inst.Owner == id.WasKey {
+			// The visitor who started this chat has just signed in (or posted, which
+			// creates their account): the chat is theirs and carries on.
+			inst.Owner = id.Key
+			inst.Status = "active"
 			return inst, nil
 		}
 	}

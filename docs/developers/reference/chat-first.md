@@ -142,6 +142,11 @@ for review on a hit. ChitChat posts and edits get the same check; a hit takes th
 of the feeds and tells the ChitChat volunteers through the existing report path. Idle
 conversations are pruned after 30 days by `purge:chats` (`PurgeService::purgeAssistantInstances`).
 
+A conversation belongs to the identity that started it. A visitor who signs in part way through
+(posting creates the account) keeps it: the browser sends the member token and the anonymous one
+together, and the instance is adopted by the member (`instanceFor`, `Identity.WasKey`). Anyone
+else naming that conversation id gets a fresh one.
+
 Signing out, from the shell's menu or the classic navbar, forgets the chat on that device
 (`stores/assistant.js`, `forget`, watching the signed-in id); a visitor who signs in keeps
 theirs, because that is the flow continuing.
