@@ -8,6 +8,7 @@ const { expect } = require('@playwright/test')
 const { timeouts, DEFAULT_TEST_PASSWORD } = require('../config')
 const { SCREENSHOTS_DIR } = require('../config')
 const { waitForModal } = require('./ui')
+const { classicModeCookie, defaultBaseURL } = require('./uiMode')
 
 /**
  * Remove any leftover modal backdrop.
@@ -126,6 +127,9 @@ async function clearSessionData(page) {
   try {
     const context = page.context()
     await context.clearCookies()
+    // Cookies gone means the front door is the chat shell again; these helpers
+    // drive the classic pages, so put that choice back.
+    await context.addCookies([classicModeCookie(defaultBaseURL())])
   } catch (e) {
     if (!/closed|Target .* closed/i.test(e.message)) {
       throw e
