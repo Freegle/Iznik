@@ -70,4 +70,63 @@ describe('AssistantAPI', () => {
     }))
     await expect(api.turn({ text: 'x' })).rejects.toThrow('500')
   })
+
+  it('follows a stream that breaks before the turn with one resume', async () => {
+    const api = new AssistantAPI({ public: { APIv2: 'http://api' } })
+    const calls = []
+    global.fetch = vi.fn(async (url, opts) => {
+      calls.push(JSON.parse(opts.body))
+      if (calls.length === 1) {
+        // Only the start of a reply, then the connection dies.
+        return {
+          ok: true,
+          headers: { get: () => null },
+          body: {
+            getReader: () => ({
+              read: async () => {
+                throw new Error('network changed')
+              },
+            }),
+          },
+        }
+      }
+      return {
+        ok: true,
+        headers: { get: () => null },
+        body: streamOf(
+          'event: turn\ndata: {"conversation":"c1","say":"","state":"GIVE_ITEM","chips":[]}\n\n'
+        ),
+      }
+    })
+    const turn = await api.turn({ conversation: 'c1', text: 'grey sofa' })
+    expect(turn.state).toBe('GIVE_ITEM')
+    expect(calls).toHaveLength(2)
+    expect(calls[1]).toEqual({ conversation: 'c1', event: { type: 'resume' } })
+  })
+
+  it('does not resume a chat that has not started, and resumes only once', async () => {
+    const api = new AssistantAPI({ public: { APIv2: 'http://api' } })
+    let n = 0
+    global.fetch = vi.fn(async () => {
+      n++
+      return {
+        ok: true,
+        headers: { get: () => null },
+        body: {
+          getReader: () => ({
+            read: async () => {
+              throw new Error('network changed')
+            },
+          }),
+        },
+      }
+    })
+    await expect(api.turn({ tap: 'give' })).rejects.toThrow('stream broke')
+    expect(n).toBe(1)
+    n = 0
+    await expect(api.turn({ conversation: 'c1', tap: 'give' })).rejects.toThrow(
+      'stream broke'
+    )
+    expect(n).toBe(2)
+  })
 })

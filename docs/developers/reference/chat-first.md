@@ -33,7 +33,9 @@ and the choice is remembered. Design and decisions: `plans/2026-09-08-chat-first
 
 ## Choosing chat or classic
 
-`composables/useUiMode.js` resolves the mode: the member's `settings.uiMode`, then the
+`composables/useUiMode.js` decides the mode once per page load, in shared state carried
+from the server to the browser, and only `setMode` changes it afterwards (a cookie coming or going
+mid-page must not flip the interface). The order is: the member's `settings.uiMode`, then the
 `freegle-ui-mode` cookie (so the server renders the same choice as the browser), then
 the runtime default `CHAT_FIRST_DEFAULT` (`chat`, `classic`, or a percentage of members
 by user id; also the kill switch). The shell's menu offers "Classic Freegle"; the classic
@@ -70,7 +72,11 @@ ai-flower's Vue editor; `GET /assistant/workflow` serves it. States are the ques
 the only moves allowed.
 
 One endpoint does the work: `POST /assistant/turn` with `{conversation, text | tap |
-event}`, answering with server-sent events (`identity`, `delta`, `turn`). Taps and host
+event}`, answering with server-sent events (`identity`, `delta`, `turn`). The turn runs on its own
+goroutine while the stream carries a comment every five seconds, so a proxy or a phone does not
+drop a silent stream; a panic ends as an `error` event. If the browser loses the end of a reply it
+sends one `resume` event, which returns the current state, chips and progress without saying or
+moving anything (`api/AssistantAPI.js`). Taps and host
 events move the flow deterministically (`host.go`: chips, `NextAfter`, `TargetForChip`,
 `ApplyEvent`). Typed text goes through the rules first (`rules.go`: commands, intents,
 postcode, email, quantity, the item validation mirrored from

@@ -185,7 +185,10 @@ func Turn(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		defer release(id.Key)
+		var mu sync.Mutex
 		send := func(event string, data interface{}) {
+			mu.Lock()
+			defer mu.Unlock()
 			b, _ := json.Marshal(data)
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, string(b))
 			_ = w.Flush()
@@ -193,9 +196,36 @@ func Turn(c *fiber.Ctx) error {
 		if id.AnonToken != "" {
 			send("identity", map[string]string{"anon": id.AnonToken})
 		}
-		res, err := svc.Turn(ctx, id, TurnInput{ConversationID: req.Conversation, Text: req.Text, Tap: req.Tap, Event: req.Event, IP: ip}, func(s string) {
-			send("delta", map[string]string{"text": s})
-		})
+		// The turn runs on its own goroutine so the stream can carry a comment every few
+		// seconds while it thinks; proxies and phones drop a silent stream. A panic in the
+		// turn ends as an error event, not a stream cut short.
+		var res *TurnResult
+		var err error
+		done := make(chan struct{})
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("assistant: panic: %v", r)
+				}
+				close(done)
+			}()
+			res, err = svc.Turn(ctx, id, TurnInput{ConversationID: req.Conversation, Text: req.Text, Tap: req.Tap, Event: req.Event, IP: ip}, func(s string) {
+				send("delta", map[string]string{"text": s})
+			})
+		}()
+		tick := time.NewTicker(5 * time.Second)
+		defer tick.Stop()
+		for waiting := true; waiting; {
+			select {
+			case <-done:
+				waiting = false
+			case <-tick.C:
+				mu.Lock()
+				fmt.Fprint(w, ": ping\n\n")
+				_ = w.Flush()
+				mu.Unlock()
+			}
+		}
 		if err != nil {
 			fmt.Printf("assistant: turn error: %v\n", err)
 			send("error", map[string]string{"message": "Something went wrong. Please try again."})

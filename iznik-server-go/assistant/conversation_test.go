@@ -242,3 +242,17 @@ func TestAsstVisitorWhoSignsInKeepsTheChat(t *testing.T) {
 		t.Fatalf("a stranger gets a fresh chat: %v %+v", err, r3)
 	}
 }
+
+func TestAsstResumeSaysNothingAndMovesNothing(t *testing.T) {
+	llm := &FakeLLM{Responses: []string{say("Have you got a photo?")}}
+	s := newTestService(llm)
+	ctx := context.Background()
+	r1, _ := s.Turn(ctx, member, TurnInput{Tap: "give"}, nil)
+	r2, err := s.Turn(ctx, member, TurnInput{ConversationID: r1.Conversation, Event: &Event{Type: "resume"}}, nil)
+	if err != nil || r2.State != "GIVE_PHOTO" || r2.Say != "" || len(r2.Chips) == 0 || r2.Progress == nil {
+		t.Fatalf("resume should return where things stand and say nothing: %v %+v", err, r2)
+	}
+	if len(llm.Calls) != 1 {
+		t.Fatalf("resume must not call the model, calls=%d", len(llm.Calls))
+	}
+}
