@@ -128,4 +128,25 @@ test.describe('Chat shell landing', () => {
       timeout: timeouts.ui.appearance,
     })
   })
+
+  test('the server renders chat and classic for back-to-back requests, whichever came first', async ({
+    request,
+    baseURL,
+  }) => {
+    // The production image caches server-rendered pages for a minute. The cache is keyed
+    // by the mode cookie, so the first visitor in a minute must not decide for the next.
+    const host = new URL(baseURL).host
+    for (const [mode, marker] of [
+      ['chat', 'data-testid="chat-shell"'],
+      ['classic', 'action-btn action-btn--give'],
+      ['chat', 'data-testid="chat-shell"'],
+    ]) {
+      const res = await request.get('/', {
+        headers: { Cookie: `freegle-ui-mode=${mode}`, Host: host },
+      })
+      expect(res.status()).toBe(200)
+      const html = await res.text()
+      expect(html, `${mode} request should render ${mode}`).toContain(marker)
+    }
+  })
 })

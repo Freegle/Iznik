@@ -4,6 +4,7 @@ owner: Freegle dev team
 covers:
   - iznik-server-go/assistant/**
   - iznik-nuxt3/layouts/chat.vue
+  - iznik-nuxt3/nginx-proxy.conf
   - iznik-nuxt3/components/chatshell/**
   - iznik-nuxt3/stores/assistant.js
   - iznik-nuxt3/api/AssistantAPI.js
@@ -36,7 +37,9 @@ and the choice is remembered. Design and decisions: `plans/2026-09-08-chat-first
 `freegle-ui-mode` cookie (so the server renders the same choice as the browser), then
 the runtime default `CHAT_FIRST_DEFAULT` (`chat`, `classic`, or a percentage of members
 by user id; also the kill switch). The shell's menu offers "Classic Freegle"; the classic
-pages carry the reverse link. Pages that can render as the shell declare
+pages carry the reverse link. The production image caches server-rendered pages for a minute
+(`nginx-proxy.conf`); the cache key includes the mode cookie, so a chat page is never served to
+a classic request or the other way round. Pages that can render as the shell declare
 `definePageMeta({ layout: false, chatShell: true })` and switch between
 `<NuxtLayout name="chat">` and the classic layout; `useNavbarVisibility` hides the global
 navbar on those routes while the member is on chat. The classic page bodies moved
