@@ -55,6 +55,9 @@ const cfg = {
  * auth: 'none' logged out, 'member' logged in as a freegler, 'mod' logged in to ModTools.
  * ui: 'chat' shoots the chat shell; anything else shoots the classic pages the member
  * guides describe (the chat shell is the default front door, so classic needs the cookie).
+ * viewport: overrides the phone viewport for that one shot (the desktop frame).
+ * steps: taps and typing before the shot, in order: { click }, { fill: [selector, text] },
+ * { press }, each followed by a short wait (or its own wait in ms).
  * Add a shot here rather than capturing images by hand.
  */
 const SHOTS = [
@@ -73,6 +76,36 @@ const SHOTS = [
     app: 'member',
     ui: 'chat',
     path: '/',
+  },
+  {
+    audience: 'members',
+    name: 'chat-desktop',
+    auth: 'none',
+    app: 'member',
+    ui: 'chat',
+    path: '/',
+    viewport: { width: 1440, height: 900 },
+  },
+  {
+    audience: 'members',
+    name: 'chat-give',
+    auth: 'none',
+    app: 'member',
+    ui: 'chat',
+    path: '/',
+    steps: [
+      { click: '[data-testid="chip-give"]', wait: 2500 },
+      { click: '[data-testid="chip-no_photo"]', wait: 2500 },
+      { fill: ['[data-testid="composer-input"]', 'Grey two seater sofa'] },
+      { press: 'Enter', wait: 3000 },
+      {
+        fill: [
+          '[data-testid="composer-input"]',
+          'Comfy, a few years old, from a smoke free home',
+        ],
+      },
+      { press: 'Enter', wait: 3000 },
+    ],
   },
   {
     audience: 'members',
@@ -247,12 +280,19 @@ async function capture(context, shot) {
   await mkdir(outDir, { recursive: true })
   const page = context.page
   await context.addCookies([uiModeCookie(base, shot.ui)])
+  await page.setViewportSize(shot.viewport || cfg.viewport)
   await page.goto(base + shot.path, {
     waitUntil: 'networkidle',
     timeout: cfg.navTimeout,
   })
   // Settle animations and lazy content.
   await page.waitForTimeout(1500)
+  for (const step of shot.steps || []) {
+    if (step.click) await page.locator(step.click).first().click()
+    if (step.fill) await page.locator(step.fill[0]).first().fill(step.fill[1])
+    if (step.press) await page.keyboard.press(step.press)
+    await page.waitForTimeout(step.wait || 1200)
+  }
   await page.screenshot({
     path: resolve(outDir, shot.name + '.png'),
     animations: 'disabled',

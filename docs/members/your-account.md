@@ -101,6 +101,8 @@ You can change any of it, or turn everything off, on the Settings page.
 and old. From here you edit, repost, promise, and mark items TAKEN or RECEIVED. See
 [Giving something away](giving.md) and [Getting something](getting.md).
 
+![Your posts as a chat](assets/chat-your-posts.png)
+
 In the chat, this is the **Your posts** chat, pinned near the top of your chat list.
 Replies to all your posts, the people you have promised things to, collection times and
 reminders arrive there as messages, with the same buttons a tap away.
@@ -130,6 +132,8 @@ community statistics and so you always have a record of what you gave or receive
   [/privacy](https://www.ilovefreegle.org/privacy) for the full policy.
 
 ## Chat or website
+
+![The chat list](assets/chat-list.png)
 
 Freegle can look like a chat app or like a website, and the two share the same account,
 posts and chats. Choose **Classic Freegle** from the menu at the top of the chat to use

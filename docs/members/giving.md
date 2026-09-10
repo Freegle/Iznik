@@ -45,6 +45,8 @@ screens.
 
 ### Giving from the chat
 
+![Giving something away in the chat](assets/chat-give.png)
+
 In the chat, tap **Give** under the chat, or just type what you have. Freegle asks for
 the same things one at a time: a photo (tap **No photo** to skip it), what the item is,
 a line or two about it, how many you have, your postcode, and your email if you are not
