@@ -256,7 +256,7 @@ notes, and lengthen your own delay.
 - **A paused post does not say so.** There is no badge on the post, and no queue of
   "posts frozen awaiting review" - only the aggregate figures on the SysAdmin page. If a
   member asks why their post seems stuck locally, nothing in ModTools will tell you it
-  is gated.
+  is on hold.
 - **Any moderator note turns off auto-approval for that member - everywhere, for good.**
   This one deserves emphasis, because many teams use notes as an **information** store
   rather than a warning: "collects after 6pm", "has a van", "please text rather than
@@ -284,7 +284,7 @@ notes, and lengthen your own delay.
   ordinary way, which trims it from your area alone.
 - **Reject from the oversight queue and Back to Pending do different things to the
   copies.** Reject stops the post's spread and the copies it rippled into other
-  communities are withdrawn on the engine's next pass - the whole post comes down.
+  communities are withdrawn the next time spreading runs - the whole post comes down.
   Back to Pending freezes the spread but leaves every community's copy in its own
   Pending queue, for that community to approve or reject. Which of the two a neighbouring
   moderator sees depends on which button the post's own community pressed. That
@@ -318,8 +318,8 @@ These are known and not fully solved:
 - **A post inside its one-hour rippling hold is not yet in the reach-based Nearby
   browse feed.** It is live on its own community's page and in "All my communities",
   and its community's email digests (immediate and daily) go out as normal - but the
-  Nearby feed (and the search that mirrors it) only picks the post up once rippling
-  initialises. For that first hour an auto-published post is less visible than a
+  Nearby feed (and the search that mirrors it) only picks the post up once the post
+  starts to spread. For that first hour an auto-published post is less visible than a
   mod-approved one.
 - **The paused-time figures count pauses, not the first hour.** The SysAdmin panel
   shows time posts spent paused by the hold on spreading; the fixed one-hour wait
@@ -332,7 +332,7 @@ These are known and not fully solved:
   Conservative by design - a false pause costs a delay, a false pass spreads a bad post -
   but it is also the cheapest available way to stall someone else's post.
 - **A paused post is not visible as paused anywhere per-post.** Only the SysAdmin
-  aggregate shows how much is being held; there is no queue of gated posts and no badge,
+  aggregate shows how much is being held; there is no queue of posts on hold and no badge,
   so a moderator cannot see that a particular post is waiting on them.
 - **"Seen" is not "scrutinised".** Views are counted from anyone whose browse list the
   post passed through, with no check that they are near enough to collect the item or
