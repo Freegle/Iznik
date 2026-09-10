@@ -34,6 +34,8 @@ chat list holds the chat with Freegle, **Your posts** (everything about what you
 offered or asked for), your chats with other freeglers, and your local **ChitChat**. On a
 computer the chat sits in a phone-sized window in the middle of the page.
 
+![The chat on a computer](assets/chat-desktop.png)
+
 **The website.** The pages the rest of this guide describes, with a Browse page, a Give
 page, a My Posts page and so on. Choose **Classic Freegle** from the menu at the top of the
 chat to use it, and **Freegle chat** from the website's menu, or the link on its front
