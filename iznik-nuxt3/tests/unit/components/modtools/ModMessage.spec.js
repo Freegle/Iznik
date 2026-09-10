@@ -423,10 +423,15 @@ describe('ModMessage', () => {
     })
   })
 
-  describe('Computed: groupid', () => {
-    it('returns groupid from message groups, 0 when no groups', () => {
+  describe('Computed: currentGroupid', () => {
+    it('resolves to the message group the mod administers', () => {
       const wrapper = mountComponent()
-      expect(wrapper.vm.groupid).toBe(789)
+      expect(wrapper.vm.currentGroupid).toBe(789)
+    })
+
+    it('is null when the message has no groups', () => {
+      const wrapper = mountComponent({}, { groups: [] })
+      expect(wrapper.vm.currentGroupid).toBeNull()
     })
   })
 
@@ -1874,7 +1879,7 @@ describe('ModMessage', () => {
           ],
         }
       )
-      expect(wrapper.vm.groupid).toBe(789)
+      expect(wrapper.vm.currentGroupid).toBe(789)
     })
 
     // Rippling-out: a post can ripple into a neighbouring group's pending queue
@@ -2039,7 +2044,7 @@ describe('ModMessage', () => {
           ],
         }
       )
-      expect(wrapper.vm.groupid).toBe(789)
+      expect(wrapper.vm.currentGroupid).toBe(789)
     })
 
     // Discourse 9808/565: in the all-communities view a mod who is active on BOTH the

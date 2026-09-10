@@ -148,12 +148,7 @@
               :only-groupid="currentGroupid"
             />
             <div
-              v-if="
-                homegroup &&
-                groupid &&
-                groupid !== homegroupids[0] &&
-                !alreadyOnHomeGroup
-              "
+              v-if="homegroup && !alreadyOnHomeGroup"
               class="small text-danger"
             >
               Possibly should be on {{ homegroup }}
@@ -974,17 +969,6 @@ const homegroupids = ref([])
 const historyGroups = reactive({})
 const editmessage = ref(false)
 
-const groupid = computed(() => {
-  // Use contextual groupid prop if provided (multi-group support),
-  // otherwise fall back to first group.
-  if (props.contextGroupid) return props.contextGroupid
-
-  if (message.value && message.value.groups && message.value.groups.length) {
-    return message.value.groups[0].groupid
-  }
-  return 0
-})
-
 // The group this copy is being administered on. In a specific group's queue that's the
 // explicit context group; in the all-communities view we pick the group I moderate that
 // most needs attention - a Pending one first, then the most-recent arrival - so a Reject
@@ -1040,8 +1024,10 @@ const currentGroupid = computed(() => {
   // queues). Anchor to the origin group, not to whichever row the API returned first.
   const home = homeGroupId(message.value?.groups)
   if (home != null) return home
-  const gid = parseInt(groupid.value)
-  return gid || null
+  // Last resort, when the post carries no origin marker at all: the first row. This is the
+  // only place that reads groups[0]; every other lookup goes through currentGroupid.
+  const first = message.value?.groups?.[0]?.groupid
+  return first ? parseInt(first) : null
 })
 
 // One predicate for "this row belongs to the group being administered", so the lookups
@@ -1108,11 +1094,10 @@ const otherGroups = computed(() => {
 })
 
 // Suppress the "Possibly should be on <homegroup>" hint when the post is ALREADY on that
-// group - e.g. it's the origin/first-posted group, or the post has rippled onto it. The
-// template's `groupid !== homegroupids[0]` only covers the case where the home group is the
-// group currently being administered; a post on its home group but viewed under a different
-// group's context (common once a post ripples onto several groups) would otherwise be told
-// it "should be on" a group it's already a member of.
+// group - e.g. it's the origin/first-posted group, or the post has rippled onto it. A post
+// on its home group but viewed under a different group's context (common once a post
+// ripples onto several groups) would otherwise be told it "should be on" a group it's
+// already a member of.
 const alreadyOnHomeGroup = computed(() => {
   const homeId = homegroupids.value?.[0]
   if (!homeId) return false
