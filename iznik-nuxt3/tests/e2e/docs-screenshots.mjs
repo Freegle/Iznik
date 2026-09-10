@@ -129,6 +129,24 @@ const SHOTS = [
     path: '/messages/pending',
   },
   {
+    // Post-moderation oversight: posts that published themselves and are waiting
+    // for a moderator's look.
+    audience: 'moderators',
+    name: 'checked',
+    auth: 'mod',
+    app: 'mod',
+    path: '/messages/checked',
+  },
+  {
+    // Post-moderation oversight: posts from members on Group Settings that went
+    // straight out.
+    audience: 'moderators',
+    name: 'trusted',
+    auth: 'mod',
+    app: 'mod',
+    path: '/messages/trusted',
+  },
+  {
     audience: 'moderators',
     name: 'members',
     auth: 'mod',
