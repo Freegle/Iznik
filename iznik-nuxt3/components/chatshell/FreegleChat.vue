@@ -91,6 +91,15 @@
             @reply="reply"
             @expand="expand"
           />
+          <button
+            v-if="assistant.cards.all"
+            type="button"
+            class="see-all"
+            data-testid="see-all"
+            @click="router.push(assistant.cards.all)"
+          >
+            {{ assistant.cards.allLabel || 'See all' }}
+          </button>
           <div v-if="!assistant.cards.ids.length" class="nothing-here">
             Nothing nearby just now.
           </div>
@@ -437,6 +446,17 @@ onMounted(() => {
 })
 </script>
 <style scoped lang="scss">
+.see-all {
+  align-self: flex-start;
+  border: 1px solid #1f5f3b;
+  background: #fff;
+  color: #1f5f3b;
+  border-radius: 999px;
+  padding: 0.35rem 1rem;
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.95rem;
+}
+
 .freegle-chat {
   display: flex;
   flex-direction: column;

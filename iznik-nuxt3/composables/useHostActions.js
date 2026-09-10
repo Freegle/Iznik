@@ -29,6 +29,8 @@ export function useHostActions() {
   function myLatLng() {
     const pc = assistant.slots?.postcodeLatLng
     if (pc?.lat && pc?.lng) return pc
+    const v = assistant.visitorLocation
+    if (v?.lat && v?.lng) return v
     const loc = me.value?.settings?.mylocation
     if (loc?.lat && loc?.lng) return { lat: loc.lat, lng: loc.lng }
     if (me.value?.lat && me.value?.lng)
@@ -182,9 +184,15 @@ export function useHostActions() {
     }))
     if (filter === 'nearest')
       list.sort((a, b) => (a.miles ?? 999) - (b.miles ?? 999))
-    const top = list.slice(0, 8)
+    // Three in the chat; the rest live on the Nearby screen, a list rather than a chat.
+    const top = list.slice(0, 3)
     await Promise.all(top.map((m) => messageStore.fetch(m.id)))
-    assistant.cards = { kind: 'posts', ids: top.map((m) => m.id) }
+    assistant.cards = {
+      kind: 'posts',
+      ids: top.map((m) => m.id),
+      all: list.length > 3 ? '/browse' : null,
+      allLabel: 'See all nearby',
+    }
     const posts = top.map((m) => ({
       id: m.id,
       title: messageStore.byId(m.id)?.subject || '',
@@ -212,9 +220,14 @@ export function useHostActions() {
     } catch (e) {
       list = []
     }
-    const top = list.slice(0, 8)
+    const top = list.slice(0, 3)
     await Promise.all(top.map((m) => messageStore.fetch(m.id)))
-    assistant.cards = { kind: 'posts', ids: top.map((m) => m.id) }
+    assistant.cards = {
+      kind: 'posts',
+      ids: top.map((m) => m.id),
+      all: list.length > 3 ? '/browse/' + encodeURIComponent(term) : null,
+      allLabel: 'See all matches',
+    }
     const posts = top.map((m) => ({
       id: m.id,
       title: messageStore.byId(m.id)?.subject || '',

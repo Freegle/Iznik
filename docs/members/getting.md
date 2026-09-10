@@ -42,10 +42,12 @@ spread quite that far, when it stops spreading and your reply goes anyway. It sh
 
 ### Finding and replying in the chat
 
+![The Nearby screen](assets/chat-nearby.png)
+
 In the chat, tap **Nearby** under the chat, or type what you are after, and Freegle shows
-what is on offer near you as cards in the chat, closest first. Tap **Offers**, **Wanted**
-or **Nearest** to narrow them down. Tap a card to read more, and **Reply** to start a chat
-with the person giving it away. Your chats with other freeglers sit in the same list as
+the three closest matches as cards in the chat. Tap **See all** for the full list: its own
+screen with a search box and an Offers or Wanted filter, nearest first. Tap a card to read
+more, and **Reply** to start a chat with the person giving it away. Your chats with other freeglers sit in the same list as
 your chat with Freegle, and arranging collection works exactly as described below.
 
 ## Posting a WANTED

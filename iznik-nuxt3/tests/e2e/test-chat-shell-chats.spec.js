@@ -92,4 +92,30 @@ test.describe('Chat shell: chats', () => {
     await expect(page.getByTestId('composer-input')).toBeVisible()
     await expect(page.getByTestId('shell-header')).toContainText('ChitChat')
   })
+
+  test('Nearby is a screen of its own with cards, a search box and a filter', async ({
+    page,
+    context,
+    baseURL,
+    existingTestEmail,
+  }) => {
+    test.setTimeout(timeouts.background)
+    await signInThenChat(page, context, baseURL, existingTestEmail)
+    await page.goto('/browse', { timeout: timeouts.navigation.initial })
+    await expect(page.getByTestId('nearby-screen')).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
+    await expect(page.getByTestId('nearby-search')).toBeVisible()
+    await expect(page.getByTestId('nearby-list')).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
+    await expect(
+      page.locator('[data-testid="nearby-list"] .post-card').first()
+    ).toBeVisible({ timeout: timeouts.background })
+    await page.getByTestId('nearby-filter-Offer').click()
+    await expect(page.getByTestId('nearby-filter-Offer')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+  })
 })

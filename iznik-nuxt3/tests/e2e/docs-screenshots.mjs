@@ -167,6 +167,14 @@ const SHOTS = [
   },
   {
     audience: 'members',
+    name: 'chat-nearby',
+    auth: 'member',
+    app: 'member',
+    ui: 'chat',
+    path: '/browse',
+  },
+  {
+    audience: 'members',
     name: 'settings',
     auth: 'member',
     app: 'member',

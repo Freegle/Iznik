@@ -1,5 +1,7 @@
 package assistant
 
+import "strings"
+
 // Fallback lines, used only when the model is unavailable, over quota, or its reply
 // failed the check twice. Plain, short, in the same voice.
 var templates = map[string]string{
@@ -61,11 +63,107 @@ func TemplateFor(state string) string {
 	return templates["HUB"]
 }
 
+// WarmTemplate is the fallback line with the thread carried through it: what they just
+// gave is acknowledged in a few words before the next question, and the stage they have
+// reached is marked lightly. Only what is in the slots and facts is ever named.
+func WarmTemplate(state string, slots Slots, facts Facts) string {
+	item := shortItem(slots.str("item"))
+	where := strings.TrimSpace(facts.str("locationName"))
+	community := strings.TrimSpace(facts.str("community"))
+	switch state {
+	case "GIVE_PHOTO":
+		if item != "" {
+			return "A " + item + ", lovely. Have you got a photo? Posts with one get far more interest."
+		}
+		return "Lovely, let's find it a new home nearby. Have you got a photo? Posts with one get far more interest."
+	case "GIVE_ITEM":
+		if facts.truthy("hasRealPhoto") {
+			return "Thanks, that helps people picture it. What is it, in a few words?"
+		}
+		if slots.has("photoDecided") {
+			return "No problem, words will do. What is it, in a few words?"
+		}
+		return templates[state]
+	case "GIVE_DESCRIPTION":
+		if item != "" {
+			return "A " + item + ", great. Anything people should know? Condition, size, when it can be collected."
+		}
+		return templates[state]
+	case "GIVE_QUANTITY":
+		return "Thanks. How many are there?"
+	case "GIVE_WHERE":
+		return "Nearly there. Roughly where is it? A postcode is easiest, and only the area is shown."
+	case "GIVE_EMAIL":
+		if where != "" {
+			return where + ", lovely. Last thing: where should replies go? Pop in your email."
+		}
+		return "Last thing: where should replies go? Pop in your email."
+	case "GIVE_CONFIRM":
+		return "That's everything. Here's what will go up. Happy with it?"
+	case "GIVE_DONE":
+		if community != "" {
+			return "That's with your local freeglers now, all around " + community + ". When someone's keen you'll hear from them right here."
+		}
+		return templates[state]
+	case "ASK_ITEM":
+		return "Let's see who nearby can help. What are you looking for?"
+	case "ASK_MATCHES":
+		if item != "" {
+			return "A " + item + ". A few things nearby might be just that. Have a look, or carry on asking."
+		}
+		return templates[state]
+	case "ASK_DESCRIPTION":
+		if item != "" {
+			return "A " + item + ", got it. Anything that would help people know if theirs would suit? Size, or what it's for."
+		}
+		return templates[state]
+	case "ASK_WHERE":
+		return "Nearly there. Roughly where are you? A postcode is easiest, and only the area is shown."
+	case "ASK_EMAIL":
+		if where != "" {
+			return where + ", lovely. Last thing: where should offers go? Pop in your email."
+		}
+		return "Last thing: where should offers go? Pop in your email."
+	case "ASK_CONFIRM":
+		return "That's everything. Here's your ask. Happy with it?"
+	case "ASK_DONE":
+		if community != "" {
+			return "That's with your local freeglers now, all around " + community + ". Offers will arrive right here."
+		}
+		return templates[state]
+	case "NEARBY":
+		if where != "" {
+			return "Here's what's on offer around " + where + " just now."
+		}
+		return templates[state]
+	}
+	return TemplateFor(state)
+}
+
+// shortItem trims a slot value to something that reads inside a sentence.
+func shortItem(item string) string {
+	item = strings.TrimSpace(strings.ToLower(item))
+	item = strings.TrimRight(item, ".!")
+	if len([]rune(item)) > 40 {
+		return ""
+	}
+	return item
+}
+
 // TemplateAfter is TemplateFor without repeating itself: if the line for the state is the
 // one Freegle has just said, the question's second form is used, and outside a question the
 // steer line, which says what Freegle is for.
 func TemplateAfter(state, lastSaid string) string {
-	t := TemplateFor(state)
+	return templateAfter(state, lastSaid, Slots{}, Facts{})
+}
+
+// WarmTemplateAfter is TemplateAfter with the thread carried through (WarmTemplate).
+func WarmTemplateAfter(state, lastSaid string, slots Slots, facts Facts) string {
+	return templateAfter(state, lastSaid, slots, facts)
+}
+
+func templateAfter(state, lastSaid string, slots Slots, facts Facts) string {
+	t := WarmTemplate(state, slots, facts)
 	if lastSaid == "" || t != lastSaid {
 		return t
 	}
