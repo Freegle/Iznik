@@ -105,6 +105,26 @@ catches it). Deterministic so a message never oscillates.
 - `iznik-server/include/group/Group.php` `defaultSettings['autoapprove']` gains
   `delay_minutes`/`quality_check_percent` (for the modtools UI + PHP parity).
 
+## Open question: microvolunteers during the wait (2026-09-10, not yet decided)
+
+What the branch does today: a microvolunteer *rejection* of a post is a danger signal
+(no auto-approve, no countdown) and a complaint that pauses spreading. A microvolunteer
+*approval* changes nothing. Pending posts reach microvolunteers only on communities with
+microvolunteering switched on (330 of 496), only to Moderate/Advanced trust reviewers, and
+the "please review" notification goes out on the every-5-minutes cron with no urgency cue.
+Production, last two weeks: about 170 CheckMessage verdicts a day from about 95 reviewers,
+of which 7 to 18 a day are rejections; about 2,000 review notifications a day.
+
+Options, in order of how much they change:
+1. Put posts inside the 20-minute wait first in the microvolunteer queue and say so in the
+   notification ("goes live in 12 minutes unless someone spots a problem").
+2. Count two approvals from distinct microvolunteers as "a human has looked": lift the
+   hold on spreading (today only a moderator's look does) and clear the post from the
+   Checked queue. Gives reviews a visible effect, which is the thing that encourages them.
+3. Offer pending-post review on every community in the auto-approve trial, whether or not
+   the community switched microvolunteering on.
+Edward to pick; none of these is in the PR.
+
 ## Gotchas (thought through)
 
 1. **Re-evaluation**: contentcheck only touches each row once (`contentcheck_checked_at IS
