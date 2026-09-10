@@ -701,6 +701,8 @@ describe('MyMessage', () => {
       mockData.message.outcomes = []
       mockData.message.promises = [{ userid: 2 }]
       const wrapper = await createWrapper()
+      // The banner names the promisee under the placeholder, instead of going blank.
+      expect(wrapper.find('.desktop-promised').text()).toContain('Freegler')
       await wrapper.find('.unpromise-btn').trigger('click')
       await flushPromises()
       const modal = wrapper.findComponent('.renege-modal')
