@@ -335,7 +335,7 @@ itself. That is the only arrangement in which they cannot drift apart:
 | Email and TN reply hold | `Ripple/ReachQueryService.php` | `RingIndex::admits` |
 | Immediate mail, reach mail | `UnifiedDigestService::keepRingAdmitted` | `RingIndex::admits` |
 | Daily digest, daily-posts push | `UnifiedDigestService::ringRescueIds` | `RingIndex::admittedFor` |
-| First-reply scout mail (excludes the already-admitted) | `FirstReply/MatchMailService` | `RingIndex::admits` |
+| First-reply match mail (excludes the already-admitted) | `FirstReply/MatchMailService` | `RingIndex::admits` |
 
 Both clients call `iznik-spatial-go`'s `reachoverflow` dataset: `/containing`
 for "which posts admit this member" (browse's direction) and `/admits` for
@@ -751,7 +751,7 @@ For each due post, `ripple:expand`:
   tick's polygon, and the stored per-tick reached-group ids drive the ripple-in - no
   schedule recomputation. The target is normally elapsed time alone, but
   `rippling_reach.min_tick` raises a floor under it (capped at the post's schedule length):
-  a scout who replies was outside the reach when we mailed them, so their reply is evidence
+  a matched member who replies was outside the reach when we mailed them, so their reply is evidence
   the item is wanted that far out and the people around them should get the same chance
   rather than waiting on the clock. See
   [first-reply.md](first-reply.md#a-matched-member-who-replies-pulls-the-reach-out-to-them).
@@ -788,9 +788,9 @@ stops such posts spreading ahead of scrutiny:
   stamp cleared, and the advance proceeds from the tick where it stopped. The same
   verdict gates the tick-0 ripple-in inside `rippleIntoNewGroups`.
 - **Consumers must respect the pause**: anything that pushes a post to people beyond its
-  current polygon has to check the gate itself. `firstreply` scouts do this by skipping
-  unreviewed posts entirely while the gate is on (a scout is a hand-picked invitation to
-  someone beyond the edge, and a scout reply raises `min_tick`).
+  current polygon has to check the gate itself. `firstreply` match mail does this by
+  skipping unreviewed posts entirely while the gate is on (match mail can reach someone
+  beyond the current edge, and a matched member's reply raises `min_tick`).
 - The oversight **reject** (Go `markchecked.go`) sets the reach row `status = 'stopped'`
   and settles the await stamp in the same statement.
 
