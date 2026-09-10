@@ -24,9 +24,7 @@
         <div class="post-card-title">{{ title }}</div>
         <div class="post-card-meta">
           <span v-if="miles !== null">{{ milesText }}</span>
-          <span v-if="message.area?.name || message.location">{{
-            message.area?.name || message.location
-          }}</span>
+          <span v-if="place">{{ place }}</span>
         </div>
         <div v-if="expanded && message.textbody" class="post-card-text">
           {{ message.textbody }}
@@ -66,6 +64,15 @@ const props = defineProps({
   miles: { type: Number, required: false, default: null },
 })
 defineEmits(['reply', 'expand'])
+
+// The area a post is in. Full records carry location as an object; summaries as text.
+const place = computed(() => {
+  const m = message.value
+  if (!m) return ''
+  if (m.area?.name) return m.area.name
+  if (typeof m.location === 'string') return m.location
+  return m.location?.name || ''
+})
 
 const messageStore = useMessageStore()
 const message = computed(() => messageStore.byId(props.id))
