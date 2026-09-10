@@ -491,14 +491,6 @@
         />
         <ModGroupSetting
           :groupid="groupid"
-          name="settings.autoapprove.delay_minutes"
-          label="Auto-approve delay (minutes)"
-          description="For members on Group Settings (not moderated), their posts are held briefly so you and microvolunteers can spot anything wrong, then auto-approved if no danger signals are found. This is how long to wait. Leave blank or 0 to use the site default (20 minutes)."
-          type="number"
-          :step="1"
-        />
-        <ModGroupSetting
-          :groupid="groupid"
           name="settings.autoapprove.quality_check_percent"
           label="Auto-approve quality-check sample (%)"
           description="Percentage of otherwise auto-approvable posts to hold in Pending anyway, so you can spot-check the quality of auto-approval. 0 (or blank) means none are held."

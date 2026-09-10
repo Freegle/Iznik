@@ -17,6 +17,16 @@ import (
 // only the groups listed in FREEGLE_AUTOAPPROVE_TRIAL_GROUPS (comma-separated ids) take part.
 // When the clean path is off for a group, the countdown falls back to the 48h estimate — a
 // countdown that will never fire must not be shown to moderators.
+// autoapproveDelayMinutes is how long a clean post waits before it publishes itself. It is
+// the same for every community and mirrors the batch's freegle.autoapprove.delay_minutes
+// (FREEGLE_AUTOAPPROVE_DELAY_MINUTES, default 20).
+func autoapproveDelayMinutes() int {
+	if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("FREEGLE_AUTOAPPROVE_DELAY_MINUTES"))); err == nil && n > 0 {
+		return n
+	}
+	return 20
+}
+
 func cleanPathEnabledFor(gid uint64) bool {
 	v := os.Getenv("FREEGLE_AUTOAPPROVE_ENABLED")
 	if v == "true" || v == "1" {
@@ -277,14 +287,12 @@ func computeAutoapproveat(db *gorm.DB, message *Message, groups []MessageGroup, 
 			mg.Spamreason == nil &&
 			!msgSpamreason
 
-		// delay_minutes / quality_check_percent from settings.autoapprove (0/absent => default).
-		delayMinutes := 20
+		// The delay is site-wide (same env the batch reads, default 20); a community has no
+		// override. quality_check_percent stays per community via settings.autoapprove.
+		delayMinutes := autoapproveDelayMinutes()
 		qualityPercent := 0
 		if settings != nil {
 			if aa, ok := settings["autoapprove"].(map[string]interface{}); ok {
-				if dm, ok := aa["delay_minutes"].(float64); ok && dm > 0 {
-					delayMinutes = int(dm)
-				}
 				if qp, ok := aa["quality_check_percent"].(float64); ok && qp > 0 {
 					qualityPercent = int(qp)
 				}

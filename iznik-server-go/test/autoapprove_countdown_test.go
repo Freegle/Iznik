@@ -147,6 +147,52 @@ func TestAutoapproveatDangerLogDaysConfigurable(t *testing.T) {
 		"a negative log outside the configured danger window must not suppress the countdown")
 }
 
+// The wait before a clean post publishes itself is the same for every community. A
+// leftover settings.autoapprove.delay_minutes on the group must not shorten the countdown,
+// and FREEGLE_AUTOAPPROVE_DELAY_MINUTES (the figure the cron reads) must lengthen it.
+func TestAutoapproveatDelayIsSiteWide(t *testing.T) {
+	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "true")
+	prefix := uniquePrefix("aadelaysite")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	poster := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, poster, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
+	// A community that tried to shorten the wait to 5 minutes.
+	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.autoapprove.delay_minutes', 5) WHERE id = ?", groupID)
+	_, modToken := CreateTestSession(t, modID)
+
+	msg := CreateTestMessage(t, poster, groupID, prefix+" clean pending", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE, contentcheck_reasons=NULL, autoapprove_hold_until=NULL WHERE msgid=?", msg)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid=?", msg)
+	defer db.Exec("DELETE FROM messages WHERE id=?", msg)
+
+	parseAt := func(v interface{}) time.Time {
+		s, ok := v.(string)
+		assert.True(t, ok, "autoapproveat should be a time string, got %#v", v)
+		at, err := time.Parse(time.RFC3339, s)
+		assert.NoError(t, err)
+		return at
+	}
+
+	// Site-wide 20 minutes from an arrival 5 minutes ago: about 15 minutes away, not
+	// already due as the group's 5-minute figure would make it.
+	at := parseAt(getAutoapproveatField(t, msg, groupID, modToken))
+	assert.True(t, at.After(time.Now().Add(12*time.Minute)),
+		"a community setting must not shorten the site-wide wait; got %v", at)
+	assert.True(t, at.Before(time.Now().Add(18*time.Minute)),
+		"the countdown should be the site-wide 20 minutes from arrival; got %v", at)
+
+	// The cron's own figure moves the countdown.
+	t.Setenv("FREEGLE_AUTOAPPROVE_DELAY_MINUTES", "60")
+	at = parseAt(getAutoapproveatField(t, msg, groupID, modToken))
+	assert.True(t, at.After(time.Now().Add(50*time.Minute)),
+		"FREEGLE_AUTOAPPROVE_DELAY_MINUTES must set the countdown; got %v", at)
+}
+
 // The content check writes a MemberModerated explanation onto every NULL-status
 // member's clean post - that is what the real population looks like, not reasons=NULL.
 // The countdown must read that as clean (20-minute path), exactly as the cron does, and

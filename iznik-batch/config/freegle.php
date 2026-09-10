@@ -1207,9 +1207,9 @@ return [
     | Auto-approve (delayed) for NULL-status ("auto-moderated") members
     |--------------------------------------------------------------------------
     |
-    | Site-wide defaults for messages:auto-approve-clean. A group may override
-    | delay_minutes / quality_check_percent via settings.autoapprove.* (an
-    | absent or 0 delay override falls back to the site default below).
+    | Site-wide settings for messages:auto-approve-clean. A group may override
+    | quality_check_percent via settings.autoapprove.quality_check_percent; the
+    | delay is the same for every community and has no per-group override.
     |
     | - enabled:                master switch for the clean-path auto-approve.
     |                           DEFAULT OFF: merging/deploying this code changes
@@ -1220,7 +1220,8 @@ return [
     |                           RIPPLE_ENABLED false). Ignored when enabled=true.
     | - delay_minutes:          how long a content-check-clean post stays in
     |                           Pending before auto-approval, giving mods and
-    |                           microvolunteers a chance to intervene.
+    |                           microvolunteers a chance to intervene. Site-wide;
+    |                           the Go countdown reads the same env variable.
     | - quality_check_percent:  percentage of otherwise-eligible posts held back
     |                           in Pending for a manual mod quality check (0 = none).
     | - danger_log_days:        how far back to look for negative moderation log

@@ -37,7 +37,8 @@ class AutoApproveCleanService
     private const DANGER_MESSAGE_SUBTYPES = ['Rejected', 'Deleted', 'Replied'];
     private const DANGER_USER_SUBTYPES    = ['Mailed', 'Rejected', 'Deleted', 'Suspect', 'ClassifiedSpam'];
 
-    public function defaultDelayMinutes(): int
+    /** How long a clean post waits in Pending before it publishes itself: the same for every community. */
+    public function delayMinutes(): int
     {
         return (int) config('freegle.autoapprove.delay_minutes', 20);
     }
@@ -89,9 +90,9 @@ class AutoApproveCleanService
             return $stats;
         }
 
-        // The delay is per-group (settings.autoapprove.delay_minutes) with a site-wide
-        // fallback, so it must be resolved in SQL — a single global threshold would ignore
-        // group overrides. A 0/absent override means "use the site default".
+        // One site-wide delay for every community (config freegle.autoapprove.delay_minutes).
+        // There is deliberately no per-community override: members get the same wait
+        // everywhere, and the Go countdown in autoapproveat.go assumes the same figure.
         $candidates = DB::table('messages_groups as mg')
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
             ->join('users as u', 'u.id', '=', 'm.fromuser')
@@ -127,10 +128,8 @@ class AutoApproveCleanService
             ->whereRaw(ContentCheckService::contentCleanSql('mg.contentcheck_reasons'))
             ->where('mg.quality_sample', 0)               // already-sampled rows are excluded entirely
             ->where('mg.rippled_in', 0)                   // rippled-in rows belong to AutoApproveService (carries the Taken/Received + rippled_in_pending_hours + recentLogs-bypass guards)
-            ->whereRaw(
-                "mg.arrival <= (NOW() - INTERVAL COALESCE(NULLIF(CAST(JSON_UNQUOTE(JSON_EXTRACT(g.settings, '$.autoapprove.delay_minutes')) AS UNSIGNED), 0), ?) MINUTE)",
-                [$this->defaultDelayMinutes()]
-            )
+            // keep-raw: NOW() - INTERVAL keeps the comparison on the database clock, like the hold check below.
+            ->whereRaw('mg.arrival <= (NOW() - INTERVAL ? MINUTE)', [$this->delayMinutes()])
             ->whereRaw(
                 '(mg.autoapprove_hold_until IS NULL OR mg.autoapprove_hold_until <= NOW())'
             )
