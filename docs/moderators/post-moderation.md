@@ -84,7 +84,7 @@ network-wide unchecked. When the companion "earned reach" switch is on:
   or a microvolunteer rejecting it. Pausing means the post's visible reach area stops
   growing too, not just its community placements: nobody new starts seeing it in
   browse, search or emails while it is paused. What it has already reached stays put.
-- **A moderator look settles it**: checking the post clears the gate entirely, and
+- **A moderator look settles it**: checking the post lifts the hold entirely, and
   rejecting it pulls it back.
 - **Posts a moderator approved by hand are exempt** - they have had their human look
   and ripple normally.
@@ -101,11 +101,11 @@ us". Three effects reach a community that is not in the trial:
 
 - **Posts from participating communities can ripple in.** This is the substantive one.
   A post that auto-published on a trial community, with no human look, can spread to
-  yours - it is the earned-reach gate, not your moderation settings, that governs how
+  yours - it is the hold on spreading, not your moderation settings, that governs how
   far and how fast (see above: an hour's head start, spread earned by clean exposure,
   any complaint freezing it, a moderator look settling it). If you reject the copy on
   your community, that removes it from your area exactly as any secondary rejection
-  does. The gate applies to any post no human has looked at, wherever it started.
+  does. The hold applies to any post no human has looked at, wherever it started.
 - **The two oversight queues appear for everyone, and they are not empty.** Checked and
   Trusted are added to the ModTools menu for all moderators, not only trial communities,
   and they list posts that went live without a moderator's click - which already happens
@@ -123,7 +123,7 @@ What does **not** cross over: no member of yours starts auto-publishing because 
 neighbouring community joined the trial. Whether a post auto-publishes is decided by the
 community it was posted to.
 
-The trial analytics (error rate, quality sample, review-gate delay) are network-wide
+The trial analytics (error rate, quality sample, time paused waiting for a moderator) are network-wide
 figures under SysAdmin, so ordinary moderators - in or out of the trial - do not see
 them unless they are published (see "Remaining problems").
 
@@ -138,7 +138,7 @@ them unless they are published (see "Remaining problems").
   already publish with no delay, no danger-signal check, and (until now) no oversight
   queue. The auto-moderated path gets all three.
 - **It is measured, not asserted.** Error rate, quality-sample comparison, and
-  review-gate delay are all tracked from day one, so the trial produces numbers rather
+  time paused waiting for a moderator are all tracked from day one, so the trial produces numbers rather
   than anecdotes.
 - **It is reversible.** Dark by default, per-group trial list, a master switch that can
   be turned off again, and no schema or behaviour change while off.
@@ -179,9 +179,9 @@ them unless they are published (see "Remaining problems").
 |---|---|
 | Dangerous content goes live (safeguarding, personal data, illegal items) | The automated content checks still run **before** publication for every post, exactly as today; anything flagged stays in Pending. The gap is content dangerous in ways no filter recognises - which already reaches the board today via the roughly half of posts that publish instantly. |
 | A bad post is seen before a moderator can act | The delay (default 20 minutes, per-community tunable upwards) keeps it in Pending first; opening the Pending queue holds everything on it for at least 10 more minutes; the oversight queues make it findable once live; reject is one click and pulls it back. |
-| A bad post spreads to neighbouring communities | The earned-reach gate: about an hour before any rippling, exposure-earned spread after that, and any single complaint freezes further spread - including the visible reach area - until a moderator looks. Bounded, not sealed: the exposure it requires can be manufactured with a few accounts (below), and the ceiling is however far rippling would have carried the post anyway. |
-| Someone games the gate to spread their own post | Needs several distinct accounts rather than repeat views, and at best restores the spread the post would have had with no gate at all - so it buys speed, not extra reach. |
-| Someone uses the gate to stall other people's posts | One objection pauses a post until a moderator looks, so it is cheap to abuse - but it only pauses spread (nothing is hidden or removed), and the objection lands in the mod queue, so it is visible rather than silent. |
+| A bad post spreads to neighbouring communities | The hold on spreading: about an hour before any rippling, exposure-earned spread after that, and any single complaint freezes further spread - including the visible reach area - until a moderator looks. Bounded, not sealed: the exposure it requires can be manufactured with a few accounts (below), and the ceiling is however far rippling would have carried the post anyway. |
+| Someone games the hold to spread their own post | Needs several distinct accounts rather than repeat views, and at best restores the spread the post would have had with no hold at all - so it buys speed, not extra reach. |
+| Someone uses the hold to stall other people's posts | One objection pauses a post until a moderator looks, so it is cheap to abuse - but it only pauses spread (nothing is hidden or removed), and the objection lands in the mod queue, so it is visible rather than silent. |
 | Scammers exploit the automatic path | Known and suspected spammer records veto auto-approval everywhere; a Spam-collection post on any community blocks all of them; a negative moderation action in the last 90 days vetoes it; each caught post creates the history that stops the next one. |
 | The moderators-know-their-members knowledge is lost | A moderator note on a member keeps their posts in Pending (any note, from any community - see the surprises section, which cuts both ways). Explicit Moderated/Prohibited statuses always win. The judgement calls stay human; only the rubber-stamping is automated. |
 | The automation is worse than believed | The quality sample is a continuously-running control group, and the error rate is computed from day one. If auto-published posts need intervention more often than the held-back sample suggests is tolerable, the numbers show it and the switch comes off. |
@@ -193,7 +193,7 @@ Worth setting out plainly, because most of these are consequences of deliberate 
 choices rather than oversights - but they are the sort of thing that is much worse to
 discover in the wild than to be told in advance.
 
-### The two ways the exposure gate can be played
+### The two ways the hold can be played
 
 - **Manufacturing approval (making a post spread faster).** Reach is earned by distinct
   members having seen the post, and "seen" means it passed through their browse list -
@@ -201,7 +201,7 @@ discover in the wild than to be told in advance.
   somebody with a handful of accounts, or a few willing friends, can clear the exposure
   bar for their own post. Two things bound it: it needs *distinct accounts*, not repeat
   views, and the worst outcome is that the post spreads at the speed it would have
-  spread at anyway if the gate did not exist - the gate can only ever slow a post down,
+  spread at anyway if the hold did not exist - the hold can only ever slow a post down,
   never carry it further than rippling would have.
 - **Freezing a post (stopping it spreading).** The brake is deliberately cheap: **one**
   message to a mod team referencing the post, or **one** microvolunteer rejection,
@@ -225,9 +225,9 @@ Post-moderation sharpens that in a way worth being blunt about:
   just the automated checks plus enough quiet views. A post your team would have queried
   in Pending can arrive on your community already live, because the community it was
   posted to never queried it.
-- **One moderator's "fine" unlocks it for everybody.** The gate asks whether *any* human
+- **One moderator's "fine" unlocks it for everybody.** The hold asks whether *any* human
   has looked, so a check by a moderator of any community the post has reached - including
-  one it merely rippled into, whose local rules differ from yours - clears the gate and
+  one it merely rippled into, whose local rules differ from yours - lifts the hold and
   lets it spread onwards everywhere.
 - **Your disagreement only trims your own patch.** Rejecting a rippled-in post removes it
   from your area and nowhere else. You cannot apply your community's standard to the
@@ -248,7 +248,7 @@ notes, and lengthen your own delay.
   never meant as complaints ("is this one still going?"). Messages from the mod side of
   that conversation do not count, so discussing a post with a member is safe; but a
   member raising it in any wording will pause its spread until someone checks it.
-- **Any moderator's check clears the gate for the whole post, everywhere.** The gate
+- **Any moderator's check lifts the hold for the whole post, everywhere.** The hold
   asks "has any human looked at this post?", not "has this community's moderator looked
   at it". A moderator of a community the post merely rippled into can clear it - after
   which it spreads normally for everyone. That is intentional (one human look is one
@@ -321,11 +321,11 @@ These are known and not fully solved:
   Nearby feed (and the search that mirrors it) only picks the post up once rippling
   initialises. For that first hour an auto-published post is less visible than a
   mod-approved one.
-- **The review-delay instrumentation measures pauses, not the initial hold.** The
-  SysAdmin panel shows time posts spent paused by the exposure gate; the fixed
-  one-hour hold is not included in those figures.
-- **The exposure gate advances a whole expansion step at once.** If the next step of
-  spread would add three communities, the post waits until it has enough views to
+- **The paused-time figures count pauses, not the first hour.** The SysAdmin panel
+  shows time posts spent paused by the hold on spreading; the fixed one-hour wait
+  before spreading starts is not included in those figures.
+- **The hold lifts for a whole stretch of spreading at once.** If the next stretch
+  of spread would add three communities, the post waits until it has enough views to
   cover all three; it does not trickle into them one at a time.
 - **A flag is deliberately crude** (see "Gaming, abuse and surprises"): any message from
   a member to a mod team referencing the post counts, so innocent messages pause posts.
@@ -374,8 +374,8 @@ These are known and not fully solved:
   posts in Pending. Explicit statuses always win. If you know a reason someone needs
   a human eye, write it down.
 - **Analytics** (currently SysAdmin-only, see above): where posts went, the
-  auto-publish error rate, quality-sample verdicts against it, and the review-gate
-  delay figures.
+  error rate for posts that published by themselves, quality-sample verdicts against
+  it, and the time posts spent paused waiting for a moderator.
 - **Your day-to-day habits are unchanged otherwise** - including the rippling ones:
   "out of area" is still never a reason to reject, and a post arriving from a
   neighbouring community is still the system working.
