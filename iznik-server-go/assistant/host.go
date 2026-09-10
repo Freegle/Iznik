@@ -65,6 +65,13 @@ func (s Slots) has(k string) bool {
 	return ok
 }
 
+func (f Facts) str(k string) string {
+	if v, ok := f[k].(string); ok {
+		return v
+	}
+	return ""
+}
+
 func (f Facts) truthy(k string) bool {
 	switch v := f[k].(type) {
 	case bool:

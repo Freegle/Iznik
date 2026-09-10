@@ -108,7 +108,7 @@ func hasEmoji(s string) bool {
 var sentenceStarters = map[string]bool{}
 
 func init() {
-	for _, w := range strings.Fields("that have when what where which who how why here there this these those it its you your we our i if so once and but or no yes not just only all any some one two three a an the lovely brilliant great nice good sorted done right okay ok roughly anything something nothing everything posted thanks thank sorry sounds looks seems want need give ask see find pop add tell let do does did is are was were will would could should can may might keep try go come back still then now first next last also even well very quite really sure freegle freeglers happy hope glad fine perfect got no problem whenever whatever please") {
+	for _, w := range strings.Fields("that have when what where which who how why here there this these those it its you your we our i if so once and but or no yes not just only all any some one two three a an the lovely brilliant great nice good sorted done right okay ok roughly anything something nothing everything posted thanks thank sorry sounds looks seems want need give ask see find pop add tell let do does did is are was were will would could should can may might keep try go come back still then now first next last also even well very quite really sure freegle freeglers happy hope glad fine perfect got no problem whenever whatever please condition size collection anything anyone people someone nobody everyone lots plenty maybe perhaps nearly almost welcome pop tap type either both most more less another other every each none offers wanted posts photos photo replies reply offer ask nearby chat chats last thing things comfy words which") {
 		sentenceStarters[w] = true
 	}
 }

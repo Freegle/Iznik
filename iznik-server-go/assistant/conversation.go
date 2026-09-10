@@ -48,6 +48,10 @@ var conversationLocks = &convLocks{m: map[string]*convLock{}}
 // llmDeadline bounds one model call, and with it how long a stream can stay open.
 const llmDeadline = 60 * time.Second
 
+// flowLapse is how long a half-finished give or ask waits before it is dropped and the
+// member is met at the hub again.
+const flowLapse = time.Hour
+
 func (l *convLocks) lock(key string) func() {
 	l.mu.Lock()
 	e := l.m[key]
@@ -344,6 +348,22 @@ func (s *Service) Turn(ctx context.Context, id Identity, in TurnInput, onDelta f
 	}
 	slots := toSlots(inst.Context["slots"])
 	recent := toRecent(inst.Context["recent"])
+	// A flow left for over an hour has lapsed: they are met at the hub, told what was left
+	// unfinished, and can start it again. The history stays; only the half-done state goes.
+	lapsed := ""
+	if IsQuestion(inst.State) && !inst.UpdatedAt.IsZero() && time.Since(inst.UpdatedAt) > flowLapse && (in.Event == nil || in.Event.Type != "resume") {
+		lapsed = shortItem(slots.str("item"))
+		if lapsed == "" {
+			lapsed = "something"
+		}
+		if strings.HasPrefix(inst.State, "ASK_") {
+			lapsed = "asking for " + lapsed
+		} else {
+			lapsed = "giving away " + lapsed
+		}
+		slots = Slots{}
+		_ = s.Engine.Force(inst, "HUB", "lapsed")
+	}
 	unclassified := 0
 	if v, ok := inst.Context["unclassified"].(float64); ok {
 		unclassified = int(v)
@@ -498,12 +518,19 @@ func (s *Service) Turn(ctx context.Context, id Identity, in TurnInput, onDelta f
 		}
 		delete(facts, "emailInUse")
 	}
+	if lapsed != "" {
+		facts["leftOff"] = lapsed
+		instruction += " They were part way through " + lapsed + " more than an hour ago and have come back. Welcome them back in a few words, say what was left unfinished, and that they can pick it up or do something else."
+	}
 	wasCancelled := facts.truthy("cancelled")
 	if wasCancelled {
 		instruction += " They stopped what they were doing. Acknowledge in a few words and mention the main things you can help with."
 		delete(facts, "cancelled")
 	}
 	say, fb := s.compose(ctx, inst, id, in.IP, slots, facts, recent, instruction, onDelta)
+	if fb && lapsed != "" {
+		say = "Welcome back. We'd got part way through " + lapsed + ". Tap Give or Ask to pick that up, or tell me what you're after."
+	}
 	if fb && wasCancelled {
 		// The hub line reads oddly straight after a cancel; the cancelled line fits.
 		say = TemplateFor("CANCELLED")
@@ -620,7 +647,7 @@ func (s *Service) compose(ctx context.Context, inst *Instance, id Identity, ip s
 		return templateAbuse, true
 	}
 	if id.Throttled || !s.Quota.Allow(id.Key, ip, id.UserID > 0) {
-		return TemplateAfter(state, lastSaid), true
+		return WarmTemplateAfter(state, lastSaid, slots, facts), true
 	}
 	ctx, cancel := context.WithTimeout(ctx, llmDeadline)
 	defer cancel()
@@ -635,7 +662,7 @@ func (s *Service) compose(ctx context.Context, inst *Instance, id Identity, ip s
 		raw, err := s.Engine.LLM.Call(ctx, system, user, deltaFn)
 		if err != nil {
 			s.logf("compose failed: %v", err)
-			return TemplateAfter(state, lastSaid), true
+			return WarmTemplateAfter(state, lastSaid, slots, facts), true
 		}
 		say := ParseSay(raw)
 		if say == "" {
@@ -649,7 +676,7 @@ func (s *Service) compose(ctx context.Context, inst *Instance, id Identity, ip s
 		s.logf("compose reply failed check: %v", reasons)
 		note = instruction + " Your previous reply was rejected for: " + strings.Join(reasons, ", ") + ". Write it again using only the facts given, no exclamation marks, no promises."
 	}
-	return TemplateAfter(state, lastSaid), true
+	return WarmTemplateAfter(state, lastSaid, slots, facts), true
 }
 
 func (s *Service) finish(inst *Instance, id Identity, slots Slots, facts Facts, recent []recentLine, memberLine, say string, hostAction *HostAction, unclassified int, fallback bool) (*TurnResult, error) {

@@ -105,7 +105,7 @@ func TestAsstModelFailureFallsBackToTemplate(t *testing.T) {
 	llm := &FakeLLM{}
 	s := newTestService(llm)
 	r, err := s.Turn(context.Background(), member, TurnInput{Tap: "give"}, nil)
-	if err != nil || !r.Fallback || r.Say != TemplateFor("GIVE_PHOTO") {
+	if err != nil || !r.Fallback || !strings.Contains(r.Say, "photo") {
 		t.Fatalf("fallback: %v %+v", err, r)
 	}
 }
@@ -114,7 +114,7 @@ func TestAsstFabricatedReplyIsRegeneratedThenTemplated(t *testing.T) {
 	llm := &FakeLLM{Responses: []string{say("Jane will collect it tomorrow!"), say("Someone will collect it within 2 hours.")}}
 	s := newTestService(llm)
 	r, _ := s.Turn(context.Background(), member, TurnInput{Tap: "give"}, nil)
-	if !r.Fallback || r.Say != TemplateFor("GIVE_PHOTO") {
+	if !r.Fallback || !strings.Contains(r.Say, "photo") {
 		t.Fatalf("expected template after two failed checks, got %q", r.Say)
 	}
 	if len(llm.Calls) != 2 || !strings.Contains(llm.Calls[1], "rejected for") {
@@ -213,7 +213,7 @@ func TestAsstThrottledIdentityGetsTemplatesOnly(t *testing.T) {
 	s := newTestService(llm)
 	throttled := Identity{Key: "a:throttled:1.2.3.4", Throttled: true}
 	r, err := s.Turn(context.Background(), throttled, TurnInput{Tap: "give"}, nil)
-	if err != nil || !r.Fallback || r.Say != TemplateFor("GIVE_PHOTO") {
+	if err != nil || !r.Fallback || !strings.Contains(r.Say, "photo") {
 		t.Fatalf("throttled visitor: %v %+v", err, r)
 	}
 	if len(llm.Calls) != 0 {
@@ -254,5 +254,52 @@ func TestAsstResumeSaysNothingAndMovesNothing(t *testing.T) {
 	}
 	if len(llm.Calls) != 1 {
 		t.Fatalf("resume must not call the model, calls=%d", len(llm.Calls))
+	}
+}
+
+func TestAsstFlowLapsesAfterAnHour(t *testing.T) {
+	llm := &FakeLLM{Responses: []string{say("Have you got a photo?"), say("What is it?")}}
+	s := newTestService(llm)
+	ctx := context.Background()
+	r1, _ := s.Turn(ctx, member, TurnInput{Tap: "give"}, nil)
+	s.Turn(ctx, member, TurnInput{ConversationID: r1.Conversation, Tap: "no_photo"}, nil)
+	s.Turn(ctx, member, TurnInput{ConversationID: r1.Conversation, Text: "grey sofa"}, nil)
+	inst, _ := s.Engine.Store.Get(r1.Conversation)
+	inst.UpdatedAt = time.Now().Add(-2 * time.Hour)
+	_ = s.Engine.Store.Save(inst)
+	// The model is unavailable for the welcome, so the template line is what they get.
+	llm.Responses = nil
+	r, err := s.Turn(ctx, member, TurnInput{ConversationID: r1.Conversation, Text: "hello again"}, nil)
+	if err != nil || r.State != "HUB" {
+		t.Fatalf("a flow left for over an hour lapses to the hub: %v %+v", err, r)
+	}
+	if !strings.Contains(r.Say, "giving away grey sofa") || !strings.Contains(r.Say, "Welcome back") {
+		t.Fatalf("the welcome names what was left unfinished: %q", r.Say)
+	}
+	if r.Progress != nil {
+		t.Fatal("no flow is in progress after a lapse")
+	}
+}
+
+func TestAsstWarmTemplatesCarryTheThread(t *testing.T) {
+	slots := Slots{"item": "Grey sofa", "photoDecided": true, "description": "comfy"}
+	facts := Facts{"locationName": "Leith", "community": "Edinburgh Freegle", "hasRealPhoto": true}
+	for _, state := range []string{"GIVE_PHOTO", "GIVE_ITEM", "GIVE_DESCRIPTION", "GIVE_QUANTITY", "GIVE_WHERE", "GIVE_EMAIL", "GIVE_CONFIRM", "GIVE_DONE", "ASK_ITEM", "ASK_MATCHES", "ASK_DESCRIPTION", "ASK_WHERE", "ASK_EMAIL", "ASK_CONFIRM", "ASK_DONE", "NEARBY", "HUB", "HELP"} {
+		line := WarmTemplate(state, slots, facts)
+		if line == "" || strings.Contains(line, "!") {
+			t.Fatalf("%s: %q", state, line)
+		}
+		if ok, reasons := CheckReply(line, AllowedVocabulary(map[string]interface{}{"facts": facts, "slots": slots}, "", FactSheet), state); !ok {
+			t.Fatalf("%s template fails the fabrication check: %v (%q)", state, reasons, line)
+		}
+	}
+	if !strings.Contains(WarmTemplate("GIVE_DESCRIPTION", slots, facts), "grey sofa") {
+		t.Fatal("the description question names the item")
+	}
+	if !strings.Contains(WarmTemplate("GIVE_EMAIL", slots, facts), "Leith") {
+		t.Fatal("the email question acknowledges the place")
+	}
+	if !strings.Contains(WarmTemplate("GIVE_DONE", slots, facts), "Edinburgh Freegle") {
+		t.Fatal("the done line names the community")
 	}
 }

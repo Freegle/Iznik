@@ -6,6 +6,7 @@ covers:
   - iznik-nuxt3/layouts/chat.vue
   - iznik-nuxt3/nginx-proxy.conf
   - iznik-nuxt3/components/chatshell/**
+  - iznik-nuxt3/pages/browse/**
   - iznik-nuxt3/stores/assistant.js
   - iznik-nuxt3/api/AssistantAPI.js
   - iznik-nuxt3/composables/useUiMode.js
@@ -60,7 +61,10 @@ Screens: `FreegleChat` (the assistant), `ChatList` (Freegle and Your posts pinne
 as a group, people; filters All · Unread · People), `MemberChat` (the existing pane and
 footer with a shell header), `YourPosts` (one chat of events about all your posts, with
 `ChooserSheet` for who gets what and how many), `ChitChatGroup` (the newsfeed as a group
-chat: one stream, replies quote what they answer, ❤ to love).
+chat: one stream, replies quote what they answer, ❤ to love), `NearbyScreen` (`/browse` in chat
+mode: a scrolling list with a search box and an Offers/Wanted filter, nearest first, ten at a
+time). The chat itself shows at most three cards for nearby or a search, with a See all link
+to that screen; a feed does not belong in a transcript.
 
 ## The assistant
 
@@ -123,6 +127,14 @@ post a collection time is for), and `heldreplies` on the owner's post record (re
 waiting for a volunteer). `composables/yourposts.js` turns the post records into the
 events Your posts shows, orders repliers by a fixed score with its reasons shown, and
 prefills a split.
+
+## When a chat resets
+
+The transcript stays on the device like any chat, capped at a few hundred lines, and on the
+server until the instance is pruned after thirty days idle. "Start again" in the menu and
+signing out clear it. A give or ask left half-done for more than an hour lapses: the next turn
+is met at the hub with a line naming what was left unfinished (`flowLapse` in
+`conversation.go`), and the flow starts afresh if they pick it up.
 
 ## Abuse, limits and races
 

@@ -27,6 +27,9 @@ export const useAssistantStore = defineStore('assistant', {
     nextId: 1,
     cards: null,
     photos: [],
+    // Where a visitor said they are, so "nearby" means the same in the chat and on the
+    // Nearby screen until they sign in.
+    visitorLocation: null,
     // Host action keys already run, so a repeated turn cannot post twice.
     done: [],
     bound: false,
@@ -43,6 +46,7 @@ export const useAssistantStore = defineStore('assistant', {
       'facts',
       'nextId',
       'lastChatId',
+      'visitorLocation',
     ],
   },
   getters: {
