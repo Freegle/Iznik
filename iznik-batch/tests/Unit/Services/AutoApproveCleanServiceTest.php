@@ -434,9 +434,10 @@ class AutoApproveCleanServiceTest extends TestCase
         $this->assertApproved($message->id, $group->id);
     }
 
-    public function test_per_group_delay_override(): void
+    public function test_delay_is_the_same_for_every_community(): void
     {
-        // Site default is 20 min; this group overrides to 5 min, so a 6-min-old post approves.
+        // A community cannot shorten the wait: a leftover settings.autoapprove.delay_minutes
+        // of 5 is ignored, so a 6-minute-old post stays pending until the site-wide 20.
         [$user, $group, $message] = $this->makeApprovable([
             'group' => ['settings' => ['autoapprove' => ['delay_minutes' => 5]]],
             'mg'    => ['arrival' => now()->subMinutes(6)],
@@ -444,20 +445,19 @@ class AutoApproveCleanServiceTest extends TestCase
 
         $this->service->process();
 
-        $this->assertApproved($message->id, $group->id);
+        $this->assertStillPending($message->id, $group->id);
     }
 
-    public function test_zero_group_delay_falls_back_to_site_default(): void
+    public function test_post_older_than_the_site_wide_delay_approves(): void
     {
-        // A 0 override means "use the site default" (20), so a 6-min-old post stays pending.
         [$user, $group, $message] = $this->makeApprovable([
-            'group' => ['settings' => ['autoapprove' => ['delay_minutes' => 0]]],
-            'mg'    => ['arrival' => now()->subMinutes(6)],
+            'group' => ['settings' => ['autoapprove' => ['delay_minutes' => 120]]],
+            'mg'    => ['arrival' => now()->subMinutes(21)],
         ]);
 
         $this->service->process();
 
-        $this->assertStillPending($message->id, $group->id);
+        $this->assertApproved($message->id, $group->id);
     }
 
     public function test_dry_run_does_not_modify_database(): void

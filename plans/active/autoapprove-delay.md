@@ -51,9 +51,10 @@ shipped design.)
 2. `contentcheck_checked_at IS NOT NULL AND contentcheck_reasons IS NULL` — content
    check ran and was **clean**. (This is how "all posts still go through spam checks;
    suspect → Pending" is honoured: suspect rows have reasons and are excluded.)
-3. `mg.arrival <= NOW() - INTERVAL {delay} MINUTE`, where `{delay}` is the per-group
-   `settings.autoapprove.delay_minutes` (JSON_EXTRACT) falling back to
-   `config('freegle.autoapprove.delay_minutes', 20)`.
+3. `mg.arrival <= NOW() - INTERVAL {delay} MINUTE`, where `{delay}` is the site-wide
+   `config('freegle.autoapprove.delay_minutes', 20)`. There is no per-group override
+   (removed 2026-09-10 at Edward's request; the setting had shipped in an earlier
+   revision of this branch).
 4. `mg.heldby IS NULL`, `m.heldby IS NULL`, `mg.spamreason IS NULL`, `m.spamreason IS NULL`,
    `mg.deleted=0`, `m.deleted IS NULL`, `u.deleted IS NULL`.
 5. Group is **not moderated**: `settings.moderated` falsy AND `rules.fullymoderated` falsy
@@ -109,8 +110,9 @@ catches it). Deterministic so a message never oscillates.
 1. **Re-evaluation**: contentcheck only touches each row once (`contentcheck_checked_at IS
    NULL`). This service must query already-checked rows → keys off `checked_at NOT NULL AND
    reasons NULL`, NOT `checked_at NULL`.
-2. **Per-group delay** must be in the SQL (JSON_EXTRACT COALESCE default) so a group's
-   shorter/longer override is honoured; a single global threshold would be wrong.
+2. **One delay for everyone**: the wait is a single site-wide figure bound into the SQL.
+   A per-group override existed in an earlier revision and was removed; the Go
+   countdown (`autoapproveat.go`) reads the same `FREEGLE_AUTOAPPROVE_DELAY_MINUTES`.
 3. **Moderated groups**: contentcheck keeps clean posts Pending with reasons=NULL even on
    moderated groups, so this service must explicitly exclude moderated/Big-Switch groups.
 4. **Races**: query filters `collection='Pending'` and the UPDATE uses `collection<>'Approved'`
@@ -135,7 +137,7 @@ catches it). Deterministic so a message never oscillates.
 | 5 | config/freegle.php defaults | ✅ | autoapprove block (no Group.php change — absent=site default) |
 | 6 | Go ListMessagesMT filter + tests | ✅ | filter=checked\|trusted (autoapproved/recentjoin/outsidecga experiment reverted) |
 | 7 | Checked/Trusted pages + countdown + help boxes | ✅ | /messages/checked,/trusted; autoapproveat countdown; ModHelp* boxes |
-| 8 | ModSettingsGroup.vue settings controls | ✅ | delay_minutes + quality_check_percent |
+| 8 | ModSettingsGroup.vue settings controls | ✅ | quality_check_percent only (delay_minutes control removed 2026-09-10) |
 | 9 | Run all suites via worktree status API | ✅ | full Laravel 3962/3962 ✓; Go 3004/3004 ✓; Vitest modtools 4475/4475 ✓ |
 | 10 | Push + PR (Freegle/Iznik) | ✅ | PR #639 — https://github.com/Freegle/Iznik/pull/639 (master merged 2026-09-05, all suites green locally; awaiting CI; never merge) |
 
@@ -185,8 +187,9 @@ gate tests ported to `polygon_cells` with the advance rasterising on the real sp
 
 Discourse context (Neil, 10088 #45-47, 2026-09-04): the Board's Ops & Tech WP is considering
 the 48h->24h cut "as part of the changes to post moderation"; a per-group auto-approve delay
-"will be implemented as part of the changes to post moderation" (= `settings.autoapprove.
-delay_minutes`); holds survive post-moderation (= `autoapprove_hold_until` + Pending queue).
+"will be implemented as part of the changes to post moderation" - this branch shipped one
+and then dropped it (2026-09-10, Edward: one wait for every community); holds survive
+post-moderation (= `autoapprove_hold_until` + Pending queue).
 
 Findings fixed:
 1. **The clean path never fired on real data.** Since 9a11c3e79 (2026-07-31, before the
