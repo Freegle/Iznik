@@ -623,9 +623,9 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
 
             // AMP-ONLY post cap. AMP for Email hard-limits the AMP document to
             // 200,000 bytes; a large daily digest's cards push it over and Gmail
-            // rejects the WHOLE AMP. Cap the cards here (the summary and the
-            // <amp-state> map are derived from $ampPosts too, so capping once
-            // shrinks all three) and surface an "and N more — browse all" link.
+            // rejects the WHOLE AMP. Cap the cards here (the summary strip is
+            // derived from $ampPosts too, so capping once shrinks both) and
+            // surface an "and N more — browse all" link.
             // The HTML and text parts still carry EVERY post; this cap is AMP
             // only. applyAmpToMessage()'s 199KB guard remains the final backstop.
             $ampCap = DigestStyle::DIGEST_POST_CAP;
@@ -634,21 +634,11 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 $ampPosts = $ampPosts->take($ampCap)->values();
             }
 
-            // Build the shared per-post metadata map for the AMP template.
-            // Storing {title, token, expiry} once per message in an
-            // <amp-state> at the top of the body — instead of inlining the
-            // full token + title in each post's tap-state — drops the
-            // per-post button payload from ~400 bytes to ~110 bytes, which
-            // is what brings a 200-post AMP digest in under the 200 KB cap.
-            $ampPostMeta = $ampPosts->mapWithKeys(fn ($p) => [
-                (int) $p['message']->id => [
-                    't' => (string) $p['itemName'],
-                    'k' => (string) ($p['ampReplyToken'] ?? ''),
-                    'e' => (int) ($p['ampReplyExp'] ?? 0),
-                ],
-            ])->toArray();
-            $ampApiUrl = rtrim(config('freegle.amp.api_url', 'https://api.ilovefreegle.org/amp'), '/');
-
+            // The view needs no shared reply state: a multi-post card's Reply
+            // is a link to the post on the website (the in-email reply drawer
+            // came up blank in the Gmail phone apps on some handsets, support
+            // ref SR-FV6KC), and the single-post immediate form carries its
+            // own action-xhr URL on the post (prepareAmpPosts).
             $this->renderAmpTemplate('emails.amp.digest.unified', [
                 'user' => $this->user,
                 'posts' => $ampPosts,
@@ -659,9 +649,6 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 'unsubscribeUrl' => $this->trackedUrl($this->userSite . '/unsubscribe', 'amp_unsubscribe', 'unsubscribe'),
                 'browseUrl' => $this->trackedUrl($this->userSite . '/browse', 'amp_browse', 'browse'),
                 'userSite' => $this->userSite,
-                'ampPostMeta' => $ampPostMeta,
-                'ampApiUrl' => $ampApiUrl,
-                'ampUserId' => (int) $this->user->id,
                 // Jobs + sponsors reach the AMP body too (V1 parity — the MJML
                 // and text parts already carry these; AMP previously dropped
                 // them). Same data the MJML view above receives.
