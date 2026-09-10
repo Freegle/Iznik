@@ -169,8 +169,9 @@ them unless they are published (see "Remaining problems").
   not community by community: during the trial it runs on the communities chosen for it,
   and the intent beyond the trial is that it becomes how Freegle works everywhere, so
   members get one consistent experience rather than a patchwork. A community tunes its
-  own delay and quality-sample rate, and every explicit member posting status is honoured
-  absolutely - but there is no setting that turns the feature off locally. Local autonomy
+  own quality-sample rate, and every explicit member posting status is honoured
+  absolutely - but the wait before a post publishes itself is the same everywhere, and
+  there is no setting that turns the feature off locally. Local autonomy
   is deliberately narrowed here, and that should be said plainly rather than softened.
 
 ## Risks and what bounds them
@@ -178,7 +179,7 @@ them unless they are published (see "Remaining problems").
 | Risk | What bounds it |
 |---|---|
 | Dangerous content goes live (safeguarding, personal data, illegal items) | The automated content checks still run **before** publication for every post, exactly as today; anything flagged stays in Pending. The gap is content dangerous in ways no filter recognises - which already reaches the board today via the roughly half of posts that publish instantly. |
-| A bad post is seen before a moderator can act | The delay (default 20 minutes, per-community tunable upwards) keeps it in Pending first; opening the Pending queue holds everything on it for at least 10 more minutes; the oversight queues make it findable once live; reject is one click and pulls it back. |
+| A bad post is seen before a moderator can act | The delay (20 minutes, the same for every community) keeps it in Pending first; opening the Pending queue holds everything on it for at least 10 more minutes; the oversight queues make it findable once live; reject is one click and pulls it back. |
 | A bad post spreads to neighbouring communities | The hold on spreading: about an hour before any rippling, exposure-earned spread after that, and any single complaint freezes further spread - including the visible reach area - until a moderator looks. Bounded, not sealed: the exposure it requires can be manufactured with a few accounts (below), and the ceiling is however far rippling would have carried the post anyway. |
 | Someone games the hold to spread their own post | Needs several distinct accounts rather than repeat views, and at best restores the spread the post would have had with no hold at all - so it buys speed, not extra reach. |
 | Someone uses the hold to stall other people's posts | One objection pauses a post until a moderator looks, so it is cheap to abuse - but it only pauses spread (nothing is hidden or removed), and the objection lands in the mod queue, so it is visible rather than silent. |
@@ -238,8 +239,8 @@ None of this is accidental: a single network-wide experience is the stated aim, 
 patchwork of standards is what it is trading away. But the practical effect is that the
 **most permissive decision in the chain wins**, and the honest summary is that your
 community will see posts you would not have approved, more often than it does today.
-The levers you keep are local: reject your copy, keep specific members moderated, write
-notes, and lengthen your own delay.
+The levers you keep are local: reject your copy, keep specific members moderated, and
+write notes.
 
 ### Things that will surprise moderators
 
@@ -358,6 +359,8 @@ These are known and not fully solved:
 - **Opening Pending guarantees you a look.** Every post on the queue gets at least 10
   more minutes before it can auto-approve, extended each time you load the page.
   Nothing publishes out from under you while you are reading it.
+
+  ![The Pending queue, with the countdown on a post that is about to publish itself](assets/pending.png)
 - **Two oversight queues** sit alongside Pending and Approved (on every community, in
   the trial or not - see "What a community NOT taking part still sees"):
   - **Checked** - posts that went live via the automatic checks.
@@ -366,6 +369,10 @@ These are known and not fully solved:
   checked"**, and age posts out after **7 days** so they never pile up. Posts that
   merely rippled in from another community do not appear - overseeing those belongs
   to the community they were posted on.
+
+  ![The Checked queue: posts that published themselves, waiting for a look](assets/checked.png)
+
+  ![The Trusted queue: posts from trusted members that went straight out](assets/trusted.png)
 - **Reject from the oversight queue** pulls a live post straight back to Pending and
   held, stops its rippling immediately, withdraws the copies it had rippled into other
   communities, and records the rejection - which both feeds the error rate and becomes
