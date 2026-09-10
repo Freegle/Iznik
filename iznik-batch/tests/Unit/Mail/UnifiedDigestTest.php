@@ -375,6 +375,47 @@ class UnifiedDigestTest extends TestCase
         $this->assertStringContainsString("We've limited this to {$cap} posts", $text);
     }
 
+    public function test_dropped_post_ids_and_tracking_describe_what_the_email_shows(): void
+    {
+        // The service stores droppedPostIds() on the member's digest tracker and offers
+        // those posts again next run, so the list must be exactly what the cap cut. The
+        // tracking record must describe the cards actually shown, not the eligible set.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $posts = collect();
+        for ($i = 1; $i <= $cap + 3; $i++) {
+            $filler = $this->createTestMessage($poster, $group, ['subject' => "OFFER: Filler{$i}Zq (London)"]);
+            $posts->push(['message' => $filler, 'postedToGroups' => [$group->id]]);
+        }
+        $ownMessage = $this->createTestMessage($user, $group, ['subject' => 'OFFER: OwnLastZq (London)']);
+        $posts->push(['message' => $ownMessage, 'postedToGroups' => [$group->id]]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $dropped = $mail->droppedPostIds();
+        $this->assertCount(4, $dropped, 'cap + 4 eligible posts, cap shown, so four left out');
+        $this->assertNotContains($ownMessage->id, $dropped);
+
+        $meta = $mail->getTracking()->metadata;
+        $this->assertSame($cap, $meta['post_count']);
+        $this->assertCount($cap, $meta['post_msgids']);
+        $this->assertContains($ownMessage->id, $meta['post_msgids']);
+        foreach ($dropped as $id) {
+            $this->assertNotContains($id, $meta['post_msgids']);
+        }
+
+        // The subject still describes the whole eligible set: over the cap, no count.
+        $this->assertStringStartsWith("What's New", $mail->envelope()->subject);
+        $this->assertStringNotContainsString('(' . ($cap + 4) . ' posts)', $mail->envelope()->subject);
+    }
+
     /**
      * Number of post cards in the plain-text part: one "OFFER:"/"WANTED:" line per card.
      * The "In this digest" summary lists subjects with a leading "- ", so it is not counted.

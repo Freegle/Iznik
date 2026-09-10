@@ -43,6 +43,12 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
 
     protected Collection $preparedPosts;
 
+    /** The live posts that fit under DIGEST_POST_CAP; what the body, AMP and tracking show. */
+    protected Collection $cappedPosts;
+
+    /** @var int[] msgids of live posts that did not fit; the service re-offers them next run */
+    protected array $droppedPostIds = [];
+
     /** @var Collection lightweight "came and went" (Taken/Received) entries for the greyed daily section */
     protected Collection $preparedCompletedPosts;
 
@@ -81,6 +87,22 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // Look up digest number for this user.
         $this->digestNumber = $this->getDigestNumber();
 
+        // Apply the post cap here, once, so the tracking record, the rendered body and the
+        // AMP part all describe the same set, and the service can carry the posts left out
+        // over to the member's next digest (droppedPostIds()). $this->posts keeps the whole
+        // eligible set: the subject and the "N new posts" line still describe that.
+        $cards = $this->posts->values();
+        $kept = $this->keptUnderCap(
+            $cards,
+            DigestStyle::DIGEST_POST_CAP,
+            fn ($card) => (int) ($card['message']->fromuser ?? 0) === (int) $this->user->id
+        );
+        $this->cappedPosts = $cards->only($kept)->values();
+        $this->droppedPostIds = $cards->except($kept)
+            ->map(fn ($c) => (int) $c['message']->id)
+            ->values()
+            ->all();
+
         // Initialize email tracking BEFORE preparePosts so trackedUrl() works.
         $userId = $this->user->exists ? $this->user->id : null;
 
@@ -100,7 +122,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             $this->getSubject(),
             [
                 'mode' => $this->mode,
-                'post_count' => $this->posts->count(),
+                'post_count' => $this->cappedPosts->count(),
                 // Ordered msgids of every post shown, position = array index.
                 // Matches the per-post link/image position labels ("post_{i}"
                 // / "image_{i}") so an OPEN with no click is still attributable
@@ -108,7 +130,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 // positions map back to a msgid, and a post's "shown at
                 // position P in N digests" denominator is recoverable. Without
                 // this only the rare clicked post can be attributed.
-                'post_msgids' => $this->posts->map(fn ($p) => $p['message']->id)->values()->all(),
+                'post_msgids' => $this->cappedPosts->map(fn ($p) => $p['message']->id)->values()->all(),
                 'digest_number' => $this->digestNumber,
                 'has_amp' => $this->ampForRecipient(),
             ],
@@ -218,6 +240,18 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->user->id ?? null;
+    }
+
+    /**
+     * The live posts this digest had to leave out at DIGEST_POST_CAP, as msgids. The service
+     * stores them on the member's digest tracker and puts them back into the next run's
+     * window, so a post that was eligible but did not fit is not lost when the cursor moves.
+     *
+     * @return int[]
+     */
+    public function droppedPostIds(): array
+    {
+        return $this->droppedPostIds;
     }
 
     /**
@@ -532,10 +566,9 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // cap bites, the template shows an intro under "In this digest" sending the reader to
         // the website for the rest. (Immediate digests are single-post, so this never bites.)
         // The recipient's own post(s) are always reserved a slot rather than being subject to
-        // the same score-ordered cut as everyone else's — see capPreservingOwnPosts().
-        $postCap = DigestStyle::DIGEST_POST_CAP;
-        $livePosts = $this->capPreservingOwnPosts($this->preparedPosts, $postCap);
-        $liveMorePosts = $this->preparedPosts->count() - $livePosts->count();
+        // the same score-ordered cut as everyone else's — see keptUnderCap().
+        $livePosts = $this->preparedPosts;
+        $liveMorePosts = count($this->droppedPostIds);
 
         $result = $this->mjmlView('emails.mjml.digest.unified', array_merge([
             'user' => $this->user,
@@ -629,12 +662,10 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             // This is a separate truncation of the AMP-specific $ampPosts collection
             // from the HTML/text cap above — both are independently capped at the
             // same DIGEST_POST_CAP, and both reserve the recipient's own post(s) via
-            // capPreservingOwnPosts(). applyAmpToMessage()'s 199KB guard remains the
+            // keptUnderCap(). applyAmpToMessage()'s 199KB guard remains the
             // final backstop.
-            $ampCap = DigestStyle::DIGEST_POST_CAP;
-            $ampTotal = $ampPosts->count();
-            $ampPosts = $this->capPreservingOwnPosts($ampPosts, $ampCap);
-            $ampMorePosts = $ampTotal - $ampPosts->count();
+            // $ampPosts derives from the prepared posts, which are already capped.
+            $ampMorePosts = count($this->droppedPostIds);
 
             // Build the shared per-post metadata map for the AMP template.
             // Storing {title, token, expiry} once per message in an
@@ -882,7 +913,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
      */
     protected function preparePosts(): Collection
     {
-        $totalPosts = $this->posts->count();
+        $posts = $this->cappedPosts;
+        $totalPosts = $posts->count();
 
         // Get user's location for distance calculation.
         $userLat = null;
@@ -898,7 +930,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // Batch-load all groups referenced by any post so each card can show
         // group name(s) without an N+1 per post. namefull is the friendly name;
         // nameshort drives the /explore link.
-        $allGroupIds = $this->posts
+        $allGroupIds = $posts
             ->flatMap(fn ($p) => $p['postedToGroups'])
             ->filter()
             ->unique()
@@ -910,9 +942,9 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
 
         // One routing call for the whole digest: road miles per post, matching
         // what the site shows. Posts the engine cannot answer keep crow-flies.
-        $this->fillRoadMiles($userLat, $userLng, $this->posts->map(fn ($p) => $p['message']));
+        $this->fillRoadMiles($userLat, $userLng, $posts->map(fn ($p) => $p['message']));
 
-        return $this->posts->map(fn ($post, $index) => $this->prepareCard(
+        return $posts->map(fn ($post, $index) => $this->prepareCard(
             $post['message'],
             $post['postedToGroups'],
             $index,
@@ -938,22 +970,22 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
      * The cap is never exceeded: a member with more own posts than the cap gets
      * the first $limit of them and no others, because the whole point of the cap
      * is the provider size limit, which does not care whose posts they are.
-     * Returns a re-indexed collection; callers take the difference in count as
-     * the number of posts the email had to leave out.
+     * Returns the keys of the cards to keep, in their original order; the constructor
+     * derives the shown set and droppedPostIds() from them.
      */
-    private function capPreservingOwnPosts(Collection $cards, int $limit): Collection
+    private function keptUnderCap(Collection $cards, int $limit, callable $isOwn): array
     {
         if ($cards->count() <= $limit) {
-            return $cards->values();
+            return $cards->keys()->all();
         }
 
-        $isOwn = fn ($c) => (bool) ($c['isOwnPost'] ?? false);
         [$own, $others] = $cards->partition($isOwn);
         $keep = $own->take($limit)->keys()
             ->merge($others->take(max(0, $limit - $own->count()))->keys())
-            ->flip();
+            ->sort()
+            ->values();
 
-        return $cards->filter(fn ($c, $key) => $keep->has($key))->values();
+        return $keep->all();
     }
 
     /**

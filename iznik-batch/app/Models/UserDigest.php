@@ -21,6 +21,8 @@ class UserDigest extends Model
     protected $casts = [
         'lastmsgdate' => 'datetime',
         'lastsent' => 'datetime',
+        // msgids the last daily digest left out at the post cap - see getPostsForUser().
+        'carryover' => 'array',
     ];
 
     /**
