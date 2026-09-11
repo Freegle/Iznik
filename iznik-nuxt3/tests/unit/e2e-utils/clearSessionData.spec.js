@@ -15,7 +15,10 @@ function makePage(overrides = {}) {
   return {
     isClosed: () => false,
     evaluate: vi.fn().mockResolvedValue(undefined),
-    context: () => ({ clearCookies: vi.fn().mockResolvedValue(undefined) }),
+    context: () => ({
+      clearCookies: vi.fn().mockResolvedValue(undefined),
+      addCookies: vi.fn().mockResolvedValue(undefined),
+    }),
     ...overrides,
   }
 }
@@ -23,27 +26,36 @@ function makePage(overrides = {}) {
 describe('clearSessionData (e2e util)', () => {
   it('clears localStorage, sessionStorage, and cookies on a live page', async () => {
     const clearCookies = vi.fn().mockResolvedValue(undefined)
+    const addCookies = vi.fn().mockResolvedValue(undefined)
     const page = makePage({
-      context: () => ({ clearCookies }),
+      context: () => ({ clearCookies, addCookies }),
     })
 
     await expect(clearSessionData(page)).resolves.toBeUndefined()
     expect(page.evaluate).toHaveBeenCalledTimes(1)
     expect(clearCookies).toHaveBeenCalledTimes(1)
+    // Cookies gone would mean the chat shell front door; these helpers drive
+    // the classic pages, so the classic choice goes straight back.
+    expect(addCookies).toHaveBeenCalledTimes(1)
+    expect(addCookies.mock.calls[0][0]).toEqual([
+      expect.objectContaining({ name: "freegle-ui-mode", value: "classic" }),
+    ])
   })
 
   it('returns early without throwing when page.isClosed() is true', async () => {
     const evaluate = vi.fn()
     const clearCookies = vi.fn()
+    const addCookies = vi.fn()
     const page = {
       isClosed: () => true,
       evaluate,
-      context: () => ({ clearCookies }),
+      context: () => ({ clearCookies, addCookies }),
     }
 
     await expect(clearSessionData(page)).resolves.toBeUndefined()
     expect(evaluate).not.toHaveBeenCalled()
     expect(clearCookies).not.toHaveBeenCalled()
+    expect(addCookies).not.toHaveBeenCalled()
   })
 
   it('swallows "Target page, context or browser has been closed" from evaluate (CI job 4788)', async () => {
@@ -77,7 +89,8 @@ describe('clearSessionData (e2e util)', () => {
   it('swallows "Target closed" from clearCookies', async () => {
     const page = makePage({
       context: () => ({
-        clearCookies: vi.fn().mockRejectedValue(new Error('Target closed')),
+        clearCookies: vi.fn().mockRejectedValue(new Error("Target closed")),
+        addCookies: vi.fn(),
       }),
     })
 
@@ -109,7 +122,10 @@ describe('clearSessionData (e2e util)', () => {
   it('works when page has no isClosed method (defensive)', async () => {
     const page = {
       evaluate: vi.fn().mockResolvedValue(undefined),
-      context: () => ({ clearCookies: vi.fn().mockResolvedValue(undefined) }),
+      context: () => ({
+      clearCookies: vi.fn().mockResolvedValue(undefined),
+      addCookies: vi.fn().mockResolvedValue(undefined),
+    }),
     }
 
     await expect(clearSessionData(page)).resolves.toBeUndefined()
