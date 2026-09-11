@@ -367,8 +367,9 @@ These are known and not fully solved:
   Nothing publishes out from under you while you are reading it.
 
   ![The Pending queue, with the countdown on a post that is about to publish itself](assets/pending.png)
-- **One oversight queue, Check**, sits alongside Pending and Approved (on every
-  community, in the trial or not - see "What a community NOT taking part still sees").
+- **One oversight queue, Check**, sits under Approved in the menu, indented and joined
+  to it by a small line, because it is a slice of Approved (on every community, in the
+  trial or not - see "What a community NOT taking part still sees").
   It lists the posts that went live by themselves via the automatic checks and that
   nobody has looked at yet. It shows a blue count of what you have not yet looked at,
   offers **"Mark all as checked"**, and ages posts out after **7 days** so it never
