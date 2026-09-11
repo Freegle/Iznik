@@ -44,7 +44,7 @@ Visible, annoying, not fatal.
 | **Google Cloud Vision** | Checks uploaded photos for unsuitable images |
 | **Google Perspective** | Scores text for abuse, feeding moderation |
 | **Google Gemini** | The AI features (support helper, classification experiments) |
-| **Anthropic Claude** | Composes the Freegle assistant's replies in the chat shell (`ANTHROPIC_API_KEY` on apiv2). Without a key the chat still works, on fixed lines. See [chat-first.md](chat-first.md) |
+| **Anthropic Claude** | Composes the Freegle assistant's replies in the chat shell (`ANTHROPIC_API_KEY` on apiv2, or a Claude Code gateway via `ASSISTANT_GATEWAY_TOKEN` and `ASSISTANT_GATEWAY_URL` for local work). Without a key the chat still works, on fixed lines. See [chat-first.md](chat-first.md) |
 | **Firebase Cloud Messaging** | Push notifications to the apps (`GOOGLE_PUSH_KEY`) |
 | **MaxMind** | Turns an IP address into a rough location, used in anti-abuse |
 | **Playwire** | Advert delivery ([ads.md](ads.md)) |

@@ -141,6 +141,9 @@ func CheckReply(say string, vocab Vocabulary, state string) (bool, []string) {
 	if strings.Contains(text, "!") {
 		reasons = append(reasons, "exclamation")
 	}
+	if strings.ContainsAny(text, "\u2014\u2013") {
+		reasons = append(reasons, "dash")
+	}
 	if hasEmoji(text) {
 		reasons = append(reasons, "emoji")
 	}

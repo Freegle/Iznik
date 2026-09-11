@@ -117,13 +117,26 @@ type AnthropicLLM struct {
 	Effort    anthropic.OutputConfigEffort
 	Timeout   time.Duration
 	LastUsage anthropic.Usage
+	// Prefix is an extra first system block, from ASSISTANT_SYSTEM_PREFIX. A Claude Code
+	// gateway (the broker) only serves requests that open with the Claude Code identity
+	// line, so local testing sets it; production leaves it empty.
+	Prefix string
 }
 
-// NewAnthropicLLM builds the client from the environment. Returns nil when no key is set.
+// NewAnthropicLLM builds the client from the environment. Returns nil when no credential is
+// set. ANTHROPIC_API_KEY is an API key; ANTHROPIC_AUTH_TOKEN is a bearer token, for a gateway
+// such as the broker; ANTHROPIC_BASE_URL, read by the SDK itself, points at that gateway.
 func NewAnthropicLLM() *AnthropicLLM {
 	key := os.Getenv("ANTHROPIC_API_KEY")
-	if key == "" {
+	token := os.Getenv("ANTHROPIC_AUTH_TOKEN")
+	if key == "" && token == "" {
 		return nil
+	}
+	opts := []option.RequestOption{option.WithMaxRetries(1)}
+	if token != "" {
+		opts = append(opts, option.WithAuthToken(token))
+	} else {
+		opts = append(opts, option.WithAPIKey(key))
 	}
 	model := os.Getenv("ASSISTANT_MODEL")
 	if model == "" {
@@ -137,27 +150,38 @@ func NewAnthropicLLM() *AnthropicLLM {
 		effort = anthropic.OutputConfigEffortHigh
 	}
 	return &AnthropicLLM{
-		Client:    anthropic.NewClient(option.WithAPIKey(key), option.WithMaxRetries(1)),
+		Client:    anthropic.NewClient(opts...),
 		Model:     model,
 		MaxTokens: 1200,
 		Effort:    effort,
 		Timeout:   25 * time.Second,
+		Prefix:    os.Getenv("ASSISTANT_SYSTEM_PREFIX"),
 	}
+}
+
+// systemBlocks lays out the system prompt: the optional prefix, the cacheable stable part,
+// then the per-turn context.
+func (l *AnthropicLLM) systemBlocks(system string) []anthropic.TextBlockParam {
+	stable, volatile := SplitSystem(system)
+	var sys []anthropic.TextBlockParam
+	if l.Prefix != "" {
+		sys = append(sys, anthropic.TextBlockParam{Text: l.Prefix})
+	}
+	sys = append(sys, anthropic.TextBlockParam{Text: stable, CacheControl: anthropic.NewCacheControlEphemeralParam()})
+	if volatile != "" {
+		sys = append(sys, anthropic.TextBlockParam{Text: volatile})
+	}
+	return sys
 }
 
 // Call streams the reply, feeding say fragments to onDelta, and returns the whole text.
 func (l *AnthropicLLM) Call(ctx context.Context, system, user string, onDelta func(string)) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, l.Timeout)
 	defer cancel()
-	stable, volatile := SplitSystem(system)
-	sys := []anthropic.TextBlockParam{{Text: stable, CacheControl: anthropic.NewCacheControlEphemeralParam()}}
-	if volatile != "" {
-		sys = append(sys, anthropic.TextBlockParam{Text: volatile})
-	}
 	params := anthropic.MessageNewParams{
 		Model:        anthropic.Model(l.Model),
 		MaxTokens:    l.MaxTokens,
-		System:       sys,
+		System:       l.systemBlocks(system),
 		OutputConfig: anthropic.OutputConfigParam{Effort: l.Effort},
 		Messages:     []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(user))},
 	}

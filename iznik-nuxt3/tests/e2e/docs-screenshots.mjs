@@ -57,7 +57,8 @@ const cfg = {
  * guides describe (the chat shell is the default front door, so classic needs the cookie).
  * viewport: overrides the phone viewport for that one shot (the desktop frame).
  * steps: taps and typing before the shot, in order: { click }, { fill: [selector, text] },
- * { press }, each followed by a short wait (or its own wait in ms).
+ * { press }, each followed by a short wait (or its own wait in ms). optional: true lets a
+ * step pass when its element is not there (a member who already has a location).
  * Add a shot here rather than capturing images by hand.
  */
 const SHOTS = [
@@ -172,6 +173,13 @@ const SHOTS = [
     app: 'member',
     ui: 'chat',
     path: '/browse',
+    steps: [
+      {
+        fill: ['[data-testid="postcode-input"] input', 'EH3 6SS'],
+        optional: true,
+        wait: 5000,
+      },
+    ],
   },
   {
     audience: 'members',
@@ -296,9 +304,15 @@ async function capture(context, shot) {
   // Settle animations and lazy content.
   await page.waitForTimeout(1500)
   for (const step of shot.steps || []) {
-    if (step.click) await page.locator(step.click).first().click()
-    if (step.fill) await page.locator(step.fill[0]).first().fill(step.fill[1])
-    if (step.press) await page.keyboard.press(step.press)
+    try {
+      const opts = step.optional ? { timeout: 3000 } : {}
+      if (step.click) await page.locator(step.click).first().click(opts)
+      if (step.fill)
+        await page.locator(step.fill[0]).first().fill(step.fill[1], opts)
+      if (step.press) await page.keyboard.press(step.press)
+    } catch (err) {
+      if (!step.optional) throw err
+    }
     await page.waitForTimeout(step.wait || 1200)
   }
   await page.screenshot({
