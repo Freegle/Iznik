@@ -5901,67 +5901,6 @@ func TestListMessagesMT_FilterChecked(t *testing.T) {
 	db.Exec("DELETE FROM messages WHERE id IN (?, ?, ?, ?)", checkedMsg, trustedMsg, modApprovedMsg, alreadyCheckedMsg)
 }
 
-func TestListMessagesMT_FilterTrusted(t *testing.T) {
-	// filter=trusted returns live posts (approvedby IS NULL) from trusted
-	// (DEFAULT/UNMODERATED posting status) members — not auto-moderated NULL
-	// members and not mod-approved posts.
-	prefix := uniquePrefix("lstmt_trusted")
-	db := database.DBConn
-
-	groupID := CreateTestGroup(t, prefix)
-	nullPoster := CreateTestUser(t, prefix+"_null", "User")
-	defaultPoster := CreateTestUser(t, prefix+"_default", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, nullPoster, groupID, "Member")
-	CreateTestMembership(t, defaultPoster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", nullPoster, groupID)
-	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ? AND groupid = ?", defaultPoster, groupID)
-	_, modToken := CreateTestSession(t, modID)
-
-	checkedMsg := CreateTestMessage(t, nullPoster, groupID, prefix+" auto checked", 52.0, -1.0)
-	trustedMsg := CreateTestMessage(t, defaultPoster, groupID, prefix+" trusted live", 52.0, -1.0)
-	modApprovedMsg := CreateTestMessage(t, defaultPoster, groupID, prefix+" mod approved", 52.0, -1.0)
-	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=NULL WHERE msgid IN (?, ?)", checkedMsg, trustedMsg)
-	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=? WHERE msgid=?", modID, modApprovedMsg)
-
-	// A copy the rippling engine inserted (rippled_in=1) from a member who happens to
-	// be trusted here is NOT this group's oversight work and must not appear.
-	otherGroup := CreateTestGroup(t, prefix+"_origin")
-	rippledMsg := CreateTestMessage(t, defaultPoster, otherGroup, prefix+" rippled in", 52.0, -1.0)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
-		"VALUES (?, ?, NOW(), 'Approved', 0, 1)", rippledMsg, groupID)
-
-	resp, err := getApp().Test(httptest.NewRequest("GET",
-		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Approved&filter=trusted&jwt=%s", groupID, modToken), nil))
-	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var body map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&body)
-	msgs, _ := body["messages"].([]interface{})
-	foundChecked, foundTrusted, foundMod, foundRippled := false, false, false, false
-	for _, id := range msgs {
-		switch id {
-		case float64(checkedMsg):
-			foundChecked = true
-		case float64(trustedMsg):
-			foundTrusted = true
-		case float64(modApprovedMsg):
-			foundMod = true
-		case float64(rippledMsg):
-			foundRippled = true
-		}
-	}
-	assert.True(t, foundTrusted, "trusted-member post should appear under trusted")
-	assert.False(t, foundChecked, "auto-moderated NULL-member post should not appear under trusted")
-	assert.False(t, foundMod, "mod-approved post should not appear under trusted")
-	assert.False(t, foundRippled, "a rippled-in copy must not appear in the trusted oversight queue")
-
-	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?, ?, ?)", checkedMsg, trustedMsg, modApprovedMsg, rippledMsg)
-	db.Exec("DELETE FROM messages WHERE id IN (?, ?, ?, ?)", checkedMsg, trustedMsg, modApprovedMsg, rippledMsg)
-}
-
 func TestListMessagesMT_MarkChecked(t *testing.T) {
 	// Marking the checked bucket sets checkedat/checkedby and removes the posts
 	// from the checked oversight queue.

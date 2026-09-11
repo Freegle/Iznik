@@ -20,7 +20,7 @@ const stubs = {
     props: ['variant'],
   },
   'b-button': {
-    template: "<button @click=\"$emit('click')\"><slot /></button>",
+    template: '<button @click="$emit(\'click\')"><slot /></button>',
   },
 }
 
@@ -30,11 +30,10 @@ describe('ModHelpApproved', () => {
     mockShowHelp.value = true
   })
 
-  it('explains that Approved is every live post and Checked/Trusted are subsets', () => {
+  it('explains that Approved is every live post and Check is a subset', () => {
     const wrapper = mount(ModHelpApproved, { global: { stubs } })
     expect(wrapper.text()).toContain('Every live post')
-    expect(wrapper.text()).toContain('focused')
-    expect(wrapper.text()).toContain('oversight subsets')
+    expect(wrapper.text()).toContain('Check is a focused oversight subset')
   })
 
   it('collapses to a Help button when hidden', () => {

@@ -890,7 +890,7 @@ const props = defineProps({
     required: false,
     default: null,
   },
-  // Passed down from the checked/trusted oversight pages to unlock the per-message Reject button
+  // Passed down from the Check oversight page to unlock the per-message Reject button
   // in ModMessageButtons. Not set on any other page.
   oversight: {
     type: Boolean,

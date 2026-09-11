@@ -461,9 +461,8 @@ func ListMessagesMT(c *fiber.Ctx) error {
 	fromuserStr := c.Query("fromuser", "0")
 	fromuser, _ := strconv.ParseUint(fromuserStr, 10, 64)
 	// Optional oversight view of the Approved collection (non-search listing):
-	//   checked — live posts auto-approved via the automated checks, from
-	//             auto-moderated (NULL posting status) members
-	//   trusted — live posts from trusted (group-settings) members
+	//   checked — the Check queue: live posts that published by themselves via
+	//             the automated checks, from members with no posting status
 	filter := c.Query("filter", "")
 
 	var msgIDs []uint64
@@ -598,9 +597,9 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		// injected SQL is constant (no user-supplied text reaches the query).
 		filterJoin := ""
 		filterWhere := ""
-		// The Checked/Trusted oversight queues show only posts a mod has NOT yet
-		// marked checked, within the auto-check window — so the list matches the
-		// session work-count badge and clears as posts are checked.
+		// The Check oversight queue shows only posts a mod has NOT yet marked
+		// checked, within the auto-check window — so the list matches the session
+		// work-count badge and clears as posts are checked.
 		checkedWindow := fmt.Sprintf(
 			"AND mg.checkedat IS NULL AND mg.arrival >= NOW() - INTERVAL %d DAY ",
 			utils.MESSAGE_CHECK_WINDOW_DAYS,
@@ -610,13 +609,6 @@ func ListMessagesMT(c *fiber.Ctx) error {
 			// Auto-approved (approvedby NULL) from auto-moderated (NULL) members.
 			filterJoin = "INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "
 			filterWhere = "AND mg.approvedby IS NULL AND mg.rippled_in = 0 AND mem.ourPostingStatus IS NULL " + checkedWindow
-		case "trusted":
-			// Went live without moderation from trusted (group-settings) members.
-			// rippled_in = 0 matches "checked": a copy the rippling engine inserted
-			// (Approved, approvedby NULL) is not this group's oversight work, and the
-			// poster's trusted status on the receiving group is coincidental.
-			filterJoin = "INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "
-			filterWhere = "AND mg.approvedby IS NULL AND mg.rippled_in = 0 AND (mem.ourPostingStatus = 'DEFAULT' OR mem.ourPostingStatus = 'UNMODERATED') " + checkedWindow
 		}
 
 		branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +

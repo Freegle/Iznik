@@ -11,18 +11,18 @@ import (
 )
 
 // MarkCheckedRequest is the request body for marking auto-published posts as
-// checked by a moderator (clearing them from the Checked/Trusted oversight queues).
+// checked by a moderator (clearing them from the Check oversight queue).
 type MarkCheckedRequest struct {
 	Groupid uint64   `json:"groupid"`          // 0 = all of the mod's groups
-	Filter  string   `json:"filter"`           // "checked" or "trusted" (used when no ids given)
+	Filter  string   `json:"filter"`           // "checked" (used when no ids given)
 	IDs     []uint64 `json:"ids,omitempty"`    // specific messages, else mark the whole bucket
 	Reject  bool     `json:"reject,omitempty"` // true = pull the specified posts back to Pending (held) instead of marking checked
 }
 
 // MarkChecked records that a moderator has reviewed auto-published posts. These
-// are posts that went live without a manual approval (auto-moderated and trusted
-// members), so there is no approvedby/heldby to key off — this sets a dedicated
-// checkedat/checkedby marker that drives the Checked/Trusted counts.
+// are posts that went live without a manual approval from members with no
+// posting status, so there is no approvedby/heldby to key off — this sets a
+// dedicated checkedat/checkedby marker that drives the Check count.
 //
 // @Summary Mark auto-published posts as checked by a moderator
 // @Tags message
@@ -133,15 +133,12 @@ func MarkChecked(c *fiber.Ctx) error {
 		rowsAffected = r.RowsAffected
 	} else {
 		// Mark the whole bucket checked (the "mark all as checked" action). The
-		// bucket condition mirrors the Checked/Trusted list filter so exactly the
-		// posts a mod is looking at get cleared.
-		if req.Filter != "checked" && req.Filter != "trusted" {
-			return fiber.NewError(fiber.StatusBadRequest, "filter must be 'checked' or 'trusted' (D10)")
+		// bucket condition mirrors the Check list filter so exactly the posts a
+		// mod is looking at get cleared.
+		if req.Filter != "checked" {
+			return fiber.NewError(fiber.StatusBadRequest, "filter must be 'checked' (D10)")
 		}
 		statusWhere := "mem.ourPostingStatus IS NULL"
-		if req.Filter == "trusted" {
-			statusWhere = "(mem.ourPostingStatus = 'DEFAULT' OR mem.ourPostingStatus = 'UNMODERATED')"
-		}
 		r := db.Exec("UPDATE messages_groups mg "+
 			"INNER JOIN messages m ON m.id = mg.msgid "+
 			"INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "+

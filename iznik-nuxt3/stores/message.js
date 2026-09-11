@@ -705,7 +705,7 @@ export const useMessageStore = defineStore('message', {
       return fetched.filter((id) => id !== null)
     },
     // Mark auto-published posts as reviewed by a moderator, clearing them from
-    // the Checked/Trusted oversight queues. Returns the number marked.
+    // the Check oversight queue. Returns the number marked.
     async markChecked(params) {
       const data = await api(this.config).message.markChecked(params)
       return data?.checked ?? 0
@@ -846,7 +846,7 @@ export const useMessageStore = defineStore('message', {
         throw held
       }
     },
-    // Reject an auto-published post from the oversight (checked/trusted) queue: pulls it back
+    // Reject an auto-published post from the Check oversight queue: pulls it back
     // to Pending (held) via the markChecked endpoint's reject flag, and removes it from the
     // local store so it leaves the oversight list immediately.
     async rejectFromOversight(id, groupid) {

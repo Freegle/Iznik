@@ -233,7 +233,7 @@ const props = defineProps({
     required: false,
     default: true,
   },
-  // Set to true ONLY from the checked/trusted oversight pages: shows a "Reject (back to Pending)"
+  // Set to true ONLY from the Check oversight page: shows a "Reject (back to Pending)"
   // button for Approved posts so a mod can pull an auto-published post back into Pending via the
   // markChecked endpoint. Not shown in the regular Approved view.
   oversight: {
@@ -373,7 +373,7 @@ function outcome(callback, type) {
   if (callback) callback()
 }
 
-// Oversight Reject button (checked/trusted pages only): send the post back to Pending via
+// Oversight Reject button (Check page only): send the post back to Pending via
 // markChecked({reject:true}) and drop it from the local store so it leaves the oversight list.
 async function rejectFromOversight(callback) {
   await messageStore.rejectFromOversight(props.messageid, props.groupid)

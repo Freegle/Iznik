@@ -36,22 +36,30 @@
             <b-tr>
               <b-td>Approved by a moderator</b-td>
               <b-td class="text-end">{{ stats.manualApproved }}</b-td>
-              <b-td class="text-muted">{{ pct(stats.manualApproved, stats.arrived) }}</b-td>
+              <b-td class="text-muted">{{
+                pct(stats.manualApproved, stats.arrived)
+              }}</b-td>
             </b-tr>
             <b-tr>
               <b-td>Rejected/deleted by a moderator</b-td>
               <b-td class="text-end">{{ stats.manualRejected }}</b-td>
-              <b-td class="text-muted">{{ pct(stats.manualRejected, stats.arrived) }}</b-td>
+              <b-td class="text-muted">{{
+                pct(stats.manualRejected, stats.arrived)
+              }}</b-td>
             </b-tr>
             <b-tr>
-              <b-td>Auto-approved (Checked delay + 48h fallback)</b-td>
+              <b-td>Auto-approved (after the wait, or the 48h fallback)</b-td>
               <b-td class="text-end">{{ stats.autoApproved }}</b-td>
-              <b-td class="text-muted">{{ pct(stats.autoApproved, stats.arrived) }}</b-td>
+              <b-td class="text-muted">{{
+                pct(stats.autoApproved, stats.arrived)
+              }}</b-td>
             </b-tr>
             <b-tr>
               <b-td>Went live immediately (Trusted members)</b-td>
               <b-td class="text-end">{{ stats.trusted }}</b-td>
-              <b-td class="text-muted">{{ pct(stats.trusted, stats.arrived) }}</b-td>
+              <b-td class="text-muted">{{
+                pct(stats.trusted, stats.arrived)
+              }}</b-td>
             </b-tr>
           </b-tbody>
         </b-table-simple>
@@ -62,32 +70,48 @@
         <b-table-simple small responsive>
           <b-tbody>
             <b-tr>
-              <b-td>Posts auto-approved (Checked + fallback)</b-td>
+              <b-td>Posts auto-approved (after the wait, or the fallback)</b-td>
               <b-td class="text-end fw-bold">{{ stats.autoApproved }}</b-td>
               <b-td />
             </b-tr>
             <b-tr>
               <b-td>…later marked checked</b-td>
               <b-td class="text-end">{{ stats.autoModChecked }}</b-td>
-              <b-td class="text-muted">{{ pct(stats.autoModChecked, stats.autoApproved) }} reviewed</b-td>
+              <b-td class="text-muted"
+                >{{
+                  pct(stats.autoModChecked, stats.autoApproved)
+                }}
+                reviewed</b-td
+              >
             </b-tr>
             <b-tr>
               <b-td>…of which cleared by two microvolunteers</b-td>
-              <b-td class="text-end">{{ stats.autoModCheckedByVolunteers }}</b-td>
-              <b-td class="text-muted">{{ pct(stats.autoModCheckedByVolunteers, stats.autoModChecked) }} of the checks</b-td>
+              <b-td class="text-end">{{
+                stats.autoModCheckedByVolunteers
+              }}</b-td>
+              <b-td class="text-muted"
+                >{{
+                  pct(stats.autoModCheckedByVolunteers, stats.autoModChecked)
+                }}
+                of the checks</b-td
+              >
             </b-tr>
             <b-tr :variant="laterActionedVariant">
               <b-td>…later rejected/deleted/edited/held after going live</b-td>
-              <b-td class="text-end fw-bold">{{ stats.autoLaterActioned }}</b-td>
-              <b-td class="fw-bold">{{ autoErrorRate }} needed intervention</b-td>
+              <b-td class="text-end fw-bold">{{
+                stats.autoLaterActioned
+              }}</b-td>
+              <b-td class="fw-bold"
+                >{{ autoErrorRate }} needed intervention</b-td
+              >
             </b-tr>
           </b-tbody>
         </b-table-simple>
         <small class="text-muted">
-          "Needed intervention" counts auto-published posts that a moderator (or a
-          user-triggered removal) acted on afterwards — the closest signal we have
-          for "auto-approve let a bad one through". A precise user-report figure
-          isn't tracked separately.
+          "Needed intervention" counts auto-published posts that a moderator (or
+          a user-triggered removal) acted on afterwards — the closest signal we
+          have for "auto-approve let a bad one through". A precise user-report
+          figure isn't tracked separately.
         </small>
       </b-card>
 
@@ -110,7 +134,10 @@
       </b-card>
 
       <!-- Justification -->
-      <b-card header="Is auto-approving working?" :border-variant="verdictVariant">
+      <b-card
+        header="Is auto-approving working?"
+        :border-variant="verdictVariant"
+      >
         <p class="mb-1">
           Of the posts a moderator manually checked (the sample),
           <strong>{{ sampleBadRate }}</strong> were bad. Of the posts we
@@ -121,9 +148,7 @@
       </b-card>
     </div>
 
-    <NoticeMessage v-else-if="loading" variant="info">
-      Loading…
-    </NoticeMessage>
+    <NoticeMessage v-else-if="loading" variant="info"> Loading… </NoticeMessage>
   </div>
 </template>
 
@@ -147,11 +172,15 @@ function pct(num, denom) {
 
 // Rate of auto-published posts that later needed intervention.
 const autoErrorRate = computed(() =>
-  stats.value ? pct(stats.value.autoLaterActioned, stats.value.autoApproved) : '—'
+  stats.value
+    ? pct(stats.value.autoLaterActioned, stats.value.autoApproved)
+    : '—'
 )
 // Rate of quality-sample posts a mod then rejected.
 const sampleBadRate = computed(() =>
-  stats.value ? pct(stats.value.qualitySampleBad, stats.value.qualitySampled) : '—'
+  stats.value
+    ? pct(stats.value.qualitySampleBad, stats.value.qualitySampled)
+    : '—'
 )
 
 const autoErrorRateNum = computed(() => {
