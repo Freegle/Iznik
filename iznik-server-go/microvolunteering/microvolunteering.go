@@ -361,14 +361,18 @@ func getPendingMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *
 	pendingWhereSQL := "messages_groups.groupid IN (?) AND messages_groups.deleted = 0 AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
 		"AND microvolunteering = 1 AND messages.deleted IS NULL AND microactions.id IS NULL " +
 		"AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1) " +
-		"AND collection = ? AND autoreposts = 0"
+		"AND messages_groups.collection = ? AND messages_groups.autoreposts = 0"
+	// Posts from members with no posting status publish by themselves after the
+	// auto-approve wait, so a human look matters most there: offer those first,
+	// oldest first within each group, then the posts a moderator will deal with anyway.
 	err := db.Table("messages_groups").
 		Select("messages_groups.msgid").
 		Joins("INNER JOIN messages ON messages.id = messages_groups.msgid").
 		Joins("INNER JOIN `groups` ON groups.id = messages_groups.groupid").
 		Joins("LEFT JOIN microactions ON microactions.msgid = messages_groups.msgid AND microactions.userid = ?", userID).
+		Joins("LEFT JOIN memberships poster ON poster.userid = messages.fromuser AND poster.groupid = messages_groups.groupid").
 		Where(pendingWhereSQL, groupIDs, userID, utils.COLLECTION_PENDING).
-		Order("messages_groups.arrival ASC").Limit(1).Scan(&msg).Error
+		Order("(poster.ourPostingStatus IS NULL) DESC, messages_groups.arrival ASC").Limit(1).Scan(&msg).Error
 
 	if err == nil && msg.Msgid > 0 {
 		return &Challenge{
@@ -725,6 +729,12 @@ func PostResponse(c *fiber.Ctx) error {
 				"score_negative": gorm.Expr("0"),
 			})
 
+			if response == "Approve" {
+				markCheckedByMicrovolunteers(db, req.Msgid)
+			} else {
+				reopenMicrovolunteerCheck(db, req.Msgid)
+			}
+
 			// If rejection, check if we have quorum to act.
 			if response == "Reject" {
 				if distinctRejectCount(db, req.Msgid) >= int64(ApprovalQuorum) {
@@ -937,6 +947,44 @@ func ModFeedback(c *fiber.Ctx) error {
 	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// markCheckedByMicrovolunteers treats a post as looked at by a human once ApprovalQuorum
+// different members other than the poster have approved it and nobody has rejected it.
+// It stamps checkedat on the post's own rows that published without a moderator, leaving
+// checkedby empty: that is how a microvolunteer check is told apart from a moderator's.
+// The stamp does the same three things a moderator's check does: the post leaves the
+// Checked queue, the hold on spreading is lifted, and the first reply mail may go out.
+func markCheckedByMicrovolunteers(db *gorm.DB, msgid uint64) {
+	var approvers int64
+	db.Table("microactions ma").
+		Select("COUNT(DISTINCT ma.userid)").
+		Joins("INNER JOIN messages m ON m.id = ma.msgid").
+		Where("ma.msgid = ? AND ma.actiontype = ? AND ma.result = 'Approve' AND ma.userid != COALESCE(m.fromuser, 0)", msgid, ChallengeCheckMessage).
+		Scan(&approvers)
+	if approvers < int64(ApprovalQuorum) {
+		return
+	}
+
+	var rejections int64
+	db.Table("microactions").
+		Where("msgid = ? AND actiontype = ? AND result = 'Reject'", msgid, ChallengeCheckMessage).
+		Count(&rejections)
+	if rejections > 0 {
+		return
+	}
+
+	db.Table("messages_groups").
+		Where("msgid = ? AND rippled_in = 0 AND approvedby IS NULL AND checkedat IS NULL AND deleted = 0", msgid).
+		Update("checkedat", gorm.Expr("NOW()"))
+}
+
+// reopenMicrovolunteerCheck undoes a microvolunteer check when someone rejects the post,
+// so a moderator sees it again. A moderator's own check (checkedby set) is left alone.
+func reopenMicrovolunteerCheck(db *gorm.DB, msgid uint64) {
+	db.Table("messages_groups").
+		Where("msgid = ? AND rippled_in = 0 AND checkedby IS NULL AND checkedat IS NOT NULL AND deleted = 0", msgid).
+		Update("checkedat", gorm.Expr("NULL"))
 }
 
 // SendForReviewAllGroups moves a message back to Pending on ALL the groups it is

@@ -67,9 +67,14 @@
               <b-td />
             </b-tr>
             <b-tr>
-              <b-td>…a moderator later marked checked</b-td>
+              <b-td>…later marked checked</b-td>
               <b-td class="text-end">{{ stats.autoModChecked }}</b-td>
               <b-td class="text-muted">{{ pct(stats.autoModChecked, stats.autoApproved) }} reviewed</b-td>
+            </b-tr>
+            <b-tr>
+              <b-td>…of which cleared by two microvolunteers</b-td>
+              <b-td class="text-end">{{ stats.autoModCheckedByVolunteers }}</b-td>
+              <b-td class="text-muted">{{ pct(stats.autoModCheckedByVolunteers, stats.autoModChecked) }} of the checks</b-td>
             </b-tr>
             <b-tr :variant="laterActionedVariant">
               <b-td>…later rejected/deleted/edited/held after going live</b-td>

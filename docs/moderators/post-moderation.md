@@ -84,8 +84,9 @@ network-wide unchecked. When the companion "earned reach" switch is on:
   or a microvolunteer rejecting it. Pausing means the post's visible reach area stops
   growing too, not just its community placements: nobody new starts seeing it in
   browse, search or emails while it is paused. What it has already reached stays put.
-- **A moderator look settles it**: checking the post lifts the hold entirely, and
-  rejecting it pulls it back.
+- **A human look settles it**: a moderator checking the post lifts the hold entirely,
+  and rejecting it pulls it back. Two different microvolunteers approving the post
+  count as a human look too, as long as no microvolunteer has rejected it.
 - **Posts a moderator approved by hand are exempt** - they have had their human look
   and ripple normally.
 
@@ -229,7 +230,7 @@ Post-moderation sharpens that in a way worth being blunt about:
 - **One moderator's "fine" unlocks it for everybody.** The hold asks whether *any* human
   has looked, so a check by a moderator of any community the post has reached - including
   one it merely rippled into, whose local rules differ from yours - lifts the hold and
-  lets it spread onwards everywhere.
+  lets it spread onwards everywhere. So do two microvolunteers approving it.
 - **Your disagreement only trims your own patch.** Rejecting a rippled-in post removes it
   from your area and nowhere else. You cannot apply your community's standard to the
   post generally, only locally - which is existing rippling behaviour, but it matters
@@ -254,6 +255,10 @@ write notes.
   at it". A moderator of a community the post merely rippled into can clear it - after
   which it spreads normally for everyone. That is intentional (one human look is one
   human look) but it is a wider authority than it appears.
+- **Two microvolunteers can clear a post as well.** When two different members approve
+  a post through microvolunteering and nobody has rejected it, it counts as looked at:
+  it leaves the Checked queue and the hold is lifted. A rejection afterwards puts it
+  back in the queue. A moderator's own check is never undone this way.
 - **A paused post does not say so.** There is no badge on the post, and no queue of
   "posts frozen awaiting review" - only the aggregate figures on the SysAdmin page. If a
   member asks why their post seems stuck locally, nothing in ModTools will tell you it
@@ -368,7 +373,13 @@ These are known and not fully solved:
   Both show a blue count of what you have not yet looked at, offer **"Mark all as
   checked"**, and age posts out after **7 days** so they never pile up. Posts that
   merely rippled in from another community do not appear - overseeing those belongs
-  to the community they were posted on.
+  to the community they were posted on. A post that two microvolunteers have approved
+  drops out of Checked by itself, and comes back if a microvolunteer then rejects it.
+- **Microvolunteers are asked about these posts first.** While a post is still inside
+  its 20-minute wait, it goes to the front of the microvolunteer review queue, and the
+  "could you review this" notification says how long there is before it goes live.
+  Only members with a Moderate or higher trust level are offered pending posts, and only
+  on communities with microvolunteering switched on.
 
   ![The Checked queue: posts that published themselves, waiting for a look](assets/checked.png)
 
@@ -381,7 +392,8 @@ These are known and not fully solved:
   posts in Pending. Explicit statuses always win. If you know a reason someone needs
   a human eye, write it down.
 - **Analytics** (currently SysAdmin-only, see above): where posts went, the
-  error rate for posts that published by themselves, quality-sample verdicts against
+  error rate for posts that published by themselves, how many of the checks were
+  two microvolunteers rather than a moderator, quality-sample verdicts against
   it, and the time posts spent paused waiting for a moderator.
 - **Your day-to-day habits are unchanged otherwise** - including the rippling ones:
   "out of area" is still never a reason to reject, and a post arriving from a

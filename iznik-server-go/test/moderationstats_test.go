@@ -162,6 +162,12 @@ func TestModerationStats_AllFieldsExactCounts(t *testing.T) {
 	// autoLaterActioned = 1: a later Rejected on msgA by the mod (also +1 to manualRejected).
 	db.Exec("INSERT INTO logs (timestamp, type, subtype, msgid, groupid, byuser, user) VALUES (?, 'Message', 'Rejected', ?, ?, ?, ?)", tLater, msgA, groupID, mod, poster)
 
+	// autoApproved +1 (msgV): Autoapproved log + checked by microvolunteers (checkedat, no checkedby).
+	msgV := CreateTestMessage(t, poster, groupID, prefix+" volunteers", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=NULL, approvedat=?, contentcheck_checked_at=?, checkedat=?, checkedby=NULL WHERE msgid=?",
+		tAuto, tAuto, tAuto, msgV)
+	db.Exec("INSERT INTO logs (timestamp, type, subtype, msgid, groupid, user) VALUES (?, 'Message', 'Autoapproved', ?, ?, ?)", tAuto, msgV, groupID, poster)
+
 	// trusted = 1 (msgT): approved-live, DEFAULT member, no Autoapproved log.
 	msgT := CreateTestMessage(t, poster, groupID, prefix+" trusted", 52.0, -1.0)
 	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=NULL, approvedat=?, contentcheck_checked_at=? WHERE msgid=?", tAuto, tAuto, msgT)
@@ -182,14 +188,15 @@ func TestModerationStats_AllFieldsExactCounts(t *testing.T) {
 	assert.Equal(t, float64(3), f("arrived"), "arrived")
 	assert.Equal(t, float64(1), f("manualApproved"), "manualApproved")
 	assert.Equal(t, float64(3), f("manualRejected"), "manualRejected (standalone + msgA-later + msgQ-bad)")
-	assert.Equal(t, float64(1), f("autoApproved"), "autoApproved")
+	assert.Equal(t, float64(2), f("autoApproved"), "autoApproved (msgA + msgV)")
 	assert.Equal(t, float64(1), f("trusted"), "trusted")
-	assert.Equal(t, float64(1), f("autoModChecked"), "autoModChecked")
+	assert.Equal(t, float64(2), f("autoModChecked"), "autoModChecked (moderator + microvolunteers)")
+	assert.Equal(t, float64(1), f("autoModCheckedByVolunteers"), "autoModCheckedByVolunteers (msgV only)")
 	assert.Equal(t, float64(1), f("autoLaterActioned"), "autoLaterActioned")
 	assert.Equal(t, float64(1), f("qualitySampled"), "qualitySampled")
 	assert.Equal(t, float64(1), f("qualitySampleBad"), "qualitySampleBad")
 
 	db.Exec("DELETE FROM logs WHERE timestamp BETWEEN ? AND ?", "2005-06-13 00:00:00", "2005-06-13 23:59:59")
-	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?, ?)", msgA, msgT, msgQ)
-	db.Exec("DELETE FROM messages WHERE id IN (?, ?, ?)", msgA, msgT, msgQ)
+	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?, ?, ?)", msgA, msgV, msgT, msgQ)
+	db.Exec("DELETE FROM messages WHERE id IN (?, ?, ?, ?)", msgA, msgV, msgT, msgQ)
 }
