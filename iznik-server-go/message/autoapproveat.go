@@ -27,6 +27,16 @@ func autoapproveDelayMinutes() int {
 	return 20
 }
 
+// autoapproveQualityCheckPercent is the share of otherwise-clean posts held back for a
+// moderator's verdict. Site-wide, mirroring the batch's freegle.autoapprove.quality_check_percent
+// (FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT, default 0).
+func autoapproveQualityCheckPercent() int {
+	if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT"))); err == nil && n > 0 {
+		return n
+	}
+	return 0
+}
+
 func cleanPathEnabledFor(gid uint64) bool {
 	v := os.Getenv("FREEGLE_AUTOAPPROVE_ENABLED")
 	if v == "true" || v == "1" {
@@ -287,17 +297,10 @@ func computeAutoapproveat(db *gorm.DB, message *Message, groups []MessageGroup, 
 			mg.Spamreason == nil &&
 			!msgSpamreason
 
-		// The delay is site-wide (same env the batch reads, default 20); a community has no
-		// override. quality_check_percent stays per community via settings.autoapprove.
+		// The delay and the quality-check sample are both site-wide (the same env the
+		// batch reads); a community has no override for either.
 		delayMinutes := autoapproveDelayMinutes()
-		qualityPercent := 0
-		if settings != nil {
-			if aa, ok := settings["autoapprove"].(map[string]interface{}); ok {
-				if qp, ok := aa["quality_check_percent"].(float64); ok && qp > 0 {
-					qualityPercent = int(qp)
-				}
-			}
-		}
+		qualityPercent := autoapproveQualityCheckPercent()
 		// Deterministic quality sample (mirror PHP isQualitySampled: crc32(msgid) % 100 < percent).
 		qualitySampled := qualityPercent > 0 && int(crc32.ChecksumIEEE([]byte(idStr))%100) < qualityPercent
 

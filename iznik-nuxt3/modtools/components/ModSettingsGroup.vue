@@ -491,14 +491,6 @@
         />
         <ModGroupSetting
           :groupid="groupid"
-          name="settings.autoapprove.quality_check_percent"
-          label="Auto-approve quality-check sample (%)"
-          description="Percentage of otherwise auto-approvable posts to hold in Pending anyway, so you can spot-check the quality of auto-approval. 0 (or blank) means none are held."
-          type="number"
-          :step="1"
-        />
-        <ModGroupSetting
-          :groupid="groupid"
           name="settings.autoadmins"
           label="Suggest ADMINs?"
           description="Freegle has a selection of ADMINs which you can adapt to your group, which we can suggest from time to time.  You can edit or delete each suggested ADMIN, so you'd only turn this off if you never wanted to even seen them."
