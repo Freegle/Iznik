@@ -51,7 +51,7 @@ for named communities only):
 
 - A post from an **auto-moderated member** (no explicit posting status) that the
   automated content checks found **clean** goes live by itself after a short delay -
-  about **20 minutes** by default, tunable per community.
+  **20 minutes**, the same for every community.
 - It does **not** go live automatically if there is any **danger signal**: a moderator
   note on the member, a microvolunteer rejection, a negative moderation action in the
   last 90 days (that window is configurable), a known or suspected spammer record (spam
@@ -62,8 +62,8 @@ for named communities only):
 - A configurable **quality sample** of otherwise-clean posts is held back in Pending
   for a human verdict, so there is always a control group to measure the automation
   against.
-- Moderators oversee auto-published posts **after** they are live, from dedicated
-  queues (see "What changes for moderators"), and can pull one back with one click.
+- Moderators oversee auto-published posts **after** they are live, from a dedicated
+  Check queue (see "What changes for moderators"), and can pull one back with one click.
 - The **error rate** - how often an auto-published post later needed a moderator to
   step in - is measured continuously, and is the yardstick for widening, holding or
   reversing the rollout.
@@ -107,13 +107,14 @@ us". Three effects reach a community that is not in the trial:
   any complaint freezing it, a moderator look settling it). If you reject the copy on
   your community, that removes it from your area exactly as any secondary rejection
   does. The hold applies to any post no human has looked at, wherever it started.
-- **The two oversight queues appear for everyone, and they are not empty.** Checked and
-  Trusted are added to the ModTools menu for all moderators, not only trial communities,
-  and they list posts that went live without a moderator's click - which already happens
-  everywhere today: posts from **trusted** members, and posts published by the long
-  standing **48-hour fallback** when nobody got to them. So on a community with
-  post-moderation off, these queues surface oversight work that existed before this
-  change and had no home; they do not mean auto-approve is running there.
+- **The Check queue appears for everyone, and it is not empty.** Check is added to the
+  ModTools menu for all moderators, not only trial communities, and it lists posts from
+  members with no posting status that went live without a moderator's click - which
+  already happens everywhere today, through the long standing **48-hour fallback** when
+  nobody got to them. So on a community with post-moderation off, the queue surfaces
+  oversight work that existed before this change and had no home; it does not mean
+  auto-approve is running there. Posts from **trusted** members go straight to Approved,
+  as they always have, and have no queue of their own.
 - **The Pending countdown appears for everyone.** Where post-moderation is off, the
   countdown on a Pending post shows the 48-hour fallback rather than a 20-minute one -
   it is reporting the auto-approval that already existed, not a new one. Opening the
@@ -257,7 +258,7 @@ write notes.
   human look) but it is a wider authority than it appears.
 - **Two microvolunteers can clear a post as well.** When two different members approve
   a post through microvolunteering and nobody has rejected it, it counts as looked at:
-  it leaves the Checked queue and the hold is lifted. A rejection afterwards puts it
+  it leaves the Check queue and the hold is lifted. A rejection afterwards puts it
   back in the queue. A moderator's own check is never undone this way.
 - **A paused post does not say so.** There is no badge on the post, and no queue of
   "posts frozen awaiting review" - only the aggregate figures on the SysAdmin page. If a
@@ -285,7 +286,7 @@ write notes.
 - **Having the Pending queue open delays auto-approval.** Each load pushes everything on
   the page at least 10 minutes further out. That is the intended guarantee, but it means
   a page left open on a second screen quietly holds posts back.
-- **Rejecting a rippled-in copy is not done from the oversight queues.** Those actions
+- **Rejecting a rippled-in copy is not done from the Check queue.** Those actions
   only ever apply to a post's own community. A bad post that rippled in is rejected the
   ordinary way, which trims it from your area alone.
 - **Reject from the oversight queue and Back to Pending do different things to the
@@ -366,24 +367,23 @@ These are known and not fully solved:
   Nothing publishes out from under you while you are reading it.
 
   ![The Pending queue, with the countdown on a post that is about to publish itself](assets/pending.png)
-- **Two oversight queues** sit alongside Pending and Approved (on every community, in
-  the trial or not - see "What a community NOT taking part still sees"):
-  - **Checked** - posts that went live via the automatic checks.
-  - **Trusted** - posts that went live because the member is trusted.
-  Both show a blue count of what you have not yet looked at, offer **"Mark all as
-  checked"**, and age posts out after **7 days** so they never pile up. Posts that
-  merely rippled in from another community do not appear - overseeing those belongs
-  to the community they were posted on. A post that two microvolunteers have approved
-  drops out of Checked by itself, and comes back if a microvolunteer then rejects it.
+- **One oversight queue, Check**, sits alongside Pending and Approved (on every
+  community, in the trial or not - see "What a community NOT taking part still sees").
+  It lists the posts that went live by themselves via the automatic checks and that
+  nobody has looked at yet. It shows a blue count of what you have not yet looked at,
+  offers **"Mark all as checked"**, and ages posts out after **7 days** so it never
+  piles up. Posts that merely rippled in from another community do not appear -
+  overseeing those belongs to the community they were posted on. Posts from trusted
+  members go straight to Approved and are not listed here. A post that two
+  microvolunteers have approved drops out of Check by itself, and comes back if a
+  microvolunteer then rejects it.
 - **Microvolunteers are asked about these posts first.** While a post is still inside
   its 20-minute wait, it goes to the front of the microvolunteer review queue, and the
   "could you review this" notification says how long there is before it goes live.
   Only members with a Moderate or higher trust level are offered pending posts, and only
   on communities with microvolunteering switched on.
 
-  ![The Checked queue: posts that published themselves, waiting for a look](assets/checked.png)
-
-  ![The Trusted queue: posts from trusted members that went straight out](assets/trusted.png)
+  ![The Check queue: posts that published themselves, waiting for a look](assets/check.png)
 - **Reject from the oversight queue** pulls a live post straight back to Pending and
   held, stops its rippling immediately, withdraws the copies it had rippled into other
   communities, and records the rejection - which both feeds the error rate and becomes

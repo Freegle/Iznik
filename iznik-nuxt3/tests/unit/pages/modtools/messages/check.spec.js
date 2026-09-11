@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
-import TrustedPage from '~/modtools/pages/messages/trusted/[[id]].vue'
+import CheckPage from '~/modtools/pages/messages/check/[[id]].vue'
 
 const mockBusy = ref(false)
 const mockContext = ref(null)
@@ -83,14 +83,14 @@ globalThis.__testUseRouter = () => ({
   currentRoute: { value: { path: '/' } },
 })
 
-describe('messages/trusted/[[id]].vue page', () => {
+describe('messages/check/[[id]].vue page', () => {
   function mountComponent() {
-    return mount(TrustedPage, {
+    return mount(CheckPage, {
       global: {
         plugins: [createPinia()],
         stubs: {
           'client-only': { template: '<div><slot /></div>' },
-          ModHelpTrusted: { template: '<div class="mod-help-trusted" />' },
+          ModHelpCheck: { template: '<div class="mod-help-check" />' },
           ScrollToTop: { template: '<div class="scroll-to-top" />' },
           ModGroupSelect: {
             template: '<div class="mod-group-select" />',
@@ -141,18 +141,18 @@ describe('messages/trusted/[[id]].vue page', () => {
   it('defaults the oversight list to summary view', () => {
     mountComponent()
     expect(mockMiscStore.set).toHaveBeenCalledWith({
-      key: 'modtoolsMessagesTrustedSummary',
+      key: 'modtoolsMessagesCheckSummary',
       value: true,
     })
   })
 
-  it('loadMore fetches with the trusted filter on the Approved collection', async () => {
+  it('loadMore fetches with the checked filter on the Approved collection', async () => {
     const wrapper = mountComponent()
     const $state = { loaded: vi.fn(), complete: vi.fn(), error: vi.fn() }
     await wrapper.vm.loadMore($state)
     expect(mockMessageStore.fetchMessagesMT).toHaveBeenCalled()
     const params = mockMessageStore.fetchMessagesMT.mock.calls[0][0]
-    expect(params.filter).toBe('trusted')
+    expect(params.filter).toBe('checked')
     expect(params.collection).toBe('Approved')
   })
 
@@ -163,13 +163,13 @@ describe('messages/trusted/[[id]].vue page', () => {
     expect(mockGroupid.value).toBe(42)
   })
 
-  it('markAllChecked clears the trusted bucket and refreshes work counts', async () => {
+  it('markAllChecked clears the checked bucket and refreshes work counts', async () => {
     mockGroupid.value = 7
     const wrapper = mountComponent()
     await wrapper.vm.markAllChecked()
     expect(mockMessageStore.markChecked).toHaveBeenCalledWith({
       groupid: 7,
-      filter: 'trusted',
+      filter: 'checked',
     })
     expect(mockMessageStore.clear).toHaveBeenCalled()
     expect(mockCheckWork).toHaveBeenCalled()

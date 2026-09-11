@@ -4,8 +4,8 @@
       Hide Help
     </b-button>
     <p class="mb-0">
-      Every live post on your group(s). Checked and Trusted are focused
-      oversight subsets of this.
+      Every live post on your group(s). Check is a focused oversight subset of
+      this: the posts that went live by themselves and nobody has looked at.
     </p>
   </NoticeMessage>
   <b-button v-else variant="link" class="float-end pt-0" @click="toggleHelp">

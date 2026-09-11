@@ -48,7 +48,7 @@ const {
 
 defineProps({
   editreview: { type: Boolean, required: false, default: false },
-  // Set by the checked/trusted oversight pages to expose the per-message Reject (back to Pending)
+  // Set by the Check oversight page to expose the per-message Reject (back to Pending)
   // button. Forwarded to each ModMessage instance.
   oversight: { type: Boolean, required: false, default: false },
 })

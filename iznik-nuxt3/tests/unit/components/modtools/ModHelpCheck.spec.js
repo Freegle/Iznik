@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
-import ModHelpChecked from '~/modtools/components/ModHelpChecked.vue'
+import ModHelpCheck from '~/modtools/components/ModHelpCheck.vue'
 
 const mockShowHelp = ref(true)
 const mockToggleHelp = vi.fn()
@@ -20,19 +20,22 @@ const stubs = {
     props: ['variant'],
   },
   'b-button': {
-    template: "<button @click=\"$emit('click')\"><slot /></button>",
+    template: '<button @click="$emit(\'click\')"><slot /></button>',
   },
 }
 
-describe('ModHelpChecked', () => {
+describe('ModHelpCheck', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockShowHelp.value = true
   })
 
-  it('explains the checked oversight queue with accurate wording', () => {
-    const wrapper = mount(ModHelpChecked, { global: { stubs } })
-    expect(wrapper.text()).toContain('went live automatically from auto-moderated members')
+  it('explains the Check oversight queue with accurate wording', () => {
+    const wrapper = mount(ModHelpCheck, { global: { stubs } })
+    expect(wrapper.text()).toContain(
+      'went live by themselves from auto-moderated members'
+    )
+    expect(wrapper.text()).toContain('two microvolunteers have approved')
     expect(wrapper.text()).toContain('drop off this queue')
     // Must NOT use the inaccurate "treated as checked" phrasing (review finding D2).
     expect(wrapper.text()).not.toContain('treated as checked')
@@ -40,13 +43,13 @@ describe('ModHelpChecked', () => {
 
   it('collapses to a Help button when hidden', () => {
     mockShowHelp.value = false
-    const wrapper = mount(ModHelpChecked, { global: { stubs } })
+    const wrapper = mount(ModHelpCheck, { global: { stubs } })
     expect(wrapper.find('.notice-message').exists()).toBe(false)
     expect(wrapper.text()).toContain('Help')
   })
 
   it('toggles help when the button is clicked', async () => {
-    const wrapper = mount(ModHelpChecked, { global: { stubs } })
+    const wrapper = mount(ModHelpCheck, { global: { stubs } })
     await wrapper.find('button').trigger('click')
     expect(mockToggleHelp).toHaveBeenCalled()
   })

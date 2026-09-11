@@ -2,13 +2,13 @@
   <div>
     <client-only>
       <ScrollToTop />
-      <ModHelpTrusted />
+      <ModHelpCheck />
       <div class="d-flex justify-content-between">
         <ModGroupSelect
           v-model="groupid"
           all
           modonly
-          remember="trusted"
+          remember="check"
           :url-override="urlOverride"
         />
         <div class="d-flex">
@@ -28,9 +28,9 @@
         v-if="!messages.length && !busy && groupsreceived"
         class="mt-2"
       >
-        Nothing to check. These are posts that went live without moderation from
-        trusted (Group Settings) members — once you've checked them they drop off
-        here, and anything older than a week is excluded from this queue.
+        Nothing to check. These are posts that went live by themselves from
+        auto-moderated members — once you've checked them they drop off here,
+        and anything older than a week is excluded from this queue.
       </NoticeMessage>
       <div v-if="groupsreceived">
         <ModMessages :oversight="true" />
@@ -50,8 +50,10 @@
 </template>
 
 <script setup>
-// Oversight list of messages that went live without moderation from trusted
-// (group-settings / DEFAULT posting status) members.
+// The Check queue: messages that have already gone live via the automated
+// content checks — i.e. auto-approved posts from auto-moderated (NULL posting
+// status) members. Posts still inside their wait appear under Pending, where a
+// moderator can stop them before they go live.
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from '#imports'
 import { setupModMessages } from '~/composables/useModMessages'
@@ -67,8 +69,8 @@ const modGroupStore = useModGroupStore()
 const route = useRoute()
 const { checkWork } = useModMe()
 
-const FILTER = 'trusted'
-const summaryKey = 'modtoolsMessagesTrustedSummary'
+const FILTER = 'checked'
+const summaryKey = 'modtoolsMessagesCheckSummary'
 // Oversight lists default to the compact summary view.
 if (miscStore.get(summaryKey) === undefined) {
   miscStore.set({ key: summaryKey, value: true })
@@ -127,7 +129,7 @@ watch(groupid, async (newVal) => {
   if (newVal !== id.value) {
     nextTick(() => {
       router.push(
-        newVal === 0 ? '/messages/trusted/' : '/messages/trusted/' + newVal
+        newVal === 0 ? '/messages/check/' : '/messages/check/' + newVal
       )
     })
   }
