@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-08
+last_reviewed: 2026-09-11
 owner: Freegle dev team
 covers:
   - iznik-server-go/assistant/**
@@ -89,7 +89,7 @@ propose one of the legal transitions (`engine.go`, `Decide`).
 
 The model composes every reply (`compose.go`, `llm.go`: Anthropic Messages API,
 `ASSISTANT_MODEL` default `claude-opus-5`, `ASSISTANT_EFFORT` default `low`, streamed,
-the stable prefix cached). The voice is `assistant/voice/character.md`; the facts it may
+the stable prefix cached). `ANTHROPIC_API_KEY` is the production credential. For local work through a Claude Code gateway such as the broker, leave the key empty and set `ASSISTANT_GATEWAY_TOKEN` (its bearer token), `ASSISTANT_GATEWAY_URL` (its address from inside the container) and `ASSISTANT_SYSTEM_PREFIX` (the Claude Code identity line a subscription expects, sent as the first system block). Compose passes the first two to apiv2 as `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL`, which the SDK reads; they are named apart so a shell running Claude Code through the same gateway does not leak its settings into the container. The voice is `assistant/voice/character.md`; the facts it may
 rely on are `voice/facts.md` plus the context of the conversation. `check.go` stands
 between the model and the member: no exclamation marks, no emoji, no banned phrases, no
 promises Freegle cannot keep, and every number and proper noun must appear in the facts,

@@ -106,6 +106,18 @@ test.describe('Chat shell: chats', () => {
       timeout: timeouts.ui.appearance,
     })
     await expect(page.getByTestId('nearby-search')).toBeVisible()
+    // A member with no saved location is asked where they are first.
+    const pc = page.locator(
+      '[data-testid="postcode-input"] .pcinp, [data-testid="postcode-input"] input'
+    )
+    if (
+      await pc
+        .first()
+        .isVisible()
+        .catch(() => false)
+    ) {
+      await pc.first().fill(environment.postcode)
+    }
     await expect(page.getByTestId('nearby-list')).toBeVisible({
       timeout: timeouts.ui.appearance,
     })

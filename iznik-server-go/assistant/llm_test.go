@@ -51,3 +51,25 @@ func TestAsstParseDecisionAndSay(t *testing.T) {
 		t.Fatal("parse say")
 	}
 }
+
+func TestAsstSystemBlocksPrefixFirst(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "token")
+	t.Setenv("ASSISTANT_SYSTEM_PREFIX", "You are Claude Code, Anthropic's official CLI for Claude.")
+	l := NewAnthropicLLM()
+	if l == nil {
+		t.Fatal("a bearer token alone should build the client")
+	}
+	blocks := l.systemBlocks("stable part" + volatileMarker + "volatile part")
+	if len(blocks) != 3 || blocks[0].Text != l.Prefix || blocks[1].CacheControl.Type == "" || blocks[2].Text == "" {
+		t.Fatalf("want prefix, cached stable, volatile; got %+v", blocks)
+	}
+	l.Prefix = ""
+	if got := l.systemBlocks("only stable"); len(got) != 1 || got[0].Text != "only stable" {
+		t.Fatalf("no prefix should mean a single cached block, got %+v", got)
+	}
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	if NewAnthropicLLM() != nil {
+		t.Fatal("no credential should mean no client")
+	}
+}

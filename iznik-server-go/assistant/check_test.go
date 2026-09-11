@@ -26,7 +26,7 @@ func TestAsstGroundedReplyPasses(t *testing.T) {
 }
 
 func TestAsstStyleFailures(t *testing.T) {
-	for _, s := range []string{"Great news! Posted.", "Posted 🎉", "Your item has been successfully posted.", "I am unable to do that."} {
+	for _, s := range []string{"Great news! Posted.", "Posted 🎉", "Your item has been successfully posted.", "I am unable to do that.", "Comfy, smoke free \u2014 that all helps.", "Two seater \u2013 grey."} {
 		if ok, _ := CheckReply(s, vocab("", nil), ""); ok {
 			t.Errorf("expected %q to fail", s)
 		}
@@ -89,5 +89,12 @@ func TestAsstSpelledOutNumbersAreChecked(t *testing.T) {
 	}
 	if ok, reasons := CheckReply("A couple of people nearby may have one.", vocab("", nil), ""); !ok {
 		t.Fatalf("small numbers in words are fine: %v", reasons)
+	}
+}
+
+func TestAsstDashIsNamed(t *testing.T) {
+	_, reasons := CheckReply("Comfy, smoke free — that all helps.", vocab("", nil), "")
+	if len(reasons) != 1 || reasons[0] != "dash" {
+		t.Fatalf("want the dash named as the one reason, got %v", reasons)
 	}
 }
