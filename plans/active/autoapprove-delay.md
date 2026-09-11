@@ -105,7 +105,7 @@ catches it). Deterministic so a message never oscillates.
 - `iznik-server/include/group/Group.php` `defaultSettings['autoapprove']` gains
   `delay_minutes`/`quality_check_percent` (for the modtools UI + PHP parity).
 
-## Open question: microvolunteers during the wait (2026-09-10, not yet decided)
+## Microvolunteers during the wait (decided 2026-09-11: options 1 and 2, both built)
 
 What the branch does today: a microvolunteer *rejection* of a post is a danger signal
 (no auto-approve, no countdown) and a complaint that pauses spreading. A microvolunteer
@@ -123,7 +123,11 @@ Options, in order of how much they change:
    Checked queue. Gives reviews a visible effect, which is the thing that encourages them.
 3. Offer pending-post review on every community in the auto-approve trial, whether or not
    the community switched microvolunteering on.
-Edward to pick; none of these is in the PR.
+Edward picked 1 and 2. Built: `getPendingMessageChallenge` orders posts from members with
+no posting status first; `MicrovolunteeringNotifyService` notifies those posts first with
+"could go live in about N minutes"; `PostResponse` stamps `checkedat` (no `checkedby`) at two
+distinct non-poster approvals with no rejection, and a rejection clears a microvolunteer
+stamp; `moderationstats` reports `autoModCheckedByVolunteers`. Option 3 not built.
 
 ## Gotchas (thought through)
 

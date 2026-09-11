@@ -5,8 +5,10 @@
     </b-button>
     <p class="mb-0">
       Posts that went live automatically from auto-moderated members. Review
-      them here as a safety net; "Mark as checked" clears them. Posts older than
-      a week drop off this queue.
+      them here as a safety net; "Mark as checked" clears them. A post that two
+      microvolunteers have approved also clears, and comes back if a
+      microvolunteer then rejects it. Posts older than a week drop off this
+      queue.
     </p>
   </NoticeMessage>
   <b-button v-else variant="link" class="float-end pt-0" @click="toggleHelp">

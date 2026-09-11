@@ -28,8 +28,9 @@ type ModerationStats struct {
 	// NB: 'auto-approved' (Autoapproved log) covers both the Checked delay path and
 	// the 48h fallback — they aren't distinguished retrospectively. Trusted posts
 	// (no log) are excluded from this error-rate denominator.
-	AutoModChecked    int64 `json:"autoModChecked"`    // a moderator later marked it checked
-	AutoLaterActioned int64 `json:"autoLaterActioned"` // later rejected/deleted/edited/held after going live
+	AutoModChecked             int64 `json:"autoModChecked"`             // later marked checked, by a moderator or by two microvolunteers
+	AutoModCheckedByVolunteers int64 `json:"autoModCheckedByVolunteers"` // of those, cleared by two microvolunteer approvals (no checkedby)
+	AutoLaterActioned          int64 `json:"autoLaterActioned"`          // later rejected/deleted/edited/held after going live
 
 	// Quality-check sample held back for manual review.
 	QualitySampled   int64 `json:"qualitySampled"`   // posts held back for a manual quality check
@@ -112,6 +113,13 @@ func Stats(c *fiber.Ctx) error {
 			"JOIN messages_groups mg ON mg.msgid=l.msgid AND mg.groupid=l.groupid "+
 			"WHERE l.type='Message' AND l.subtype='Autoapproved' AND l.timestamp BETWEEN ? AND ? "+
 			"AND mg.checkedat IS NOT NULL", start, end).Scan(&stats.AutoModChecked)
+	})
+	run(func() {
+		db.Table("logs l").
+			Select("COUNT(DISTINCT l.msgid)").
+			Joins("JOIN messages_groups mg ON mg.msgid=l.msgid AND mg.groupid=l.groupid").
+			Where("l.type='Message' AND l.subtype='Autoapproved' AND l.timestamp BETWEEN ? AND ? AND mg.checkedat IS NOT NULL AND mg.checkedby IS NULL", start, end).
+			Scan(&stats.AutoModCheckedByVolunteers)
 	})
 	run(func() {
 		// Auto-approved posts that later needed intervention: a rejection, deletion,
