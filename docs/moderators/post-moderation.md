@@ -170,10 +170,10 @@ them unless they are published (see "Remaining problems").
 - **A community cannot opt out.** Whether post-moderation applies is decided centrally,
   not community by community: during the trial it runs on the communities chosen for it,
   and the intent beyond the trial is that it becomes how Freegle works everywhere, so
-  members get one consistent experience rather than a patchwork. A community tunes its
-  own quality-sample rate, and every explicit member posting status is honoured
-  absolutely - but the wait before a post publishes itself is the same everywhere, and
-  there is no setting that turns the feature off locally. Local autonomy
+  members get one consistent experience rather than a patchwork. Every explicit member
+  posting status is honoured absolutely - but the wait before a post publishes itself and
+  the size of the quality sample are the same everywhere, and there is no setting that
+  turns the feature off locally. Local autonomy
   is deliberately narrowed here, and that should be said plainly rather than softened.
 
 ## Risks and what bounds them

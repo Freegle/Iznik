@@ -161,7 +161,7 @@ stamp; `moderationstats` reports `autoModCheckedByVolunteers`. Option 3 not buil
 | 5 | config/freegle.php defaults | ✅ | autoapprove block (no Group.php change — absent=site default) |
 | 6 | Go ListMessagesMT filter + tests | ✅ | filter=checked\|trusted (autoapproved/recentjoin/outsidecga experiment reverted) |
 | 7 | Check page + countdown + help boxes | ✅ | /messages/check (renamed from Checked 2026-09-11; the Trusted queue was removed the same day - trusted posts go straight to Approved); autoapproveat countdown; ModHelp* boxes |
-| 8 | ModSettingsGroup.vue settings controls | ✅ | quality_check_percent only (delay_minutes control removed 2026-09-10) |
+| 8 | ModSettingsGroup.vue settings controls | ✅ | none left: delay_minutes removed 2026-09-10, quality_check_percent removed 2026-09-11 (both site-wide via env) |
 | 9 | Run all suites via worktree status API | ✅ | full Laravel 3962/3962 ✓; Go 3004/3004 ✓; Vitest modtools 4475/4475 ✓ |
 | 10 | Push + PR (Freegle/Iznik) | ✅ | PR #639 — https://github.com/Freegle/Iznik/pull/639 (master merged 2026-09-05, all suites green locally; awaiting CI; never merge) |
 

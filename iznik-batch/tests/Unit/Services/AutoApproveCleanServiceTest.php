@@ -407,9 +407,8 @@ class AutoApproveCleanServiceTest extends TestCase
 
     public function test_quality_sample_100_holds_all(): void
     {
-        [$user, $group, $message] = $this->makeApprovable([
-            'group' => ['settings' => ['autoapprove' => ['quality_check_percent' => 100]]],
-        ]);
+        config(['freegle.autoapprove.quality_check_percent' => 100]);
+        [$user, $group, $message] = $this->makeApprovable();
 
         $stats = $this->service->process();
 
@@ -425,13 +424,32 @@ class AutoApproveCleanServiceTest extends TestCase
 
     public function test_quality_sample_zero_holds_none(): void
     {
-        [$user, $group, $message] = $this->makeApprovable([
-            'group' => ['settings' => ['autoapprove' => ['quality_check_percent' => 0]]],
-        ]);
+        config(['freegle.autoapprove.quality_check_percent' => 0]);
+        [$user, $group, $message] = $this->makeApprovable();
 
         $this->service->process();
 
         $this->assertApproved($message->id, $group->id);
+    }
+
+    public function test_quality_sample_is_the_same_for_every_community(): void
+    {
+        // A leftover community setting of 100% is ignored: with the site-wide rate at 0
+        // the post publishes, and with the site-wide rate at 100 it is held even though
+        // the community says 0.
+        config(['freegle.autoapprove.quality_check_percent' => 0]);
+        [$user, $group, $message] = $this->makeApprovable([
+            'group' => ['settings' => ['autoapprove' => ['quality_check_percent' => 100]]],
+        ]);
+        $this->service->process();
+        $this->assertApproved($message->id, $group->id);
+
+        config(['freegle.autoapprove.quality_check_percent' => 100]);
+        [$user2, $group2, $message2] = $this->makeApprovable([
+            'group' => ['settings' => ['autoapprove' => ['quality_check_percent' => 0]]],
+        ]);
+        $this->service->process();
+        $this->assertStillPending($message2->id, $group2->id);
     }
 
     public function test_delay_is_the_same_for_every_community(): void
@@ -543,9 +561,8 @@ class AutoApproveCleanServiceTest extends TestCase
     {
         // A row already marked quality_sample=1 must not appear in the candidate
         // query at all. This verifies the ->where('mg.quality_sample', 0) guard.
-        [$user, $group, $message] = $this->makeApprovable([
-            'group' => ['settings' => ['autoapprove' => ['quality_check_percent' => 0]]],
-        ]);
+        config(['freegle.autoapprove.quality_check_percent' => 0]);
+        [$user, $group, $message] = $this->makeApprovable();
         // Manually pre-mark the row as already sampled (e.g. by a previous run).
         DB::table('messages_groups')
             ->where('msgid', $message->id)
@@ -564,9 +581,8 @@ class AutoApproveCleanServiceTest extends TestCase
     {
         // $stats['held_quality']++ must be inside the if(!$dryRun) block so a
         // dry-run pass doesn't falsely inflate the cron stat.
-        [$user, $group, $message] = $this->makeApprovable([
-            'group' => ['settings' => ['autoapprove' => ['quality_check_percent' => 100]]],
-        ]);
+        config(['freegle.autoapprove.quality_check_percent' => 100]);
+        [$user, $group, $message] = $this->makeApprovable();
 
         $stats = $this->service->process(dryRun: true);
 

@@ -193,6 +193,46 @@ func TestAutoapproveatDelayIsSiteWide(t *testing.T) {
 		"FREEGLE_AUTOAPPROVE_DELAY_MINUTES must set the countdown; got %v", at)
 }
 
+// The quality-check sample is site-wide too: a community's own percentage is ignored,
+// and the env figure the cron reads decides whether a post is held for a moderator
+// (no countdown) or counts down as normal.
+func TestAutoapproveatQualitySampleIsSiteWide(t *testing.T) {
+	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "true")
+	prefix := uniquePrefix("aasamplesite")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	poster := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, poster, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
+	// A community that tried to sample everything.
+	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.autoapprove.quality_check_percent', 100) WHERE id = ?", groupID)
+	_, modToken := CreateTestSession(t, modID)
+
+	msg := CreateTestMessage(t, poster, groupID, prefix+" clean pending", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE, contentcheck_reasons=NULL, autoapprove_hold_until=NULL WHERE msgid=?", msg)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid=?", msg)
+	defer db.Exec("DELETE FROM messages WHERE id=?", msg)
+
+	// Site-wide sample is 0: the community's 100 is ignored and the post counts down.
+	t.Setenv("FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT", "0")
+	assert.NotNil(t, getAutoapproveatField(t, msg, groupID, modToken),
+		"a community's own sample rate must not hold the post")
+
+	// Site-wide sample is 100: the post is held for a moderator, so no 20-minute countdown.
+	// (The 48-hour fallback still applies, so autoapproveat is far off rather than absent.)
+	t.Setenv("FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT", "100")
+	v := getAutoapproveatField(t, msg, groupID, modToken)
+	if s, ok := v.(string); ok {
+		at, err := time.Parse(time.RFC3339, s)
+		assert.NoError(t, err)
+		assert.True(t, at.After(time.Now().Add(6*time.Hour)),
+			"a sampled post must not show the short countdown; got %v", at)
+	}
+}
+
 // The content check writes a MemberModerated explanation onto every NULL-status
 // member's clean post - that is what the real population looks like, not reasons=NULL.
 // The countdown must read that as clean (20-minute path), exactly as the cron does, and

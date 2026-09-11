@@ -43,7 +43,8 @@ class AutoApproveCleanService
         return (int) config('freegle.autoapprove.delay_minutes', 20);
     }
 
-    public function defaultQualityCheckPercent(): int
+    /** Share of otherwise-clean posts held back for a moderator's verdict: the same for every community. */
+    public function qualityCheckPercent(): int
     {
         return (int) config('freegle.autoapprove.quality_check_percent', 0);
     }
@@ -157,7 +158,7 @@ class AutoApproveCleanService
                     continue;
                 }
 
-                if ($this->isQualitySampled((int) $row->msgid, (int) $row->groupid)) {
+                if ($this->isQualitySampled((int) $row->msgid)) {
                     if (!$dryRun) {
                         // Mark it as a quality-check sample so the moderation-stats
                         // dashboard can compare the mod's verdict on the sample
@@ -284,13 +285,14 @@ class AutoApproveCleanService
     }
 
     /**
-     * Deterministically hold a configurable percentage of otherwise-eligible posts in
+     * Deterministically hold a site-wide percentage of otherwise-eligible posts in
      * Pending so a moderator spot-checks the auto-approval quality. Deterministic on msgid
-     * so a held message never oscillates between runs.
+     * so a held message never oscillates between runs. There is no per-community rate;
+     * the Go countdown (autoapproveat.go) reads the same env variable.
      */
-    protected function isQualitySampled(int $msgid, int $groupid): bool
+    protected function isQualitySampled(int $msgid): bool
     {
-        $percent = $this->qualityPercentForGroup($groupid);
+        $percent = $this->qualityCheckPercent();
         if ($percent <= 0) {
             return false;
         }
@@ -299,18 +301,6 @@ class AutoApproveCleanService
         }
 
         return (abs(crc32((string) $msgid)) % 100) < $percent;
-    }
-
-    protected function qualityPercentForGroup(int $groupid): int
-    {
-        $group    = Group::find($groupid);
-        $settings = $group?->settings ?? [];
-        $val      = $settings['autoapprove']['quality_check_percent'] ?? null;
-        if ($val === null || $val === '') {
-            return $this->defaultQualityCheckPercent();
-        }
-
-        return (int) $val;
     }
 
     /**
