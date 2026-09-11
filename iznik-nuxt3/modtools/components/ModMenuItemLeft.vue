@@ -1,7 +1,10 @@
 <template>
   <div :class="getClass">
-    <!-- eslint-disable-next-line -->
-    <span v-if="indent" class="ps-3" /><span v-if="sub" class="menu-elbow" aria-hidden="true" /><nuxt-link :to="link" @mousedown.native="click">{{ name }}</nuxt-link>
+    <span v-if="indent" class="ps-3" /><span
+      v-if="sub"
+      class="menu-elbow"
+      aria-hidden="true"
+    /><nuxt-link :to="link" @mousedown="click">{{ name }}</nuxt-link>
     <b-badge v-if="count && getCount(count)" :variant="countVariant">
       {{ getCount(count) }}
     </b-badge>
