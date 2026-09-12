@@ -419,4 +419,67 @@ describe('GroupHeader', () => {
       expect(html).toContain('contact our lovely local volunteers')
     })
   })
+
+  // A feed filtered to one community shows this header above the posts. The feed decides
+  // whether it is folded up (v-model:collapsed); the header only renders that state and
+  // asks to change it, so the compact bar and the full card never show together.
+  describe('collapsible', () => {
+    it('shows only the compact bar when folded, and asks to open on "Show details"', async () => {
+      mockMember.value = 'Member'
+      mockAuthStore.member.mockReturnValue('Member')
+      const wrapper = createWrapper({ collapsible: true, collapsed: true })
+
+      const bar = wrapper.find('.group-compact')
+      expect(bar.exists()).toBe(true)
+      expect(bar.text()).toContain('Test Community')
+      expect(bar.find('img').attributes('src')).toBe('/test-profile.jpg')
+      expect(bar.find('.group-compact__toggle').text()).toBe('Show details')
+      expect(wrapper.find('.mobile-group-header').exists()).toBe(false)
+      expect(wrapper.find('.group-description').exists()).toBe(false)
+
+      await bar.find('.group-compact__toggle').trigger('click')
+      expect(wrapper.emitted('update:collapsed')).toEqual([[false]])
+    })
+
+    it('shows the full header with "Hide details" under the Leave button when open', async () => {
+      mockMember.value = 'Member'
+      mockAuthStore.member.mockReturnValue('Member')
+      const wrapper = createWrapper({ collapsible: true, collapsed: false })
+
+      expect(wrapper.find('.group-compact').exists()).toBe(false)
+      expect(wrapper.find('.mobile-group-header').exists()).toBe(true)
+      expect(wrapper.find('.group-description').exists()).toBe(true)
+
+      // One per layout: desktop card, tablet action block, mobile full-width actions.
+      const desktop = wrapper.find('.group__hide')
+      expect(desktop.text()).toBe('Hide details')
+      expect(wrapper.find('.mobile-hero__hide').text()).toBe('Hide details')
+      expect(wrapper.find('.mobile-actions__hide').text()).toBe('Hide details')
+      // The desktop one sits inside the buttons cell, after the Leave button.
+      const buttonsCell = wrapper.find('.group__buttons')
+      const html = buttonsCell.html()
+      expect(html.indexOf('Leave')).toBeLessThan(html.indexOf('Hide details'))
+
+      await desktop.find('button').trigger('click')
+      expect(wrapper.emitted('update:collapsed')).toEqual([[true]])
+    })
+
+    it('shows neither the compact bar nor "Hide details" unless collapsible', () => {
+      mockMember.value = 'Member'
+      mockAuthStore.member.mockReturnValue('Member')
+      const wrapper = createWrapper({ collapsed: true })
+
+      expect(wrapper.find('.group-compact').exists()).toBe(false)
+      expect(wrapper.find('.group__hide').exists()).toBe(false)
+      expect(wrapper.find('.mobile-hero__hide').exists()).toBe(false)
+      expect(wrapper.find('.mobile-actions__hide').exists()).toBe(false)
+      expect(wrapper.find('.mobile-group-header').exists()).toBe(true)
+    })
+
+    it('keeps the Join button for someone who has not joined, with "Hide details" beneath it', () => {
+      const wrapper = createWrapper({ collapsible: true, collapsed: false })
+      expect(wrapper.find('[data-label="Join community"]').exists()).toBe(true)
+      expect(wrapper.find('.mobile-actions__hide').exists()).toBe(true)
+    })
+  })
 })
