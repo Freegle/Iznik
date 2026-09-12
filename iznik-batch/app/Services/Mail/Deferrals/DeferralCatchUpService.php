@@ -3,6 +3,7 @@
 namespace App\Services\Mail\Deferrals;
 
 use App\Mail\Deferrals\UnreadChatCatchUpMail;
+use App\Models\ChatRoom;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
 use App\Services\Mail\MailSuppressionService;
@@ -31,6 +32,10 @@ use Illuminate\Support\Facades\Log;
  *   Chat notifications   one "you have unread messages" summary. Chat is the
  *                        only one where the member is waiting on a person
  *                        rather than on us, so silence is the costly outcome.
+ *                        Chats with members and a moderator's chats on the
+ *                        volunteers' side are counted apart, because they
+ *                        are read in different places (the member site and
+ *                        ModTools).
  *
  * Which leaves this class with one real job: the chat summary.
  */
@@ -98,9 +103,14 @@ class DeferralCatchUpService
                     continue;
                 }
 
+                $suppression = $this->suppressionFor($row->suppressionid ?? null);
+
+                // The count is bounded to what WE held back (firstat); the date
+                // is when the PROVIDER started refusing us. They differ when the
+                // block began hours before this member next had mail due.
                 $summary = $this->unreadChatSummary((int) $userId, $row->firstat ?? null);
 
-                if ($summary['chats'] === 0 || $summary['messages'] === 0) {
+                if ($summary['messages'] + $summary['modMessages'] === 0) {
                     // Nothing arrived while we were silent that they have not
                     // since read - they went to the website, or the other side
                     // gave up. No email is the right email.
@@ -128,8 +138,10 @@ class DeferralCatchUpService
                             recipientName: $user->displayname ?: 'there',
                             chatCount: $summary['chats'],
                             messageCount: $summary['messages'],
-                            delayedSince: $this->formatSince($row->firstat),
-                            provider: $this->providerFor($row->suppressionid ?? null),
+                            delayedSince: $this->formatSince($suppression?->deferred_since ?? $row->firstat ?? null),
+                            provider: $suppression?->provider,
+                            modChatCount: $summary['modChats'],
+                            modMessageCount: $summary['modMessages'],
                         ),
                         $email,
                         emailType: 'chat_catchup'
@@ -173,10 +185,10 @@ class DeferralCatchUpService
 
     /**
      * What this member missed WHILE WE WERE NOT EMAILING THEM, and has still not
-     * read.
+     * read - split by where they would go to read it.
      *
-     * Both halves of that are load-bearing, and getting either wrong makes the
-     * email lie in the alarming direction.
+     * Both halves of "missed and unread" are load-bearing, and getting either
+     * wrong makes the email lie in the alarming direction.
      *
      * NOT lastmsgemailed. That watermark records what we have EMAILED, not what
      * they have SEEN, so for anyone who reads on the website - who is therefore
@@ -191,11 +203,27 @@ class DeferralCatchUpService
      * on you had N messages", so counting anything from before the provider
      * started refusing us is counting something else entirely.
      *
-     * @return array{chats:int, messages:int}
+     * Member side vs mod side. A moderator is on the roster of every User2Mod
+     * chat on their groups, on the volunteers' side, and of every Mod2Mod chat.
+     * Those are only visible in ModTools: the member site lists User2Mod chats
+     * where the viewer IS the member (user1) and nothing else. On 2026-09-12 a
+     * moderator was told "a message in one chat", followed the button to the
+     * member site, and found only a two-month-old chat of her own; the message
+     * was a member writing to her group's volunteers. So the two are counted
+     * apart and the email sends each to where it can be read.
+     *
+     * @return array{chats:int, messages:int, modChats:int, modMessages:int}
      */
     private function unreadChatSummary(int $userId, ?string $since): array
     {
+        $modSide = sprintf(
+            "(chat_rooms.chattype = '%s' OR (chat_rooms.chattype = '%s' AND chat_rooms.user1 <> chat_roster.userid))",
+            ChatRoom::TYPE_MOD2MOD,
+            ChatRoom::TYPE_USER2MOD
+        );
+
         $q = DB::table('chat_roster')
+            ->join('chat_rooms', 'chat_rooms.id', '=', 'chat_roster.chatid')
             ->join('chat_messages', 'chat_messages.chatid', '=', 'chat_roster.chatid')
             ->where('chat_roster.userid', $userId)
             // Their own messages are not something to catch up on.
@@ -212,12 +240,18 @@ class DeferralCatchUpService
             $q->where('chat_messages.date', '>=', $since);
         }
 
-        $row = $q->selectRaw('COUNT(DISTINCT chat_roster.chatid) AS chats, COUNT(*) AS messages')
-            ->first();
+        $row = $q->selectRaw(
+            "COUNT(DISTINCT CASE WHEN NOT {$modSide} THEN chat_roster.chatid END) AS chats,"
+            ." SUM(CASE WHEN NOT {$modSide} THEN 1 ELSE 0 END) AS messages,"
+            ." COUNT(DISTINCT CASE WHEN {$modSide} THEN chat_roster.chatid END) AS modchats,"
+            ." SUM(CASE WHEN {$modSide} THEN 1 ELSE 0 END) AS modmessages"
+        )->first();
 
         return [
             'chats' => (int) ($row->chats ?? 0),
             'messages' => (int) ($row->messages ?? 0),
+            'modChats' => (int) ($row->modchats ?? 0),
+            'modMessages' => (int) ($row->modmessages ?? 0),
         ];
     }
 
@@ -234,21 +268,33 @@ class DeferralCatchUpService
     }
 
     /**
-     * The provider that was refusing us, from the suppression we recorded at
-     * the time we declined to send.
+     * The suppression we recorded at the time we declined to send: who was
+     * refusing us, and since when.
      *
      * Recorded rather than re-derived: by the time the catch-up runs the
      * suppression has been released, and working backwards from the member's
      * address would mean reimplementing the mailer's own address-ranking
      * rules against history that has already moved on.
+     *
+     * deferred_since is the provider's date, not ours. mail_suppressed_counts
+     * .firstat is merely the first time we happened to have something to hold
+     * back for this member, which can be a day or more after the provider
+     * started refusing us; told "stopped accepting our emails on 11 September"
+     * in an email sent on 11 September, a member reasonably concluded the
+     * email was nonsense.
+     *
+     * @return object{provider: ?string, deferred_since: ?string}|null
      */
-    private function providerFor(?int $suppressionId): ?string
+    private function suppressionFor(?int $suppressionId): ?object
     {
         if ($suppressionId === null || $suppressionId <= 0) {
             return null;
         }
 
-        return DB::table('mail_suppressions')->where('id', $suppressionId)->value('provider');
+        return DB::table('mail_suppressions')
+            ->where('id', $suppressionId)
+            ->select(['provider', 'deferred_since'])
+            ->first();
     }
 
     private function formatSince(?string $when): string
