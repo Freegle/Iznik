@@ -192,7 +192,7 @@ describe('MessageItemLocation', () => {
       })
       const wrapper = createWrapper()
       expect(wrapper.find('.b-badge').exists()).toBe(true)
-      expect(wrapper.text()).toContain('5 left')
+      expect(wrapper.text()).toContain('5 available')
     })
 
     it('hides badge when availablenow is 1', () => {
@@ -215,14 +215,37 @@ describe('MessageItemLocation', () => {
       expect(wrapper.find('.b-badge').exists()).toBe(false)
     })
 
-    it('shows 0 when availablenow is falsy but badge shown', () => {
+    it('shows the count when we do not know the original pool size', () => {
       mockMessageById.mockReturnValue({
         id: 1,
         subject: 'Offer: Item (Place)',
         availablenow: 3,
       })
       const wrapper = createWrapper()
-      expect(wrapper.text()).toContain('3 left')
+      expect(wrapper.text()).toContain('3 available')
+    })
+
+    it('says part gone once some have been given away', () => {
+      mockMessageById.mockReturnValue({
+        id: 1,
+        subject: 'Offer: Books (Glasgow)',
+        availablenow: 2,
+        availableinitially: 5,
+      })
+      const wrapper = createWrapper()
+      expect(wrapper.text()).toContain('Part gone, some still available')
+    })
+
+    it('keeps the running count on a bulk clearance offer', () => {
+      mockMessageById.mockReturnValue({
+        id: 1,
+        subject: 'Offer: Office clearance (Leeds)',
+        availablenow: 2,
+        availableinitially: 5,
+        bulkcount: 4,
+      })
+      const wrapper = createWrapper()
+      expect(wrapper.text()).toContain('2 available')
     })
   })
 
