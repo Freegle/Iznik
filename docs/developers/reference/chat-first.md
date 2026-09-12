@@ -86,7 +86,8 @@ event}`, answering with server-sent events (`identity`, `delta`, `turn`). The tu
 goroutine while the stream carries a comment every five seconds, so a proxy or a phone does not
 drop a silent stream; a panic ends as an `error` event. If the browser loses the end of a reply it
 sends one `resume` event, which returns the current state, chips and progress without saying or
-moving anything (`api/AssistantAPI.js`). Taps and host
+moving anything (`api/AssistantAPI.js`); the e2e harness lets that cut stream's console error
+through for the same reason (`tests/e2e/fixtures.js`), so a test asserts the recovery. Taps and host
 events move the flow deterministically (`host.go`: chips, `NextAfter`, `TargetForChip`,
 `ApplyEvent`). Typed text goes through the rules first (`rules.go`: commands, intents,
 postcode, email, quantity, the item validation mirrored from
