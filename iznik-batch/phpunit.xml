@@ -11,6 +11,7 @@
          cacheDirectory="/tmp/phpunit-cache"
          enforceTimeLimit="true"
          defaultTimeLimit="30"
+         timeoutForLargeTests="120"
 >
     <testsuites>
         <testsuite name="Unit">

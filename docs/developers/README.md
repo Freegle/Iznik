@@ -47,6 +47,7 @@ Read these directly; the pages above link into them rather than copy them:
 | Donations and Gift Aid | [./reference/donations-and-gift-aid.md](./reference/donations-and-gift-aid.md) |
 | The mobile apps | [./reference/mobile-app.md](./reference/mobile-app.md) |
 | Electricals and reuse reporting | [./reference/electricals.md](./reference/electricals.md) |
+| Item desirability scoring | [./reference/item-desirability.md](./reference/item-desirability.md) |
 | Matched-posts email | [./reference/matched-posts-email.md](./reference/matched-posts-email.md) |
 | Getting a first reply in | [./reference/first-reply.md](./reference/first-reply.md) |
 | Unsubscribing from email (List-Unsubscribe) | [./reference/unsubscribe.md](./reference/unsubscribe.md) |
