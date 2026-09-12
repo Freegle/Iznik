@@ -54,4 +54,23 @@ class FeatureFlagsTest extends TestCase
         // Restore.
         config(['freegle.mail.enabled_types' => self::ALL_EMAIL_TYPES]);
     }
+
+    public function test_wildcard_enables_every_type(): void
+    {
+        config(['freegle.mail.enabled_types' => '*']);
+
+        $this->assertTrue(self::isEmailTypeEnabled('Welcome'));
+        $this->assertTrue(self::isEmailTypeEnabled('SomeDeploymentSpecificType'));
+
+        // The wildcard can sit alongside named types.
+        config(['freegle.mail.enabled_types' => 'Welcome, *']);
+        $this->assertTrue(self::isEmailTypeEnabled('Newsletter'));
+
+        // A '*' inside a name is not a wildcard.
+        config(['freegle.mail.enabled_types' => 'Wel*come']);
+        $this->assertFalse(self::isEmailTypeEnabled('Welcome'));
+
+        // Restore.
+        config(['freegle.mail.enabled_types' => self::ALL_EMAIL_TYPES]);
+    }
 }

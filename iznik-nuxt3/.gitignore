@@ -45,6 +45,8 @@ save
 /playwright-report/
 /test-results/.last-run.json
 /test-results/
+# Per-layer Playwright output dirs (e.g. a deployment layer's own test-results-<layer>/).
+/test-results-*/
 /.npmrc
 /test-emails.json
 

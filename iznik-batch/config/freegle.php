@@ -103,6 +103,30 @@ return [
         'paypal_url' => env('FREEGLE_DONATE_PAYPAL_URL', 'https://freegle.in/paypal1510'),
     ],
 
+    // Deployment switches. Each one defaults to how Freegle behaves today, so
+    // leaving them unset changes nothing; another deployment built on this
+    // codebase sets them instead of carrying its own edits to shared files.
+    // See docs/developers/reference/deployment-switches.md.
+    'auth' => [
+        // Passwordless sign-in. When true, the "forgot password" request sends a
+        // sign-in link email (App\Mail\Session\LoginLinkMail) that lands on
+        // login_link_path with ?u=&k=, which the web app consumes to sign the
+        // member in - instead of the "set a new password" email.
+        'passwordless' => filter_var(env('FREEGLE_PASSWORDLESS_LOGIN', false), FILTER_VALIDATE_BOOLEAN),
+        'login_link_path' => env('FREEGLE_LOGIN_LINK_PATH', '/'),
+    ],
+    'schedule' => [
+        // 'full' (default) runs everything in routes/console.php. 'overlay-only'
+        // runs nothing from that file except what the overlay below schedules,
+        // for deployments that want a small hand-picked set of jobs. Any other
+        // value behaves as 'full', so a typo can never silently stop the schedule.
+        'profile' => env('FREEGLE_SCHEDULE_PROFILE', 'full'),
+        // Optional extra schedule file, loaded if it exists (path relative to the
+        // app root unless absolute). Freegle ships no such file; a deployment
+        // adds its own jobs there instead of editing routes/console.php.
+        'overlay' => env('FREEGLE_SCHEDULE_OVERLAY', 'routes/console.deployment.php'),
+    ],
+
     'branding' => [
         'name' => env('FREEGLE_SITE_NAME', 'Freegle'),
         'logo_url' => env('FREEGLE_LOGO_URL', 'https://www.ilovefreegle.org/icon.png'),
@@ -144,6 +168,11 @@ return [
         // Email types: Welcome, ChatNotification, etc.
         // If empty, NO emails will be sent (fail-safe default).
         'enabled_types' => env('FREEGLE_MAIL_ENABLED_TYPES', ''),
+        // Open/click tracking (the email_tracking row, tracked links, the pixel).
+        // Off, every mailable's tracked*() helpers hand back the plain destination
+        // URL and no email_tracking row is written - for deployments whose API
+        // does not serve the tracking redirect/pixel endpoints.
+        'tracking_enabled' => filter_var(env('FREEGLE_MAIL_TRACKING_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         // GeekAlerts email for system alerts and failure notifications.
         'geek_alerts_addr' => env('FREEGLE_GEEK_ALERTS_ADDR', 'geek-alerts@ilovefreegle.org'),
         // Geeks address for system emails (FROM address for reports etc).
