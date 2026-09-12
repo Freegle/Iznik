@@ -407,6 +407,7 @@ Still to confirm:
 | 14 | App share sheet opens the chat Give flow for chat members | App keeps the classic wizard |
 | 15 | Assistant runs inside apiv2 (Go port of the ai-flower engine core) | A separate Node service running ai-flower itself |
 | 16 | The chooser opens as soon as there are replies; the giver decides when | A fair-chance window (Trash Nothing delays the choice about a day) enforced by the flow |
+| 17 | Browse in chat mode is a sheet over the chat: rows scroll inside it, the transcript shows a count and a glimpse, never cards (2026-09-12, replaces the Nearby screen; see `2026-09-12-nearby-sheet-design.md`) | A page of its own that grows with More |
 
 ## 12. Testing
 

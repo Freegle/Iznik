@@ -339,6 +339,7 @@ type Event struct {
 	Posts        []map[string]interface{} `json:"posts,omitempty"`
 	Communities  []map[string]interface{} `json:"communities,omitempty"`
 	Filter       string                   `json:"filter,omitempty"`
+	Count        int                      `json:"count,omitempty"`
 	LocationName string                   `json:"locationName,omitempty"`
 }
 
@@ -444,6 +445,8 @@ func ApplyEvent(state string, ev Event, slots Slots, facts Facts) EventResult {
 	case "nearby":
 		f["nearby"] = capMaps(ev.Posts, 8)
 		f["nearbyFilter"] = ev.Filter
+		// How many the host found in all; the chat shows a glimpse and a way to look.
+		f["nearbyCount"] = ev.Count
 	case "communities":
 		f["communities"] = capMaps(ev.Communities, 5)
 	case "joined":

@@ -82,6 +82,23 @@ test.describe('Chat shell landing', () => {
     await expect(page.getByTestId('chip-skip')).toHaveCount(0) // no real photo, so the description is required
   })
 
+  test('Nearby under the composer opens a sheet over the chat, not a page', async ({
+    page,
+  }) => {
+    await page.goto('/', { timeout: timeouts.navigation.initial })
+    await page.getByTestId('chip-nearby').click()
+    const sheet = page.getByTestId('nearby-sheet')
+    await expect(sheet).toBeVisible({ timeout: timeouts.ui.appearance })
+    // The chat is still there underneath, and the page did not go anywhere.
+    await expect(page.getByTestId('chat-transcript')).toBeVisible()
+    await expect(page).toHaveURL(/\/(\?.*)?$/)
+    // A visitor is asked where they are, inside the sheet.
+    await expect(sheet.locator('[data-testid="postcode-input"]')).toBeVisible()
+    await page.getByTestId('nearby-sheet-close').click()
+    await expect(sheet).toHaveCount(0)
+    await expect(page.getByTestId('composer-input')).toBeVisible()
+  })
+
   test('the desktop frame is a phone-sized column with footer links', async ({
     page,
   }) => {

@@ -196,3 +196,18 @@ func TestAsstPostFailedReturnsToTheCard(t *testing.T) {
 		t.Fatalf("reason kept for the composed line: %+v", r.Facts)
 	}
 }
+
+func TestAsstNearbyCountIsAFactTheModelMaySay(t *testing.T) {
+	ev := Event{Type: "nearby", Count: 14, Filter: "offers", Posts: []map[string]interface{}{{"id": 1, "title": "Grey sofa", "type": "Offer", "miles": 1}}}
+	r := ApplyEvent("NEARBY", ev, Slots{}, Facts{})
+	if r.Facts["nearbyCount"] != 14 {
+		t.Fatalf("nearbyCount = %v, want 14", r.Facts["nearbyCount"])
+	}
+	vocab := AllowedVocabulary(r.Facts, "", "")
+	if ok, reasons := CheckReply("14 offers nearby, here is a glimpse of three.", vocab, "NEARBY"); !ok {
+		t.Fatalf("the count from the facts should pass: %v", reasons)
+	}
+	if ok, _ := CheckReply("15 offers nearby, here is a glimpse of three.", vocab, "NEARBY"); ok {
+		t.Fatal("a count not in the facts should trip the check")
+	}
+}

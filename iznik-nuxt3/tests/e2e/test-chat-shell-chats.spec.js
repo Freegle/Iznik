@@ -93,7 +93,7 @@ test.describe('Chat shell: chats', () => {
     await expect(page.getByTestId('shell-header')).toContainText('ChitChat')
   })
 
-  test('Nearby is a screen of its own with cards, a search box and a filter', async ({
+  test('Nearby is a sheet over the chat with a search box, a filter and rows, and closing it leaves the chat', async ({
     page,
     context,
     baseURL,
@@ -101,14 +101,16 @@ test.describe('Chat shell: chats', () => {
   }) => {
     test.setTimeout(timeouts.background)
     await signInThenChat(page, context, baseURL, existingTestEmail)
+    // /browse in chat mode is the chat with the sheet already up.
     await page.goto('/browse', { timeout: timeouts.navigation.initial })
-    await expect(page.getByTestId('nearby-screen')).toBeVisible({
+    await expect(page.getByTestId('nearby-sheet')).toBeVisible({
       timeout: timeouts.ui.appearance,
     })
+    await expect(page.getByTestId('chat-transcript')).toBeVisible()
     await expect(page.getByTestId('nearby-search')).toBeVisible()
-    // A member with no saved location is asked where they are first.
+    // A member with no saved location is asked where they are first, inside the sheet.
     const pc = page.locator(
-      '[data-testid="postcode-input"] .pcinp, [data-testid="postcode-input"] input'
+      '[data-testid="nearby-sheet"] [data-testid="postcode-input"] .pcinp, [data-testid="nearby-sheet"] [data-testid="postcode-input"] input'
     )
     if (
       await pc
@@ -118,16 +120,37 @@ test.describe('Chat shell: chats', () => {
     ) {
       await pc.first().fill(environment.postcode)
     }
+    // The list scrolls inside the sheet: the page is no taller once the rows are in.
+    const pageHeight = () =>
+      page.evaluate(() => document.documentElement.scrollHeight)
+    const before = await pageHeight()
     await expect(page.getByTestId('nearby-list')).toBeVisible({
       timeout: timeouts.ui.appearance,
     })
     await expect(
-      page.locator('[data-testid="nearby-list"] .post-card').first()
+      page.locator('[data-testid="nearby-list"] .post-row').first()
     ).toBeVisible({ timeout: timeouts.background })
-    await page.getByTestId('nearby-filter-Offer').click()
-    await expect(page.getByTestId('nearby-filter-Offer')).toHaveAttribute(
+    expect(await pageHeight()).toBe(before)
+    const frame = await page.getByTestId('chat-shell').boundingBox()
+    const sheet = await page.locator('.sheet').boundingBox()
+    expect(sheet.height).toBeLessThanOrEqual(frame.height * 0.86)
+    await page.getByTestId('nearby-filter-offers').click()
+    await expect(page.getByTestId('nearby-filter-offers')).toHaveAttribute(
       'aria-selected',
       'true'
     )
+    // A row opens in place with a Reply button.
+    await page
+      .locator('[data-testid="nearby-list"] .post-row-main')
+      .first()
+      .click()
+    await expect(
+      page.locator('[data-testid="nearby-list"] .post-row-detail').first()
+    ).toBeVisible()
+    expect(await pageHeight()).toBe(before)
+    await page.getByTestId('nearby-sheet-close').click()
+    await expect(page.getByTestId('nearby-sheet')).toHaveCount(0)
+    await expect(page.getByTestId('composer-input')).toBeVisible()
+    await expect(page).toHaveURL(/\/(\?.*)?$/)
   })
 })

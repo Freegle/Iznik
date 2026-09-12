@@ -413,7 +413,7 @@ func (s *Service) Turn(ctx context.Context, id Identity, in TurnInput, onDelta f
 		if tr := TargetForChip(inst.State, in.Tap, slots, facts); tr != nil {
 			if tr.Reset {
 				slots = Slots{}
-				for _, k := range []string{"posted", "matches", "postFailed", "cancelled", "nearby", "recognised", "hasRealPhoto"} {
+				for _, k := range []string{"posted", "matches", "postFailed", "cancelled", "nearby", "nearbyCount", "recognised", "hasRealPhoto"} {
 					delete(facts, k)
 				}
 			}
