@@ -40,20 +40,13 @@
         <ShellBubble from="freegle"
           >Hello. Got something to give away, or after something?</ShellBubble
         >
-        <div
+        <PostStrip
           v-if="samples.length"
-          class="sample-strip"
-          data-testid="sample-offers"
-        >
-          <div class="sample-title">Offered near you recently</div>
-          <PostCard
-            v-for="id in samples"
-            :id="id"
-            :key="'sample-' + id"
-            @reply="reply"
-            @expand="expand"
-          />
-        </div>
+          kind="samples"
+          :ids="samples"
+          :count="samples.length"
+          @look="openSheet()"
+        />
       </template>
       <template v-for="line in assistant.lines" :key="line.id">
         <ShellBubble
@@ -81,29 +74,15 @@
           @edit="editField"
           @toggle="toggleField"
         />
-        <template v-if="assistant.cards?.kind === 'posts'">
-          <PostCard
-            v-for="id in assistant.cards.ids"
-            :id="id"
-            :key="'card-' + id"
-            :expanded="expandedId === id"
-            :miles="milesFor(id)"
-            @reply="reply"
-            @expand="expand"
-          />
-          <button
-            v-if="assistant.cards.all"
-            type="button"
-            class="see-all"
-            data-testid="see-all"
-            @click="router.push(assistant.cards.all)"
-          >
-            {{ assistant.cards.allLabel || 'See all' }}
-          </button>
-          <div v-if="!assistant.cards.ids.length" class="nothing-here">
-            Nothing nearby just now.
-          </div>
-        </template>
+        <PostStrip
+          v-if="assistant.cards?.kind === 'posts'"
+          :ids="assistant.cards.ids"
+          :count="assistant.cards.count ?? assistant.cards.ids.length"
+          :kind="assistant.cards.look || 'nearby'"
+          :filter="assistant.cards.filter || ''"
+          :term="assistant.cards.term || ''"
+          @look="openSheet(assistant.cards)"
+        />
         <template v-if="assistant.cards?.kind === 'groups'">
           <GroupCard
             v-for="id in assistant.cards.ids"
@@ -150,6 +129,12 @@
       @cancel="cancel"
       @action="tap"
     />
+    <NearbySheet
+      v-if="sheet"
+      :term="sheet.term"
+      :filter="sheet.filter"
+      @close="closeSheet"
+    />
     <OurUploader
       v-if="uploading"
       v-model="assistant.photos"
@@ -168,7 +153,8 @@ import ShellHeader from '~/components/chatshell/ShellHeader.vue'
 import ShellComposer from '~/components/chatshell/ShellComposer.vue'
 import ShellBubble from '~/components/chatshell/ShellBubble.vue'
 import ShellChips from '~/components/chatshell/ShellChips.vue'
-import PostCard from '~/components/chatshell/PostCard.vue'
+import PostStrip from '~/components/chatshell/PostStrip.vue'
+import NearbySheet from '~/components/chatshell/NearbySheet.vue'
 import GroupCard from '~/components/chatshell/GroupCard.vue'
 import ConfirmCard from '~/components/chatshell/ConfirmCard.vue'
 import PostcodeInput from '~/components/chatshell/PostcodeInput.vue'
@@ -176,7 +162,6 @@ import EmailInput from '~/components/chatshell/EmailInput.vue'
 import { useAssistantStore } from '~/stores/assistant'
 import { useAuthStore } from '~/stores/auth'
 import { useChatStore } from '~/stores/chat'
-import { useMessageStore } from '~/stores/message'
 import { useGroupStore } from '~/stores/group'
 import { useHostActions } from '~/composables/useHostActions'
 import { useUiMode } from '~/composables/useUiMode'
@@ -187,14 +172,16 @@ const OurUploader = defineAsyncComponent(
 
 // The chat with Freegle. The store holds the lines; the service decides; this renders
 // and does what Freegle asks the browser to do.
-defineProps({
+const props = defineProps({
   samples: { type: Array, required: false, default: () => [] },
+  // Open with the Nearby sheet up, as /browse does in chat mode.
+  nearby: { type: Boolean, required: false, default: false },
+  nearbyTerm: { type: String, required: false, default: '' },
 })
 
 const assistant = useAssistantStore()
 const authStore = useAuthStore()
 const chatStore = useChatStore()
-const messageStore = useMessageStore()
 const groupStore = useGroupStore()
 const host = useHostActions()
 const uiMode = useUiMode()
@@ -209,6 +196,8 @@ const uploading = ref(false)
 const editing = ref(false)
 const expandedId = ref(null)
 const lastBody = ref(null)
+// The Nearby sheet, when it is up: what it searches for and which filter it opens on.
+const sheet = ref(null)
 
 const MAIN = [
   { value: 'give', label: 'Give' },
@@ -302,6 +291,11 @@ async function tap(chip) {
     editing.value = true
     return
   }
+  if (chip.value === 'nearby') {
+    // Straight to the sheet, as an attachment button opens its tray.
+    openSheet()
+    return
+  }
   if (['offers', 'wanted', 'nearest'].includes(chip.value)) {
     assistant.push({ who: 'member', text: chip.label })
     await host.listNearby(chip.value)
@@ -382,8 +376,16 @@ async function emailEntered(email) {
   await host.checkEmail(email)
 }
 
-function reply(id) {
-  host.replyTo(id)
+function openSheet(cards) {
+  sheet.value = { term: cards?.term || '', filter: cards?.filter || 'all' }
+}
+function closeSheet() {
+  sheet.value = null
+  // /browse in chat mode is the chat with the sheet up; closing it is the chat,
+  // which for a member means the Freegle chat rather than the chat list.
+  if (route.path.startsWith('/browse')) {
+    router.replace(me.value ? '/?chat=1' : '/')
+  }
 }
 
 function expand(id) {
@@ -392,13 +394,6 @@ function expand(id) {
 
 async function join(id) {
   await host.joinCommunity(id)
-}
-
-function milesFor(id) {
-  const at = host.myLatLng()
-  const m = messageStore.byId(id)
-  if (!at || !m?.lat) return null
-  return milesAway(at.lat, at.lng, m.lat, m.lng)
 }
 
 function groupMiles(id) {
@@ -425,6 +420,7 @@ async function goClassic() {
 
 onMounted(() => {
   scrollToEnd()
+  if (props.nearby) openSheet({ term: props.nearbyTerm })
   // Your posts can send someone here to start something: /?do=give.
   const wanted = MAIN.find((c) => c.value === route.query.do)
   if (wanted && !assistant.busy && !assistant.progress) tap(wanted)
@@ -446,17 +442,6 @@ onMounted(() => {
 })
 </script>
 <style scoped lang="scss">
-.see-all {
-  align-self: flex-start;
-  border: 1px solid #1f5f3b;
-  background: #fff;
-  color: #1f5f3b;
-  border-radius: 999px;
-  padding: 0.35rem 1rem;
-  margin: 0.25rem 0 0.5rem;
-  font-size: 0.95rem;
-}
-
 .freegle-chat {
   display: flex;
   flex-direction: column;
@@ -484,16 +469,6 @@ onMounted(() => {
   }
 }
 
-.sample-strip {
-  margin-top: 0.4rem;
-}
-
-.sample-title {
-  font-size: 0.78rem;
-  color: #5a6470;
-  padding: 0 0.7rem;
-}
-
 .widgets {
   padding-bottom: 0.3rem;
 }
@@ -501,12 +476,6 @@ onMounted(() => {
 .chips-wrap,
 .edit-chips {
   padding: 0 0.6rem;
-}
-
-.nothing-here {
-  padding: 0.4rem 0.7rem;
-  color: #5a6470;
-  font-size: 0.9rem;
 }
 
 .chat-error {

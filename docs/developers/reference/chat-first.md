@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-11
+last_reviewed: 2026-09-12
 owner: Freegle dev team
 covers:
   - iznik-server-go/assistant/**
@@ -61,10 +61,16 @@ Screens: `FreegleChat` (the assistant), `ChatList` (Freegle and Your posts pinne
 as a group, people; filters All · Unread · People), `MemberChat` (the existing pane and
 footer with a shell header), `YourPosts` (one chat of events about all your posts, with
 `ChooserSheet` for who gets what and how many), `ChitChatGroup` (the newsfeed as a group
-chat: one stream, replies quote what they answer, ❤ to love), `NearbyScreen` (`/browse` in chat
-mode: a scrolling list with a search box and an Offers/Wanted filter, nearest first, ten at a
-time). The chat itself shows at most three cards for nearby or a search, with a See all link
-to that screen; a feed does not belong in a transcript.
+chat: one stream, replies quote what they answer, ❤ to love), `NearbySheet` (on
+`ShellSheet`, the base `ChooserSheet` also uses: backdrop, handle, title, a body that
+scrolls inside its own bounds). The sheet holds the search box, the All/Offers/Wanted
+filter and one `PostRow` per item, nearest first, ten more at a time, each opening in
+place with Reply. `/browse` in chat mode renders the chat with the sheet up. The
+transcript never holds post cards: what a look around, a search or the matches before an
+Ask found is one `PostStrip` (count, three thumbnails, Look), and the landing's sample
+offers are the same strip. The rows behind both live in `assistant.nearby`, filled by
+`useHostActions.fetchNearby`; `assistant.cards` carries only the top three and the
+count. Decision note: `plans/2026-09-12-nearby-sheet-design.md`.
 
 ## The assistant
 

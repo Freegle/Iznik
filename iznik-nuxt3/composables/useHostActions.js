@@ -153,92 +153,116 @@ export function useHostActions() {
           : null,
       }
     })
-    assistant.cards = { kind: 'posts', ids: matches.map((m) => m.id) }
+    assistant.cards = {
+      kind: 'posts',
+      look: 'matches',
+      ids: matches.map((m) => m.id),
+      count: matches.length,
+      filter: 'all',
+      term: item,
+    }
     return assistant.sendEvent({ type: 'matches', matches }, null)
   }
 
-  async function listNearby(filter) {
-    const at = myLatLng()
-    if (!at) return assistant.sendEvent({ type: 'nearby', posts: [] }, null)
-    const box = 0.15
-    let list
+  // Offers and wanted, or one of them, from the rows the sheet and the strip share.
+  function filterRows(rows, filter) {
+    const f = String(filter || '').toLowerCase()
+    if (f === 'offers' || f === 'offer')
+      return rows.filter((m) => m.type === 'Offer')
+    if (f === 'wanted') return rows.filter((m) => m.type === 'Wanted')
+    return rows
+  }
+
+  // What is nearby, or what matches a search, as lean rows nearest first. One fetch
+  // feeds the strip in the chat and the sheet that lists the lot: the sheet pages
+  // through these rows and fetches full records as they come into view.
+  async function fetchNearby({ term = '', at = myLatLng() } = {}) {
+    let list = []
     try {
-      list =
-        (await messageStore.fetchInBounds(
-          at.lat - box,
-          at.lng - box,
-          at.lat + box,
-          at.lng + box,
-          null,
-          40,
-          true
-        )) || []
+      if (term) {
+        const params = { search: term }
+        if (at) {
+          params.swlat = at.lat - 0.3
+          params.swlng = at.lng - 0.3
+          params.nelat = at.lat + 0.3
+          params.nelng = at.lng + 0.3
+        }
+        list = (await messageStore.search(params)) || []
+      } else if (at) {
+        const box = 0.15
+        list =
+          (await messageStore.fetchInBounds(
+            at.lat - box,
+            at.lng - box,
+            at.lat + box,
+            at.lng + box,
+            null,
+            200,
+            true
+          )) || []
+      }
     } catch (e) {
       list = []
     }
-    if (filter === 'offers') list = list.filter((m) => m.type === 'Offer')
-    if (filter === 'wanted') list = list.filter((m) => m.type === 'Wanted')
-    list = list.map((m) => ({
-      ...m,
-      miles: milesAway(at.lat, at.lng, m.lat, m.lng),
+    const rows = list.map((m) => ({
+      id: m.id,
+      type: m.type,
+      lat: m.lat,
+      lng: m.lng,
+      miles: at && m.lat ? milesAway(at.lat, at.lng, m.lat, m.lng) : null,
     }))
-    if (filter === 'nearest')
-      list.sort((a, b) => (a.miles ?? 999) - (b.miles ?? 999))
-    // Three in the chat; the rest live on the Nearby screen, a list rather than a chat.
-    const top = list.slice(0, 3)
-    await Promise.all(top.map((m) => messageStore.fetch(m.id)))
-    assistant.cards = {
-      kind: 'posts',
-      ids: top.map((m) => m.id),
-      all: list.length > 3 ? '/browse' : null,
-      allLabel: 'See all nearby',
-    }
-    const posts = top.map((m) => ({
+    if (at) rows.sort((a, b) => (a.miles ?? 999) - (b.miles ?? 999))
+    assistant.nearby = { term, at, rows, fetched: Date.now() }
+    return rows
+  }
+
+  async function summaries(rows) {
+    await Promise.all(rows.map((m) => messageStore.fetch(m.id)))
+    return rows.map((m) => ({
       id: m.id,
       title: messageStore.byId(m.id)?.subject || '',
       type: m.type,
       miles: m.miles == null ? null : Math.round(m.miles),
     }))
+  }
+
+  async function listNearby(filter) {
+    const at = myLatLng()
+    if (!at) {
+      return assistant.sendEvent({ type: 'nearby', posts: [], count: 0 }, null)
+    }
+    const shown = filterRows(await fetchNearby({ at }), filter)
+    // A glimpse of three in the chat; the sheet lists the lot.
+    const top = shown.slice(0, 3)
+    const posts = await summaries(top)
+    assistant.cards = {
+      kind: 'posts',
+      look: 'nearby',
+      ids: top.map((m) => m.id),
+      count: shown.length,
+      filter: filter || 'all',
+      term: '',
+    }
     return assistant.sendEvent(
-      { type: 'nearby', posts, filter: filter || '' },
+      { type: 'nearby', posts, filter: filter || '', count: shown.length },
       null
     )
   }
 
   async function search(term) {
-    const at = myLatLng()
-    let list
-    try {
-      const params = { search: term }
-      if (at) {
-        params.swlat = at.lat - 0.3
-        params.swlng = at.lng - 0.3
-        params.nelat = at.lat + 0.3
-        params.nelng = at.lng + 0.3
-      }
-      list = (await messageStore.search(params)) || []
-    } catch (e) {
-      list = []
-    }
-    const top = list.slice(0, 3)
-    await Promise.all(top.map((m) => messageStore.fetch(m.id)))
+    const rows = await fetchNearby({ term })
+    const top = rows.slice(0, 3)
+    const posts = await summaries(top)
     assistant.cards = {
       kind: 'posts',
+      look: 'search',
       ids: top.map((m) => m.id),
-      all: list.length > 3 ? '/browse/' + encodeURIComponent(term) : null,
-      allLabel: 'See all matches',
+      count: rows.length,
+      filter: 'all',
+      term,
     }
-    const posts = top.map((m) => ({
-      id: m.id,
-      title: messageStore.byId(m.id)?.subject || '',
-      type: m.type,
-      miles:
-        at && m.lat
-          ? Math.round(milesAway(at.lat, at.lng, m.lat, m.lng))
-          : null,
-    }))
     return assistant.sendEvent(
-      { type: 'nearby', posts, filter: 'search:' + term },
+      { type: 'nearby', posts, filter: 'search:' + term, count: rows.length },
       null
     )
   }
@@ -334,6 +358,8 @@ export function useHostActions() {
     checkEmail,
     createPost,
     findMatches,
+    fetchNearby,
+    filterRows,
     listNearby,
     search,
     listCommunities,

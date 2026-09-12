@@ -172,10 +172,14 @@ const SHOTS = [
     auth: 'member',
     app: 'member',
     ui: 'chat',
+    // The chat with the Nearby sheet up: search, a filter, and rows that scroll inside it.
     path: '/browse',
     steps: [
       {
-        fill: ['[data-testid="postcode-input"] input', 'EH3 6SS'],
+        fill: [
+          '[data-testid="nearby-sheet"] [data-testid="postcode-input"] input',
+          'EH3 6SS',
+        ],
         optional: true,
         wait: 5000,
       },

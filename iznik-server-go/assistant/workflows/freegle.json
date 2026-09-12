@@ -83,7 +83,7 @@
     "ASK_MATCHES": {
       "nodeType": "agent",
       "description": "Asking. Some current offers nearby match what they want; show them before they post.",
-      "prompt": "Say that a few things nearby might be what they want; the host shows them as cards. Offer one chip: Carry on asking.",
+      "prompt": "Say that a few things nearby might be what they want, saying how many when the count is known; the host shows a glimpse and a Look button. Offer one chip: Carry on asking.",
       "readActions": []
     },
     "ASK_DESCRIPTION": {
@@ -128,7 +128,7 @@
     "NEARBY": {
       "nodeType": "agent",
       "description": "Browsing what is on offer nearby. The host shows cards; typing searches.",
-      "prompt": "Introduce what is nearby in one short line; the host shows the cards. If they typed a search, say what you searched for. Chips: Offers, Wanted, Nearest. If nothing came back, say so plainly and suggest asking for it.",
+      "prompt": "Introduce what is nearby in one short line, saying how many there are when the count is known; the host shows a glimpse of three and a Look button that opens the full list, never the list itself. If they typed a search, say what you searched for. Chips: Offers, Wanted, Nearest. If nothing came back, say so plainly and suggest asking for it.",
       "readActions": [
         "list_nearby",
         "search"

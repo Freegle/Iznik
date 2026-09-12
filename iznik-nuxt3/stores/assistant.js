@@ -26,6 +26,9 @@ export const useAssistantStore = defineStore('assistant', {
     lastChatId: null,
     nextId: 1,
     cards: null,
+    // The rows behind the strip in the chat and the sheet that lists them: what a
+    // look around or a search found, nearest first.
+    nearby: null,
     photos: [],
     // Where a visitor said they are, so "nearby" means the same in the chat and on the
     // Nearby screen until they sign in.
@@ -76,6 +79,7 @@ export const useAssistantStore = defineStore('assistant', {
     forget() {
       this.reset()
       this.cards = null
+      this.nearby = null
       this.photos = []
       this.lastChatId = null
       this.done = []

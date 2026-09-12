@@ -1,12 +1,12 @@
 <template>
-  <div class="nearby-screen" data-testid="nearby-screen">
-    <ShellHeader
-      :title="term ? 'Search' : 'Nearby'"
-      :subtitle="subtitle"
-      avatar="/icon.png"
-      back="/"
-    />
-    <div class="nearby-tools">
+  <ShellSheet
+    testid="nearby-sheet"
+    :title="term ? 'Search' : 'Nearby'"
+    height="85%"
+    @close="$emit('close')"
+  >
+    <template #subtitle>{{ subtitle }}</template>
+    <template #tools>
       <form class="nearby-search" @submit.prevent="go">
         <label class="visually-hidden" for="nearby-search">Search nearby</label>
         <input
@@ -27,25 +27,24 @@
           class="filter-btn"
           :class="{ active: filter === f.value }"
           role="tab"
-          :aria-selected="filter === f.value"
+          :aria-selected="filter === f.value ? 'true' : 'false'"
           :data-testid="'nearby-filter-' + f.value"
-          @click="setFilter(f.value)"
+          @click="filter = f.value"
         >
           {{ f.label }}
         </button>
       </div>
-    </div>
+    </template>
 
-    <div v-if="!at" class="nearby-where">
+    <div v-if="!at && !term" class="nearby-where">
       <p class="nearby-note">
         To see what's near you, say roughly where you are. Only the area is ever
         shown.
       </p>
       <PostcodeInput @selected="onPostcode" />
     </div>
-
-    <div v-else ref="scroller" class="nearby-scroll" data-testid="nearby-list">
-      <PostCard
+    <div v-else class="nearby-list" data-testid="nearby-list">
+      <PostRow
         v-for="id in shown"
         :id="id"
         :key="'nearby-' + id"
@@ -73,130 +72,116 @@
         data-testid="nearby-more"
         @click="loadMore"
       >
-        More
+        Show more
       </button>
     </div>
-  </div>
+  </ShellSheet>
 </template>
 <script setup>
-// What is nearby, as a screen of its own: a search box, a filter, and as many cards
-// as they want to scroll. The chat shows three and sends people here for the rest.
-import { computed, ref, watch, onMounted, useRouter } from '#imports'
-import ShellHeader from '~/components/chatshell/ShellHeader.vue'
-import PostCard from '~/components/chatshell/PostCard.vue'
+// What is nearby, as a sheet over the chat: a search box, a filter, and one line per
+// item that scrolls inside the sheet, ten more at a time. The chat underneath never
+// grows. Tapping a line opens it in place; Reply closes the sheet and carries on in
+// the chat.
+import { computed, ref, watch, onMounted } from '#imports'
+import ShellSheet from '~/components/chatshell/ShellSheet.vue'
+import PostRow from '~/components/chatshell/PostRow.vue'
 import PostcodeInput from '~/components/chatshell/PostcodeInput.vue'
 import { useMessageStore } from '~/stores/message'
 import { useAssistantStore } from '~/stores/assistant'
 import { useHostActions } from '~/composables/useHostActions'
-import { milesAway } from '~/composables/useDistance'
 
 const props = defineProps({
   term: { type: String, required: false, default: '' },
+  filter: { type: String, required: false, default: 'all' },
 })
+const emit = defineEmits(['close'])
 
 const PAGE = 10
-const BOX = 0.15 // degrees, roughly ten miles
+const FRESH = 5 * 60 * 1000
 
 const messageStore = useMessageStore()
 const assistant = useAssistantStore()
 const host = useHostActions()
-const router = useRouter()
 
 const q = ref(props.term)
-const filter = ref('all')
+// The term the rows on show are for; q is what is being typed.
+const term = ref(props.term)
+const filter = ref(
+  ['offers', 'wanted'].includes(props.filter) ? props.filter : 'all'
+)
 const filters = [
   { value: 'all', label: 'All' },
-  { value: 'Offer', label: 'Offers' },
-  { value: 'Wanted', label: 'Wanted' },
+  { value: 'offers', label: 'Offers' },
+  { value: 'wanted', label: 'Wanted' },
 ]
-const all = ref([]) // lean rows from the feed, nearest first
 const ids = ref([]) // ids whose full records are loaded, in order
 const loading = ref(false)
 const expandedId = ref(null)
 
 const at = computed(() => host.myLatLng())
-const subtitle = computed(() => {
-  if (!at.value) return 'Tell me where you are'
-  return props.term ? `Matches for "${props.term}"` : 'Nearest first'
-})
-const filtered = computed(() =>
-  filter.value === 'all'
-    ? all.value
-    : all.value.filter((m) => m.type === filter.value)
-)
+const rows = computed(() => assistant.nearby?.rows || [])
+const filtered = computed(() => host.filterRows(rows.value, filter.value))
 const shown = computed(() =>
   ids.value.filter((id) => filtered.value.some((m) => m.id === id))
 )
-const more = computed(() => ids.value.length < all.value.length)
+const more = computed(() =>
+  filtered.value.some((m) => !ids.value.includes(m.id))
+)
+const subtitle = computed(() => {
+  if (!at.value && !term.value) return 'Tell me where you are'
+  if (term.value) return `Matches for "${term.value}"`
+  return 'Nearest first'
+})
 
 function milesFor(id) {
-  const m = messageStore.byId(id)
-  if (!at.value || !m?.lat) return null
-  return milesAway(at.value.lat, at.value.lng, m.lat, m.lng)
+  return rows.value.find((r) => r.id === id)?.miles ?? null
+}
+
+// The rows the chat fetched a moment ago, for the same place and term, serve again.
+function fresh() {
+  const n = assistant.nearby
+  if (!n) return false
+  if ((n.term || '') !== (term.value || '')) return false
+  const a = at.value
+  if (!!a !== !!n.at) return false
+  if (a && (a.lat !== n.at.lat || a.lng !== n.at.lng)) return false
+  return Date.now() - (n.fetched || 0) < FRESH
 }
 
 async function load() {
-  if (!at.value) return
   loading.value = true
   ids.value = []
+  expandedId.value = null
   try {
-    let list
-    if (props.term) {
-      list =
-        (await messageStore.search({
-          search: props.term,
-          swlat: at.value.lat - 0.3,
-          swlng: at.value.lng - 0.3,
-          nelat: at.value.lat + 0.3,
-          nelng: at.value.lng + 0.3,
-        })) || []
-    } else {
-      list =
-        (await messageStore.fetchInBounds(
-          at.value.lat - BOX,
-          at.value.lng - BOX,
-          at.value.lat + BOX,
-          at.value.lng + BOX,
-          null,
-          200,
-          true
-        )) || []
-    }
-    all.value = [...list].sort(
-      (a, b) =>
-        (milesAway(at.value.lat, at.value.lng, a.lat, a.lng) || 0) -
-        (milesAway(at.value.lat, at.value.lng, b.lat, b.lng) || 0)
-    )
-  } catch (e) {
-    all.value = []
+    if (!fresh()) await host.fetchNearby({ term: term.value, at: at.value })
+    await loadMore()
+  } finally {
+    loading.value = false
   }
-  await loadMore()
-  loading.value = false
 }
 
 async function loadMore() {
-  const next = all.value.slice(ids.value.length, ids.value.length + PAGE)
+  const next = filtered.value
+    .filter((m) => !ids.value.includes(m.id))
+    .slice(0, PAGE)
   await Promise.all(next.map((m) => messageStore.fetch(m.id).catch(() => null)))
   ids.value = [...ids.value, ...next.map((m) => m.id)]
 }
 
-function setFilter(value) {
-  filter.value = value
-}
-
 function go() {
-  const term = q.value.trim()
-  router.push(term ? '/browse/' + encodeURIComponent(term) : '/browse')
+  term.value = q.value.trim()
+  load()
 }
 
 async function onPostcode(pc) {
   if (!pc?.lat || !pc?.lng) return
-  // Remembered on this device so the chat and this screen agree where "nearby" is.
+  // Remembered on this device so the chat and the sheet agree where "nearby" is.
   assistant.visitorLocation = { lat: pc.lat, lng: pc.lng, name: pc.name || '' }
   await load()
 }
 
 function reply(id) {
+  emit('close')
   host.replyTo(id)
 }
 
@@ -204,33 +189,22 @@ function expand(id) {
   expandedId.value = expandedId.value === id ? null : id
 }
 
-watch(() => props.term, load)
-onMounted(load)
+// A narrower filter may leave fewer than a page on show: fill it from the rows.
+watch(filter, () => {
+  if (more.value && shown.value.length < PAGE) loadMore()
+})
+onMounted(() => {
+  if (at.value || term.value) load()
+})
 </script>
 <style scoped lang="scss">
-@import 'bootstrap/scss/functions';
-@import 'bootstrap/scss/variables';
-
-.nearby-screen {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  background: #efeae2;
-}
-
-.nearby-tools {
-  background: #fff;
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid #e6e6e6;
-}
-
 .nearby-input {
   width: 100%;
   border: 1px solid #d9d9d9;
   border-radius: 999px;
   padding: 0.45rem 0.9rem;
   font-size: 1rem;
-  background: #f4f4f4;
+  background: #fff;
 }
 
 .nearby-filters {
@@ -255,22 +229,18 @@ onMounted(load)
 }
 
 .nearby-where {
-  padding: 1rem 0.75rem;
+  padding: 0.5rem 0.9rem 1rem;
 }
 
-.nearby-scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0.75rem;
+.nearby-list {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
 }
 
 .nearby-note {
   color: #4a4a4a;
   font-size: 0.95rem;
-  margin: 0.5rem 0.25rem;
+  margin: 0.6rem 0.9rem;
 }
 
 .nearby-more {
@@ -280,6 +250,6 @@ onMounted(load)
   color: #1f5f3b;
   border-radius: 999px;
   padding: 0.4rem 1.4rem;
-  margin: 0.5rem 0 1rem;
+  margin: 0.6rem 0 1rem;
 }
 </style>
