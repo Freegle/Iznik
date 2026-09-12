@@ -44,3 +44,7 @@ technical detail is in [../developers/reference/rippling-algorithm.md](../develo
 
 Council sponsorship deals - who sponsors us, what they are worth, and the quarterly
 statistics councils receive - are covered in [./partnerships.md](./partnerships.md).
+
+Post-moderation (auto-approve) - built but switched off - has its own reference
+describing what it does, the case for and against, and what changes for moderators
+and members: [./post-moderation.md](./post-moderation.md).

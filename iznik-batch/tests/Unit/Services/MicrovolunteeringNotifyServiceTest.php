@@ -100,6 +100,85 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
     // Returned stats array
     // ─────────────────────────────────────────────────────────────────────────
 
+    /**
+     * A pending post that will publish by itself (auto-moderated member, community in the
+     * trial) is offered first and the notification says how long there is.
+     */
+    public function test_self_publishing_post_is_notified_first_and_says_when_it_goes_live(): void
+    {
+        config([
+            'freegle.autoapprove.enabled'       => true,
+            'freegle.autoapprove.delay_minutes' => 20,
+        ]);
+
+        $group    = $this->createGroup();
+        $reviewer = $this->createUser('Moderate');
+        $this->addMembership($reviewer, $group);
+
+        // An older pending post from a moderated member: a moderator will deal with it.
+        $moderated = $this->createUser();
+        $this->addMembership($moderated, $group);
+        DB::table('memberships')->where('userid', $moderated)->where('groupid', $group)->update(['ourPostingStatus' => 'MODERATED']);
+        $moderatedMsg = $this->createMessage($group, $moderated, 'Pending');
+        DB::table('messages_groups')->where('msgid', $moderatedMsg)->update(['arrival' => now()->subMinutes(30)]);
+
+        // A newer pending post from an auto-moderated member, 5 minutes into its 20.
+        $auto = $this->createUser();
+        $this->addMembership($auto, $group);
+        DB::table('memberships')->where('userid', $auto)->where('groupid', $group)->update(['ourPostingStatus' => null]);
+        $autoMsg = $this->createMessage($group, $auto, 'Pending');
+        DB::table('messages_groups')->where('msgid', $autoMsg)->update(['arrival' => now()->subMinutes(5)]);
+
+        $stats = (new MicrovolunteeringNotifyService())->notifyForMessages();
+
+        // One reviewer, one notification per run: it goes to the self-publishing post.
+        $this->assertSame(1, $stats['users_notified']);
+        $row = DB::table('users_notifications')->where('touser', $reviewer)->where('type', 'Exhort')->first();
+        $this->assertNotNull($row);
+        $this->assertSame('/microvolunteering/message/' . $autoMsg, $row->url);
+        $this->assertStringContainsString('could go live in about 15 minutes', $row->text);
+        $this->assertStringContainsString('OFFER: Test item', $row->text);
+    }
+
+    public function test_pending_post_waiting_for_a_moderator_keeps_the_plain_wording(): void
+    {
+        config(['freegle.autoapprove.enabled' => true]);
+
+        $group    = $this->createGroup();
+        $reviewer = $this->createUser('Moderate');
+        $this->addMembership($reviewer, $group);
+        $moderated = $this->createUser();
+        $this->addMembership($moderated, $group);
+        DB::table('memberships')->where('userid', $moderated)->where('groupid', $group)->update(['ourPostingStatus' => 'MODERATED']);
+        $this->createMessage($group, $moderated, 'Pending');
+
+        (new MicrovolunteeringNotifyService())->notifyForMessages();
+
+        $row = DB::table('users_notifications')->where('touser', $reviewer)->where('type', 'Exhort')->first();
+        $this->assertNotNull($row);
+        $this->assertStringStartsWith('Click here to review:', $row->text);
+        $this->assertStringNotContainsString('go live', $row->text);
+    }
+
+    public function test_self_publishing_wording_needs_the_trial_to_include_the_community(): void
+    {
+        config(['freegle.autoapprove.enabled' => false, 'freegle.autoapprove.trial_group_ids' => '']);
+
+        $group    = $this->createGroup();
+        $reviewer = $this->createUser('Moderate');
+        $this->addMembership($reviewer, $group);
+        $auto = $this->createUser();
+        $this->addMembership($auto, $group);
+        DB::table('memberships')->where('userid', $auto)->where('groupid', $group)->update(['ourPostingStatus' => null]);
+        $this->createMessage($group, $auto, 'Pending');
+
+        (new MicrovolunteeringNotifyService())->notifyForMessages();
+
+        $row = DB::table('users_notifications')->where('touser', $reviewer)->where('type', 'Exhort')->first();
+        $this->assertNotNull($row);
+        $this->assertStringNotContainsString('go live', $row->text);
+    }
+
     public function test_stats_are_all_zero_when_no_messages(): void
     {
         $service = new MicrovolunteeringNotifyService();

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-04
+last_reviewed: 2026-09-05
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -143,6 +143,23 @@ shows these with an old-to-new difference, and you **Accept Edit** or **Reject E
 live, search by id, subject or member, and mark OFFERs and WANTEDs as **Taken**,
 **Received** or **Withdrawn** on the member's behalf when needed. You can also move a post
 **Back to Pending** for another look.
+
+## The oversight queues: Checked and Trusted
+
+Alongside Pending and Approved there are two oversight queues for posts that went live
+**without** a moderator's click: **Messages > Checked** (`/messages/checked`) for posts
+published by the automatic checks, and **Messages > Trusted** (`/messages/trusted`) for
+posts from members marked trusted. Each shows a blue count of posts you have not yet
+looked at, offers **Mark all as checked**, and ages posts out after 7 days. From either
+queue you can **reject** a post that should not be live - it is pulled straight back to
+Pending and held, and its rippling stops immediately. Posts that merely rippled in from
+another community never appear here.
+
+Where posts publish automatically, the Pending queue also shows a **live countdown** on
+each post that is going to auto-approve, and opening the queue guarantees everything on
+it at least 10 more minutes before it can publish. The full picture - what auto-approves,
+what never does, and how spread is gated - is in
+[the post-moderation guide](post-moderation.md).
 
 ## Marking as spam versus deleting
 

@@ -45,6 +45,7 @@ function mountComponent() {
         ModSysAdminReengageEffectiveness: stub('c-reengage'),
         ModSysAdminRipplingDensity: stub('c-ripplingdensity'),
         ModSysAdminRipplingAnalytics: stub('c-rippling'),
+        ModSysAdminModerationStats: stub('c-moderation'),
       },
     },
   })
@@ -56,7 +57,7 @@ describe('sysadmin page tab grouping', () => {
     mockRouteQuery.value = {}
   })
 
-  it('shows the grouped top-level tabs: Housekeeping, Cron Jobs, Mail, Behaviour, Rippling', async () => {
+  it('shows the grouped top-level tabs: Housekeeping, Cron Jobs, Mail, Behaviour, Rippling, Moderation', async () => {
     const wrapper = mountComponent()
     await flushPromises()
     const text = wrapper.text()
@@ -66,6 +67,7 @@ describe('sysadmin page tab grouping', () => {
       'Mail',
       'Behaviour',
       'Rippling',
+      'Moderation',
     ]) {
       expect(text).toContain(label)
     }
@@ -96,6 +98,7 @@ describe('sysadmin page tab grouping', () => {
     expect(wrapper.find('.c-housekeeping').exists()).toBe(true)
     expect(wrapper.find('.c-reengage').exists()).toBe(false)
     expect(wrapper.find('.c-emailstats').exists()).toBe(false)
+    expect(wrapper.find('.c-moderation').exists()).toBe(false)
   })
 
   it('deep-links ?tab=reengagement to the Behaviour tab and loads the effectiveness panel', async () => {
@@ -145,6 +148,13 @@ describe('sysadmin page tab grouping', () => {
     await flushPromises()
     expect(wrapper.find('.c-ripplingdensity').exists()).toBe(true)
     expect(wrapper.find('.c-rippling').exists()).toBe(true)
+  })
+
+  it('deep-links ?tab=moderation to the Moderation tab', async () => {
+    mockRouteQuery.value = { tab: 'moderation' }
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.find('.c-moderation').exists()).toBe(true)
   })
 
   it('shows an access notice to non-admins', () => {

@@ -2121,4 +2121,59 @@ describe('ModMessage', () => {
       expect(labelSpan.text()).toBe('Back to Pending')
     })
   })
+
+  describe('auto-approve countdown badge (A5)', () => {
+    const pendingGroups = (autoapproveat) => [
+      { groupid: 789, namedisplay: 'Test Group', collection: 'Pending', autoapproveat },
+    ]
+
+    it('shows no badge when there is no autoapproveat', () => {
+      const wrapper = mountComponent({}, { groups: pendingGroups(null) })
+      expect(
+        wrapper.find('[data-testid="autoapprove-countdown"]').exists()
+      ).toBe(false)
+    })
+
+    it('shows a prominent m/s countdown when <=30m away', () => {
+      const soon = new Date(Date.now() + 15 * 60 * 1000).toISOString()
+      const wrapper = mountComponent({}, { groups: pendingGroups(soon) })
+      const badge = wrapper.find('[data-testid="autoapprove-countdown"]')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toMatch(/Auto-approves in \d+m \d{2}s/)
+    })
+
+    it('shows a muted ~Nh badge when >1h away', () => {
+      const later = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
+      const wrapper = mountComponent({}, { groups: pendingGroups(later) })
+      const badge = wrapper.find('[data-testid="autoapprove-countdown"]')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toMatch(/Auto-approves in ~3h/)
+    })
+
+    it('shows Auto-approving… when the time has passed', () => {
+      const past = new Date(Date.now() - 5000).toISOString()
+      const wrapper = mountComponent({}, { groups: pendingGroups(past) })
+      expect(
+        wrapper.find('[data-testid="autoapprove-countdown"]').text()
+      ).toBe('Auto-approving…')
+    })
+
+    it('picks the soonest autoapproveat across multiple Pending groups', () => {
+      const sooner = new Date(Date.now() + 10 * 60 * 1000).toISOString()
+      const later = new Date(Date.now() + 40 * 60 * 1000).toISOString()
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            { groupid: 789, collection: 'Pending', autoapproveat: later },
+            { groupid: 790, collection: 'Pending', autoapproveat: sooner },
+          ],
+        }
+      )
+      const badge = wrapper.find('[data-testid="autoapprove-countdown"]')
+      expect(badge.exists()).toBe(true)
+      // 10 min is <=30m, so prominent m/s formatting (the sooner one wins).
+      expect(badge.text()).toMatch(/Auto-approves in \d+m \d{2}s/)
+    })
+  })
 })

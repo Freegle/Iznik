@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-04
+last_reviewed: 2026-09-05
 owner: Freegle ops
 covers:
   - conf/rspamd
@@ -93,6 +93,16 @@ receiving community's **own** keywords and worry words are asked. A match makes 
 community's copy Pending with the reasons recorded in
 `messages_groups.contentcheck_reasons`, and auto-approve leaves such a copy for a human
 rather than releasing it when the veto window runs out.
+
+`contentcheck_reasons` carries two different things, and a reader must say which it
+means. Findings (`Money`, `ConcernKeyword`, `PerGroupWorryWord`, ...) are what the checks
+caught. Explanations (`MemberModerated`, `GroupModerated`, `NoLocation`) are written by
+`holdReasons()` to say why a clean post is waiting, and every post from a member no
+moderator has given a posting status carries `MemberModerated`. So nothing decides on the
+column being NULL: `reasonsHoldByGroupOwnRules()` picks out the receiving community's own
+findings for a rippled-in copy, and `reasonsAreContentClean()` / `contentCleanSql()` treat
+a post carrying only explanations as clean for the post-moderation clean path
+(`NoLocation` excepted - a post nobody can place is not publishable).
 
 Reference data lives in its own tables, each with a moderator-facing editor in ModTools:
 

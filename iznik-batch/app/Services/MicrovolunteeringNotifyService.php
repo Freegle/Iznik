@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Services\AutoApproveCleanService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -21,6 +22,7 @@ class MicrovolunteeringNotifyService
 {
     private const NOTIFICATION_TYPE = 'Exhort';
     private const NOTIFICATION_TITLE = 'Could you review this message to help us keep the site safe?';
+    private const SELF_PUBLISHING_TITLE = 'Could you check this post before it goes live?';
     private const MAX_PER_USER = 3;
     private const CANDIDATES_PER_MESSAGE = 10;
     // Only mark-seen notifications from the recent window. There are ~2.5M unseen
@@ -67,10 +69,12 @@ class MicrovolunteeringNotifyService
         ];
 
         $msgs = DB::select("
-            SELECT messages.id, messages.fromuser, messages_groups.groupid, messages.subject, messages_groups.collection
+            SELECT messages.id, messages.fromuser, messages_groups.groupid, messages.subject, messages_groups.collection,
+                   messages_groups.arrival, poster.ourPostingStatus AS posterstatus
             FROM messages
             INNER JOIN messages_groups ON messages.id = messages_groups.msgid
             INNER JOIN `groups` ON messages_groups.groupid = groups.id
+            LEFT JOIN memberships poster ON poster.userid = messages.fromuser AND poster.groupid = messages_groups.groupid
             LEFT JOIN users_notifications
                 ON users_notifications.timestamp >= DATE_SUB(NOW(), INTERVAL 1 DAY)
                 AND users_notifications.url LIKE CONCAT('/microvolunteering/message/', messages.id)
@@ -90,6 +94,21 @@ class MicrovolunteeringNotifyService
         ", [self::NOTIFICATION_TYPE]);
 
         $stats['messages_considered'] = count($msgs);
+
+        // Posts that will publish by themselves come first: a human look matters most
+        // while the auto-approve wait is still running. Each carries the minutes left.
+        $minutesLeft = [];
+        foreach ($msgs as $msg) {
+            $left = $this->minutesUntilSelfPublish($msg);
+            if ($left !== null) {
+                $minutesLeft[$msg->id] = $left;
+            }
+        }
+        usort($msgs, function ($a, $b) use ($minutesLeft) {
+            $la = $minutesLeft[$a->id] ?? PHP_INT_MAX;
+            $lb = $minutesLeft[$b->id] ?? PHP_INT_MAX;
+            return $la <=> $lb ?: $a->id <=> $b->id;
+        });
 
         // Users who have already recorded a CheckMessage microaction for a message
         // must never be re-notified about it. Without this, a rippling post - whose
@@ -140,8 +159,11 @@ class MicrovolunteeringNotifyService
                         'type'       => self::NOTIFICATION_TYPE,
                         'newsfeedid' => null,
                         'url'        => $url,
-                        'title'      => self::NOTIFICATION_TITLE,
-                        'text'       => 'Click here to review: ' . $msg->subject,
+                        'title'      => isset($minutesLeft[$msg->id]) ? self::SELF_PUBLISHING_TITLE : self::NOTIFICATION_TITLE,
+                        'text'       => isset($minutesLeft[$msg->id])
+                            ? 'This post could go live in about ' . $minutesLeft[$msg->id] . ' minute' . ($minutesLeft[$msg->id] === 1 ? '' : 's')
+                                . ' unless someone spots a problem. Click here to review: ' . $msg->subject
+                            : 'Click here to review: ' . $msg->subject,
                     ]);
                 }
 
@@ -151,6 +173,31 @@ class MicrovolunteeringNotifyService
         }
 
         return $stats;
+    }
+
+    /**
+     * Minutes until a pending post publishes by itself, or null when it will not: only a
+     * post from a member with no posting status, on a community the auto-approve trial
+     * covers, is on that path. Danger signals and the quality sample are not checked
+     * here, hence "could go live" in the wording. Never below one minute.
+     */
+    private function minutesUntilSelfPublish(object $msg): ?int
+    {
+        if (($msg->collection ?? null) !== 'Pending' || ($msg->posterstatus ?? null) !== null) {
+            return null;
+        }
+
+        $autoApprove = app(AutoApproveCleanService::class);
+        $enabled = $autoApprove->enabledGroupIds();
+        if ($enabled === [] || ($enabled !== null && !in_array((int) $msg->groupid, $enabled, true))) {
+            return null;
+        }
+
+        $elapsed = now()->diffInMinutes(\Carbon\Carbon::parse($msg->arrival), false);
+        // diffInMinutes with a past date is negative; we want minutes since arrival.
+        $sinceArrival = max(0, (int) floor(-$elapsed));
+
+        return max(1, $autoApprove->delayMinutes() - $sinceArrival);
     }
 
     /**

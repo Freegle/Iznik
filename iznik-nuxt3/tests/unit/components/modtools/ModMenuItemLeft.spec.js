@@ -136,6 +136,24 @@ describe('ModMenuItemLeft', () => {
     })
   })
 
+  describe('sub prop', () => {
+    it('draws no elbow by default', () => {
+      const wrapper = mountModMenuItemLeft({ indent: true })
+      expect(wrapper.find('span.menu-elbow').exists()).toBe(false)
+    })
+
+    it('draws the elbow that joins a sub-item to the entry above it', () => {
+      const wrapper = mountModMenuItemLeft({ indent: true, sub: true })
+      const elbow = wrapper.find('span.menu-elbow')
+      expect(elbow.exists()).toBe(true)
+      expect(elbow.attributes('aria-hidden')).toBe('true')
+      // The elbow sits between the indent and the link text.
+      const html = wrapper.html()
+      expect(html.indexOf('ps-3')).toBeLessThan(html.indexOf('menu-elbow'))
+      expect(html.indexOf('menu-elbow')).toBeLessThan(html.indexOf('<a '))
+    })
+  })
+
   describe('indent prop', () => {
     it('does not add ps-3 span when indent is false', () => {
       const wrapper = mountModMenuItemLeft({ indent: false })
