@@ -39,7 +39,7 @@
         />
       </div>
       <template #fallback>
-        <header>
+        <header v-if="shouldShowNavbar">
           <nav
             id="navbar_large"
             data-v-454188a5=""
@@ -121,6 +121,7 @@ import { useComposeStore } from './stores/compose'
 import { useChatStore } from './stores/chat'
 import { useAddressStore } from './stores/address'
 import { useTrystStore } from './stores/tryst'
+import { useAssistantStore } from './stores/assistant'
 import { useNotificationStore } from './stores/notification'
 import { useNewsfeedStore } from './stores/newsfeed'
 import { useReplyStore } from './stores/reply'
@@ -212,6 +213,7 @@ const configStore = useConfigStore()
 const chatStore = useChatStore()
 const addressStore = useAddressStore()
 const trystStore = useTrystStore()
+const assistantStore = useAssistantStore()
 const notificationStore = useNotificationStore()
 const newsfeedStore = useNewsfeedStore()
 const replyStore = useReplyStore()
@@ -243,6 +245,7 @@ composeStore.init(runtimeConfig)
 chatStore.init(runtimeConfig)
 addressStore.init(runtimeConfig)
 trystStore.init(runtimeConfig)
+assistantStore.init(runtimeConfig)
 notificationStore.init(runtimeConfig)
 newsfeedStore.init(runtimeConfig)
 replyStore.init(runtimeConfig)

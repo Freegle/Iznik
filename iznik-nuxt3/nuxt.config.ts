@@ -381,6 +381,7 @@ export default defineNuxtConfig({
       SENTRY_DSN: config.IS_MT ? config.SENTRY_DSN_MT : config.SENTRY_DSN,
       BUILD_DATE: new Date().toISOString(),
       ISAPP: config.ISAPP,
+      CHAT_FIRST_DEFAULT: config.CHAT_FIRST_DEFAULT,
       MOBILE_VERSION: config.MOBILE_VERSION,
       AI_SUPPORT_URL: config.AI_SUPPORT_URL,
       NETLIFY_DEPLOY_ID: process.env.DEPLOY_ID,

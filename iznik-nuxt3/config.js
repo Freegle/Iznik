@@ -92,6 +92,10 @@ const CONFIG = {
   // Cookie banner for this site.
   COOKIEYES: process.env.COOKIEYES || null,
   ISAPP: process.env.IZNIK_NUXT3_IS_APP === 'true',
+
+  // Chat or classic for people who have not chosen: 'chat', 'classic', or a
+  // percentage of members by user id. Also the kill switch.
+  CHAT_FIRST_DEFAULT: process.env.CHAT_FIRST_DEFAULT || 'chat',
   MOBILE_VERSION: '3.2.28',
 
   TRUSTPILOT_LINK: process.env.TRUSTPILOT_LINK || null,

@@ -17,7 +17,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, Suspense, h, nextTick } from 'vue'
 
-import IndexPage from '~/pages/index.vue'
+import IndexPage from '~/components/ClassicLanding.vue'
 
 vi.mock('~/composables/useBuildHead', () => ({
   buildHead: vi.fn(() => ({})),
@@ -94,7 +94,7 @@ function setAppBuild(isApp) {
   globalThis.__testRuntimeConfig = () => ({ public: { ISAPP: isApp } })
 }
 
-describe('pages/index boot data cascade', () => {
+describe('ClassicLanding boot data cascade', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockGroupFetch.mockResolvedValue(undefined)

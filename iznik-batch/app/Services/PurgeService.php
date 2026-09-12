@@ -1205,4 +1205,40 @@ class PurgeService
 
         return $results;
     }
+
+    /**
+     * Prune Freegle assistant conversations nobody has touched for a while. Every visit
+     * to the chat front door opens one, so without this the table only ever grows; the
+     * transcript itself lives in chat_messages and is untouched.
+     */
+    public function purgeAssistantInstances(int $days = 30, bool $dryRun = false): int
+    {
+        $cutoff = now()->subDays($days);
+
+        if ($dryRun) {
+            return DB::table('assistant_instances')->where('updated_at', '<', $cutoff)->count();
+        }
+
+        $total = 0;
+
+        do {
+            $ids = DB::table('assistant_instances')
+                ->where('updated_at', '<', $cutoff)
+                ->limit($this->chunkSize)
+                ->pluck('id');
+
+            if ($ids->isEmpty()) {
+                break;
+            }
+
+            DB::table('assistant_instances')->whereIn('id', $ids)->delete();
+            $total += $ids->count();
+
+            if ($total % $this->logInterval === 0) {
+                Log::info("Purged {$total} assistant instances");
+            }
+        } while (true);
+
+        return $total;
+    }
 }

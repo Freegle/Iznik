@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-08
 owner: Freegle dev team
 covers:
   - .env.example
@@ -44,6 +44,7 @@ Visible, annoying, not fatal.
 | **Google Cloud Vision** | Checks uploaded photos for unsuitable images |
 | **Google Perspective** | Scores text for abuse, feeding moderation |
 | **Google Gemini** | The AI features (support helper, classification experiments) |
+| **Anthropic Claude** | Composes the Freegle assistant's replies in the chat shell (`ANTHROPIC_API_KEY` on apiv2, or a Claude Code gateway via `ASSISTANT_GATEWAY_TOKEN` and `ASSISTANT_GATEWAY_URL` for local work). Without a key the chat still works, on fixed lines. See [chat-first.md](chat-first.md) |
 | **Firebase Cloud Messaging** | Push notifications to the apps (`GOOGLE_PUSH_KEY`) |
 | **MaxMind** | Turns an IP address into a rough location, used in anti-abuse |
 | **Playwire** | Advert delivery ([ads.md](ads.md)) |
@@ -105,3 +106,7 @@ every visitor - so only publishable keys belong in it (a Stripe *publishable* ke
 advert publisher id). Server-side secrets go in `.env` (development, see `.env.example`) and
 `.env.background` (production batch, see `.env.background.example`), and in the batch tier
 are read through `iznik-batch/config/freegle.php` rather than `env()` at the point of use.
+
+`CHAT_FIRST_DEFAULT` (public) picks the front door for anyone who has not chosen: `chat`,
+`classic`, or a percentage of members by user id. Setting it to `classic` is the kill
+switch for the chat shell ([chat-first.md](chat-first.md)).

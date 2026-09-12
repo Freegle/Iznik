@@ -53,6 +53,12 @@ const cfg = {
 /**
  * The manifest. Each entry maps one screenshot to one place in the docs.
  * auth: 'none' logged out, 'member' logged in as a freegler, 'mod' logged in to ModTools.
+ * ui: 'chat' shoots the chat shell; anything else shoots the classic pages the member
+ * guides describe (the chat shell is the default front door, so classic needs the cookie).
+ * viewport: overrides the phone viewport for that one shot (the desktop frame).
+ * steps: taps and typing before the shot, in order: { click }, { fill: [selector, text] },
+ * { press }, each followed by a short wait (or its own wait in ms). optional: true lets a
+ * step pass when its element is not there (a member who already has a location).
  * Add a shot here rather than capturing images by hand.
  */
 const SHOTS = [
@@ -63,6 +69,44 @@ const SHOTS = [
     auth: 'none',
     app: 'member',
     path: '/',
+  },
+  {
+    audience: 'members',
+    name: 'chat-home',
+    auth: 'none',
+    app: 'member',
+    ui: 'chat',
+    path: '/',
+  },
+  {
+    audience: 'members',
+    name: 'chat-desktop',
+    auth: 'none',
+    app: 'member',
+    ui: 'chat',
+    path: '/',
+    viewport: { width: 1440, height: 900 },
+  },
+  {
+    audience: 'members',
+    name: 'chat-give',
+    auth: 'none',
+    app: 'member',
+    ui: 'chat',
+    path: '/',
+    steps: [
+      { click: '[data-testid="chip-give"]', wait: 2500 },
+      { click: '[data-testid="chip-no_photo"]', wait: 2500 },
+      { fill: ['[data-testid="composer-input"]', 'Grey two seater sofa'] },
+      { press: 'Enter', wait: 3000 },
+      {
+        fill: [
+          '[data-testid="composer-input"]',
+          'Comfy, a few years old, from a smoke free home',
+        ],
+      },
+      { press: 'Enter', wait: 3000 },
+    ],
   },
   {
     audience: 'members',
@@ -105,6 +149,41 @@ const SHOTS = [
     auth: 'member',
     app: 'member',
     path: '/chats',
+  },
+  {
+    audience: 'members',
+    name: 'chat-list',
+    auth: 'member',
+    app: 'member',
+    ui: 'chat',
+    path: '/chats',
+  },
+  {
+    audience: 'members',
+    name: 'chat-your-posts',
+    auth: 'member',
+    app: 'member',
+    ui: 'chat',
+    path: '/chats/posts',
+  },
+  {
+    audience: 'members',
+    name: 'chat-nearby',
+    auth: 'member',
+    app: 'member',
+    ui: 'chat',
+    // The chat with the Nearby sheet up: search, a filter, and rows that scroll inside it.
+    path: '/browse',
+    steps: [
+      {
+        fill: [
+          '[data-testid="nearby-sheet"] [data-testid="postcode-input"] input',
+          'EH3 6SS',
+        ],
+        optional: true,
+        wait: 5000,
+      },
+    ],
   },
   {
     audience: 'members',
@@ -206,17 +285,40 @@ async function loginMod(page) {
   await fillLogin(page, cfg.modEmail, cfg.modPassword)
 }
 
+// The chat shell is the default front door; the cookie picks which one a shot sees.
+function uiModeCookie(base, ui) {
+  return {
+    name: 'freegle-ui-mode',
+    value: ui === 'chat' ? 'chat' : 'classic',
+    url: base,
+  }
+}
+
 async function capture(context, shot) {
   const base = shot.app === 'mod' ? cfg.modBase : cfg.memberBase
   const outDir = resolve(DOCS_ROOT, shot.audience, 'assets')
   await mkdir(outDir, { recursive: true })
   const page = context.page
+  await context.addCookies([uiModeCookie(base, shot.ui)])
+  await page.setViewportSize(shot.viewport || cfg.viewport)
   await page.goto(base + shot.path, {
     waitUntil: 'networkidle',
     timeout: cfg.navTimeout,
   })
   // Settle animations and lazy content.
   await page.waitForTimeout(1500)
+  for (const step of shot.steps || []) {
+    try {
+      const opts = step.optional ? { timeout: 3000 } : {}
+      if (step.click) await page.locator(step.click).first().click(opts)
+      if (step.fill)
+        await page.locator(step.fill[0]).first().fill(step.fill[1], opts)
+      if (step.press) await page.keyboard.press(step.press)
+    } catch (err) {
+      if (!step.optional) throw err
+    }
+    await page.waitForTimeout(step.wait || 1200)
+  }
   await page.screenshot({
     path: resolve(outDir, shot.name + '.png'),
     animations: 'disabled',
@@ -259,6 +361,8 @@ async function run() {
         if (!memberCtx) {
           memberCtx = await browser.newContext(ctxOpts)
           memberCtx.page = await memberCtx.newPage()
+          // Log in on the classic browse page, whichever shot comes first.
+          await memberCtx.addCookies([uiModeCookie(cfg.memberBase, 'classic')])
           await loginMember(memberCtx.page)
         }
         ctx = memberCtx

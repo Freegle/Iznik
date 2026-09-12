@@ -1,0 +1,819 @@
+{
+  "id": "freegle",
+  "name": "Freegle chat",
+  "version": "1",
+  "description": "The Freegle assistant: give, ask, nearby, community and help, as one state machine. Taps are host-driven; typed text lets the model propose one of the legal transitions.",
+  "initialState": "HUB",
+  "guardrails": "See voice/character.md: the service prepends the character sheet and the fabrication rules to every prompt.",
+  "states": {
+    "HUB": {
+      "nodeType": "start",
+      "description": "Nothing in progress. Work out what the member wants: give something, ask for something, see what's nearby, find their community, or get help.",
+      "prompt": "Welcome them briefly if this is the first turn, otherwise just respond to what they said. If they have told you what they want to give or ask for, capture it in slots and move straight to the right state. Offer at most three chips: Give something, Ask for something, See what's nearby.",
+      "writeActions": []
+    },
+    "GIVE_PHOTO": {
+      "nodeType": "agent",
+      "description": "Giving. Ask for a photo. Posts with a photo get far more interest.",
+      "prompt": "If you already know what the item is, open with it in a few words so they know you understood, then ask if they have a photo. Chips: Add a photo, No photo. If they type a description instead, capture it in slots and carry on.",
+      "readActions": []
+    },
+    "GIVE_ITEM": {
+      "nodeType": "agent",
+      "description": "Giving. Find out what the item is, in a few words that would work as a title.",
+      "prompt": "Ask what it is, if you do not already know. If a photo was recognised, offer its name as a chip. If they typed a long description, suggest a short title as a chip but keep their own words as the first chip. Fill slots.item when you have it.",
+      "readActions": [
+        "check_item"
+      ]
+    },
+    "GIVE_DESCRIPTION": {
+      "nodeType": "agent",
+      "description": "Giving. Anything people should know: condition, size, when it can be collected.",
+      "prompt": "Ask for anything people should know, in one short question, mentioning condition, size or collection as examples. Skipping is fine when there is a real photo; say so with a Skip chip. Fill slots.description.",
+      "readActions": []
+    },
+    "GIVE_QUANTITY": {
+      "nodeType": "agent",
+      "description": "Giving. How many are there, when the item sounds like more than one.",
+      "prompt": "Ask how many there are. Chips: 1, 2, 3 or more. Fill slots.quantity.",
+      "readActions": []
+    },
+    "GIVE_WHERE": {
+      "nodeType": "agent",
+      "description": "Giving. Where the item is, as a postcode, so it can be shown to people nearby.",
+      "prompt": "Ask roughly where it is. A postcode is easiest and only the area is ever shown. The host renders a postcode field; do not offer chips. Fill slots.postcode when the host confirms one.",
+      "readActions": [
+        "lookup_postcode"
+      ]
+    },
+    "GIVE_EMAIL": {
+      "nodeType": "agent",
+      "description": "Giving. Where replies should go: an email address, because they are not signed in.",
+      "prompt": "Ask for their email so replies can reach them. The host renders an email field; no chips. Fill slots.email when the host confirms one.",
+      "readActions": []
+    },
+    "GIVE_CONFIRM": {
+      "nodeType": "agent",
+      "description": "Giving. Show what will be posted and let them check it.",
+      "prompt": "Say the post is ready to go, in one short line. The host renders the confirm card with the details; offer exactly two chips: Post it, Change something.",
+      "readActions": []
+    },
+    "GIVE_POST": {
+      "nodeType": "tool",
+      "description": "Giving. The host posts it using the existing compose store and reports back.",
+      "writeActions": [
+        "create_post"
+      ]
+    },
+    "GIVE_DONE": {
+      "nodeType": "agent",
+      "description": "Giving. It is posted. Tell them what happens next, warmly, about people and community.",
+      "prompt": "Tell them it is now with their local freeglers, naming the community if known, and that they will hear here when someone is keen. If the host reports a new account was made, add one sentence saying so and that the email explains how to sign in. Chips: Give something else, See your posts.",
+      "readActions": []
+    },
+    "ASK_ITEM": {
+      "nodeType": "agent",
+      "description": "Asking. Find out what they are looking for, in a few words that would work as a title.",
+      "prompt": "Ask what they are looking for, if you do not already know. Fill slots.item.",
+      "readActions": [
+        "check_item",
+        "find_matches"
+      ]
+    },
+    "ASK_MATCHES": {
+      "nodeType": "agent",
+      "description": "Asking. Some current offers nearby match what they want; show them before they post.",
+      "prompt": "Say that a few things nearby might be what they want, saying how many when the count is known; the host shows a glimpse and a Look button. Offer one chip: Carry on asking.",
+      "readActions": []
+    },
+    "ASK_DESCRIPTION": {
+      "nodeType": "agent",
+      "description": "Asking. Anything that would help: size, why they need it.",
+      "prompt": "Ask for anything that would help people know if theirs would suit, mentioning size or what it is for. Skip chip allowed. Fill slots.description.",
+      "readActions": []
+    },
+    "ASK_WHERE": {
+      "nodeType": "agent",
+      "description": "Asking. Where they are, as a postcode.",
+      "prompt": "Ask roughly where they are; a postcode is easiest. The host renders a postcode field; no chips.",
+      "readActions": [
+        "lookup_postcode"
+      ]
+    },
+    "ASK_EMAIL": {
+      "nodeType": "agent",
+      "description": "Asking. Email for replies, because they are not signed in.",
+      "prompt": "Ask for their email so offers can reach them. The host renders an email field; no chips.",
+      "readActions": []
+    },
+    "ASK_CONFIRM": {
+      "nodeType": "agent",
+      "description": "Asking. Show what will be posted.",
+      "prompt": "Say the ask is ready to go, in one short line. Chips: Post it, Change something.",
+      "readActions": []
+    },
+    "ASK_POST": {
+      "nodeType": "tool",
+      "description": "Asking. The host posts it and reports back.",
+      "writeActions": [
+        "create_post"
+      ]
+    },
+    "ASK_DONE": {
+      "nodeType": "agent",
+      "description": "Asking. It is posted.",
+      "prompt": "Tell them their ask is now with local freeglers, naming the community if known, and that offers will arrive here. Chips: Ask for something else, See what's nearby.",
+      "readActions": []
+    },
+    "NEARBY": {
+      "nodeType": "agent",
+      "description": "Browsing what is on offer nearby. The host shows cards; typing searches.",
+      "prompt": "Introduce what is nearby in one short line, saying how many there are when the count is known; the host shows a glimpse of three and a Look button that opens the full list, never the list itself. If they typed a search, say what you searched for. Chips: Offers, Wanted, Nearest. If nothing came back, say so plainly and suggest asking for it.",
+      "readActions": [
+        "list_nearby",
+        "search"
+      ]
+    },
+    "NEARBY_WHERE": {
+      "nodeType": "agent",
+      "description": "Browsing, but no location is known yet.",
+      "prompt": "Ask roughly where they are so you can show what is close; a postcode is easiest. The host renders a postcode field; no chips.",
+      "readActions": [
+        "lookup_postcode"
+      ]
+    },
+    "COMMUNITY": {
+      "nodeType": "agent",
+      "description": "Finding and joining their local community.",
+      "prompt": "Say which communities are nearest in one short line; the host shows them as cards with Join. If they tap Join while signed out the host asks for an email first.",
+      "readActions": [
+        "list_communities"
+      ]
+    },
+    "COMMUNITY_WHERE": {
+      "nodeType": "agent",
+      "description": "Finding a community, but no location is known yet.",
+      "prompt": "Ask roughly where they are; a postcode is easiest. The host renders a postcode field; no chips.",
+      "readActions": [
+        "lookup_postcode"
+      ]
+    },
+    "HELP": {
+      "nodeType": "agent",
+      "description": "Help and safety, from the fact sheet only.",
+      "prompt": "Answer from the fact sheet only, briefly. If it is not in the fact sheet, say the volunteers can help and offer the Contact volunteers chip. Chips: How it works, Safety, Contact volunteers.",
+      "readActions": []
+    },
+    "CANCELLED": {
+      "nodeType": "end",
+      "description": "They stopped what they were doing.",
+      "prompt": "Acknowledge in a few words and offer the three main chips."
+    }
+  },
+  "transitions": [
+    {
+      "id": "hub_give",
+      "from": "HUB",
+      "to": "GIVE_PHOTO",
+      "trigger": "llm_decision",
+      "condition": "They want to give something away"
+    },
+    {
+      "id": "hub_give_item",
+      "from": "HUB",
+      "to": "GIVE_ITEM",
+      "trigger": "llm_decision",
+      "condition": "They want to give something and have already attached a photo"
+    },
+    {
+      "id": "hub_ask",
+      "from": "HUB",
+      "to": "ASK_ITEM",
+      "trigger": "llm_decision",
+      "condition": "They are looking for something"
+    },
+    {
+      "id": "hub_nearby",
+      "from": "HUB",
+      "to": "NEARBY",
+      "trigger": "llm_decision",
+      "condition": "They want to see what is on offer nearby and a location is known"
+    },
+    {
+      "id": "hub_nearby_where",
+      "from": "HUB",
+      "to": "NEARBY_WHERE",
+      "trigger": "llm_decision",
+      "condition": "They want to see what is nearby but no location is known"
+    },
+    {
+      "id": "hub_community",
+      "from": "HUB",
+      "to": "COMMUNITY",
+      "trigger": "llm_decision",
+      "condition": "They want to find or join their local community and a location is known"
+    },
+    {
+      "id": "hub_community_where",
+      "from": "HUB",
+      "to": "COMMUNITY_WHERE",
+      "trigger": "llm_decision",
+      "condition": "They want to find their community but no location is known"
+    },
+    {
+      "id": "hub_help",
+      "from": "HUB",
+      "to": "HELP",
+      "trigger": "llm_decision",
+      "condition": "They have a question about how Freegle works or safety"
+    },
+    {
+      "id": "gphoto_item",
+      "from": "GIVE_PHOTO",
+      "to": "GIVE_ITEM",
+      "trigger": "llm_decision",
+      "condition": "A photo was added or they said they have none, and the item is not yet known"
+    },
+    {
+      "id": "gphoto_desc",
+      "from": "GIVE_PHOTO",
+      "to": "GIVE_DESCRIPTION",
+      "trigger": "llm_decision",
+      "condition": "A photo was added or declined and the item is already known"
+    },
+    {
+      "id": "gphoto_cancel",
+      "from": "GIVE_PHOTO",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "They want to stop"
+    },
+    {
+      "id": "gitem_desc",
+      "from": "GIVE_ITEM",
+      "to": "GIVE_DESCRIPTION",
+      "trigger": "llm_decision",
+      "condition": "The item is known and passes the check"
+    },
+    {
+      "id": "gitem_cancel",
+      "from": "GIVE_ITEM",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "They want to stop"
+    },
+    {
+      "id": "gdesc_qty",
+      "from": "GIVE_DESCRIPTION",
+      "to": "GIVE_QUANTITY",
+      "trigger": "llm_decision",
+      "condition": "Description done or skipped, and the item sounds like more than one"
+    },
+    {
+      "id": "gdesc_where",
+      "from": "GIVE_DESCRIPTION",
+      "to": "GIVE_WHERE",
+      "trigger": "llm_decision",
+      "condition": "Description done or skipped, one item, and no location is known"
+    },
+    {
+      "id": "gdesc_email",
+      "from": "GIVE_DESCRIPTION",
+      "to": "GIVE_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "Description done or skipped, one item, location known, not signed in"
+    },
+    {
+      "id": "gdesc_confirm",
+      "from": "GIVE_DESCRIPTION",
+      "to": "GIVE_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Description done or skipped, one item, location known, signed in"
+    },
+    {
+      "id": "gdesc_cancel",
+      "from": "GIVE_DESCRIPTION",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "They want to stop"
+    },
+    {
+      "id": "gqty_where",
+      "from": "GIVE_QUANTITY",
+      "to": "GIVE_WHERE",
+      "trigger": "llm_decision",
+      "condition": "Quantity known and no location is known"
+    },
+    {
+      "id": "gqty_email",
+      "from": "GIVE_QUANTITY",
+      "to": "GIVE_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "Quantity known, location known, not signed in"
+    },
+    {
+      "id": "gqty_confirm",
+      "from": "GIVE_QUANTITY",
+      "to": "GIVE_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Quantity known, location known, signed in"
+    },
+    {
+      "id": "gqty_cancel",
+      "from": "GIVE_QUANTITY",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "They want to stop"
+    },
+    {
+      "id": "gwhere_email",
+      "from": "GIVE_WHERE",
+      "to": "GIVE_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "Postcode confirmed and not signed in"
+    },
+    {
+      "id": "gwhere_confirm",
+      "from": "GIVE_WHERE",
+      "to": "GIVE_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Postcode confirmed and signed in"
+    },
+    {
+      "id": "gwhere_cancel",
+      "from": "GIVE_WHERE",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "They want to stop"
+    },
+    {
+      "id": "gemail_confirm",
+      "from": "GIVE_EMAIL",
+      "to": "GIVE_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Email confirmed"
+    },
+    {
+      "id": "gemail_cancel",
+      "from": "GIVE_EMAIL",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "They want to stop"
+    },
+    {
+      "id": "gconfirm_post",
+      "from": "GIVE_CONFIRM",
+      "to": "GIVE_POST",
+      "trigger": "llm_decision",
+      "condition": "They confirmed: post it"
+    },
+    {
+      "id": "gconfirm_photo",
+      "from": "GIVE_CONFIRM",
+      "to": "GIVE_PHOTO",
+      "trigger": "llm_decision",
+      "condition": "They want to change the photo"
+    },
+    {
+      "id": "gconfirm_item",
+      "from": "GIVE_CONFIRM",
+      "to": "GIVE_ITEM",
+      "trigger": "llm_decision",
+      "condition": "They want to change what it is called"
+    },
+    {
+      "id": "gconfirm_desc",
+      "from": "GIVE_CONFIRM",
+      "to": "GIVE_DESCRIPTION",
+      "trigger": "llm_decision",
+      "condition": "They want to change the description"
+    },
+    {
+      "id": "gconfirm_where",
+      "from": "GIVE_CONFIRM",
+      "to": "GIVE_WHERE",
+      "trigger": "llm_decision",
+      "condition": "They want to change where it is"
+    },
+    {
+      "id": "gconfirm_cancel",
+      "from": "GIVE_CONFIRM",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "They want to stop"
+    },
+    {
+      "id": "gpost_done",
+      "from": "GIVE_POST",
+      "to": "GIVE_DONE",
+      "trigger": "llm_decision",
+      "condition": "The host reported the post was made"
+    },
+    {
+      "id": "gdone_give",
+      "from": "GIVE_DONE",
+      "to": "GIVE_PHOTO",
+      "trigger": "llm_decision",
+      "condition": "They want to give something else"
+    },
+    {
+      "id": "gdone_hub",
+      "from": "GIVE_DONE",
+      "to": "HUB",
+      "trigger": "llm_decision",
+      "condition": "They want to do something else"
+    },
+    {
+      "id": "aitem_matches",
+      "from": "ASK_ITEM",
+      "to": "ASK_MATCHES",
+      "trigger": "llm_decision",
+      "condition": "The item is known and matching offers were found nearby"
+    },
+    {
+      "id": "aitem_desc",
+      "from": "ASK_ITEM",
+      "to": "ASK_DESCRIPTION",
+      "trigger": "llm_decision",
+      "condition": "The item is known and nothing nearby matches"
+    },
+    {
+      "id": "aitem_cancel",
+      "from": "ASK_ITEM",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "They want to stop"
+    },
+    {
+      "id": "amatch_desc",
+      "from": "ASK_MATCHES",
+      "to": "ASK_DESCRIPTION",
+      "trigger": "llm_decision",
+      "condition": "They want to carry on asking"
+    },
+    {
+      "id": "amatch_cancel",
+      "from": "ASK_MATCHES",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "One of the offers will do, or they want to stop"
+    },
+    {
+      "id": "adesc_where",
+      "from": "ASK_DESCRIPTION",
+      "to": "ASK_WHERE",
+      "trigger": "llm_decision",
+      "condition": "Description done or skipped and no location is known"
+    },
+    {
+      "id": "adesc_email",
+      "from": "ASK_DESCRIPTION",
+      "to": "ASK_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "Description done or skipped, location known, not signed in"
+    },
+    {
+      "id": "adesc_confirm",
+      "from": "ASK_DESCRIPTION",
+      "to": "ASK_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Description done or skipped, location known, signed in"
+    },
+    {
+      "id": "adesc_cancel",
+      "from": "ASK_DESCRIPTION",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "They want to stop"
+    },
+    {
+      "id": "awhere_email",
+      "from": "ASK_WHERE",
+      "to": "ASK_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "Postcode confirmed and not signed in"
+    },
+    {
+      "id": "awhere_confirm",
+      "from": "ASK_WHERE",
+      "to": "ASK_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Postcode confirmed and signed in"
+    },
+    {
+      "id": "awhere_cancel",
+      "from": "ASK_WHERE",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "They want to stop"
+    },
+    {
+      "id": "aemail_confirm",
+      "from": "ASK_EMAIL",
+      "to": "ASK_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Email confirmed"
+    },
+    {
+      "id": "aemail_cancel",
+      "from": "ASK_EMAIL",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "They want to stop"
+    },
+    {
+      "id": "aconfirm_post",
+      "from": "ASK_CONFIRM",
+      "to": "ASK_POST",
+      "trigger": "llm_decision",
+      "condition": "They confirmed: post it"
+    },
+    {
+      "id": "aconfirm_item",
+      "from": "ASK_CONFIRM",
+      "to": "ASK_ITEM",
+      "trigger": "llm_decision",
+      "condition": "They want to change what they are asking for"
+    },
+    {
+      "id": "aconfirm_desc",
+      "from": "ASK_CONFIRM",
+      "to": "ASK_DESCRIPTION",
+      "trigger": "llm_decision",
+      "condition": "They want to change the description"
+    },
+    {
+      "id": "aconfirm_where",
+      "from": "ASK_CONFIRM",
+      "to": "ASK_WHERE",
+      "trigger": "llm_decision",
+      "condition": "They want to change where they are"
+    },
+    {
+      "id": "aconfirm_cancel",
+      "from": "ASK_CONFIRM",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "They want to stop"
+    },
+    {
+      "id": "apost_done",
+      "from": "ASK_POST",
+      "to": "ASK_DONE",
+      "trigger": "llm_decision",
+      "condition": "The host reported the post was made"
+    },
+    {
+      "id": "adone_ask",
+      "from": "ASK_DONE",
+      "to": "ASK_ITEM",
+      "trigger": "llm_decision",
+      "condition": "They want to ask for something else"
+    },
+    {
+      "id": "adone_nearby",
+      "from": "ASK_DONE",
+      "to": "NEARBY",
+      "trigger": "llm_decision",
+      "condition": "They want to see what is nearby"
+    },
+    {
+      "id": "adone_hub",
+      "from": "ASK_DONE",
+      "to": "HUB",
+      "trigger": "llm_decision",
+      "condition": "They want to do something else"
+    },
+    {
+      "id": "nwhere_nearby",
+      "from": "NEARBY_WHERE",
+      "to": "NEARBY",
+      "trigger": "llm_decision",
+      "condition": "Postcode confirmed"
+    },
+    {
+      "id": "nwhere_cancel",
+      "from": "NEARBY_WHERE",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "They want to stop"
+    },
+    {
+      "id": "nearby_give",
+      "from": "NEARBY",
+      "to": "GIVE_PHOTO",
+      "trigger": "llm_decision",
+      "condition": "They want to give something instead"
+    },
+    {
+      "id": "nearby_ask",
+      "from": "NEARBY",
+      "to": "ASK_ITEM",
+      "trigger": "llm_decision",
+      "condition": "They want to ask for something, perhaps because nothing suits"
+    },
+    {
+      "id": "nearby_hub",
+      "from": "NEARBY",
+      "to": "HUB",
+      "trigger": "llm_decision",
+      "condition": "They are done browsing"
+    },
+    {
+      "id": "cwhere_community",
+      "from": "COMMUNITY_WHERE",
+      "to": "COMMUNITY",
+      "trigger": "llm_decision",
+      "condition": "Postcode confirmed"
+    },
+    {
+      "id": "cwhere_cancel",
+      "from": "COMMUNITY_WHERE",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "They want to stop"
+    },
+    {
+      "id": "community_hub",
+      "from": "COMMUNITY",
+      "to": "HUB",
+      "trigger": "llm_decision",
+      "condition": "They are done with communities"
+    },
+    {
+      "id": "help_hub",
+      "from": "HELP",
+      "to": "HUB",
+      "trigger": "llm_decision",
+      "condition": "Their question is answered"
+    },
+    {
+      "id": "help_give",
+      "from": "HELP",
+      "to": "GIVE_PHOTO",
+      "trigger": "llm_decision",
+      "condition": "They want to give something"
+    },
+    {
+      "id": "help_ask",
+      "from": "HELP",
+      "to": "ASK_ITEM",
+      "trigger": "llm_decision",
+      "condition": "They want to ask for something"
+    },
+    {
+      "id": "hub_cancel",
+      "from": "HUB",
+      "to": "CANCELLED",
+      "trigger": "llm_decision",
+      "condition": "They said cancel or stop with nothing in progress"
+    },
+    {
+      "id": "gconfirm_qty",
+      "from": "GIVE_CONFIRM",
+      "to": "GIVE_QUANTITY",
+      "trigger": "llm_decision",
+      "condition": "They want to change how many there are"
+    },
+    {
+      "id": "gconfirm_email",
+      "from": "GIVE_CONFIRM",
+      "to": "GIVE_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "They want to change the email replies go to"
+    },
+    {
+      "id": "aconfirm_email",
+      "from": "ASK_CONFIRM",
+      "to": "ASK_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "They want to change the email replies go to"
+    },
+    {
+      "id": "gpost_failed",
+      "from": "GIVE_POST",
+      "to": "GIVE_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Posting did not go through; back to the card to try again"
+    },
+    {
+      "id": "apost_failed",
+      "from": "ASK_POST",
+      "to": "ASK_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Posting did not go through; back to the card to try again"
+    },
+    {
+      "id": "gphoto_skip_qty",
+      "from": "GIVE_PHOTO",
+      "to": "GIVE_QUANTITY",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "gphoto_skip_where",
+      "from": "GIVE_PHOTO",
+      "to": "GIVE_WHERE",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "gphoto_skip_email",
+      "from": "GIVE_PHOTO",
+      "to": "GIVE_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "gphoto_skip_confirm",
+      "from": "GIVE_PHOTO",
+      "to": "GIVE_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "gitem_skip_qty",
+      "from": "GIVE_ITEM",
+      "to": "GIVE_QUANTITY",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "gitem_skip_where",
+      "from": "GIVE_ITEM",
+      "to": "GIVE_WHERE",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "gitem_skip_email",
+      "from": "GIVE_ITEM",
+      "to": "GIVE_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "gitem_skip_confirm",
+      "from": "GIVE_ITEM",
+      "to": "GIVE_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "aitem_skip_where",
+      "from": "ASK_ITEM",
+      "to": "ASK_WHERE",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "aitem_skip_email",
+      "from": "ASK_ITEM",
+      "to": "ASK_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "aitem_skip_confirm",
+      "from": "ASK_ITEM",
+      "to": "ASK_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "amatches_skip_where",
+      "from": "ASK_MATCHES",
+      "to": "ASK_WHERE",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "amatches_skip_email",
+      "from": "ASK_MATCHES",
+      "to": "ASK_EMAIL",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "amatches_skip_confirm",
+      "from": "ASK_MATCHES",
+      "to": "ASK_CONFIRM",
+      "trigger": "llm_decision",
+      "condition": "Everything between here and there is already known, so the questions in between are skipped"
+    },
+    {
+      "id": "amatches_item",
+      "from": "ASK_MATCHES",
+      "to": "ASK_ITEM",
+      "trigger": "llm_decision",
+      "condition": "They want to change what they are asking for"
+    },
+    {
+      "id": "adone_nearby_where",
+      "from": "ASK_DONE",
+      "to": "NEARBY_WHERE",
+      "trigger": "llm_decision",
+      "condition": "They want to see what is nearby and we do not know where they are"
+    }
+  ]
+}

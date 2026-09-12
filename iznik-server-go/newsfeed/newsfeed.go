@@ -14,6 +14,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/spatial"
@@ -1233,44 +1234,7 @@ func Post(c *fiber.Ctx) error {
 		}
 	case "Report":
 		if req.ID > 0 {
-			db.Table("newsfeed").Where("id = ?", req.ID).Update("reviewrequired", gorm.Expr("1"))
-			// ORM migration site 958d1d242008 (wave 3), through the portable
-			// upsert wrapper. The conflict target is the composite
-			// (userid, newsfeedid) unique key: PostgreSQL requires it to be
-			// named explicitly, and naming it here keeps the one call site
-			// correct on both engines.
-			db.Table("newsfeed_reports").Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "userid"}, {Name: "newsfeedid"}},
-				DoUpdates: clause.Assignments(map[string]interface{}{"reason": req.Reason}),
-			}).Create(map[string]interface{}{
-				"userid":     myid,
-				"newsfeedid": req.ID,
-				"reason":     req.Reason,
-			})
-
-			// Queue email to ChitChat support.
-			type ReporterInfo struct {
-				Fullname string
-				Email    string
-			}
-			var reporter ReporterInfo
-			db.Table("users u").
-				Select("u.fullname, ue.email").
-				Joins("LEFT JOIN users_emails ue ON ue.userid = u.id").
-				Where("u.id = ?", myid).
-				Order("ue.preferred DESC, ue.id ASC").
-				Limit(1).
-				Scan(&reporter)
-
-			if err := queue.QueueTask(queue.TaskEmailChitchatReport, map[string]interface{}{
-				"user_id":     myid,
-				"user_name":   reporter.Fullname,
-				"user_email":  reporter.Email,
-				"newsfeed_id": req.ID,
-				"reason":      req.Reason,
-			}); err != nil {
-				stdlog.Printf("Failed to queue chitchat report email for newsfeed %d: %v", req.ID, err)
-			}
+			reportNewsfeed(db, req.ID, myid, req.Reason)
 		}
 	case "Hide":
 		if req.ID > 0 && canHidePost(myid) {
@@ -1527,6 +1491,18 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 	idInt, _ := row["@id"].(int64)
 	id := uint64(idInt)
 
+	// A post that trips a concern keyword goes to the ChitChat volunteers the way a
+	// member's report does: out of the feeds until they have looked, with the words
+	// that tripped it. The chat shell pins ChitChat beside every member's chats, so
+	// what would once have been a quiet corner is now in view.
+	if hits := message.WorryMatchesForText(db, req.Message); len(hits) > 0 {
+		words := make([]string, 0, len(hits))
+		for _, h := range hits {
+			words = append(words, h.Word)
+		}
+		reportNewsfeed(db, id, myid, "Automatic: worry words "+strings.Join(words, ", "))
+	}
+
 	// If this is a reply and not hidden, bump the thread
 	if id > 0 && req.Replyto > 0 && !hidden {
 		bumpThread(db, req.Replyto)
@@ -1700,6 +1676,14 @@ func Edit(c *fiber.Ctx) error {
 	}
 
 	db.Table("newsfeed").Where("id = ?", req.ID).Update("message", req.Message)
+	// An edit is a new piece of text: screen it as a new post is screened.
+	if hits := message.WorryMatchesForText(db, req.Message); len(hits) > 0 {
+		words := make([]string, 0, len(hits))
+		for _, h := range hits {
+			words = append(words, h.Word)
+		}
+		reportNewsfeed(db, req.ID, myid, "Automatic: worry words "+strings.Join(words, ", "))
+	}
 
 	return c.JSON(fiber.Map{"success": true})
 }
@@ -1790,4 +1774,45 @@ func feedArgs(myid uint64, swlat, swlng, nelat, nelng, userLat, userLng float64,
 		utils.NEWSFEED_TYPE_ALERT,
 	)
 	return args
+}
+
+// reportNewsfeed hides a post from the feeds pending review and tells the ChitChat
+// volunteers, by a member's report or by the worry-word check on posting.
+func reportNewsfeed(db *gorm.DB, id uint64, byUser uint64, reason string) {
+	db.Table("newsfeed").Where("id = ?", id).Update("reviewrequired", gorm.Expr("1"))
+	// ORM migration site 958d1d242008 (wave 3), through the portable upsert wrapper.
+	// The conflict target is the composite (userid, newsfeedid) unique key: PostgreSQL
+	// requires it to be named explicitly.
+	db.Table("newsfeed_reports").Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "userid"}, {Name: "newsfeedid"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{"reason": reason}),
+	}).Create(map[string]interface{}{
+		"userid":     byUser,
+		"newsfeedid": id,
+		"reason":     reason,
+	})
+
+	// Queue email to ChitChat support.
+	type ReporterInfo struct {
+		Fullname string
+		Email    string
+	}
+	var reporter ReporterInfo
+	db.Table("users u").
+		Select("u.fullname, ue.email").
+		Joins("LEFT JOIN users_emails ue ON ue.userid = u.id").
+		Where("u.id = ?", byUser).
+		Order("ue.preferred DESC, ue.id ASC").
+		Limit(1).
+		Scan(&reporter)
+
+	if err := queue.QueueTask(queue.TaskEmailChitchatReport, map[string]interface{}{
+		"user_id":     byUser,
+		"user_name":   reporter.Fullname,
+		"user_email":  reporter.Email,
+		"newsfeed_id": id,
+		"reason":      reason,
+	}); err != nil {
+		stdlog.Printf("Failed to queue chitchat report email for newsfeed %d: %v", id, err)
+	}
 }

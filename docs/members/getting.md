@@ -5,9 +5,12 @@ covers:
   - iznik-nuxt3/pages/ask/**
   - iznik-nuxt3/pages/chats/**
   - iznik-nuxt3/pages/message/**
+  - iznik-nuxt3/components/chatshell/MemberChat.vue
+  - iznik-nuxt3/components/chatshell/PostCard.vue
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-reply-flow-logged-in.spec.js
   - iznik-nuxt3/tests/e2e/test-reply-to-chat.spec.js
+  - iznik-nuxt3/tests/e2e/test-chat-shell-chats.spec.js
   - iznik-server-go/test/chatmessage_rippling_held_test.go
 ---
 
@@ -37,6 +40,18 @@ you when: either when the post is due to reach your area, or, if it is never goi
 spread quite that far, when it stops spreading and your reply goes anyway. It shows as
 "waiting to send" until it has gone.
 
+### Finding and replying in the chat
+
+![The Nearby sheet](assets/chat-nearby.png)
+
+In the chat, tap **Nearby** under the chat and a sheet slides up over it: a search box, an
+Offers or Wanted filter, and what is nearest to you, one line each. It scrolls inside the
+sheet, ten more at a time, so the chat underneath stays where it was. Tap a line to read
+more and see the photo, and **Reply** to start a chat with the person giving it away. If
+you type what you are after instead, Freegle says how many it found and shows a glimpse
+of three; **Look** opens the same sheet. Your chats with other freeglers sit in the same
+list as your chat with Freegle, and arranging collection works exactly as described below.
+
 ## Posting a WANTED
 
 If nobody is offering what you need, post a WANTED and let it find you.
@@ -47,6 +62,12 @@ If nobody is offering what you need, post a WANTED and let it find you.
 4. Confirm your email if you are not logged in, then click **Freegle it!**
 
 A WANTED has no delivery or deadline step. People who have the item can reply to you.
+
+In the chat, tap **Ask** and answer Freegle's questions in turn: what you are looking
+for, a word about why or what would do, your postcode, and your email if you are not
+signed in. Before posting, Freegle looks for matching offers nearby and shows any it finds,
+so you may not need to post at all. Tap **Carry on asking** to post anyway. Replies come to
+**Your posts**, and people offering you the item appear there with a **Reply** button.
 
 ## The chat: arranging collection
 

@@ -17,11 +17,13 @@ import (
 )
 
 type Tryst struct {
-	ID             uint64  `json:"id" gorm:"primary_key"`
-	User1          uint64  `json:"user1"`
-	User2          uint64  `json:"user2"`
-	Arrangedat     string  `json:"arrangedat"`
-	Arrangedfor    *string `json:"arrangedfor"`
+	ID          uint64  `json:"id" gorm:"primary_key"`
+	User1       uint64  `json:"user1"`
+	User2       uint64  `json:"user2"`
+	Arrangedat  string  `json:"arrangedat"`
+	Arrangedfor *string `json:"arrangedfor"`
+	// Which post the collection time is for; nil for trysts made before this existed.
+	Msgid          *uint64 `json:"msgid"`
 	User1confirmed *string `json:"user1confirmed"`
 	User2confirmed *string `json:"user2confirmed"`
 	User1declined  *string `json:"user1declined"`
@@ -114,6 +116,7 @@ func GetTryst(c *fiber.Ctx) error {
 				"user2":        t.User2,
 				"arrangedat":   t.Arrangedat,
 				"arrangedfor":  t.Arrangedfor,
+				"msgid":        t.Msgid,
 				"calendarLink": calendarLink(t.Arrangedfor),
 			},
 		})
@@ -131,6 +134,7 @@ func GetTryst(c *fiber.Ctx) error {
 			"user2":        t.User2,
 			"arrangedat":   t.Arrangedat,
 			"arrangedfor":  t.Arrangedfor,
+			"msgid":        t.Msgid,
 			"calendarLink": calendarLink(t.Arrangedfor),
 		}
 	}
@@ -160,6 +164,7 @@ func CreateTryst(c *fiber.Ctx) error {
 		User1       uint64 `json:"user1"`
 		User2       uint64 `json:"user2"`
 		Arrangedfor string `json:"arrangedfor"`
+		Msgid       uint64 `json:"msgid"`
 	}
 
 	var req CreateRequest
@@ -234,10 +239,11 @@ func CreateTryst(c *fiber.Ctx) error {
 		DoUpdates: clause.Set{
 			{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
 			{Column: clause.Column{Name: "arrangedat"}, Value: gorm.Expr("NOW()")},
+			// The same two people arranging the same time for a different post: the
+			// newer post wins, and a create without one leaves the old one alone.
+			{Column: clause.Column{Name: "msgid"}, Value: gorm.Expr("COALESCE(VALUES(msgid), msgid)")},
 		},
-	}).Create(map[string]interface{}{
-		"user1": req.User1, "user2": req.User2, "arrangedfor": req.Arrangedfor,
-	})
+	}).Create(trystRow(req.User1, req.User2, req.Arrangedfor, req.Msgid))
 	if tx.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Create failed")
 	}
@@ -269,6 +275,7 @@ func PatchTryst(c *fiber.Ctx) error {
 	type PatchRequest struct {
 		ID          uint64 `json:"id"`
 		Arrangedfor string `json:"arrangedfor"`
+		Msgid       uint64 `json:"msgid"`
 	}
 
 	var req PatchRequest
@@ -293,6 +300,9 @@ func PatchTryst(c *fiber.Ctx) error {
 
 	if req.Arrangedfor != "" {
 		db.Table("trysts").Where("id = ?", req.ID).Update("arrangedfor", req.Arrangedfor)
+	}
+	if req.Msgid != 0 {
+		db.Table("trysts").Where("id = ?", req.ID).Update("msgid", req.Msgid)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -400,4 +410,13 @@ func DeleteTryst(c *fiber.Ctx) error {
 	db.Table("trysts").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// trystRow builds the insert, carrying the post id when the caller gave one.
+func trystRow(user1, user2 uint64, arrangedfor string, msgid uint64) map[string]interface{} {
+	row := map[string]interface{}{"user1": user1, "user2": user2, "arrangedfor": arrangedfor}
+	if msgid > 0 {
+		row["msgid"] = msgid
+	}
+	return row
 }

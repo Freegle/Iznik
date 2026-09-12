@@ -25,7 +25,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref, computed, defineComponent, h, Suspense, nextTick } from 'vue'
 
-import ChatsPage from '~/pages/chats/[[id]].vue'
+import ChatsPage from '~/components/ClassicChats.vue'
 
 vi.mock('dayjs', () => {
   const mockDayjs = () => ({
