@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-12
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/ask/**
@@ -70,7 +70,9 @@ banner in the chat.
 - Arrange collection somewhere you are comfortable, and tell someone where you are going.
 - Keep the conversation in the Freegle chat until you are ready to share contact details.
 - You can **report** a chat or a post to the moderators, or **block** someone, from within
-  the chat if anything feels wrong.
+  the chat if anything feels wrong. Blocking hides the conversation and stops their messages
+  and nudges reaching you, and withdraws any promise you had made them. It stays in place,
+  even if you open the conversation to look at it, until you choose **Unblock**.
 
 ## When you have it: marking it RECEIVED
 
