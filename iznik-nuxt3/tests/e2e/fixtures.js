@@ -359,6 +359,7 @@ const test = base.test.extend({
       /Failed to load resource.*gstatic\.com/, // Google Sign-In assets — external script the app runs fine without; container network transiently fails to reach it
       /Your focus-trap must have at least one container/, // Bootstrap Vue focus-trap error during modal transitions (transient, non-critical)
       /Failed to load resource.*adtrafficquality\.google.*sodar/, // Google CSE script internally calls sodar (ad traffic quality) — external service, not our code
+      /ERR_INCOMPLETE_CHUNKED_ENCODING.*\/api\/assistant\/turn/, // The assistant streams its reply; a stream cut short under load is resumed by the client (AssistantAPI.turn sends a resume event), so the test goes on to assert the flow carried on rather than failing here
     ]
 
     // Initialize the working copy of allowed error patterns
