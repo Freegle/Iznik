@@ -5739,20 +5739,41 @@ func handleRenege(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		promisedTo = *req.Userid
 	}
 
-	// Record renege for reliability tracking (only if not reneging on self).
-	if promisedTo != myid {
-		db.Table("messages_reneged").Create(map[string]interface{}{"userid": promisedTo, "msgid": req.ID})
-	}
-
-	// Delete the promise.
-	db.Table("messages_promises").Where("msgid = ? AND userid = ?", req.ID, promisedTo).Delete(nil)
-
-	// Create a chat message of type Reneged if reneging on another user.
-	if req.Userid != nil && *req.Userid > 0 && *req.Userid != myid {
-		createSystemChatMessage(db, myid, *req.Userid, req.ID, utils.CHAT_MESSAGE_RENEGED)
-	}
+	renegePromise(db, myid, promisedTo, req.ID)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// renegePromise withdraws the promise of message msgid from promiser to
+// promisedTo: records it for reliability tracking, deletes the promise and
+// posts a Reneged chat message - unless the promise was to themselves, which
+// carries no record and no chat message.
+func renegePromise(db *gorm.DB, promiser uint64, promisedTo uint64, msgid uint64) {
+	if promisedTo != promiser {
+		db.Table("messages_reneged").Create(map[string]interface{}{"userid": promisedTo, "msgid": msgid})
+	}
+
+	db.Table("messages_promises").Where("msgid = ? AND userid = ?", msgid, promisedTo).Delete(nil)
+
+	if promisedTo != promiser {
+		createSystemChatMessage(db, promiser, promisedTo, msgid, utils.CHAT_MESSAGE_RENEGED)
+	}
+}
+
+// RenegePromisesTo withdraws every promise promiser has made to promisedTo on
+// their own posts. Blocking someone calls this (V1 parity: ChatRoom::updateRoster
+// reneged on Block), so a blocked member is not left holding a promise from
+// someone who no longer wants to deal with them.
+func RenegePromisesTo(db *gorm.DB, promiser uint64, promisedTo uint64) {
+	var msgids []uint64
+	db.Table("messages_promises").
+		Joins("INNER JOIN messages ON messages.id = messages_promises.msgid").
+		Where("messages.fromuser = ? AND messages_promises.userid = ?", promiser, promisedTo).
+		Pluck("messages_promises.msgid", &msgids)
+
+	for _, msgid := range msgids {
+		renegePromise(db, promiser, promisedTo, msgid)
+	}
 }
 
 // handleOutcomeIntended records an intended outcome.
