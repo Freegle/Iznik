@@ -4510,4 +4510,158 @@ class ExpandServiceTest extends TestCase
         );
     }
 
+    /**
+     * Record the leave-check's driving query.
+     *
+     * @return array<int, array{sql: string, bindings: array}>
+     */
+    private function captureLeaveCheckQueries(callable $fn): array
+    {
+        $seen = [];
+        DB::listen(function ($query) use (&$seen) {
+            if (stripos($query->sql, "ll.type = 'Group'") !== false) {
+                $seen[] = ['sql' => $query->sql, 'bindings' => $query->bindings];
+            }
+        });
+
+        $fn();
+
+        return $seen;
+    }
+
+    private function insertLeftLog(int $userId, int $groupId, ?string $timestamp = null): int
+    {
+        return DB::table('logs')->insertGetId([
+            'timestamp' => $timestamp ?? now(),
+            'type' => 'Group',
+            'subtype' => 'Left',
+            'user' => $userId,
+            'groupid' => $groupId,
+        ]);
+    }
+
+    /**
+     * The leave-check runs every tick and re-examines the whole two-day window each time -
+     * ~1,200 log rows, each driving two nested EXISTS against a 42.6M-row table, to act on
+     * roughly one. A log-id watermark makes the work proportional to new leaves.
+     */
+    public function test_leave_check_is_bounded_by_a_log_id_watermark(): void
+    {
+        [, $posterId, $groupB] = $this->rippleIntoOneGroup();
+        DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB)->delete();
+        $this->insertLeftLog($posterId, $groupB);
+
+        $queries = $this->captureLeaveCheckQueries(fn () => $this->service()->process(false, 500));
+
+        $this->assertNotEmpty($queries, 'expected the leave-check query to run');
+        $this->assertMatchesRegularExpression(
+            '/ll\.id\s*>\s*\?/i',
+            $queries[0]['sql'],
+            'the leave-check must resume from the last log it examined'
+        );
+    }
+
+    /**
+     * The two-day window is a backstop against the job stalling, not a scan bound. It must
+     * survive the watermark - shortening it would make a stall lose leaves outright, because
+     * nothing else ever revisits a rippled copy whose poster has left.
+     */
+    public function test_leave_check_keeps_its_stall_backstop(): void
+    {
+        [, $posterId, $groupB] = $this->rippleIntoOneGroup();
+        DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB)->delete();
+        $this->insertLeftLog($posterId, $groupB);
+
+        $queries = $this->captureLeaveCheckQueries(fn () => $this->service()->process(false, 500));
+
+        $this->assertMatchesRegularExpression(
+            '/ll\.timestamp\s*>=\s*\?/i',
+            $queries[0]['sql'],
+            'the timestamp backstop must remain alongside the watermark'
+        );
+
+        $cutoffs = array_filter($queries[0]['bindings'], fn ($b) => is_string($b) && strtotime($b) !== false);
+        $this->assertNotEmpty($cutoffs, 'expected a timestamp cutoff binding');
+        $this->assertLessThanOrEqual(
+            now()->subHours(47)->timestamp,
+            strtotime((string) reset($cutoffs)),
+            'the backstop must still reach back about two days'
+        );
+    }
+
+    /**
+     * Successive ticks must start after the leaves the previous tick examined.
+     */
+    public function test_leave_check_watermark_advances_between_ticks(): void
+    {
+        [, $posterId, $groupB] = $this->rippleIntoOneGroup();
+        DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB)->delete();
+        $this->insertLeftLog($posterId, $groupB);
+
+        $first = $this->captureLeaveCheckQueries(fn () => $this->service()->process(false, 500));
+        $second = $this->captureLeaveCheckQueries(fn () => $this->service()->process(false, 500));
+
+        $firstInts = array_values(array_filter($first[0]['bindings'], 'is_int'));
+        $secondInts = array_values(array_filter($second[0]['bindings'], 'is_int'));
+        $this->assertNotEmpty($firstInts, 'expected a watermark binding on the first tick');
+        $this->assertNotEmpty($secondInts, 'expected a watermark binding on the second tick');
+        $firstMark = end($firstInts);
+        $secondMark = end($secondInts);
+
+        $this->assertGreaterThan(
+            $firstMark,
+            $secondMark,
+            'the second tick must resume after the logs the first tick examined'
+        );
+    }
+
+    /**
+     * A scoped run looks at one post only, so it must leave the shared watermark alone.
+     * Advancing it would make the next global tick skip every leave the scoped run ignored -
+     * a targeted debugging run would silently strand real posts.
+     */
+    public function test_scoped_run_does_not_advance_the_leave_check_watermark(): void
+    {
+        [$msgidA, $posterA, $groupA] = $this->rippleIntoOneGroup();
+        [$msgidB, $posterB, $groupB] = $this->rippleIntoOneGroup();
+
+        DB::table('memberships')->where('userid', $posterA)->where('groupid', $groupA)->delete();
+        DB::table('memberships')->where('userid', $posterB)->where('groupid', $groupB)->delete();
+        $this->insertLeftLog($posterA, $groupA);
+        $this->insertLeftLog($posterB, $groupB);
+
+        // Scoped to A only.
+        $this->service()->process(false, 500, $msgidA);
+
+        $this->assertSame(
+            1,
+            (int) DB::table('messages_groups')->where('msgid', $msgidA)->where('groupid', $groupA)->value('deleted'),
+            'precondition: the scoped run pulled its own post'
+        );
+
+        // The global tick must still see B's leave.
+        $this->service()->process(false, 500);
+
+        $this->assertSame(
+            1,
+            (int) DB::table('messages_groups')->where('msgid', $msgidB)->where('groupid', $groupB)->value('deleted'),
+            'the scoped run must not have advanced the watermark past the other leave'
+        );
+    }
+
+    /**
+     * The ripple auto-join makes the poster a member of each group their post rippled into,
+     * which can make them newly eligible for reach mail about OTHER posts on those groups.
+     * Like every other join path, it queues them for the member side of reach mail.
+     */
+    public function test_ripple_auto_join_queues_the_poster_for_reach_mail(): void
+    {
+        [, $posterId] = $this->rippleIntoOneGroup();
+
+        $this->assertSame(
+            'joined',
+            DB::table('rippling_reach_member_pending')->where('userid', $posterId)->value('reason'),
+            'a rippled-in membership queues the poster like any other join'
+        );
+    }
 }

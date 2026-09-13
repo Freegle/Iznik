@@ -10,6 +10,7 @@ class MessageIllustrationsService
 {
     private const BATCH_SIZE = 5;
     private const CONFIG_KEY = 'illustrations_last_arrival';
+    private const CLEANUP_WATERMARK_KEY = 'illustrations_cleanup_last_id';
 
     public function __construct(private PollinationsService $pollinations) {}
 
@@ -31,6 +32,23 @@ class MessageIllustrationsService
      */
     private function cleanupDuplicates(bool $dryRun = false): int
     {
+        // This runs every minute and, in the steady state, returns nothing - the historical
+        // backlog is long clear. Unbounded it still drove a full scan of messages_attachments
+        // (39.6M rows in production, 20% of the database's overnight CPU) to find that out.
+        //
+        // Two branches rather than one OR: each is a primary-key range scan, whereas an OR
+        // across the two aliases would put the optimiser back on a full scan.
+        //
+        // Both sides are watermarked because either can arrive last. Usually it is the member's
+        // photo, landing after the illustration. But generation races the upload, so an
+        // illustration can also be written after the photo - and a photo-side-only watermark
+        // would then never see the pair again, leaving the illustration in place for good.
+        $watermark = $this->getCleanupWatermark();
+
+        // Read the high-water mark BEFORE the query, so anything inserted while it runs falls
+        // above the mark and is picked up next time rather than skipped.
+        $highWater = (int) (DB::table('messages_attachments')->max('id') ?? 0);
+
         $duplicates = DB::select("
             SELECT DISTINCT ma_ai.id, ma_ai.msgid
             FROM messages_attachments ma_ai
@@ -41,7 +59,19 @@ class MessageIllustrationsService
                 OR JSON_EXTRACT(ma_real.externalmods, '$.ai') IS NULL
                 OR JSON_EXTRACT(ma_real.externalmods, '$.ai') = FALSE
             )
-        ");
+            AND ma_real.id > ?
+            UNION
+            SELECT DISTINCT ma_ai.id, ma_ai.msgid
+            FROM messages_attachments ma_ai
+            INNER JOIN messages_attachments ma_real ON ma_real.msgid = ma_ai.msgid
+            WHERE JSON_EXTRACT(ma_ai.externalmods, '$.ai') = TRUE
+            AND (
+                ma_real.externalmods IS NULL
+                OR JSON_EXTRACT(ma_real.externalmods, '$.ai') IS NULL
+                OR JSON_EXTRACT(ma_real.externalmods, '$.ai') = FALSE
+            )
+            AND ma_ai.id > ?
+        ", [$watermark, $watermark]);
 
         $count = 0;
         foreach ($duplicates as $dup) {
@@ -63,7 +93,25 @@ class MessageIllustrationsService
             $count++;
         }
 
+        if (! $dryRun) {
+            $this->setCleanupWatermark($highWater);
+        }
+
         return $count;
+    }
+
+    private function getCleanupWatermark(): int
+    {
+        return (int) (DB::table('config')->where('key', self::CLEANUP_WATERMARK_KEY)->value('value') ?? 0);
+    }
+
+    private function setCleanupWatermark(int $id): void
+    {
+        DB::table('config')->upsert(
+            ['key' => self::CLEANUP_WATERMARK_KEY, 'value' => (string) $id],
+            ['key'],
+            ['value']
+        );
     }
 
     private function processBatches(bool $dryRun = false): array
