@@ -59,6 +59,29 @@ class StoriesNewsletterCommandTest extends TestCase
         $this->createStory(['headline' => 'Story C']);
     }
 
+    // ── Feature flag ──────────────────────────────────────────────────────────
+
+    /**
+     * The type gate that silently dropped this newsletter for three months in
+     * 2026, when batch-prod's FREEGLE_MAIL_ENABLED_TYPES was missing it and the
+     * cron reported "Processed: 0" every month.
+     */
+    public function test_sends_nothing_when_the_type_is_not_enabled(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Welcome,ChatNotification']);
+        $this->minStories();
+        $this->createEligibleUser();
+
+        $result = (new StoriesNewsletterService())->generateAndSend();
+
+        $this->assertSame(0, $result['sent']);
+        $this->assertSame(0, $result['stories']);
+        Mail::assertNothingSent();
+
+        // And nothing was consumed, so the next enabled run still has them.
+        $this->assertSame(3, DB::table('users_stories')->where('mailedtomembers', 0)->count());
+    }
+
     // ── Threshold tests ───────────────────────────────────────────────────────
 
     public function test_returns_zero_when_no_stories(): void
@@ -376,6 +399,37 @@ class StoriesNewsletterCommandTest extends TestCase
             'userid'    => $user->id,
             'emailtype' => 'storiesnewsletter',
         ]);
+    }
+
+    public function test_skips_members_with_no_address_to_send_to(): void
+    {
+        $this->minStories();
+        $group = $this->createTestGroup(['publish' => 1]);
+        $user  = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0]);
+        $this->createMembership($user, $group);
+        DB::table('users_emails')->where('userid', $user->id)->delete();
+
+        $result = (new StoriesNewsletterService())->generateAndSend();
+        $this->assertSame(0, $result['sent']);
+        Mail::assertNothingSent();
+    }
+
+    public function test_addresses_a_member_with_no_name_as_a_freegle_member(): void
+    {
+        $this->minStories();
+        $group = $this->createTestGroup(['publish' => 1]);
+        $user  = $this->createTestUser([
+            'newslettersallowed' => 1,
+            'bouncing'           => 0,
+            'fullname'           => null,
+            'firstname'          => null,
+            'lastname'           => null,
+        ]);
+        $this->createMembership($user, $group);
+
+        (new StoriesNewsletterService())->generateAndSend();
+
+        Mail::assertSent(StoriesNewsletterMail::class, fn ($m) => $m->recipientName === 'Freegle Member');
     }
 
     public function test_skips_groups_with_newsletter_disabled_in_settings(): void
