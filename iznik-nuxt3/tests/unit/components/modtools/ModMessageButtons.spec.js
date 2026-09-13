@@ -412,6 +412,38 @@ describe('ModMessageButtons', () => {
       )
       expect(takenButton).toBeUndefined()
     })
+
+    // Outcomes are facts about the whole post, so they belong to the poster or to the
+    // moderators of the group it was posted on. On a copy the post merely rippled into,
+    // the server refuses them, so the buttons must not be offered there (Discourse 10102).
+    it('hides TAKEN, RECEIVED and Withdrawn on a copy the post rippled into', () => {
+      const wrapper = mountComponent(
+        { isHomeGroup: false },
+        {
+          groups: [{ groupid: 456, collection: 'Approved' }],
+          type: 'Offer',
+          outcomes: [],
+        }
+      )
+      const labels = wrapper.findAll('.spin-button').map((btn) => btn.text())
+      expect(labels.some((l) => l.includes('Mark as TAKEN'))).toBe(false)
+      expect(labels.some((l) => l.includes('Mark as RECEIVED'))).toBe(false)
+      expect(labels.some((l) => l.includes('Mark as Withdrawn'))).toBe(false)
+    })
+
+    it('still offers Withdrawn on the home group when there is no outcome', () => {
+      const wrapper = mountComponent(
+        { isHomeGroup: true },
+        {
+          groups: [{ groupid: 456, collection: 'Approved' }],
+          type: 'Offer',
+          outcomes: [],
+        }
+      )
+      const labels = wrapper.findAll('.spin-button').map((btn) => btn.text())
+      expect(labels.some((l) => l.includes('Mark as Withdrawn'))).toBe(true)
+      expect(labels.some((l) => l.includes('Mark as TAKEN'))).toBe(true)
+    })
   })
 
   describe('editreview buttons', () => {
