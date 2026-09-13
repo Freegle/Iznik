@@ -1467,6 +1467,30 @@ type DeleteMembershipsRequest struct {
 	Ban     *bool  `json:"ban"`
 }
 
+// msgSelfLeaveKeepsRole is the refusal a moderator sees when they try to leave a group
+// they run. The frontend never offers that choice; this is the backstop.
+const msgSelfLeaveKeepsRole = "You are a moderator of this community, so leaving would drop that role. Ask another owner to change your role first."
+
+// selfLeaveKeepsRole reports whether leaving this group would throw away a moderator
+// role the member holds by choice. Only a membership rippling created (rippled = 1) is
+// theirs to drop freely: that is how a poster stops a rippled post reaching a group. A
+// chosen Owner or Moderator row needs another owner to change the role first (Discourse
+// 10148: an owner left the groups she ran while trying to stop a post rippling, and the
+// ripple rejoin brought her back as a plain member).
+func selfLeaveKeepsRole(db *gorm.DB, userid uint64, groupid uint64) bool {
+	var row struct {
+		Role    string
+		Rippled int
+	}
+	res := db.Table("memberships").Select("role, rippled").
+		Where("userid = ? AND groupid = ? AND collection = ?", userid, groupid, utils.COLLECTION_APPROVED).
+		Limit(1).Scan(&row)
+	if res.Error != nil || res.RowsAffected == 0 {
+		return false
+	}
+	return row.Rippled == 0 && (row.Role == utils.ROLE_MODERATOR || row.Role == utils.ROLE_OWNER)
+}
+
 // DeleteMemberships handles DELETE /memberships - user leaves a group.
 // Supports partner auth (partner query param) or JWT auth.
 // Frontend $delv2 sends JSON body (BaseAPI.js line 166 JSON-stringifies config.params for non-GET/POST).
@@ -1536,12 +1560,15 @@ func DeleteMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
 
-	// Self-leave is always allowed. Non-self removals require mod/owner of the group.
+	// Non-self removals require mod/owner of the group. A self-leave is allowed unless it
+	// would throw away a moderator role the member holds by choice.
 	if userid != myid {
 		if !isModOfGroup(myid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
 		}
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_DELETED, req.Groupid, userid, myid, "")
+	} else if selfLeaveKeepsRole(db, myid, req.Groupid) {
+		return fiber.NewError(fiber.StatusForbidden, msgSelfLeaveKeepsRole)
 	}
 
 	// Remove the membership.
@@ -1598,6 +1625,12 @@ func deleteMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) erro
 		return fiber.NewError(fiber.StatusNotFound, "User not found")
 	}
 	userid := candidates[0]
+
+	// The partner path is a self-leave too, so the same protection of a chosen
+	// moderator role applies.
+	if selfLeaveKeepsRole(db, userid, groupid) {
+		return fiber.NewError(fiber.StatusForbidden, msgSelfLeaveKeepsRole)
+	}
 
 	// Remove the membership.
 	// Converted together with its

@@ -2145,6 +2145,36 @@ class ExpandServiceTest extends TestCase
         $this->assertSame('Banned', $m->collection, 'existing banned membership left untouched');
     }
 
+    public function test_rippling_does_not_touch_an_existing_owner_membership(): void
+    {
+        // A poster who already OWNS a group the post ripples into keeps that row exactly as it
+        // is: the ripple-join only ever inserts where no membership exists, so it can never
+        // downgrade a chosen moderator role to Member or mark it as ripple-created
+        // (Discourse 10148: the rejoin after a self-leave is what turned an owner into a
+        // member; the self-leave is refused server-side now, and this pins the other half).
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Owner',
+            'collection' => 'Approved', 'added' => now()->subYears(2), 'rippled' => 0,
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $rows = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->get();
+        $this->assertCount(1, $rows, 'still exactly one membership row');
+        $this->assertSame('Owner', $rows[0]->role, 'owner role untouched by rippling');
+        $this->assertSame(0, (int) $rows[0]->rippled, 'a chosen membership is never marked ripple-created');
+    }
+
     /**
      * A poster banned from a group (users_banned row) must NOT have their post rippled into it,
      * nor be re-joined to it. A ban is an explicit mod ejection; rippling must not silently undo it.
