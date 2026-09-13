@@ -286,6 +286,63 @@ func TestDeleteMembershipsLeaveGroup(t *testing.T) {
 	}
 }
 
+// An Owner or Moderator cannot drop their own role by leaving: the membership is one
+// they hold by choice, and a self-leave threw it away with no warning (Discourse 10148,
+// an owner "de-rippling" herself out of the groups she ran came back as a plain member).
+func TestDeleteMembershipsSelfLeaveRefusedForModeratorRoles(t *testing.T) {
+	db := database.DBConn
+
+	for _, role := range []string{"Owner", "Moderator"} {
+		prefix := uniquePrefix("mem_selfleave_" + role)
+		userID := CreateTestUser(t, prefix+"_user", "User")
+		_, token := CreateTestSession(t, userID)
+		groupID := CreateTestGroup(t, prefix)
+		CreateTestMembership(t, userID, groupID, role)
+
+		body := map[string]interface{}{"userid": userID, "groupid": groupID}
+		bodyBytes, _ := json.Marshal(body)
+		req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/memberships?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 403, resp.StatusCode, role+" self-leave must be refused")
+
+		var stillRole string
+		db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
+			userID, groupID).Scan(&stillRole)
+		assert.Equal(t, role, stillRole, role+" membership must survive a refused self-leave")
+
+		assert.Nil(t, findLog(db, "Group", "Left", userID), "a refused self-leave must not log Group/Left")
+	}
+}
+
+// A membership that rippling created (rippled = 1) is the member's to drop whatever it
+// says: that is how a poster stops a rippled post reaching a group. Only chosen
+// moderator roles are protected.
+func TestDeleteMembershipsSelfLeaveAllowedForRippledRow(t *testing.T) {
+	prefix := uniquePrefix("mem_selfleave_rippled")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	membershipID := CreateTestMembership(t, userID, groupID, "Moderator")
+	db.Exec("UPDATE memberships SET rippled = 1 WHERE id = ?", membershipID)
+
+	body := map[string]interface{}{"userid": userID, "groupid": groupID}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/memberships?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
+		userID, groupID).Scan(&count)
+	assert.Equal(t, int64(0), count, "a rippling-created membership can always be left")
+}
+
 func TestDeleteMembershipsNotMember(t *testing.T) {
 	prefix := uniquePrefix("mem_notmem")
 
@@ -4514,9 +4571,15 @@ func TestDeleteMembershipsDemotesStaleModeratorSystemRole(t *testing.T) {
 	userID := CreateTestUser(t, prefix, "Moderator")
 	groupID := CreateTestGroup(t, prefix)
 	CreateTestMembership(t, userID, groupID, "Moderator") // their only mod role
-	token := getToken(t, userID)
 
-	body, _ := json.Marshal(map[string]interface{}{"groupid": groupID})
+	// A moderator cannot leave a group they run themselves (see
+	// TestDeleteMembershipsSelfLeaveRefusedForModeratorRoles), so the removal that
+	// drops their last mod role comes from an owner of the group.
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Owner")
+	token := getToken(t, ownerID)
+
+	body, _ := json.Marshal(map[string]interface{}{"groupid": groupID, "userid": userID})
 	req := httptest.NewRequest("DELETE", "/api/memberships?jwt="+token, bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
@@ -4524,7 +4587,7 @@ func TestDeleteMembershipsDemotesStaleModeratorSystemRole(t *testing.T) {
 
 	var systemrole string
 	database.DBConn.Raw("SELECT systemrole FROM users WHERE id = ?", userID).Scan(&systemrole)
-	assert.Equal(t, "User", systemrole, "leaving the only mod group must demote systemrole to User")
+	assert.Equal(t, "User", systemrole, "losing the only mod role must demote systemrole to User")
 }
 
 // TestGetMembershipsMailDelayed covers the deferral-aware suppression fields.

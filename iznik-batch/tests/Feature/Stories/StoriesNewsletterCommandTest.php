@@ -277,6 +277,71 @@ class StoriesNewsletterCommandTest extends TestCase
         Mail::assertNothingSent();
     }
 
+    /**
+     * V1's Newsletter::send() called sendOurMails() per user, which refuses
+     * anyone not seen for six months. This port dropped that check, so on
+     * 2026-09-13 the monthly newsletter targeted 2.56M members of whom 2.41M
+     * had not logged in for over six months - the median recipient had been
+     * gone for ten years. Mailing decade-old addresses finds spam traps.
+     */
+    public function test_skips_members_not_seen_for_six_months(): void
+    {
+        $this->minStories();
+        $group = $this->createTestGroup(['publish' => 1]);
+        $user  = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0]);
+        $user->lastaccess = now()->subDays(200);
+        $user->save();
+        $this->createMembership($user, $group);
+
+        $result = (new StoriesNewsletterService())->generateAndSend();
+        $this->assertSame(0, $result['sent']);
+        Mail::assertNothingSent();
+    }
+
+    public function test_sends_to_members_just_inside_the_activity_window(): void
+    {
+        $this->minStories();
+        $group = $this->createTestGroup(['publish' => 1]);
+        $user  = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0]);
+        $user->lastaccess = now()->subDays(100);
+        $user->save();
+        $this->createMembership($user, $group);
+
+        $result = (new StoriesNewsletterService())->generateAndSend();
+        $this->assertSame(1, $result['sent']);
+        Mail::assertSent(StoriesNewsletterMail::class, 1);
+    }
+
+    public function test_skips_members_who_asked_for_no_email_at_all(): void
+    {
+        $this->minStories();
+        $group = $this->createTestGroup(['publish' => 1]);
+        $user  = $this->createTestUser([
+            'newslettersallowed' => 1,
+            'bouncing'           => 0,
+            'settings'           => ['simplemail' => User::SIMPLE_MAIL_NONE],
+        ]);
+        $this->createMembership($user, $group);
+
+        $result = (new StoriesNewsletterService())->generateAndSend();
+        $this->assertSame(0, $result['sent']);
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_members_on_holiday(): void
+    {
+        $this->minStories();
+        $group = $this->createTestGroup(['publish' => 1]);
+        $user  = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0]);
+        $user->onholidaytill = now()->addDays(7);
+        $user->save();
+        $this->createMembership($user, $group);
+
+        $result = (new StoriesNewsletterService())->generateAndSend();
+        $this->assertSame(0, $result['sent']);
+        Mail::assertNothingSent();
+    }
+
     public function test_skips_groups_with_newsletter_disabled_in_settings(): void
     {
         $this->minStories();
