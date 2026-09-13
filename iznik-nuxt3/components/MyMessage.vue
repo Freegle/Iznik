@@ -327,6 +327,17 @@
             </div>
           </div>
 
+          <!-- Promised line - mobile only. The desktop panel above has its own banner;
+               below lg this is the only place the poster learns who has it, and the
+               button beside it is the only way to unpromise (Discourse 10152, 890). -->
+          <div
+            v-if="!rejected && isPromised && !taken && !received && !withdrawn"
+            class="mobile-promised d-lg-none small text-muted px-2 pb-1"
+          >
+            <v-icon icon="handshake" class="me-1" />
+            Promised to <strong>{{ promisedToName }}</strong>
+          </div>
+
           <!-- Action buttons - mobile only -->
           <div v-if="!rejected" class="action-buttons d-lg-none">
             <div class="action-buttons-left">
@@ -345,6 +356,14 @@
               >
                 <v-icon icon="check" />
                 <span>RECEIVED</span>
+              </button>
+              <button
+                v-if="isPromised && !taken && !received && !withdrawn"
+                class="action-btn action-btn--warning action-btn--unpromise"
+                @click="unpromise($event)"
+              >
+                <v-icon icon="handshake" />
+                <span>Unpromise</span>
               </button>
               <button
                 v-if="
@@ -697,7 +716,10 @@ const closestUser = computed(() => {
         const measure =
           road?.mins != null
             ? { known: 1, value: road.mins }
-            : { known: 0, value: milesAway(u.lat, u.lng, me.value.lat, me.value.lng) }
+            : {
+                known: 0,
+                value: milesAway(u.lat, u.lng, me.value.lat, me.value.lng),
+              }
         if (
           dist === null ||
           measure.known > dist.known ||

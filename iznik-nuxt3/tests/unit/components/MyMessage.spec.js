@@ -464,6 +464,44 @@ describe('MyMessage', () => {
       const wrapper = await createWrapper()
       expect(wrapper.find('.unpromise-btn').exists()).toBe(true)
     })
+
+    // The banner above (.unpromise-btn) lives in the desktop-only panel, hidden
+    // below the lg breakpoint. Phones and tablets see only the mobile action row,
+    // which had no way to unpromise at all: once a post was promised the only
+    // buttons left were Withdraw and Taken (Discourse 10152, 890).
+    it('offers Unpromise in the mobile action row when promised', async () => {
+      mockData.message.promised = true
+      mockData.message.outcomes = []
+      mockData.message.promises = [{ userid: 2 }]
+      mockUserStore.byId.mockReturnValue({ id: 2, displayname: 'Test User' })
+      const wrapper = await createWrapper()
+      const mobile = wrapper.find('.action-buttons .action-btn--unpromise')
+      expect(mobile.exists()).toBe(true)
+      expect(mobile.text()).toContain('Unpromise')
+      expect(wrapper.find('.mobile-promised').text()).toContain('Test User')
+    })
+
+    it('mobile Unpromise opens the renege modal', async () => {
+      mockData.message.promised = true
+      mockData.message.outcomes = []
+      mockData.message.promises = [{ userid: 2 }]
+      mockUserStore.byId.mockReturnValue({ id: 2, displayname: 'Test User' })
+      const wrapper = await createWrapper()
+      await wrapper
+        .find('.action-buttons .action-btn--unpromise')
+        .trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.renege-modal').exists()).toBe(true)
+    })
+
+    it('does not offer Unpromise in the mobile row when nothing is promised', async () => {
+      mockData.message.promised = false
+      mockData.message.outcomes = []
+      const wrapper = await createWrapper()
+      expect(
+        wrapper.find('.action-buttons .action-btn--unpromise').exists()
+      ).toBe(false)
+    })
   })
 
   describe('Rejected Messages', () => {
