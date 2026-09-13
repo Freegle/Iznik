@@ -76,6 +76,14 @@ const props = defineProps({
     required: false,
     default: false,
   },
+  // Whether to only show groups where we are a plain member. Used where the choice
+  // leads to leaving, so a moderator or owner is never offered a way to drop their
+  // own role (Discourse 10148).
+  memberonly: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
   // Whether "All my communities" should be "My active communities"
   active: {
     type: Boolean,
@@ -216,11 +224,10 @@ const groupOptions = computed(() => {
   }
 
   for (const group of sortedGroups.value) {
+    const isMod = group.role === 'Owner' || group.role === 'Moderator'
     if (
       props.listall ||
-      !props.modonly ||
-      group.role === 'Owner' ||
-      group.role === 'Moderator'
+      ((!props.modonly || isMod) && (!props.memberonly || !isMod))
     ) {
       let text = group.namedisplay
 
