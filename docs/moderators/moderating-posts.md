@@ -182,7 +182,8 @@ communities are unaffected. There is a full walk-through in
 When a post reappears in your Pending queue this way - even one you had already approved -
 the pending post now shows the reason (for example *"A moderator moved this post back to
 pending for review."*), so you can see why it is back rather than assuming your Approve did
-not work.
+not work. The post's logs on your community record the same pull as a Hold entry, naming
+the moderator who did it when it was a moderator rather than a members' review.
 
 ## Next steps
 
