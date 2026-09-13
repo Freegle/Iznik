@@ -841,7 +841,10 @@ export function matchDirectMasterFixCommits(
   for (const c of commits) {
     if (!c.sha || !c.subj || NON_FIX.test(c.subj)) continue
     const msg = `${c.subj} ${c.body || ''}`
-    for (const m of msg.matchAll(/\b(9\d{3})\s*[/#]\s*(\d{1,4})\b/g)) {
+    // Topic ids are 9000-9999 or 10000-19999: Discourse passed 10000 in September 2026, and
+    // a "9\d{3}" match silently stopped crediting every fix on a newer topic. Keeping the
+    // leading digit fixed still rules out dates such as 2026/09 reading as topic/post.
+    for (const m of msg.matchAll(/\b(9\d{3}|1\d{4})\s*[/#]\s*(\d{1,4})\b/g)) {
       const key = `${m[1]}/${m[2]}`
       if (!tpRefs.has(key)) tpRefs.set(key, { sha: c.sha, subj: c.subj })
     }
@@ -852,7 +855,7 @@ export function matchDirectMasterFixCommits(
     // get matched to an unrelated open bug (9808/633) via the fallback, marking
     // it fixed and posting a bogus retest (Neville, 2026-07-22). The negative
     // lookahead keeps scoped references out of topicRefs.
-    for (const m of msg.matchAll(/(?:\(|discourse\s+|#)(9\d{3})\b(?!\s*[/#]\s*\d)/gi)) {
+    for (const m of msg.matchAll(/(?:\(|discourse\s+|#)(9\d{3}|1\d{4})\b(?!\s*[/#]\s*\d)/gi)) {
       const t = Number(m[1])
       if (!topicRefs.has(t)) topicRefs.set(t, { sha: c.sha, subj: c.subj })
     }
