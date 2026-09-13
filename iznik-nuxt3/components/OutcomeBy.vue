@@ -359,39 +359,47 @@ select {
   width: auto;
 }
 
+// One picked person: name | thumbs up/down | number taken (bulk) or remove (x).
+// Narrow screens stack the name above the other two; from md up it is one row.
+// The two side columns size to their content, so the two rating buttons stay on
+// one line and the number control never lands outside the box (it used to be
+// placed in a fourth column the grid did not define, which put it past the
+// right edge).
 .layout {
   display: grid;
+  align-items: center;
   border: 1px solid $color-gray--faded;
   border-radius: var(--radius-sm, 0.375rem);
   padding: 10px;
 
-  grid-template-rows: auto auto auto;
-  grid-template-columns: 2fr 2fr;
+  grid-template-rows: auto auto;
+  grid-template-columns: 1fr auto;
   grid-column-gap: 5px;
 
   @include media-breakpoint-up(md) {
-    padding: 10px;
-
     grid-template-rows: auto;
-    grid-template-columns: 1fr 165px 160px;
+    grid-template-columns: 1fr auto auto;
   }
 
   .select {
+    min-width: 0;
+    overflow-wrap: anywhere;
+
     grid-column: 1 / 3;
-    grid-row: 1 / 2;
+    grid-row: 1;
 
     @include media-breakpoint-up(md) {
       grid-column: 1 / 2;
-      grid-row: 1;
     }
   }
 
   .ratings {
     justify-self: start;
+    white-space: nowrap;
     margin-top: 1rem;
 
     grid-column: 1 / 2;
-    grid-row: 2 / 3;
+    grid-row: 2;
 
     @include media-breakpoint-up(md) {
       margin-top: 0;
@@ -402,14 +410,16 @@ select {
 
   .took {
     justify-self: end;
+    width: 160px;
+    max-width: 100%;
     margin-top: 1rem;
 
-    grid-column: 3 / 4;
-    grid-row: 2 / 3;
+    grid-column: 2 / 3;
+    grid-row: 2;
 
     @include media-breakpoint-up(md) {
       margin-top: 0;
-      grid-column: 4 / 5;
+      grid-column: 3 / 4;
       grid-row: 1;
     }
   }
@@ -423,8 +433,8 @@ select {
     border: none;
     color: $color-gray--dark;
 
-    grid-column: 3 / 4;
-    grid-row: 2 / 3;
+    grid-column: 2 / 3;
+    grid-row: 2;
 
     &:hover,
     &:focus {
@@ -433,7 +443,7 @@ select {
 
     @include media-breakpoint-up(md) {
       margin-top: 0;
-      grid-column: 4 / 5;
+      grid-column: 3 / 4;
       grid-row: 1;
     }
   }
