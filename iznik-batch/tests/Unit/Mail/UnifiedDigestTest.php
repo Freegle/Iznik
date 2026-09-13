@@ -341,6 +341,176 @@ class UnifiedDigestTest extends TestCase
         return new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
     }
 
+    // ── AMP reply controls ───────────────────────────────────────────────────
+    //
+    // In Gmail the daily digest's Reply used to open a reply drawer inside the
+    // email (a shared amp-sidebar). On some phones that drawer showed as a
+    // blank screen (support ref SR-FV6KC, Gmail Android app), and only ~67
+    // members a week got a reply through it. Reply is now the same tracked
+    // website link the HTML part uses. The single-post immediate digest keeps
+    // its inline reply form, which works on phones.
+
+    /**
+     * A daily digest for a Gmail recipient carrying $otherPosts posts by
+     * another member and, when asked, one of the recipient's own - built, so
+     * the AMP part is rendered.
+     *
+     * @return array{0: UnifiedDigest, 1: int} the mailable and the recipient's
+     *   own message id (0 when there is none)
+     */
+    private function dailyDigestForGmailRecipient(int $otherPosts, bool $withOwnPost = false): array
+    {
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $user = $this->createTestUser(['email_preferred' => 'recipient@gmail.com']);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $posts = collect();
+        for ($i = 1; $i <= $otherPosts; $i++) {
+            $message = $this->createTestMessage($poster, $group, [
+                'subject' => "OFFER: Chair {$i} (London)",
+            ]);
+            $posts->push(['message' => $message, 'postedToGroups' => [$group->id]]);
+        }
+
+        $ownId = 0;
+        if ($withOwnPost) {
+            $own = $this->createTestMessage($user, $group, [
+                'subject' => 'OFFER: My own lamp (London)',
+            ]);
+            $ownId = (int) $own->id;
+            $posts->push(['message' => $own, 'postedToGroups' => [$group->id]]);
+        }
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $mail->build();
+
+        return [$mail, $ownId];
+    }
+
+    /** The rendered AMP part of a built digest ($ampHtml is protected). */
+    private function ampPartOf(UnifiedDigest $mail): string
+    {
+        $ref = new \ReflectionProperty($mail, 'ampHtml');
+        $ref->setAccessible(true);
+
+        return (string) $ref->getValue($mail);
+    }
+
+    /**
+     * The per-post data the AMP view was rendered from, keyed by message id -
+     * read back from the view data the mailable kept, so the URLs are the
+     * ones actually in the markup (not a fresh token from a second pass).
+     *
+     * @return array<int, array>
+     */
+    private function ampPostsOf(UnifiedDigest $mail): array
+    {
+        $ref = new \ReflectionProperty($mail, 'ampData');
+        $ref->setAccessible(true);
+        $byId = [];
+        foreach ($ref->getValue($mail)['posts'] as $post) {
+            $byId[(int) $post['message']->id] = $post;
+        }
+
+        return $byId;
+    }
+
+    public function test_daily_amp_card_reply_is_a_link_to_the_post_on_the_website(): void
+    {
+        [$mail] = $this->dailyDigestForGmailRecipient(3);
+        $amp = $this->ampPartOf($mail);
+        $posts = $this->ampPostsOf($mail);
+
+        $this->assertCount(3, $posts);
+        foreach ($posts as $post) {
+            $this->assertMatchesRegularExpression(
+                '#<a href="' . preg_quote(e($post['fallbackReplyUrl']), '#') . '" class="reply-btn(?: wanted)?">Reply</a>#',
+                $amp,
+                "the card's Reply is an anchor to that post's website reply link"
+            );
+        }
+        $this->assertSame(
+            3,
+            preg_match_all('#class="reply-btn(?: wanted)?">Reply</a>#', $amp),
+            'one Reply link per card, no more'
+        );
+    }
+
+    public function test_daily_amp_part_has_no_in_email_reply_drawer(): void
+    {
+        [$mail] = $this->dailyDigestForGmailRecipient(2);
+        $amp = $this->ampPartOf($mail);
+
+        $this->assertStringContainsString('class="reply-btn', $amp, 'the cards rendered');
+        foreach ([
+            '<amp-sidebar',
+            '<amp-state',
+            'AMP.setState',
+            'custom-element="amp-bind"',
+            'custom-element="amp-sidebar"',
+        ] as $drawer) {
+            $this->assertStringNotContainsString(
+                $drawer,
+                $amp,
+                "the AMP part no longer carries the in-email reply drawer ({$drawer})"
+            );
+        }
+    }
+
+    public function test_daily_amp_card_for_the_recipients_own_post_has_no_reply_control(): void
+    {
+        [$mail, $ownId] = $this->dailyDigestForGmailRecipient(2, true);
+        $amp = $this->ampPartOf($mail);
+        $posts = $this->ampPostsOf($mail);
+
+        $this->assertTrue($posts[$ownId]['isOwnPost']);
+        $this->assertStringNotContainsString(
+            'href="' . e($posts[$ownId]['fallbackReplyUrl']) . '" class="reply-btn',
+            $amp,
+            'you cannot reply to your own post'
+        );
+        $this->assertSame(
+            2,
+            preg_match_all('#class="reply-btn(?: wanted)?">Reply</a>#', $amp),
+            "only the other members' posts carry Reply"
+        );
+    }
+
+    public function test_immediate_amp_part_keeps_its_inline_reply_form(): void
+    {
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $user = $this->createTestUser(['email_preferred' => 'recipient@gmail.com']);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sofa (London)',
+        ]);
+
+        $mail = new UnifiedDigest(
+            $user,
+            collect([['message' => $message, 'postedToGroups' => [$group->id]]]),
+            UnifiedDigestService::MODE_IMMEDIATE
+        );
+        $mail->build();
+        $amp = $this->ampPartOf($mail);
+        $post = $this->ampPostsOf($mail)[(int) $message->id];
+
+        $this->assertStringContainsString('<amp-accordion class="reply-acc">', $amp);
+        $this->assertStringContainsString(
+            '<form method="post" action-xhr="' . e($post['ampReplyUrl']) . '">',
+            $amp,
+            'the single-post immediate digest still replies from inside the email'
+        );
+        $this->assertStringNotContainsString('<amp-sidebar', $amp);
+    }
+
     public function test_has_amp_column_set_for_amp_supported_recipient(): void
     {
         // The ModTools sysadmin AMP stats read the has_amp COLUMN. It was only
@@ -459,11 +629,6 @@ class UnifiedDigestTest extends TestCase
             'unsubscribeUrl' => 'https://example.com/unsubscribe?t=1',
             'userSite' => 'https://example.com',
             'siteName' => 'Freegle',
-            // AMP-only state the unified blade references (production builds
-            // these in UnifiedDigest when assembling the AMP variant).
-            'ampPostMeta' => [],
-            'ampApiUrl' => 'https://api.example.com/amp',
-            'ampUserId' => 42,
         ];
     }
 
