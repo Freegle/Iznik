@@ -423,10 +423,15 @@ describe('ModMessage', () => {
     })
   })
 
-  describe('Computed: groupid', () => {
-    it('returns groupid from message groups, 0 when no groups', () => {
+  describe('Computed: currentGroupid', () => {
+    it('resolves to the message group the mod administers', () => {
       const wrapper = mountComponent()
-      expect(wrapper.vm.groupid).toBe(789)
+      expect(wrapper.vm.currentGroupid).toBe(789)
+    })
+
+    it('is null when the message has no groups', () => {
+      const wrapper = mountComponent({}, { groups: [] })
+      expect(wrapper.vm.currentGroupid).toBeNull()
     })
   })
 
@@ -889,6 +894,140 @@ describe('ModMessage', () => {
       })
       const wrapper = mountComponent()
       expect(wrapper.vm.membership).toBe(undefined)
+    })
+
+    // Discourse 10115/2: a crosspost has a direct copy and a rippled-in copy of the
+    // same message. messages_groups is fetched with no ORDER BY (message.go), so
+    // message.groups[0] can be either copy. membership must anchor to currentGroupid
+    // (the group actually being administered - here the mod's own direct group, 789)
+    // rather than groups[0], the same fix already applied to `group`, `configid` and
+    // `editgroup` in this file for Discourse 9808/303, 9808/305 and 9862/15.
+    it('resolves membership for currentGroupid, not groups[0], when a rippled copy sorts first', async () => {
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'Updated User',
+        memberships: [
+          { id: 790, groupid: 790, ourpostingstatus: 'PROHIBITED' },
+          { id: 789, groupid: 789, ourpostingstatus: 'DEFAULT' },
+        ],
+      })
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            {
+              groupid: 790,
+              collection: 'Approved',
+              rippled_in: 1,
+              arrival: '2024-01-02T00:00:00Z',
+            },
+            {
+              groupid: 789,
+              collection: 'Pending',
+              rippled_in: 0,
+              arrival: '2024-01-01T00:00:00Z',
+            },
+          ],
+        }
+      )
+      await flushPromises()
+
+      // The mod only moderates group 789, so currentGroupid resolves to it regardless
+      // of array order.
+      expect(wrapper.vm.currentGroupid).toBe(789)
+      expect(wrapper.vm.membership).toEqual({
+        id: 789,
+        groupid: 789,
+        ourpostingstatus: 'DEFAULT',
+      })
+    })
+
+    const crosspostGroups = [
+      {
+        groupid: 790,
+        collection: 'Approved',
+        rippled_in: 1,
+        arrival: '2024-01-02T00:00:00Z',
+      },
+      {
+        groupid: 789,
+        collection: 'Approved',
+        rippled_in: 0,
+        arrival: '2024-01-01T00:00:00Z',
+      },
+    ]
+    const bothMemberships = [
+      { id: 790, groupid: 790, ourpostingstatus: 'PROHIBITED' },
+      { id: 789, groupid: 789, ourpostingstatus: 'DEFAULT' },
+    ]
+
+    it('anchors membership to the origin copy when the mod moderates both groups', async () => {
+      // Here the pool really has two candidates, so the tie-break inside currentGroupid
+      // (home group first, by rippled_in) is what decides - not the array order.
+      mockMyModGroups.push({
+        id: 790,
+        lat: 52.0,
+        lng: -1.0,
+        polygon: null,
+        mysettings: { configid: 1 },
+        settings: {},
+      })
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'Updated User',
+        memberships: bothMemberships,
+      })
+      try {
+        const wrapper = mountComponent({}, { groups: crosspostGroups })
+        await flushPromises()
+        expect(wrapper.vm.currentGroupid).toBe(789)
+        expect(wrapper.vm.membership).toEqual({
+          id: 789,
+          groupid: 789,
+          ourpostingstatus: 'DEFAULT',
+        })
+      } finally {
+        mockMyModGroups.pop()
+      }
+    })
+
+    it('falls back to the origin copy, not the first row, when the mod moderates neither group', async () => {
+      // The Support page mounts this with no moderated groups at all (a Support viewer
+      // is not a Moderator on the post's groups), which used to leave membership on
+      // whichever row the API happened to return first.
+      const saved = mockMyModGroups.splice(0, mockMyModGroups.length)
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'Updated User',
+        memberships: bothMemberships,
+      })
+      try {
+        const wrapper = mountComponent({}, { groups: crosspostGroups })
+        await flushPromises()
+        expect(wrapper.vm.currentGroupid).toBe(789)
+        expect(wrapper.vm.membership).toEqual({
+          id: 789,
+          groupid: 789,
+          ourpostingstatus: 'DEFAULT',
+        })
+      } finally {
+        mockMyModGroups.push(...saved)
+      }
+    })
+
+    it('matches a membership whose groupid arrives as a string', async () => {
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'Updated User',
+        memberships: [{ id: 789, groupid: '789', ourpostingstatus: 'DEFAULT' }],
+      })
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.vm.membership).toEqual({
+        id: 789,
+        groupid: '789',
+        ourpostingstatus: 'DEFAULT',
+      })
     })
   })
 
@@ -1740,7 +1879,7 @@ describe('ModMessage', () => {
           ],
         }
       )
-      expect(wrapper.vm.groupid).toBe(789)
+      expect(wrapper.vm.currentGroupid).toBe(789)
     })
 
     // Rippling-out: a post can ripple into a neighbouring group's pending queue
@@ -1905,7 +2044,7 @@ describe('ModMessage', () => {
           ],
         }
       )
-      expect(wrapper.vm.groupid).toBe(789)
+      expect(wrapper.vm.currentGroupid).toBe(789)
     })
 
     // Discourse 9808/565: in the all-communities view a mod who is active on BOTH the

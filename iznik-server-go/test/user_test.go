@@ -3140,16 +3140,23 @@ func TestGetUserMembershipsPostingStatus(t *testing.T) {
 	CreateTestMembership(t, prohibitedUser, groupID, "Member")
 	db.Exec("UPDATE memberships SET ourPostingStatus = 'PROHIBITED' WHERE userid = ? AND groupid = ?", prohibitedUser, groupID)
 
+	// A membership rippling created for the poster (rippled = 1) carries no posting
+	// status because no moderator ever set one. It must not read as MODERATED.
+	rippledUser := CreateTestUser(t, prefix+"_rip", "User")
+	CreateTestMembership(t, rippledUser, groupID, "Member")
+	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", rippledUser, groupID)
+
 	// Fetch each user with modtools=true and check posting status.
 	for _, tc := range []struct {
 		name     string
 		uid      uint64
-		expected string
+		expected interface{}
 	}{
 		{"NULL→MODERATED", nullUser, "MODERATED"},
 		{"DEFAULT stays DEFAULT", defaultUser, "DEFAULT"},
 		{"MODERATED stays MODERATED", moderatedUser, "MODERATED"},
 		{"PROHIBITED stays PROHIBITED", prohibitedUser, "PROHIBITED"},
+		{"NULL on a rippled membership stays unset", rippledUser, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", tc.uid, modToken)

@@ -175,7 +175,7 @@ const repliers = computed(() => {
 
         ret.push({
           userid: u.userid,
-          displayname: user?.displayname,
+          displayname: user?.displayname || 'Freegler',
         })
       }
     })
