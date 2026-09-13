@@ -66,30 +66,27 @@ class MicrovolunteeringNotifyService
             'stale_notifications_cleared' => $staleNotificationsCleared,
         ];
 
+        // Candidates first, correlation second.
+        //
+        // This used to be one statement with a LEFT JOIN onto users_notifications
+        // correlated by `url LIKE CONCAT('/microvolunteering/message/', messages.id)`.
+        // Correlating on a value computed per row is what costs: the optimiser cannot use
+        // the url index for it and falls back to scanning, and when the equality form made
+        // that index merely eligible it got worse still - a url ref lookup is costed at the
+        // whole table because the index cardinality reads as 1, so every one of ~40k outer
+        // rows was range-checked and rejected. That version never completed once and the
+        // every-five-minute schedule stacked 18 copies against the read node on 2026-09-13.
+        //
+        // A CONSTANT url is a clean ref lookup on the same index (`type=ref, key=url,
+        // rows=1`, 0.001s), so the exclusion is done afterwards with constants. Measured on
+        // production: 17.03s for the joined form against 1.00s for this one, over 6,209
+        // distinct message ids in 7 chunked lookups, returning a result set identical row
+        // for row (23,926 rows both ways).
         $msgs = DB::select("
             SELECT messages.id, messages.fromuser, messages_groups.groupid, messages.subject, messages_groups.collection
             FROM messages
             INNER JOIN messages_groups ON messages.id = messages_groups.msgid
             INNER JOIN `groups` ON messages_groups.groupid = groups.id
-            LEFT JOIN users_notifications
-                ON users_notifications.timestamp >= DATE_SUB(NOW(), INTERVAL 1 DAY)
-                -- LIKE, not `=`, until the statistics support the equality. Both match the
-                -- same rows (the pattern carries no wildcard). The `=` form was introduced so
-                -- an index on users_notifications.url could serve this as a ref lookup, and
-                -- that index does now exist in production - but its cardinality reads as 1, so
-                -- the optimiser costs a url ref lookup at 7.45M rows and rejects it on every
-                -- row: EXPLAIN gives `type=ALL, key=NULL, rows=7453675, Range checked for each
-                -- record` against ~40k outer rows. On 2026-09-13 that never completed once, and
-                -- the every-5-minute schedule stacked 17 copies against production. As LIKE the
-                -- url index cannot be considered at all, so the optimiser picks the single-pass
-                -- plan this job ran happily on for months.
-                --
-                -- The real fix is to stop correlating per row: a constant url lookup IS a ref
-                -- lookup on this index (EXPLAIN: type=ref, key=url, rows=1, 0.001s), so the
-                -- candidates should be collected first and checked with constants. Do that, or
-                -- refresh the table statistics, before reaching for `=` again.
-                AND users_notifications.url LIKE CONCAT('/microvolunteering/message/', messages.id)
-                AND users_notifications.type = ?
             WHERE messages_groups.arrival > DATE_SUB(NOW(), INTERVAL 1 DAY)
               AND messages.deleted IS NULL
               -- A hold is per-group. Every other predicate here is already
@@ -100,9 +97,10 @@ class MicrovolunteeringNotifyService
               -- be offered up for \"please review\" - the hold only ever
               -- belonged to the group it was placed on.
               AND messages_groups.heldby IS NULL
-              AND users_notifications.id IS NULL
               AND groups.microvolunteering = 1
-        ", [self::NOTIFICATION_TYPE]);
+        ");
+
+        $msgs = $this->withoutMessagesNotifiedToday($msgs);
 
         $stats['messages_considered'] = count($msgs);
 
@@ -285,6 +283,60 @@ class MicrovolunteeringNotifyService
         $this->eligibleCache[$key] = array_map(fn ($r) => (int) $r->userid, $rows);
 
         return $this->eligibleCache[$key];
+    }
+
+    /**
+     * Drop candidate rows whose message already had a microvolunteering Exhort
+     * notification in the last day. This is the anti-join that used to sit in the
+     * candidate query as a correlated LEFT JOIN.
+     *
+     * The exclusion is by MESSAGE, not by message and group, which is what the join it
+     * replaces did: `users_notifications.id IS NULL` against a condition naming only
+     * messages.id. A notification about a message therefore takes it out of the running
+     * for every group it sits on, the same as before.
+     *
+     * Chunked because the point is that every url is a constant: an IN list of constants
+     * is a ref lookup per value on the url index, where the computed CONCAT the join used
+     * could not be. 1,000 per chunk needed 7 statements and 0.28s for a day of messages.
+     *
+     * @param object[] $msgs
+     * @return object[]
+     */
+    private function withoutMessagesNotifiedToday(array $msgs): array
+    {
+        if (empty($msgs)) {
+            return [];
+        }
+
+        $ids = array_values(array_unique(array_map(fn ($m) => (int) $m->id, $msgs)));
+
+        $notified = [];
+        foreach (array_chunk($ids, 1000) as $chunk) {
+            $urls = array_map(fn ($id) => '/microvolunteering/message/' . $id, $chunk);
+            $placeholders = implode(',', array_fill(0, count($urls), '?'));
+
+            $rows = DB::select(
+                "SELECT url
+                 FROM users_notifications
+                 WHERE type = ?
+                   AND timestamp >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+                   AND url IN ($placeholders)",
+                array_merge([self::NOTIFICATION_TYPE], $urls)
+            );
+
+            foreach ($rows as $row) {
+                $notified[$row->url] = true;
+            }
+        }
+
+        if (empty($notified)) {
+            return $msgs;
+        }
+
+        return array_values(array_filter(
+            $msgs,
+            fn ($m) => !isset($notified['/microvolunteering/message/' . (int) $m->id])
+        ));
     }
 
     /**
