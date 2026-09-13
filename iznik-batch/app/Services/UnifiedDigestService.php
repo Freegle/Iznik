@@ -1803,9 +1803,10 @@ class UnifiedDigestService
         if ($posts->isEmpty() && $pinnedCards->isEmpty()) {
             // No live posts to send. Still advance the cursor past everything
             // examined (incl. completed/withdrawn) so they don't re-surface,
-            // and don't send a completed-only digest.
+            // and don't send a completed-only digest. Anything carried over was
+            // examined too and did not make it, so it is not carried again.
             if (!$dryRun) {
-                $this->updateDigestTracker($digestTracker, $allPosts);
+                $this->updateDigestTracker($digestTracker, $allPosts, false, []);
             }
             return ['status' => 'no_posts', 'count' => 0];
         }
@@ -1826,7 +1827,7 @@ class UnifiedDigestService
             // Nothing to send, but still advance the tracker past these posts
             // so the next tick doesn't re-fetch and re-filter the same set.
             if (!$dryRun) {
-                $this->updateDigestTracker($digestTracker, $allPosts);
+                $this->updateDigestTracker($digestTracker, $allPosts, false, []);
             }
             return ['status' => 'no_posts', 'count' => 0];
         }
@@ -1851,15 +1852,14 @@ class UnifiedDigestService
         // Daily mode: one rolled-up digest. $completedPosts (the "came and
         // went" Taken/Received set) was partitioned from the same query above.
         if (!$dryRun) {
-            app(\App\Services\EmailSpoolerService::class)->spool(
-                new UnifiedDigest($user, $deduplicatedPosts, $mode, $sponsors, $completedPosts),
-                emailType: 'digest_daily',
-            );
+            $digest = new UnifiedDigest($user, $deduplicatedPosts, $mode, $sponsors, $completedPosts);
+            app(\App\Services\EmailSpoolerService::class)->spool($digest, emailType: 'digest_daily');
             // Advance the cursor past everything examined this window (live,
             // completed and withdrawn) so nothing re-surfaces tomorrow. Pass
             // emailWasSent=true so lastsent is stamped even when $allPosts is empty
             // (a pinned-only digest still sent an email) — see updateDigestTracker.
-            $this->updateDigestTracker($digestTracker, $allPosts, true);
+            // The posts the email left out at the cap are carried to the next run.
+            $this->updateDigestTracker($digestTracker, $allPosts, true, $digest->droppedPostIds());
         }
 
         return ['status' => 'sent', 'count' => 1];
@@ -2028,13 +2028,20 @@ class UnifiedDigestService
             ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
             ->orderBy('messages_groups.arrival', 'asc');
 
-        // Only get messages after the last digest.
-        if ($tracker->lastmsgdate) {
-            $query->where('messages_groups.arrival', '>', $tracker->lastmsgdate);
-        } else {
-            // First digest - only get messages from the last 24 hours.
-            $query->where('messages_groups.arrival', '>=', now()->subDay());
-        }
+        // The window: everything since the cursor, plus the posts the member's last digest
+        // had to leave out at the post cap (carryover). Those are older than the cursor, so
+        // they come first in arrival order and the cursor never moves backwards for them.
+        $carryover = array_values(array_filter(array_map('intval', $tracker->carryover ?? [])));
+        $query->where(function ($q) use ($tracker, $carryover) {
+            if ($tracker->lastmsgdate) {
+                $q->where('messages_groups.arrival', '>', $tracker->lastmsgdate);
+            } else {
+                $q->where('messages_groups.arrival', '>=', now()->subDay());
+            }
+            if ($carryover !== []) {
+                $q->orWhereIn('messages.id', $carryover);
+            }
+        });
 
         // Reach-gate rippling posts for the daily digest and the daily-posts push (both
         // call this) just like the immediate path: a post with a rippling_reach row is only
@@ -3035,8 +3042,11 @@ class UnifiedDigestService
      * @param UserDigest $tracker
      * @param Collection $posts
      */
-    protected function updateDigestTracker(UserDigest $tracker, Collection $posts, bool $emailWasSent = false): void
+    protected function updateDigestTracker(UserDigest $tracker, Collection $posts, bool $emailWasSent = false, ?array $carryover = null): void
     {
+        // Posts the digest left out at the post cap: re-offered by getPostsForUser() next
+        // run. Null means "leave whatever is stored" (callers that did not examine them).
+        $carry = $carryover === null ? [] : ['carryover' => ($carryover === [] ? null : array_values($carryover))];
         $lastPost = $posts->last();
 
         if ($lastPost) {
@@ -3044,7 +3054,7 @@ class UnifiedDigestService
                 'lastmsgid' => $lastPost->id,
                 'lastmsgdate' => $lastPost->arrival,
                 'lastsent' => now(),
-            ]);
+            ] + $carry);
         } elseif ($emailWasSent) {
             // A daily email WAS sent but there are no cursor posts to advance past —
             // the digest contained only a pinned post, which is never part of the
@@ -3053,7 +3063,7 @@ class UnifiedDigestService
             // Without this, a pinned-only digest re-sends every minute (incident
             // 2026-07-05: the once-per-day guard never fired, so 67 members received the
             // daily digest up to ~198 times).
-            $tracker->update(['lastsent' => now()]);
+            $tracker->update(['lastsent' => now()] + $carry);
         }
     }
 

@@ -1049,6 +1049,62 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(1, $stats['emails_sent']);
     }
 
+    public function test_daily_digest_carries_posts_left_out_at_the_cap_to_the_next_run(): void
+    {
+        // Discourse 10029/17: a post that was eligible but did not fit under the post cap
+        // used to be lost for good, because the cursor moved past it. The digest now
+        // records what it left out and offers those posts again in the next run.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createMembership($poster, $group);
+        for ($i = 1; $i <= $cap + 2; $i++) {
+            $this->createTestMessage($poster, $group, ['subject' => "OFFER: Carry{$i}Zq (TestLocation)"]);
+        }
+
+        Mail::fake();
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(1, $stats['emails_sent']);
+        $sent = [];
+        Mail::assertSent(\App\Mail\Digest\UnifiedDigest::class, function ($m) use (&$sent) {
+            $sent[] = $m;
+            return true;
+        });
+        $this->assertCount(1, $sent);
+        $dropped = $sent[0]->droppedPostIds();
+        $this->assertCount(2, $dropped, 'two posts did not fit under the cap');
+
+        $tracker = UserDigest::where('userid', $recipient->id)
+            ->where('mode', UnifiedDigestService::MODE_DAILY)
+            ->first();
+        $this->assertEqualsCanonicalizing($dropped, $tracker->carryover);
+
+        // Next day: nothing new has arrived, but the two carried posts are offered again,
+        // and once shown they are not carried any further.
+        $tracker->update(['lastsent' => now()->subDay()]);
+        Mail::fake();
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(1, $stats['emails_sent']);
+        $sent = [];
+        Mail::assertSent(\App\Mail\Digest\UnifiedDigest::class, function ($m) use (&$sent) {
+            $sent[] = $m;
+            return true;
+        });
+        $shown = array_map(fn ($p) => (int) $p['msgid'], $sent[0]->mailDescriptor()['posts']);
+        $this->assertEqualsCanonicalizing($dropped, $shown);
+        $this->assertSame([], $sent[0]->droppedPostIds());
+        $this->assertNull($tracker->fresh()->carryover);
+    }
+
     /**
      * Daily defaults to OFF (empty allowlist = nobody) so a deploy can't
      * double-mail the whole userbase alongside V1's still-running daily cron.
