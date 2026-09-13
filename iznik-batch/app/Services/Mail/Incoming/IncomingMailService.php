@@ -3174,7 +3174,16 @@ class IncomingMailService
 
             $messageId = ($email->messageId ?? (microtime(true).'@'.config('freegle.mail.user_domain', 'users.ilovefreegle.org'))).'-'.$group->id;
 
-            DB::table('messages_history')->insert([
+            // insertOrIgnore for the same reason as the row above: (msgid, groupid) is
+            // unique here too, so a second delivery of the same email for a group already
+            // on this message threw 1062 one line after the INSERT IGNORE that was meant
+            // to make exactly that case harmless. Skipping the rest is right - the first
+            // delivery did it - but arriving there by exception meant it was logged as an
+            // error every time, 8, 13 and 7 times on 2026-09-11, 09-12 and 09-13. A
+            // collision here can only mean the group is already recorded against this
+            // message, because the attach path runs only when the message exists and the
+            // creating email wrote its own group's history row.
+            $historyWritten = DB::table('messages_history')->insertOrIgnore([
                 'groupid' => $group->id,
                 'source' => Message::SOURCE_EMAIL ?? 'Email',
                 'fromuser' => $user->id,
@@ -3188,6 +3197,22 @@ class IncomingMailService
                 'messageid' => $messageId,
                 'msgid' => $msgid,
             ]);
+
+            if ($historyWritten === 0) {
+                // Already attached by an earlier delivery of this same email, which wrote
+                // the receipt log and routed the copy. Return null, as the failure path
+                // did: null tells the caller there is no fresh attach to follow up, and
+                // that follow-up must not run twice - messages_postings carries no unique
+                // key on (msgid, groupid), so a second pass would record the item as
+                // posted twice and feed the repost logic a phantom. The difference is
+                // that this is now a no-op saying so, not an exception logged as an error.
+                Log::info('TN cross-post group was already attached, nothing to do', [
+                    'msgid' => $msgid,
+                    'groupid' => $group->id,
+                ]);
+
+                return null;
+            }
 
             DB::table('logs')->insert([
                 'timestamp' => now(),
