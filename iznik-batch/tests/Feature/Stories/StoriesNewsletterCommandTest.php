@@ -5,6 +5,7 @@ namespace Tests\Feature\Stories;
 use App\Mail\Stories\StoriesNewsletterMail;
 use App\Models\Group;
 use App\Models\User;
+use App\Services\Mail\MailSuppressionService;
 use App\Services\StoriesNewsletterService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -340,6 +341,41 @@ class StoriesNewsletterCommandTest extends TestCase
         $result = (new StoriesNewsletterService())->generateAndSend();
         $this->assertSame(0, $result['sent']);
         Mail::assertNothingSent();
+    }
+
+    public function test_skips_members_whose_provider_is_refusing_our_mail(): void
+    {
+        $this->minStories();
+        $group = $this->createTestGroup(['publish' => 1]);
+        $user  = $this->createTestUser([
+            'newslettersallowed' => 1,
+            'bouncing'           => 0,
+            'email_preferred'    => 'held@suppressed-example.com',
+        ]);
+        $this->createMembership($user, $group);
+
+        DB::table('mail_suppressions')->insert([
+            'scope'          => 'domain',
+            'value'          => 'suppressed-example.com',
+            'reason'         => '421 4.7.0 temporarily deferred',
+            'provider'       => 'Example',
+            'deferred_since' => now()->subHour(),
+            'first_seen'     => now(),
+            'last_seen'      => now(),
+            'message_count'  => 100,
+        ]);
+        app(MailSuppressionService::class)->flushCache();
+
+        $result = (new StoriesNewsletterService())->generateAndSend();
+
+        $this->assertSame(0, $result['sent']);
+        Mail::assertNothingSent();
+
+        // Counted, so ModTools can show what the member missed.
+        $this->assertDatabaseHas('mail_suppressed_counts', [
+            'userid'    => $user->id,
+            'emailtype' => 'storiesnewsletter',
+        ]);
     }
 
     public function test_skips_groups_with_newsletter_disabled_in_settings(): void
