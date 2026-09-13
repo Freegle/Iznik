@@ -5847,9 +5847,15 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// the pending queue before the withdrawal can still reject / delete the message
 	// without getting a spurious 403 from getMessageModContext failing to scan a
 	// now-absent messages row.
+	//
+	// "Still pending" means a live Pending row on a group the post was POSTED on. A copy
+	// that rippled into a neighbouring group and is sitting in its veto window is not
+	// that: the post is live at home, so withdrawing it is a real outcome, and the
+	// rippled copy is retired below like Taken and Received do. Rows already soft-deleted
+	// do not count either (Discourse 10102).
 	if req.Outcome == utils.OUTCOME_WITHDRAWN {
 		var pendingCount int64
-		db.Table("messages_groups").Where("msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING).Count(&pendingCount)
+		db.Table("messages_groups").Where("msgid = ? AND collection = ? AND deleted = 0 AND rippled_in = 0", req.ID, utils.COLLECTION_PENDING).Count(&pendingCount)
 		if pendingCount > 0 {
 			// Capture the groups the post is actively pending on *before* the
 			// soft-delete, so we can write a per-group audit log below.
@@ -5965,8 +5971,10 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// leaves those mod queues (and is never auto-approved/mailed into them later). We do this
 	// ONLY when the post is Approved on some other group, so the post and its Taken record
 	// survive and a post pending only on its single group is never stranded. Mirrors the
-	// Withdrawn-while-pending cleanup above, but keeps the message.
-	if req.Outcome == utils.OUTCOME_TAKEN || req.Outcome == utils.OUTCOME_RECEIVED {
+	// Withdrawn-while-pending cleanup above, but keeps the message. Withdrawn takes the
+	// same path: a rippled copy still in its veto window must not linger in that group's
+	// queue, or be approved into it later, once the poster has withdrawn (Discourse 10102).
+	if req.Outcome == utils.OUTCOME_TAKEN || req.Outcome == utils.OUTCOME_RECEIVED || req.Outcome == utils.OUTCOME_WITHDRAWN {
 		var approvedElsewhere int64
 		db.Table("messages_groups").Where("msgid = ? AND collection = ? AND deleted = 0", req.ID, utils.COLLECTION_APPROVED).Count(&approvedElsewhere)
 		if approvedElsewhere > 0 {
@@ -6023,11 +6031,14 @@ func canModifyMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 		return true
 	}
 
-	// Check if user is a moderator/owner of any group the message is on.
+	// Otherwise a moderator/owner of a group the message was POSTED on. Outcomes and
+	// "taken by" are facts about the whole post, so a copy that merely rippled into a
+	// moderator's group (rippled_in = 1) gives them no standing here; their per-group
+	// actions (reject, delete, hold) are unaffected (Discourse 10102).
 	var modCount int64
 	db.Table("messages_groups mg").
 		Joins("JOIN memberships m ON mg.groupid = m.groupid").
-		Where("mg.msgid = ? AND m.userid = ? AND m.role IN (?, ?)", msgid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Where("mg.msgid = ? AND mg.rippled_in = 0 AND m.userid = ? AND m.role IN (?, ?)", msgid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
 		Count(&modCount)
 	return modCount > 0
 }

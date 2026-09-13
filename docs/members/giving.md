@@ -83,7 +83,9 @@ you stop getting replies, and lets you thank and rate the person who collected.
 - Go to **My Posts**, open the post, and choose **Mark as TAKEN**.
 - You can also do this from the "What happened to ..." email we send you.
 
-If nobody took it and you no longer want to offer it, choose **Withdraw** instead.
+If nobody took it and you no longer want to offer it, choose **Withdraw** instead. The
+post is marked withdrawn on every community it has reached, including any copy still
+waiting for a moderator's look on a neighbouring community.
 
 ## Reminders and auto-reposting
 

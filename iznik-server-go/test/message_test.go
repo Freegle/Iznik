@@ -4936,6 +4936,134 @@ func TestPostMessageWithdrawnPendingLogsDeleted(t *testing.T) {
 	assert.Equal(t, "Withdrawn", logText, "log.text should note the withdrawal")
 }
 
+// A post live on its own group, with a copy still Pending on a group it rippled into,
+// is withdrawn like any other live post: the outcome is recorded and the post stays.
+// The rippled-in copy is retired with a per-group log, as Taken and Received already
+// do. Before this the pending copy sent the request down the "still pending, so
+// delete it" path and the whole post was soft-deleted (Discourse 10102).
+func TestPostMessageWithdrawnWithRippledCopyPendingRecordsOutcome(t *testing.T) {
+	prefix := uniquePrefix("msgw_wdr_rip")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	homeGroup := CreateTestGroup(t, prefix+"_home")
+	nearbyGroup := CreateTestGroup(t, prefix+"_near")
+	msgID := CreateTestMessage(t, userID, homeGroup, prefix+" offer item", 52.5, -1.8)
+
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, msgtype, rippled_in) VALUES (?, ?, 'Pending', NOW(), 'Offer', 1)", msgID, nearbyGroup)
+	db.Exec("DELETE FROM logs WHERE msgid = ?", msgID)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Outcome",
+		"outcome": "Withdrawn",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Nil(t, result["deleted"], "a live post is withdrawn, not deleted")
+
+	var msgDeleted *string
+	db.Raw("SELECT deleted FROM messages WHERE id = ?", msgID).Scan(&msgDeleted)
+	assert.Nil(t, msgDeleted, "the post itself must not be soft-deleted")
+
+	var outcome string
+	db.Raw("SELECT outcome FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&outcome)
+	assert.Equal(t, "Withdrawn", outcome, "the outcome is recorded")
+
+	var homeDeleted, nearbyDeleted int
+	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, homeGroup).Scan(&homeDeleted)
+	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, nearbyGroup).Scan(&nearbyDeleted)
+	assert.Equal(t, 0, homeDeleted, "the home copy is left alone")
+	assert.Equal(t, 1, nearbyDeleted, "the pending rippled-in copy is retired")
+
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE msgid = ? AND groupid = ? AND type = 'Message' AND subtype = 'Deleted' AND text = 'Withdrawn'",
+		msgID, nearbyGroup).Scan(&logCount)
+	assert.Equal(t, int64(1), logCount, "retiring the rippled-in copy is logged on that group")
+}
+
+// A Pending row that is already soft-deleted is not "still pending". It must not turn a
+// withdrawal of a live post into a soft-delete of the whole post.
+func TestPostMessageWithdrawnIgnoresDeletedPendingRows(t *testing.T) {
+	prefix := uniquePrefix("msgw_wdr_del")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	homeGroup := CreateTestGroup(t, prefix+"_home")
+	otherGroup := CreateTestGroup(t, prefix+"_other")
+	msgID := CreateTestMessage(t, userID, homeGroup, prefix+" offer item", 52.5, -1.8)
+
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, msgtype, deleted) VALUES (?, ?, 'Pending', NOW(), 'Offer', 1)", msgID, otherGroup)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Outcome",
+		"outcome": "Withdrawn",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msgDeleted *string
+	db.Raw("SELECT deleted FROM messages WHERE id = ?", msgID).Scan(&msgDeleted)
+	assert.Nil(t, msgDeleted, "a deleted pending row must not make the withdrawal delete the post")
+
+	var outcome string
+	db.Raw("SELECT outcome FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&outcome)
+	assert.Equal(t, "Withdrawn", outcome, "the outcome is recorded")
+}
+
+// Outcomes are facts about the whole post. A moderator whose only connection to the post
+// is a copy that rippled into their group cannot record one; a moderator of the group it
+// was posted on can.
+func TestPostMessageOutcomeRefusedForRippledInModerator(t *testing.T) {
+	prefix := uniquePrefix("msgw_out_rip")
+	db := database.DBConn
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	homeGroup := CreateTestGroup(t, prefix+"_home")
+	nearbyGroup := CreateTestGroup(t, prefix+"_near")
+	msgID := CreateTestMessage(t, posterID, homeGroup, prefix+" offer item", 52.5, -1.8)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, msgtype, rippled_in) VALUES (?, ?, 'Approved', NOW(), 'Offer', 1)", msgID, nearbyGroup)
+
+	nearbyModID := CreateTestUser(t, prefix+"_nearmod", "User")
+	CreateTestMembership(t, nearbyModID, nearbyGroup, "Moderator")
+	_, nearbyToken := CreateTestSession(t, nearbyModID)
+
+	homeModID := CreateTestUser(t, prefix+"_homemod", "User")
+	CreateTestMembership(t, homeModID, homeGroup, "Moderator")
+	_, homeToken := CreateTestSession(t, homeModID)
+
+	post := func(token string) int {
+		body := map[string]interface{}{
+			"id":      msgID,
+			"action":  "Outcome",
+			"outcome": "Withdrawn",
+		}
+		bodyBytes, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		return resp.StatusCode
+	}
+
+	assert.Equal(t, 403, post(nearbyToken), "a moderator of a rippled-in group cannot withdraw the post")
+	assert.Equal(t, 200, post(homeToken), "a moderator of the home group can")
+}
+
 func TestPostMessageWithdrawnApproved(t *testing.T) {
 	// Withdrawn on an approved message should record the outcome normally (not delete).
 	prefix := uniquePrefix("msgw_wdr_app")

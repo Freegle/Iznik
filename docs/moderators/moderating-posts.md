@@ -107,7 +107,10 @@ something on yours. Anything we say to a poster about their post comes from the 
 they posted it on, so Blank Reply and the standard messages whose only job is to write to
 the poster are hidden. A standard message that rejects or deletes shows a short
 confirmation and takes the copy off your community without opening the compose box, and
-the poster is not told. Approve, Hold and Release stay as plain buttons. A rippled-in copy
+the poster is not told. Approve, Hold and Release stay as plain buttons. Taken, Received
+and Withdrawn are not offered either: an outcome is a fact about the whole post, so it is
+recorded by the poster or by the moderators of the community it was posted on, and the
+server refuses it from anywhere else. A rippled-in copy
 can also arrive Pending because it breaks your own keyword or worry-word rules, with the
 reason shown on the post. The whole picture is in [rippling out](rippling-out.md).
 
