@@ -13,6 +13,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/firstreply"
+	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -1575,7 +1576,8 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": strconv.FormatUint(req.ID, 10) + " Not visible to you"})
 	}
 
-	// Determine status - default to Online if not specified
+	// Determine status - default to Online if not specified. A request with no
+	// status is the client marking the chat read (it sends only lastmsgseen).
 	status := req.Status
 	if status == "" {
 		status = utils.CHAT_STATUS_ONLINE
@@ -1584,7 +1586,14 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 	// Get user's IP for tracking
 	ip := c.IP()
 
-	// Insert or update roster entry
+	// Insert or update roster entry.
+	//
+	// A Block is sticky: only an explicit Online - the Unblock button - clears
+	// it. Everything else (mark-as-read with no status, Away/Offline presence,
+	// Closed) leaves a Block in place. V1 and the first Go port both let the
+	// mark-as-read default of Online overwrite Blocked, so a member who blocked
+	// someone and then opened the conversation was silently unblocked, and the
+	// other person's nudges and messages reached them again (Discourse #10153).
 	if status == utils.CHAT_STATUS_BLOCKED {
 		// Converted together with its
 		// identical twin below (9c86a991eb7c): a half-converted pair renumbers
@@ -1596,21 +1605,29 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 		}).Create(map[string]interface{}{
 			"chatid": req.ID, "userid": myid, "status": status, "lastip": ip, "date": gorm.Expr("NOW()"),
 		})
-	} else if status == utils.CHAT_STATUS_CLOSED {
-		// Don't overwrite BLOCKED with CLOSED
+
+		// Blocking someone withdraws any promise you made them (V1 parity:
+		// ChatRoom::updateRoster reneged on Block).
+		if room.Chattype == utils.CHAT_TYPE_USER2USER {
+			message.RenegePromisesTo(db, myid, getOtherUser(room, myid))
+		}
+	} else if req.Status == utils.CHAT_STATUS_ONLINE {
+		// Explicit Online: Unblock / Unhide. Overwrites whatever was there.
+		// Twin of 7db50195bb3c above.
 		db.Table("chat_roster").Clauses(clause.OnConflict{
 			DoUpdates: clause.Assignments(map[string]interface{}{
-				"status": gorm.Expr("IF(status = ?, status, ?)", utils.CHAT_STATUS_BLOCKED, status),
-				"lastip": ip, "date": gorm.Expr("NOW()"),
+				"status": status, "lastip": ip, "date": gorm.Expr("NOW()"),
 			}),
 		}).Create(map[string]interface{}{
 			"chatid": req.ID, "userid": myid, "status": status, "lastip": ip, "date": gorm.Expr("NOW()"),
 		})
 	} else {
-		// Twin of 7db50195bb3c above.
+		// Closed, Away, Offline, or the implicit Online of a mark-as-read:
+		// never overwrite BLOCKED.
 		db.Table("chat_roster").Clauses(clause.OnConflict{
 			DoUpdates: clause.Assignments(map[string]interface{}{
-				"status": status, "lastip": ip, "date": gorm.Expr("NOW()"),
+				"status": gorm.Expr("IF(status = ?, status, ?)", utils.CHAT_STATUS_BLOCKED, status),
+				"lastip": ip, "date": gorm.Expr("NOW()"),
 			}),
 		}).Create(map[string]interface{}{
 			"chatid": req.ID, "userid": myid, "status": status, "lastip": ip, "date": gorm.Expr("NOW()"),

@@ -184,6 +184,10 @@ Mobile-specific Stripe implementation:
    - Handle app links from external sources
    - One-click unsubscribe links
    - Push notification routing
+   - Tracked email links (`/e/d/r/...`): the universal-link association hands
+     the app the tracker's URL, not its destination, so `stores/mobile.js`
+     `resolveTrackedLink()` asks the API (`?format=json`, which also records
+     the click) and routes to the answer, falling back to `/`
 
 2. **Native Share**
    - Share posts using native share sheet
