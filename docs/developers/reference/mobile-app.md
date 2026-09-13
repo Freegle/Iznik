@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-06
+last_reviewed: 2026-09-13
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/capacitor.config.ts
@@ -51,6 +51,10 @@ Facts worth carrying in your head:
 - The Android build **throws at config time** unless the four keystore variables are set
   (`FREEGLE_NUXT3_KEYSTORE_PATH`, `..._PASSWORD`, `..._ALIAS`, `FREEGLE_NUXT3_KEYALIAS_PASSWORD`).
   That is deliberate: an unsigned build is worse than no build.
+
+Adverts in the app: no ad network runs without cookie consent, so every ad slot shows the
+job listings, with the donate banner while there are none. See
+[ads.md](ads.md#the-mobile-app) before changing that path.
 
 ## Releasing
 
