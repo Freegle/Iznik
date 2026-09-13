@@ -317,9 +317,12 @@ const visibleCollectionGroups = computed(() => {
 </script>
 <style scoped lang="scss">
 @import 'assets/css/_color-vars.scss';
+@import 'assets/css/navbar.scss';
 
 .my-posts-list {
-  padding: 0;
+  /* Room for the fixed bottom navigation bar, which slides back over the end
+     of the list when scrolling stops (Discourse 9808/805). */
+  padding: 0 0 $page-bottom-padding;
 }
 
 .loading-state {
