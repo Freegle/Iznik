@@ -678,6 +678,8 @@ export const useMessageStore = defineStore('message', {
         search: params.term,
         messagetype: 'All',
         groupids: params.groupid ? String(params.groupid) : undefined,
+        // Approved Messages "Only this group's own posts (hide rippled-in)".
+        originonly: params.originonly ? 'true' : undefined,
         searchmode: 'vector',
       })
 

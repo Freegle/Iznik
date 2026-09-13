@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-05
+last_reviewed: 2026-09-06
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -107,9 +107,17 @@ something on yours. Anything we say to a poster about their post comes from the 
 they posted it on, so Blank Reply and the standard messages whose only job is to write to
 the poster are hidden. A standard message that rejects or deletes shows a short
 confirmation and takes the copy off your community without opening the compose box, and
-the poster is not told. Approve, Hold and Release stay as plain buttons. A rippled-in copy
+the poster is not told. Approve, Hold and Release stay as plain buttons. Taken, Received
+and Withdrawn are not offered either: an outcome is a fact about the whole post, so it is
+recorded by the poster or by the moderators of the community it was posted on, and the
+server refuses it from anywhere else. A rippled-in copy
 can also arrive Pending because it breaks your own keyword or worry-word rules, with the
 reason shown on the post. The whole picture is in [rippling out](rippling-out.md).
+
+Only a copy rippling created counts as rippled in. A post a TrashNothing member sent to
+your community directly, as well as to others, is yours to moderate in full, and the
+member is told when you reject it - it makes no difference which community's copy
+happened to arrive first.
 
 ### Fill-in boxes and optional bits
 
@@ -142,7 +150,9 @@ shows these with an old-to-new difference, and you **Accept Edit** or **Reject E
 **Messages > Approved** (`/messages/approved`) lets you browse posts that are already
 live, search by id, subject or member, and mark OFFERs and WANTEDs as **Taken**,
 **Received** or **Withdrawn** on the member's behalf when needed. You can also move a post
-**Back to Pending** for another look.
+**Back to Pending** for another look. Tick **Only this group's own posts (hide
+rippled-in)** to leave out copies that rippled in from elsewhere; it applies to a search
+by subject as well as to the plain list.
 
 ## Marking as spam versus deleting
 
@@ -172,7 +182,8 @@ communities are unaffected. There is a full walk-through in
 When a post reappears in your Pending queue this way - even one you had already approved -
 the pending post now shows the reason (for example *"A moderator moved this post back to
 pending for review."*), so you can see why it is back rather than assuming your Approve did
-not work.
+not work. The post's logs on your community record the same pull as a Hold entry, naming
+the moderator who did it when it was a moderator rather than a members' review.
 
 ## Next steps
 

@@ -14,6 +14,7 @@ import (
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The 'nearby' browse feed (GET /isochrone/message) now selects posts whose rippling-out
@@ -119,8 +120,13 @@ func TestNearbyReachFeed(t *testing.T) {
 
 	// The nearby count (GET /message/count, nearby view) mirrors the feed: the covered posts
 	// are unseen for this brand-new viewer, so the count includes them.
+	// require, not assert, on the status: the line below reads cbody["count"] with a bare
+	// type assertion, and assert records a failure without stopping. A non-200 therefore
+	// reached that conversion on a nil and panicked, which failed the whole package and
+	// left go test writing a coverage profile with only the small unit packages in it -
+	// published as an 86% -> 15.9% drop. Stopping here keeps a bad response a plain failure.
 	cresp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
-	assert.Equal(t, 200, cresp.StatusCode)
+	require.Equal(t, 200, cresp.StatusCode)
 	var cbody map[string]interface{}
 	json2.Unmarshal(rsp(cresp), &cbody)
 	assert.GreaterOrEqual(t, cbody["count"].(float64), float64(2), "nearby count includes both reach-covered unseen posts")
@@ -171,7 +177,7 @@ func TestNearbyCountDistanceLimit(t *testing.T) {
 	stubReachIndexFromDB(t, false)
 
 	unlimitedResp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
-	assert.Equal(t, 200, unlimitedResp.StatusCode)
+	require.Equal(t, 200, unlimitedResp.StatusCode)
 	var unlimitedBody map[string]interface{}
 	json2.Unmarshal(rsp(unlimitedResp), &unlimitedBody)
 	unlimitedCount := unlimitedBody["count"].(float64)
@@ -180,7 +186,7 @@ func TestNearbyCountDistanceLimit(t *testing.T) {
 
 	// maxDistance=10 (miles): 'near' (≈0mi) is within it, 'far' (≈27mi) is not.
 	limitedResp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token+"&maxDistance=10", nil))
-	assert.Equal(t, 200, limitedResp.StatusCode)
+	require.Equal(t, 200, limitedResp.StatusCode)
 	var limitedBody map[string]interface{}
 	json2.Unmarshal(rsp(limitedResp), &limitedBody)
 	limitedCount := limitedBody["count"].(float64)
@@ -199,7 +205,7 @@ func TestNearbyCountDistanceLimit(t *testing.T) {
 	browsecount.Invalidate(viewerID)
 
 	settingResp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
-	assert.Equal(t, 200, settingResp.StatusCode)
+	require.Equal(t, 200, settingResp.StatusCode)
 	var settingBody map[string]interface{}
 	json2.Unmarshal(rsp(settingResp), &settingBody)
 	assert.Equal(t, limitedCount, settingBody["count"].(float64),

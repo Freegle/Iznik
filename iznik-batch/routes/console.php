@@ -32,6 +32,25 @@ if (!function_exists('cronLog')) {
 \App\Console\SchedulerMutex::apply(app(\Illuminate\Console\Scheduling\Schedule::class));
 
 // =============================================================================
+// DEPLOYMENT SWITCHES (see docs/developers/reference/deployment-switches.md)
+// =============================================================================
+// Another deployment of this codebase adds its own jobs in an overlay file that
+// Freegle does not ship, and can choose to run ONLY those. Both default to how
+// Freegle runs today: no overlay, the full schedule below.
+$scheduleOverlay = (string) config('freegle.schedule.overlay', '');
+if ($scheduleOverlay !== '') {
+    if (! str_starts_with($scheduleOverlay, '/')) {
+        $scheduleOverlay = base_path($scheduleOverlay);
+    }
+    if (is_file($scheduleOverlay)) {
+        require $scheduleOverlay;
+    }
+}
+if (config('freegle.schedule.profile', 'full') === 'overlay-only') {
+    return;
+}
+
+// =============================================================================
 // ACTIVE SCHEDULED COMMANDS
 // =============================================================================
 
@@ -839,6 +858,16 @@ foreach (range(0, $reachMailShardCount - 1) as $reachShard) {
         ->sendOutputTo(cronLog("mail:digest:unified.reach.shard{$reachShard}"))
         ->runInBackground();
 }
+
+// The daily backstop for reach mail's member queue: re-queue anyone whose join or postcode
+// change since yesterday was not followed by reach mail, so a hook that is missed or wrong
+// costs a day rather than the mail. Two indexed queries over the last day; the reach pass's
+// drain does the containment work.
+Schedule::command('ripple:reconcile-reach-members')
+    ->dailyAt('05:23')
+    ->withoutOverlapping(360)
+    ->sendOutputTo(cronLog('ripple:reconcile-reach-members'))
+    ->runInBackground();
 
 // Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')

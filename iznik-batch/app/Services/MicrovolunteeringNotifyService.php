@@ -73,7 +73,11 @@ class MicrovolunteeringNotifyService
             INNER JOIN `groups` ON messages_groups.groupid = groups.id
             LEFT JOIN users_notifications
                 ON users_notifications.timestamp >= DATE_SUB(NOW(), INTERVAL 1 DAY)
-                AND users_notifications.url LIKE CONCAT('/microvolunteering/message/', messages.id)
+                -- Equality, not LIKE. The pattern carries no wildcard so the two match the
+                -- same rows, but MySQL cannot use an index for LIKE against a pattern built
+                -- per row, so this correlation was evaluated by scanning. As `=` an index on
+                -- users_notifications.url can serve it as a ref lookup.
+                AND users_notifications.url = CONCAT('/microvolunteering/message/', messages.id)
                 AND users_notifications.type = ?
             WHERE messages_groups.arrival > DATE_SUB(NOW(), INTERVAL 1 DAY)
               AND messages.deleted IS NULL

@@ -92,6 +92,10 @@ type ReachOrigin struct {
 	// Schedule is nil when the column is empty or unusable.
 	Schedule []rippling.ScheduleTick
 	Arrival  *time.Time
+	// Finished: the reach has stopped expanding (status 'done'), so a member it does
+	// not cover is never going to be covered. Callers say so rather than dating an
+	// arrival off a schedule that has already run out.
+	Finished bool
 }
 
 // ReachBlockedOrigins is ReachBlockedSet with the reach origin of each blocked
@@ -161,7 +165,7 @@ func reachBlockedOrigins(myid uint64, msgids []uint64, lat, lng float64, strict 
 			if _, ok := admitted[id]; ok {
 				continue
 			}
-			origin := ReachOrigin{Arrival: info.Arrival}
+			origin := ReachOrigin{Arrival: info.Arrival, Finished: info.Status == "done"}
 			if info.Lat != nil && info.Lng != nil {
 				origin.Lat, origin.Lng, origin.Ok = *info.Lat, *info.Lng, true
 			}

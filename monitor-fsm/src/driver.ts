@@ -57,6 +57,7 @@ import { ClaudeCodeAdapter } from 'ai-flower/adapters/claude-code'
 import { actions } from './actions/index.js'
 import { sanitizeLLMDecision } from './llm-json.js'
 import { ensureUsableInstanceStore } from './instance-store.js'
+import { parseOnlyDecision, proposedTransitions } from './parse-only.js'
 import { pruneInstances } from './prune-instances.js'
 import { partitionFailedChecks } from './coverage-checks.js'
 import { getDb, startIteration, endIteration } from './db/index.js'
@@ -499,6 +500,24 @@ async function main() {
       consecutiveDiagnose = 0
     }
 
+    // ─── PARSE_ONLY: never START a non-analysis state ───
+    // The tool-node fast-path below transitions and `continue`s past the post-step
+    // guard further down, so WORK_ROUTER's route into PARALLEL_FIX_BUGS reached the
+    // next step unchallenged (2026-09-12: a scan-only run launched five fix
+    // delegates). Judge the state we are about to execute, before anything runs.
+    if (process.env.PARSE_ONLY === '1') {
+      const decision = parseOnlyDecision([current.currentState])
+      if (decision.action === 'bypass') {
+        out('PARSE_ONLY: master red but skipping fix — forcing straight to Discourse analysis')
+        await engine.forceTransition(instance.id, decision.to, 'PARSE_ONLY: bypassing FIX_MASTER_CI')
+        continue
+      }
+      if (decision.action === 'stop') {
+        out(`PARSE_ONLY: stopping before ${humanizeState(decision.offender)}`)
+        break
+      }
+    }
+
     step++
     // Flag the step header with whether it costs an LLM call. Tool / start-with-
     // readActions → deterministic code, no tokens. Agent → LLM decides what to
@@ -838,27 +857,21 @@ async function main() {
         // Judge the state we are HEADED FOR, not only the one we are sitting
         // in. A step's action returns its target as `_transition`, and reading
         // currentState alone let a PARSE_ONLY run walk straight into
-        // PARALLEL_FIX_BUGS and dispatch real fix delegates: WORK_ROUTER
-        // returned _transition PARALLEL_FIX_BUGS, currentState still read as
-        // an analysis state, the stop never fired. Considering both is correct
-        // whenever the engine applies the transition.
-        const proposedNext: string[] = result.actionsExecuted
-          .map((a: any) => a?.result?._transition)
-          .filter((t: any): t is string => typeof t === 'string' && t.length > 0)
-        const candidateStates = [parseOnlyNow.currentState, ...proposedNext]
-
-        if (candidateStates.includes('FIX_MASTER_CI')) {
+        // PARALLEL_FIX_BUGS and dispatch real fix delegates (2026-08-06). The
+        // pre-step check at the top of the loop is the backstop for tool nodes,
+        // which never reach this point; this one stops as early as an LLM step
+        // shows its intent. Same decision, see parse-only.ts.
+        const decision = parseOnlyDecision([
+          parseOnlyNow.currentState,
+          ...proposedTransitions(result.actionsExecuted),
+        ])
+        if (decision.action === 'bypass') {
           out('PARSE_ONLY: master red but skipping fix — forcing straight to Discourse analysis')
-          await engine.forceTransition(instance.id, 'PARALLEL_ANALYZE_AND_FIX', 'PARSE_ONLY: bypassing FIX_MASTER_CI')
+          await engine.forceTransition(instance.id, decision.to, 'PARSE_ONLY: bypassing FIX_MASTER_CI')
           continue
         }
-        const ANALYSIS_STATES = new Set([
-          'LOAD_STATE', 'CHECK_CI', 'CI_ROUTER',
-          'PARALLEL_ANALYZE_AND_FIX', 'COLLATE_RESULTS', 'WORK_ROUTER',
-        ])
-        const offender = candidateStates.find(s => !ANALYSIS_STATES.has(s))
-        if (offender) {
-          out(`PARSE_ONLY: stopping before ${humanizeState(offender)}`)
+        if (decision.action === 'stop') {
+          out(`PARSE_ONLY: stopping before ${humanizeState(decision.offender)}`)
           break
         }
       }

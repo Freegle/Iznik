@@ -713,4 +713,214 @@ class PurgeServiceTest extends TestCase
         $this->assertArrayHasKey('user_activity_logs', $results);
         $this->assertArrayHasKey('orphaned_user_logs', $results);
     }
+
+    /**
+     * Set the service's chunk size for a test. Reflection rather than a setter so the
+     * production class does not grow an API that only tests use.
+     */
+    private function setChunkSize(int $size): void
+    {
+        $prop = new \ReflectionProperty(PurgeService::class, 'chunkSize');
+        $prop->setAccessible(true);
+        $prop->setValue($this->service, $size);
+    }
+
+    /**
+     * Record the SQL of every chunk SELECT the given callback runs against `logs`.
+     *
+     * @return array<int, array{sql: string, bindings: array}>
+     */
+    private function captureChunkSelects(string $needle, callable $fn): array
+    {
+        $seen = [];
+        DB::listen(function ($query) use (&$seen, $needle) {
+            if (stripos($query->sql, 'select') === 0 && stripos($query->sql, $needle) !== false) {
+                $seen[] = ['sql' => $query->sql, 'bindings' => $query->bindings];
+            }
+        });
+
+        $fn();
+
+        return $seen;
+    }
+
+    /**
+     * The orphan-log purge must resume from the last id it saw rather than re-running the
+     * whole anti-join for every chunk. Without a watermark each chunk rescans the table from
+     * the start, so the run is O(chunks x table) and gets slower as it nears completion -
+     * measured on production at 2.9M rows read per row deleted.
+     */
+    public function test_purge_orphaned_user_logs_resumes_from_a_watermark(): void
+    {
+        $missingUser = 2147483000;
+
+        $orphans = [];
+        for ($i = 0; $i < 3; $i++) {
+            $orphans[] = DB::table('logs')->insertGetId([
+                'type' => 'User',
+                'subtype' => 'Login',
+                'user' => $missingUser + $i,
+                'timestamp' => now()->subDays(400),
+            ]);
+        }
+
+        $this->setChunkSize(1);
+
+        $selects = $this->captureChunkSelects('left join users', function () {
+            $this->service->purgeOrphanedUserLogs();
+        });
+
+        $this->assertGreaterThanOrEqual(2, count($selects), 'expected one chunk SELECT per orphan plus a terminating one');
+
+        $watermarks = [];
+        foreach ($selects as $select) {
+            $this->assertMatchesRegularExpression(
+                '/logs\.id\s*>\s*\?/i',
+                $select['sql'],
+                'each chunk must be bounded by an id watermark so it resumes instead of rescanning'
+            );
+
+            $numeric = array_values(array_filter($select['bindings'], 'is_int'));
+            $this->assertNotEmpty($numeric, 'the watermark binding must be present');
+            $watermarks[] = $numeric[0];
+        }
+
+        $sorted = $watermarks;
+        sort($sorted);
+        $this->assertSame($sorted, $watermarks, 'the watermark must not go backwards');
+        $this->assertSame(count(array_unique($watermarks)), count($watermarks), 'each chunk must start after the previous one ended');
+
+        foreach ($orphans as $orphan) {
+            $this->assertDatabaseMissing('logs', ['id' => $orphan]);
+        }
+    }
+
+    /**
+     * The watermark must not skip work: orphans separated by rows that are not orphans must
+     * all still be deleted, and the rows in between must survive.
+     */
+    public function test_purge_orphaned_user_logs_deletes_orphans_interleaved_with_live_rows(): void
+    {
+        $user = $this->createTestUser();
+        $missingUser = 2147483100;
+
+        $first = DB::table('logs')->insertGetId([
+            'type' => 'User', 'subtype' => 'Login', 'user' => $missingUser,
+            'timestamp' => now()->subDays(400),
+        ]);
+        $keep = DB::table('logs')->insertGetId([
+            'type' => 'User', 'subtype' => 'Login', 'user' => $user->id,
+            'timestamp' => now()->subDays(400),
+        ]);
+        $second = DB::table('logs')->insertGetId([
+            'type' => 'User', 'subtype' => 'Login', 'user' => $missingUser + 1,
+            'timestamp' => now()->subDays(400),
+        ]);
+
+        $this->setChunkSize(1);
+        $this->service->purgeOrphanedUserLogs();
+
+        $this->assertDatabaseMissing('logs', ['id' => $first]);
+        $this->assertDatabaseMissing('logs', ['id' => $second]);
+        $this->assertDatabaseHas('logs', ['id' => $keep]);
+    }
+
+    /**
+     * Recent orphans must be left alone - the cutoff is what keeps the purge to old rows.
+     */
+    public function test_purge_orphaned_user_logs_leaves_recent_orphans(): void
+    {
+        $recent = DB::table('logs')->insertGetId([
+            'type' => 'User', 'subtype' => 'Login', 'user' => 2147483200,
+            'timestamp' => now()->subDays(1),
+        ]);
+
+        $this->service->purgeOrphanedUserLogs();
+
+        $this->assertDatabaseHas('logs', ['id' => $recent]);
+    }
+
+    /**
+     * Same defect as the orphan-log purge: the empty-room anti-join drives a 3.8M-row range
+     * scan on `typelatest`, and without a watermark every chunk repeats it from the start.
+     */
+    public function test_purge_empty_chat_rooms_resumes_from_a_watermark(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $user3 = $this->createTestUser();
+
+        ChatRoom::create([
+            'name' => 'Empty A', 'chattype' => ChatRoom::TYPE_USER2USER,
+            'user1' => $user1->id, 'user2' => $user2->id,
+        ]);
+        ChatRoom::create([
+            'name' => 'Empty B', 'chattype' => ChatRoom::TYPE_USER2USER,
+            'user1' => $user1->id, 'user2' => $user3->id,
+        ]);
+
+        $this->setChunkSize(1);
+
+        $selects = $this->captureChunkSelects('chat_messages', function () {
+            $this->service->purgeEmptyChatRooms();
+        });
+
+        $chunkSelects = array_values(array_filter($selects, fn ($q) => stripos($q['sql'], 'left join') !== false));
+        $this->assertGreaterThanOrEqual(2, count($chunkSelects));
+
+        $watermarks = [];
+        foreach ($chunkSelects as $select) {
+            $this->assertMatchesRegularExpression(
+                '/`?chat_rooms`?\.`?id`?\s*>\s*\?/i',
+                $select['sql'],
+                'each chunk must be bounded by an id watermark so it resumes instead of rescanning'
+            );
+
+            $numeric = array_values(array_filter($select['bindings'], 'is_int'));
+            $this->assertNotEmpty($numeric, 'the watermark binding must be present');
+            $watermarks[] = end($numeric);
+        }
+
+        $sorted = $watermarks;
+        sort($sorted);
+        $this->assertSame($sorted, $watermarks, 'the watermark must not go backwards');
+        $this->assertSame(count(array_unique($watermarks)), count($watermarks), 'each chunk must start after the previous one ended');
+    }
+
+    /**
+     * The watermark must not skip empty rooms that sit after a room which has messages.
+     */
+    public function test_purge_empty_chat_rooms_deletes_rooms_interleaved_with_busy_rooms(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $user3 = $this->createTestUser();
+        $user4 = $this->createTestUser();
+
+        $firstEmpty = ChatRoom::create([
+            'name' => 'Empty first', 'chattype' => ChatRoom::TYPE_USER2USER,
+            'user1' => $user1->id, 'user2' => $user2->id,
+        ]);
+
+        $busy = ChatRoom::create([
+            'name' => 'Busy', 'chattype' => ChatRoom::TYPE_USER2USER,
+            'user1' => $user1->id, 'user2' => $user3->id,
+        ]);
+        ChatMessage::create([
+            'chatid' => $busy->id, 'userid' => $user1->id, 'message' => 'Hello',
+            'type' => ChatMessage::TYPE_DEFAULT, 'date' => now(),
+        ]);
+
+        $lastEmpty = ChatRoom::create([
+            'name' => 'Empty last', 'chattype' => ChatRoom::TYPE_USER2USER,
+            'user1' => $user1->id, 'user2' => $user4->id,
+        ]);
+
+        $this->setChunkSize(1);
+        $this->service->purgeEmptyChatRooms();
+
+        $this->assertDatabaseMissing('chat_rooms', ['id' => $firstEmpty->id]);
+        $this->assertDatabaseMissing('chat_rooms', ['id' => $lastEmpty->id]);
+        $this->assertDatabaseHas('chat_rooms', ['id' => $busy->id]);
+    }
 }

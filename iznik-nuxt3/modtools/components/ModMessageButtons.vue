@@ -110,8 +110,13 @@
         spam
         label="Delete as Spam"
       />
+      <!-- Outcomes are facts about the whole post, so they belong to the poster or to the
+           moderators of the group it was posted on. The server refuses them from a group
+           the post merely rippled into, so do not offer them there (Discourse 10102). -->
       <SpinButton
-        v-if="message.type === 'Offer' && !message.outcomes?.length"
+        v-if="
+          isHomeGroup && message.type === 'Offer' && !message.outcomes?.length
+        "
         variant="white"
         class="m-1"
         icon-name="check"
@@ -121,7 +126,9 @@
         @handle="outcome($event, 'Taken')"
       />
       <SpinButton
-        v-if="message.type === 'Wanted' && !message.outcomes?.length"
+        v-if="
+          isHomeGroup && message.type === 'Wanted' && !message.outcomes?.length
+        "
         variant="white"
         class="m-1"
         icon-name="check"
@@ -131,7 +138,7 @@
         @handle="outcome($event, 'Received')"
       />
       <SpinButton
-        v-if="!message.outcomes?.length"
+        v-if="isHomeGroup && !message.outcomes?.length"
         variant="white"
         class="m-1"
         icon-name="trash-alt"

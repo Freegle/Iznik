@@ -385,6 +385,14 @@ the reply is sent rather than held, and no "hasn't reached your area yet" notice
 `rippling.ReachRowInfo.Decided` carries that distinction in Go, `ReachQueryService::reachVerdict`
 in PHP. Mail is the one exception (see below).
 
+**A finished reach is not "on its way".** An `out` on a row whose `status` is `done` (the
+schedule ran out, or the extent governor stopped it) is permanent, so the message page says
+so (`reachfinished`, `message/reach.go` `ReachOrigin.Finished`) instead of dating an
+arrival: the only date `CoverageAt` could give is the final tick's, already in the past,
+which the client rendered as "any moment now" about a reach that had ended weeks earlier
+(Discourse 9808/797). The reply is still held and `ripple:release-replies` releases it on
+its next pass through the `done` branch, so "straight away" is what the member is told.
+
 That direction was chosen after 2026-09-02, when the reach engine was down for sixteen hours
 and the gates failed the other way. A member 13 minutes' drive from a post, in the post's own
 community since 2009, was told it had not reached her - beside an ETA, computed on a lane
@@ -1044,7 +1052,24 @@ rows, its latest row states its outcome.
   `updated_at` delta catch-up, then an atomic RENAME swap. Dev/CI just run the Laravel
   migration (small tables).
 - **Unified digest distance scoring:** the reach polygon feeds each post's closeness score.
-- **Reach mail:** the join notification when a post ripples to within reach.
+- **Reach mail:** the join notification when a post ripples to within reach. Two change feeds
+  drive it, one per direction, and neither uses a time window:
+  - *The post's reach moved.* `UnifiedDigestService::sendReachDigests` resumes from a per-shard
+    mark on `rippling_reach.updated_at` (`config` key `reach_mail_mark_shard{N}`), stored as the
+    time the pass started so a row written in the same second is caught next tick. A dry run,
+    a pass stopped early, or a pass with a failed post leaves the mark alone. A cold start reads
+    the last hour. A repost of a Taken or Received post bumps `updated_at` (`JoinAndPostAs` in
+    iznik-server-go), since its reach row survives with its old stamp.
+  - *The member changed.* Joining a group, changing postcode, returning after 90 days away, or
+    switching to immediate mail queues the member in `rippling_reach_member_pending` (written
+    through iznik-server-go's `reachqueue` package by `authMiddleware`, `ProcessSettingsUpdate`, `addMemberToGroup`,
+    `putMembershipsPartner`, `PutUser`, `PatchMemberships`; and by `ExpandService`'s ripple
+    auto-join and `user:add-membership` in PHP - see `ReachMemberQueueService`). The same pass
+    drains the queue, partitioned by `MOD(userid, shards)`, asking `mailNewlyReachedForPost`
+    about each candidate post scoped to that one member. `ripple:reconcile-reach-members` runs
+    daily and re-queues anyone whose join or postcode change since yesterday has no ledger row
+    after it, so a missed hook costs a day, not the mail.
+  The `rippling_reach_notified` ledger dedupes both feeds, so their overlap is harmless.
 - **Held replies:** a reply from outside the post's current reach is parked in
   `rippling_held_replies` rather than delivered, so local people keep first chance. Every hold
   is a **delay with a due time** rather than an open-ended wait - see §7a. One exception: a
@@ -1263,10 +1288,16 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   (§7a) and `releasedat`. Two similar names, one letter apart: `dueat` is when it becomes
   due, `releasedat` is when it actually went.
 - `messages_groups.rippled_in = 1` - marks a rippled-in copy (vs the origin membership).
-  It is also how the post's **origin group** is identified: `MessageOriginGroup`
-  (`iznik-server-go/message/message.go`) takes the earliest-arriving `rippled_in = 0` row,
-  and the client's `homeGroupId` (`composables/rippleStatus.js`) uses the same column.
-  Identify the origin from this column and nothing else. In particular an arrival window
+  It is also how the post's **home groups** are identified, and they are a SET: `HomeGroups`
+  (`iznik-server-go/message/message.go`) is every `rippled_in = 0` row, and
+  `NotifyPosterFlag` relays a moderation action to the poster only from one of them. The
+  client's `isHomeGroupRow` (`composables/rippleStatus.js`) reads the same column per row;
+  `homeGroupId` still picks the earliest of them where ONE anchor is needed (which chat a
+  Blank Reply joins). A TrashNothing cross-post is one post sent directly to several
+  communities, whose mails arrive a second apart, and every one of those copies is home -
+  modelling home as the single earliest row told the others they were rejecting a
+  rippled-in copy and dropped their mail to the member (Discourse 10115).
+  Identify home from this column and nothing else. In particular an arrival window
   (`messages_groups.arrival` close to `messages.arrival`) does not work: approving
   re-stamps `messages_groups.arrival` to the approval time while `messages.arrival` keeps
   the time the post was received, so any post moderated slowly has no row inside the

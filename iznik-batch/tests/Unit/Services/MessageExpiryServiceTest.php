@@ -325,6 +325,56 @@ class MessageExpiryServiceTest extends TestCase
         ]);
     }
 
+    public function test_aged_post_expires_even_when_its_spatial_row_is_gone(): void
+    {
+        // The spatial index only keeps posts from the last 31 days, so a post whose expiry
+        // threshold is longer than that lost its spatial row before it ever came due. The
+        // expiry job used to read its candidates from that index, so such a post was never
+        // withdrawn: tens of thousands of live posts three months to a year old on
+        // production (Discourse 9808/806). Candidates come from the live postings now.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup([
+            'settings' => [
+                'maxagetoshow' => 45,
+                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
+            ],
+        ]);
+        $this->createMembership($user, $group);
+
+        // 46 days on the group: past the 45-day threshold, and past the 31-day spatial window.
+        $message = $this->createTestMessage($user, $group, ['arrival' => now()->subDays(46)]);
+        $this->assertDatabaseMissing('messages_spatial', ['msgid' => $message->id]);
+
+        $count = $this->service->processExpiredFromSpatialIndex();
+
+        $this->assertEquals(1, $count);
+        $this->assertDatabaseHas('messages_outcomes', [
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
+            'comments' => 'Auto-expired',
+        ]);
+    }
+
+    public function test_post_older_than_spatial_window_but_inside_threshold_is_left_alone(): void
+    {
+        // Older than the 31-day spatial window, but the group gives it 90 days: nothing to do.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup([
+            'settings' => [
+                'maxagetoshow' => 90,
+                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
+            ],
+        ]);
+        $this->createMembership($user, $group);
+
+        $message = $this->createTestMessage($user, $group, ['arrival' => now()->subDays(40)]);
+
+        $count = $this->service->processExpiredFromSpatialIndex();
+
+        $this->assertEquals(0, $count);
+        $this->assertDatabaseMissing('messages_outcomes', ['msgid' => $message->id]);
+    }
+
     public function test_process_expired_from_spatial_index_virtual_expiry_by_age(): void
     {
         $user = $this->createTestUser();
