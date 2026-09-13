@@ -8,6 +8,7 @@ const { mockMessageStore, mockModConfigStore } = vi.hoisted(() => {
     byId: vi.fn(),
     fetch: vi.fn().mockResolvedValue(),
     updateMT: vi.fn().mockResolvedValue(),
+    rejectFromOversight: vi.fn().mockResolvedValue(),
   }
   const mockModConfigStore = {
     configsById: {},
@@ -766,6 +767,49 @@ describe('ModMessageButtons', () => {
 
       const wrapper = mountComponent({ modconfigid: 1 })
       expect(wrapper.vm.filtered).toEqual([])
+    })
+  })
+
+  describe('oversight context (checked/trusted pages)', () => {
+    function rejectBtn(wrapper) {
+      return wrapper
+        .findAll('.spin-button')
+        .find((b) => b.text().includes('Reject (back to Pending)'))
+    }
+
+    it('shows Reject when oversight=true and the message is Approved', () => {
+      const wrapper = mountComponent(
+        { oversight: true },
+        { groups: [{ groupid: 456, collection: 'Approved' }] }
+      )
+      expect(rejectBtn(wrapper)).toBeDefined()
+    })
+
+    it('does NOT show Reject when oversight is false (default) for Approved', () => {
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'Approved' }] }
+      )
+      expect(rejectBtn(wrapper)).toBeUndefined()
+    })
+
+    it('does NOT show Reject for Pending even with oversight=true', () => {
+      const wrapper = mountComponent(
+        { oversight: true },
+        { groups: [{ groupid: 456, collection: 'Pending' }] }
+      )
+      expect(rejectBtn(wrapper)).toBeUndefined()
+    })
+
+    it('calls rejectFromOversight with messageid and groupid on click', async () => {
+      const wrapper = mountComponent(
+        { oversight: true, groupid: 456 },
+        { id: 123, groups: [{ groupid: 456, collection: 'Approved' }] }
+      )
+      const btn = rejectBtn(wrapper)
+      expect(btn).toBeDefined()
+      await btn.trigger('click')
+      expect(mockMessageStore.rejectFromOversight).toHaveBeenCalledWith(123, 456)
     })
   })
 })

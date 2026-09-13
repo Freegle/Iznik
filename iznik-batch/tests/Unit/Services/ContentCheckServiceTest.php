@@ -661,6 +661,54 @@ class ContentCheckServiceTest extends TestCase
     // isUserModerated — needs DB
     // =========================================================================
 
+    // =========================================================================
+    // reasonsAreContentClean / contentCleanSql - the clean auto-approve predicate
+    // =========================================================================
+
+    /** @return array<string, array{0: ?string, 1: bool}> */
+    public static function contentCleanCases(): array
+    {
+        $mm = ['check' => ContentCheckService::CHECK_MEMBER_MODERATED, 'category' => null, 'action' => 'flag', 'detail' => 'x'];
+        $gm = ['check' => ContentCheckService::CHECK_GROUP_MODERATED, 'category' => null, 'action' => 'flag', 'detail' => 'x'];
+        $nl = ['check' => ContentCheckService::CHECK_NO_LOCATION, 'category' => null, 'action' => 'flag', 'detail' => 'x'];
+        $money = ['check' => ContentCheckService::CHECK_MONEY, 'category' => null, 'action' => 'flag', 'detail' => 'x'];
+
+        return [
+            'no reasons'                         => [null, true],
+            'member moderated only'              => [json_encode([$mm]), true],
+            'group + member moderated'           => [json_encode([$gm, $mm]), true],
+            'a content finding beside them'      => [json_encode([$mm, $money]), false],
+            'a content finding alone'            => [json_encode([$money]), false],
+            'no location is not clean'           => [json_encode([$mm, $nl]), false],
+            'an element without a check is skipped' => [json_encode([$mm, ['detail' => 'x']]), true],
+            'no checks at all'                   => [json_encode([['detail' => 'x']]), false],
+            'empty array'                        => ['[]', false],
+            'not json'                           => ['not json', false],
+            'a scalar'                           => ['"MemberModerated"', false],
+        ];
+    }
+
+    /** @dataProvider contentCleanCases */
+    public function test_reasons_are_content_clean(?string $json, bool $expected): void
+    {
+        $this->assertSame($expected, ContentCheckService::reasonsAreContentClean($json));
+    }
+
+    /**
+     * The SQL form must give the database's answer, and it must be the PHP answer: the
+     * cron's candidate query uses the SQL and the Go countdown mirrors the PHP, so a case
+     * where they differ is a countdown promising what the cron will not do.
+     *
+     * @dataProvider contentCleanCases
+     */
+    public function test_content_clean_sql_agrees_with_php(?string $json, bool $expected): void
+    {
+        $sql = ContentCheckService::contentCleanSql('t.reasons');
+        $row = DB::selectOne("SELECT ({$sql}) AS clean FROM (SELECT ? AS reasons) t", [$json]);
+
+        $this->assertSame($expected, (bool) $row->clean, "SQL verdict for " . var_export($json, true));
+    }
+
     public function test_is_user_moderated_null_status_is_moderated(): void
     {
         $user  = $this->createTestUser();

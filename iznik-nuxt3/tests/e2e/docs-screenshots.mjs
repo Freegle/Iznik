@@ -129,6 +129,15 @@ const SHOTS = [
     path: '/messages/pending',
   },
   {
+    // Post-moderation oversight: the Check queue, posts that published
+    // themselves and are waiting for a look.
+    audience: 'moderators',
+    name: 'check',
+    auth: 'mod',
+    app: 'mod',
+    path: '/messages/check',
+  },
+  {
     audience: 'moderators',
     name: 'members',
     auth: 'mod',

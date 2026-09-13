@@ -2,6 +2,7 @@ package message
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -459,6 +460,10 @@ func ListMessagesMT(c *fiber.Ctx) error {
 	search := c.Query("search", "")
 	fromuserStr := c.Query("fromuser", "0")
 	fromuser, _ := strconv.ParseUint(fromuserStr, 10, 64)
+	// Optional oversight view of the Approved collection (non-search listing):
+	//   checked — the Check queue: live posts that published by themselves via
+	//             the automated checks, from members with no posting status
+	filter := c.Query("filter", "")
 
 	var msgIDs []uint64
 
@@ -588,11 +593,31 @@ func ListMessagesMT(c *fiber.Ctx) error {
 			branchArgs = []interface{}{utils.COLLECTION_PENDING, utils.COLLECTION_SPAM}
 		}
 
+		// Optional moderation filter. Values are matched against a fixed set, so the
+		// injected SQL is constant (no user-supplied text reaches the query).
+		filterJoin := ""
+		filterWhere := ""
+		// The Check oversight queue shows only posts a mod has NOT yet marked
+		// checked, within the auto-check window — so the list matches the session
+		// work-count badge and clears as posts are checked.
+		checkedWindow := fmt.Sprintf(
+			"AND mg.checkedat IS NULL AND mg.arrival >= NOW() - INTERVAL %d DAY ",
+			utils.MESSAGE_CHECK_WINDOW_DAYS,
+		)
+		switch filter {
+		case "checked":
+			// Auto-approved (approvedby NULL) from auto-moderated (NULL) members.
+			filterJoin = "INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "
+			filterWhere = "AND mg.approvedby IS NULL AND mg.rippled_in = 0 AND mem.ourPostingStatus IS NULL " + checkedWindow
+		}
+
 		branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +
 			"INNER JOIN messages m ON m.id = mg.msgid " +
 			"INNER JOIN users u ON u.id = m.fromuser " +
+			filterJoin +
 			"WHERE mg.groupid = %GID% AND " + collectionFilter + " AND mg.deleted = 0 " +
 			"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL " +
+			filterWhere +
 			contentcheckFilter + " "
 
 		if fromuser > 0 {
@@ -616,6 +641,22 @@ func ListMessagesMT(c *fiber.Ctx) error {
 
 	if len(msgIDs) == 0 {
 		return c.JSON(fiber.Map{"messages": []uint64{}})
+	}
+
+	// A3. Reset-to-minimum hold (extend-only) for the messages just loaded. When a
+	// moderator views the Pending queue, every fetched post is given at least 10 more
+	// minutes before it becomes eligible for auto-approval, so nothing vanishes while
+	// the page is open. GREATEST(COALESCE(autoapprove_hold_until, NOW()), NOW()+10m) is
+	// extend-only: an existing hold further out is never shortened. Scope: Pending,
+	// heldby IS NULL, deleted=0, only the mod's groups.
+	if collection == utils.COLLECTION_PENDING && len(groupIDs) > 0 {
+		db.Exec(
+			"UPDATE messages_groups "+
+				"SET autoapprove_hold_until = GREATEST(COALESCE(autoapprove_hold_until, NOW()), NOW() + INTERVAL 10 MINUTE) "+
+				"WHERE msgid IN ? AND groupid IN ? "+
+				"AND collection = 'Pending' AND heldby IS NULL AND deleted = 0 AND rippled_in = 0",
+			msgIDs, groupIDs,
+		)
 	}
 
 	// Build pagination context from last ID.

@@ -4510,4 +4510,472 @@ class ExpandServiceTest extends TestCase
         );
     }
 
+    // ───────────────────────── Earned-reach gate (dark unless RIPPLE_EARNED_REACH_ENABLED) ─────
+
+    /** Record $n distinct members (not the poster) viewing the post. */
+    private function addCleanViews(int $msgid, int $n): void
+    {
+        for ($i = 0; $i < $n; $i++) {
+            DB::table('messages_likes')->insert([
+                'msgid' => $msgid, 'userid' => $this->createTestUser()->id,
+                'type' => 'View', 'timestamp' => now(),
+            ]);
+        }
+    }
+
+    /** A member reports the post to the mods - a User2Mod chat message referencing it,
+     *  exactly what the front-end report flow sends. */
+    private function reportToMods(int $msgid): void
+    {
+        $reporter = $this->createTestUser();
+        $groupid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $room = \App\Models\ChatRoom::create([
+            'chattype' => \App\Models\ChatRoom::TYPE_USER2MOD,
+            'user1' => $reporter->id, 'groupid' => $groupid, 'created' => now(),
+        ]);
+        DB::table('chat_messages')->insert([
+            'chatid' => $room->id, 'userid' => $reporter->id, 'refmsgid' => $msgid,
+            'message' => "I'm reporting this post as inappropriate", 'type' => 'Default',
+            'date' => now(), 'reviewrequired' => 0, 'processingrequired' => 0,
+            'processingsuccessful' => 1, 'mailedtoall' => 0, 'seenbyall' => 0,
+            'reviewrejected' => 0, 'platform' => 1,
+        ]);
+    }
+
+    /** A MODERATOR writes in a User2Mod conversation, referencing the post - discussing it
+     *  with the member, not complaining about it. */
+    private function modMessagesAboutPost(int $msgid): void
+    {
+        $member = $this->createTestUser();
+        $mod = $this->createTestUser();
+        $groupid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $room = \App\Models\ChatRoom::create([
+            'chattype' => \App\Models\ChatRoom::TYPE_USER2MOD,
+            'user1' => $member->id, 'groupid' => $groupid, 'created' => now(),
+        ]);
+        DB::table('chat_messages')->insert([
+            'chatid' => $room->id, 'userid' => $mod->id, 'refmsgid' => $msgid,
+            'message' => 'Thanks - that post looks fine to me, leaving it up.', 'type' => 'Default',
+            'date' => now(), 'reviewrequired' => 0, 'processingrequired' => 0,
+            'processingsuccessful' => 1, 'mailedtoall' => 0, 'seenbyall' => 0,
+            'reviewrejected' => 0, 'platform' => 1,
+        ]);
+    }
+
+    public function test_a_moderators_own_message_about_a_post_is_not_a_flag(): void
+    {
+        // The flag test must mean "a member raised this with the mods", not "somebody
+        // mentioned this post in a mod conversation". In a User2Mod room the member is
+        // user1; anything from the mod side is the team talking, and a mod discussing a
+        // post with a member must not freeze that post's spread.
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0,
+            'freegle.ripple.clean_views_per_group' => 2]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $this->seedCoveringGroup();
+        $this->addCleanViews($msgid, 5);
+        $this->modMessagesAboutPost($msgid);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['reach_capped'], "a mod's own message is not a member complaint");
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in'], 'the post still ripples');
+    }
+
+    private function addMicrovolReject(int $msgid): void
+    {
+        DB::table('microactions')->insert([
+            'actiontype' => 'CheckMessage', 'userid' => $this->createTestUser()->id,
+            'msgid' => $msgid, 'result' => 'Reject', 'timestamp' => now(),
+        ]);
+    }
+
+    public function test_autoapprove_hold_prevents_young_unreviewed_post_from_rippling(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 3600]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // younger than the 1h hold
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['initialized'], 'auto-published post within the hold window must not start rippling');
+        $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $msgid)->count(), 'no reach row while held');
+    }
+
+    public function test_autoapprove_hold_allows_old_enough_unreviewed_post(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 3600]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90)); // past the 1h hold
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'post past the hold ripples normally');
+        $this->assertSame(1, DB::table('rippling_reach')->where('msgid', $msgid)->count());
+    }
+
+    public function test_autoapprove_hold_skipped_when_approvedby_is_set(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 3600]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(5));
+        $modId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['approvedby' => $modId]);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'a mod-approved post bypasses the hold');
+    }
+
+    public function test_autoapprove_hold_skipped_when_checkedat_is_set(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 3600]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(5));
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['checkedat' => now()]);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'a mod-checked post bypasses the hold');
+    }
+
+    public function test_autoapprove_hold_bypassed_for_only_msgid_run(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 3600]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(5)); // under the hold
+
+        $stats = $this->service()->process(false, 500, $msgid);
+
+        $this->assertSame(1, $stats['initialized'], '--msgid bypasses the hold, like the arrival cutoff');
+    }
+
+    public function test_clean_views_counts_distinct_viewers_excluding_poster(): void
+    {
+        $svc = $this->service();
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $poster = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+        $ref = new \ReflectionMethod($svc, 'cleanViews');
+        $ref->setAccessible(true);
+
+        $this->assertSame(0, $ref->invoke($svc, $msgid, $poster), 'baseline 0 views');
+        $this->addCleanViews($msgid, 2);
+        $this->assertSame(2, $ref->invoke($svc, $msgid, $poster), 'two distinct viewers');
+        DB::table('messages_likes')->insert([
+            'msgid' => $msgid, 'userid' => $poster, 'type' => 'View', 'timestamp' => now(),
+        ]);
+        $this->assertSame(2, $ref->invoke($svc, $msgid, $poster), "the poster's own view does not count");
+    }
+
+    public function test_earned_reach_cap_blocks_below_view_threshold(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0,
+            'freegle.ripple.clean_views_per_group' => 2]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $groupB = $this->seedCoveringGroup();
+        $this->addCleanViews($msgid, 1); // 1 view < required 2 for N=1
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'reach is still initialised');
+        $this->assertSame(0, $stats['rippled_in'], 'not rippled in while views < required');
+        $this->assertSame(1, $stats['reach_capped']);
+        $this->assertNull(DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->first());
+        $this->assertNotNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->value('awaiting_review_since'),
+            'awaiting_review_since stamped on pause'
+        );
+    }
+
+    public function test_earned_reach_cap_passes_with_enough_clean_views(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0,
+            'freegle.ripple.clean_views_per_group' => 2]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $groupB = $this->seedCoveringGroup();
+        $this->addCleanViews($msgid, 2); // 2 views >= required 2
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['rippled_in'], '2 clean views meet N=1; ripples in');
+        $this->assertSame(0, $stats['reach_capped']);
+    }
+
+    public function test_earned_reach_cap_pauses_when_flagged_despite_views(): void
+    {
+        // A member report to the mods outweighs any number of quiet views: spread pauses
+        // until a moderator look clears it.
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0,
+            'freegle.ripple.clean_views_per_group' => 2]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $this->seedCoveringGroup();
+        $this->addCleanViews($msgid, 10);
+        $this->reportToMods($msgid);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['rippled_in'], 'a reported post must not spread');
+        $this->assertSame(1, $stats['reach_capped']);
+    }
+
+    public function test_earned_reach_cap_pauses_on_microvol_reject_despite_views(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0,
+            'freegle.ripple.clean_views_per_group' => 2]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $this->seedCoveringGroup();
+        $this->addCleanViews($msgid, 10);
+        $this->addMicrovolReject($msgid);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['rippled_in'], 'a microvol-rejected post must not spread');
+        $this->assertSame(1, $stats['reach_capped']);
+    }
+
+    public function test_earned_reach_cap_cleared_by_mod_check_even_when_flagged(): void
+    {
+        // A moderator look supersedes the crowd signals: checkedat clears the gate outright,
+        // zero views and an outstanding report notwithstanding.
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0,
+            'freegle.ripple.clean_views_per_group' => 2]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $this->seedCoveringGroup();
+        $this->reportToMods($msgid);
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['checkedat' => now()]);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in'], 'a mod-checked post ripples');
+        $this->assertSame(0, $stats['reach_capped']);
+    }
+
+    public function test_earned_reach_cap_does_not_apply_to_mod_approved_post(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $this->seedCoveringGroup();
+        $modId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['approvedby' => $modId]); // mod-approved, zero views
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['reach_capped'], 'mod-approved post is exempt from the cap');
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in'], 'mod-approved post ripples without any views');
+    }
+
+    public function test_earned_reach_cap_pause_then_resume_accumulates_await_seconds(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0,
+            'freegle.ripple.clean_views_per_group' => 2]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $groupB = $this->seedCoveringGroup();
+
+        // Run 1: 1 view < 2, capped.
+        $this->addCleanViews($msgid, 1);
+        $stats1 = $this->service()->process(false, 500);
+        $this->assertSame(1, $stats1['reach_capped']);
+        $this->assertNotNull(DB::table('rippling_reach')->where('msgid', $msgid)->value('awaiting_review_since'));
+
+        // Simulate time passing while paused, and make a LATER tick genuinely due. advanceDue only
+        // re-enters the cap when target > current tick, so age the reach back to the final hazard
+        // step and reset the tick to force a real advance.
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'awaiting_review_since' => now()->subSeconds(60),
+            'arrival' => now()->subHours(7),
+            'tick' => 0,
+            'next_expansion_at' => now()->subMinute(),
+        ]);
+
+        // Run 2: a second viewer -> 2 views >= 2, resumes and ripples.
+        $this->addCleanViews($msgid, 1);
+        $stats2 = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats2['reach_capped'], 'cap lifted on resume');
+        $this->assertGreaterThanOrEqual(1, $stats2['rippled_in'], 'ripples on resume');
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNull($row->awaiting_review_since, 'await stamp cleared on resume');
+        $this->assertGreaterThanOrEqual(60, (int) $row->awaiting_review_seconds, 'waited time banked');
+    }
+
+    public function test_earned_reach_cap_does_not_reset_await_since_on_repeated_pause(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0,
+            'freegle.ripple.clean_views_per_group' => 2]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $this->seedCoveringGroup();
+
+        $this->addCleanViews($msgid, 1);
+        $this->service()->process(false, 500); // capped, stamp set
+
+        $original = now()->subMinutes(10);
+        DB::table('rippling_reach')->where('msgid', $msgid)
+            ->update(['awaiting_review_since' => $original, 'arrival' => now()->subHours(7), 'tick' => 0, 'next_expansion_at' => now()->subMinute()]);
+
+        $this->service()->process(false, 500); // still 1 view < 2, still capped
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertEqualsWithDelta(
+            $original->timestamp,
+            \Carbon\Carbon::parse($row->awaiting_review_since)->timestamp,
+            2,
+            'awaiting_review_since must not be reset on a second consecutive pause'
+        );
+    }
+
+    /** Seed an advance-due reach row at tick 1 of 3 with a cached schedule, so the next
+     *  process() run takes the advanceDue path (no routing call - cached WKT; the advance rasterises
+     *  the new reach on the real spatial server, see fakeSpatialHttp). */
+    private function seedAdvanceDueReach(int $msgid): void
+    {
+        $ticksJson = json_encode([
+            ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 30, 'wkt' => self::WKT],
+            ['tick' => 2, 'drive_min' => 10, 'cumulative_users' => 60, 'wkt' => self::WKT],
+            ['tick' => 3, 'drive_min' => 15, 'cumulative_users' => 90, 'wkt' => self::WKT],
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
+            [$msgid, $this->reachCellsFor(self::WKT), self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
+        );
+    }
+
+    public function test_earned_reach_cap_freezes_reach_and_tick_on_advance(): void
+    {
+        // The stored reach is what the nearby browse feed, search and reach mails read, so a
+        // capped post must freeze its member-facing reach too - not just skip the
+        // community placements. Pausing only the group-joins while the reach keeps
+        // advancing would let a gated post spread to ever more distant members anyway.
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0,
+            'freegle.ripple.clean_views_per_group' => 2]);
+        $msgid = $this->seedSpatialPost(now()->subHours(7)); // approvedby NULL = auto-published
+        $groupB = $this->seedCoveringGroup();
+        $this->seedAdvanceDueReach($msgid);
+        $this->fakeSpatialHttp(); // cached schedule - no routing call expected
+        $before = DB::table('rippling_reach')->where('msgid', $msgid)->first(['polygon_cells', 'tick']);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['reach_capped'], 'the due advance is capped (0 views < 2 required)');
+        $this->assertSame(0, $stats['expanded'], 'a capped advance is not an expansion');
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)
+            ->first(['polygon_cells', 'tick', 'status', 'next_expansion_at', 'awaiting_review_since']);
+        $this->assertSame($before->polygon_cells, $row->polygon_cells, 'the stored reach must NOT advance while capped');
+        $this->assertSame((int) $before->tick, (int) $row->tick, 'tick must NOT advance while capped');
+        $this->assertSame('expanding', $row->status, 'a capped post must never reach done');
+        $this->assertNotNull($row->awaiting_review_since, 'await stamp set');
+        $this->assertTrue(
+            \Carbon\Carbon::parse($row->next_expansion_at)->isFuture(),
+            'next_expansion_at pushed out so the gate is re-evaluated, not hot-looped'
+        );
+        $this->assertNull(DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->first());
+    }
+
+    public function test_earned_reach_flag_freezes_reach_despite_views(): void
+    {
+        // "One complaint pauses it" must mean the member-facing reach too: a flagged post
+        // with plenty of quiet views still must not widen its reach.
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0,
+            'freegle.ripple.clean_views_per_group' => 2]);
+        $msgid = $this->seedSpatialPost(now()->subHours(7));
+        $this->seedCoveringGroup();
+        $this->seedAdvanceDueReach($msgid);
+        $this->addCleanViews($msgid, 10);
+        $this->reportToMods($msgid);
+        $this->fakeSpatialHttp();
+        $before = DB::table('rippling_reach')->where('msgid', $msgid)->first(['polygon_cells', 'tick']);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['reach_capped']);
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first(['polygon_cells', 'tick']);
+        $this->assertSame($before->polygon_cells, $row->polygon_cells, 'flagged post reach frozen');
+        $this->assertSame((int) $before->tick, (int) $row->tick);
+    }
+
+    public function test_earned_reach_capped_post_resumes_without_manual_rewind(): void
+    {
+        // A capped post must resume BY ITSELF once exposure catches up: the tick was not
+        // consumed by the capped run, so the next due evaluation advances from where it
+        // stopped. (Previously the tick marched on to 'done' while capped, so a paused
+        // post could never join the groups it was paused from.)
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0,
+            'freegle.ripple.clean_views_per_group' => 2]);
+        $msgid = $this->seedSpatialPost(now()->subHours(7));
+        $groupB = $this->seedCoveringGroup();
+        $this->seedAdvanceDueReach($msgid);
+        $this->fakeSpatialHttp();
+
+        $stats1 = $this->service()->process(false, 500); // 0 views -> capped
+        $this->assertSame(1, $stats1['reach_capped']);
+
+        // Exposure catches up; make the pushed-out recheck due again (time passing).
+        $this->addCleanViews($msgid, 2);
+        DB::table('rippling_reach')->where('msgid', $msgid)
+            ->update(['next_expansion_at' => now()->subMinute(),
+                      'awaiting_review_since' => now()->subSeconds(60)]);
+
+        $stats2 = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats2['reach_capped'], 'gate passes once views suffice');
+        $this->assertSame(1, $stats2['expanded'], 'the frozen tick now advances');
+        $this->assertGreaterThanOrEqual(1, $stats2['rippled_in'], 'the paused-from group is joined on resume');
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull(DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->first());
+        $this->assertNull($row->awaiting_review_since, 'stamp cleared on resume');
+        $this->assertGreaterThanOrEqual(60, (int) $row->awaiting_review_seconds, 'paused time banked');
+    }
+
+    public function test_earned_reach_stamp_banked_when_mod_look_clears_gate(): void
+    {
+        // A moderator look clears the gate - and must also settle the await-review
+        // bookkeeping. Without that, "posts currently awaiting review" counts a
+        // mod-cleared post forever.
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0,
+            'freegle.ripple.clean_views_per_group' => 2]);
+        $msgid = $this->seedSpatialPost(now()->subHours(7));
+        $this->seedCoveringGroup();
+        $this->seedAdvanceDueReach($msgid);
+        $this->fakeSpatialHttp();
+
+        $stats1 = $this->service()->process(false, 500); // 0 views -> capped, stamp set
+        $this->assertSame(1, $stats1['reach_capped']);
+
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['checkedat' => now()]);
+        DB::table('rippling_reach')->where('msgid', $msgid)
+            ->update(['next_expansion_at' => now()->subMinute(),
+                      'awaiting_review_since' => now()->subSeconds(120)]);
+
+        $stats2 = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats2['reach_capped'], 'mod look clears the gate');
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNull($row->awaiting_review_since, 'stamp cleared when the gate stops applying');
+        $this->assertGreaterThanOrEqual(120, (int) $row->awaiting_review_seconds, 'paused time banked on clearance');
+    }
+
+    public function test_earned_reach_gate_is_dark_by_default(): void
+    {
+        // Flag off (default): a young auto-published post with zero views ripples
+        // exactly as before - no hold, no cap.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $this->seedCoveringGroup();
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'gate off: young post still ripples (no hold)');
+        $this->assertSame(0, $stats['reach_capped'], 'gate off: cap never fires');
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in'], 'gate off: unreviewed post ripples freely');
+    }
 }

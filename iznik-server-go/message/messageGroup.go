@@ -42,4 +42,18 @@ type MessageGroup struct {
 	// routing/KNN calls failed at ripple-in time — the frontend shows nothing in all three cases.
 	RippleProximityP *string `json:"ripple_proximity_p,omitempty"`
 	RippleProximityQ *string `json:"ripple_proximity_q,omitempty"`
+
+	// QualitySample is set by AutoApproveCleanService when a clean post is held back
+	// for a manual quality check. Scanned for the autoapproveat estimate; not serialised.
+	QualitySample int `json:"-" gorm:"column:quality_sample"`
+
+	// AutoapproveHoldUntil is the server-side extend-only hold set when the Pending
+	// queue is viewed (see ListMessagesMT). Scanned but not serialised — the frontend
+	// uses the computed Autoapproveat below.
+	AutoapproveHoldUntil *time.Time `json:"-" gorm:"column:autoapprove_hold_until"`
+
+	// Autoapproveat is the earliest time this post may be auto-approved, exposed only
+	// on Pending messages viewed by a group moderator. nil = no auto-approval expected
+	// (held / spam / danger-signalled, or not on any auto-approve path).
+	Autoapproveat *time.Time `json:"autoapproveat,omitempty" gorm:"-"`
 }

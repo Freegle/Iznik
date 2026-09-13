@@ -99,6 +99,15 @@
           @mobilehidemenu="mobilehidemenu"
         />
         <ModMenuItemLeft
+          link="/messages/check"
+          name="Check"
+          :count="['checked']"
+          count-variant="info"
+          indent
+          sub
+          @mobilehidemenu="mobilehidemenu"
+        />
+        <ModMenuItemLeft
           link="/messages/edits"
           name="Edits"
           :count="['editreview']"
