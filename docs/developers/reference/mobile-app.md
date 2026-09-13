@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-06
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/capacitor.config.ts
@@ -119,3 +119,14 @@ $ANDROID_HOME/platform-tools/adb exec-out screencap -p > screenshot.png
 ```
 
 The seeded local database already has test data (FreeglePlayground, around Edinburgh).
+
+## Tracked email links opened in the app
+
+The iOS universal-link association hands every site path except `/api/*` to the app, so a
+tapped email link arrives as the tracker's own URL (`/e/d/r/...`), not the page it points to,
+and the tap never reaches the server that would have recorded the click. Until 2026-09 the app
+pushed that path into its router, which has no such page: the member landed on the error page
+and then their home page - a chat notification's Reply button once put a member's reply into
+ChitChat that way. `stores/mobile.js` `resolveTrackedLink()` now asks apiv2 for the
+destination (`?format=json` on the same tracked path, served at the API origin; the click is
+recorded exactly as a 302 would) and routes there, falling back to `/`.
