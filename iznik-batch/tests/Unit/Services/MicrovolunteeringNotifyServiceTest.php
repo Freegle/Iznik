@@ -408,17 +408,21 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
 
         $seen = [];
         DB::listen(function ($query) use (&$seen) {
-            // Only the candidate-message anti-join, which correlates by a per-row CONCAT.
-            // A separate query prefix-matches the same urls with a constant LIKE pattern;
-            // that one is already index-usable and must be left alone.
-            if (stripos($query->sql, "CONCAT('/microvolunteering/message/") !== false) {
+            // The candidate-message anti-join specifically. Two other statements in this
+            // service also carry that CONCAT: the stale mark-seen UPDATE, which correlates
+            // un.url to microactions.msgid with `=` and is bounded by the (timestamp, seen,
+            // mailed) index, and a constant-pattern prefix match. Matching on the CONCAT
+            // alone picked up the UPDATE, which ran first - so the assertion landed on the
+            // wrong statement and said nothing about the anti-join at all.
+            if (stripos($query->sql, 'LEFT JOIN users_notifications') !== false
+                && stripos($query->sql, "CONCAT('/microvolunteering/message/") !== false) {
                 $seen[] = $query->sql;
             }
         });
 
         (new MicrovolunteeringNotifyService())->notifyForMessages();
 
-        $this->assertNotEmpty($seen, 'expected the candidate-message query to run');
+        $this->assertCount(1, $seen, 'expected exactly the candidate-message anti-join to run');
 
         $this->assertMatchesRegularExpression(
             "/url\s+LIKE\s+CONCAT\(/i",
