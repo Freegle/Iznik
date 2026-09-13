@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-29
+last_reviewed: 2026-09-12
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Mail/Deferrals/*.php
@@ -225,6 +225,16 @@ point - so the backlog policy is per type:
 | Community News, WeMissYou, volunteering | Dropped. All periodic; the next one along is a better email than a stale one. |
 | Daily digest | One catch-up covering the whole window. This needs no code: the gate returns *before* the digest tracker is advanced, so the next daily run naturally spans the gap and sends exactly one. |
 | Chat notifications | One "you have unread messages" summary. Never replayed individually - a stack of days-old notifications arriving at once is its own harm, and is the behaviour that gets a sender deferred in the first place. |
+
+The chat summary counts what arrived while we were holding this member's mail
+and is still unread, in two halves that are read in different places: chats
+with other members (the member site) and a moderator's chats on the
+volunteers' side of their groups, plus mod-to-mod chats (ModTools - the
+member site does not list those at all). Each half gets its own button and a
+half with nothing in it is left out. The "stopped accepting our emails on"
+date is the suppression's `deferred_since` - when the provider started
+refusing us - not the first time we happened to hold something for this
+member, which can be a day later and reads as nonsense next to the send date.
 
 `mail_suppressed_counts` records, per member and per type, what we declined to
 generate. That is what lets the catch-up say something true about the size of

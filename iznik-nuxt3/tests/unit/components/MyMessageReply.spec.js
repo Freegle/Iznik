@@ -502,6 +502,30 @@ describe('MyMessageReply', () => {
       expect(wrapper.find('.renege-modal').exists()).toBe(true)
     })
 
+    it('opens the renege modal for a placeholder before the replier profile has loaded', async () => {
+      // The Unpromise button only needs the reply, but the modal used to wait for the
+      // replier's profile, so a quick click did nothing at all.
+      mockUserById.mockReturnValue(null)
+      const wrapper = await createWrapper({
+        message: {
+          ...mockMessage,
+          promisecount: 1,
+          promises: [{ userid: 42 }],
+        },
+      })
+      await flushPromises()
+      const unpromiseBtn = wrapper.find('.action-btn--warning')
+      expect(unpromiseBtn.exists()).toBe(true)
+      await unpromiseBtn.trigger('click')
+      await flushPromises()
+      const modal = wrapper.findComponent('.renege-modal')
+      expect(modal.exists()).toBe(true)
+      expect(modal.props('users')).toEqual([
+        { id: 42, displayname: 'Freegler' },
+      ])
+      expect(modal.props('selectedUser')).toBe(42)
+    })
+
     it('does not show renege modal initially', async () => {
       const promisedMessage = {
         ...mockMessage,

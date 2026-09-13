@@ -145,6 +145,7 @@ type MembershipTable struct {
 	Eventsallowed       int       `json:"eventsallowed"`
 	Volunteeringallowed int       `json:"volunteeringallowed"`
 	Role                string    `json:"role"`
+	Rippled             int       `json:"rippled"` // 1 = rippling auto-joined the poster; nobody chose this membership
 	OurPostingStatus    *string   `json:"ourpostingstatus,omitempty" gorm:"column:ourPostingStatus"`
 }
 
@@ -403,7 +404,7 @@ func GetMemberships(id uint64) []Membership {
 
 	var memberships []Membership
 	db.Table("memberships").
-		Select("memberships.id, added, role, groupid, emailfrequency, eventsallowed, volunteeringallowed, ourPostingStatus, microvolunteering AS microvolunteeringallowed, nameshort, namefull, groups.type, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
+		Select("memberships.id, added, role, groupid, emailfrequency, eventsallowed, volunteeringallowed, ourPostingStatus, memberships.rippled, microvolunteering AS microvolunteeringallowed, nameshort, namefull, groups.type, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
 		Joins("INNER JOIN `groups` ON groups.id = memberships.groupid").
 		Where("userid = ? AND collection = ?", id, "Approved").
 		Scan(&memberships)
@@ -1449,10 +1450,14 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 
 	// Resolve NULL ourPostingStatus → MODERATED.
 	// DEFAULT stays as DEFAULT — it's an explicit status meaning "follow group default".
+	// A membership rippling created for the poster (rippled = 1) is left unset: no
+	// moderator chose that membership, so a blank status there is not a moderation
+	// decision, and reading it as MODERATED put a "This member is Moderated" notice on
+	// every rippled-in copy (Discourse 10115).
 	if modtools {
 		for i := range memberships {
 			m := &memberships[i]
-			if m.OurPostingStatus == nil || *m.OurPostingStatus == "" {
+			if m.Rippled == 0 && (m.OurPostingStatus == nil || *m.OurPostingStatus == "") {
 				v := utils.POSTING_STATUS_MODERATED
 				m.OurPostingStatus = &v
 			}

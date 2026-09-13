@@ -693,6 +693,37 @@ describe('MyMessage', () => {
       await flushPromises()
       expect(wrapper.find('.renege-modal').exists()).toBe(true)
     })
+
+    it('lists an unresolved promisee in the renege modal under the same placeholder name', async () => {
+      // The button shows "Freegler" for a promisee whose profile has not loaded; the
+      // modal's "to:" list must show the same person, not come up empty.
+      mockData.message.promised = true
+      mockData.message.outcomes = []
+      mockData.message.promises = [{ userid: 2 }]
+      const wrapper = await createWrapper()
+      // The banner names the promisee under the placeholder, instead of going blank.
+      expect(wrapper.find('.desktop-promised').text()).toContain('Freegler')
+      await wrapper.find('.unpromise-btn').trigger('click')
+      await flushPromises()
+      const modal = wrapper.findComponent('.renege-modal')
+      expect(modal.exists()).toBe(true)
+      expect(modal.props('users')).toEqual([{ id: 2, displayname: 'Freegler' }])
+      expect(modal.props('selectedUser')).toBe(2)
+    })
+
+    it('clicking Unpromise button shows renege modal when promisee profile is not yet resolved', async () => {
+      mockData.message.promised = true
+      mockData.message.outcomes = []
+      mockData.message.promises = [{ userid: 2 }]
+      // mockUserStore.byId is left at its default (null) from beforeEach - the
+      // promisee's profile hasn't loaded into the store yet.
+      const wrapper = await createWrapper()
+      const unpromiseBtn = wrapper.find('.unpromise-btn')
+      expect(unpromiseBtn.exists()).toBe(true)
+      await unpromiseBtn.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.renege-modal').exists()).toBe(true)
+    })
   })
 
   describe('Replies Section', () => {
