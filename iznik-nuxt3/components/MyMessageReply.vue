@@ -109,11 +109,11 @@
       @hidden="showPromiseModal = false"
     />
     <RenegeModal
-      v-if="replyuser && showRenegeModal"
+      v-if="showRenegeModal"
       :messages="[message.id]"
       :selected-message="message.id"
-      :users="[replyuser]"
-      :selected-user="replyuser?.id"
+      :users="[replyuser || { id: reply.userid, displayname: 'Freegler' }]"
+      :selected-user="reply.userid"
       @hidden="showRenegeModal = false"
     />
     <LazyProfileModal

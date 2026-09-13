@@ -768,17 +768,15 @@ const promisedTo = computed(() => {
     message.value.promises.forEach((p) => {
       const isSomeone = p.userid === me.value?.id
       const user = userStore?.byId(p.userid)
-      if (isSomeone || user) {
-        const tryst = trystStore?.getByUser(p.userid)
-        const date = tryst
-          ? dayjs(tryst.arrangedfor).format('ddd Do HH:mm')
-          : null
-        ret.push({
-          id: p.userid,
-          name: isSomeone ? 'Someone' : user.displayname,
-          trystdate: date,
-        })
-      }
+      const tryst = trystStore?.getByUser(p.userid)
+      const date = tryst
+        ? dayjs(tryst.arrangedfor).format('ddd Do HH:mm')
+        : null
+      ret.push({
+        id: p.userid,
+        name: isSomeone ? 'Someone' : user?.displayname || 'Freegler',
+        trystdate: date,
+      })
     })
   }
   return ret
@@ -792,7 +790,12 @@ const promisedToName = computed(() => {
 })
 
 const promisedToUsers = computed(() => {
-  return promisedTo.value.map((p) => userStore?.byId(p.id)).filter((u) => u)
+  // Mirror promisedTo: a promisee whose profile has not loaded yet is still a promisee,
+  // so the Renege dialog's "to:" list carries them under the same placeholder name the
+  // button already shows, rather than coming up empty.
+  return promisedTo.value.map(
+    (p) => userStore?.byId(p.id) || { id: p.id, displayname: p.name }
+  )
 })
 
 const isPromised = computed(() => {

@@ -171,3 +171,21 @@ describe('postDiscourseReply quote invariant', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('SKIP_DISCOURSE_POSTS kill-switch', () => {
+  const originalFetch = globalThis.fetch
+  afterEach(() => {
+    delete process.env.SKIP_DISCOURSE_POSTS
+    globalThis.fetch = originalFetch
+  })
+
+  it('fails closed without touching the network when set', async () => {
+    process.env.SKIP_DISCOURSE_POSTS = '1'
+    const fetchMock = vi.fn()
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    const r = await postDiscourseReply(9692, QUOTED_RAW, 8)
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/SKIP_DISCOURSE_POSTS/)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
