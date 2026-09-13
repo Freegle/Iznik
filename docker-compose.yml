@@ -1855,6 +1855,12 @@ services:
       - LOKI_JSON_PATH=/var/log/freegle
       # MJML (local container)
       - MJML_URL=http://mjml/
+      # Embedding sidecar (local container, same one the dev batch uses).
+      # Without this the electricals variant clustering falls back to its word
+      # test alone and desirability cold-start scoring cannot reach the model,
+      # because both read EMBEDDING_SIDECAR_URL and default to empty. The dev
+      # `batch` block above has always set it; this one never did.
+      - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
       # Avatar generation (Go API)
       - FREEGLE_AVATAR_SERVER_URL=https://api.ilovefreegle.org/avatar
       # AMP Email

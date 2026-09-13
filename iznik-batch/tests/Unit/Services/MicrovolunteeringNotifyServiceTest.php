@@ -381,16 +381,25 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
     }
 
     /**
-     * The anti-join correlates users_notifications to the message by a computed string, and
-     * ran every five minutes as `LIKE CONCAT(...)`. The pattern carries no wildcard, so it is
-     * an equality already - but MySQL cannot use an index for LIKE against a non-constant
-     * pattern, so it scanned the whole candidate set per message. Writing it as `=` is what
-     * lets an index on users_notifications.url serve it as a ref lookup.
+     * The anti-join correlates users_notifications to the message by a computed string. It
+     * was rewritten from `LIKE CONCAT(...)` to `= CONCAT(...)` so that an index on
+     * users_notifications.url could serve it as a ref lookup, on the reasoning that MySQL
+     * cannot use an index for LIKE against a non-constant pattern.
      *
-     * The index itself is a schema change and is not in this branch; without it this is
-     * preparation rather than a saving.
+     * In production that made it very much worse. The url index does exist there, but its
+     * cardinality reads as 1, so the optimiser costs a url ref lookup at the whole table and
+     * rejects it for every one of ~40k outer rows: `type=ALL, key=NULL, rows=7453675, Range
+     * checked for each record`. On 2026-09-13 it never completed once, and the
+     * every-five-minute schedule stacked 18 copies against the read node before they were
+     * killed. As LIKE the url index cannot be considered at all, so the optimiser takes the
+     * single-pass plan, which measures 24,168 candidate rows in 17.4s.
+     *
+     * So this guards the operator in the direction that is actually safe today. A constant
+     * url lookup IS a ref lookup on that index (`type=ref, key=url, rows=1`, 0.001s), so the
+     * way to make this fast is to collect the candidates first and check them with constants,
+     * not to reinstate a per-row equality.
      */
-    public function test_notification_anti_join_uses_equality_so_an_index_can_serve_it(): void
+    public function test_notification_anti_join_avoids_the_per_row_equality_that_stalls(): void
     {
         $groupId  = $this->createGroup();
         $fromUser = $this->createUser('Basic');
@@ -399,27 +408,31 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
 
         $seen = [];
         DB::listen(function ($query) use (&$seen) {
-            // Only the candidate-message anti-join, which correlates by a per-row CONCAT.
-            // A separate query prefix-matches the same urls with a constant LIKE pattern;
-            // that one is already index-usable and must be left alone.
-            if (stripos($query->sql, "CONCAT('/microvolunteering/message/") !== false) {
+            // The candidate-message anti-join specifically. Two other statements in this
+            // service also carry that CONCAT: the stale mark-seen UPDATE, which correlates
+            // un.url to microactions.msgid with `=` and is bounded by the (timestamp, seen,
+            // mailed) index, and a constant-pattern prefix match. Matching on the CONCAT
+            // alone picked up the UPDATE, which ran first - so the assertion landed on the
+            // wrong statement and said nothing about the anti-join at all.
+            if (stripos($query->sql, 'LEFT JOIN users_notifications') !== false
+                && stripos($query->sql, "CONCAT('/microvolunteering/message/") !== false) {
                 $seen[] = $query->sql;
             }
         });
 
         (new MicrovolunteeringNotifyService())->notifyForMessages();
 
-        $this->assertNotEmpty($seen, 'expected the candidate-message query to run');
+        $this->assertCount(1, $seen, 'expected exactly the candidate-message anti-join to run');
 
         $this->assertMatchesRegularExpression(
-            "/url\s*=\s*CONCAT\(/i",
-            $seen[0],
-            'the url correlation must be an equality'
-        );
-        $this->assertDoesNotMatchRegularExpression(
             "/url\s+LIKE\s+CONCAT\(/i",
             $seen[0],
-            'LIKE against a computed pattern cannot use an index'
+            'the url correlation must stay a LIKE until the candidates are checked with constants'
+        );
+        $this->assertDoesNotMatchRegularExpression(
+            "/url\s*=\s*CONCAT\(/i",
+            $seen[0],
+            'a per-row equality on url makes the optimiser range-check every row and never finish'
         );
     }
 

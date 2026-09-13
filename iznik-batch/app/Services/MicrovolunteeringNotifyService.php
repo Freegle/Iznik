@@ -73,11 +73,22 @@ class MicrovolunteeringNotifyService
             INNER JOIN `groups` ON messages_groups.groupid = groups.id
             LEFT JOIN users_notifications
                 ON users_notifications.timestamp >= DATE_SUB(NOW(), INTERVAL 1 DAY)
-                -- Equality, not LIKE. The pattern carries no wildcard so the two match the
-                -- same rows, but MySQL cannot use an index for LIKE against a pattern built
-                -- per row, so this correlation was evaluated by scanning. As `=` an index on
-                -- users_notifications.url can serve it as a ref lookup.
-                AND users_notifications.url = CONCAT('/microvolunteering/message/', messages.id)
+                -- LIKE, not `=`, until the statistics support the equality. Both match the
+                -- same rows (the pattern carries no wildcard). The `=` form was introduced so
+                -- an index on users_notifications.url could serve this as a ref lookup, and
+                -- that index does now exist in production - but its cardinality reads as 1, so
+                -- the optimiser costs a url ref lookup at 7.45M rows and rejects it on every
+                -- row: EXPLAIN gives `type=ALL, key=NULL, rows=7453675, Range checked for each
+                -- record` against ~40k outer rows. On 2026-09-13 that never completed once, and
+                -- the every-5-minute schedule stacked 17 copies against production. As LIKE the
+                -- url index cannot be considered at all, so the optimiser picks the single-pass
+                -- plan this job ran happily on for months.
+                --
+                -- The real fix is to stop correlating per row: a constant url lookup IS a ref
+                -- lookup on this index (EXPLAIN: type=ref, key=url, rows=1, 0.001s), so the
+                -- candidates should be collected first and checked with constants. Do that, or
+                -- refresh the table statistics, before reaching for `=` again.
+                AND users_notifications.url LIKE CONCAT('/microvolunteering/message/', messages.id)
                 AND users_notifications.type = ?
             WHERE messages_groups.arrival > DATE_SUB(NOW(), INTERVAL 1 DAY)
               AND messages.deleted IS NULL
