@@ -471,6 +471,37 @@ describe('ModMessageButtons', () => {
       expect(wrapper.vm.pending).toBe(false)
       expect(wrapper.vm.approved).toBe(false)
     })
+
+    // A post that rippled to several groups has one row per group, each with its own
+    // collection. The buttons must describe the copy being administered, not whichever
+    // other group still has the post waiting (Discourse 10102).
+    it('reads the collection of the group being administered, not any group', () => {
+      const wrapper = mountComponent(
+        { groupid: 456 },
+        {
+          groups: [
+            { groupid: 456, collection: 'Approved' },
+            { groupid: 789, collection: 'Pending' },
+          ],
+        }
+      )
+      expect(wrapper.vm.pending).toBe(false)
+      expect(wrapper.vm.approved).toBe(true)
+    })
+
+    it('falls back to any group when no group is being administered', () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            { groupid: 456, collection: 'Approved' },
+            { groupid: 789, collection: 'Pending' },
+          ],
+        }
+      )
+      expect(wrapper.vm.pending).toBe(true)
+      expect(wrapper.vm.approved).toBe(true)
+    })
   })
 
   describe('validActions computed', () => {
@@ -698,8 +729,10 @@ describe('ModMessageButtons', () => {
         },
       }
 
+      // The buttons describe the copy on the group being administered, so the pending
+      // row has to be on that group for any button to render.
       const messageData = createMessage({
-        groups: [{ groupid: 456, collection: 'Pending' }],
+        groups: [{ groupid: 789, collection: 'Pending' }],
       })
       mockMessageStore.byId.mockImplementation((id) =>
         id === messageData.id ? messageData : null

@@ -804,6 +804,27 @@ describe('ModMessage', () => {
       )
       expect(wrapper.vm.pending).toBe(expected)
     })
+
+    // One row per group: the copy being administered decides, not any other group's
+    // copy that is still waiting (Discourse 10102).
+    it.each([
+      [456, false],
+      [789, true],
+    ])(
+      'follows the administered group %s when copies differ',
+      (contextGroupid, expected) => {
+        const wrapper = mountComponent(
+          { contextGroupid },
+          {
+            groups: [
+              { groupid: 456, collection: 'Approved' },
+              { groupid: 789, collection: 'Pending' },
+            ],
+          }
+        )
+        expect(wrapper.vm.pending).toBe(expected)
+      }
+    )
   })
 
   describe('Computed: position', () => {

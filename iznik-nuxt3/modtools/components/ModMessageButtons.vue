@@ -256,18 +256,18 @@ const heldByOnThisGroup = computed(() => {
   return g?.heldby || null
 })
 
+// A post that rippled to several groups has one row per group, each with its own
+// collection. The buttons describe the copy being administered (props.groupid), not
+// whichever other group still has the post waiting: with the old any-group reading, an
+// Approved copy showed the Pending buttons while a neighbour's copy was still Pending, and
+// a Delete there was refused by the server as "no longer pending" (Discourse 10102). With
+// no group in context, fall back to any row, as before.
 function hasCollection(coll) {
-  let ret = false
-
-  if (message.value?.groups) {
-    message.value.groups.forEach((group) => {
-      if (group.collection === coll) {
-        ret = true
-      }
-    })
-  }
-
-  return ret
+  const groups = message.value?.groups || []
+  const scoped = props.groupid
+    ? groups.filter((g) => parseInt(g.groupid) === parseInt(props.groupid))
+    : groups
+  return scoped.some((g) => g.collection === coll)
 }
 
 const pending = computed(() => {

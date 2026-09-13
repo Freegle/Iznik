@@ -2782,7 +2782,11 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		Where("msgid = ? AND groupid IN ? AND collection IN ? AND deleted = 0",
 			req.ID, authorizedGroups, moderatable).Scan(&pendingGroups)
 
-	if subject != "" && len(pendingGroups) == 0 {
+	// The same answer for a plain delete (no standard message): ModTools used to show the
+	// Pending buttons on an Approved copy whenever any OTHER group's copy was still Pending,
+	// and a Delete there updated nothing yet reported Success (Discourse 10102). Saying so
+	// lets the client show the real state instead.
+	if len(pendingGroups) == 0 {
 		return c.JSON(fiber.Map{"ret": 1, "status": "Message is no longer pending and was not rejected"})
 	}
 
