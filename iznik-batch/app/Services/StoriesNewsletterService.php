@@ -202,6 +202,18 @@ class StoriesNewsletterService
                 continue;
             }
 
+            // The member's provider is refusing our mail. Generating this one
+            // would cost a render and then sit in the spool behind everything
+            // else, so skip before the render - the same place Community News
+            // and the digests gate. Counted, so ModTools can show the scale of
+            // what a member missed; the catch-up policy then drops it rather
+            // than replaying it, which is right for a monthly newsletter where
+            // next month's issue is a better email than a stale one.
+            if (app(\App\Services\Mail\MailSuppressionService::class)
+                ->shouldSkip($email, (int) $userId, 'storiesnewsletter')) {
+                continue;
+            }
+
             $name = $user->fullname
                 ?? trim(($user->firstname ?? '') . ' ' . ($user->lastname ?? ''))
                 ?: 'Freegle Member';

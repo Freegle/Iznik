@@ -185,6 +185,58 @@ class CommunityNewsEmailServiceTest extends TestCase
         $this->assertNotNull($area->fresh()->lastemailed);
     }
 
+    /**
+     * While a provider is refusing our mail we stop generating it, rather than
+     * rendering a weekly issue that can only sit in the spool. The count is
+     * what ModTools shows the member; the catch-up policy then drops it,
+     * because next week's issue beats a stale one.
+     */
+    public function test_skips_members_whose_provider_is_refusing_our_mail(): void
+    {
+        config(['freegle.mail.enabled_types' => 'CommunityNews']);
+
+        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
+        $this->catchment($g1);
+
+        $held = $this->createTestUser([
+            'email_preferred' => 'held@suppressed-example.com',
+            'newslettersallowed' => 1,
+            'bouncing' => 0,
+        ]);
+        $this->locate($held, 51.50, -0.12);
+        $this->createMembership($held, $g1);
+
+        DB::table('mail_suppressions')->insert([
+            'scope' => 'domain',
+            'value' => 'suppressed-example.com',
+            'reason' => '421 4.7.0 temporarily deferred',
+            'provider' => 'Example',
+            'deferred_since' => now()->subHour(),
+            'first_seen' => now(),
+            'last_seen' => now(),
+            'message_count' => 100,
+        ]);
+        app(\App\Services\Mail\MailSuppressionService::class)->flushCache();
+
+        $area = CommunityNewsArea::create([
+            'anchorgroupid' => $g1->id, 'name' => 'Testville', 'intro' => 'A few nice things.',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id], 'groupcount' => 1,
+        ]);
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'Repair Café', 'snippet' => 'Fix stuff.',
+            'url' => 'https://example.org/repair', 'source' => 'Library', 'researched_at' => now(),
+        ]);
+
+        $result = $this->svc()->sendWeekly();
+
+        $this->assertSame(0, $result['sent']);
+        Mail::assertNothingSent();
+        $this->assertDatabaseHas('mail_suppressed_counts', [
+            'userid' => $held->id,
+            'emailtype' => 'communitynews',
+        ]);
+    }
+
     public function test_only_mails_members_their_home_group_covers(): void
     {
         config(['freegle.mail.enabled_types' => 'CommunityNews']);

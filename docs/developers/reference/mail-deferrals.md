@@ -145,6 +145,7 @@ Gated paths, all of which skip before a `Mailable` is constructed:
 | Chat notifications | `ChatNotificationService::processMessage()`, after the `email_preferred` guard |
 | WeMissYou / engagement | `EngageEmailService::sendToUsers()` |
 | Community News | `CommunityNewsEmailService::sendWeekly()` |
+| Stories newsletter | `StoriesNewsletterService::generateAndSend()`, after the `email_preferred` guard |
 
 There is a final backstop inside `EmailSpoolerService::spool()` itself, above
 the render call. It catches anything that does not gate earlier, including any
