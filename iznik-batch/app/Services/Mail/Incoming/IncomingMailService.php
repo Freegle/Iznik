@@ -2798,9 +2798,16 @@ class IncomingMailService
             // Note: member posts are no longer Approved on arrival (see routing note
             // above). The APPROVED branch is retained for completeness / any future
             // caller; unmoderated members take the awaiting-content-check path below.
+            //
+            // Every update here is scoped to THIS group's row. A TrashNothing cross-post
+            // arrives as one email per group, minutes apart, and all of them attach to
+            // the same message; keyed on the message alone, routing the second email
+            // set the first group's copy back to Pending after the content check had
+            // already promoted it (Discourse 10142).
             if ($routingResult === RoutingResult::APPROVED) {
                 // Message is approved - update collection to Approved
                 MessageGroup::where('msgid', $messageId)
+                    ->where('groupid', $group->id)
                     ->update([
                         'collection' => MessageGroup::COLLECTION_APPROVED,
                         'approvedat' => now(),
@@ -2820,6 +2827,7 @@ class IncomingMailService
                 // content-check job's responsibility, so clean posts create no mod
                 // work and flagged posts never go live unchecked.
                 MessageGroup::where('msgid', $messageId)
+                    ->where('groupid', $group->id)
                     ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
 
                 Log::info('Message pending content check (auto-approve candidate)', [
@@ -2831,6 +2839,7 @@ class IncomingMailService
                 // worry words, unmapped user, Big Switch) - collection is already
                 // Incoming, update to Pending and notify mods now.
                 MessageGroup::where('msgid', $messageId)
+                    ->where('groupid', $group->id)
                     ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
 
                 // #15: Notify group moderators of new pending work
