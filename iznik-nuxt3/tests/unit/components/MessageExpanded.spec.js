@@ -737,6 +737,25 @@ describe('MessageExpanded', () => {
         expect(wrapper.text()).toContain('as soon as it does')
       })
 
+      // Discourse 9808/797: a reach the governor had finished weeks earlier still read
+      // "hasn't reached your area yet ... any moment now at the latest". A finished
+      // reach is never going to arrive; say so, and that the reply goes straight on.
+      it('says the reach has finished, not that it is still on its way, when the API says so', async () => {
+        mockFromme.value = false
+        mockMessage.value.replyeligible = false
+        mockMessage.value.reachfinished = true
+        const wrapper = await createWrapper({ replyable: true })
+
+        const text = wrapper.text().replace(/\s+/g, ' ')
+        expect(wrapper.find('[data-testid="reach-finished"]').exists()).toBe(
+          true
+        )
+        expect(text).toContain('finished rippling out')
+        expect(text).toContain('straight away')
+        expect(text).not.toContain("hasn't reached your area yet")
+        expect(text).not.toContain('any moment now')
+      })
+
       it('says nothing about a hold when the post has reached the viewer', async () => {
         mockFromme.value = false
         const wrapper = await createWrapper({ replyable: true })

@@ -213,8 +213,38 @@ export function rippledInAreaDates(groups, myGroups) {
  */
 export function isHomeGroup(group, groups) {
   if (!group) return false
-  const homeId = homeGroupId(groups)
-  if (homeId == null) return false
   const gid = group.groupid ?? group.id
-  return gid != null && parseInt(gid) === homeId
+  if (gid == null || !Array.isArray(groups) || groups.length === 0) return false
+  return isHomeGroupRow(groups, gid)
+}
+
+/**
+ * Is the post's copy on `groupid` one the member posted DIRECTLY, as opposed to one
+ * rippling created? This is the test every "may this community say something to the
+ * poster?" decision needs, and it is per ROW: a TrashNothing cross-post is one post sent
+ * directly to several communities, whose mails land a second apart, and every one of
+ * those copies is home (Discourse 10115). homeGroupId still picks ONE of them, for the
+ * things that need a single anchor (which chat a Blank Reply joins).
+ *
+ * Mirrors HomeGroups / NotifyPosterFlag in iznik-server-go (message/message.go).
+ *
+ * Fails open: with nothing known about the groups the answer is true, as the server's
+ * "no home row survives" case is - better to offer the message than silently withhold
+ * it. A row without rippled_in (an older API response) falls back to the earliest-arrival
+ * heuristic homeGroupId uses.
+ *
+ * @param {Array<{groupid:number|string, arrival?:string, rippled_in?:number|boolean}>} groups
+ * @param {number|string} groupid
+ * @returns {boolean}
+ */
+export function isHomeGroupRow(groups, groupid) {
+  if (!Array.isArray(groups) || groups.length === 0) return true
+  const gid = parseInt(groupid)
+  if (Number.isNaN(gid)) return true
+  const row = groups.find((g) => g && parseInt(g.groupid) === gid)
+  if (!row) return false
+  if (row.rippled_in !== undefined && row.rippled_in !== null) {
+    return !(row.rippled_in === 1 || row.rippled_in === true)
+  }
+  return homeGroupId(groups) === gid
 }
