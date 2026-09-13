@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-05
+last_reviewed: 2026-09-13
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/components/ExternalDa.vue
@@ -80,6 +80,20 @@ Things to know before touching it:
   gate itself breaks.
 - Jobs are geocoded on ingest and the `jobs` table is also the geocode cache, so a wrong
   placement does not heal by itself.
+
+## The mobile app
+
+The app runs without cookie consent, so no ad network can run in it. Every slot shows the
+job listings instead, which need no consent, and the donate banner stands in while there
+are no listings for the member's location. Supporters (recent donors) see neither. There
+is no "bored" switch to another network in the app, because there is none to switch to.
+The decision is the app-without-cookies branch at the top of `visibilityChanged` in
+`iznik-nuxt3/components/ExternalDa.vue`.
+
+Do not take the jobs slot out of that branch to cure a blank band. That was done once, in
+August 2026, and the app then showed only the donate banner for a month while the same
+members had dozens of listings a mile or two away. A blank band means the jobs slot
+reported nothing, and the fix belongs in what it reports.
 
 ## Behaviour that trips people up
 
