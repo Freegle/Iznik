@@ -32,6 +32,25 @@ if (!function_exists('cronLog')) {
 \App\Console\SchedulerMutex::apply(app(\Illuminate\Console\Scheduling\Schedule::class));
 
 // =============================================================================
+// DEPLOYMENT SWITCHES (see docs/developers/reference/deployment-switches.md)
+// =============================================================================
+// Another deployment of this codebase adds its own jobs in an overlay file that
+// Freegle does not ship, and can choose to run ONLY those. Both default to how
+// Freegle runs today: no overlay, the full schedule below.
+$scheduleOverlay = (string) config('freegle.schedule.overlay', '');
+if ($scheduleOverlay !== '') {
+    if (! str_starts_with($scheduleOverlay, '/')) {
+        $scheduleOverlay = base_path($scheduleOverlay);
+    }
+    if (is_file($scheduleOverlay)) {
+        require $scheduleOverlay;
+    }
+}
+if (config('freegle.schedule.profile', 'full') === 'overlay-only') {
+    return;
+}
+
+// =============================================================================
 // ACTIVE SCHEDULED COMMANDS
 // =============================================================================
 
