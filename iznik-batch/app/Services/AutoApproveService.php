@@ -125,13 +125,19 @@ class AutoApproveService
                         // on the column here: the periodic content check annotates every
                         // Pending row it visits (GroupModerated, MemberModerated, ...), so
                         // "has reasons" is not "held by this group's rules".
+                        //
+                        // The vetting this window relies on is the ORIGIN copy being Approved:
+                        // the poster's own group's row, rippled_in = 0. Another receiving
+                        // group approving its rippled-in copy by hand is not that vetting and
+                        // must not unlock the fast-track everywhere else (Discourse 10102).
                         ->whereExists(function ($q3) {
                             $q3->select(DB::raw(1))
                                 ->from('messages_groups as origin_mg')
                                 ->whereColumn('origin_mg.msgid', 'messages_groups.msgid')
                                 ->whereColumn('origin_mg.groupid', '!=', 'messages_groups.groupid')
                                 ->where('origin_mg.collection', MessageGroup::COLLECTION_APPROVED)
-                                ->where('origin_mg.deleted', 0);
+                                ->where('origin_mg.deleted', 0)
+                                ->where('origin_mg.rippled_in', 0);
                         });
                 });
             })

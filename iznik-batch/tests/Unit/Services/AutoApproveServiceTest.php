@@ -626,6 +626,46 @@ class AutoApproveServiceTest extends TestCase
     }
 
     /**
+     * The fast-track needs the ORIGIN copy to be Approved: that is the vetting the receiving
+     * group relies on. Another rippled-in copy that a neighbouring group's moderator approved
+     * is not that vetting, so it must not unlock the veto window elsewhere (Discourse 10102).
+     */
+    public function test_does_not_fast_track_rippled_in_when_only_another_rippled_in_copy_is_approved(): void
+    {
+        $user = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $approvedNearbyGroup = $this->createTestGroup();
+        $pendingNearbyGroup = $this->createTestGroup();
+        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, $originGroup);
+        // Origin still Pending (recent) — not yet vetted.
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
+            ->update(['collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()]);
+
+        // One rippled-in copy a moderator on that group approved by hand.
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $approvedNearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(2),
+            'msgtype' => 'Offer', 'rippled_in' => 1,
+        ]);
+        // Another rippled-in copy still waiting.
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $pendingNearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
+            'msgtype' => 'Offer', 'rippled_in' => 1,
+        ]);
+
+        $this->service->process();
+
+        $this->assertDatabaseHas('messages_groups', [
+            'msgid' => $message->id, 'groupid' => $pendingNearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+        ]);
+    }
+
+    /**
      * A rippled-in post that has already been collected (a Taken/Received outcome exists) is
      * never auto-approved into the receiving group - approving it would re-list a gone item and
      * fire a "newly reached" mail. The take normally retires the pending rows, but a take via a
