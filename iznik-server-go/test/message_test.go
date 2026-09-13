@@ -8799,6 +8799,16 @@ func TestPostMessageBackToPendingPullsAllGroups(t *testing.T) {
 	var heldbyB *uint64
 	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldbyB)
 	assert.Nil(t, heldbyB)
+
+	// Both groups' moderators can see in the logs why the post is back in their queue,
+	// and who did it: one Hold row each, no duplicate on the group the mod acted from
+	// (Discourse 10102).
+	for _, gid := range []uint64{groupA, groupB} {
+		var holdLogs int64
+		db.Raw("SELECT COUNT(*) FROM logs WHERE msgid = ? AND groupid = ? AND type = 'Message' AND subtype = 'Hold' AND byuser = ?",
+			msgID, gid, modID).Scan(&holdLogs)
+		assert.Equal(t, int64(1), holdLogs, "group %d should carry exactly one Hold log for the back to pending", gid)
+	}
 }
 
 func TestPostMessageHoldPerGroupLogsCorrectGroup(t *testing.T) {
