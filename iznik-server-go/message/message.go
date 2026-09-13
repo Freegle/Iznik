@@ -3536,17 +3536,20 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		}
 	}
 
-	// Remove the targeted group rows. With a groupid this is just that group;
-	// without one it's every group the message was on. Any groups not in the
-	// set keep their live posting.
-	// Identical golden to 3a50dbee0fa0
-	// (handleDeleteMessage); converted together per gate (h). Runs on tx (a
-	// *gorm.DB transaction), which the retired harness's dry-run build
-	// function rendered identically to the plain connection - same reasoning
-	// as the retired orm_wave2_pilot_test.go's handleMerge note (removed in
-	// d22ba1d6c).
+	// Soft-delete the targeted group rows. With a groupid this is just that
+	// group; without one it's every group the message was on. Any groups not
+	// in the set keep their live posting.
+	//
+	// This must NOT be a hard delete: RejectToDraft is a reversible pause (the
+	// owner reposts the same message via JoinAndPost, see below), not a
+	// permanent removal like handleDeleteMessage. A hard delete here destroys
+	// the whole messages_groups row - including a mod-applied heldby - and the
+	// resubmit's INSERT IGNORE then creates a brand-new row with heldby NULL,
+	// silently clearing a hold no mod released (Discourse 9946/8). Soft
+	// deleting keeps the row, and heldby, alive across the pause so a later
+	// revival (JoinAndPostAs) can restore it untouched.
 	if err := tx.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, groupids).
-		Delete(nil).Error; err != nil {
+		Update("deleted", true).Error; err != nil {
 		tx.Rollback()
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to remove from group")
 	}
@@ -3556,7 +3559,7 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// groups and the message is still active elsewhere. Only when this was the
 	// last group does the message become a fresh draft and need a full reset.
 	var remainingGroups int64
-	if err := tx.Table("messages_groups").Where("msgid = ?", req.ID).Count(&remainingGroups).Error; err != nil {
+	if err := tx.Table("messages_groups").Where("msgid = ? AND deleted = 0", req.ID).Count(&remainingGroups).Error; err != nil {
 		tx.Rollback()
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to count remaining groups")
 	}
@@ -3786,7 +3789,10 @@ func JoinAndPostAs(c *fiber.Ctx, caller uint64, author uint64, req PostMessageRe
 		db.Table("messages").Where("id = ?", req.ID).Update("deliverypossible", *req.Deliverypossible)
 	}
 
-	// Submit: insert into messages_groups and clean up draft.
+	// Submit: insert into messages_groups and clean up draft. INSERT IGNORE
+	// only fires for a group with no existing row (msgid, groupid unique key)
+	// - a soft-deleted row from RejectToDraft survives it untouched, so the
+	// revival Updates below brings that row back rather than leaving two.
 	db.Table("messages_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 		"msgid":      req.ID,
 		"groupid":    groupid,
@@ -3798,6 +3804,19 @@ func JoinAndPostAs(c *fiber.Ctx, caller uint64, author uint64, req PostMessageRe
 		// writes NULL rather than an empty string the enum would reject.
 		"msgtype": gorm.Expr("(SELECT type FROM messages WHERE id = ?)", req.ID),
 	})
+
+	// Revive a row RejectToDraft soft-deleted rather than creating a new one -
+	// this is what preserves a mod-applied heldby across a member's
+	// edit-and-repost (Discourse 9946/8). heldby is deliberately not touched
+	// here: a hold is a moderator action and only Approve/Release/Reject clear
+	// it (see message.go's other heldby call sites).
+	db.Table("messages_groups").Where("msgid = ? AND groupid = ? AND deleted = 1", req.ID, groupid).
+		Updates(map[string]interface{}{
+			"deleted":    false,
+			"collection": collection,
+			"arrival":    gorm.Expr("NOW()"),
+			"msgtype":    gorm.Expr("(SELECT type FROM messages WHERE id = ?)", req.ID),
+		})
 
 	// Clear any previous outcomes (V1 parity: submit() always deletes outcomes before re-posting).
 	// Identical golden to 854c7e93efe3
