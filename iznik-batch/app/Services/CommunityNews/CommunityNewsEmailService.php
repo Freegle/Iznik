@@ -244,7 +244,7 @@ class CommunityNewsEmailService
     }
 
     /**
-     * Distinct, opted-in, non-deleted members of any group in the area whose
+     * Distinct, opted-in, deliverable members of any group in the area whose
      * HOME GROUP that group is: the group's catchment (groups.polyindex, the
      * COALESCE of DPA poly / CGA polyofficial) must contain the member's
      * location. Membership alone is not enough — someone who joined Oxford but
@@ -257,8 +257,11 @@ class CommunityNewsEmailService
      * poly/polyofficial), simply don't match ST_Contains and are not mailed.
      *
      * whereExists-free join + distinct on users.id gives one row per user even
-     * when they belong to several covering groups in the area (dedup). Mirrors
-     * StoriesNewsletterService's eligible-member query.
+     * when they belong to several covering groups in the area (dedup).
+     *
+     * "Deliverable" is User::scopeReceivingOurMails — the same gate the Stories
+     * newsletter and the events/volunteering roundups use, and the SQL form of
+     * V1's User::sendOurMails().
      */
     public function eligibleMembers(array $groupIds)
     {
@@ -275,7 +278,7 @@ class CommunityNewsEmailService
             "     ELSE lastloc.lat END" .
             "), {$srid})";
 
-        return DB::table('users')
+        return User::query()
             ->join('memberships', 'memberships.userid', '=', 'users.id')
             ->join('groups', function ($join) {
                 $join->on('groups.id', '=', 'memberships.groupid')
@@ -286,18 +289,17 @@ class CommunityNewsEmailService
             ->whereIn('memberships.groupid', $groupIds)
             ->where('memberships.collection', 'Approved')
             ->where('users.newslettersallowed', 1)
-            ->whereNull('users.deleted')
-            // Recently-active only, matching the digest convention
-            // (UnifiedDigestService: Engage::USER_INACTIVE = 365*12*3600s =
-            // 182.5 days; NULL lastaccess = new member who has never logged
-            // in, still included). Without this gate the 2026-08-15 send
-            // spooled 643,931 mails — every member of every enabled group
-            // however dormant — and the dead mailboxes among them caused a
-            // mass deferral storm at the relay.
-            ->where(function ($q) {
-                $q->whereNull('users.lastaccess')
-                  ->orWhere('users.lastaccess', '>', now()->subSeconds(365 * 12 * 3600));
-            })
+            // People we should be mailing at all: not deleted, seen within
+            // User::USER_INACTIVE_DAYS, simplemail not 'None', not on holiday,
+            // not bouncing — the SQL form of V1's User::sendOurMails(), shared
+            // with the events/volunteering roundups and the Stories newsletter.
+            // Without the activity half of it the 2026-08-15 send spooled
+            // 643,931 mails — every member of every enabled group however
+            // dormant — and the dead mailboxes among them caused a mass
+            // deferral storm at the relay. The hand-rolled version this
+            // replaces also let through members who have never logged in at
+            // all, are on holiday, or have asked for no mail whatsoever.
+            ->receivingOurMails()
             // The ModTools "Send newsletters to members?" group toggle
             // (settings.newsletter). For Community News this defaults OFF —
             // stricter than StoriesNewsletterService's default-on — so a group

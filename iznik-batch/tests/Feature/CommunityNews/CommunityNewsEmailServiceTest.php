@@ -5,6 +5,7 @@ namespace Tests\Feature\CommunityNews;
 use App\Mail\CommunityNews\CommunityNewsMail;
 use App\Models\CommunityNewsArea;
 use App\Models\CommunityNewsItem;
+use App\Models\User;
 use App\Services\CommunityNews\CommunityNewsEmailService;
 use App\Services\CommunityNews\CommunityNewsImageService;
 use App\Services\GeminiService;
@@ -129,15 +130,32 @@ class CommunityNewsEmailServiceTest extends TestCase
         $this->createMembership($u5, $g1);
 
         // Dormant but inside the threshold -> still mailed (the boundary's
-        // other side). NULL lastaccess is untestable — the column is NOT NULL
-        // DEFAULT CURRENT_TIMESTAMP, so no real user can carry it — but the
-        // whereNull arm stays in the query as belt-and-braces matching the
-        // digest convention.
+        // other side).
         $u6 = $this->createTestUser(['email_preferred' => 'u6@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $u6->lastaccess = now()->subDays(100);
         $u6->save();
         $this->locate($u6, 51.50, -0.12);
         $this->createMembership($u6, $g1);
+
+        // Asked for no email whatsoever (simplemail None) -> no mail. The
+        // hand-rolled activity check this gate replaced only looked at
+        // lastaccess, so 2,198 members who had turned all mail off were still
+        // getting Community News.
+        $u7 = $this->createTestUser([
+            'email_preferred' => 'u7@test.com',
+            'newslettersallowed' => 1,
+            'bouncing' => 0,
+            'settings' => ['simplemail' => User::SIMPLE_MAIL_NONE],
+        ]);
+        $this->locate($u7, 51.50, -0.12);
+        $this->createMembership($u7, $g1);
+
+        // On holiday -> no mail, as for every other mail we send.
+        $u8 = $this->createTestUser(['email_preferred' => 'u8@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $u8->onholidaytill = now()->addDays(7);
+        $u8->save();
+        $this->locate($u8, 51.50, -0.12);
+        $this->createMembership($u8, $g1);
 
         $area = CommunityNewsArea::create([
             'anchorgroupid' => min($g1->id, $g2->id), 'name' => 'Testville', 'intro' => 'A few nice things.',
@@ -159,6 +177,8 @@ class CommunityNewsEmailServiceTest extends TestCase
         $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u3->id)); // bouncing
         $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u5->id)); // dormant >182.5d
         $this->assertTrue($sent->contains(fn ($m) => $m->userId === $u6->id));  // dormant 100d, inside threshold
+        $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u7->id)); // wants no email at all
+        $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u8->id)); // on holiday
 
         // Bookkeeping: item marked emailed, area cadence stamped.
         $this->assertNotNull(CommunityNewsItem::where('areaid', $area->id)->first()->emailed_at);
