@@ -956,16 +956,17 @@ func GetSession(c *fiber.Ctx) error {
 	}
 
 	type MembershipRow struct {
-		Groupid                  uint64  `json:"groupid"`
-		Role                     string  `json:"role"`
-		Emailfrequency           int     `json:"emailfrequency"`
-		Eventsallowed            int     `json:"eventsallowed"`
-		Volunteeringallowed      int     `json:"volunteeringallowed"`
-		Microvolunteeringallowed int     `json:"microvolunteeringallowed"`
-		Configid                 *uint64 `json:"configid"`
-		Active                   int     `json:"active"` // 1=active mod, 0=backup mod
-		Type                     string  `json:"-"`      // Used server-side for moderator detection, not returned to client
-		Settings                 *string `json:"-"`      // Per-group membership settings JSON, used to determine active/inactive
+		Groupid                  uint64    `json:"groupid"`
+		Role                     string    `json:"role"`
+		Emailfrequency           int       `json:"emailfrequency"`
+		Eventsallowed            int       `json:"eventsallowed"`
+		Volunteeringallowed      int       `json:"volunteeringallowed"`
+		Microvolunteeringallowed int       `json:"microvolunteeringallowed"`
+		Configid                 *uint64   `json:"configid"`
+		Added                    time.Time `json:"added"`  // When they joined - the feed folds a community's header up after the first week
+		Active                   int       `json:"active"` // 1=active mod, 0=backup mod
+		Type                     string    `json:"-"`      // Used server-side for moderator detection, not returned to client
+		Settings                 *string   `json:"-"`      // Per-group membership settings JSON, used to determine active/inactive
 	}
 
 	type LocationRow struct {
@@ -1035,7 +1036,7 @@ func GetSession(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 		db.Table("memberships m").
-			Select("m.groupid, m.role, m.emailfrequency, m.eventsallowed, m.volunteeringallowed, m.configid, g.type, m.settings, g.microvolunteering AS microvolunteeringallowed").
+			Select("m.groupid, m.role, m.emailfrequency, m.eventsallowed, m.volunteeringallowed, m.configid, m.added, g.type, m.settings, g.microvolunteering AS microvolunteeringallowed").
 			Joins("JOIN `groups` g ON g.id = m.groupid").
 			Where("m.userid = ? AND m.collection = ?", myid, utils.COLLECTION_APPROVED).
 			Order("LOWER(CASE WHEN g.namefull IS NOT NULL THEN g.namefull ELSE g.nameshort END)").

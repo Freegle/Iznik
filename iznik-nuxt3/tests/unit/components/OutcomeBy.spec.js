@@ -43,6 +43,18 @@ describe('OutcomeBy', () => {
     mockMessageStore.byId.mockReturnValue(mockMessage)
   })
 
+  it('names a promisee whose profile has not loaded as Freegler', async () => {
+    mockUserStore.byId.mockReturnValue(null)
+    mockMessageStore.byId.mockReturnValue({
+      ...mockMessage,
+      replies: [],
+      promises: [{ userid: 300 }],
+    })
+    const wrapper = await createWrapper()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Freegler')
+  })
+
   async function createWrapper(props = {}) {
     const TestWrapper = defineComponent({
       setup() {
