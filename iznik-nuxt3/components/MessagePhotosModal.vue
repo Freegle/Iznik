@@ -538,10 +538,6 @@ onMounted(() => {
   // Prevent body scroll
   document.body.style.overflow = 'hidden'
 
-  // The viewer sits above everything, so the confirmation popups it opens must be
-  // lifted above it too (see the global style below).
-  document.body.classList.add('photo-viewer-open')
-
   // Capture phase, so Escape reaches us before the modal we are covering.
   window.addEventListener('keydown', handleKeydown, true)
 })
@@ -549,26 +545,19 @@ onMounted(() => {
 onUnmounted(() => {
   // Restore body scroll
   document.body.style.overflow = ''
-  document.body.classList.remove('photo-viewer-open')
 
   window.removeEventListener('keydown', handleKeydown, true)
 })
 </script>
 
-<style lang="scss">
-/* The viewer is fixed at z-index 10000, above bootstrap's modals (about 1050). While it
-   is open, lift every modal above it so its own confirmation popups can be seen.
-   !important because bootstrap-vue-next writes the modal's z-index as an inline style.
-   Only the modal: its backdrop is nested inside it, so raising that too would put the
-   backdrop over the dialog. */
-body.photo-viewer-open .modal {
-  z-index: 10100 !important;
-}
-</style>
-
 <style scoped lang="scss">
 @import 'assets/css/_color-vars.scss';
 
+/* z-index 10000 puts us above bootstrap's modals (about 1050), which matters because we
+   are usually opened from one - the post modal in Browse, or the edit-post form. Never
+   lift modals as a class above this: that buries the viewer behind the very modal that
+   opened it. The confirmation popups we open carry modal-class="confirm-modal", which
+   global.scss puts at 200000, above us. */
 .fullscreen-viewer {
   position: fixed;
   top: 0;

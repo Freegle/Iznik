@@ -1,5 +1,12 @@
 <template>
-  <b-modal ref="modal" title="Remove AI Image" no-stacking>
+  <!-- confirm-modal puts us above everything else on the page (assets/css/global.scss),
+  which we need because the member site opens us from the photo viewer at z-index 10000. -->
+  <b-modal
+    ref="modal"
+    title="Remove AI Image"
+    no-stacking
+    modal-class="confirm-modal"
+  >
     <template #default>
       <p>This is an AI-generated image. Why are you removing it?</p>
       <b-button
