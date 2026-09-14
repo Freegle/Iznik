@@ -50,7 +50,10 @@ For each post you can:
   community moderates its own: holding it on yours does not lock, hide the buttons for, or
   remove from anyone else's pending count the copy on theirs. If you moderate several
   communities the same post reached, you will see it held only on the one where the hold
-  was placed.
+  was placed. The buttons you see describe your community's copy in the same way: a post
+  already live on yours does not show the Pending actions just because a neighbouring
+  community's copy is still waiting, and a Delete on a copy that is no longer pending is
+  refused with a message saying so rather than reported as done.
 - **Delete** or **Delete as Spam** (on your own community's posts).
 
 If a post only breaks a small rule, prefer **editing it with a note** over rejecting it.

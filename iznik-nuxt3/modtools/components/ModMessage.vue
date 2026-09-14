@@ -1568,18 +1568,17 @@ function imageRemoved(id) {
   return ret
 }
 
+// One row per group: the copy being administered (currentGroupid) decides, not any other
+// group's copy that is still waiting. Reading any row made an Approved copy render as
+// Pending while a neighbour's rippled copy was still in its veto window (Discourse 10102).
+// With no group in context, fall back to any row, as before.
 function hasCollection(coll) {
-  let ret = false
-
-  if (message.value?.groups) {
-    message.value.groups.forEach((grp) => {
-      if (grp.collection === coll) {
-        ret = true
-      }
-    })
-  }
-
-  return ret
+  const groups = message.value?.groups || []
+  const scoped =
+    currentGroupid.value != null
+      ? groups.filter((grp) => isCurrentGroup(grp.groupid))
+      : groups
+  return scoped.some((grp) => grp.collection === coll)
 }
 
 function postcodeSelect(pc) {

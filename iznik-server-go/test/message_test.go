@@ -1626,6 +1626,58 @@ func TestPostMessageRejectNonPendingDoesNotEmailOrLog(t *testing.T) {
 	assert.Equal(t, "Approved", collection, "A non-pending message must not be silently rejected")
 }
 
+// A plain Delete (a Reject with no standard message) on a copy that is no longer pending
+// is refused in the same words as a Reject with one, instead of answering Success while
+// touching nothing. ModTools showed the Pending buttons on an Approved copy whenever ANY
+// other group's copy was still Pending, so moderators clicked Delete on a live post and
+// were told it had worked (Discourse 10102).
+func TestPostMessageRejectNoSubjectOnApprovedCopyIsRefused(t *testing.T) {
+	prefix := uniquePrefix("msgmod_del_approved")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	otherGroup := CreateTestGroup(t, prefix+"_other")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved' WHERE msgid = ? AND groupid = ?", msgID, groupID)
+	// Still Pending on a group this moderator does not moderate - the situation that
+	// made ModTools offer Delete on the Approved copy.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, msgtype, rippled_in) VALUES (?, ?, 'Pending', NOW(), 'Offer', 1)", msgID, otherGroup)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"groupid": groupID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", modToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(1), result["ret"], "a plain delete on a copy that is not pending is refused, not reported as done")
+	assert.Contains(t, result["status"], "no longer pending")
+
+	var collection string
+	var deleted int
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
+	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&deleted)
+	assert.Equal(t, "Approved", collection, "the live copy is left alone")
+	assert.Equal(t, 0, deleted, "the live copy is not soft-deleted")
+
+	var msgDeleted *string
+	db.Raw("SELECT deleted FROM messages WHERE id = ?", msgID).Scan(&msgDeleted)
+	assert.Nil(t, msgDeleted, "the post itself is untouched")
+}
+
 func TestPostMessageRejectNoSubjectDeletes(t *testing.T) {
 	prefix := uniquePrefix("msgmod_rej_del")
 	db := database.DBConn
