@@ -2077,7 +2077,10 @@ class ExpandService
      * collection Approved), marked rippled=1. Email settings come from the poster's home/origin
      * group membership, except immediate (-1) is downgraded to daily (24) so an unrequested
      * membership never starts a flood of immediate mail (a no-email 0 or daily 24 home setting is
-     * preserved). Existing memberships - including a Banned row - are left untouched (INSERT IGNORE
+     * preserved). A poster who has left every group on the post falls back to any membership they
+     * still hold (organic before ripple-created), and one who holds none at all is in no community,
+     * so defaults to no email rather than to the daily digest. Existing memberships - including a
+ * Banned row - are left untouched (INSERT IGNORE
      * + NOT EXISTS), and a group whose most recent join was a ripple-join the poster then LEFT is
      * never re-joined ("most recent join wins"; an ordinary last membership they left does not block
      * rippling).
@@ -2095,8 +2098,7 @@ class ExpandService
             }
 
             // Email settings = the poster's settings on their home group: the earliest-arrival
-            // group on this message where they're already a member. Fall back to the same
-            // defaults addMembership uses if (unexpectedly) no such membership exists.
+            // group on this message where they're already a member.
             $home = DB::selectOne(
                 'SELECT m.emailfrequency, m.eventsallowed, m.volunteeringallowed
                  FROM messages_groups mg
@@ -2106,16 +2108,39 @@ class ExpandService
                  LIMIT 1',
                 [$posterId, $msgid]
             );
-            // Email frequency: preserve the poster's home-group setting, but DOWNGRADE ONLY
-            // immediate (-1) to daily (24). A rippled-into group is a lower-priority, unrequested
-            // membership, so we never start a flood of immediate emails from it - but we also never
-            // silently start emailing a no-email (0) member, nor change a daily (24) member. Events
-            // and volunteering are copied verbatim: they are one-email-per-user roundups with their
-            // own cadence guard, so leaving them at the home setting adds no extra emails.
-            $homeFreq = $home->emailfrequency ?? 24;
-            $emailfrequency = ((int) $homeFreq === -1) ? 24 : $homeFreq;
-            $eventsallowed = $home->eventsallowed ?? 1;
-            $volunteeringallowed = $home->volunteeringallowed ?? 1;
+            // No row means they have left every group this post is on. They may still be a member
+            // elsewhere, and that setting is a choice they made, so it beats any default. An organic
+            // membership (rippled = 0) is preferred over a ripple-created one, which only ever held a
+            // previous ripple's guess - otherwise a wrong default propagates itself forward every time
+            // another post ripples.
+            if (!$home) {
+                $home = DB::selectOne(
+                    'SELECT emailfrequency, eventsallowed, volunteeringallowed
+                     FROM memberships WHERE userid = ?
+                     ORDER BY rippled ASC, added DESC
+                     LIMIT 1',
+                    [$posterId]
+                );
+            }
+            // Email frequency: preserve the poster's setting, but DOWNGRADE ONLY immediate (-1) to
+            // daily (24). A rippled-into group is a lower-priority, unrequested membership, so we never
+            // start a flood of immediate emails from it - but we also never silently start emailing a
+            // no-email (0) member, nor change a daily (24) member. Events and volunteering are copied
+            // verbatim: they are one-email-per-user roundups with their own cadence guard, so leaving
+            // them at the member's setting adds no extra emails. eventsallowed is nullable and a NULL
+            // there has always meant on, so the ?? default belongs to the column, not to the member.
+            if ($home) {
+                $emailfrequency = ((int) $home->emailfrequency === -1) ? 24 : $home->emailfrequency;
+                $eventsallowed = $home->eventsallowed ?? 1;
+                $volunteeringallowed = $home->volunteeringallowed ?? 1;
+            } else {
+                // No membership anywhere: they are in no community at all. Defaulting that to daily
+                // would re-subscribe the member who has done the one thing that most clearly asks for
+                // none, so an auto-join for them starts silent.
+                $emailfrequency = 0;
+                $eventsallowed = 0;
+                $volunteeringallowed = 0;
+            }
 
             // Groups this post has rippled into where the poster has no membership row yet AND
             // which the poster has not "rippled in then left". Only a group whose MOST RECENT

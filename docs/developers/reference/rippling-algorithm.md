@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-07
+last_reviewed: 2026-09-14
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -796,6 +796,14 @@ For each due post, `ripple:expand`:
 **Rejoin suppression.** If a freegler's most recent Group/Joined log for a group is a
 ripple-join (`logs.text = 'Rippled'`) and they then left, rippling does not re-add them: they
 opted out of a rippled membership. A later ordinary join-then-leave does not block rippling.
+
+**Email settings for a ripple-join.** The new membership copies the poster's settings from
+their home group on the post, except immediate (-1) becomes daily (24) so an unrequested
+membership never starts a flood. If they have left every group the post is on, the settings
+come from any membership they still hold, preferring ones they joined themselves so an
+earlier ripple's guess cannot propagate itself forward. A poster holding no membership at
+all is in no community, and defaults to no email rather than to the daily digest: that
+member has done the one thing that most clearly says they want none.
 
 ## 5a. Frozen reaches (`status = 'held'`)
 
