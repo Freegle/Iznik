@@ -94,7 +94,7 @@ Also: `deferred`, `off-topic`, `duplicate`, `feature-request`, `confirmed`.
 
 `check_bug_feedback` (run each `LOAD_STATE`) scans follow-up Discourse posts for reporter confirmations and Edward's "working on it" / "fix applied" / "expected behaviour" replies, updating states automatically.
 
-Once a PR is merged and its fix is confirmed live (by comparing the merge SHA against `/api/version` for Go/Laravel and the Netlify published-deploy commit for the frontend), `queue_deployed_reply_drafts` auto-posts the verbatim "AI Edward: possible fix applied, please retest and report back" reply threaded under the specific reporting post. Two exceptions: a **tooling-only** fix (no frontend/Go/PHP files — e.g. monitor-fsm, docs, CI) is marked deployed *without* a reply, because there is nothing the reporter could retest; and a **failed post** (e.g. Discourse rate limit) resets the PR's deploy state so the reply is retried next iteration. `reconcile_direct_master_fixes` applies the same two rules to direct-to-master fixes.
+Once a PR is merged and its fix is confirmed live (by comparing the merge SHA against `/api/version` for Go/Laravel and the Netlify published-deploy commit for the frontend), `queue_deployed_reply_drafts` auto-posts the verbatim "AI Edward: possible fix applied, please retest and report back" reply threaded under the specific reporting post. Every such reply ends with a `Technical details:` line linking the change — the PR here, the commit in `reconcile_direct_master_fixes` — so a moderator reading the thread can see what was actually done. Two exceptions: a **tooling-only** fix (no frontend/Go/PHP files — e.g. monitor-fsm, docs, CI) is marked deployed *without* a reply, because there is nothing the reporter could retest; and a **failed post** (e.g. Discourse rate limit) resets the PR's deploy state so the reply is retried next iteration. `reconcile_direct_master_fixes` applies the same two rules to direct-to-master fixes.
 
 ### Model assignment
 
@@ -188,7 +188,7 @@ The driver lock at `/tmp/freegle-monitor-driver.lock` means only one driver can 
 
 ### Discourse replies are not auto-posted during fixing
 
-Post-fix Discourse replies are auto-posted (verbatim "AI Edward: possible fix applied, please retest and report back") only **after the fix is confirmed live in production** — verified by comparing the PR's merge commit against `/api/version` (Go/Laravel) and the Netlify published-deploy SHA (frontend). During the fix pipeline the monitor does not post to Discourse.
+Post-fix Discourse replies are auto-posted (verbatim "AI Edward: possible fix applied, please retest and report back", plus a `Technical details:` link to the PR or commit) only **after the fix is confirmed live in production** — verified by comparing the PR's merge commit against `/api/version` (Go/Laravel) and the Netlify published-deploy SHA (frontend). During the fix pipeline the monitor does not post to Discourse.
 
 Discourse replies are posted as Edward_Hibbert (using the API key from `profile.json`). There is no per-reply human approval — the auto-post behaviour is enabled by design. If you want to suppress it in local/dev runs, set `SKIP_DISCOURSE_STATUS=1`.
 

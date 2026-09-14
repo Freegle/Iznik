@@ -1004,6 +1004,17 @@ export function extractJsonArrayMarker(combined: string, marker: string): unknow
 // dependencies through this object so tests can substitute fakes (the functions
 // themselves shell out to gh/curl or POST to Discourse). Production behaviour
 // is unchanged — these are the real implementations.
+// The body of a reporter-facing "please retest" reply. `link` is the change behind the
+// fix — the PR, or for a fix pushed straight to master the commit. Edward's rule
+// (2026-09-14): every such reply carries one, so a moderator reading the thread can go
+// and see what was actually done rather than taking "fix applied" on trust.
+export function retestReplyBody(opts: { affectsApp: boolean; link?: string | null }): string {
+  let body = 'AI Edward: possible fix applied, please retest and report back'
+  if (opts.affectsApp) body += ' (but app releases may take up to one week)'
+  if (opts.link) body += `\n\nTechnical details: ${opts.link}`
+  return body
+}
+
 export const deployedReplyDeps = {
   checkPrDeployed,
   postDiscourseReply,
@@ -1466,9 +1477,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         // it immediately). checkPrDeployed already determined the touched areas
         // from the PR file list, so reuse that rather than re-querying GitHub.
         const affectsApp = deployCheck.touched.frontend || (bug.frontend_only ?? 0) === 1
-        const APP_CAVEAT = ' (but app releases may take up to one week)'
-        const body = 'AI Edward: possible fix applied, please retest and report back'
-          + (affectsApp ? APP_CAVEAT : '')
+        const body = retestReplyBody({ affectsApp, link: prUrl })
         // Quote the reporter's ACTUAL words (fetched verbatim) so the reply quotes
         // what they wrote, not our paraphrased summary. Fall back to the stored
         // excerpt/title only if the live fetch yields nothing; the posting guard
@@ -1588,8 +1597,11 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
 
         const quote = (await fetchReporterQuote(bug.topic, bug.post)) || (bug.excerpt || bug.topic_title || '').trim()
         if (!quote) { markFixed(); skipped.push(`${tag} (no quote text — marked fixed, no reply)`); continue }
-        const body = 'AI Edward: possible fix applied, please retest and report back'
-          + (live.touchesFrontend ? ' (but app releases may take up to one week)' : '')
+        // No PR on this path by definition, so the commit is the technical reference.
+        const body = retestReplyBody({
+          affectsApp: live.touchesFrontend,
+          link: `https://github.com/${PROD_REPO}/commit/${match.sha}`,
+        })
         const username = bug.reporter ?? 'there'
         const raw = formatReplyRaw({ username, post: bug.post, topic: bug.topic, quote, body })
         const postRes = await postDiscourseReply(bug.topic, raw, bug.post)
