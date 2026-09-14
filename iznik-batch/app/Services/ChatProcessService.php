@@ -115,23 +115,32 @@ class ChatProcessService
         // 410m away, on the poster's own community, banned only on a community the post had
         // rippled into and that neither of them was conversing on).
 
-        // --- User2User spam and review checks ---
         $review = 0;
         $reviewreason = null;
         $spam = 0;
 
+        // Someone on the spammer list reaches nobody, whatever kind of chat this is.
+        // Their mail is already dropped on the way in, volunteers address included
+        // (IncomingMailService::isKnownSpammer), but the Contact button on a group page
+        // opens a chat with the volunteers, and this check used to sit inside the
+        // User2User branch below, so that route stayed open (Discourse 10149).
+        //
+        // A ban is deliberately NOT treated this way: the banned-in-common check stays
+        // below, for member-to-member chats only, so a banned member can still write to
+        // the volunteers to appeal. That is Edward's decision on the same thread.
+        $isSpammer = DB::table('spam_users')
+            ->where('userid', $userid)
+            ->whereIn('collection', ['Spammer', 'PendingAdd'])
+            ->exists();
+
+        if ($isSpammer) {
+            $this->processFailed($id, ChatMessage::PROCESSFAIL_SPAMMER);
+
+            return true;
+        }
+
+        // --- User2User review and ban checks ---
         if ($chattype === ChatRoom::TYPE_USER2USER) {
-            // Check if sender is a confirmed or pending spammer.
-            $isSpammer = DB::table('spam_users')
-                ->where('userid', $userid)
-                ->whereIn('collection', ['Spammer', 'PendingAdd'])
-                ->exists();
-
-            if ($isSpammer) {
-                $this->processFailed($id, ChatMessage::PROCESSFAIL_SPAMMER);
-                return true;
-            }
-
             // Check if sender is banned on all common groups with the other user.
             $otherId = $message->user1 == $userid ? $message->user2 : $message->user1;
 

@@ -119,6 +119,16 @@ On a member you can:
 
 Removing or banning is a last resort. A friendly word usually solves the problem.
 
+A ban stops someone posting on your community and replying to posts there. It does **not**
+stop them writing to your volunteers, by email or with the Contact button on your community
+page, and that is deliberate: it is how someone appeals a ban. Their message arrives in
+their chat with your volunteers, which every moderator on the community can see.
+
+The **spammer list** is the stronger measure. Someone on it is banned everywhere, and
+nothing they send reaches us at all: their email is dropped, the volunteers address
+included, and a message to volunteers from the site or app is never delivered. It does not
+lock their account, so they can still sign in.
+
 Some members are on your list only because a post of theirs **rippled in**: rippling
 joins the poster so the post can live on your community. That is not a relationship with
 you, so such a member has no **Chat** button and no standard messages that only write to
