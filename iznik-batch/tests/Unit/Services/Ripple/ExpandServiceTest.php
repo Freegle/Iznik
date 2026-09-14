@@ -4301,7 +4301,16 @@ class ExpandServiceTest extends TestCase
         $this->assertNull($b->approvedat, 'and it is not marked approved');
     }
 
-    /** The reason is recorded, so the moderator can see what their rule caught. */
+    /**
+     * The reason is recorded, so the moderator can see what their rule caught. But
+     * checkGroupOwnRules() only ever re-checks THIS group's own keywords - it never runs
+     * the full checkMessage() pipeline (money symbols, phone numbers, PII, etc). If the
+     * insert stamped contentcheck_checked_at here, processUnprocessed()'s periodic scan
+     * would treat this row as already checked and permanently skip that full pipeline for
+     * it - silently letting through money-for-item offers, phone numbers and addresses on
+     * every rippled-in post held this way (Discourse 10063/4). Leaving it NULL keeps the
+     * row eligible for that scan, exactly like a clean rippled-in copy already is.
+     */
     public function test_group_own_rule_hold_records_why(): void
     {
         $this->fakeRouting(3);
@@ -4322,7 +4331,10 @@ class ExpandServiceTest extends TestCase
         $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
         $this->assertNotNull($b->contentcheck_reasons, 'the moderator is told what matched');
         $this->assertStringContainsString('rabbit', $b->contentcheck_reasons);
-        $this->assertNotNull($b->contentcheck_checked_at);
+        $this->assertNull(
+            $b->contentcheck_checked_at,
+            'must stay NULL so the periodic full check pipeline still runs on this row (Discourse 10063/4)'
+        );
     }
 
     /** One group's rule is one group's business: the others still get the post as normal. */

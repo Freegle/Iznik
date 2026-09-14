@@ -2018,14 +2018,19 @@ class ExpandService
             foreach ($targetGroups as $g) {
                 // The group's own rules are asked first: a breach holds the copy with its
                 // reasons recorded. Otherwise the copy lands where the origin's vetting put it.
+                // contentcheck_checked_at is deliberately left NULL here (unlike the recordCheckOnly()
+                // "never fight a mod" path): checkGroupOwnRules() only re-checks this group's own
+                // keywords, so stamping it would permanently exclude the row from processUnprocessed()'s
+                // periodic full checkMessage() pipeline - silently skipping money/phone/PII/URL/spam
+                // checks for every rippled-in post held this way (Discourse 10063/4).
                 $breaches = $this->contentCheck->checkGroupOwnRules($subject, $textbody, (int) $g->id);
 
                 if (!empty($breaches)) {
                     $inserted = DB::affectingStatement(
                         "INSERT IGNORE INTO messages_groups
                             (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in,
-                             contentcheck_checked_at, contentcheck_reasons)
-                         VALUES (?, ?, 'Pending', NULL, NOW(), 0, ?, 1, NOW(), ?)",
+                             contentcheck_reasons)
+                         VALUES (?, ?, 'Pending', NULL, NOW(), 0, ?, 1, ?)",
                         [$msgid, $g->id, $msg->type, json_encode($breaches)]
                     );
 
