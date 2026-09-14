@@ -12,7 +12,7 @@
 //   legendMode   — ref ('outbound' | 'inbound' | 'catchment') set by the tab/direction
 //                  toggles, so the key on the map matches what is drawn
 import { watch } from 'vue'
-import { attribution, osmtile } from '~/composables/useMap'
+import { attribution, loadLeaflet, osmtile } from '~/composables/useMap'
 import {
   chaikinSmooth,
   geoToLeaflet,
@@ -48,8 +48,13 @@ export async function setupRipplingExplorer({
   legendMode,
   catchmentLegend,
 }) {
-  await import('leaflet/dist/leaflet.css')
-  const L = (await import('leaflet')).default
+  // The app's one Leaflet instance, pinned on window.L. The bare 'leaflet' package is the
+  // UMD build, which assigns window.L to itself when it loads; importing it here swapped
+  // every vue-leaflet map on the page onto a second instance, and the message map's
+  // fitBounds() then rejected bounds built with the first ("Bounds are not valid."),
+  // taking the whole ModTools page to the error view whenever the reach opened.
+  await loadLeaflet()
+  const L = window.L
 
   let map = null
   const cleanupFns = []
