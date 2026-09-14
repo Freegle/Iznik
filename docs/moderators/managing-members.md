@@ -127,7 +127,9 @@ their chat with your volunteers, which every moderator on the community can see.
 The **spammer list** is the stronger measure. Someone on it is banned everywhere, and
 nothing they send reaches us at all: their email is dropped, the volunteers address
 included, and a message to volunteers from the site or app is never delivered. It does not
-lock their account, so they can still sign in.
+lock their account, so they can still sign in. Someone only *proposed* for the list, and
+still waiting on a second moderator, can write to volunteers as normal, so they can put
+their case before the decision is made.
 
 Some members are on your list only because a post of theirs **rippled in**: rippling
 joins the poster so the post can live on your community. That is not a relationship with

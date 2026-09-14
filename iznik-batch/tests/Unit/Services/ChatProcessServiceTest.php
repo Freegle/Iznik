@@ -188,6 +188,35 @@ class ChatProcessServiceTest extends TestCase
         $this->assertNull($updated->processingfailreason);
     }
 
+    /**
+     * Someone only PROPOSED for the spammer list is not on it yet, and writing to the
+     * volunteers is how they would argue they should not be added. Member-to-member is
+     * unchanged: a pending addition is still held back there, as it always was.
+     */
+    public function test_a_pending_spammer_can_still_message_the_volunteers(): void
+    {
+        $proposed = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $room = $this->createTestChatRoom($proposed, $proposed, [
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user2' => null,
+            'groupid' => $group->id,
+        ]);
+        DB::table('spam_users')->insert([
+            'userid' => $proposed->id, 'collection' => 'PendingAdd', 'added' => now(),
+        ]);
+
+        $msg = $this->createTestChatMessage($room, $proposed, [
+            'processingrequired' => 1, 'processingsuccessful' => 0, 'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $updated->processingsuccessful,
+            'a proposed spammer must still be able to put their case to the volunteers');
+    }
+
     // --- Basic processing ---
 
     public function test_message_with_processingrequired_gets_marked_processed(): void

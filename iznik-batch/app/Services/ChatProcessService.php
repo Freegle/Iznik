@@ -128,9 +128,18 @@ class ChatProcessService
         // A ban is deliberately NOT treated this way: the banned-in-common check stays
         // below, for member-to-member chats only, so a banned member can still write to
         // the volunteers to appeal. That is Edward's decision on the same thread.
+        //
+        // Same reasoning for a PendingAdd on the volunteers route: that is a proposal
+        // awaiting a second moderator, not the list, and writing to the volunteers is how
+        // someone argues they should not be added. Member-to-member keeps both
+        // collections, exactly as before.
+        $spamCollections = $chattype === ChatRoom::TYPE_USER2USER
+            ? ['Spammer', 'PendingAdd']
+            : ['Spammer'];
+
         $isSpammer = DB::table('spam_users')
             ->where('userid', $userid)
-            ->whereIn('collection', ['Spammer', 'PendingAdd'])
+            ->whereIn('collection', $spamCollections)
             ->exists();
 
         if ($isSpammer) {
