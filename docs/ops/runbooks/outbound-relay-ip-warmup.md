@@ -10,6 +10,9 @@ covers:
 
 # Outbound relay: warming sending addresses per provider
 
+> For the whole outbound path - generation, the spool, this relay, the provider -
+> see [how an email gets from Freegle to an inbox](../reference/outbound-mail.md).
+
 The outbound mail relay has several sending addresses. Large receiving providers
 (Yahoo's estate is the recurring one: `yahoo.*`, `aol.*`, `sky.com`, `ymail.com` ...)
 judge us per *sending address x receiving provider*, and when one of those pairs is
