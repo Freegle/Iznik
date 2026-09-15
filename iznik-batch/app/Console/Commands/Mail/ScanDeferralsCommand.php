@@ -5,6 +5,7 @@ namespace App\Console\Commands\Mail;
 use App\Services\Mail\Deferrals\DeferralCatchUpService;
 use App\Services\Mail\Deferrals\DeferralProbe;
 use App\Services\Mail\Deferrals\DeferralScanService;
+use App\Services\Mail\Deferrals\RelayQueueRecorder;
 use App\Services\Mail\Deferrals\RelayQueueSnapshot;
 use App\Services\Mail\MailSuppressionService;
 use Illuminate\Console\Command;
@@ -43,6 +44,7 @@ class ScanDeferralsCommand extends Command
         DeferralProbe $probe,
         DeferralScanService $scan,
         DeferralCatchUpService $catchUp,
+        RelayQueueRecorder $queue,
     ): int {
         $cfg = (array) config('freegle.mail.deferrals', []);
 
@@ -96,6 +98,17 @@ class ScanDeferralsCommand extends Command
         }
 
         $this->reportSnapshot($snapshot);
+
+        // Record the queue itself before deciding anything about it. A
+        // provider refusing us is one reason mail is late; our own pacing is
+        // the other, and it produces no error for anything else to notice.
+        $recorded = $queue->record($snapshot, $dryRun);
+        $this->line(sprintf(
+            'Queue recorded: %d domains, %s waiting on us, %s refused by a provider.',
+            $recorded['rows'],
+            number_format($recorded['waiting']),
+            number_format($recorded['deferred'])
+        ));
 
         // Ask each suppressed provider directly whether it is taking our mail
         // again, rather than waiting to infer it from traffic we have

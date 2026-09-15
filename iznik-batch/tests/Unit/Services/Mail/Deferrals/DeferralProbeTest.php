@@ -80,6 +80,151 @@ class DeferralProbeTest extends TestCase
     }
 
     /**
+     * The failure this whole change exists to fix.
+     *
+     * A queue entry with no delay_reason is not a deferral - nothing has
+     * refused it - and the probe used to drop it on the floor. On a relay that
+     * paces a provider deliberately, that is where the entire backlog lives:
+     * thousands of messages, hours old, with no error anywhere because none
+     * has occurred. The delayed view could therefore report that every
+     * provider was accepting our mail while a member's email ran half a day
+     * late, and both statements were true.
+     */
+    public function test_queue_entries_nothing_has_refused_are_counted_as_waiting(): void
+    {
+        $waiting = $this->queueLine([
+            'queue_name' => 'active',
+            'queue_id' => 'WAIT00001',
+            'arrival_time' => 1755270000,
+            'recipients' => [['address' => 'someone@yahoo.com']],
+        ]);
+
+        $probe = new DeferralProbe($this->runner($this->wrap($waiting)));
+        $snapshot = $probe->probe('relay@host', 65536);
+
+        $this->assertSame(1, $snapshot->waiting['yahoo.com']['count']);
+        $this->assertSame(1755270000, $snapshot->waiting['yahoo.com']['oldest']);
+
+        // And emphatically NOT as a deferral: it must not count toward
+        // suppressing a provider that has done nothing wrong.
+        $this->assertSame([], $snapshot->groups);
+        $this->assertSame([], $snapshot->addresses);
+        $this->assertSame(0, $snapshot->unattributed);
+    }
+
+    /**
+     * `incoming` is where a burst lands, and it is the easy one to leave out.
+     * On 2026-09-13 it held 81,800 messages against 40,000 in active, so a
+     * count that skipped it understated the backlog by two thirds - while
+     * looking perfectly plausible.
+     */
+    public function test_the_incoming_queue_counts_as_waiting(): void
+    {
+        $probe = new DeferralProbe($this->runner($this->wrap($this->queueLine([
+            'queue_name' => 'incoming',
+            'recipients' => [['address' => 'someone@yahoo.com']],
+        ]))));
+        $snapshot = $probe->probe('relay@host', 65536);
+
+        $this->assertSame(1, $snapshot->waiting['yahoo.com']['count']);
+    }
+
+    /**
+     * Mail is only on hold because an operator put it there. That is a
+     * different fact wanting a different conversation, and folding it into the
+     * backlog would read as a delivery problem that does not exist.
+     */
+    public function test_mail_an_operator_has_held_is_not_counted_as_waiting(): void
+    {
+        $probe = new DeferralProbe($this->runner($this->wrap($this->queueLine([
+            'queue_name' => 'hold',
+            'recipients' => [['address' => 'someone@yahoo.com']],
+        ]))));
+        $snapshot = $probe->probe('relay@host', 65536);
+
+        $this->assertSame([], $snapshot->waiting);
+    }
+
+    /**
+     * Waiting is bucketed by recipient domain rather than by relay family,
+     * because an entry that has never been attempted has no relay to name.
+     */
+    public function test_waiting_is_bucketed_by_domain_and_keeps_the_oldest_arrival(): void
+    {
+        $lines = implode("\n", [
+            $this->queueLine([
+                'queue_id' => 'W1',
+                'arrival_time' => 1755280000,
+                'recipients' => [['address' => 'a@yahoo.com']],
+            ]),
+            $this->queueLine([
+                'queue_id' => 'W2',
+                'arrival_time' => 1755270000,
+                'recipients' => [['address' => 'b@yahoo.com']],
+            ]),
+            $this->queueLine([
+                'queue_id' => 'W3',
+                'arrival_time' => 1755290000,
+                'recipients' => [['address' => 'c@gmail.com']],
+            ]),
+        ]);
+
+        $probe = new DeferralProbe($this->runner($this->wrap($lines)));
+        $snapshot = $probe->probe('relay@host', 65536);
+
+        $this->assertSame(2, $snapshot->waiting['yahoo.com']['count']);
+        $this->assertSame(1755270000, $snapshot->waiting['yahoo.com']['oldest'], 'oldest, not latest');
+        $this->assertSame(1, $snapshot->waiting['gmail.com']['count']);
+    }
+
+    /**
+     * Which instance holds it, because a relay that paces providers runs more
+     * than one and an operator reaching for postqueue needs to know which.
+     */
+    public function test_waiting_records_the_instance_that_holds_it(): void
+    {
+        $probe = new DeferralProbe($this->runner($this->wrapInstances([
+            '/etc/postfix' => $this->queueLine([
+                'queue_id' => 'P1',
+                'recipients' => [['address' => 'a@gmail.com']],
+            ]),
+            '/etc/postfix-warm' => $this->queueLine([
+                'queue_id' => 'W1',
+                'recipients' => [['address' => 'b@yahoo.com']],
+            ]),
+        ])));
+        $snapshot = $probe->probe('relay@host', 65536);
+
+        $this->assertSame('/etc/postfix', $snapshot->waiting['gmail.com']['instance']);
+        $this->assertSame('/etc/postfix-warm', $snapshot->waiting['yahoo.com']['instance']);
+    }
+
+    /**
+     * A depth with no drain rate cannot be acted on: 3,000 queued is fine at
+     * 3,000/hour and a two-day outage at 60. The relay family rate is not a
+     * substitute, because waiting is counted per domain and an unattempted
+     * message names no family.
+     */
+    public function test_deliveries_are_counted_by_recipient_domain_as_well_as_relay(): void
+    {
+        $delivered = implode("\n", [
+            'Sep 15 19:39:09 h postfix-warm1/smtp[1]: A1: to=<one@yahoo.com>, '
+                . 'relay=mta7.am0.yahoodns.net[67.195.204.79]:25, delay=1.9, status=sent (250 ok)',
+            'Sep 15 19:39:10 h postfix-warm1/smtp[2]: A2: to=<two@yahoo.com>, '
+                . 'relay=mta7.am0.yahoodns.net[67.195.204.79]:25, delay=1.9, status=sent (250 ok)',
+            'Sep 15 19:39:11 h postfix/smtp[3]: A3: to=<three@gmail.com>, '
+                . 'relay=alt1.gmail-smtp-in.l.google.com[142.250.102.26]:25, delay=1.1, status=sent (250 ok)',
+        ]);
+
+        $probe = new DeferralProbe($this->runner($this->wrap($this->queueLine(), $delivered)));
+        $snapshot = $probe->probe('relay@host', 65536);
+
+        $this->assertSame(2, $snapshot->deliveriesForDomain('yahoo.com'));
+        $this->assertSame(1, $snapshot->deliveriesForDomain('gmail.com'));
+        $this->assertSame(0, $snapshot->deliveriesForDomain('never-seen.com'));
+    }
+
+    /**
      * The relay runs more than one postfix instance, and the second owns
      * delivery to exactly the providers this scan exists to watch. A bare
      * `postqueue -j` returns only the default instance, so the scan would

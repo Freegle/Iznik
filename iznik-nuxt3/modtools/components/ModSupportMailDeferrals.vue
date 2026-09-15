@@ -2,11 +2,13 @@
   <div>
     <NoticeMessage variant="info" class="mb-3">
       <p class="mb-0">
-        <strong>Providers refusing our mail.</strong> When a provider stops
-        accepting mail from our sending servers, we pause generating email for
-        everyone at that provider rather than pile up mail that can't be
-        delivered. This is our sending reputation, not a problem with anyone's
-        address.
+        <strong>Why email is running late.</strong> Two different things delay
+        mail and they need opposite responses. A provider can refuse our mail
+        outright, in which case we pause generating email for everyone there
+        rather than pile up mail that can't be delivered. Or mail can simply be
+        queued, waiting its turn, because we send to that provider at a
+        deliberately limited rate - nothing has gone wrong, but the member is
+        still waiting. Both are below.
       </p>
     </NoticeMessage>
 
@@ -19,15 +21,86 @@
     </NoticeMessage>
 
     <template v-else>
-      <NoticeMessage v-if="!suppressions.length" variant="success" class="mb-3">
-        Nothing is being deferred. Every provider is accepting our mail.
+      <NoticeMessage
+        v-if="!suppressions.length && !queues.length"
+        variant="success"
+        class="mb-3"
+      >
+        Nothing is waiting and nothing is being deferred. Every provider is
+        accepting our mail as fast as we're sending it.
       </NoticeMessage>
 
-      <template v-else>
+      <!-- The queue comes first because it answers the question people
+           actually arrive with - "is mail to this member late?" - whoever's
+           fault it is. A suppression is the answer to a narrower question. -->
+      <template v-if="queues.length">
         <h3 class="mb-2">
-          Currently suppressed
-          <b-badge variant="danger">{{ suppressions.length }}</b-badge>
+          In the sending queue
+          <b-badge :variant="worstQueueVariant">{{
+            totalQueued.toLocaleString()
+          }}</b-badge>
         </h3>
+        <p class="text-muted small mb-2">
+          One row per recipient domain, worst first.
+          <strong>Waiting</strong> is mail nothing has refused - it's queued
+          behind the rate we send to that provider at.
+          <strong>Refused</strong> is mail they've turned away. Depth on its own
+          doesn't tell you much: a big queue draining fast is fine, a small one
+          that isn't draining is not.
+        </p>
+        <b-table-simple responsive striped small class="mb-4">
+          <b-thead>
+            <b-tr>
+              <b-th>Domain</b-th>
+              <b-th class="text-end">Waiting</b-th>
+              <b-th class="text-end">Refused</b-th>
+              <b-th>Oldest</b-th>
+              <b-th class="text-end">Sending</b-th>
+              <b-th>Clears in</b-th>
+            </b-tr>
+          </b-thead>
+          <b-tbody>
+            <b-tr v-for="q in queues" :key="'q-' + q.domain">
+              <b-td>
+                <code>{{ q.domain }}</code>
+              </b-td>
+              <b-td class="text-end">{{
+                (q.waiting || 0).toLocaleString()
+              }}</b-td>
+              <b-td class="text-end">{{
+                (q.deferred || 0).toLocaleString()
+              }}</b-td>
+              <b-td>
+                <span v-if="q.oldest" :title="q.oldest">{{
+                  timeago(q.oldest)
+                }}</span>
+                <span v-else class="text-muted">-</span>
+              </b-td>
+              <b-td class="text-end">
+                <span v-if="q.deliveredperhour"
+                  >{{ q.deliveredperhour.toLocaleString() }}/hr</span
+                >
+                <span v-else class="text-muted">-</span>
+              </b-td>
+              <b-td :class="clearsClass(q)">{{ clearsIn(q) }}</b-td>
+            </b-tr>
+          </b-tbody>
+        </b-table-simple>
+      </template>
+
+      <h3 class="mb-2">
+        Providers refusing our mail
+        <b-badge v-if="suppressions.length" variant="danger">{{
+          suppressions.length
+        }}</b-badge>
+      </h3>
+
+      <p v-if="!suppressions.length" class="text-muted">
+        Nobody is refusing us. Anything in the queue above is waiting on the
+        rate we send at, not on a provider turning us away.
+      </p>
+
+      <template v-else>
         <p class="text-muted small mb-2">
           One row per recipient domain, worst backlog first. Individual full
           mailboxes are not listed - those are that member's inbox, not a
@@ -69,9 +142,9 @@
       </h3>
 
       <p v-if="!members.length" class="text-muted">
-        No mail has been held back yet. A suppression starts holding mail from
-        the moment it's created, so this fills up as each member's next email
-        comes due.
+        No mail has been held back yet. Only a suppression holds mail back -
+        mail queued behind our sending rate has already been generated and is
+        waiting to go out, so it doesn't appear here.
       </p>
 
       <template v-else>
@@ -116,7 +189,7 @@
 <script setup>
 import { computed, onMounted } from 'vue'
 import { useEmailTrackingStore } from '~/modtools/stores/emailtracking'
-import { dateshort } from '~/composables/useTimeFormat'
+import { dateshort, timeago } from '~/composables/useTimeFormat'
 
 const store = useEmailTrackingStore()
 
@@ -125,6 +198,54 @@ const error = computed(() => store.deferralsError)
 const suppressions = computed(() => store.deferralSuppressions)
 const members = computed(() => store.deferralMembers)
 const memberLimit = computed(() => store.deferralMemberLimit)
+const queues = computed(() => store.deferralQueues)
+
+const totalQueued = computed(() =>
+  queues.value.reduce((n, q) => n + (q.waiting || 0) + (q.deferred || 0), 0)
+)
+
+// Colour the headline on the worst row, not on the total. A hundred thousand
+// messages spread over domains that are all draining is a normal busy evening;
+// a thousand that aren't moving is the problem.
+const worstQueueVariant = computed(() => {
+  const stuck = queues.value.some((q) => q.waiting > 0 && !q.deliveredperhour)
+
+  return stuck ? 'danger' : 'warning'
+})
+
+// Depth divided by drain rate. Stated in the units the reader thinks in, and
+// refusing to guess when there is nothing to divide by: "not draining" is a
+// far more useful answer than a made-up number, and it is the row that wants
+// acting on.
+function clearsIn(q) {
+  const waiting = q.waiting || 0
+
+  if (!waiting) {
+    return '-'
+  }
+
+  const rate = q.deliveredperhour || 0
+
+  if (!rate) {
+    return 'not draining'
+  }
+
+  const hours = waiting / rate
+
+  if (hours < 1) {
+    return `${Math.max(1, Math.round(hours * 60))} min`
+  }
+
+  return `${hours.toFixed(1)} hours`
+}
+
+function clearsClass(q) {
+  if (q.waiting > 0 && !q.deliveredperhour) {
+    return 'text-danger fw-bold'
+  }
+
+  return q.waiting / (q.deliveredperhour || 1) > 4 ? 'text-warning' : ''
+}
 
 onMounted(() => {
   store.fetchDeferrals()

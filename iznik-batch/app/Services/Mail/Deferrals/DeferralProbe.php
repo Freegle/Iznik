@@ -583,8 +583,19 @@ SH;
             return;
         }
 
+        // The three queues mail actually flows through. `incoming` matters as
+        // much as the other two for the waiting count and is easy to leave
+        // out: it is where a burst lands, and on 2026-09-13 it held 81,800
+        // messages against 40,000 in active - so a count that skipped it would
+        // have understated the backlog by two thirds. It cannot affect the
+        // deferral counts either way, because nothing in it has been attempted
+        // and so none of it carries a delay reason.
+        //
+        // `hold` is deliberately not here. Mail is only in it because an
+        // operator put it there, which is a different fact needing a different
+        // conversation, and folding it in would read as a delivery problem.
         $queue = $entry['queue_name'] ?? '';
-        if ($queue !== 'deferred' && $queue !== 'active') {
+        if ($queue !== 'deferred' && $queue !== 'active' && $queue !== 'incoming') {
             return;
         }
 
@@ -596,10 +607,18 @@ SH;
                 continue;
             }
 
-            // Absent for a recipient that has not been attempted yet. Those
-            // are not evidence of a deferral, so they do not count.
+            // Absent for a recipient nothing has refused. That is not a
+            // deferral - but it is not nothing either. On a relay that paces
+            // an address deliberately, this is where a warmed provider's
+            // whole backlog lives: tens of thousands of messages, hours old,
+            // with no error anywhere because none has occurred. Counting it
+            // separately is what lets the delayed view say "waiting on us"
+            // rather than report an empty page while mail runs half a day
+            // late.
             $reason = $recipient['delay_reason'] ?? null;
             if (! is_string($reason) || $reason === '') {
+                $snapshot->addWaiting((string) $recipient['address'], $arrival, $instance);
+
                 continue;
             }
 
@@ -636,5 +655,13 @@ SH;
         }
 
         $snapshot->addDelivery(MxGrouper::group($host));
+
+        // Also by recipient domain, which is the unit the waiting queue is
+        // counted in. Without it a domain's backlog has a depth but no drain
+        // rate, and "3,000 queued" cannot be turned into "clears in two
+        // hours" - which is the only form of the number anyone can act on.
+        if (preg_match('/to=<[^@>]*@([^>\s,]+)>/', $line, $to)) {
+            $snapshot->addDomainDelivery(rtrim($to[1], '.'));
+        }
     }
 }

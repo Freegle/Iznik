@@ -31,6 +31,25 @@ class RelayQueueSnapshot
     /** Relay family => deliveries seen in the log window. */
     public array $delivered = [];
 
+    /**
+     * Recipient domain => [count, oldest arrival unix ts, instance] for mail
+     * that is QUEUED BUT NOT REFUSED.
+     *
+     * A provider refusing us leaves a delay_reason on the queue entry and is
+     * counted above. Mail we are deliberately pacing ourselves - a warmed
+     * sending address on a rate delay, or one that has spent its day
+     * allowance - leaves no reason at all: nothing has gone wrong, the
+     * message is simply waiting its turn. To a member the two are the same
+     * email arriving hours late, so both have to be visible; only the
+     * remedies differ, and they are opposites.
+     *
+     * @var array<string, array{count:int, oldest:?int, instance:?string}>
+     */
+    public array $waiting = [];
+
+    /** Recipient domain => deliveries seen in the log window. */
+    public array $deliveredByDomain = [];
+
     /** Queue ids per relay family, for --purge. */
     public array $queueIds = [];
 
@@ -153,6 +172,42 @@ class RelayQueueSnapshot
     public function deliveriesFor(string $group): int
     {
         return (int) ($this->delivered[$group] ?? 0);
+    }
+
+    /**
+     * One queue entry that no provider has refused - it is waiting on us.
+     *
+     * Bucketed by recipient DOMAIN, not by relay family: an entry that has
+     * never been attempted has no relay to name, and the domain is what
+     * support looks a member up by anyway.
+     */
+    public function addWaiting(string $address, ?int $arrivalTime, ?string $instance = null): void
+    {
+        $domain = $this->domainOf(strtolower(trim($address)));
+        if ($domain === null) {
+            return;
+        }
+
+        if (! isset($this->waiting[$domain])) {
+            $this->waiting[$domain] = ['count' => 0, 'oldest' => null, 'instance' => $instance];
+        }
+        $this->waiting[$domain]['count']++;
+        $this->waiting[$domain]['oldest'] = $this->earliest($this->waiting[$domain]['oldest'], $arrivalTime);
+    }
+
+    public function addDomainDelivery(string $domain): void
+    {
+        $domain = strtolower(trim($domain));
+        if ($domain === '') {
+            return;
+        }
+
+        $this->deliveredByDomain[$domain] = ($this->deliveredByDomain[$domain] ?? 0) + 1;
+    }
+
+    public function deliveriesForDomain(string $domain): int
+    {
+        return (int) ($this->deliveredByDomain[strtolower(trim($domain))] ?? 0);
     }
 
     /**

@@ -9,15 +9,19 @@ covers:
   - iznik-batch/app/Console/Commands/Mail/ScanDeferralsCommand.php
   - iznik-batch/app/Mail/Deferrals/UnreadChatCatchUpMail.php
   - iznik-batch/database/migrations/2026_08_18_000001_create_mail_suppressions_tables.php
+  - iznik-batch/database/migrations/2026_09_15_000001_create_mail_relay_queue.php
   - iznik-batch/tests/Unit/Services/Mail/Deferrals/*.php
   - iznik-batch/tests/Feature/Mail/DeferralScanServiceTest.php
   - iznik-batch/tests/Feature/Mail/MailSuppressionServiceTest.php
   - iznik-batch/tests/Feature/Mail/DeferralCatchUpServiceTest.php
   - iznik-batch/tests/Feature/Mail/ScanDeferralsCommandTest.php
+  - iznik-batch/tests/Feature/Mail/RelayQueueRecorderTest.php
   - iznik-server-go/emailtracking/deferrals.go
+  - iznik-server-go/maildeferral/maildeferral.go
   - iznik-nuxt3/modtools/components/ModMailDelayed.vue
   - iznik-nuxt3/modtools/components/ModSupportMailDeferrals.vue
   - iznik-nuxt3/tests/unit/components/modtools/ModMailDelayed.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSupportMailDeferrals.spec.js
 ---
 
 # Mail deferrals and suppression
@@ -74,6 +78,39 @@ watch: a handful of deferrals for everyone else, while tens of thousands of
 messages to a blocked provider sit unseen and nothing suppresses. Queue ids are
 unique only within an instance, so the snapshot records which instance each came
 from and `postsuper` is always told which one to delete from.
+
+### Refused, and merely waiting
+
+A queue entry a provider has refused carries a `delay_reason` - their 4xx, in
+their words. That is a deferral, and everything above is about those.
+
+An entry with no `delay_reason` has not been refused by anyone. It is waiting
+its turn, because we send to that provider at a deliberately limited rate. On a
+relay that paces an address, this is where a provider's entire backlog lives:
+thousands of messages, hours old, with no error anywhere because nothing has
+gone wrong.
+
+The two need opposite responses - one wants us to stop generating mail and wait
+for our reputation to recover, the other wants more sending capacity or less
+mail - but they are the same experience for the member, who simply has not had
+their email. So both are counted, and they are counted separately.
+
+Waiting mail is bucketed by **recipient domain** rather than by relay family,
+because an entry nothing has attempted has no relay host to name. Deliveries
+are counted per domain as well as per family for the same reason: depth on its
+own cannot be acted on, since 3,000 queued is an ordinary evening at 3,000 an
+hour and a two-day outage at 60.
+
+`RelayQueueRecorder` writes the result to `mail_relay_queue`, one row per
+domain, rewritten by every scan. It is a snapshot, not a history: a domain that
+has cleared loses its row rather than being left at zero for someone to misread
+as current. A domain qualifies on depth **or** age, because a handful of
+messages stuck for a day would never clear a depth threshold and is exactly the
+shape nobody notices.
+
+This half is reporting only. Nothing suppresses on it, and it is deliberately
+recorded by a different service from the one that decides suppressions, so a
+widened view can never reach the gate.
 
 ### Two tiers, and the first is the one that matters
 
@@ -336,9 +373,34 @@ pointers in Go so a query branch that does not select them reads as *unknown*
 rather than as a confident "not delayed".
 
 **Support view**: sysadmin > Mail > Delayed
-(`GET /modtools/email/deferrals`) lists every active suppression and every
-member whose mail is being held, capped at 1,000 rows with the cap stated
+(`GET /modtools/email/deferrals`) answers the question people actually arrive
+with - is mail to this member late? - which has the two different causes above.
+
+It shows the queue first: one row per recipient domain, with what is waiting on
+our own pacing, what a provider has refused, the age of the oldest waiting
+message, the rate it is draining at and the two divided into a time to clear.
+Where there is nothing to divide by it says "not draining" rather than invent a
+number, because that is the row worth acting on.
+
+Then the suppressions, and then the members whose mail is being held. Only a
+suppression holds mail back; mail queued behind our sending rate has already
+been generated and is waiting to go out, so it is in the queue table and not in
+the member list. The member list is capped at 1,000 rows with the cap stated
 rather than silently applied.
+
+The all-clear message requires both halves to be clear. Before the queue was
+recorded it read "every provider is accepting our mail", which was true, and
+sat on the same page as a provider whose members were twelve hours behind.
+
+**Member view**: the banner in `MailDelayed.vue` fires for both, from
+`me.emaildeferred`. The wording blames the receiving end either way and carries
+no field saying which case it is. That is not a simplification for members'
+benefit: we pace a provider precisely because it will not take our mail any
+faster, so our rate limit is their limit enforced at our end. Only domains
+whose oldest waiting message is older than `maildeferral.pacedMinAge` qualify -
+a paced address always has something queued, so a shorter threshold would put a
+permanent banner in front of every member at a paced provider, which is the
+same as having no banner at all.
 
 ## Configuration
 
@@ -362,11 +424,16 @@ Thresholds (backlog size, delivery rate, release window, staleness) are all
 env-overridable - see the comments in `config/freegle.php`, which explain what
 each was set against.
 
+The queue view has its own block, `freegle.mail.relay_queue`: `min_queued` and
+`min_age_minutes` are the two ways a domain earns a row, and `max_rows` caps
+the table, because an estate-wide episode names thousands of domains and nobody
+reads the five hundredth.
+
 ## Schema
 
-Two tables, created by
-`2026_08_18_000001_create_mail_suppressions_tables.php` with the paired
-idempotent production SQL alongside it.
+Three tables, each created by a migration with the paired idempotent production
+SQL alongside it - `2026_08_18_000001_create_mail_suppressions_tables.php` for
+the first two, `2026_09_15_000001_create_mail_relay_queue.php` for the third.
 
 `mail_suppressions` - one row per suppression, scoped `mxgroup`, `domain` or
 `address`. Domain rows hang off their mxgroup row via `parentid`, so releasing
@@ -376,6 +443,12 @@ a provider cascades. Rows are kept after release; the active set is
 `mail_suppressed_counts` - per member and per type, what we declined to
 generate, plus the `suppressionid` that was in force at the time. Claimed by
 `caughtup_at` before the catch-up sends, so a crash cannot send it twice.
+
+`mail_relay_queue` - one row per recipient domain: `waiting`, `deferred`, the
+`oldest` waiting arrival, the `deliveredperhour` it is draining at, and the
+postfix `instance` holding it (queue ids are unique only within one, so an
+operator reaching for `postsuper` needs to know which). Rewritten by every
+scan, so it is the current state and nothing has to interpret a stale row.
 
 ## Tests
 
