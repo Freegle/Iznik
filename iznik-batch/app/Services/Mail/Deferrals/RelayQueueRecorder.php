@@ -60,7 +60,7 @@ class RelayQueueRecorder
                 'waiting' => $d['waiting'],
                 'deferred' => $d['deferred'],
                 'oldest' => $d['oldest'] !== null ? Carbon::createFromTimestamp($d['oldest'])->toDateTimeString() : null,
-                'deliveredperhour' => $snapshot->deliveriesForDomain($domain),
+                'deliveredperhour' => $snapshot->deliveriesPerHourForDomain($domain),
                 'instance' => $d['instance'],
                 'scanned' => $now->toDateTimeString(),
             ];

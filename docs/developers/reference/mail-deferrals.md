@@ -382,6 +382,23 @@ message, the rate it is draining at and the two divided into a time to clear.
 Where there is nothing to divide by it says "not draining" rather than invent a
 number, because that is the row worth acting on.
 
+The rate is an average over the probe's sample, which covers a couple of hours,
+not the rate at this instant. For a queue that takes hours to clear that is the
+more useful divisor, but it lags a step change: when a sending address spends
+its daily allowance and drops to a trickle, the rate reads high, and so the
+time to clear reads short, until the sample moves past the fast part.
+
+Two things that made that rate wrong before they were fixed, both of which read
+as perfectly plausible numbers. The loopback hop between the relay's two
+postfix instances logs `to=<the real recipient>` and `status=sent`, one line
+per message, so counting it roughly doubled the rate for exactly the providers
+being paced; it is excluded on two independent signals, and if neither signal
+matches anything on a relay that has two instances the probe refuses to give a
+rate at all rather than give a reassuring one. And the sample was taken with
+`tail -n`, which is a number of lines, not a length of time - on the live relay
+200,000 lines covered 2h15m, so every "per hour" figure was inflated by more
+than double. The relay now reports how many seconds its sample actually spans.
+
 Then the suppressions, and then the members whose mail is being held. Only a
 suppression holds mail back; mail queued behind our sending rate has already
 been generated and is waiting to go out, so it is in the queue table and not in

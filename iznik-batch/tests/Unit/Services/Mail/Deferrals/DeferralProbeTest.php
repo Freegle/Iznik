@@ -54,13 +54,15 @@ class DeferralProbeTest extends TestCase
         ], $overrides));
     }
 
-    private function wrap(string $queue, string $delivered = '', bool $truncated = false): string
+    private function wrap(string $queue, string $delivered = '', bool $truncated = false, ?int $windowSeconds = null): string
     {
         return DeferralProbe::MARK_QUEUE . "\n"
             . $queue . "\n"
             . ($truncated ? DeferralProbe::MARK_TRUNCATED . "\n" : '')
             . DeferralProbe::MARK_DELIVERED . "\n"
             . $delivered . "\n"
+            // Before MARK_END, because the parser stops dead there.
+            . ($windowSeconds !== null ? DeferralProbe::MARK_WINDOW . "\n" . $windowSeconds . "\n" : '')
             . DeferralProbe::MARK_END . "\n";
     }
 
@@ -276,6 +278,91 @@ class DeferralProbeTest extends TestCase
         $snapshot = $probe->probe('relay@host', 65536);
 
         $this->assertSame(0, $snapshot->deliveriesForDomain('yahoo.com'));
+    }
+
+    /**
+     * `tail -n` takes a number of LINES, and how much time those cover depends
+     * on how busy the relay is. Measured live, a 200,000 line sample spanned
+     * 2h15m, so every rate taken from it was more than double the truth - and
+     * the rate is what a backlog is divided by to say when it clears.
+     */
+    public function test_delivery_counts_are_scaled_to_the_window_the_relay_reports(): void
+    {
+        $delivered = implode("\n", array_fill(0, 10, 'Sep 15 21:22:44 h postfix/smtp[2]: D: to=<a@yahoo.com>, '
+            . 'relay=mta5.am0.yahoodns.net[67.195.228.94]:25, status=sent (250 ok)'));
+
+        // Ten deliveries over two hours is five an hour, not ten.
+        $probe = new DeferralProbe($this->runner(
+            $this->wrap($this->queueLine(), $delivered, false, 7200)
+        ));
+        $snapshot = $probe->probe('relay@host', 65536);
+
+        $this->assertSame(10, $snapshot->deliveriesForDomain('yahoo.com'), 'the raw count is unscaled');
+        $this->assertSame(5, $snapshot->deliveriesPerHourForDomain('yahoo.com'));
+    }
+
+    /**
+     * When the relay cannot tell us how long the sample covers we fall back to
+     * treating it as an hour, which is what everything did before it was
+     * measured.
+     */
+    public function test_an_unknown_window_leaves_the_count_alone(): void
+    {
+        $delivered = 'Sep 15 21:22:44 h postfix/smtp[2]: D: to=<a@yahoo.com>, '
+            . 'relay=mta5.am0.yahoodns.net[67.195.228.94]:25, status=sent (250 ok)';
+
+        $probe = new DeferralProbe($this->runner($this->wrap($this->queueLine(), $delivered)));
+        $snapshot = $probe->probe('relay@host', 65536);
+
+        $this->assertNull($snapshot->windowSeconds);
+        $this->assertSame(1, $snapshot->deliveriesPerHourForDomain('yahoo.com'));
+    }
+
+    /**
+     * Fail closed. A relay with two instances writes one hop line per message
+     * to every paced provider, so excluding none of them means the pattern has
+     * stopped matching - not that the hops stopped. Every rate is then
+     * inflated by hops counted as deliveries, and an inflated rate makes a
+     * backlog look like it is clearing when it is not.
+     */
+    public function test_no_rate_is_given_when_the_handover_pattern_matches_nothing(): void
+    {
+        config([
+            'freegle.mail.relay_logs.handover_port' => 10026,
+            'freegle.mail.relay_logs.handover_transport' => 'relaywarm',
+        ]);
+
+        // Two instances, and a delivery sample with no hop line in it at all.
+        $delivered = 'Sep 15 21:22:44 h postfix/smtp[2]: D: to=<a@yahoo.com>, '
+            . 'relay=mta5.am0.yahoodns.net[67.195.228.94]:25, status=sent (250 ok)';
+
+        $probe = new DeferralProbe($this->runner($this->wrapInstances([
+            '/etc/postfix' => $this->queueLine(),
+            '/etc/postfix-warm' => $this->queueLine(['queue_id' => 'W1']),
+        ], $delivered)));
+        $snapshot = $probe->probe('relay@host', 65536);
+
+        $this->assertFalse($snapshot->handoverExclusionLooksAlive());
+        $this->assertSame(0, $snapshot->deliveriesPerHourForDomain('yahoo.com'), 'refuse rather than reassure');
+
+        // The raw count is untouched, so the suppression side is unaffected.
+        $this->assertSame(1, $snapshot->deliveriesForDomain('yahoo.com'));
+    }
+
+    /**
+     * A relay with one instance has no hop to exclude, so the absence of one
+     * must not gag it.
+     */
+    public function test_a_single_instance_relay_still_reports_a_rate(): void
+    {
+        $delivered = 'Sep 15 21:22:44 h postfix/smtp[2]: D: to=<a@yahoo.com>, '
+            . 'relay=mta5.am0.yahoodns.net[67.195.228.94]:25, status=sent (250 ok)';
+
+        $probe = new DeferralProbe($this->runner($this->wrap($this->queueLine(), $delivered)));
+        $snapshot = $probe->probe('relay@host', 65536);
+
+        $this->assertTrue($snapshot->handoverExclusionLooksAlive());
+        $this->assertSame(1, $snapshot->deliveriesPerHourForDomain('yahoo.com'));
     }
 
     /**

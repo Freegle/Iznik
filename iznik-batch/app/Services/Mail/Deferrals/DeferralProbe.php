@@ -39,6 +39,9 @@ class DeferralProbe
     /** Followed by a config directory: the queue lines after it are that instance's. */
     public const MARK_INSTANCE = '===FREEGLE-DEFERRALS-INSTANCE===';
 
+    /** Followed by the number of seconds the delivery sample covers. */
+    public const MARK_WINDOW = '===FREEGLE-DEFERRALS-WINDOW===';
+
     public const MARK_ACCEPTING = '===FREEGLE-DEFERRALS-ACCEPTING===';
 
     public const MARK_CANPURGE = '===FREEGLE-DEFERRALS-CANPURGE===';
@@ -147,6 +150,28 @@ class DeferralProbe
                 DELIVERED=\$(tail -n 200000 /var/log/mail.log 2>/dev/null | grep 'status=sent' || true)
             fi
             printf '%s\n' "\$DELIVERED"
+            echo '{$this->markWindow()}'
+            # How long the sample above actually covers, in seconds, so a count
+            # can be turned into a rate. `tail -n` takes a number of LINES, and
+            # how much time those cover depends entirely on how busy the relay
+            # is: measured on the live relay, 200,000 lines spanned 2h15m, so
+            # every "per hour" figure derived from it was inflated by more than
+            # double. Resolving the timestamps here rather than in PHP keeps
+            # syslog's year-less format the local `date`'s problem.
+            #
+            # Emitting nothing is the honest answer when the dates will not
+            # parse - the caller then falls back to treating the sample as an
+            # hour, which is what it did before - and a negative span across a
+            # year boundary is caught by the same test.
+            FIRST=\$(printf '%s\n' "\$DELIVERED" | head -n 1 | cut -c1-15)
+            LAST=\$(printf '%s\n' "\$DELIVERED" | tail -n 1 | cut -c1-15)
+            if [ -n "\$FIRST" ] && [ -n "\$LAST" ]; then
+                A=\$(date -d "\$FIRST" +%s 2>/dev/null || true)
+                B=\$(date -d "\$LAST" +%s 2>/dev/null || true)
+                if [ -n "\$A" ] && [ -n "\$B" ] && [ "\$B" -gt "\$A" ]; then
+                    echo \$(( B - A ))
+                fi
+            fi
             echo '{$this->markEnd()}'
             SH;
     }
@@ -485,6 +510,11 @@ SH;
         return self::MARK_DELIVERED;
     }
 
+    private function markWindow(): string
+    {
+        return self::MARK_WINDOW;
+    }
+
     private function markEnd(): string
     {
         return self::MARK_END;
@@ -522,6 +552,10 @@ SH;
                 $instance = $line !== '' ? $line : null;
                 $expectInstance = false;
 
+                if ($instance !== null && ! in_array($instance, $snapshot->instancesSeen, true)) {
+                    $snapshot->instancesSeen[] = $instance;
+                }
+
                 continue;
             }
             if ($line === self::MARK_INSTANCE) {
@@ -536,6 +570,11 @@ SH;
             }
             if ($line === self::MARK_DELIVERED) {
                 $section = 'delivered';
+
+                continue;
+            }
+            if ($line === self::MARK_WINDOW) {
+                $section = 'window';
 
                 continue;
             }
@@ -555,6 +594,8 @@ SH;
                 $this->parseQueueLine($line, $snapshot, $instance);
             } elseif ($section === 'delivered') {
                 $this->parseDeliveredLine($line, $snapshot);
+            } elseif ($section === 'window' && ctype_digit($line)) {
+                $snapshot->windowSeconds = (int) $line;
             }
         }
 
@@ -667,6 +708,8 @@ SH;
     private function parseDeliveredLine(string $line, RelayQueueSnapshot $snapshot): void
     {
         if ($this->isHandover($line)) {
+            $snapshot->handoversSeen++;
+
             return;
         }
 
