@@ -21,6 +21,11 @@ are plain markdown and worth reading directly if you are new to an area.
 | `.claude/rules/frontend-traps.md` | `iznik-nuxt3/**/*.{vue,js,mjs}` |
 | `.claude/rules/tests-and-ci.md` | `.circleci/**`, the four test trees, `status-nuxt/**` |
 | `.claude/rules/dev-containers.md` | `docker-compose*.yml`, `scripts/**`, `freegle`, `.env*` |
+| `.claude/rules/rippling.md` | the Ripple services and commands, `iznik-server-go/rippling/**` |
+| `.claude/rules/modtools.md` | `iznik-nuxt3/modtools/**`, the Go user and chat packages |
+| `.claude/rules/browse-and-search.md` | the Browse pages and map, `isochrone/**`, `message/**` |
+| `.claude/rules/mail-and-data.md` | `iznik-batch/app/Mail/**`, the digest services, mail views |
+| `.claude/rules/conventions.md` | everywhere: settled decisions, not preferences |
 
 They share one shape: **no error, no warning, a plausible wrong answer.** A passing test does not
 clear any of them. Add to them when something fails silently twice.

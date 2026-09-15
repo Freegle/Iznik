@@ -98,7 +98,16 @@ plausible body rather than an error. A test that appears to exercise a real spat
 reading 23 bytes of empty JSON. If a spatial result looks empty-but-valid, check the mock knows
 the path.
 
+## Any join to `messages_groups` fans out, and DISTINCT does not fix it
+
+A rippled post has one row per receiving group, so a join returns one row per group. `SELECT
+DISTINCT` only drops rows identical in every selected column, so a per-group column in the
+select list defeats it entirely. Use `GROUP BY m.id`, or `AND mg.rippled_in = 0` for origin rows
+only, and `COUNT(DISTINCT messages.id)` rather than `COUNT(*)`. See
+`.claude/rules/rippling.md`.
+
 ## See also
 
-- `.claude/rules/mysql-traps.md` - JSON null casting, in-place foreign keys.
+- `.claude/rules/laravel-batch-traps.md` - JSON null casting, in-place foreign keys.
+- `.claude/rules/rippling.md` - one post, many group rows.
 - `docs/developers/reference/rippling-algorithm.md` - what the reach geometry means.
