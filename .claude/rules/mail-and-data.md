@@ -43,6 +43,16 @@ the body text.
 Anything that reasons about post content, including matching and search quality, has to expect
 this.
 
+## A processing flag that silently stops mail
+
+Chat replies with the processing flags in one particular combination are never emailed to the
+offerer at all. It is a small share of messages, but to the member it is total: they replied and
+the other person never heard. It was misdiagnosed as a rippling problem more than once, because
+rippling was the recent change.
+
+Before blaming the newest subsystem for undelivered mail, check whether the message was ever
+queued.
+
 ## Readers with no writer, left behind by the V1 removal
 
 Removing the old PHP stack took several tables' only writer with it, while readers stayed. The
@@ -56,6 +66,30 @@ SELECT MAX(timestamp) FROM <table>;
 ```
 
 A maximum that stops near the V1 removal date means the writer left with it.
+
+## Background work that overlaps itself
+
+The batch lock gives **no** overlap protection for work dispatched to the background: the lock
+is released when the dispatching process ends, not when the work finishes. Two runs of the same
+job can therefore be in flight at once.
+
+Removing the old PHP stack also deleted cron **writers** while leaving their readers, so whole
+pipelines are dead rather than merely idle, and the loop that was supposed to report on
+deprecated endpoints never ran at all.
+
+## Before you write an analytics query
+
+The likes table has tens of millions of rows and **no index on its timestamp or source**, so any
+straightforward analytical query over it will not return. Check for an index before writing the
+obvious query, not after it hangs.
+
+Two more shapes worth knowing: the spatial index empties in large bursts because old rows are
+deleted in batches, and image delivery no longer involves the old third-party service at all.
+
+## Never load a large gazetteer into the towns table
+
+It is used to anchor content to a nearest town, so enlarging it silently re-anchors existing
+content. Use the places table for area coverage instead.
 
 ## See also
 

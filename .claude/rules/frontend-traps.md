@@ -47,6 +47,18 @@ It is not working around a fixed iOS bug. With `autocapitalize="sentences"`, iOS
 at the start of a sentence, so Return reports `shiftKey: true` and our send-on-enter handlers
 treat it as a newline. The keyboard is behaving as designed; the attribute is the fix.
 
+## Enter bound twice sends twice
+
+A comment box bound `keydown.enter` on the wrapping element **and** `keyup.enter` on the
+textarea inside it. One key press fired the send twice, and because the box is cleared only
+after the send resolves, both calls passed the non-empty check and both posted.
+
+It surfaced as an **editing** bug: the member saw their original and edited text side by side,
+because they had unknowingly posted twice and then edited one copy. Two rows with the same
+author, the same parent and the same timestamp is the signature.
+
+Bind the key once, and clear or disable the input before awaiting.
+
 ## A setup function that registers a watcher per call
 
 `modtools/composables/useModMessages.js` `setupModMessages()` carries a comment forbidding
@@ -56,6 +68,32 @@ identical API calls in production logs.
 
 When a composable's setup runs per component instance, anything it registers is per instance
 too. Check before adding a watcher, an observer, or an interval.
+
+## Stores, SSR and registration
+
+- **Calling `useXStore()` after an `await` in SSR** throws "no active Pinia", most visibly
+  during prerender. Capture the store before the first await.
+- **A new store used by a ModTools page must be registered in that app's init**, or it is simply
+  absent at runtime.
+- **An unguarded top-level await in a component silently fails the thing it was opening.** A
+  rejected fetch left a reply overlay that never appeared, with no error shown.
+
+## Editing the chat has three headers to choose from
+
+Chat has three header implementations and the one members actually see is inline markup, not the
+component named `ChatHeader`, which is ModTools only. Changing the obvious file changes nothing
+for members.
+
+## Libraries and packaging
+
+- **vue-leaflet imports a bare `leaflet`** when the global is unset, producing a second Leaflet
+  instance and two maps that do not agree.
+- **Lockfiles are not interchangeable between npm 10 and npm 11.** A lockfile written by one
+  fails a clean install under the other.
+- **Capacitor's plugin allowlist overrides dependency scanning**, so adding a dependency is not
+  enough; it must be listed.
+- **A white screen on app launch** is usually the combination of no splash plugin, an empty body
+  in the entry HTML, and a root component that suspends.
 
 ## See also
 

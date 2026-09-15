@@ -40,6 +40,28 @@ Rebuild rather than restart when the code should have changed. A stale spatial i
 class: it answers one endpoint with a 404, every reach write silently produces no row, and a
 large number of tests fail for what looks like an unrelated reason.
 
+## Which container actually runs your tests
+
+The runner is not always the container you expect, and the wrong one bakes its own copy of the
+source and dependencies at image build time. Symptoms of running against a baked copy:
+
+- Dozens of phantom failures in whole files, from stale packages rather than your change.
+- A new frontend dependency needing a stub before the runner can resolve it at all.
+- Files that file sync routes to one set of containers and not another, so a shared module is
+  current in the app and stale in the test runner.
+
+Confirm which container is running before concluding anything from a local result.
+
+## Stale networks and wedged state
+
+- Removed worktrees leave their networks behind and eventually **exhaust Docker's address
+  pools**, after which nothing new will start.
+- A swept worktree's network is gone, so starting it again fails until it is recreated.
+- The main checkout and a worktree do not sync symmetrically, and sessions sharing the main
+  checkout pollute each other.
+- Production containers are built at start rather than by a separate build, so "rebuild" means
+  something different for them.
+
 ## Compose variables leak out of the shell
 
 The interactive shell profile exports `COMPOSE_PROJECT_NAME`, `COMPOSE_FILE` and friends
@@ -55,6 +77,64 @@ when a port is missing from the environment, so you test the wrong stack without
 Creating a worktree and then resetting hard onto a different base leaves the containers with a
 stale file tree **and** stale dependencies. The symptom is a missing dependency or a schema error
 that makes no sense for the branch. Rebuild the containers after any reset that moves the base.
+
+## Work in a worktree, and commit early
+
+The shared main checkout has been hard reset at least once with about forty files of
+uncommitted work in it, and none of it was recoverable: the containers are not a backup, because
+file sync propagates the reset into them too. A host crash can also lose newly created files and
+recent edits that were never flushed to disk.
+
+Both have the same remedy. Do the work in a worktree, and commit sooner than feels necessary. An
+untidy commit you amend later costs nothing; an afternoon of uncommitted work costs the
+afternoon.
+
+Worktree host scripts have also synced into the **main** containers rather than the worktree's
+own, so a worktree run can silently be exercising the main checkout.
+
+## A fresh worktree is not ready to test
+
+Several things are missing or stale the moment it exists, and each fails in a way that points
+somewhere else:
+
+- **Its test database is empty.** Run the setup script, or fixture ids come out wrong and
+  poison everything downstream.
+- **The map data file is absent**, so the spatial containers exit immediately and restart, and
+  the Go suite looks wedged rather than failing.
+- **Images are baked at create time.** Merging master in does not rebuild them: the spatial
+  image goes stale and starts refusing reach requests, the Go API keeps serving the old commit,
+  an old batch image lacks a required PHP extension, and the status container serves whatever
+  it was built from.
+- **A long-lived worktree runs the scheduler**, whose hourly auto-approve wipes the pending
+  fixtures your tests depend on.
+
+After merging master into a worktree, rebuild. Do not restart.
+
+## Its test API can escape to the main instance
+
+The worktree's status API runners have escaped to the **main** containers because of a
+hard-coded name, and its live-API client has reached the main API because a port was missing.
+A worktree result is only about the worktree if you have checked which containers answered.
+
+Test runs read the worktree's files **as they execute**, because the batch container bind-mounts
+the tree. So do not edit files or merge during a run, and a run that must be red needs the
+implementation genuinely absent rather than present-but-broken. `docker cp` into that container
+writes into your working tree and silently reverts your edits.
+
+Note also that a Laravel test cannot read the Go tree and a Go test cannot read the PHP tree, so
+a cross-language assertion has to go through a fixture or the API.
+
+## Branches, clones and the tools around them
+
+- **Creating a worktree branches off your local master**, which may be behind or ahead of the
+  remote, so the base can include unpushed local commits.
+- **Removing a worktree keeps the branch**, so the branch accumulates even when the directory
+  does not.
+- **Agents sharing one clone switch branches underneath each other**, and a push can end up a
+  silent no-op.
+- **The worktree guard is session-wide**, and a subagent can move it, after which commands are
+  refused or land in the wrong place.
+- **`pkill -f` matches its own command line** and kills the shell that ran it.
 
 ## `git checkout --ours` replaces the whole file
 

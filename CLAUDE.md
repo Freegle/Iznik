@@ -25,6 +25,7 @@ are plain markdown and worth reading directly if you are new to an area.
 | `.claude/rules/modtools.md` | `iznik-nuxt3/modtools/**`, the Go user and chat packages |
 | `.claude/rules/browse-and-search.md` | the Browse pages and map, `isochrone/**`, `message/**` |
 | `.claude/rules/mail-and-data.md` | `iznik-batch/app/Mail/**`, the digest services, mail views |
+| `.claude/rules/monitor-fsm.md` | `monitor-fsm/**` |
 | `.claude/rules/conventions.md` | everywhere: settled decisions, not preferences |
 
 They share one shape: **no error, no warning, a plausible wrong answer.** A passing test does not

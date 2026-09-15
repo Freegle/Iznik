@@ -41,6 +41,23 @@ because the method returned an empty array on the next line anyway.
 When you rename a table or column, grep for the old name in `hasTable`/`hasColumn` guards. When
 you find a guard whose migration has long since shipped, delete the guard rather than leaving it.
 
+## A dropped table cannot be restored by running migrations
+
+If a table is missing but its create-migration is already recorded as applied, `migrate` will
+never recreate it, and a `hasTable` guard inside that migration makes re-running a no-op anyway.
+The symptom is a fixture load aborting part-way with the table not existing, leaving the database
+half-populated.
+
+Recreate the table explicitly, or roll the migration back before re-running it. Do not expect
+`migrate` to notice.
+
+## A migration that converts a list needs a branch for every kind of entry
+
+A conversion of one keyword table into another had no branch for the protected entries, so
+protected place and shop names were written out as live matches. Ordinary words then started
+flagging posts. When a migration maps one vocabulary onto another, enumerate every category in
+the source and decide what happens to each, including the ones that mean "never match".
+
 ## Adding a foreign key needs `foreign_key_checks = 0` to stay in place
 
 MySQL 8 supports `ALGORITHM=INPLACE` for adding a FOREIGN KEY **only when the session has

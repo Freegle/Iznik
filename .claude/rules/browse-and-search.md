@@ -44,6 +44,15 @@ Two independent causes, and fixing one alone leaves the complaint standing:
 
 Order matters here. Judge any change to search quality on both.
 
+## The badge and the feed can be answered by different code
+
+The faster raster-backed containment check is wired into the **count** only. The feed always
+goes through the geometry query, which also excludes held reaches unconditionally. Any
+disagreement between the two implementations therefore shows up as the badge and the feed
+telling the member different things, by construction.
+
+If you change one, change both, or confirm in the code which readers you have actually touched.
+
 ## Stacking: what is above what
 
 - **Bootstrap modals set their z-index inline**, so a class intended to lift them above the ad

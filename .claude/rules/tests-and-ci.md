@@ -42,6 +42,44 @@ trusting it.
 - **Seeding rows with identical timestamps gives non-deterministic order.** Newsfeed replies are
   ordered by `timestamp`, not `added`, so a test can appear to prove an ordering it does not.
 
+## A count that is not the count you think
+
+- **"Tests failed: 4868 pass, 0 fail"** means errors, not failures. Something died before it
+  could be counted. Do not read the zero as good news.
+- **A spec that fails to parse** reports as one failed file, and every test inside it silently
+  never runs. The file count moves by one and the test count drops by however many it held.
+- **Adding a component to a page breaks that page's spec**, because the unresolved component
+  renders as nothing and the assertions quietly stop matching.
+
+## Coverage numbers that move on their own
+
+Coverage checks fail on deltas no change caused, and chasing them wastes days:
+
+- A large aggregate swing is usually a **failed build uploading fewer flags** than a good one,
+  not a real drop.
+- The Playwright flag wanders between builds and has discrete states it flips between.
+- A major version upgrade of a test runner re-baselines its measurement, so the first comparison
+  against master is meaningless.
+
+Read what the build uploaded before believing what it reports. Do not make coverage optional to
+get past it.
+
+## Test databases are not as clean as they look
+
+- The batch test database is **not empty mid-suite**: earlier tests leak committed rows past the
+  per-test rollback.
+- The Go test database needs the setup script re-run after new migrations, or the suite fails
+  on schema it has never seen.
+- A drop-table migration plus a stale fixtures file blocks the fixture load entirely.
+- Starting the Go and Laravel suites **at the same time** through the local status API kills one
+  of them during setup. Run them one after the other.
+
+## Assertions that match the wrong thing
+
+Two `expectsOutputToContain` substrings that appear in the **same** output line both pass, so a
+test can assert two things and really be asserting one. Chain them only when the strings are
+genuinely on different lines.
+
 ## Fixtures and environment
 
 - **Any Go test inserting `rippling_reach` must set `outer_bound`.** It is `GEOMETRY NOT NULL`
@@ -55,6 +93,23 @@ trusting it.
   away, so `waitForURL` and `toHaveURL` against an absolute URL can never match.
 - **Pinning matters for swagger**: adding `modernc.org/sqlite@latest` bumps the module to a Go
   version that panics go-swagger. Pin to a compatible release.
+- **`status-nuxt` has no lockfile**, so its image re-resolves dependencies on every build and is
+  at the mercy of whatever the base image's package manager does with the peer graph. A build
+  that worked yesterday can fail today with nothing changed on our side.
+
+## CI failures that are about the build, not the branch
+
+- **Docker Hub rate limits** mean the pull-through mirror is only wired up for the self-hosted
+  runner, so a job that lands elsewhere pulls directly and is throttled.
+- **A new compose service that is not in the orb's explicit build list** is never built, and
+  fails later in a way that looks unrelated.
+- **A per-step `export` in the orb does not reach a later step's compose command.** The variable
+  is simply absent, with no error.
+- **The swagger generator's fallback binary path** can resolve to a stale build, producing
+  nondeterministic output.
+
+When master is red across many builds, pin the breaking commit by which **test** fails per
+build, not by bisecting the boundary.
 
 ## See also
 

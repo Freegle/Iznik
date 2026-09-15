@@ -61,6 +61,49 @@ It runs around two orders of magnitude above real reply volume, so it is meaning
 refusal returned by the send endpoint, which is tiny, because the read path hides the button
 before anyone gets there.
 
+## Two silent routes to "no limit"
+
+Both of these stored the sentinel meaning no distance limit, for members who had asked for the
+opposite:
+
+- A lookup returned **before** its routing call when no curated town fell inside the candidate
+  box, so the narrow end of the distance control saved "no limit" instead of a small radius.
+- A one-shot widening migration was re-applied on **every** monthly run, walking members up to
+  the sentinel a step at a time. A migration that runs on a schedule has to be able to tell
+  whether it has already run.
+
+## Rippled-in copies are not the receiving community's own posts
+
+They arrive already approved, which has repeatedly meant they skip things that apply to a
+community's own posts: the receiving community's rules were not checked, and its moderators
+could contact the poster when only one action had been suppressed. When you add anything that
+acts on a post in a community, decide explicitly what it does to a copy that rippled in.
+
+For the same reason, statistics that count local activity must exclude memberships rippling
+created itself, or auto-joins get counted as pre-existing local members.
+
+## A held reply released to somebody who never got the post
+
+Replies held while a post spreads can be released long after, and most of them go to people the
+post never reached. Releasing them all at once on a post already marked taken dumps them on the
+offerer. Anything that releases in bulk needs to check the post is still open and the recipient
+is still relevant.
+
+## The reach partition is not reproducible
+
+The partition builder collects edges into a map and then iterates it, and Go randomises map
+iteration order, so leaf assignment differs run to run. Every rebuild therefore invalidates
+stored reach labels. Do not assume two builds of the same input agree.
+
+Related: stored reach blobs omit one field that the in-memory labels carry, so a stored reach
+behaves slightly differently near the origin from a freshly computed one.
+
+## Budgets are in minutes, and the clock was recalibrated
+
+Reaches sized before the travel-time recalibration kept their **minute** budget but are now
+evaluated against the slower calibrated clock, so an old reach covers less ground than it did.
+When comparing reaches across that date, you are not comparing like with like.
+
 ## The distance cap belongs to the recipient
 
 Size a cap from the **recipient's** local density, not the post's origin. Sizing it at the

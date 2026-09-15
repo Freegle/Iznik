@@ -98,6 +98,41 @@ plausible body rather than an error. A test that appears to exercise a real spat
 reading 23 bytes of empty JSON. If a spatial result looks empty-but-valid, check the mock knows
 the path.
 
+## Reads and writes go to different servers
+
+Reads are split away from the primary, so a write followed by a read-back can land on a replica
+that has not caught up:
+
+- A newly created post read its own id back with a **select for the maximum id**, which on a
+  replica returned somebody else's post. Members got each other's offers. Use the id the insert
+  returns.
+- Moderator setting toggles "don't stick" for the same reason: the save succeeds and the
+  immediate read-back shows the old value.
+
+Never confirm a write by reading it again unless you have pinned the read to the primary.
+
+## A request context that only cancels at shutdown
+
+The framework request context is not cancelled when the client or the gateway goes away; it ends
+only when the process shuts down. Work handed that context therefore keeps running after nobody
+is waiting for it, so a timed-out request still costs the database everything it was going to.
+
+## Enum migrations follow production's physical order
+
+Enum values have a physical order, and the development order had already diverged from
+production. Author any enum migration from production's order, or values shift underneath stored
+rows.
+
+## A swallowed `Scan` error becomes a confident wrong answer
+
+The login paths run a raw query, `Scan` into a struct, and then branch on the id being zero
+without ever checking the error. When the database is unreachable the scan fails, the id stays
+zero, and a lookup failure is reported to the member as **"We don't know that email address."**
+They try their correct password during an outage and are told their account does not exist.
+
+Capture the result and return a retryable error when it failed. This is a shape, not one site:
+grep for `db.Raw(...).Scan(&x)` followed by a test on a zero value.
+
 ## Any join to `messages_groups` fans out, and DISTINCT does not fix it
 
 A rippled post has one row per receiving group, so a join returns one row per group. `SELECT

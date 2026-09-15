@@ -45,6 +45,7 @@ day to.
 | [`.claude/rules/modtools.md`](../../.claude/rules/modtools.md) | "It isn't showing" and what actually causes it |
 | [`.claude/rules/browse-and-search.md`](../../.claude/rules/browse-and-search.md) | Three feed endpoints, sorting, stacking |
 | [`.claude/rules/mail-and-data.md`](../../.claude/rules/mail-and-data.md) | Digest cursors, unsubscribe, tables with no writer |
+| [`.claude/rules/monitor-fsm.md`](../../.claude/rules/monitor-fsm.md) | Why it can look idle when it is broken |
 | [`.claude/rules/conventions.md`](../../.claude/rules/conventions.md) | Settled decisions that are easy to re-derive wrongly |
 
 They live under `.claude/` rather than here because they double as Claude Code path-scoped rules:
