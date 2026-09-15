@@ -2343,6 +2343,71 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
+     * A poster who has left EVERY community has no home membership to copy settings from.
+     * Rippling must not read that as "no preference, sign them up for the daily digest": they
+     * are the member least likely to want mail. Reproduces the live case where a member turned
+     * digests off, left all their communities, and was auto-joined back into 7 of them with
+     * emailfrequency 24 by their own still-live post.
+     */
+    public function test_poster_who_left_every_group_is_not_signed_up_for_daily_email(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        // No memberships at all: they have left everything.
+        DB::table('memberships')->where('userid', $posterId)->delete();
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $m = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($m, 'poster added as member of rippled-into group');
+        $this->assertSame(
+            0,
+            (int) $m->emailfrequency,
+            'a poster with no memberships left is not silently subscribed to the daily digest'
+        );
+    }
+
+    /**
+     * Left the group the post is on, but still a member elsewhere: the rippled membership takes
+     * their own surviving setting rather than the hardcoded daily default.
+     */
+    public function test_email_frequency_falls_back_to_a_surviving_membership(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        // Not a member of any group this post is on, but still a member somewhere on 4-hourly.
+        DB::table('memberships')->where('userid', $posterId)->delete();
+        $elsewhere = $this->createTestGroup();
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $elsewhere->id, 'role' => 'Member',
+            'collection' => 'Approved', 'emailfrequency' => 4, 'eventsallowed' => 1,
+            'volunteeringallowed' => 1, 'added' => now()->subDay(),
+        ]);
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $m = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($m, 'poster added as member of rippled-into group');
+        $this->assertSame(4, (int) $m->emailfrequency, 'surviving membership setting used, not the daily default');
+    }
+
+    /**
      * A poster who was RIPPLED into a group (Group/Joined, text='Rippled') and then LEFT it is
      * never re-joined AND their post is never (re-)rippled in: leaving a group you were rippled
      * into is the opt-out signal rippling must respect.
