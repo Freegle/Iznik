@@ -48,7 +48,30 @@ flock -n 9 || exit 0
 DIR=/var/lib/ip-warmup
 LOG=/var/log/ip-warmup.log
 MAILLOG=/var/log/mail.log
-MAP=/etc/postfix/warmup_transport
+# The throttled lanes run in their OWN postfix instance. A provider we are
+# pacing holds thousands of messages for hours, and postfix's active queue is
+# sized per instance by a single global qmgr_message_active_limit - there is no
+# per-transport or per-ip variant. Sharing an instance with ordinary mail
+# therefore means one throttled provider can fill the active queue and stall
+# delivery to everybody else, which is exactly what Yahoo did on 2026-09-13/14
+# (38,236 of 38,449 active messages, postfix logging its own clog warning).
+# So every postfix read and write below has to say WHICH instance it means.
+PFDIR=/etc/postfix-warm
+PFINSTANCE=postfix-warm
+# The primary still holds a queue for these groups during a cutover, and the
+# messages already in it drain on the old routing - so "is there anything to
+# send for this group" has to look at both. See refresh_queue_cache().
+PRIMARY_PFDIR=/etc/postfix
+# TWO maps, written from one domain list so they cannot drift apart. The
+# primary's says only "this domain is in a throttled group, hand it over"; the
+# warm instance's says which (ip, group) pair actually carries it.
+MAP=$PFDIR/warmup_transport
+PRIMARY_MAP=$PRIMARY_PFDIR/warmup_transport
+# The loopback hop between the two. provider-group-discover.sh has to exclude
+# this hop from "is the primary being accepted" - it logs exactly like a
+# delivery - so keep these two in step with the constants there.
+RELAY_TRANSPORT=relaywarm
+RELAY_PORT=10026
 # <domain> <group> - every domain of every provider group in play, written by
 # provider-group-discover.sh. A group is a set of recipient domains sharing an
 # inbound MX (yahoo.com, yahoo.co.uk, aol.com, sky.com ... are one group,
@@ -58,7 +81,6 @@ GROUPS_FILE=/etc/postfix/warmup-groups
 # group's bulk address rather than a canary. Everything else in the group is
 # canary material. One global list, intersected per group.
 BULK_DOMAINS=/etc/postfix/warmup-bulk-domains
-MAPNEW=$MAP.new
 
 # A dry run that writes state files, appends to the log and drops scratch files
 # into /etc/postfix is not a dry run. Point every writable path at a throwaway
@@ -67,7 +89,7 @@ MAPNEW=$MAP.new
 if [ "$DRY" = "1" ]; then
   _dry=$(mktemp -d)
   cp -a "$DIR/." "$_dry/" 2>/dev/null
-  DIR=$_dry; LOG=$_dry/ip-warmup.log; MAPNEW=$_dry/warmup_transport.new
+  DIR=$_dry; LOG=$_dry/ip-warmup.log
 fi
 
 # Candidates live in a config file, not in this script: adding or retiring a
@@ -234,6 +256,7 @@ day_sent() { cat "$DIR/$1.day" 2>/dev/null || echo 0; }
 # Postfix plumbing.
 # ---------------------------------------------------------------------------
 need_reload=0
+primary_need_reload=0
 
 # Pace a transport. The setting MUST go in main.cf as <transport>_destination_*:
 # rate delay and per-destination concurrency are enforced by the QUEUE MANAGER,
@@ -242,12 +265,12 @@ need_reload=0
 # why the "paced" cold start put 2,810 attempts on a brand-new IP in one minute
 # on 2026-08-20, and why none of the earlier rungs ever paced anything either.
 set_rate() {  # $1 transport, $2 delay
-  have=$(postconf -h "$1_destination_rate_delay" 2>/dev/null)
+  have=$(postconf -c "$PFDIR" -h "$1_destination_rate_delay" 2>/dev/null)
   [ "$have" = "$2" ] && return 1
   # To stderr: every caller redirects this function's stdout to /dev/null, which
   # silently swallowed the dry run's most important output.
   if [ "$DRY" = "1" ]; then echo "DRY: would set ${1}_destination_rate_delay=$2 (is ${have:-unset})" >&2; return 1; fi
-  postconf -e "$1_destination_rate_delay=$2" "$1_destination_concurrency_limit=1" >/dev/null 2>&1
+  postconf -c "$PFDIR" -e "$1_destination_rate_delay=$2" "$1_destination_concurrency_limit=1" >/dev/null 2>&1
   need_reload=1
   return 0
 }
@@ -267,7 +290,7 @@ delay_secs() {
 # again - two postfix reloads every quarter hour for as long as it stays
 # blocked, which for the primary has so far been a week.
 set_rate_min() {  # $1 transport, $2 minimum delay
-  have=$(postconf -h "$1_destination_rate_delay" 2>/dev/null)
+  have=$(postconf -c "$PFDIR" -h "$1_destination_rate_delay" 2>/dev/null)
   [ "$(delay_secs "$have")" -ge "$(delay_secs "$2")" ] && return 1
   set_rate "$1" "$2"
 }
@@ -277,25 +300,41 @@ set_rate_min() {  # $1 transport, $2 minimum delay
 # bind address is what makes it that candidate. Created slow: the ladder speeds
 # it up on evidence, never the other way round.
 ensure_transport() {  # $1 transport, $2 ip
-  postconf -Mf "$1/unix" 2>/dev/null | grep -q . && return 1
+  postconf -c "$PFDIR" -Mf "$1/unix" 2>/dev/null | grep -q . && return 1
   if [ "$DRY" = "1" ]; then echo "DRY: would create transport $1 bound to $2" >&2; return 1; fi
-  postconf -M "$1/unix=$1 unix - - n - $NEW_TRANSPORT_MAXPROC smtp -o syslog_name=postfix-$1 -o smtp_bind_address=$2 -o smtp_connection_reuse_count_limit=10" >/dev/null 2>&1 || {
+  # syslog_name is set per transport and so overrides the instance-wide one -
+  # verified on 2026-09-14, and load-bearing: the tag IS the per-pair
+  # measurement, so if the instance default ever won here every harvest window
+  # would collapse into one bucket named after the instance.
+  postconf -c "$PFDIR" -M "$1/unix=$1 unix - - n - $NEW_TRANSPORT_MAXPROC smtp -o syslog_name=postfix-$1 -o smtp_bind_address=$2 -o smtp_connection_reuse_count_limit=10" >/dev/null 2>&1 || {
     log "ERROR: could not create transport $1 for $2"; return 1; }
-  postconf -e "$1_destination_rate_delay=$NEW_TRANSPORT_DELAY" "$1_destination_concurrency_limit=1" >/dev/null 2>&1
+  postconf -c "$PFDIR" -e "$1_destination_rate_delay=$NEW_TRANSPORT_DELAY" "$1_destination_concurrency_limit=1" >/dev/null 2>&1
   need_reload=1
   log "created transport $1 (bind $2, $NEW_TRANSPORT_DELAY)"
   return 0
 }
 
-install_map() {  # stdin: desired map content; returns 0 if it changed
-  cat > "$MAPNEW"
-  if cmp -s "$MAPNEW" "$MAP" 2>/dev/null; then rm -f "$MAPNEW"; return 1; fi
+# stdin: desired map content. $1 is the map to write, $2 the name of the
+# variable to set if it changed - the two instances reload independently,
+# because the primary carries every healthy domain and must not have its smtp
+# clients churned for a change that only concerns a throttled lane.
+install_map_to() {  # $1 map path, $2 reload-flag variable name
+  _dest=$1; _flag=$2
+  _new=$_dest.new
+  # A dry run must not drop scratch files into either config directory.
+  [ "$DRY" = "1" ] && _new=$DIR/$(basename "$_dest").new
+  cat > "$_new"
+  if cmp -s "$_new" "$_dest" 2>/dev/null; then rm -f "$_new"; return 1; fi
   if [ "$DRY" = "1" ]; then
-    echo "DRY: would install map:"; sed 's/^/DRY:   /' "$MAPNEW"; rm -f "$MAPNEW"; return 1
+    echo "DRY: would install $_dest:"; sed 's/^/DRY:   /' "$_new"; rm -f "$_new"; return 1
   fi
-  mv "$MAPNEW" "$MAP"
-  need_reload=1
+  mv "$_new" "$_dest"
+  eval "$_flag=1"
   return 0
+}
+
+install_map() {  # stdin: desired map content; returns 0 if it changed
+  install_map_to "$MAP" need_reload
 }
 
 # ---------------------------------------------------------------------------
@@ -345,12 +384,32 @@ refresh_queue_cache() {
   # yahoo messages - one tick away from "idle: nothing queued for the family"
   # unrouting the family back onto the primary, which Yahoo was still refusing
   # 4.7.0 at 14:40 that same afternoon.
-  raw=$(qshape active deferred 2>/dev/null | awk 'NR > 1 && $1 != "TOTAL" {print $1, $2}')
-  # A measurement that did not happen must not read as "nothing to send" - that
-  # is the single value that unroutes a group. Keep the last known figures and
-  # try again next tick rather than acting on a blank.
-  [ -z "$raw" ] && { [ -f "$QUEUE_CACHE" ] || echo "__none__ 1" > "$QUEUE_CACHE"; return; }
-  echo "$raw" > "$QUEUE_CACHE"
+  # BOTH INSTANCES. The routed groups deliver from the warm instance, so a
+  # primary-only qshape reads 0 for every one of them the moment a group is
+  # cut over - and 0 is the single value that unroutes a group. The primary
+  # still has to be counted too: mail queued before a cutover drains there on
+  # the old routing, and a group whose backlog is all on the primary is not
+  # idle.
+  #
+  # On the warm instance count `incoming` as well. Its active limit is
+  # deliberately small - a lane pacing one message every few seconds gains no
+  # throughput from a big active queue, it only costs qmgr memory - so a
+  # backlog of tens of thousands sits in incoming, not active.
+  warm_q=$(qshape -c "$PFDIR" incoming active deferred 2>/dev/null)
+  prim_q=$(qshape -c "$PRIMARY_PFDIR" incoming active deferred 2>/dev/null)
+  # A measurement that did not happen must not read as "nothing to send", and a
+  # HALF measurement is just as dangerous as none - so both instances have to
+  # answer before we believe either. qshape always prints a header, so no
+  # output at all means the command failed, which is a different thing from a
+  # queue that is legitimately empty.
+  if [ -z "$warm_q" ] || [ -z "$prim_q" ]; then
+    [ -f "$QUEUE_CACHE" ] || echo "__none__ 1" > "$QUEUE_CACHE"
+    return
+  fi
+  # $1 == "T" is the header row, whose $2 is a bucket width rather than a count.
+  printf '%s\n%s\n' "$warm_q" "$prim_q" \
+    | awk '$1 != "TOTAL" && $1 != "T" && $2 ~ /^[0-9]+$/ { t[$1] += $2 }
+           END { for (d in t) print d, t[d] }' > "$QUEUE_CACHE"
 }
 refresh_queue_cache
 group_queued() {  # $1 group
@@ -626,6 +685,23 @@ done
 
 printf '%s' "$maplines" | sort | install_map && log "routing changed: $(printf '%s' "$summary" | awk '{print $1, $2}' | tr '\n' ' ')"
 
-if [ "$need_reload" = "1" ]; then postfix reload >/dev/null 2>&1; fi
+# The primary's half of the routing: every domain of every group in play goes
+# over the loopback hop, no matter which pair is carrying it. Derived from the
+# SAME $maplines as the per-pair map above, so the two cannot disagree about
+# which domains are in play - a domain the primary still delivered itself while
+# the warm instance also held a route for it would leave from an address we are
+# not measuring, and nothing would say so.
+printf '%s' "$maplines" \
+  | awk -v t="$RELAY_TRANSPORT" -v p="$RELAY_PORT" 'NF { print $1, t ":[127.0.0.1]:" p }' \
+  | sort -u \
+  | install_map_to "$PRIMARY_MAP" primary_need_reload \
+  && log "primary handover map updated ($(printf '%s' "$maplines" | grep -c .) domains -> $RELAY_TRANSPORT)"
+
+# The two instances reload independently. The primary carries every healthy
+# domain and a reload drops its cached smtp connections, so it is reloaded only
+# when its OWN map changed - which is rare, since that map only moves when a
+# group enters or leaves play.
+if [ "$need_reload" = "1" ]; then postmulti -i "$PFINSTANCE" -x postfix reload >/dev/null 2>&1; fi
+if [ "$primary_need_reload" = "1" ]; then postmulti -i - -x postfix reload >/dev/null 2>&1; fi
 
 printf '%s' "$summary" | while IFS= read -r line; do [ -n "$line" ] && log "$line span=${span}m"; done

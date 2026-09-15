@@ -370,11 +370,91 @@ class DeferralProbeTest extends TestCase
 
         $this->assertTrue($probe->providerAccepting('relay@host', 'yahoo.co.uk', 'noreply@example.com'));
         $this->assertNotNull($script);
-        $this->assertStringContainsString("postconf -h transport_maps", $script, 'must walk the relay\'s transport maps');
+        $this->assertStringContainsString('-h transport_maps', $script, 'must walk the relay\'s transport maps');
         $this->assertStringContainsString('postmap -q "$DOMAIN"', $script, 'must resolve the probed domain, not a guess');
         $this->assertStringContainsString('smtp_bind_address', $script, 'must read the transport\'s bind address');
         $this->assertStringContainsString('source_address=(bind, 0)', $script, 'must bind the socket to that address');
         $this->assertStringContainsString("DOMAIN='yahoo.co.uk'", $script);
+    }
+
+    /**
+     * Not a string match: this RUNS the resolution the probe emits, against
+     * stub postfix tools, and checks which address comes out.
+     *
+     * A throttled provider is handed to a second postfix instance over a
+     * loopback hop, so the primary resolves it to a relay transport that has no
+     * bind address of its own. Stopping there falls through to the global
+     * default - 185.53.57.161, the address the provider blocked - and a refusal
+     * from it cancels the 24h fail-open, so the suppression can never lift.
+     * That is the 2026-09-02 failure, and the only thing standing between us
+     * and it is that this resolution keeps walking into the next instance.
+     */
+    public function test_resolution_crosses_into_the_second_postfix_instance(): void
+    {
+        $script = null;
+        $probe = new DeferralProbe($this->runner(
+            DeferralProbe::MARK_ACCEPTING . "\nACCEPTING mta5.am0.yahoodns.net 250 from 77.72.7.253 via warm1yahoodnsnet\n",
+            function (string $target, string $sent) use (&$script) {
+                $script = $sent;
+            }
+        ));
+        $probe->providerAccepting('relay@host', 'yahoo.co.uk', 'noreply@example.com');
+        $this->assertNotNull($script);
+
+        $bin = sys_get_temp_dir() . '/probe-stub-' . getmypid();
+        @mkdir($bin, 0700, true);
+
+        // The primary knows only that the domain goes to the relay transport,
+        // and that transport has no smtp_bind_address. The warm instance holds
+        // the pair that actually faces the provider.
+        file_put_contents("$bin/postmulti", <<<'STUB'
+#!/bin/bash
+[ "$1" = "-l" ] && { echo "-            -     y  /etc/postfix"; echo "postfix-warm warm  y  /etc/postfix-warm"; }
+STUB);
+        file_put_contents("$bin/postconf", <<<'STUB'
+#!/bin/bash
+cd=/etc/postfix; a=("$@")
+for ((i=0;i<${#a[@]};i++)); do [ "${a[$i]}" = "-c" ] && cd="${a[$((i+1))]}"; done
+case "$*" in
+  *"-h transport_maps"*)
+    if [ "$cd" = "/etc/postfix" ]; then echo "texthash:/etc/postfix/warmup_transport"
+    else echo "texthash:/etc/postfix-warm/warmup_transport"; fi ;;
+  *"-Mf relaywarm/unix"*)
+    echo "relaywarm unix - - n - 20 smtp"; echo "    -o syslog_name=postfix-relaywarm" ;;
+  *"-Mf warm1yahoodnsnet/unix"*)
+    echo "warm1yahoodnsnet unix - - n - 4 smtp"
+    echo "    -o syslog_name=postfix-warm1yahoodnsnet"
+    echo "    -o smtp_bind_address=77.72.7.253" ;;
+  *"-h smtp_bind_address"*) echo "185.53.57.161" ;;
+  *"-h config_directory"*) echo "/etc/postfix" ;;
+esac
+STUB);
+        file_put_contents("$bin/postmap", <<<'STUB'
+#!/bin/bash
+case "$*" in
+  *"/etc/postfix/warmup_transport"*) echo "relaywarm:[127.0.0.1]:10026" ;;
+  *"/etc/postfix-warm/warmup_transport"*) echo "warm1yahoodnsnet:" ;;
+esac
+STUB);
+        foreach (['postmulti', 'postconf', 'postmap'] as $f) {
+            chmod("$bin/$f", 0700);
+        }
+
+        // Everything the probe emits before it hands over to python is the
+        // resolution; run exactly that, then report what it decided.
+        $resolution = substr($script, 0, strpos($script, 'python3 - '));
+        $out = shell_exec('PATH=' . escapeshellarg($bin) . ':$PATH bash -c '
+            . escapeshellarg($resolution . "\necho \"BIND=\$BIND TR=\$TR\"") . ' 2>&1');
+
+        array_map('unlink', glob("$bin/*"));
+        @rmdir($bin);
+
+        $this->assertStringContainsString('BIND=77.72.7.253', (string) $out,
+            'must bind the warm instance address that actually faces the provider');
+        $this->assertStringContainsString('TR=warm1yahoodnsnet', (string) $out,
+            'must report the pair transport, not the loopback relay');
+        $this->assertStringNotContainsString('BIND=185.53.57.161', (string) $out,
+            'falling through to the blocked default is the 2026-09-02 bug');
     }
 
     public function test_refuses_to_put_a_bogus_domain_in_a_shell(): void

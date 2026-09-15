@@ -1,9 +1,11 @@
 ---
-last_reviewed: 2026-09-03
+last_reviewed: 2026-09-15
 owner: Freegle dev team
 covers:
   - scripts/bulk2/ip-warmup.sh
   - scripts/bulk2/provider-group-discover.sh
+  - ops/hosts/mail-host/postfix/warm-instance/*
+  - ops/hosts/mail-host/monit/postfix-warm.conf
 ---
 
 # Outbound relay: warming sending addresses per provider
@@ -46,6 +48,67 @@ other candidates as *canaries*, so a blocked address keeps being probed and is n
 when it re-opens. Over a cap the script slows the transport down; it never re-routes
 because of a cap, and when nothing is healthy it holds the current routing rather than
 handing mail to an unproven address.
+
+## Two postfix instances
+
+A throttled group is **not delivered by the primary postfix instance at all**. The
+primary hands it over an SMTP hop on `127.0.0.1:10026` (transport `relaywarm`) to a
+second instance, `postfix-warm` (`/etc/postfix-warm`, queue `/var/spool/postfix-warm`),
+which owns the warm transports and does the real delivery.
+
+That exists because `qmgr_message_active_limit` is a single global limit **per
+instance** - Postfix has no per-transport, per-destination or per-IP variant. A lane we
+are deliberately pacing holds tens of thousands of messages for hours, and every one of
+them occupies an active-queue slot that healthy domains need. On 2026-09-13/14 the
+primary's active queue sat pinned at exactly 40,000 for about thirty hours, 38,236 of it
+Yahoo, and Postfix logged the diagnosis itself: *"this may slow down other mail
+deliveries"*. Yahoo was accepting throughout; the backlog was our own day cap. The lane
+is slow by design, so it gets a queue of its own instead of a bigger share of everyone
+else's.
+
+`ip-warmup.sh` writes **both** maps from one domain list, so they cannot drift:
+
+| map | says |
+|---|---|
+| `/etc/postfix/warmup_transport` | every domain of every group in play → `relaywarm` |
+| `/etc/postfix-warm/warmup_transport` | domain → the (address, group) pair carrying it |
+
+Target one instance with `postmulti -i postfix-warm -x <cmd>`; `postmulti -i -` is the
+primary; a bare `postmulti -x` hits both. Setup and the traps are in
+[`ops/hosts/mail-host/postfix/warm-instance/README.md`](../../../ops/hosts/mail-host/postfix/warm-instance/README.md).
+monit watches the second instance separately (`postfix-warm`) - without that it could die
+and every throttled provider would stop while the primary went on looking healthy.
+
+### The loopback hop is not a delivery
+
+This is the trap for **anything that reads the maillog**. The hop logs exactly like a
+successful delivery:
+
+```
+postfix-relaywarm/smtp[...]: ABC: to=<someone@yahoo.com>,
+  relay=127.0.0.1[127.0.0.1]:10026, ... status=sent (250 ... queued as DEF)
+```
+
+while having reached nothing but our own second instance. Counted as a send by
+`provider-group-discover.sh` it is not merely wrong, it is catastrophic and it hides
+itself: there is one hop per message, so the count is unbounded, so it always beats the
+refusal count, so every routed group is declared "primary confirmed accepting" and the
+whole family is un-routed back onto the address that is refusing it - the 2026-09-02
+outage in a different shape, with the log reading as good news throughout.
+
+The exclusion therefore uses two independent signals (the `postfix-relaywarm` tag *and*
+the loopback `relay=`), so one going stale on its own cannot quietly restore the bug, and
+it is **fail-closed**: if domains are routed to `relaywarm` but the pattern matches none
+of those hops, no group is allowed to leave play that run.
+
+The same hop is excluded by the relay's `logs_emails` ingest (otherwise a member asking
+"did you send it?" would be told the provider accepted a message it has not seen) and the
+warm instance runs `header_checks` so its own records carry the Subject line.
+
+`DeferralProbe` likewise has to cross instances: the primary resolves a throttled domain
+to `relaywarm`, which has no `smtp_bind_address` of its own, and stopping there falls back
+to the global default - the blocked address - which is exactly the bug that held a
+suppression over 10,000 members for a day and a half.
 
 The output is `/etc/postfix/warmup_transport`, consulted first in `transport_maps`.
 

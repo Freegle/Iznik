@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-12
+last_reviewed: 2026-09-15
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Mail/Deferrals/*.php
@@ -211,6 +211,18 @@ with no way out because the refusal also cancels the fail-open below. That
 held a Yahoo suppression over 10,000 members for 33 hours on 2026-09-02/03.
 The log line `Mail deferral probe: provider is still refusing` names the
 address it asked from.
+
+That resolution has to cross **postfix instances**. Since 2026-09-15 a
+throttled provider is not delivered by the relay's primary instance at all: it
+is handed over a loopback hop to a second instance (`postfix-warm`) that owns
+the warmed addresses, so the primary resolves the domain to a relay transport
+with no `smtp_bind_address` of its own. Stopping there would fall back to the
+global default - the blocked address - and recreate the bug above exactly, so
+the probe walks every instance (`postmulti -l`) and takes the first that yields
+a transport with a real bind address. A single-instance host, and the primary
+before a group is cut over, both resolve on the first pass and behave as
+before. See the [outbound relay runbook](../../ops/runbooks/outbound-relay-ip-warmup.md)
+for why the second instance exists.
 
 There is also a fail-open: if the probe has not been able to confirm a
 suppression for `stale_after_hours`, it is released and alerted on. Quietly not
