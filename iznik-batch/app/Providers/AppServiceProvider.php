@@ -70,6 +70,21 @@ class AppServiceProvider extends ServiceProvider
                 );
             });
 
+        // How mail:relay-logs:ingest reaches the relay. It needs the SAME
+        // restricted key as the deferral probe and for the same reason: it only
+        // ever reads a log file, which the relay account can already do through
+        // group membership. Without this binding it would fall through to the
+        // monitoring runner above - a root shell across the whole estate, and a
+        // 30s timeout that a multi-megabyte log slice cannot finish inside.
+        $this->app->when(\App\Services\Mail\RelayLogIngestService::class)
+            ->needs(\App\Monitoring\HostCommandRunner::class)
+            ->give(function () {
+                return new \App\Monitoring\SshHostCommandRunner(
+                    (string) config('freegle.mail.relay_logs.ssh_key', '/etc/mail-deferrals-ssh-key'),
+                    (int) config('freegle.mail.relay_logs.ssh_timeout_seconds', 120),
+                );
+            });
+
         // The suppression gate is consulted inside every per-recipient sending
         // loop, and it caches the active set in-process. A singleton means one
         // cache per batch job rather than one per call site.

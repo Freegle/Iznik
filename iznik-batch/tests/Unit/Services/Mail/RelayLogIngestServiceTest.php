@@ -4,6 +4,7 @@ namespace Tests\Unit\Services\Mail;
 
 use App\Monitoring\HostCommandRunner;
 use App\Services\Mail\RelayLogIngestService;
+use Illuminate\Support\Facades\Cache;
 use Tests\TestCase;
 
 /**
@@ -191,6 +192,9 @@ class RelayLogIngestServiceTest extends TestCase
         config()->set('freegle.mail.relay_logs.host', 'logs@relay');
         config()->set('freegle.mail.relay_logs.path', '/var/log/mail.log');
         config()->set('freegle.mail.relay_logs.max_slice_bytes', 1024);
+        // Somewhere to read FROM, so this exercises the incremental path rather
+        // than the cold start below.
+        Cache::forever('mail.relaylog.offset', 2048);
 
         $script = null;
         $service = $this->service("OFFSET 4096\n", function (string $target, string $sent) use (&$script) {
@@ -206,6 +210,50 @@ class RelayLogIngestServiceTest extends TestCase
     }
 
     /**
+     * A first run wants to keep up from here, not to backfill.
+     *
+     * Asking for "everything up to the cap" with no offset drags the cap's worth
+     * of log through ssh and into memory, to record deliveries that already
+     * happened - the slowest possible request and the least useful one. In
+     * production that request could not finish inside the ssh timeout at all,
+     * so the ingest never started.
+     */
+    public function test_a_first_run_starts_at_the_end_of_the_log_and_ingests_nothing(): void
+    {
+        config()->set('freegle.mail.relay_logs.enabled', true);
+        config()->set('freegle.mail.relay_logs.host', 'logs@relay');
+        Cache::forget('mail.relaylog.offset');
+
+        $scripts = [];
+        $service = $this->service("SIZE 123456\n", function (string $target, string $sent) use (&$scripts) {
+            $scripts[] = $sent;
+        });
+
+        $stats = $service->ingest();
+
+        $this->assertSame(0, $stats['written'], 'a first run records nothing');
+        $this->assertSame(0, $stats['lines']);
+        $this->assertSame(123456, (int) Cache::get('mail.relaylog.offset'), 'it remembers the end of the log');
+
+        $joined = implode("\n", $scripts);
+        $this->assertStringContainsString('stat -c %s', $joined, 'asks only how long the log is');
+        $this->assertStringNotContainsString('tail -c +', $joined, 'must not pull any of the log itself');
+    }
+
+    /** A relay that cannot answer the size must not leave a bogus offset. */
+    public function test_a_first_run_that_cannot_reach_the_relay_records_no_offset(): void
+    {
+        config()->set('freegle.mail.relay_logs.enabled', true);
+        config()->set('freegle.mail.relay_logs.host', 'logs@relay');
+        Cache::forget('mail.relaylog.offset');
+
+        $stats = $this->service(null)->ingest();
+
+        $this->assertTrue($stats['failed']);
+        $this->assertNull(Cache::get('mail.relaylog.offset'));
+    }
+
+    /**
      * A failed fetch must not move the offset, or the lines it could not read
      * would be skipped for ever rather than retried.
      */
@@ -213,6 +261,7 @@ class RelayLogIngestServiceTest extends TestCase
     {
         config()->set('freegle.mail.relay_logs.enabled', true);
         config()->set('freegle.mail.relay_logs.host', 'logs@relay');
+        Cache::forever('mail.relaylog.offset', 2048);
 
         $stats = $this->service(null)->ingest();
 
