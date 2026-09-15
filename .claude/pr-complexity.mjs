@@ -60,8 +60,12 @@ const ALLOWED_FIRST = new Set([
 ])
 
 function main(raw) {
-  // Markdown structure markers are not prose.
+  // Markdown structure markers are not prose. Neither is a URL: its host and path
+  // segments would be counted as words and syllables, so a link inflates the reading
+  // grade of the sentence carrying it, and a hyphenated slug reads as a coined
+  // compound. House style asks for links in this text, so they have to be free.
   const text = raw
+    .replace(/https?:\/\/[^\s<>)"\]]*/g, '')
     .replace(/^[#>*-]+\s*/gm, '')
     .replace(/\*\*|__|\*/g, '')
 

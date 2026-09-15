@@ -45,6 +45,9 @@ run_case "create: unresolvable body" 2 'curl -X POST https://discourse.ilovefree
 run_case "edit: plain, unquoted" 0 "$(printf 'cat > /tmp/r.md <<%s\n%s\nBODY\ncurl -X PUT https://discourse.ilovefreegle.org/posts/68528.json -d @/tmp/p.json\n' "$HD" "$PLAIN")"
 run_case "edit: dense" 2 "$(printf 'cat > /tmp/r.md <<%s\n%s\nBODY\ncurl -X PUT https://discourse.ilovefreegle.org/posts/68528.json -d @/tmp/p.json\n' "$HD" "$DENSE")"
 
+# A link in the reply is not prose either: its slug must not read as a coined compound.
+run_case "create: plain reply carrying a link" 0 "$(printf 'cat > /tmp/r.md <<%s\n[quote="X, post:4, topic:1"]\nthe report\n[/quote]\n\n%s See https://discourse.ilovefreegle.org/t/rippling-feedback-leaving-groups-request/10157/4 for the thread.\nBODY\ncurl -X POST https://discourse.ilovefreegle.org/posts.json -d @/tmp/p.json\n' "$HD" "$PLAIN")"
+
 # Reads are untouched.
 run_case "read: topic json" 0 'curl -s https://discourse.ilovefreegle.org/t/10157.json -o /tmp/t.json'
 run_case "read: post by number" 0 'curl -s https://discourse.ilovefreegle.org/posts/by_number/10157/5.json'

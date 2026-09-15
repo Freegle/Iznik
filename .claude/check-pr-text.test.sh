@@ -65,6 +65,12 @@ printf 'The `users_expected` table and the `cursor` column are named in backtick
 check "backticked spans exempt" 0 \
   "PR_TEXT_VERIFIED=1 $PRC --base master --head x --title t --body-file $TMP/ticks.md"
 
+# House style asks for the Discourse link in the description, so a hyphenated topic
+# slug must not read as a coined compound. This one failed on "feedback-leaving".
+printf 'Prompted by a question from a volunteer.\n\nhttps://discourse.ilovefreegle.org/t/rippling-feedback-leaving-groups-request/10157/4\n' > "$TMP/link.md"
+check "URL slug not read as prose" 0 \
+  "PR_TEXT_VERIFIED=1 $PRC --base master --head x --title t --body-file $TMP/link.md"
+
 check "override works" 0 \
   "PR_PLAIN_ENGLISH_OK=1 PR_TEXT_VERIFIED=1 $PRC --base master --head x --title t --body-file $TMP/jargon.md"
 
