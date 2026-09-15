@@ -39,6 +39,8 @@ day to.
 | [`.claude/rules/go-api-traps.md`](../../.claude/rules/go-api-traps.md) | The Go API: GORM, Fiber, spatial SQL |
 | [`.claude/rules/laravel-batch-traps.md`](../../.claude/rules/laravel-batch-traps.md) | Laravel batch: mail, test fakes, schema guards |
 | [`.claude/rules/frontend-traps.md`](../../.claude/rules/frontend-traps.md) | Nuxt frontend: build flags, hanging awaits, iOS |
+| [`.claude/rules/tests-and-ci.md`](../../.claude/rules/tests-and-ci.md) | Green results that mean nothing |
+| [`.claude/rules/dev-containers.md`](../../.claude/rules/dev-containers.md) | Testing code that is not the code you are looking at |
 
 They live under `.claude/` rather than here because they double as Claude Code path-scoped rules:
 each declares the globs it applies to, so the right page loads automatically when someone opens a
