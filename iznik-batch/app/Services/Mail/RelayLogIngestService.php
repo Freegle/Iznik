@@ -107,13 +107,53 @@ class RelayLogIngestService
     }
 
     /**
+     * How long the relay's maillog is right now, so a first run knows where to
+     * start. One cheap round trip; null if the relay could not answer.
+     */
+    private function logSize(): ?int
+    {
+        $log = escapeshellarg((string) config('freegle.mail.relay_logs.path'));
+        $out = $this->runner->run(
+            (string) config('freegle.mail.relay_logs.host'),
+            "echo \"SIZE \$(stat -c %s $log 2>/dev/null || echo 0)\""
+        );
+
+        if ($out === null || preg_match('/SIZE (\d+)/', $out, $m) !== 1) {
+            Log::warning('Relay log ingest: could not read the log size');
+
+            return null;
+        }
+
+        return (int) $m[1];
+    }
+
+    /**
      * Pull the bytes appended to the relay's maillog since we last looked.
      *
      * @return array{0:int,1:array<int,string>}|null [new offset, lines]
      */
     private function fetch(): ?array
     {
-        $offset = (int) Cache::get(self::OFFSET_KEY, 0);
+        $offset = Cache::get(self::OFFSET_KEY);
+
+        // COLD START. With no offset we do not want history: we want to keep up
+        // from here. Asking for "everything up to the cap" on a first run means
+        // dragging the cap's worth of log through ssh and into memory to record
+        // deliveries that have already happened - which is both the slowest
+        // possible request and the least useful. So learn where the end is and
+        // start from there next run.
+        if ($offset === null) {
+            $end = $this->logSize();
+            if ($end === null) {
+                return null;
+            }
+            Cache::forever(self::OFFSET_KEY, $end);
+            Log::info('Relay log ingest: first run, starting from the end of the log', ['offset' => $end]);
+
+            return [$end, []];
+        }
+
+        $offset = (int) $offset;
         $log = config('freegle.mail.relay_logs.path');
         $max = (int) config('freegle.mail.relay_logs.max_slice_bytes');
 

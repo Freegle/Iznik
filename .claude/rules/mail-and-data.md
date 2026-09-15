@@ -2,7 +2,10 @@
 paths:
   - "iznik-batch/app/Mail/**"
   - "iznik-batch/app/Services/*Digest*"
+  - "iznik-batch/app/Services/Mail/**"
   - "iznik-batch/resources/views/**"
+  - "scripts/bulk2/**"
+  - "ops/hosts/mail-host/**"
 ---
 
 # Traps in mail, digests and the data behind them
@@ -90,6 +93,55 @@ deleted in batches, and image delivery no longer involves the old third-party se
 
 It is used to anchor content to a nearest town, so enlarging it silently re-anchors existing
 content. Use the places table for area coverage instead.
+
+## The relay runs more than one postfix instance
+
+Every postfix command that reads or writes a queue defaults to the **default instance only**.
+The relay has a second one that owns delivery to the providers we deliberately pace, so a
+command without `-c <configdir>` silently answers about the wrong mail - and the mail it omits
+is exactly the mail you were asking about.
+
+This has already bitten twice in one day. Read the queue with `postqueue -j` and you see a few
+thousand messages for healthy domains while tens of thousands to a throttled provider sit unseen
+in the other queue, so nothing ever crosses a suppression threshold. Measure with `qshape` and a
+routed provider reads as zero queued, which is the one value that takes a group off its warmed
+sending address.
+
+**Queue ids are unique only within an instance.** `postsuper` against the wrong one deletes
+nothing, or deletes a different message that happens to share the id. Anything that collects ids
+must record which instance each came from and pass them back per instance.
+
+After adding an instance, grep for every `postqueue`, `postsuper`, `qshape`, `mailq`, `postconf`
+and `postmap` in the repo and on the relay, and answer "which instance does this mean?" for each.
+`postmulti -l` enumerates them; `postmulti -i <name> -x <cmd>` targets one; `postmulti -i -` is
+the default one; a bare `postmulti -x` hits all of them.
+
+## The hop between those instances logs exactly like a delivery
+
+The primary hands a paced provider to the second instance over SMTP on loopback, and that hop
+writes a line which is indistinguishable from success at a glance:
+
+```
+postfix-relaywarm/smtp[...]: ABC: to=<someone@yahoo.com>,
+  relay=127.0.0.1[127.0.0.1]:10026, ... status=sent (250 ... queued as DEF)
+```
+
+It reached our own second instance and nothing else. **Anything parsing the maillog must exclude
+it.** Counted as a send it is worse than wrong, because it is unbounded - one per message - so it
+always exceeds any count it is compared against, and it reads as good news the whole time:
+
+- counted as "the primary is accepting this provider", every paced group looks healthy and gets
+  taken off its warmed address and put back on one that is refusing it;
+- counted as a delivery in the member-visible mail log, someone asking "did you email me?" is
+  told their provider accepted a message it may not see for hours.
+
+Exclude it on **two** independent signals - the transport's syslog tag and the loopback `relay=`
+- so that renaming the transport or changing the port cannot quietly restore the fault. And make
+the check fail closed: if messages are being routed over the hop but neither signal matches any
+of them, the pattern has stopped working, so refuse to draw a conclusion that run.
+
+A message crossing the hop is logged under **two** queue ids, one per instance. Correlate them
+through the `queued as <id>` in the hop's own line.
 
 ## See also
 
