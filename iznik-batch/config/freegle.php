@@ -289,6 +289,11 @@ return [
             // Empty = disabled (dev/CI).
             'host' => env('FREEGLE_MAIL_RELAY_LOGS_HOST', env('FREEGLE_MAIL_DEFERRALS_HOST', '')),
 
+            // Same restricted key as the deferral probe: this only reads a log
+            // file the relay account can already read.
+            'ssh_key' => env('FREEGLE_MAIL_RELAY_LOGS_SSH_KEY', env('FREEGLE_MAIL_DEFERRALS_SSH_KEY', '/etc/mail-deferrals-ssh-key')),
+            'ssh_timeout_seconds' => (int) env('FREEGLE_MAIL_RELAY_LOGS_SSH_TIMEOUT', 120),
+
             'path' => env('FREEGLE_MAIL_RELAY_LOGS_PATH', '/var/log/mail.log'),
 
             // We keep a byte offset and fetch only what was appended, which is
@@ -297,7 +302,10 @@ return [
             // multi-gigabyte log through ssh and into PHP's memory, every run,
             // for ever. Skipping ahead loses some history, which is the better
             // of the two failures.
-            'max_slice_bytes' => (int) env('FREEGLE_MAIL_RELAY_LOGS_MAX_SLICE_BYTES', 64 * 1024 * 1024),
+            // A ten-minute slice is about 5MB, so this is generous headroom
+            // rather than a target. It has to cross ssh and be held in memory,
+            // so it is not sized in tens of megabytes.
+            'max_slice_bytes' => (int) env('FREEGLE_MAIL_RELAY_LOGS_MAX_SLICE_BYTES', 16 * 1024 * 1024),
 
             // The relay hands paced providers to a second postfix instance
             // over a loopback hop. That hop logs exactly like a delivery, so
