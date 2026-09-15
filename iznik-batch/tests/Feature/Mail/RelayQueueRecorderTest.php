@@ -20,20 +20,24 @@ use Tests\TestCase;
  */
 class RelayQueueRecorderTest extends TestCase
 {
+    // Resolved only - the thresholds are set in setUp so that a test wanting a
+    // different one can just say so. Setting them here instead silently undid
+    // any config() a test had already made, which is how the cap test came to
+    // assert 3 rows against a limit of 500.
     private function recorder(): RelayQueueRecorder
     {
-        config([
-            'freegle.mail.relay_queue.min_queued' => 25,
-            'freegle.mail.relay_queue.min_age_minutes' => 120,
-            'freegle.mail.relay_queue.max_rows' => 500,
-        ]);
-
         return app(RelayQueueRecorder::class);
     }
 
     protected function setUp(): void
     {
         parent::setUp();
+
+        config([
+            'freegle.mail.relay_queue.min_queued' => 25,
+            'freegle.mail.relay_queue.min_age_minutes' => 120,
+            'freegle.mail.relay_queue.max_rows' => 500,
+        ]);
 
         DB::table('mail_relay_queue')->delete();
     }
@@ -183,11 +187,12 @@ class RelayQueueRecorderTest extends TestCase
             }
         }
 
-        $this->recorder()->record($snapshot);
+        $totals = $this->recorder()->record($snapshot);
 
+        $this->assertSame(3, $totals['rows'], 'the cap must actually be read from config');
         $this->assertSame(3, DB::table('mail_relay_queue')->count());
-        $this->assertDatabaseHas('mail_relay_queue', ['domain' => 'domain0.com']);
-        $this->assertDatabaseMissing('mail_relay_queue', ['domain' => 'domain4.com']);
+        $this->assertDatabaseHas('mail_relay_queue', ['domain' => 'domain0.com'], 'the worst survives');
+        $this->assertDatabaseMissing('mail_relay_queue', ['domain' => 'domain4.com'], 'the smallest is dropped');
     }
 
     /**
