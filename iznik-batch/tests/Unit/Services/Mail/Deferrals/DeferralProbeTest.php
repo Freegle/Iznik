@@ -225,6 +225,60 @@ class DeferralProbeTest extends TestCase
     }
 
     /**
+     * The hop between the relay's two postfix instances logs exactly like a
+     * delivery - the real recipient, and status=sent (250 ...) - and there is
+     * one per message. Counted, it roughly doubles the apparent send rate for
+     * every provider we pace, which is the number the delayed view divides the
+     * backlog by. In one sample window it was 440 hops against about 1,000
+     * real deliveries for a single domain.
+     */
+    public function test_the_loopback_hop_between_instances_is_not_a_delivery(): void
+    {
+        config([
+            'freegle.mail.relay_logs.handover_port' => 10026,
+            'freegle.mail.relay_logs.handover_transport' => 'relaywarm',
+        ]);
+
+        $delivered = implode("\n", [
+            'Sep 15 21:22:43 h postfix-relaywarm/smtp[1]: C8F: to=<one@yahoo.com>, '
+                . 'relay=127.0.0.1[127.0.0.1]:10026, delay=0.1, dsn=2.0.0, status=sent (250 ok)',
+            'Sep 15 21:22:44 h postfix-warm1yahoodnsnet/smtp[2]: D9A: to=<one@yahoo.com>, '
+                . 'relay=mta5.am0.yahoodns.net[67.195.228.94]:25, delay=1.9, status=sent (250 ok)',
+        ]);
+
+        $probe = new DeferralProbe($this->runner($this->wrap($this->queueLine(), $delivered)));
+        $snapshot = $probe->probe('relay@host', 65536);
+
+        $this->assertSame(1, $snapshot->deliveriesForDomain('yahoo.com'), 'the hop and the delivery are one message');
+    }
+
+    /**
+     * Either signal alone is enough, so a renamed transport or a changed port
+     * cannot quietly turn hops back into deliveries.
+     */
+    public function test_either_handover_signal_alone_excludes_the_line(): void
+    {
+        config([
+            'freegle.mail.relay_logs.handover_port' => 10026,
+            'freegle.mail.relay_logs.handover_transport' => 'relaywarm',
+        ]);
+
+        $delivered = implode("\n", [
+            // Right transport, some other port.
+            'Sep 15 21:22:43 h postfix-relaywarm/smtp[1]: A: to=<a@yahoo.com>, '
+                . 'relay=127.0.0.1[127.0.0.1]:10027, status=sent (250 ok)',
+            // Right port, some other transport name.
+            'Sep 15 21:22:43 h postfix-renamed/smtp[2]: B: to=<b@yahoo.com>, '
+                . 'relay=127.0.0.1[127.0.0.1]:10026, status=sent (250 ok)',
+        ]);
+
+        $probe = new DeferralProbe($this->runner($this->wrap($this->queueLine(), $delivered)));
+        $snapshot = $probe->probe('relay@host', 65536);
+
+        $this->assertSame(0, $snapshot->deliveriesForDomain('yahoo.com'));
+    }
+
+    /**
      * The relay runs more than one postfix instance, and the second owns
      * delivery to exactly the providers this scan exists to watch. A bare
      * `postqueue -j` returns only the default instance, so the scan would

@@ -640,8 +640,36 @@ SH;
      * We only need the relay host, to know which providers are still taking
      * our mail.
      */
+    /**
+     * Is this line the loopback hop into the relay's other postfix instance,
+     * rather than a delivery to anybody?
+     *
+     * The hop logs exactly like a delivery - `to=<the real recipient>` and
+     * `status=sent (250 ...)` - and there is one per message, so counting it
+     * roughly doubles the apparent send rate for every provider we pace. In a
+     * sample window it put 440 hops against about 1,000 real deliveries for
+     * one domain, which would have made "clears in two hours" out of a queue
+     * that needed three.
+     *
+     * Two independent signals, matching App\Services\Mail\RelayLogIngestService,
+     * so that one going stale on its own - a renamed transport, a changed port -
+     * cannot quietly turn hops back into deliveries.
+     */
+    private function isHandover(string $line): bool
+    {
+        $port = (int) config('freegle.mail.relay_logs.handover_port', 10026);
+        $transport = (string) config('freegle.mail.relay_logs.handover_transport', 'relaywarm');
+
+        return str_contains($line, "relay=127.0.0.1[127.0.0.1]:$port")
+            || ($transport !== '' && str_contains($line, "postfix-$transport/"));
+    }
+
     private function parseDeliveredLine(string $line, RelayQueueSnapshot $snapshot): void
     {
+        if ($this->isHandover($line)) {
+            return;
+        }
+
         if (! preg_match('/relay=([^\[\s,:]+)/', $line, $m)) {
             return;
         }
