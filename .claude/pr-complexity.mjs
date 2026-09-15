@@ -10,6 +10,12 @@
 //   - coined hyphen-compounds ("label-admitted", "union-ready"): a made-up
 //     adjective is a term of art by construction
 
+// Thresholds. The defaults are the PR ones and are what you get with no env set.
+// check-discourse-post.sh tightens both, because a reply to a volunteer is read once,
+// on a phone, by someone who does not work on the code.
+const MAX_GRADE = Number(process.env.PROSE_MAX_GRADE || 13)
+const MAX_SENTENCE_WORDS = Number(process.env.PROSE_MAX_SENTENCE_WORDS || 40)
+
 const WORD = /[A-Za-z][A-Za-z'-]*/g
 
 function wordsOf(s) {
@@ -70,11 +76,11 @@ function main(raw) {
 
   const problems = []
   const overall = bodyGrade(words, sentences.length)
-  if (overall > 13) {
+  if (overall > MAX_GRADE) {
     const worst = [...sentences]
       .sort((a, b) => grade(wordsOf(b)) - grade(wordsOf(a)))
       .slice(0, 4)
-    problems.push(`OVERALL reading grade ${overall.toFixed(1)} (max 13). Hardest sentences:`)
+    problems.push(`OVERALL reading grade ${overall.toFixed(1)} (max ${MAX_GRADE}). Hardest sentences:`)
     for (const s of worst) {
       problems.push(
         `  [grade ${grade(wordsOf(s)).toFixed(0)}, ${wordCount(s)} words] ${s.split(/\s+/).join(' ').slice(0, 150)}`
@@ -82,9 +88,9 @@ function main(raw) {
     }
   }
 
-  const longSents = sentences.filter((s) => wordCount(s) > 40)
+  const longSents = sentences.filter((s) => wordCount(s) > MAX_SENTENCE_WORDS)
   if (longSents.length) {
-    problems.push('SENTENCES over 40 words - split each into claims:')
+    problems.push(`SENTENCES over ${MAX_SENTENCE_WORDS} words - split each into claims:`)
     for (const s of longSents.slice(0, 4)) {
       problems.push(`  [${wordCount(s)} words] ${s.split(/\s+/).join(' ').slice(0, 150)}`)
     }

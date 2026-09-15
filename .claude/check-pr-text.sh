@@ -147,7 +147,16 @@ fi
 # and holding them to prose rules produces exactly the noise that gets a hook
 # switched off.
 # --------------------------------------------------------------------------
-PROSE=$(echo "$TEXT" | awk '
+# The path a body is read FROM is not prose, and matching terms inside it is a
+# pure false positive: a body file called ticks.md made every PR that used it fail
+# the '\bticks?\b' jargon rule, quoting the command line back as the offending
+# "sentence". Strip the body-file path (and any @file argument) before the prose
+# checks. The rest of the command stays, because that is what puts the --title in
+# scope - checks 2-5 are meant to see the title too, and only check 6 (which reads
+# BODY_TEXT on its own) needs the scaffolding gone entirely.
+PROSE=$(echo "$TEXT" \
+  | sed -E 's/--body-file[=[:space:]]+[^[:space:]]+//g; s/(^|[[:space:]])@[^[:space:]]+//g; s/body=@[^[:space:]]+//g' \
+  | awk '
   /^[[:space:]]*```/ { infence = !infence; next }
   infence { next }
   # A markdown table row is structured reference rather than writing. A glossary
