@@ -5,7 +5,8 @@ covers:
   - scripts/bulk2/ip-warmup.sh
   - scripts/bulk2/provider-group-discover.sh
   - ops/hosts/mail-host/postfix/warm-instance/*
-  - ops/hosts/mail-host/monit/postfix-warm.conf
+  - ops/hosts/monit/mail-host/conf.d/postfix-warm.conf
+  - ops/hosts/monit/mail-host/scripts/postfix-warm-active.sh
 ---
 
 # Outbound relay: warming sending addresses per provider
