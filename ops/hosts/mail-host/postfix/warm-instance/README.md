@@ -32,14 +32,42 @@ spooler ──SMTP──► primary (/etc/postfix, :25, DKIM milter, active limi
                           transport `relaywarm`
                           ──SMTP──► 127.0.0.1:10026
                                     postfix-warm (/etc/postfix-warm,
-                                    active limit 20,000, no milters,
+                                    active limit 60,000, no milters,
                                     in_flow_delay=0)
                                       └── warm<n><group> ──► the internet
 ```
 
-Instance 2's active limit is deliberately **smaller** than the primary's. A lane
-pacing one message every few seconds gains no throughput from a big active
-queue; it only costs qmgr memory. The backlog waits in `incoming` on disk.
+## Sizing the second instance's own active queue
+
+The same starvation exists one level down, and it is worth being explicit about
+why it is handled differently.
+
+Inside instance 2 all the paced groups share one active queue. When that queue
+fills, its queue manager stops importing from `incoming`, and a second paced
+group then waits behind the first. That is *much* less serious than the problem
+this instance solves - both providers are ones we are deliberately slowing, and
+the delay is bounded by the pacing anyway - but it is the same shape.
+
+Measured on 2026-09-15: instance 2's qmgr held **17,103 active messages in 39MB
+RSS**, against 6.5MB for a near-empty one. So roughly **1.9KB per active
+message**. The box had ~2,000MB available.
+
+The starvation only happens when the queue is *full*, so the fix is to size it
+above a realistic paced backlog rather than to build anything: the limit is
+**60,000**, about 114MB, around 6% of available memory. The newsletter blowout
+of 2026-09-13 peaked near 40,000.
+
+The alternative - one instance per group - was rejected for now. Groups are
+invented dynamically by `provider-group-discover.sh`, so it would mean creating
+and destroying postfix instances from a cron job that runs every minute on the
+live relay. That is a lot of moving parts for a case where the harm is one
+paced provider delaying another.
+
+What the original incident actually cost us was thirty hours of nobody
+noticing, so the residual risk is **monitored** instead:
+`ops/hosts/monit/mail-host/scripts/postfix-warm-active.sh` alerts when the
+active queue passes 80% of its limit. If that fires regularly, give the busiest
+group its own instance.
 
 ## Things that will bite you
 
@@ -67,9 +95,21 @@ postmulti -e init                                   # on the default instance
 postmulti -I postfix-warm -G warm -e create
 # then apply main.cf / master.cf from this directory, and:
 bash setup-relaywarm.sh                             # the primary's handover transport
-cp ../../monit/postfix-warm.conf /etc/monit/conf.d/ && monit reload
 postmulti -i postfix-warm -e enable
 postmulti -i postfix-warm -p start
+
+# monit: the process check AND the queue-depth check
+install -m 644 ../../../monit/mail-host/conf.d/postfix-warm.conf /etc/monit/conf.d/
+install -m 755 -D ../../../monit/mail-host/scripts/postfix-warm-active.sh /etc/monit/scripts/postfix-warm-active.sh
+monit reload
+```
+
+Test a monit script the way monit runs it - no HOME, minimal PATH - or it can
+sit inert for years looking healthy:
+
+```sh
+env -i /etc/monit/scripts/postfix-warm-active.sh; echo "exit=$?"
+env -i WARN_PCT=1 /etc/monit/scripts/postfix-warm-active.sh; echo "exit=$?"   # must fail
 ```
 
 `ip-warmup.sh` writes **both** maps from one domain list, so they cannot drift:

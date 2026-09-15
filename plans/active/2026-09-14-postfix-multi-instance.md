@@ -25,16 +25,18 @@ spooler ──SMTP──► primary (/etc/postfix, :25, DKIM milter, active limi
                           via transport `relaywarm`
                           ──SMTP──► 127.0.0.1:10026
                                     instance postfix-warm
-                                    (/etc/postfix-warm, active limit 20,000,
+                                    (/etc/postfix-warm, active limit 60,000,
                                      no milters, in_flow_delay=0)
                                       │
                                       └── warm<n><group> transports ──► the internet
 ```
 
-`qmgr_message_active_limit` on instance 2 is deliberately *smaller* (20,000) than the
-primary's. For a rate-limited lane a large active queue buys no throughput — concurrency
-is 1 per destination behind a rate delay — it only costs qmgr memory. The backlog waits
-in `incoming` on disk instead, which is what disk is for.
+Instance 2 started at 20,000 — smaller than the primary — on the reasoning that a paced
+lane gains no throughput from a big active queue. That was right about throughput and
+wrong about fairness: the same starvation exists one level down, and at 17,095/20,000 a
+second paced group was about to start waiting behind Yahoo. Measured cost is ~1.9KB per
+active message (39MB RSS at 17,103), so the limit is now **60,000** (~114MB, ~6% of
+available memory) and a monit check alerts at 80%. See the warm-instance README.
 
 ## Status
 
@@ -50,11 +52,31 @@ in `incoming` on disk instead, which is what disk is for.
 | 8 | `DeferralProbe.php` follow chain into instance 2 | ✅ | resolution executed against stubs: post-cutover→77.72.7.253, pre-cutover unchanged, single-instance falls back |
 | 9 | monit check for instance 2 | ✅ | proven by stopping it: monit restarted in ~40s |
 | 13 | Cutover | ✅ | canary aol.com → full 65 domains; traced primary id → warm id → provider `250 ok dirdel` |
-| 10 | Version config under `ops/hosts/mail-host/postfix/` | ⬜ | |
-| 11 | Docs: runbook + mail-deferrals | ⬜ | freshness checker `covers:` both |
-| 12 | Verify adaptive-shaper/shaped-ramp no overlap | ⬜ | warmup_transport is first in transport_maps — verify, don't assume |
-| 14 | Finish Laravel `RelayLogIngestService` + command + tests | ⬜ | service written; needs command, config, schedule, tests, retire V1 cron |
-| 15 | Commit + PR | ⬜ | |
+| 10 | Version config under `ops/hosts/mail-host/` | ✅ | plus cron.d, shaped-ramp.sh, release-talktalk.sh, monit — all were live but uncommitted |
+| 11 | Docs: runbook + mail-deferrals + logging | ✅ | freshness check passes |
+| 12 | Verify adaptive-shaper/shaped-ramp no overlap | ✅ | `shaped_destinations` holds only o2.co.uk; zero overlap |
+| 14 | Finish Laravel `RelayLogIngestService` + command + tests | ✅ | service, command, config, schedule, 9 tests. V1 cron NOT yet retired - see below |
+| 15 | Commit + PR | ✅ | PR #1524 |
+| 16 | Second instance: same starvation one level down | ✅ | measured 1.9KB/msg; limit 20,000 -> 60,000; monit queue-depth check added |
+
+## Retiring the V1 eximlogs cron - AFTER merge, not before
+
+`*/10 * * * * cd /var/www/iznik/scripts/cron; nice php ./eximlogs.php` is still in
+root's crontab on the relay, with the loopback-hop guard applied. Do NOT remove it
+until `mail:relay-logs:ingest` is confirmed writing rows in production, or there is
+a window with no producer for `logs_emails`.
+
+A brief overlap is harmless: both are keyed on the postfix queue id and only ever
+fill in fields that are missing, so whichever runs second finds the row and adds
+nothing.
+
+Cutover:
+1. Merge, let batch-prod pick up the schedule (bind mount, so the code is live).
+2. `docker exec batch-prod php artisan mail:relay-logs:ingest --dry-run` - check it
+   reports lines and hops.
+3. Watch for new `logs_emails` rows with recent timestamps.
+4. Comment the eximlogs line in root's crontab on the relay (back it up first).
+5. `/tmp/iznik.eximlogs.out` had grown to 1.38GB - delete it.
 
 **Priority note (user, 2026-09-15):** getting mail flowing came first; 10–12 and 14–15
 are deliberately after the cutover.

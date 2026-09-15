@@ -979,6 +979,22 @@ if (config('freegle.mail.deferrals.enabled')) {
         ->runInBackground();
 }
 
+// Read the relay's maillog into logs_emails, so we can tell a member whether
+// we actually sent them something. Replaces V1's eximlogs.php, which ran from
+// root's crontab on the relay itself. Same ten-minute cadence, because that is
+// what the offset and the slice cap were sized against - about 5MB a run.
+//
+// Gated on config so it is not scheduled where the relay is unreachable (dev,
+// CI). No ->sentryMonitor() for the same reason as the deferral scan: it uses
+// withoutOverlapping(), and a skipped run would page as a missed check-in.
+if (config('freegle.mail.relay_logs.enabled') && config('freegle.mail.relay_logs.host') !== '') {
+    Schedule::command('mail:relay-logs:ingest')
+        ->everyTenMinutes()
+        ->withoutOverlapping(20)
+        ->sendOutputTo(cronLog('mail:relay-logs:ingest'))
+        ->runInBackground();
+}
+
 // Clean up old sent emails - run daily.
 Schedule::command('mail:spool:process --cleanup --cleanup-days=7')
     ->dailyAt('04:00')

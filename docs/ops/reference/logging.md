@@ -744,3 +744,33 @@ and do not necessarily make the same queries.
 Rather than leave a table that reads as current, the honest statement is: work out what still
 reads `logs`, `logs_emails`, `logs_events` and `logs_jobs` by grepping `iznik-batch` and
 `iznik-server-go`, and record the answer here. `logs_api` is already unreferenced in code.
+
+### Where `logs_emails` comes from
+
+`logs_emails` is how we answer "did you actually email me?", so it is worth being clear about
+what writes it and what the rows mean.
+
+It is written by `mail:relay-logs:ingest` (`RelayLogIngestService`), which reads the outbound
+relay's maillog over ssh every ten minutes and groups the lines by postfix queue id. It keeps a
+byte offset and fetches only what was appended - about 5MB a run. This replaced V1's
+`scripts/cron/eximlogs.php`, which ran from root's crontab on the relay itself and re-read the
+whole multi-gigabyte log every time.
+
+Three things read the table, and all three treat it as evidence about a real member:
+
+- the moderator-only "recent emails to this user" endpoint in `iznik-server-go`
+- the GDPR user dump (up to 20,000 rows per user)
+- the AI support helper, which reads an **absent** row as "we never sent it" and a `250` as
+  "the recipient's mail server accepted it"
+
+Two things to know when reading a row:
+
+- **The relay runs two postfix instances.** Paced providers are handed to the second one over
+  a loopback hop, and that hop logs exactly like a delivery while having reached nothing but
+  our own machine. It is deliberately not recorded, so a paced message appears once, under the
+  second instance's queue id, with the real outcome. See the
+  [outbound relay runbook](../runbooks/outbound-relay-ip-warmup.md).
+- **A row with no status is not a failure.** A message still in flight when the slice ended
+  gets its row now and is filled in on a later run. That is deliberate: the support helper
+  reads a missing row as "never sent", so it is better to have the row early and incomplete
+  than to have nothing.
