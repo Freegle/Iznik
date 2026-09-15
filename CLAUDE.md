@@ -8,6 +8,21 @@
 - **You may push the current branch and open a PR without being asked first, provided you have run the full relevant test suite locally and it passes.** If tests have not been run locally, or any are failing, do not push — run and fix them first. (Merging is still humans-only; see above.)
   - **Exception**: When CI is failing on master, you may push fixes directly to master (no PR required) — same as you would fix CI failures on an open PR.
 
+## Traps
+
+`.claude/rules/` holds the gotchas that have cost real debugging time, one file per area. Each
+declares `paths:`, so Claude Code loads it automatically when a file in that area is opened. They
+are plain markdown and worth reading directly if you are new to an area.
+
+| File | Loads for |
+|---|---|
+| `.claude/rules/go-api-traps.md` | `iznik-server-go/**/*.go` |
+| `.claude/rules/laravel-batch-traps.md` | `iznik-batch/**/*.php` |
+| `.claude/rules/frontend-traps.md` | `iznik-nuxt3/**/*.{vue,js,mjs}` |
+
+They share one shape: **no error, no warning, a plausible wrong answer.** A passing test does not
+clear any of them. Add to them when something fails silently twice.
+
 ## Documentation
 
 Canonical documentation lives in **[`docs/`](docs/README.md)**, organised by audience: `members/`, `moderators/`, `developers/`, `ops/`. It is the place for "how things work" - not `plans/`, which is scratch that gets pruned when work ships.

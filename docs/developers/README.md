@@ -27,6 +27,23 @@ have the stack running.
 4. **[APIs and data](apis-and-data.md)** - the v2 API, how the frontend talks to
    it, the data model, and recipes for common changes.
 
+## Traps worth reading before you start
+
+`.claude/rules/` collects the things in this codebase that fail **silently** - no error, no
+warning, a plausible wrong answer, and a green test run. They are ordinary markdown, one file per
+area, and they are the fastest way to avoid losing a day to something the team has already lost a
+day to.
+
+| File | Area |
+|---|---|
+| [`.claude/rules/go-api-traps.md`](../../.claude/rules/go-api-traps.md) | The Go API: GORM, Fiber, spatial SQL |
+| [`.claude/rules/laravel-batch-traps.md`](../../.claude/rules/laravel-batch-traps.md) | Laravel batch: mail, test fakes, schema guards |
+| [`.claude/rules/frontend-traps.md`](../../.claude/rules/frontend-traps.md) | Nuxt frontend: build flags, hanging awaits, iOS |
+
+They live under `.claude/` rather than here because they double as Claude Code path-scoped rules:
+each declares the globs it applies to, so the right page loads automatically when someone opens a
+file in that area. Keeping one copy means they cannot drift apart.
+
 ## The authoritative reference docs
 
 Read these directly; the pages above link into them rather than copy them:
