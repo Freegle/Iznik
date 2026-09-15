@@ -60,15 +60,10 @@ primary hands it over an SMTP hop on `127.0.0.1:10026` (transport `relaywarm`) t
 second instance, `postfix-warm` (`/etc/postfix-warm`, queue `/var/spool/postfix-warm`),
 which owns the warm transports and does the real delivery.
 
-That exists because `qmgr_message_active_limit` is a single global limit **per
-instance** - Postfix has no per-transport, per-destination or per-IP variant. A lane we
-are deliberately pacing holds tens of thousands of messages for hours, and every one of
-them occupies an active-queue slot that healthy domains need. On 2026-09-13/14 the
-primary's active queue sat pinned at exactly 40,000 for about thirty hours, 38,236 of it
-Yahoo, and Postfix logged the diagnosis itself: *"this may slow down other mail
-deliveries"*. Yahoo was accepting throughout; the backlog was our own day cap. The lane
-is slow by design, so it gets a queue of its own instead of a bigger share of everyone
-else's.
+`qmgr_message_active_limit` is a single global limit **per instance** - Postfix has no
+per-transport, per-destination or per-IP variant. A paced lane holds tens of thousands of
+messages for hours, and each occupies an active-queue slot healthy domains need. The
+second instance keeps that backlog out of the queue the rest of the mail uses.
 
 `ip-warmup.sh` writes **both** maps from one domain list, so they cannot drift:
 
@@ -93,39 +88,33 @@ postfix-relaywarm/smtp[...]: ABC: to=<someone@yahoo.com>,
   relay=127.0.0.1[127.0.0.1]:10026, ... status=sent (250 ... queued as DEF)
 ```
 
-while having reached nothing but our own second instance. Counted as a send by
-`provider-group-discover.sh` it is not merely wrong, it is catastrophic and it hides
-itself: there is one hop per message, so the count is unbounded, so it always beats the
-refusal count, so every routed group is declared "primary confirmed accepting" and the
-whole family is un-routed back onto the address that is refusing it - the 2026-09-02
-outage in a different shape, with the log reading as good news throughout.
+while having reached nothing but the second instance.
 
-The exclusion therefore uses two independent signals (the `postfix-relaywarm` tag *and*
-the loopback `relay=`), so one going stale on its own cannot quietly restore the bug, and
-it is **fail-closed**: if domains are routed to `relaywarm` but the pattern matches none
-of those hops, no group is allowed to leave play that run.
+`provider-group-discover.sh` must not count it as a send. There is one hop per message,
+so the count is unbounded and always exceeds the refusal count; every routed group would
+read as "primary confirmed accepting" and the group would be taken off its warmed address
+and put back on one that is refusing it.
 
-The same hop is excluded by the relay's `logs_emails` ingest (otherwise a member asking
-"did you send it?" would be told the provider accepted a message it has not seen) and the
-warm instance runs `header_checks` so its own records carry the Subject line.
+The exclusion uses two independent signals - the `postfix-relaywarm` tag and the loopback
+`relay=` - so one going stale does not restore the fault. If domains are routed to
+`relaywarm` but neither signal matches any hop, no group may leave play that run.
 
-`DeferralProbe` likewise has to cross instances: the primary resolves a throttled domain
+The relay's `logs_emails` ingest excludes the same hop, otherwise a member asking "did you
+send it?" is told the provider accepted a message it has not seen. The warm instance runs
+`header_checks` so its own records carry the Subject line.
+
+`DeferralProbe` crosses instances for the same reason: the primary resolves a paced domain
 to `relaywarm`, which has no `smtp_bind_address` of its own, and stopping there falls back
-to the global default - the blocked address - which is exactly the bug that held a
-suppression over 10,000 members for a day and a half.
+to the global default - the address the provider is refusing.
 
 The output is `/etc/postfix/warmup_transport`, consulted first in `transport_maps`.
 
-## Why per pair, not per address
+## Per pair, not per address
 
-Until 2026-09-03 the warm-up managed one provider group at a time, with one rung per
-address, and the discover script *chose* which group that was by counting refusals.
-That contest is how a second provider's unrelated policy refusals took the chain away
-from Yahoo on 2026-09-02 (a log sample that covered 102 of the 360 minutes asked for,
-inside which the primary had made zero Yahoo attempts, read as "no refusals") and left
-the whole Yahoo estate dark for 33 hours while walking the working address's rung from
-6 to 0 without a single Yahoo refusal. Per pair, nothing about one provider can touch
-another, and there is nothing to choose.
+Every (address, group) pair has its own transport, rung, state and cool-off, so one
+provider's refusals cannot move another provider's routing. No group competes with
+another for the warm-up, and there is nothing to choose between them: every group the
+primary is refused by is warmed independently.
 
 ## What to look at
 
@@ -139,11 +128,10 @@ another, and there is nothing to choose.
 
 ## Hand interventions
 
-- **Pause the automation before editing state.** The cron re-judges every minute, and a
-  freshly reset rung was demoted again within sixty seconds on 2026-09-03 because the
-  pair was still being judged as a canary on a three-hour window full of old refusals.
-  Comment the line in `/etc/cron.d/ip-warmup`, make the change, run the script once by
-  hand, check the log line, uncomment.
+- **Pause the automation before editing state.** The cron re-judges every minute and will
+  undo a hand-set rung within a minute, because the pair is still judged on a window that
+  still holds the old refusals. Comment the line in `/etc/cron.d/ip-warmup`, make the
+  change, run the script once by hand, check the log line, uncomment.
 - **Restore a rung** you have evidence for by writing the pair's `.state` file
   (`date=<today> rung=N hot=0 lastup=<epoch>`) and removing its `.cooloff`.
 - **Rate settings must be in `main.cf`** as `<transport>_destination_rate_delay` /
