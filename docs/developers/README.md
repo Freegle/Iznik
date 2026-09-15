@@ -27,6 +27,31 @@ have the stack running.
 4. **[APIs and data](apis-and-data.md)** - the v2 API, how the frontend talks to
    it, the data model, and recipes for common changes.
 
+## Traps worth reading before you start
+
+`.claude/rules/` collects the things in this codebase that fail **silently** - no error, no
+warning, a plausible wrong answer, and a green test run. They are ordinary markdown, one file per
+area, and they are the fastest way to avoid losing a day to something the team has already lost a
+day to.
+
+| File | Area |
+|---|---|
+| [`.claude/rules/go-api-traps.md`](../../.claude/rules/go-api-traps.md) | The Go API: GORM, Fiber, spatial SQL |
+| [`.claude/rules/laravel-batch-traps.md`](../../.claude/rules/laravel-batch-traps.md) | Laravel batch: mail, test fakes, schema guards |
+| [`.claude/rules/frontend-traps.md`](../../.claude/rules/frontend-traps.md) | Nuxt frontend: build flags, hanging awaits, iOS |
+| [`.claude/rules/tests-and-ci.md`](../../.claude/rules/tests-and-ci.md) | Green results that mean nothing |
+| [`.claude/rules/dev-containers.md`](../../.claude/rules/dev-containers.md) | Testing code that is not the code you are looking at |
+| [`.claude/rules/rippling.md`](../../.claude/rules/rippling.md) | One post, many group rows, and what that breaks |
+| [`.claude/rules/modtools.md`](../../.claude/rules/modtools.md) | "It isn't showing" and what actually causes it |
+| [`.claude/rules/browse-and-search.md`](../../.claude/rules/browse-and-search.md) | Three feed endpoints, sorting, stacking |
+| [`.claude/rules/mail-and-data.md`](../../.claude/rules/mail-and-data.md) | Digest cursors, unsubscribe, tables with no writer |
+| [`.claude/rules/monitor-fsm.md`](../../.claude/rules/monitor-fsm.md) | Why it can look idle when it is broken |
+| [`.claude/rules/conventions.md`](../../.claude/rules/conventions.md) | Settled decisions that are easy to re-derive wrongly |
+
+They live under `.claude/` rather than here because they double as Claude Code path-scoped rules:
+each declares the globs it applies to, so the right page loads automatically when someone opens a
+file in that area. Keeping one copy means they cannot drift apart.
+
 ## The authoritative reference docs
 
 Read these directly; the pages above link into them rather than copy them:
