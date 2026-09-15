@@ -4,6 +4,7 @@ namespace Tests\Unit\Services\Mail\Deferrals;
 
 use App\Monitoring\HostCommandRunner;
 use App\Services\Mail\Deferrals\DeferralProbe;
+use App\Services\Mail\Deferrals\RelayQueueSnapshot;
 use Tests\TestCase;
 
 /**
@@ -61,6 +62,117 @@ class DeferralProbeTest extends TestCase
             . DeferralProbe::MARK_DELIVERED . "\n"
             . $delivered . "\n"
             . DeferralProbe::MARK_END . "\n";
+    }
+
+    /**
+     * Wrap queue lines that are attributed to a named postfix instance.
+     *
+     * @param  array<string, string>  $byInstance  config directory => queue lines
+     */
+    private function wrapInstances(array $byInstance, string $delivered = ''): string
+    {
+        $out = DeferralProbe::MARK_QUEUE."\n";
+        foreach ($byInstance as $dir => $lines) {
+            $out .= DeferralProbe::MARK_INSTANCE."\n".$dir."\n".$lines."\n";
+        }
+
+        return $out.DeferralProbe::MARK_DELIVERED."\n".$delivered."\n".DeferralProbe::MARK_END."\n";
+    }
+
+    /**
+     * The relay runs more than one postfix instance, and the second owns
+     * delivery to exactly the providers this scan exists to watch. A bare
+     * `postqueue -j` returns only the default instance, so the scan would
+     * report a few deferrals for everyone else while tens of thousands of
+     * messages to a blocked provider sat unseen in the other queue - and
+     * nothing would ever suppress.
+     */
+    public function test_the_probe_asks_every_postfix_instance_for_its_queue(): void
+    {
+        $script = null;
+        $probe = new DeferralProbe($this->runner(
+            $this->wrap($this->queueLine()),
+            function (string $target, string $sent) use (&$script) {
+                $script = $sent;
+            }
+        ));
+        $probe->probe('relay@host', 65536);
+
+        $this->assertNotNull($script);
+        $this->assertStringContainsString('postmulti -l', $script, 'must enumerate the instances');
+        $this->assertStringContainsString('postqueue -c "$D" -j', $script, 'must read each instance by name');
+        $this->assertStringContainsString('config_directory', $script, 'must still work where postmulti is absent');
+    }
+
+    /**
+     * A queue id is unique only WITHIN an instance, so the snapshot has to
+     * remember which one each came from. Purging an id against the wrong
+     * instance either deletes nothing or deletes a different message.
+     */
+    public function test_queue_ids_are_attributed_to_the_instance_holding_them(): void
+    {
+        $probe = new DeferralProbe($this->runner($this->wrapInstances([
+            '/etc/postfix' => $this->queueLine(['queue_id' => 'AAAAAA111']),
+            '/etc/postfix-warm' => $this->queueLine(['queue_id' => 'BBBBBB222']),
+        ])));
+
+        $snapshot = $probe->probe('relay@host', 65536);
+        $this->assertNotNull($snapshot);
+
+        $groups = array_keys($snapshot->queueIds);
+        $this->assertNotEmpty($groups, 'both instances should contribute deferrals');
+
+        $ids = $snapshot->queueIdsFor($groups[0]);
+        $this->assertArrayHasKey('/etc/postfix', $ids);
+        $this->assertArrayHasKey('/etc/postfix-warm', $ids);
+        $this->assertSame(['AAAAAA111'], $ids['/etc/postfix']);
+        $this->assertSame(['BBBBBB222'], $ids['/etc/postfix-warm']);
+    }
+
+    /** A host with one instance names nothing, and must still be purgeable. */
+    public function test_an_unnamed_instance_falls_back_to_the_default(): void
+    {
+        $probe = new DeferralProbe($this->runner($this->wrap($this->queueLine(['queue_id' => 'CCCCCC333']))));
+
+        $snapshot = $probe->probe('relay@host', 65536);
+        $this->assertNotNull($snapshot);
+
+        $groups = array_keys($snapshot->queueIds);
+        $ids = $snapshot->queueIdsFor($groups[0]);
+        $this->assertSame(['CCCCCC333'], $ids[RelayQueueSnapshot::DEFAULT_INSTANCE] ?? null);
+    }
+
+    /** postsuper must be told which instance, for the same reason. */
+    public function test_purge_runs_postsuper_against_each_instance(): void
+    {
+        $scripts = [];
+        $probe = new DeferralProbe($this->runner(
+            'postsuper: Deleted: 1 message',
+            function (string $target, string $sent) use (&$scripts) {
+                $scripts[] = $sent;
+            }
+        ));
+
+        $probe->purge('relay@host', [
+            '/etc/postfix' => ['AAAAAA111'],
+            '/etc/postfix-warm' => ['BBBBBB222'],
+        ]);
+
+        $joined = implode("\n", $scripts);
+        $this->assertStringContainsString("postsuper -c '/etc/postfix' -d -", $joined);
+        $this->assertStringContainsString("postsuper -c '/etc/postfix-warm' -d -", $joined);
+    }
+
+    /** The instance path reaches a shell, so it is checked like the ids are. */
+    public function test_purge_refuses_an_implausible_instance_path(): void
+    {
+        $called = false;
+        $probe = new DeferralProbe($this->runner('x', function () use (&$called) {
+            $called = true;
+        }));
+
+        $this->assertSame(0, $probe->purge('relay@host', ['; rm -rf /' => ['AAAAAA111']]));
+        $this->assertFalse($called, 'nothing should reach the relay');
     }
 
     public function test_returns_null_when_the_relay_is_unreachable(): void
@@ -209,7 +321,10 @@ class DeferralProbeTest extends TestCase
 
         $snapshot = (new DeferralProbe($this->runner($this->wrap($queue))))->probe('relay@host', 1024);
 
-        $this->assertSame(['ABC123DEF'], $snapshot->queueIdsFor('yahoodns.net'));
+        $this->assertSame(
+            [RelayQueueSnapshot::DEFAULT_INSTANCE => ['ABC123DEF']],
+            $snapshot->queueIdsFor('yahoodns.net')
+        );
     }
 
     public function test_purge_refuses_anything_that_is_not_a_queue_id(): void
@@ -224,7 +339,7 @@ class DeferralProbeTest extends TestCase
             }
         ));
 
-        $deleted = $probe->purge('relay@host', ['GOODID1234', 'rm -rf /', '; postsuper -d ALL']);
+        $deleted = $probe->purge('relay@host', ['/etc/postfix' => ['GOODID1234', 'rm -rf /', '; postsuper -d ALL']]);
 
         $this->assertSame(1, $deleted);
         $this->assertStringContainsString('GOODID1234', $sent[0]);
@@ -251,7 +366,7 @@ class DeferralProbeTest extends TestCase
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessageMatches('/reserved for the superuser/');
 
-        $probe->purge('relay@host', ['GOODID1234']);
+        $probe->purge('relay@host', ['/etc/postfix' => ['GOODID1234']]);
     }
 
     public function test_purge_raises_when_nothing_was_confirmed_deleted(): void
@@ -262,7 +377,7 @@ class DeferralProbeTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
 
-        $probe->purge('relay@host', ['GOODID1234']);
+        $probe->purge('relay@host', ['/etc/postfix' => ['GOODID1234']]);
     }
 
     public function test_purge_counts_what_the_relay_confirmed_not_what_it_was_sent(): void
@@ -272,7 +387,7 @@ class DeferralProbeTest extends TestCase
         // lower than the count sent, and that is the honest number.
         $probe = new DeferralProbe($this->runner('postsuper: Deleted: 2 messages'));
 
-        $this->assertSame(2, $probe->purge('relay@host', ['AAAAAA1111', 'BBBBBB2222', 'CCCCCC3333']));
+        $this->assertSame(2, $probe->purge('relay@host', ['/etc/postfix' => ['AAAAAA1111', 'BBBBBB2222', 'CCCCCC3333']]));
     }
 
     // ===================================================================
@@ -370,11 +485,91 @@ class DeferralProbeTest extends TestCase
 
         $this->assertTrue($probe->providerAccepting('relay@host', 'yahoo.co.uk', 'noreply@example.com'));
         $this->assertNotNull($script);
-        $this->assertStringContainsString("postconf -h transport_maps", $script, 'must walk the relay\'s transport maps');
+        $this->assertStringContainsString('-h transport_maps', $script, 'must walk the relay\'s transport maps');
         $this->assertStringContainsString('postmap -q "$DOMAIN"', $script, 'must resolve the probed domain, not a guess');
         $this->assertStringContainsString('smtp_bind_address', $script, 'must read the transport\'s bind address');
         $this->assertStringContainsString('source_address=(bind, 0)', $script, 'must bind the socket to that address');
         $this->assertStringContainsString("DOMAIN='yahoo.co.uk'", $script);
+    }
+
+    /**
+     * Not a string match: this RUNS the resolution the probe emits, against
+     * stub postfix tools, and checks which address comes out.
+     *
+     * A throttled provider is handed to a second postfix instance over a
+     * loopback hop, so the primary resolves it to a relay transport that has no
+     * bind address of its own. Stopping there falls through to the global
+     * default - 185.53.57.161, the address the provider blocked - and a refusal
+     * from it cancels the 24h fail-open, so the suppression can never lift.
+     * That is the 2026-09-02 failure, and the only thing standing between us
+     * and it is that this resolution keeps walking into the next instance.
+     */
+    public function test_resolution_crosses_into_the_second_postfix_instance(): void
+    {
+        $script = null;
+        $probe = new DeferralProbe($this->runner(
+            DeferralProbe::MARK_ACCEPTING . "\nACCEPTING mta5.am0.yahoodns.net 250 from 77.72.7.253 via warm1yahoodnsnet\n",
+            function (string $target, string $sent) use (&$script) {
+                $script = $sent;
+            }
+        ));
+        $probe->providerAccepting('relay@host', 'yahoo.co.uk', 'noreply@example.com');
+        $this->assertNotNull($script);
+
+        $bin = sys_get_temp_dir() . '/probe-stub-' . getmypid();
+        @mkdir($bin, 0700, true);
+
+        // The primary knows only that the domain goes to the relay transport,
+        // and that transport has no smtp_bind_address. The warm instance holds
+        // the pair that actually faces the provider.
+        file_put_contents("$bin/postmulti", <<<'STUB'
+#!/bin/bash
+[ "$1" = "-l" ] && { echo "-            -     y  /etc/postfix"; echo "postfix-warm warm  y  /etc/postfix-warm"; }
+STUB);
+        file_put_contents("$bin/postconf", <<<'STUB'
+#!/bin/bash
+cd=/etc/postfix; a=("$@")
+for ((i=0;i<${#a[@]};i++)); do [ "${a[$i]}" = "-c" ] && cd="${a[$((i+1))]}"; done
+case "$*" in
+  *"-h transport_maps"*)
+    if [ "$cd" = "/etc/postfix" ]; then echo "texthash:/etc/postfix/warmup_transport"
+    else echo "texthash:/etc/postfix-warm/warmup_transport"; fi ;;
+  *"-Mf relaywarm/unix"*)
+    echo "relaywarm unix - - n - 20 smtp"; echo "    -o syslog_name=postfix-relaywarm" ;;
+  *"-Mf warm1yahoodnsnet/unix"*)
+    echo "warm1yahoodnsnet unix - - n - 4 smtp"
+    echo "    -o syslog_name=postfix-warm1yahoodnsnet"
+    echo "    -o smtp_bind_address=77.72.7.253" ;;
+  *"-h smtp_bind_address"*) echo "185.53.57.161" ;;
+  *"-h config_directory"*) echo "/etc/postfix" ;;
+esac
+STUB);
+        file_put_contents("$bin/postmap", <<<'STUB'
+#!/bin/bash
+case "$*" in
+  *"/etc/postfix/warmup_transport"*) echo "relaywarm:[127.0.0.1]:10026" ;;
+  *"/etc/postfix-warm/warmup_transport"*) echo "warm1yahoodnsnet:" ;;
+esac
+STUB);
+        foreach (['postmulti', 'postconf', 'postmap'] as $f) {
+            chmod("$bin/$f", 0700);
+        }
+
+        // Everything the probe emits before it hands over to python is the
+        // resolution; run exactly that, then report what it decided.
+        $resolution = substr($script, 0, strpos($script, 'python3 - '));
+        $out = shell_exec('PATH=' . escapeshellarg($bin) . ':$PATH bash -c '
+            . escapeshellarg($resolution . "\necho \"BIND=\$BIND TR=\$TR\"") . ' 2>&1');
+
+        array_map('unlink', glob("$bin/*"));
+        @rmdir($bin);
+
+        $this->assertStringContainsString('BIND=77.72.7.253', (string) $out,
+            'must bind the warm instance address that actually faces the provider');
+        $this->assertStringContainsString('TR=warm1yahoodnsnet', (string) $out,
+            'must report the pair transport, not the loopback relay');
+        $this->assertStringNotContainsString('BIND=185.53.57.161', (string) $out,
+            'falling through to the blocked default is the 2026-09-02 bug');
     }
 
     public function test_refuses_to_put_a_bogus_domain_in_a_shell(): void
@@ -395,7 +590,7 @@ class DeferralProbeTest extends TestCase
             $called = true;
         }));
 
-        $this->assertSame(0, $probe->purge('relay@host', ['../../etc/passwd']));
+        $this->assertSame(0, $probe->purge('relay@host', ['/etc/postfix' => ['../../etc/passwd']]));
         $this->assertFalse($called, 'must not open a shell on the relay with nothing to do');
     }
 }

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-12
+last_reviewed: 2026-09-15
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Mail/Deferrals/*.php
@@ -66,6 +66,14 @@ emits one JSON object per line, which we can cap and stream.
 
 The relay's topology is not in this repo and must not be: the ssh target lives
 only in the environment. See "Configuration" below.
+
+**It reads every postfix instance on the relay, not just the default one.** The
+relay runs a second instance that owns delivery to the providers we pace, so a
+bare `postqueue -j` returns a queue without the providers this scan exists to
+watch: a handful of deferrals for everyone else, while tens of thousands of
+messages to a blocked provider sit unseen and nothing suppresses. Queue ids are
+unique only within an instance, so the snapshot records which instance each came
+from and `postsuper` is always told which one to delete from.
 
 ### Two tiers, and the first is the one that matters
 
@@ -211,6 +219,16 @@ with no way out because the refusal also cancels the fail-open below. That
 held a Yahoo suppression over 10,000 members for 33 hours on 2026-09-02/03.
 The log line `Mail deferral probe: provider is still refusing` names the
 address it asked from.
+
+That resolution crosses **postfix instances**. A paced provider is not delivered
+by the relay's primary instance: it is handed over a loopback hop to a second
+instance (`postfix-warm`) that owns the warmed addresses, so the primary
+resolves the domain to a relay transport with no `smtp_bind_address` of its
+own. Stopping there falls back to the global default, which is the address the
+provider is refusing, so the probe walks every instance (`postmulti -l`) and
+takes the first that yields a transport with a real bind address. A host with
+one instance, and a group that is not paced, both resolve on the first pass.
+See the [outbound relay runbook](../../ops/runbooks/outbound-relay-ip-warmup.md).
 
 There is also a fail-open: if the probe has not been able to confirm a
 suppression for `stale_after_hours`, it is released and alerted on. Quietly not

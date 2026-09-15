@@ -32,6 +32,13 @@ MAILLOG=/var/log/mail.log
 OUT=/etc/postfix/warmup-groups           # lines: <domain> <group>
 LOG=/var/log/provider-discover.log
 CANDIDATES_FILE=/etc/postfix/warmup-candidates
+# A group in play does not leave the primary for the provider at all: the
+# primary hands it over a loopback SMTP hop into a second postfix instance,
+# which does the real delivery. Keep these in step with ip-warmup.sh, which
+# owns both maps.
+PRIMARY_MAP=/etc/postfix/warmup_transport
+RELAY_TRANSPORT=relaywarm
+RELAY_PORT=10026
 WINDOW_MIN=${1:-180}
 MIN_REFUSALS=50                          # 4.7.x refusals from the primary before a group enters play
 # Lines, not minutes: 400k covered 102 of 360 minutes at morning volume on
@@ -122,7 +129,41 @@ fi
 # postfix-warm1yahoodnsnet); exclude those lines from both counts.
 primary_ip=$(postconf -h smtp_bind_address 2>/dev/null)
 nonprimary_re=$(awk -v p="$primary_ip" '!/^[[:space:]]*(#|$)/ && $1 != p {printf "%s%s", (n++ ? "|" : ""), "postfix-" $2 "[a-z0-9]*/"}' "$CANDIDATES_FILE" 2>/dev/null)
-if [ -n "$nonprimary_re" ]; then grep -vE "$nonprimary_re" "$tmp.win" > "$tmp.prim"; else cp "$tmp.win" "$tmp.prim"; fi
+
+# THE LOOPBACK HOP IS NOT A DELIVERY. For a group in play the primary no longer
+# talks to the provider at all - it hands the message to the warm instance over
+# SMTP on 127.0.0.1, and that hop logs exactly like a delivery:
+#
+#   postfix-relaywarm/smtp[...]: ABC: to=<someone@yahoo.com>,
+#     relay=127.0.0.1[127.0.0.1]:10026, ... status=sent (250 ... queued as DEF)
+#
+# having reached nothing but our own second instance. Counted as a send that is
+# not merely wrong, it is catastrophic, and in a way that hides itself: there is
+# one hop per message, so the count is unbounded; it therefore always clears
+# CONFIRM_MIN_SENT and always beats the refusal count; every routed group is
+# declared "primary confirmed accepting"; and the whole family is un-routed back
+# onto the address that is refusing it. That is the 2026-09-02 outage rebuilt in
+# a different shape, and the log would read as good news the entire time.
+#
+# Two independent signals, so that one going stale on its own - a renamed
+# transport, a changed port - cannot quietly restore the bug.
+relay_re="postfix-${RELAY_TRANSPORT}[a-z0-9]*/|relay=127\.0\.0\.1\[127\.0\.0\.1\]:${RELAY_PORT}"
+exclude_re=$relay_re
+[ -n "$nonprimary_re" ] && exclude_re="$nonprimary_re|$relay_re"
+grep -vE "$exclude_re" "$tmp.win" > "$tmp.prim"
+
+# Prove the exclusion still matches before trusting what is left. If the primary
+# is routing domains to the relay transport then those hops MUST be somewhere in
+# the window; matching none of them means either the pattern has stopped working
+# or the window is empty, and in both cases the sends we are about to count are
+# not evidence of anything. A quiet window reaching the same conclusion is fine:
+# the only consequence is that nothing leaves play this run.
+routed_to_relay=$(grep -cE "[[:space:]]${RELAY_TRANSPORT}:" "$PRIMARY_MAP" 2>/dev/null || true)
+relay_seen=$(grep -cE "$relay_re" "$tmp.win" 2>/dev/null || true)
+if [ "${routed_to_relay:-0}" -gt 0 ] && [ "${relay_seen:-0}" -eq 0 ]; then
+  covered=0
+  echo "$(stamp)Z relay-hop exclusion matched nothing while $routed_to_relay domains are routed to $RELAY_TRANSPORT - stale pattern or empty window, no group leaves play" >> "$LOG"
+fi
 
 # Recipient domains refused 4.7.x by the primary (reputation/volume refusals).
 grep -E "status=deferred.*4\.7\.[0-9]" "$tmp.prim" \

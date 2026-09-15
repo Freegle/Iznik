@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-06
+last_reviewed: 2026-09-15
 owner: Freegle dev team
 covers:
   - iznik-batch/config/freegle.php
@@ -42,6 +42,8 @@ variables like every other Freegle setting.
 | `auth.login_link_path` | `FREEGLE_LOGIN_LINK_PATH` | `/` | Where that sign-in link lands on the site. The page there must consume `?u=&k=` to sign the member in; the root app already does. |
 | `mail.tracking_enabled` | `FREEGLE_MAIL_TRACKING_ENABLED` | `true` | Off, no `email_tracking` row is written and every tracked link, image and pixel helper returns the plain destination. For a deployment whose API does not serve the tracking redirect and pixel. |
 | `mail.enabled_types` | `FREEGLE_MAIL_ENABLED_TYPES` | (as before) | New: a `*` in the list enables every type, so a deployment with its own mailables need not re-list Freegle's whole catalogue. |
+| `mail.relay_logs.enabled` | `FREEGLE_MAIL_RELAY_LOGS_ENABLED` | `true` | Off, or with no relay host set, nothing reads the outbound relay's maillog into `logs_emails` and the job is not even scheduled. A deployment whose relay it cannot reach - and any dev or CI environment - wants this off. |
+| `mail.relay_logs.host` | `FREEGLE_MAIL_RELAY_LOGS_HOST` | falls back to `FREEGLE_MAIL_DEFERRALS_HOST` | The ssh target for that read. It defaults to the deferral probe's target because it is the same relay and the same restricted account; set it only if they differ. Empty disables the job. |
 | `schedule.profile` | `FREEGLE_SCHEDULE_PROFILE` | `full` | `overlay-only` runs nothing from `routes/console.php` except what the overlay file below schedules. Any other value behaves as `full`, so a typo can never quietly stop the schedule. |
 | `schedule.overlay` | `FREEGLE_SCHEDULE_OVERLAY` | `routes/console.deployment.php` | A schedule file loaded **if it exists** (relative to the app root, or absolute). Freegle ships none. A deployment puts its own jobs there. |
 
