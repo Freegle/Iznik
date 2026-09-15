@@ -191,8 +191,9 @@ class RelayQueueRecorderTest extends TestCase
 
         $this->assertSame(3, $totals['rows'], 'the cap must actually be read from config');
         $this->assertSame(3, DB::table('mail_relay_queue')->count());
-        $this->assertDatabaseHas('mail_relay_queue', ['domain' => 'domain0.com'], 'the worst survives');
-        $this->assertDatabaseMissing('mail_relay_queue', ['domain' => 'domain4.com'], 'the smallest is dropped');
+        // The worst survives and the smallest is dropped.
+        $this->assertDatabaseHas('mail_relay_queue', ['domain' => 'domain0.com']);
+        $this->assertDatabaseMissing('mail_relay_queue', ['domain' => 'domain4.com']);
     }
 
     /**
