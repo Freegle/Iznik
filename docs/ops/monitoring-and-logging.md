@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-15
 owner: Freegle dev team
 covers:
   - docs/ops/reference/logging.md
@@ -94,6 +94,8 @@ and CI tool, not a production monitoring surface. See
 | "What did a moderator or member see in the logs?" | ModTools Log Viewer |
 | "Is production healthy right now?" | The ModTools status dot, then Sentry |
 | "Did last night's database restore work?" | The Yesterday panel on the ModTools home page |
+| "Did we actually email this member?" | `logs_emails` - see [reference/logging.md](reference/logging.md) |
+| "Why is mail slow / backed up?" | [reference/outbound-mail.md](reference/outbound-mail.md), which separates our own delay from a provider throttling us |
 
 Access to production monitoring is gated by team credentials, which are not documented
 here.

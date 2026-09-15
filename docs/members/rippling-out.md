@@ -1,3 +1,15 @@
+---
+last_reviewed: 2026-09-15
+owner: Freegle dev team
+covers:
+  - iznik-nuxt3/components/DistanceSliders.vue
+  - iznik-nuxt3/components/DistanceSliderRow.vue
+  - iznik-nuxt3/composables/useReachDistance.js
+  - iznik-batch/app/Services/Ripple/ExpandService.php
+  - iznik-batch/app/Services/Ripple/DistancePreferenceFilter.php
+  - iznik-server-go/utils/reachcap.go
+---
+
 # Rippling Out - A Guide for Members
 
 > **Current reference document.** Supersedes the draft at
@@ -46,6 +58,9 @@ rippling:
   than instantly.
 - **If you were already on daily digest or no emails**, those settings are kept exactly
   as they are.
+- **If you have left every community**, the communities your post reaches start with all
+  emails turned off, rather than on a daily digest. Leaving everything is about as clear a
+  signal as there is, so we do not use rippling to start emailing you again.
 - **Community events and volunteering emails** carry over the setting you already use on
   your own community, so you get no extra emails.
 
@@ -122,8 +137,9 @@ it in Settings.
 Two things happen when you leave:
 
 1. Your post is **removed from that community** - people there will no longer see it.
-2. You will **not be re-joined** to that community, even if your post continues to ripple
-   elsewhere.
+2. You will **not be re-joined** to that community. That is not just for this post: any
+   future post of yours ripples past that community and leaves you out of it, unless you
+   choose to join it yourself.
 
 Your post carries on being visible in every other community it reached, so leaving one
 community does not affect the rest.
@@ -175,6 +191,13 @@ That both-ways rule applies to the slider **when you move it yourself**. It is y
 about how far you are willing to go, so it seems only fair that it says how far your own
 offers travel too.
 
+If you want the two to be different, choose **Set separately** under the slider. You then get
+two: "Posts I see" and "Who sees my posts". The second can go further than the first, which
+suits people who only want to look at their own town while still being happy for someone a few
+towns away to collect something they are giving away. **Link them again** goes back to one
+slider. Until you use it, the single slider covers both, so there is nothing you need to do
+here to limit who can answer your offers.
+
 The starting position Freegle works out for you is different, and it only affects **what you
 see**. It never shortens how far your own posts go. That is deliberate, and the reason is that
 the two are not really the same question. Working out that you have plenty of freeglers close
@@ -225,5 +248,5 @@ shows as "waiting to send" until then. Nothing is lost.
 | Community events/volunteering emails | Carried over from your own community's setting |
 | Intro email | One bundled email explains what happened and how to change things |
 | Repost reminders / check-ins | One per item, not one per community |
-| Leaving a community | Removes your post from it; you are not re-joined |
+| Leaving a community | Removes your post from it; you are not re-joined, now or by a later post |
 | Changing settings | Adjust per community in Settings at any time |

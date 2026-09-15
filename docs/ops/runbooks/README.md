@@ -67,6 +67,9 @@ provider queues on the relay; the batch side notices and pauses generation for i
 - The relay warms its other sending addresses against that provider and routes the
   provider's mail to whichever one is being accepted, automatically and per provider.
 - Full description: **[outbound-relay-ip-warmup.md](outbound-relay-ip-warmup.md)**.
+- If you are not yet sure the relay is the problem, start with
+  **[how an email gets sent](../reference/outbound-mail.md)** - it separates our own
+  delay from a provider throttling us, which call for opposite responses.
 - Pause the every-minute automation before touching its state by hand, and judge an
   address on sustained deliveries, never on a one-off probe.
 

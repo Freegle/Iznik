@@ -275,6 +275,38 @@ return [
             // than silently stop mailing a provider for ever.
             'stale_after_hours' => (int) env('FREEGLE_MAIL_DEFERRALS_STALE_HOURS', 24),
         ],
+
+        // Reading the relay's maillog into logs_emails, so a member can be
+        // told whether we actually sent them something. Replaces V1's
+        // scripts/cron/eximlogs.php, which ran from root's crontab on the
+        // relay itself.
+        'relay_logs' => [
+            'enabled' => (bool) env('FREEGLE_MAIL_RELAY_LOGS_ENABLED', true),
+
+            // ssh target, same shape and same restricted account as the
+            // deferral probe - it needs only to read a file the `adm` group
+            // can already read. Topology lives ONLY in the environment.
+            // Empty = disabled (dev/CI).
+            'host' => env('FREEGLE_MAIL_RELAY_LOGS_HOST', env('FREEGLE_MAIL_DEFERRALS_HOST', '')),
+
+            'path' => env('FREEGLE_MAIL_RELAY_LOGS_PATH', '/var/log/mail.log'),
+
+            // We keep a byte offset and fetch only what was appended, which is
+            // about 5MB a run. The cap is for the case where the offset is
+            // lost: without it the first run afterwards would pull the whole
+            // multi-gigabyte log through ssh and into PHP's memory, every run,
+            // for ever. Skipping ahead loses some history, which is the better
+            // of the two failures.
+            'max_slice_bytes' => (int) env('FREEGLE_MAIL_RELAY_LOGS_MAX_SLICE_BYTES', 64 * 1024 * 1024),
+
+            // The relay hands paced providers to a second postfix instance
+            // over a loopback hop. That hop logs exactly like a delivery, so
+            // it must not be recorded as one. Two independent signals, so that
+            // one going stale on its own cannot quietly turn hops back into
+            // "sent". Keep in step with scripts/bulk2/ip-warmup.sh.
+            'handover_port' => (int) env('FREEGLE_MAIL_RELAY_LOGS_HANDOVER_PORT', 10026),
+            'handover_transport' => env('FREEGLE_MAIL_RELAY_LOGS_HANDOVER_TRANSPORT', 'relaywarm'),
+        ],
     ],
 
     'mod_welfare' => [
