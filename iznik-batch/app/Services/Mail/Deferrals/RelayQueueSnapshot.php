@@ -31,6 +31,43 @@ class RelayQueueSnapshot
     /** Relay family => deliveries seen in the log window. */
     public array $delivered = [];
 
+    /**
+     * Recipient domain => [count, oldest arrival unix ts, instance] for mail
+     * that is QUEUED BUT NOT REFUSED.
+     *
+     * A provider refusing us leaves a delay_reason on the queue entry and is
+     * counted above. Mail we are deliberately pacing ourselves - a warmed
+     * sending address on a rate delay, or one that has spent its day
+     * allowance - leaves no reason at all: nothing has gone wrong, the
+     * message is simply waiting its turn. To a member the two are the same
+     * email arriving hours late, so both have to be visible; only the
+     * remedies differ, and they are opposites.
+     *
+     * @var array<string, array{count:int, oldest:?int, instance:?string}>
+     */
+    public array $waiting = [];
+
+    /** Recipient domain => deliveries seen in the log window. */
+    public array $deliveredByDomain = [];
+
+    /**
+     * How many seconds of log the delivery sample above actually covers.
+     *
+     * Null when the relay could not tell us, in which case a caller wanting a
+     * rate should treat the sample as an hour - which is what everything did
+     * before this was measured, and was wrong by whatever factor the relay's
+     * traffic happened to make it. On the live relay a 200,000 line sample
+     * covered 2h15m, so every "per hour" number taken from it was more than
+     * double the truth.
+     */
+    public ?int $windowSeconds = null;
+
+    /** Config directories the relay reported, one per postfix instance. */
+    public array $instancesSeen = [];
+
+    /** Log lines excluded as the loopback hop between instances. */
+    public int $handoversSeen = 0;
+
     /** Queue ids per relay family, for --purge. */
     public array $queueIds = [];
 
@@ -153,6 +190,92 @@ class RelayQueueSnapshot
     public function deliveriesFor(string $group): int
     {
         return (int) ($this->delivered[$group] ?? 0);
+    }
+
+    /**
+     * One queue entry that no provider has refused - it is waiting on us.
+     *
+     * Bucketed by recipient DOMAIN, not by relay family: an entry that has
+     * never been attempted has no relay to name, and the domain is what
+     * support looks a member up by anyway.
+     */
+    public function addWaiting(string $address, ?int $arrivalTime, ?string $instance = null): void
+    {
+        $domain = $this->domainOf(strtolower(trim($address)));
+        if ($domain === null) {
+            return;
+        }
+
+        if (! isset($this->waiting[$domain])) {
+            $this->waiting[$domain] = ['count' => 0, 'oldest' => null, 'instance' => $instance];
+        }
+        $this->waiting[$domain]['count']++;
+        $this->waiting[$domain]['oldest'] = $this->earliest($this->waiting[$domain]['oldest'], $arrivalTime);
+    }
+
+    public function addDomainDelivery(string $domain): void
+    {
+        $domain = strtolower(trim($domain));
+        if ($domain === '') {
+            return;
+        }
+
+        $this->deliveredByDomain[$domain] = ($this->deliveredByDomain[$domain] ?? 0) + 1;
+    }
+
+    public function deliveriesForDomain(string $domain): int
+    {
+        return (int) ($this->deliveredByDomain[strtolower(trim($domain))] ?? 0);
+    }
+
+    /**
+     * Deliveries to a domain scaled to an hour.
+     *
+     * An AVERAGE over the probe's whole sample, which is a couple of hours, not
+     * the rate right now. That is usually what you want - a queue taking hours
+     * to clear should be divided by an hours-long average, not by a momentary
+     * one - but it lags a step change. When a sending address spends its daily
+     * allowance and drops to a trickle, this reads high until the sample has
+     * moved past the fast part.
+     *
+     * Deliberately a separate method from deliveriesFor(), which the
+     * suppression decision uses. Scaling that one would change when a provider
+     * gets suppressed - a real change to whether mail is generated - and this
+     * is a reporting number. The two should be reconciled deliberately, not as
+     * a side effect of making a page read correctly.
+     */
+    public function deliveriesPerHourForDomain(string $domain): int
+    {
+        if (! $this->handoverExclusionLooksAlive()) {
+            return 0;
+        }
+
+        $count = $this->deliveriesForDomain($domain);
+
+        if ($count === 0 || $this->windowSeconds === null || $this->windowSeconds <= 0) {
+            return $count;
+        }
+
+        return (int) round($count * 3600 / $this->windowSeconds);
+    }
+
+    /**
+     * Is the loopback-hop exclusion still matching anything?
+     *
+     * A relay with a second postfix instance sends one hop line per message to
+     * every paced provider, so seeing none of them means the pattern has
+     * stopped matching - a renamed transport, a changed port - not that the
+     * hop has stopped happening. At that point every rate is inflated by the
+     * hops now being counted as deliveries, and an inflated rate makes a
+     * backlog look like it is clearing when it is not.
+     *
+     * So refuse to give a rate at all rather than give a reassuring one. The
+     * view renders that as "not draining", which is the pessimistic reading
+     * and the one that gets looked at.
+     */
+    public function handoverExclusionLooksAlive(): bool
+    {
+        return count($this->instancesSeen) < 2 || $this->handoversSeen > 0;
     }
 
     /**
