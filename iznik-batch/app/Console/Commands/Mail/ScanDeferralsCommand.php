@@ -245,11 +245,18 @@ class ScanDeferralsCommand extends Command
             return;
         }
 
-        $ids = [];
+        // Per instance: a queue id is only unique within one postfix instance,
+        // and the relay runs more than one.
+        $byInstance = [];
         foreach ($suppressed as $group) {
-            $ids = array_merge($ids, $snapshot->queueIdsFor($group));
+            foreach ($snapshot->queueIdsFor($group) as $instance => $groupIds) {
+                foreach ($groupIds as $id) {
+                    $byInstance[$instance][$id] = true;
+                }
+            }
         }
-        $ids = array_values(array_unique($ids));
+        $byInstance = array_map(static fn ($set) => array_keys($set), $byInstance);
+        $ids = array_merge(...(array_values($byInstance) ?: [[]]));
 
         if ($ids === []) {
             $this->info('Purge: no queued messages found for the suppressed relays.');
@@ -292,7 +299,7 @@ class ScanDeferralsCommand extends Command
         }
 
         try {
-            $deleted = $probe->purge($target, $ids);
+            $deleted = $probe->purge($target, $byInstance);
         } catch (\Throwable $e) {
             // purge() raises rather than counting ids it merely sent. Anything
             // reaching here means the relay did not confirm the deletions.

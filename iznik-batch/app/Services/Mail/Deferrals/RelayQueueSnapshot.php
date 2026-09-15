@@ -43,13 +43,16 @@ class RelayQueueSnapshot
      */
     public int $perMailbox = 0;
 
+    /** Used when the relay did not name an instance (a single-instance host). */
+    public const DEFAULT_INSTANCE = '/etc/postfix';
+
     /** Queue lines that were not valid JSON (expect 1 when truncated). */
     public int $unparseableLines = 0;
 
     /** Whether the relay's queue listing was cut short by the byte cap. */
     public bool $truncated = false;
 
-    public function addDeferral(string $address, string $reason, ?int $arrivalTime, ?string $queueId): void
+    public function addDeferral(string $address, string $reason, ?int $arrivalTime, ?string $queueId, ?string $instance = null): void
     {
         $address = strtolower(trim($address));
         if ($address === '') {
@@ -101,7 +104,12 @@ class RelayQueueSnapshot
         if ($queueId !== null && $queueId !== '') {
             // Deduplicated: one queue file can hold many recipients in the
             // same family, and purging wants each id once.
-            $this->queueIds[$group][$queueId] = true;
+            //
+            // Keyed by INSTANCE as well, because a queue id is only unique
+            // within one postfix instance. Purging an id against the wrong
+            // instance either deletes nothing or, if the id happens to exist
+            // there too, deletes a different message.
+            $this->queueIds[$group][$instance ?? self::DEFAULT_INSTANCE][$queueId] = true;
         }
     }
 
@@ -161,9 +169,19 @@ class RelayQueueSnapshot
     }
 
     /** @return string[] */
+    /**
+     * Queue ids for a group, grouped by the postfix instance holding them.
+     *
+     * @return array<string, string[]> config directory => queue ids
+     */
     public function queueIdsFor(string $group): array
     {
-        return array_keys($this->queueIds[$group] ?? []);
+        $out = [];
+        foreach ($this->queueIds[$group] ?? [] as $instance => $ids) {
+            $out[$instance] = array_keys($ids);
+        }
+
+        return $out;
     }
 
     private function domainOf(string $address): ?string

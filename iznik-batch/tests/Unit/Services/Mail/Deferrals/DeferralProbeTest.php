@@ -4,6 +4,7 @@ namespace Tests\Unit\Services\Mail\Deferrals;
 
 use App\Monitoring\HostCommandRunner;
 use App\Services\Mail\Deferrals\DeferralProbe;
+use App\Services\Mail\Deferrals\RelayQueueSnapshot;
 use Tests\TestCase;
 
 /**
@@ -61,6 +62,117 @@ class DeferralProbeTest extends TestCase
             . DeferralProbe::MARK_DELIVERED . "\n"
             . $delivered . "\n"
             . DeferralProbe::MARK_END . "\n";
+    }
+
+    /**
+     * Wrap queue lines that are attributed to a named postfix instance.
+     *
+     * @param  array<string, string>  $byInstance  config directory => queue lines
+     */
+    private function wrapInstances(array $byInstance, string $delivered = ''): string
+    {
+        $out = DeferralProbe::MARK_QUEUE."\n";
+        foreach ($byInstance as $dir => $lines) {
+            $out .= DeferralProbe::MARK_INSTANCE."\n".$dir."\n".$lines."\n";
+        }
+
+        return $out.DeferralProbe::MARK_DELIVERED."\n".$delivered."\n".DeferralProbe::MARK_END."\n";
+    }
+
+    /**
+     * The relay runs more than one postfix instance, and the second owns
+     * delivery to exactly the providers this scan exists to watch. A bare
+     * `postqueue -j` returns only the default instance, so the scan would
+     * report a few deferrals for everyone else while tens of thousands of
+     * messages to a blocked provider sat unseen in the other queue - and
+     * nothing would ever suppress.
+     */
+    public function test_the_probe_asks_every_postfix_instance_for_its_queue(): void
+    {
+        $script = null;
+        $probe = new DeferralProbe($this->runner(
+            $this->wrap($this->queueLine()),
+            function (string $target, string $sent) use (&$script) {
+                $script = $sent;
+            }
+        ));
+        $probe->probe('relay@host', 65536);
+
+        $this->assertNotNull($script);
+        $this->assertStringContainsString('postmulti -l', $script, 'must enumerate the instances');
+        $this->assertStringContainsString('postqueue -c "$D" -j', $script, 'must read each instance by name');
+        $this->assertStringContainsString('config_directory', $script, 'must still work where postmulti is absent');
+    }
+
+    /**
+     * A queue id is unique only WITHIN an instance, so the snapshot has to
+     * remember which one each came from. Purging an id against the wrong
+     * instance either deletes nothing or deletes a different message.
+     */
+    public function test_queue_ids_are_attributed_to_the_instance_holding_them(): void
+    {
+        $probe = new DeferralProbe($this->runner($this->wrapInstances([
+            '/etc/postfix' => $this->queueLine(['queue_id' => 'AAAAAA111']),
+            '/etc/postfix-warm' => $this->queueLine(['queue_id' => 'BBBBBB222']),
+        ])));
+
+        $snapshot = $probe->probe('relay@host', 65536);
+        $this->assertNotNull($snapshot);
+
+        $groups = array_keys($snapshot->queueIds);
+        $this->assertNotEmpty($groups, 'both instances should contribute deferrals');
+
+        $ids = $snapshot->queueIdsFor($groups[0]);
+        $this->assertArrayHasKey('/etc/postfix', $ids);
+        $this->assertArrayHasKey('/etc/postfix-warm', $ids);
+        $this->assertSame(['AAAAAA111'], $ids['/etc/postfix']);
+        $this->assertSame(['BBBBBB222'], $ids['/etc/postfix-warm']);
+    }
+
+    /** A host with one instance names nothing, and must still be purgeable. */
+    public function test_an_unnamed_instance_falls_back_to_the_default(): void
+    {
+        $probe = new DeferralProbe($this->runner($this->wrap($this->queueLine(['queue_id' => 'CCCCCC333']))));
+
+        $snapshot = $probe->probe('relay@host', 65536);
+        $this->assertNotNull($snapshot);
+
+        $groups = array_keys($snapshot->queueIds);
+        $ids = $snapshot->queueIdsFor($groups[0]);
+        $this->assertSame(['CCCCCC333'], $ids[RelayQueueSnapshot::DEFAULT_INSTANCE] ?? null);
+    }
+
+    /** postsuper must be told which instance, for the same reason. */
+    public function test_purge_runs_postsuper_against_each_instance(): void
+    {
+        $scripts = [];
+        $probe = new DeferralProbe($this->runner(
+            'postsuper: Deleted: 1 message',
+            function (string $target, string $sent) use (&$scripts) {
+                $scripts[] = $sent;
+            }
+        ));
+
+        $probe->purge('relay@host', [
+            '/etc/postfix' => ['AAAAAA111'],
+            '/etc/postfix-warm' => ['BBBBBB222'],
+        ]);
+
+        $joined = implode("\n", $scripts);
+        $this->assertStringContainsString("postsuper -c '/etc/postfix' -d -", $joined);
+        $this->assertStringContainsString("postsuper -c '/etc/postfix-warm' -d -", $joined);
+    }
+
+    /** The instance path reaches a shell, so it is checked like the ids are. */
+    public function test_purge_refuses_an_implausible_instance_path(): void
+    {
+        $called = false;
+        $probe = new DeferralProbe($this->runner('x', function () use (&$called) {
+            $called = true;
+        }));
+
+        $this->assertSame(0, $probe->purge('relay@host', ['; rm -rf /' => ['AAAAAA111']]));
+        $this->assertFalse($called, 'nothing should reach the relay');
     }
 
     public function test_returns_null_when_the_relay_is_unreachable(): void
@@ -209,7 +321,10 @@ class DeferralProbeTest extends TestCase
 
         $snapshot = (new DeferralProbe($this->runner($this->wrap($queue))))->probe('relay@host', 1024);
 
-        $this->assertSame(['ABC123DEF'], $snapshot->queueIdsFor('yahoodns.net'));
+        $this->assertSame(
+            [RelayQueueSnapshot::DEFAULT_INSTANCE => ['ABC123DEF']],
+            $snapshot->queueIdsFor('yahoodns.net')
+        );
     }
 
     public function test_purge_refuses_anything_that_is_not_a_queue_id(): void
@@ -224,7 +339,7 @@ class DeferralProbeTest extends TestCase
             }
         ));
 
-        $deleted = $probe->purge('relay@host', ['GOODID1234', 'rm -rf /', '; postsuper -d ALL']);
+        $deleted = $probe->purge('relay@host', ['/etc/postfix' => ['GOODID1234', 'rm -rf /', '; postsuper -d ALL']]);
 
         $this->assertSame(1, $deleted);
         $this->assertStringContainsString('GOODID1234', $sent[0]);
@@ -251,7 +366,7 @@ class DeferralProbeTest extends TestCase
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessageMatches('/reserved for the superuser/');
 
-        $probe->purge('relay@host', ['GOODID1234']);
+        $probe->purge('relay@host', ['/etc/postfix' => ['GOODID1234']]);
     }
 
     public function test_purge_raises_when_nothing_was_confirmed_deleted(): void
@@ -262,7 +377,7 @@ class DeferralProbeTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
 
-        $probe->purge('relay@host', ['GOODID1234']);
+        $probe->purge('relay@host', ['/etc/postfix' => ['GOODID1234']]);
     }
 
     public function test_purge_counts_what_the_relay_confirmed_not_what_it_was_sent(): void
@@ -272,7 +387,7 @@ class DeferralProbeTest extends TestCase
         // lower than the count sent, and that is the honest number.
         $probe = new DeferralProbe($this->runner('postsuper: Deleted: 2 messages'));
 
-        $this->assertSame(2, $probe->purge('relay@host', ['AAAAAA1111', 'BBBBBB2222', 'CCCCCC3333']));
+        $this->assertSame(2, $probe->purge('relay@host', ['/etc/postfix' => ['AAAAAA1111', 'BBBBBB2222', 'CCCCCC3333']]));
     }
 
     // ===================================================================
@@ -475,7 +590,7 @@ STUB);
             $called = true;
         }));
 
-        $this->assertSame(0, $probe->purge('relay@host', ['../../etc/passwd']));
+        $this->assertSame(0, $probe->purge('relay@host', ['/etc/postfix' => ['../../etc/passwd']]));
         $this->assertFalse($called, 'must not open a shell on the relay with nothing to do');
     }
 }

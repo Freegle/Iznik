@@ -36,6 +36,9 @@ class DeferralProbe
 
     public const MARK_TRUNCATED = '===FREEGLE-DEFERRALS-TRUNCATED===';
 
+    /** Followed by a config directory: the queue lines after it are that instance's. */
+    public const MARK_INSTANCE = '===FREEGLE-DEFERRALS-INSTANCE===';
+
     public const MARK_ACCEPTING = '===FREEGLE-DEFERRALS-ACCEPTING===';
 
     public const MARK_CANPURGE = '===FREEGLE-DEFERRALS-CANPURGE===';
@@ -96,14 +99,30 @@ class DeferralProbe
         return <<<SH
             set -u
             echo '{$this->markQueue()}'
+            # EVERY postfix instance, not just the default one. The relay runs a
+            # second instance that owns delivery to the providers we pace, so a
+            # bare `postqueue -j` returns the queue WITHOUT the providers this
+            # scan exists to watch - it would report a handful of deferrals for
+            # everyone else while tens of thousands of messages to a blocked
+            # provider sat unseen in the other queue, and nothing would suppress.
             if command -v postqueue >/dev/null 2>&1; then
-                OUT=\$(postqueue -j 2>/dev/null | head -c {$bytes})
-                echo "\$OUT"
-                # head -c cuts mid-line, so say so rather than let the scan
-                # treat a truncated tail as a complete picture.
-                if [ "\$(printf '%s' "\$OUT" | wc -c)" -ge {$bytes} ]; then
-                    echo '{$this->markTruncated()}'
-                fi
+                DIRS=\$(postmulti -l 2>/dev/null | awk 'NF {print \$NF}')
+                [ -z "\$DIRS" ] && DIRS=\$(postconf -h config_directory 2>/dev/null || echo /etc/postfix)
+                # Split the transfer budget across instances so the total stays
+                # bounded however many there are.
+                N=\$(printf '%s\n' \$DIRS | wc -l); [ "\$N" -lt 1 ] && N=1
+                EACH=\$(( {$bytes} / N )); [ "\$EACH" -lt 1024 ] && EACH=1024
+                for D in \$DIRS; do
+                    echo '{$this->markInstance()}'
+                    echo "\$D"
+                    OUT=\$(postqueue -c "\$D" -j 2>/dev/null | head -c \$EACH)
+                    echo "\$OUT"
+                    # head -c cuts mid-line, so say so rather than let the scan
+                    # treat a truncated tail as a complete picture.
+                    if [ "\$(printf '%s' "\$OUT" | wc -c)" -ge "\$EACH" ]; then
+                        echo '{$this->markTruncated()}'
+                    fi
+                done
             fi
             echo '{$this->markDelivered()}'
             # status=sent lines in the last hour, bucketed by the relay host
@@ -145,10 +164,30 @@ class DeferralProbe
      * Callers must have established that the relay family is suppressed;
      * this method only does what it is told.
      *
-     * @param  string[]  $queueIds
+     * @param  array<string, string[]>  $queueIds  config directory => queue ids
      * @return int number of messages the relay CONFIRMED it deleted
      */
     public function purge(string $target, array $queueIds): int
+    {
+        $deleted = 0;
+
+        foreach ($queueIds as $instance => $ids) {
+            $deleted += $this->purgeInstance($target, (string) $instance, (array) $ids);
+        }
+
+        return $deleted;
+    }
+
+    /**
+     * Delete queued messages from ONE postfix instance.
+     *
+     * The instance is not optional. Queue ids are unique only within an
+     * instance, so running postsuper without saying which one either deletes
+     * nothing or deletes a different message that shares the id.
+     *
+     * @param  string[]  $queueIds
+     */
+    private function purgeInstance(string $target, string $instance, array $queueIds): int
     {
         // The ids come from the relay's own listing, but they are still being
         // pasted into a shell on a production host, so anything that does not
@@ -157,6 +196,16 @@ class DeferralProbe
             $queueIds,
             fn ($id) => is_string($id) && preg_match('/^[A-Za-z0-9]{6,32}$/', $id) === 1
         ));
+
+        // Same reasoning for the config directory, which also reaches a shell.
+        if (preg_match('#^/[A-Za-z0-9._/-]{1,120}$#', $instance) !== 1) {
+            Log::error('Mail deferral purge: refusing an implausible instance path', [
+                'target' => $target,
+                'instance' => $instance,
+            ]);
+
+            return 0;
+        }
 
         if ($safe === []) {
             return 0;
@@ -171,7 +220,8 @@ class DeferralProbe
             // so in as many words rather than leaving a bare "fatal" to be
             // decoded. Kept conditional so a root relay still works untouched.
             $script = 'SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo -n"; '
-                .'printf "%s\n" '.implode(' ', $chunk).' | $SUDO postsuper -d - 2>&1';
+                .'printf "%s\n" '.implode(' ', $chunk)
+                .' | $SUDO postsuper -c '.escapeshellarg($instance).' -d - 2>&1';
 
             $out = $this->runner->run($target, $script);
 
@@ -440,6 +490,11 @@ SH;
         return self::MARK_END;
     }
 
+    private function markInstance(): string
+    {
+        return self::MARK_INSTANCE;
+    }
+
     private function markTruncated(): string
     {
         return self::MARK_TRUNCATED;
@@ -454,10 +509,26 @@ SH;
 
         $section = null;
         $truncated = false;
+        // Which instance the queue lines currently belong to. Queue ids are
+        // only unique WITHIN an instance, so a purge that forgets this could
+        // delete a different message that happens to share an id.
+        $instance = null;
+        $expectInstance = false;
 
         foreach (explode("\n", $output) as $line) {
             $line = rtrim($line, "\r");
 
+            if ($expectInstance) {
+                $instance = $line !== '' ? $line : null;
+                $expectInstance = false;
+
+                continue;
+            }
+            if ($line === self::MARK_INSTANCE) {
+                $expectInstance = true;
+
+                continue;
+            }
             if ($line === self::MARK_QUEUE) {
                 $section = 'queue';
 
@@ -481,7 +552,7 @@ SH;
             }
 
             if ($section === 'queue') {
-                $this->parseQueueLine($line, $snapshot);
+                $this->parseQueueLine($line, $snapshot, $instance);
             } elseif ($section === 'delivered') {
                 $this->parseDeliveredLine($line, $snapshot);
             }
@@ -500,7 +571,7 @@ SH;
      * attempted and pushed back: `incoming` and `hold` have not been tried,
      * and `corrupt` is a different problem entirely.
      */
-    private function parseQueueLine(string $line, RelayQueueSnapshot $snapshot): void
+    private function parseQueueLine(string $line, RelayQueueSnapshot $snapshot, ?string $instance = null): void
     {
         $entry = json_decode($line, true);
 
@@ -537,6 +608,7 @@ SH;
                 reason: $reason,
                 arrivalTime: $arrival,
                 queueId: $queueId,
+                instance: $instance,
             );
         }
     }

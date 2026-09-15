@@ -67,6 +67,14 @@ emits one JSON object per line, which we can cap and stream.
 The relay's topology is not in this repo and must not be: the ssh target lives
 only in the environment. See "Configuration" below.
 
+**It reads every postfix instance on the relay, not just the default one.** The
+relay runs a second instance that owns delivery to the providers we pace, so a
+bare `postqueue -j` returns a queue without the providers this scan exists to
+watch: a handful of deferrals for everyone else, while tens of thousands of
+messages to a blocked provider sit unseen and nothing suppresses. Queue ids are
+unique only within an instance, so the snapshot records which instance each came
+from and `postsuper` is always told which one to delete from.
+
 ### Two tiers, and the first is the one that matters
 
 **MX group (primary).** Deferrals are grouped by the *relay host* Postfix
