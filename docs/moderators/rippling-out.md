@@ -290,6 +290,7 @@ settings for that community are set as follows:
 - **Immediate email** - downgraded to daily digest.
 - **Daily digest or no emails** - preserved exactly as-is.
 - **Community events and volunteering** - copied from their home community settings (no extra emails).
+- **No community at all** - a poster who has left every community starts with all emails off, rather than on a daily digest.
 
 The poster receives one bundled intro email explaining all of this, rather than a separate
 welcome email from each community they were joined to.
