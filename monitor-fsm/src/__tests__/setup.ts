@@ -1,4 +1,5 @@
-import { mkdtempSync } from 'node:fs'
+import { afterAll } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -17,3 +18,9 @@ import { join } from 'node:path'
  */
 const dir = mkdtempSync(join(tmpdir(), 'monitor-fsm-test-'))
 process.env.MONITOR_FSM_DB_PATH = join(dir, 'monitor.db')
+
+// One directory per test file per run, so without this they pile up in /tmp on
+// every machine that runs the suite and on every CI build.
+afterAll(() => {
+  rmSync(dir, { recursive: true, force: true })
+})
