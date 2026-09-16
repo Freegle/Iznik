@@ -225,6 +225,136 @@ def fetch(url, retries=${retries}):
 `
 }
 
+/**
+ * Python source for check_bug_feedback's decision: given a bug and the posts made
+ * after it was reported, what do those posts mean?
+ *
+ * The answer closes bugs and changes their state, so the phrase rules matter more
+ * than most code here. They are kept behind `posts_for(topic, post)` rather than
+ * inlined against the network, which is what lets the suite drive them with
+ * fixtures. See actions.bug_feedback_classify.test.ts.
+ *
+ * classify_feedback returns (confirmations, edward_updates).
+ */
+export const BUG_FEEDBACK_CLASSIFY_PY = `
+CONFIRM_RE = re.compile(
+    r'\\b(fixed|works? now|working now|confirmed?|thanks?|thankyou|all good|resolved?'
+    r'|seems? (?:to be )?(?:fixed|working|ok|good)|unlimited now|no (?:longer|more)'
+    r'|great[,!.]?\\s*(?:thanks?)?|perfect|sorted|much better|no issues?'
+    r'|fix worked|that worked|worked (?:a treat|fine|now|perfectly)|no problem)\\b',
+    re.IGNORECASE
+)
+
+# Negation guard (sweep 2026-05-31 rule #1): a reporter can say "thanks but it's
+# still broken" / "spoke too soon" / "back again". CONFIRM_RE matches "thanks"
+# but the bug is NOT fixed. If a post matches STILL_BROKEN_RE, it must NOT be
+# treated as a fix confirmation, even if CONFIRM_RE also matches.
+#
+# "still" takes a general verb (still omits, still shows, still failing) as well as
+# the listed phrases: an enumeration misses the complaint it was written for, and
+# 9655/5 ("still omits pending") is that case. The two ways to be wrong are not
+# equal. Blocking a real confirmation leaves the bug open for the next lap to
+# re-check; accepting a false one closes a live bug and stops the replies.
+STILL_BROKEN_RE = re.compile(
+    r'(?:still (?:\\w+s\\b|\\w+ing\\b|broken|not working|there|the same|an issue|a problem)'
+    r'|spoke too soon|came back|back again|is back|happening again|not fixed|doesn.?t work'
+    r'|did(?:n.?t| not) (?:work|fix)|same (?:problem|issue|thing|error)|no (?:change|difference)'
+    r'|(?:never|hasn.?t|has not|not) worked'
+    r'|worse|reappear|reoccur|again today|once more)',
+    re.IGNORECASE
+)
+
+# Edward's posts indicating he is actively working on a fix
+EDWARD_IN_PROGRESS_RE = re.compile(
+    r'(?:fix|looking|working|will).*(?:on the way|in progress|coming|soon|catch up|next week|look.*into|look.*at this|looking into|working on)'
+    r'|(?:possible fix|fix is on the way|fix on the way|fix coming|on the way)'
+    r'|(?:i can see the (?:problem|bug|issue))'
+    r'|(?:will (?:fix|sort|look at|investigate))',
+    re.IGNORECASE
+)
+
+# Edward's posts indicating he has applied a fix
+EDWARD_FIXED_RE = re.compile(
+    r'(?:should be fixed|please retest|let me know how it is|i.ve fixed|fixed this|fixed now'
+    r'|this should now work|fix applied|should now work|have fixed|has been fixed)',
+    re.IGNORECASE
+)
+
+# Edward's posts indicating this is expected/by-design (not a bug)
+EDWARD_EXPECTED_RE = re.compile(
+    r'(?:this is expected|to be expected|that.s expected|by design|working as (?:intended|designed|expected)'
+    r'|not a bug|expected (?:behavior|behaviour)|this is correct|working correctly)',
+    re.IGNORECASE
+)
+
+EDWARD = 'Edward_Hibbert'
+
+def post_text(post):
+    t = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
+    return re.sub(r'\\s+', ' ', t).strip()
+
+def classify_feedback(bugs, all_bugs, posts_for):
+    results = []
+    edward_updates = []
+
+    # Pass A: reporter confirmations (open/investigating only)
+    for bug in bugs:
+        topic_id = bug['topic']
+        orig_post = bug['post']
+        reporter = bug.get('reporter') or ''
+
+        new_posts = posts_for(topic_id, orig_post)
+        # Sweep rule #1 (2026-05-31): if ANY non-Edward post in the thread reports the
+        # bug is still broken, do NOT confirm a fix, even if an earlier post said
+        # "thanks, fixed". (9655/4: post 4 "fix worked", post 5 "still omits pending".)
+        any_still_broken = False
+        for post in new_posts:
+            if post.get('username', '') == EDWARD:
+                continue
+            if STILL_BROKEN_RE.search(post_text(post)):
+                any_still_broken = True
+                break
+
+        if not any_still_broken:
+            for post in new_posts:
+                username = post.get('username', '')
+                if username == EDWARD:
+                    continue
+                text = post_text(post)
+                if CONFIRM_RE.search(text) and not STILL_BROKEN_RE.search(text):
+                    results.append({
+                        'topic': topic_id,
+                        'post': orig_post,
+                        'reporter': reporter,
+                        'confirmedBy': username,
+                        'confirmPostNumber': post.get('post_number'),
+                        'confirmText': text[:200],
+                    })
+                    break
+
+    # Pass B: Edward's posts (open/investigating/deferred)
+    for bug in all_bugs:
+        topic_id = bug['topic']
+        orig_post = bug['post']
+
+        for post in posts_for(topic_id, orig_post):
+            if post.get('username') != EDWARD:
+                continue
+            text = post_text(post)
+            post_num = post.get('post_number')
+            if EDWARD_EXPECTED_RE.search(text):
+                edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'off_topic', 'postNumber': post_num, 'text': text[:200]})
+                break
+            elif EDWARD_FIXED_RE.search(text):
+                edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'investigating', 'postNumber': post_num, 'text': text[:200]})
+                break
+            elif EDWARD_IN_PROGRESS_RE.search(text):
+                edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'investigating', 'postNumber': post_num, 'text': text[:200]})
+                break
+
+    return results, edward_updates
+`
+
 // Bot accounts whose PR comments are never a human review signal.
 const BOT_COMMENT_LOGINS = new Set([
   'netlify', 'github-actions', 'codecov', 'codecov-commenter', 'coderabbitai',
@@ -1150,49 +1280,6 @@ p = json.load(open('/home/edward/profile.json'))
 api_key = p['auth_pairs'][0]['user_api_key']
 headers = {'Api-Key': api_key}
 
-CONFIRM_RE = re.compile(
-    r'\\b(fixed|works? now|working now|confirmed?|thanks?|thankyou|all good|resolved?'
-    r'|seems? (?:to be )?(?:fixed|working|ok|good)|unlimited now|no (?:longer|more)'
-    r'|great[,!.]?\\s*(?:thanks?)?|perfect|sorted|much better|no issues?'
-    r'|fix worked|that worked|worked (?:a treat|fine|now|perfectly)|no problem)\\b',
-    re.IGNORECASE
-)
-
-# Negation guard (sweep 2026-05-31 rule #1): a reporter can say "thanks but it's
-# still broken" / "spoke too soon" / "back again" — CONFIRM_RE matches "thanks"
-# but the bug is NOT fixed. If a post matches STILL_BROKEN_RE, it must NOT be
-# treated as a fix confirmation, even if CONFIRM_RE also matches.
-STILL_BROKEN_RE = re.compile(
-    r'(?:still (?:broken|not working|happening|there|occurring|stuck|the same|an issue|a problem|doing)'
-    r'|spoke too soon|came back|back again|is back|happening again|not fixed|doesn.?t work'
-    r'|did(?:n.?t| not) (?:work|fix)|same (?:problem|issue|thing|error)|no (?:change|difference)'
-    r'|(?:never|hasn.?t|has not|not) worked'
-    r'|worse|reappear|reoccur|again today|once more)',
-    re.IGNORECASE
-)
-
-# Edward's posts indicating he is actively working on a fix
-EDWARD_IN_PROGRESS_RE = re.compile(
-    r'(?:fix|looking|working|will).*(?:on the way|in progress|coming|soon|catch up|next week|look.*into|look.*at this|looking into|working on)'
-    r'|(?:possible fix|fix is on the way|fix on the way|fix coming|on the way)'
-    r'|(?:i can see the (?:problem|bug|issue))'
-    r'|(?:will (?:fix|sort|look at|investigate))',
-    re.IGNORECASE
-)
-
-# Edward's posts indicating he has applied a fix
-EDWARD_FIXED_RE = re.compile(
-    r'(?:should be fixed|please retest|let me know how it is|i.ve fixed|fixed this|fixed now'
-    r'|this should now work|fix applied|should now work|have fixed|has been fixed)',
-    re.IGNORECASE
-)
-
-# Edward's posts indicating this is expected/by-design (not a bug)
-EDWARD_EXPECTED_RE = re.compile(
-    r'(?:this is expected|to be expected|that.s expected|by design|working as (?:intended|designed|expected)'
-    r'|not a bug|expected (?:behavior|behaviour)|this is correct|working correctly)',
-    re.IGNORECASE
-)
 
 ${discourseFetchPy(4, 'skip')}
 
@@ -1223,69 +1310,9 @@ def get_posts_after(topic_id, orig_post):
             new_posts.extend(pd.get('post_stream', {}).get('posts', []))
     return new_posts
 
-results = []
-edward_updates = []
+${BUG_FEEDBACK_CLASSIFY_PY}
 
-# Pass A: reporter confirmations (open/investigating only)
-for bug in bugs:
-    topic_id = bug['topic']
-    orig_post = bug['post']
-    reporter = bug.get('reporter') or ''
-
-    new_posts = get_posts_after(topic_id, orig_post)
-    # Sweep rule #1 (2026-05-31): if ANY non-Edward post in the thread reports the
-    # bug is still broken, do NOT confirm a fix — even if an earlier post said
-    # "thanks, fixed". (9655/4: post 4 "fix worked", post 5 "still omits pending".)
-    any_still_broken = False
-    for post in new_posts:
-        if post.get('username', '') == 'Edward_Hibbert':
-            continue
-        t = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
-        t = re.sub(r'\\s+', ' ', t).strip()
-        if STILL_BROKEN_RE.search(t):
-            any_still_broken = True
-            break
-
-    if not any_still_broken:
-        for post in new_posts:
-            username = post.get('username', '')
-            if username == 'Edward_Hibbert':
-                continue
-            text = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
-            text = re.sub(r'\\s+', ' ', text).strip()
-            if CONFIRM_RE.search(text) and not STILL_BROKEN_RE.search(text):
-                results.append({
-                    'topic': topic_id,
-                    'post': orig_post,
-                    'reporter': reporter,
-                    'confirmedBy': username,
-                    'confirmPostNumber': post.get('post_number'),
-                    'confirmText': text[:200],
-                })
-                break
-
-# Pass B: Edward's posts (open/investigating/deferred)
-for bug in all_bugs:
-    topic_id = bug['topic']
-    orig_post = bug['post']
-
-    new_posts = get_posts_after(topic_id, orig_post)
-    for post in new_posts:
-        if post.get('username') != 'Edward_Hibbert':
-            continue
-        text = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
-        text = re.sub(r'\\s+', ' ', text).strip()
-        post_num = post.get('post_number')
-        if EDWARD_EXPECTED_RE.search(text):
-            edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'off_topic', 'postNumber': post_num, 'text': text[:200]})
-            break
-        elif EDWARD_FIXED_RE.search(text):
-            edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'investigating', 'postNumber': post_num, 'text': text[:200]})
-            break
-        elif EDWARD_IN_PROGRESS_RE.search(text):
-            edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'investigating', 'postNumber': post_num, 'text': text[:200]})
-            break
-
+results, edward_updates = classify_feedback(bugs, all_bugs, get_posts_after)
 print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates, 'fetchFailures': FETCH_FAILURES}))
 `
 
