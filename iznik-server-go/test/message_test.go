@@ -6809,10 +6809,10 @@ func TestRejectToDraftOwner(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM messages_drafts WHERE msgid = ?", msgID).Scan(&draftCount)
 	assert.Equal(t, int64(1), draftCount, "Message should be in messages_drafts")
 
-	// Verify message is no longer live in messages_groups (hard-deleted; any
+	// Verify message is no longer in messages_groups at all (hard-deleted; any
 	// mod-applied hold was captured into messages_drafts.heldby instead - see
 	// TestRejectToDraftPreservesModHold).
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", msgID).Scan(&mgCount)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ?", msgID).Scan(&mgCount)
 	assert.Equal(t, int64(0), mgCount, "Message should be removed from messages_groups")
 
 	// Verify repost log entry was created.
@@ -6852,10 +6852,10 @@ func TestRejectToDraftPerGroup(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// groupA row gone, groupB still live.
+	// groupA row gone (hard-deleted), groupB row untouched and still live.
 	var countA, countB int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ? AND deleted = 0", msgID, groupA).Scan(&countA)
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ? AND deleted = 0", msgID, groupB).Scan(&countB)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&countA)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&countB)
 	assert.Equal(t, int64(0), countA, "groupA row should be removed")
 	assert.Equal(t, int64(1), countB, "groupB row should remain live")
 
@@ -6885,7 +6885,7 @@ func TestRejectToDraftPerGroup(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp2.StatusCode)
 
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", msgID).Scan(&countB)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ?", msgID).Scan(&countB)
 	assert.Equal(t, int64(0), countB, "No groups should remain")
 
 	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&outcomeCount)
@@ -6923,9 +6923,9 @@ func TestRejectToDraftOwnerWithdrawsAllGroups(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// All groups removed.
+	// All groups removed (hard-deleted).
 	var mgCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", msgID).Scan(&mgCount)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ?", msgID).Scan(&mgCount)
 	assert.Equal(t, int64(0), mgCount, "All groups should be removed when withdrawing without a groupid")
 
 	// messages_drafts is unique per msgid, so exactly one draft row results.
@@ -10012,13 +10012,13 @@ func TestPatchMessageGroupidUpdatesDraft(t *testing.T) {
 	assert.Equal(t, float64(group2ID), joinResult["groupid"], "JoinAndPost should use the new group, not the original")
 
 	// Message must be in group2 only (group1's row was hard-deleted by
-	// RejectToDraft, so this checks it's genuinely gone).
+	// RejectToDraft, so this checks it's genuinely gone, not just not live).
 	var mgCount1 int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ? AND deleted = 0", msgID, group1ID).Scan(&mgCount1)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group1ID).Scan(&mgCount1)
 	assert.Equal(t, int64(0), mgCount1, "message must not land on original group1")
 
 	var mgCount2 int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ? AND deleted = 0", msgID, group2ID).Scan(&mgCount2)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group2ID).Scan(&mgCount2)
 	assert.Equal(t, int64(1), mgCount2, "message must land on the user-selected group2")
 }
 
