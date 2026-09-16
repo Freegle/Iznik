@@ -6809,8 +6809,9 @@ func TestRejectToDraftOwner(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM messages_drafts WHERE msgid = ?", msgID).Scan(&draftCount)
 	assert.Equal(t, int64(1), draftCount, "Message should be in messages_drafts")
 
-	// Verify message is no longer live in messages_groups (soft-deleted, not
-	// hard-deleted - the row survives so a mod-applied hold on it would too).
+	// Verify message is no longer live in messages_groups (hard-deleted; any
+	// mod-applied hold was captured into messages_drafts.heldby instead - see
+	// TestRejectToDraftPreservesModHold).
 	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", msgID).Scan(&mgCount)
 	assert.Equal(t, int64(0), mgCount, "Message should be removed from messages_groups")
 
@@ -10010,8 +10011,8 @@ func TestPatchMessageGroupidUpdatesDraft(t *testing.T) {
 	json.NewDecoder(resp3.Body).Decode(&joinResult)
 	assert.Equal(t, float64(group2ID), joinResult["groupid"], "JoinAndPost should use the new group, not the original")
 
-	// Message must be in group2 only (group1's row survives soft-deleted from
-	// RejectToDraft, so this checks it's not live rather than not present).
+	// Message must be in group2 only (group1's row was hard-deleted by
+	// RejectToDraft, so this checks it's genuinely gone).
 	var mgCount1 int64
 	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ? AND deleted = 0", msgID, group1ID).Scan(&mgCount1)
 	assert.Equal(t, int64(0), mgCount1, "message must not land on original group1")
