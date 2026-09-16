@@ -276,6 +276,20 @@ return [
             'stale_after_hours' => (int) env('FREEGLE_MAIL_DEFERRALS_STALE_HOURS', 24),
         ],
 
+        // What the delayed view shows about the queue itself, as opposed to
+        // which providers are refusing us. Mail waiting behind our own rate
+        // limits is not a fault and raises no alarm anywhere, so without this
+        // a backlog hours deep is invisible.
+        'relay_queue' => [
+            // Two ways in, because depth and age catch different failures:
+            // a domain qualifies on either.
+            'min_queued' => (int) env('FREEGLE_MAIL_RELAY_QUEUE_MIN', 25),
+            'min_age_minutes' => (int) env('FREEGLE_MAIL_RELAY_QUEUE_MIN_AGE', 120),
+            // An estate-wide episode names thousands of domains and nobody
+            // reads the hundredth.
+            'max_rows' => (int) env('FREEGLE_MAIL_RELAY_QUEUE_MAX_ROWS', 500),
+        ],
+
         // Reading the relay's maillog into logs_emails, so a member can be
         // told whether we actually sent them something. Replaces V1's
         // scripts/cron/eximlogs.php, which ran from root's crontab on the

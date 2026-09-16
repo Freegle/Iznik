@@ -143,6 +143,27 @@ of them, the pattern has stopped working, so refuse to draw a conclusion that ru
 A message crossing the hop is logged under **two** queue ids, one per instance. Correlate them
 through the `queued as <id>` in the hop's own line.
 
+## A line count is not a time window
+
+`tail -n 200000 /var/log/mail.log` takes a number of LINES. How much time those cover depends
+entirely on how busy the relay is, and it moves by the hour. The deferral probe sampled
+deliveries that way and every figure derived from it was called "per hour": measured live, the
+sample spanned 2h15m, so the rates were more than double the truth.
+
+That number is a divisor. A backlog only means something next to the rate it is draining at, so
+an inflated rate makes a queue look like it clears in two hours when it needs five - and the
+error is invisible, because both numbers are plausible and neither is ever wrong in a way that
+throws.
+
+If you sample by lines, make the source tell you the span it actually covered and scale by it.
+Resolve the timestamps where `date` can see them, on the host, rather than parsing year-less
+syslog dates; when they will not parse, or the span comes out negative across a year boundary,
+report nothing and fall back rather than guess.
+
+The same count still feeds `mxgroup_max_delivered_per_hour` in the suppression decision
+unscaled, which makes a provider look healthier than it is and so errs towards not suppressing.
+Scaling it would change when real mail stops being generated, so it wants its own change.
+
 ## See also
 
 - `docs/developers/reference/unsubscribe.md` - the intended unsubscribe behaviour.

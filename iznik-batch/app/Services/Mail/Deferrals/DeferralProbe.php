@@ -39,6 +39,9 @@ class DeferralProbe
     /** Followed by a config directory: the queue lines after it are that instance's. */
     public const MARK_INSTANCE = '===FREEGLE-DEFERRALS-INSTANCE===';
 
+    /** Followed by the number of seconds the delivery sample covers. */
+    public const MARK_WINDOW = '===FREEGLE-DEFERRALS-WINDOW===';
+
     public const MARK_ACCEPTING = '===FREEGLE-DEFERRALS-ACCEPTING===';
 
     public const MARK_CANPURGE = '===FREEGLE-DEFERRALS-CANPURGE===';
@@ -147,6 +150,28 @@ class DeferralProbe
                 DELIVERED=\$(tail -n 200000 /var/log/mail.log 2>/dev/null | grep 'status=sent' || true)
             fi
             printf '%s\n' "\$DELIVERED"
+            echo '{$this->markWindow()}'
+            # How long the sample above actually covers, in seconds, so a count
+            # can be turned into a rate. `tail -n` takes a number of LINES, and
+            # how much time those cover depends entirely on how busy the relay
+            # is: measured on the live relay, 200,000 lines spanned 2h15m, so
+            # every "per hour" figure derived from it was inflated by more than
+            # double. Resolving the timestamps here rather than in PHP keeps
+            # syslog's year-less format the local `date`'s problem.
+            #
+            # Emitting nothing is the honest answer when the dates will not
+            # parse - the caller then falls back to treating the sample as an
+            # hour, which is what it did before - and a negative span across a
+            # year boundary is caught by the same test.
+            FIRST=\$(printf '%s\n' "\$DELIVERED" | head -n 1 | cut -c1-15)
+            LAST=\$(printf '%s\n' "\$DELIVERED" | tail -n 1 | cut -c1-15)
+            if [ -n "\$FIRST" ] && [ -n "\$LAST" ]; then
+                A=\$(date -d "\$FIRST" +%s 2>/dev/null || true)
+                B=\$(date -d "\$LAST" +%s 2>/dev/null || true)
+                if [ -n "\$A" ] && [ -n "\$B" ] && [ "\$B" -gt "\$A" ]; then
+                    echo \$(( B - A ))
+                fi
+            fi
             echo '{$this->markEnd()}'
             SH;
     }
@@ -485,6 +510,11 @@ SH;
         return self::MARK_DELIVERED;
     }
 
+    private function markWindow(): string
+    {
+        return self::MARK_WINDOW;
+    }
+
     private function markEnd(): string
     {
         return self::MARK_END;
@@ -522,6 +552,10 @@ SH;
                 $instance = $line !== '' ? $line : null;
                 $expectInstance = false;
 
+                if ($instance !== null && ! in_array($instance, $snapshot->instancesSeen, true)) {
+                    $snapshot->instancesSeen[] = $instance;
+                }
+
                 continue;
             }
             if ($line === self::MARK_INSTANCE) {
@@ -536,6 +570,11 @@ SH;
             }
             if ($line === self::MARK_DELIVERED) {
                 $section = 'delivered';
+
+                continue;
+            }
+            if ($line === self::MARK_WINDOW) {
+                $section = 'window';
 
                 continue;
             }
@@ -555,6 +594,8 @@ SH;
                 $this->parseQueueLine($line, $snapshot, $instance);
             } elseif ($section === 'delivered') {
                 $this->parseDeliveredLine($line, $snapshot);
+            } elseif ($section === 'window' && ctype_digit($line)) {
+                $snapshot->windowSeconds = (int) $line;
             }
         }
 
@@ -583,8 +624,19 @@ SH;
             return;
         }
 
+        // The three queues mail actually flows through. `incoming` matters as
+        // much as the other two for the waiting count and is easy to leave
+        // out: it is where a burst lands, and on 2026-09-13 it held 81,800
+        // messages against 40,000 in active - so a count that skipped it would
+        // have understated the backlog by two thirds. It cannot affect the
+        // deferral counts either way, because nothing in it has been attempted
+        // and so none of it carries a delay reason.
+        //
+        // `hold` is deliberately not here. Mail is only in it because an
+        // operator put it there, which is a different fact needing a different
+        // conversation, and folding it in would read as a delivery problem.
         $queue = $entry['queue_name'] ?? '';
-        if ($queue !== 'deferred' && $queue !== 'active') {
+        if ($queue !== 'deferred' && $queue !== 'active' && $queue !== 'incoming') {
             return;
         }
 
@@ -596,10 +648,18 @@ SH;
                 continue;
             }
 
-            // Absent for a recipient that has not been attempted yet. Those
-            // are not evidence of a deferral, so they do not count.
+            // Absent for a recipient nothing has refused. That is not a
+            // deferral - but it is not nothing either. On a relay that paces
+            // an address deliberately, this is where a warmed provider's
+            // whole backlog lives: tens of thousands of messages, hours old,
+            // with no error anywhere because none has occurred. Counting it
+            // separately is what lets the delayed view say "waiting on us"
+            // rather than report an empty page while mail runs half a day
+            // late.
             $reason = $recipient['delay_reason'] ?? null;
             if (! is_string($reason) || $reason === '') {
+                $snapshot->addWaiting((string) $recipient['address'], $arrival, $instance);
+
                 continue;
             }
 
@@ -621,8 +681,38 @@ SH;
      * We only need the relay host, to know which providers are still taking
      * our mail.
      */
+    /**
+     * Is this line the loopback hop into the relay's other postfix instance,
+     * rather than a delivery to anybody?
+     *
+     * The hop logs exactly like a delivery - `to=<the real recipient>` and
+     * `status=sent (250 ...)` - and there is one per message, so counting it
+     * roughly doubles the apparent send rate for every provider we pace. In a
+     * sample window it put 440 hops against about 1,000 real deliveries for
+     * one domain, which would have made "clears in two hours" out of a queue
+     * that needed three.
+     *
+     * Two independent signals, matching App\Services\Mail\RelayLogIngestService,
+     * so that one going stale on its own - a renamed transport, a changed port -
+     * cannot quietly turn hops back into deliveries.
+     */
+    private function isHandover(string $line): bool
+    {
+        $port = (int) config('freegle.mail.relay_logs.handover_port', 10026);
+        $transport = (string) config('freegle.mail.relay_logs.handover_transport', 'relaywarm');
+
+        return str_contains($line, "relay=127.0.0.1[127.0.0.1]:$port")
+            || ($transport !== '' && str_contains($line, "postfix-$transport/"));
+    }
+
     private function parseDeliveredLine(string $line, RelayQueueSnapshot $snapshot): void
     {
+        if ($this->isHandover($line)) {
+            $snapshot->handoversSeen++;
+
+            return;
+        }
+
         if (! preg_match('/relay=([^\[\s,:]+)/', $line, $m)) {
             return;
         }
@@ -636,5 +726,13 @@ SH;
         }
 
         $snapshot->addDelivery(MxGrouper::group($host));
+
+        // Also by recipient domain, which is the unit the waiting queue is
+        // counted in. Without it a domain's backlog has a depth but no drain
+        // rate, and "3,000 queued" cannot be turned into "clears in two
+        // hours" - which is the only form of the number anyone can act on.
+        if (preg_match('/to=<[^@>]*@([^>\s,]+)>/', $line, $to)) {
+            $snapshot->addDomainDelivery(rtrim($to[1], '.'));
+        }
     }
 }

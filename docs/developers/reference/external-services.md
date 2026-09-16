@@ -68,7 +68,7 @@ These look like external services on other sites. We run them.
 | **weserv** | Cloudinary or similar | Image resizing and delivery (`IMAGE_DELIVERY`) |
 | **Loki + Grafana** | A hosted log service | [../../ops/monitoring-and-logging.md](../../ops/monitoring-and-logging.md) |
 | **Discourse** | A hosted forum | `discourse.ilovefreegle.org`, the volunteers' forum |
-| **Postfix** | A bulk mail provider | About 200,000 messages a day; see [how an email gets sent](../../ops/reference/outbound-mail.md) |
+| **Postfix** | A bulk mail provider | About 200,000 messages a day; see [how an email gets sent](../../ops/reference/outbound-mail.md). Its queue depth per recipient domain is read back into `mail_relay_queue` - see [mail deferrals](mail-deferrals.md) |
 | **Embedding sidecar** | A paid embeddings API | `embedding-sidecar` container (`EMBEDDING_SIDECAR_URL`). Turns text into vectors for moderation checks, for the item grouping on [electricals.md](electricals.md), and for scoring a title we have never seen before on [item-desirability.md](item-desirability.md). Every caller treats it as optional and falls back when it is absent |
 
 ## In the code but not in use
