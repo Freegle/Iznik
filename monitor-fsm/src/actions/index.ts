@@ -1228,6 +1228,15 @@ export const bugFeedbackDeps = {
   },
 }
 
+/**
+ * discover_active_topics' call out to Discourse, behind a name a test can replace.
+ * Which topics it reports as having new posts is what decides whether a report is
+ * triaged at all.
+ */
+export const discoverTopicsDeps = {
+  runScan: (script: string) => sh('python3', ['-c', script]),
+}
+
 export const actions: ActionDefinition[] = [
   {
     name: 'load_state',
@@ -1968,7 +1977,7 @@ for page in range(${latestPages}):
 topics = list(seen.values())
 print(json.dumps(topics))
 `
-      const { stdout, stderr, code } = await sh('python3', ['-c', script])
+      const { stdout, stderr, code } = await discoverTopicsDeps.runScan(script)
       if (code !== 0) return { topics: [], error: `discover_active_topics fetch failed: ${stderr.slice(-200)}` }
 
       let rawTopics: Array<{ id: number; title: string; postsCount: number }> = []
