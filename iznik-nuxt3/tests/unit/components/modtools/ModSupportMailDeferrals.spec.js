@@ -156,7 +156,7 @@ describe('ModSupportMailDeferrals', () => {
   // would have support hunting for members who are not there.
   it('explains that queued mail is not the same as held-back mail', async () => {
     expect(words(await render({ queues: [yahooBacklog] }))).toContain(
-      "it doesn't appear here"
+      'in the queue above rather than here'
     )
   })
 
@@ -205,7 +205,7 @@ describe('ModSupportMailDeferrals', () => {
     expect(text).toContain('Nothing here means anything is wrong with our mail')
     // "Held" read as a deliberate withholding, and as a number of emails
     // sitting somewhere. It is neither.
-    expect(text).toContain('not a punishment or a setting anyone chose')
+    expect(text).toContain('Nothing here is a punishment or a setting anyone chose')
     expect(text).toContain("how many emails we didn't generate")
   })
 })
