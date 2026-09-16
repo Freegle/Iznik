@@ -134,17 +134,34 @@
         </b-table-simple>
       </template>
 
-      <h3 class="mb-2">
-        Members waiting on a provider
+      <h3 class="mb-2 mt-4">Members we've stopped emailing for now</h3>
+
+      <p class="text-muted small mb-3">
+        Nothing here is a punishment or a setting anyone chose. When mail to
+        someone can't be delivered, we stop generating more of it rather than
+        pile up email that can't arrive, and we send a catch-up once it clears.
+        The count is how many emails we didn't generate while that was true -
+        not a number of emails sitting somewhere waiting. An immediate digest is
+        generated per matching post, so an active member on several communities
+        reaches thousands within days.
+      </p>
+
+      <h4 class="mb-2 h5">
+        Waiting on a provider
         <b-badge v-if="waitingOnProvider.length" variant="info">{{
           waitingOnProvider.length
         }}</b-badge>
-      </h3>
+      </h4>
+
+      <p class="text-muted small mb-2">
+        Our sending reputation with their provider. Ours to fix, and nothing the
+        member can do.
+      </p>
 
       <p v-if="!waitingOnProvider.length" class="text-muted">
-        Nobody. Only a suppression stops us generating mail - mail queued behind
-        our sending rate has already been generated and is waiting to go out, so
-        it doesn't appear here.
+        Nobody. Mail queued behind our own sending rate has already been
+        generated and is waiting to go out, so it's in the queue above rather
+        than here.
       </p>
 
       <ModSupportMailHeldTable
@@ -153,18 +170,18 @@
         :limit="memberLimit"
       />
 
-      <h3 class="mb-2 mt-4">
-        Members whose own mailbox is the problem
+      <h4 class="mb-2 mt-4 h5">
+        Their own mailbox
         <b-badge v-if="ownMailbox.length" variant="secondary">{{
           ownMailbox.length
         }}</b-badge>
-      </h3>
+      </h4>
 
       <p class="text-muted small mb-2">
-        Their inbox is full, or their address doesn't resolve. That's their
-        problem rather than our sending reputation, which is why they aren't in
-        the table of providers refusing us above - and why they need a different
-        conversation. Nothing here means anything is wrong with our mail.
+        Their inbox is full, or their address doesn't resolve. That's theirs to
+        fix, not our sending reputation, which is why they aren't in the table
+        of providers refusing us above. Nothing here means anything is wrong
+        with our mail.
       </p>
 
       <p v-if="!ownMailbox.length" class="text-muted">Nobody.</p>

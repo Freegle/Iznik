@@ -41,6 +41,9 @@ type DelayedMember struct {
 	Skipped uint64 `json:"skipped" gorm:"column:skipped"`
 	// What kinds of mail, so a big number is explicable rather than alarming.
 	Types *string `json:"types"`
+	// The provider's own words for why, so the table can say what is wrong
+	// instead of leaving a reader to guess from a blank provider column.
+	Reason *string `json:"reason"`
 	// Whether the reason is this member's own mailbox - full, or an address
 	// that does not resolve - rather than a provider refusing us. They are
 	// different problems with different remedies, and mixing them is what
@@ -140,6 +143,10 @@ func Deferrals(c *fiber.Ctx) error {
 		Select("msc.userid, u.fullname AS displayname, ue.email, "+
 			"ms.provider, MIN(msc.firstat) AS since, SUM(msc.count) AS skipped, "+
 			"GROUP_CONCAT(DISTINCT msc.emailtype ORDER BY msc.emailtype SEPARATOR ', ') AS types, "+
+			// MAX over a group that is one suppression in practice; a member
+			// with several gets the alphabetically last, which is a reason
+			// rather than no reason.
+			"MAX(ms.reason) AS reason, "+
 			// Their mailbox, not our reputation. Same test the suppression
 			// list above uses to leave these out, so the two halves of this
 			// page can no longer disagree about what is wrong.

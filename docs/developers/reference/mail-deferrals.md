@@ -21,6 +21,7 @@ covers:
   - iznik-nuxt3/modtools/components/ModMailDelayed.vue
   - iznik-nuxt3/modtools/components/ModSupportMailDeferrals.vue
   - iznik-nuxt3/modtools/components/ModSupportMailHeldTable.vue
+  - iznik-nuxt3/tests/unit/components/modtools/ModSupportMailHeldTable.spec.js
   - iznik-nuxt3/tests/unit/components/modtools/ModMailDelayed.spec.js
   - iznik-nuxt3/tests/unit/components/modtools/ModSupportMailDeferrals.spec.js
 ---
@@ -429,9 +430,19 @@ waiting in a queue somewhere - which "held" invited - the figure is nonsense,
 and a nonsense figure discredits the whole table. The kinds of mail are listed
 beside it so a large number is explicable rather than alarming.
 
-`provider` is only ever populated on mxgroup and domain rows, so an
-address-scope suppression shows no provider. It reads as `-` rather than
-"Unknown", which implied we had failed to work something out.
+The provider column is replaced by **Why**, in words: "Their inbox is full",
+"That mailbox no longer exists", "We can't reach their mail server", or
+"<provider> is refusing our mail". `provider` is only ever populated on mxgroup
+and domain rows, so on an address-scope suppression the old column was empty
+and rendered "Unknown" on every row - the table said nothing whatever about why
+the mail was not getting through. The provider's own words are kept as the
+hover text; the phrase is derived from them.
+
+Both tables sit under wording that says this is not a punishment or a setting
+anyone chose: when mail to someone cannot be delivered we stop generating more
+rather than pile up email that cannot arrive, and a catch-up goes out when it
+clears. "Held" implied a deliberate withholding, and a queue of emails sitting
+somewhere, and it is neither.
 
 The all-clear message requires both halves to be clear. Before the queue was
 recorded it read "every provider is accepting our mail", which was true, and

@@ -201,7 +201,11 @@ describe('ModSupportMailDeferrals', () => {
       })
     )
 
-    expect(text).toContain("Members whose own mailbox is the problem")
+    expect(text).toContain('Their own mailbox')
     expect(text).toContain('Nothing here means anything is wrong with our mail')
+    // "Held" read as a deliberate withholding, and as a number of emails
+    // sitting somewhere. It is neither.
+    expect(text).toContain('not a punishment or a setting anyone chose')
+    expect(text).toContain("how many emails we didn't generate")
   })
 })
