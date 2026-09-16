@@ -161,6 +161,70 @@ export function parseRetryAfter(header: string | null, body: string): number {
   return 5
 }
 
+/**
+ * Python source for a Discourse GET with rate-limit backoff, shared by the three
+ * actions that shell out to python3. This is parseRetryAfter's rule in Python.
+ *
+ * Discourse carries the wait in the 429 body (`extras.wait_seconds`, routinely 40s
+ * or more) and often sends no Retry-After header, so the header alone does not say
+ * how long to wait, and a short fixed backoff exhausts its retries inside a window
+ * Discourse is still refusing.
+ *
+ * Expects `json`, `urllib.request`, `sys` and `time` imported and `headers` defined
+ * above it. `onExhausted` chooses what an unrecoverable fetch does: 'raise' where a
+ * partial answer is worse than a loud failure (the topic listings), 'skip' where one
+ * rate-limited topic must not discard the results already gathered for all the
+ * others (the per-bug scan). Either way the URL lands in FETCH_FAILURES, so the
+ * caller can tell a partial scan from a clean one.
+ */
+export function discourseFetchPy(retries: number, onExhausted: 'raise' | 'skip'): string {
+  return `
+FETCH_FAILURES = []
+
+def _retry_after_seconds(err, default_s):
+    """Seconds to wait before retrying a 429: the Retry-After header, else the
+    rate-limit body's extras.wait_seconds, else the caller's growing default."""
+    hdr = err.headers.get('Retry-After')
+    try:
+        if hdr is not None and float(hdr) > 0:
+            return min(float(hdr), 60.0)
+    except (TypeError, ValueError):
+        pass
+    try:
+        body = json.loads(err.read().decode('utf-8', 'replace'))
+        wait = float(body.get('extras', {}).get('wait_seconds', 0))
+        if wait > 0:
+            return min(wait, 60.0)
+    except Exception:
+        pass
+    return min(default_s, 60.0)
+
+def fetch(url, retries=${retries}):
+    """GET a Discourse URL, backing off for as long as a 429 asks."""
+    delay = 2.0
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            return json.load(urllib.request.urlopen(req, timeout=20))
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            if e.code == 429 and attempt < retries - 1:
+                sleep_s = _retry_after_seconds(e, delay)
+                sys.stderr.write(f'429 on {url}, backing off {sleep_s}s (attempt {attempt+1}/{retries})\\n')
+                time.sleep(sleep_s)
+                delay = min(delay * 2, 60.0)
+                continue
+            FETCH_FAILURES.append(f'{e.code} {url}')
+            ${onExhausted === 'raise' ? 'raise' : 'return None'}
+        except Exception:
+            FETCH_FAILURES.append(f'error {url}')
+            return None
+    FETCH_FAILURES.append(f'retries {url}')
+    return None
+`
+}
+
 // Bot accounts whose PR comments are never a human review signal.
 const BOT_COMMENT_LOGINS = new Set([
   'netlify', 'github-actions', 'codecov', 'codecov-commenter', 'coderabbitai',
@@ -1061,7 +1125,7 @@ export const actions: ActionDefinition[] = [
 
   {
     name: 'check_bug_feedback',
-    description: 'For each open/investigating/deferred bug in discourse_bug, fetch posts after the original report on that Discourse topic. (A) Detects reporter confirmation of a fix — marks confirmed bugs as fixed. (B) Detects Edward_Hibbert posts indicating fix-in-progress, off-topic/expected-behaviour, or applied fix — updates state accordingly. Returns {checked, markedFixed, markedInvestigating, markedOffTopic}.',
+    description: 'For each open/investigating/deferred bug in discourse_bug, fetch posts after the original report on that Discourse topic. (A) Detects reporter confirmation of a fix — marks confirmed bugs as fixed. (B) Detects Edward_Hibbert posts indicating fix-in-progress, off-topic/expected-behaviour, or applied fix — updates state accordingly. Returns {checked, markedFixed, markedInvestigating, markedOffTopic, fetchFailures}. A non-empty fetchFailures means the scan was partial (Discourse rate-limited some topics), so an empty markedFixed does not mean nobody confirmed anything.',
     handler: async () => {
       const db = getDb()
       // Reporter-confirmation scan: open/investigating only
@@ -1130,22 +1194,7 @@ EDWARD_EXPECTED_RE = re.compile(
     re.IGNORECASE
 )
 
-def fetch(url, retries=3):
-    delay = 2.0
-    for attempt in range(retries):
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            return json.load(urllib.request.urlopen(req, timeout=20))
-        except urllib.error.HTTPError as e:
-            if e.code == 429 and attempt < retries - 1:
-                time.sleep(float(e.headers.get('Retry-After', delay)))
-                delay *= 2
-                continue
-            if e.code == 404:
-                return None
-            raise
-        except Exception:
-            return None
+${discourseFetchPy(4, 'skip')}
 
 bugs = json.loads('''${bugsJson.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}''')
 all_bugs = json.loads('''${allBugsJson.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}''')
@@ -1237,14 +1286,21 @@ for bug in all_bugs:
             edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'investigating', 'postNumber': post_num, 'text': text[:200]})
             break
 
-print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
+print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates, 'fetchFailures': FETCH_FAILURES}))
 `
 
       const { stdout } = await exec('python3', ['-c', script])
-      let parsed: { confirmations: Array<any>; edwardUpdates: Array<any> }
+      let parsed: { confirmations: Array<any>; edwardUpdates: Array<any>; fetchFailures?: string[] }
       try { parsed = JSON.parse(stdout.trim() || '{}') } catch { parsed = { confirmations: [], edwardUpdates: [] } }
       const confirmations = parsed.confirmations ?? []
       const edwardUpdates = parsed.edwardUpdates ?? []
+      const fetchFailures = parsed.fetchFailures ?? []
+
+      // A rate-limited scan returns an empty confirmations list, which is
+      // indistinguishable from "nobody confirmed anything" unless we say so.
+      if (fetchFailures.length > 0) {
+        out(`check_bug_feedback: PARTIAL SCAN: ${fetchFailures.length} fetch(es) failed, so some bugs were not checked: ${fetchFailures.slice(0, 5).join(', ')}`)
+      }
 
       for (const c of confirmations) {
         db.prepare(
@@ -1284,7 +1340,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         }
       }
 
-      return { checked: allActiveBugs.length, markedFixed: confirmations, markedInvestigating, markedOffTopic }
+      return { checked: allActiveBugs.length, markedFixed: confirmations, markedInvestigating, markedOffTopic, fetchFailures }
     },
   },
 
@@ -1654,22 +1710,7 @@ headers = {'Api-Key': api_key}
 
 tracked_cursors = json.loads('''${cursorsJson.replace(/'/g, "\\'")}''')
 
-def fetch(url, retries=4):
-    """GET a Discourse URL with rate-limit backoff for 429."""
-    delay = 2.0
-    for attempt in range(retries):
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            return json.load(urllib.request.urlopen(req, timeout=20))
-        except urllib.error.HTTPError as e:
-            if e.code == 429 and attempt < retries - 1:
-                retry_after = e.headers.get('Retry-After')
-                sleep_s = float(retry_after) if retry_after else delay
-                sys.stderr.write(f'429 on {url} — backing off {sleep_s}s (attempt {attempt+1}/{retries})\\n')
-                time.sleep(sleep_s)
-                delay *= 2
-                continue
-            raise
+${discourseFetchPy(4, 'raise')}
 
 # 1. Get latest-${recentLimit} to find recently-active topics (may include new untracked ones)
 d = fetch('${DISCOURSE_BASE}/latest.json?order=activity&per_page=${recentLimit}')
@@ -1869,22 +1910,7 @@ p = json.load(open('/home/edward/profile.json'))
 api_key = p['auth_pairs'][0]['user_api_key']
 headers = {'Api-Key': api_key}
 
-def fetch(url, retries=4):
-    """GET a Discourse URL with rate-limit backoff for 429."""
-    delay = 2.0
-    for attempt in range(retries):
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            return json.load(urllib.request.urlopen(req, timeout=20))
-        except urllib.error.HTTPError as e:
-            if e.code == 429 and attempt < retries - 1:
-                retry_after = e.headers.get('Retry-After')
-                sleep_s = float(retry_after) if retry_after else delay
-                sys.stderr.write(f'429 on {url} — backing off {sleep_s}s (attempt {attempt+1}/{retries})\\n')
-                time.sleep(sleep_s)
-                delay *= 2
-                continue
-            raise
+${discourseFetchPy(4, 'raise')}
 
 # Paginate the activity-ordered latest list. A single page (~30) misses slow-but-
 # recurring catch-all threads (e.g. "Testing please") that dropped below the first
