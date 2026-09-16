@@ -1607,6 +1607,13 @@ commands:
                && command -v python3 >/dev/null 2>&1; then
               echo "Running with host node $(node --version) and $(python3 --version)"
               cd "$FSM_DIR"
+              # ai-flower is a git dependency, so npm builds it on install, and its own
+              # better-sqlite3 compiles rather than taking a prebuilt binary. Without a
+              # compiler that fails as "gyp ERR! stack Error: not found: make".
+              if ! command -v make >/dev/null 2>&1; then
+                echo "No make on this runner - installing build tools for node-gyp"
+                sudo apt-get update -qq && sudo apt-get install -y -qq build-essential
+              fi
               npm ci --no-audit --no-fund
               npx vitest run
             else
