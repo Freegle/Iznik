@@ -786,6 +786,31 @@ Schedule::call(function () {
     } else {
         \Illuminate\Support\Facades\Log::info('Email delivery looks normal across domains');
     }
+
+    // Carryover health, measured right after the window that writes it.
+    //
+    // users_digests.carryover holds the posts a member's last digest could not fit under
+    // DIGEST_POST_CAP; the next run offers them again, below that run's new posts. Every id
+    // on it is also a DIGEST_LOAD_CAP slot a new post does not get, so the list is bounded
+    // three ways (age, already-seen, size) in UnifiedDigestService::carryoverFrom(). Those
+    // bounds are the thing this line exists to check: if the mean or the max climbs run over
+    // run, they are not holding and members are being fed their backlog instead of today's
+    // posts. A steady mean well under the cap is what healthy looks like. No threshold and
+    // no alert - there is no measured normal to compare against yet, and inventing one from
+    // a single day's figure would be worse than reading the trend.
+    $carryover = \Illuminate\Support\Facades\DB::table('users_digests')
+        ->where('mode', 'daily')
+        ->whereNotNull('carryover')
+        ->selectRaw('COUNT(*) AS members, ROUND(AVG(JSON_LENGTH(carryover)), 1) AS mean_len, MAX(JSON_LENGTH(carryover)) AS max_len')
+        ->first();
+
+    \Illuminate\Support\Facades\Log::info('Daily digest carryover', [
+        'members_carrying' => (int) ($carryover->members ?? 0),
+        'mean_posts_carried' => (float) ($carryover->mean_len ?? 0),
+        'max_posts_carried' => (int) ($carryover->max_len ?? 0),
+        'cap' => \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP,
+        'max_age_days' => \App\Services\UnifiedDigestService::CARRYOVER_MAX_AGE_DAYS,
+    ]);
 })
     ->name('mail:digest:daily-lag-check')
     ->timezone(config('freegle.timezone'))
