@@ -2994,10 +2994,15 @@ func TestPatchMessageAsMod(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// Mod edits should NOT create review record.
+	// Mod edits create an edit record like an owner's, attributed to the mod, but must not
+	// queue the mod's own edit for review.
 	var editCount int64
 	db.Raw("SELECT COUNT(*) FROM messages_edits WHERE msgid = ? AND byuser = ?", msgID, modID).Scan(&editCount)
-	assert.Equal(t, int64(0), editCount)
+	assert.Equal(t, int64(1), editCount)
+
+	var reviewRequired int
+	db.Raw("SELECT reviewrequired FROM messages_edits WHERE msgid = ? AND byuser = ? ORDER BY id DESC LIMIT 1", msgID, modID).Scan(&reviewRequired)
+	assert.Equal(t, 0, reviewRequired)
 }
 
 func TestGetMessageReturnsEditsForMod(t *testing.T) {
