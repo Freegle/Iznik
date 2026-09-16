@@ -20,6 +20,7 @@ covers:
   - iznik-server-go/maildeferral/maildeferral.go
   - iznik-nuxt3/modtools/components/ModMailDelayed.vue
   - iznik-nuxt3/modtools/components/ModSupportMailDeferrals.vue
+  - iznik-nuxt3/modtools/components/ModSupportMailHeldTable.vue
   - iznik-nuxt3/tests/unit/components/modtools/ModMailDelayed.spec.js
   - iznik-nuxt3/tests/unit/components/modtools/ModSupportMailDeferrals.spec.js
 ---
@@ -399,11 +400,38 @@ rate at all rather than give a reassuring one. And the sample was taken with
 200,000 lines covered 2h15m, so every "per hour" figure was inflated by more
 than double. The relay now reports how many seconds its sample actually spans.
 
-Then the suppressions, and then the members whose mail is being held. Only a
-suppression holds mail back; mail queued behind our sending rate has already
-been generated and is waiting to go out, so it is in the queue table and not in
-the member list. The member list is capped at 1,000 rows with the cap stated
-rather than silently applied.
+Then the suppressions, and then the members we are not generating mail for.
+Only a suppression stops us generating; mail queued behind our sending rate has
+already been generated and is waiting to go out, so it is in the queue table
+and not in the member list. The list is capped at 1,000 rows with the cap
+stated rather than silently applied.
+
+Those members are split into two tables, because they are two different
+problems. **Waiting on a provider** is our reputation and our job to fix.
+**Their own mailbox is the problem** is a full inbox or an address that does
+not resolve, and it is the larger group by far: of 193 members on 2026-09-16,
+156 were their own mailbox and 37 were waiting on us.
+
+Keeping them together is what made this page contradict itself. The suppression
+table above excludes per-mailbox reasons deliberately - a full inbox says
+nothing about whether a provider is accepting our mail - but the member list
+applied no such filter. So a day with no domain suppression at all showed
+"Nothing is being deferred. Every provider is accepting our mail" immediately
+above 194 members described as having mail held, with no entry above to explain
+any of them. The two halves now apply the same test, and the all-clear message
+requires the member list to be empty too.
+
+The count beside each member is headed **emails not generated**, not "held". It
+counts the times we declined to generate something, and an immediate digest is
+generated per matching post, so an active member on several communities reaches
+thousands within days: one had 11,694 over five. Read as a number of emails
+waiting in a queue somewhere - which "held" invited - the figure is nonsense,
+and a nonsense figure discredits the whole table. The kinds of mail are listed
+beside it so a large number is explicable rather than alarming.
+
+`provider` is only ever populated on mxgroup and domain rows, so an
+address-scope suppression shows no provider. It reads as `-` rather than
+"Unknown", which implied we had failed to work something out.
 
 The all-clear message requires both halves to be clear. Before the queue was
 recorded it read "every provider is accepting our mail", which was true, and

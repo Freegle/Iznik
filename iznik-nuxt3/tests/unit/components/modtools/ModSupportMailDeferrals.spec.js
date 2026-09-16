@@ -29,6 +29,12 @@ const stubs = {
   'b-th': { template: '<th><slot /></th>' },
   'b-td': { template: '<td><slot /></td>' },
   'nuxt-link': { template: '<a><slot /></a>' },
+  ModSupportMailHeldTable: {
+    name: 'ModSupportMailHeldTable',
+    props: ['members', 'limit'],
+    template:
+      '<table class="held"><tr v-for="m in members" :key="m.userid"><td>{{ m.email }}</td><td>{{ m.skipped }}</td></tr></table>',
+  },
 }
 
 async function render(response = {}) {
@@ -152,5 +158,50 @@ describe('ModSupportMailDeferrals', () => {
     expect(words(await render({ queues: [yahooBacklog] }))).toContain(
       "it doesn't appear here"
     )
+  })
+
+  // A member whose own inbox is full is not waiting on anything we can fix,
+  // and the suppression list above deliberately leaves those reasons out. With
+  // both in one table the page said "every provider is accepting our mail"
+  // directly above 194 people it described as having mail held.
+  it('separates members waiting on a provider from members whose mailbox is full', async () => {
+    const wrapper = await render({
+      members: [
+        { userid: 1, email: 'full@gmail.com', skipped: 11694, permailbox: true },
+        { userid: 2, email: 'waiting@talktalk.net', skipped: 4, permailbox: false },
+      ],
+    })
+
+    const tables = wrapper.findAllComponents({ name: 'ModSupportMailHeldTable' })
+    expect(tables).toHaveLength(2)
+    expect(tables[0].props('members').map((m) => m.userid)).toEqual([2])
+    expect(tables[1].props('members').map((m) => m.userid)).toEqual([1])
+  })
+
+  // The all-clear was computed from the suppression list alone, so a page with
+  // no domain suppression but 194 members listed below claimed all was well.
+  it('does not claim all is well while it is listing members', async () => {
+    const text = words(
+      await render({
+        members: [
+          { userid: 1, email: 'full@gmail.com', skipped: 12351, permailbox: true },
+        ],
+      })
+    )
+
+    expect(text).not.toContain('Every provider is accepting our mail')
+  })
+
+  it('says a full mailbox is not a problem with our mail', async () => {
+    const text = words(
+      await render({
+        members: [
+          { userid: 1, email: 'full@gmail.com', skipped: 12351, permailbox: true },
+        ],
+      })
+    )
+
+    expect(text).toContain("Members whose own mailbox is the problem")
+    expect(text).toContain('Nothing here means anything is wrong with our mail')
   })
 })

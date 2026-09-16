@@ -22,7 +22,7 @@
 
     <template v-else>
       <NoticeMessage
-        v-if="!suppressions.length && !queues.length"
+        v-if="!suppressions.length && !queues.length && !members.length"
         variant="success"
         class="mb-3"
       >
@@ -135,54 +135,45 @@
       </template>
 
       <h3 class="mb-2">
-        Members with mail held
-        <b-badge v-if="members.length" variant="info">{{
-          members.length
+        Members waiting on a provider
+        <b-badge v-if="waitingOnProvider.length" variant="info">{{
+          waitingOnProvider.length
         }}</b-badge>
       </h3>
 
-      <p v-if="!members.length" class="text-muted">
-        No mail has been held back yet. Only a suppression holds mail back -
-        mail queued behind our sending rate has already been generated and is
-        waiting to go out, so it doesn't appear here.
+      <p v-if="!waitingOnProvider.length" class="text-muted">
+        Nobody. Only a suppression stops us generating mail - mail queued behind
+        our sending rate has already been generated and is waiting to go out, so
+        it doesn't appear here.
       </p>
 
-      <template v-else>
-        <NoticeMessage
-          v-if="members.length >= memberLimit && memberLimit > 0"
-          variant="warning"
-          class="mb-2"
-        >
-          Showing the first {{ memberLimit }} members. There are more.
-        </NoticeMessage>
+      <ModSupportMailHeldTable
+        v-else
+        :members="waitingOnProvider"
+        :limit="memberLimit"
+      />
 
-        <b-table-simple responsive striped small>
-          <b-thead>
-            <b-tr>
-              <b-th>Member</b-th>
-              <b-th>Email</b-th>
-              <b-th>Provider</b-th>
-              <b-th>Delayed since</b-th>
-              <b-th class="text-end">Held</b-th>
-            </b-tr>
-          </b-thead>
-          <b-tbody>
-            <b-tr v-for="m in members" :key="'mem-' + m.userid">
-              <b-td>
-                <nuxt-link :to="'/support/' + m.userid">
-                  {{ m.displayname || '#' + m.userid }}
-                </nuxt-link>
-              </b-td>
-              <b-td class="small">{{ m.email }}</b-td>
-              <b-td>{{ m.provider || 'Unknown' }}</b-td>
-              <b-td>
-                <span :title="m.since">{{ dateshort(m.since) }}</span>
-              </b-td>
-              <b-td class="text-end">{{ m.heldmessages }}</b-td>
-            </b-tr>
-          </b-tbody>
-        </b-table-simple>
-      </template>
+      <h3 class="mb-2 mt-4">
+        Members whose own mailbox is the problem
+        <b-badge v-if="ownMailbox.length" variant="secondary">{{
+          ownMailbox.length
+        }}</b-badge>
+      </h3>
+
+      <p class="text-muted small mb-2">
+        Their inbox is full, or their address doesn't resolve. That's their
+        problem rather than our sending reputation, which is why they aren't in
+        the table of providers refusing us above - and why they need a different
+        conversation. Nothing here means anything is wrong with our mail.
+      </p>
+
+      <p v-if="!ownMailbox.length" class="text-muted">Nobody.</p>
+
+      <ModSupportMailHeldTable
+        v-else
+        :members="ownMailbox"
+        :limit="memberLimit"
+      />
     </template>
   </div>
 </template>
@@ -199,6 +190,15 @@ const suppressions = computed(() => store.deferralSuppressions)
 const members = computed(() => store.deferralMembers)
 const memberLimit = computed(() => store.deferralMemberLimit)
 const queues = computed(() => store.deferralQueues)
+
+// Two different problems, so two tables. A member whose own inbox is full is
+// not waiting on anything we can fix, and listing them together is what let
+// this page say "every provider is accepting our mail" directly above 194
+// people it described as having mail held.
+const waitingOnProvider = computed(() =>
+  members.value.filter((m) => !m.permailbox)
+)
+const ownMailbox = computed(() => members.value.filter((m) => m.permailbox))
 
 const totalQueued = computed(() =>
   queues.value.reduce((n, q) => n + (q.waiting || 0) + (q.deferred || 0), 0)
