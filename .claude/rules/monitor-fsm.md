@@ -17,6 +17,9 @@ observable state as "nothing needed doing". Check these before concluding it is 
 - The first brain call of a lap can return only "Prompt is too long", and the run continues past
   it as though it had an answer.
 - A state file that has been truncated to zero bytes kills every run at startup.
+- Discourse answers a 429 with the wait in the response body, not in a `Retry-After` header. A
+  caller that reads only the header gives up while Discourse is still refusing, the action
+  throws, and the lap carries on with no topics and no reporter confirmations.
 
 ## `PARSE_ONLY` does not stop where you expect
 
@@ -27,8 +30,7 @@ than from the flag.
 ## Laps without draining what the previous step left
 
 The fix step and the verify step can lap without draining results still in flight, so work is
-re-decided while its outcome is still arriving. A failed post of a reply draft is never retried,
-so the draft is orphaned rather than queued again.
+re-decided while its outcome is still arriving.
 
 It also opens pull requests, runs its own adversarial review, and leaves them open when that
 review fails. An open request from it is not a reviewed one.
