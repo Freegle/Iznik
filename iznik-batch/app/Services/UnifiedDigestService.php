@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Mail\Digest\DigestStyle;
 use App\Mail\Digest\UnifiedDigest;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Membership;
@@ -77,6 +78,19 @@ class UnifiedDigestService
      * the render cap so scoring/dedup still choose from a large pool for normal daily volume.
      */
     public const DIGEST_LOAD_CAP = 500;
+
+    /**
+     * How long a post the cap left out keeps being offered again (users_digests.carryover).
+     *
+     * A carried post is shown only in the room DIGEST_POST_CAP leaves once the new posts are
+     * in (see newPostsFirst), so a member whose daily volume is above the cap may never have
+     * room for it. Without an age bound it would then be re-offered for as long as it stayed
+     * live - measured at up to 59 days on production - and it would sit at the head of every
+     * window, because the load query is oldest-first and carried posts are older than the
+     * cursor. Three days is two further chances after the digest that could not fit it; past
+     * that it is not news to anybody.
+     */
+    public const CARRYOVER_MAX_AGE_DAYS = 3;
 
     /**
      * Send unified digests to users who want them.
@@ -1929,6 +1943,13 @@ class UnifiedDigestService
         // doc's "Insertion points" section.
         $posts = $this->filterByDistancePreference($posts, $user, $latlng);
 
+        // Carried-over posts sink BELOW the new ones, whatever they score. They are older
+        // than the cursor by construction, so letting the score interleave them gives the
+        // member a digest whose dates jump around - which is what the roll-up is meant to
+        // stop. They take the room DIGEST_POST_CAP leaves once the new posts are in, and
+        // age out of the carryover when it never comes (see carryoverFrom).
+        $posts = $this->newPostsFirst($posts, $digestTracker);
+
         $completedPosts = $this->deduplicateCompletedPosts(
             $allPosts->filter(fn ($p) => $p->has_success)->values()
         );
@@ -1992,7 +2013,12 @@ class UnifiedDigestService
             // emailWasSent=true so lastsent is stamped even when $allPosts is empty
             // (a pinned-only digest still sent an email) — see updateDigestTracker.
             // The posts the email left out at the cap are carried to the next run.
-            $this->updateDigestTracker($digestTracker, $allPosts, true, $digest->droppedPostIds());
+            $this->updateDigestTracker(
+                $digestTracker,
+                $allPosts,
+                true,
+                $this->carryoverFrom($digest->droppedPostIds(), $deduplicatedPosts)
+            );
         }
 
         return ['status' => 'sent', 'count' => 1];
@@ -2164,6 +2190,10 @@ class UnifiedDigestService
         // The window: everything since the cursor, plus the posts the member's last digest
         // had to leave out at the post cap (carryover). Those are older than the cursor, so
         // they come first in arrival order and the cursor never moves backwards for them.
+        // Loading them first is NOT showing them first: newPostsFirst() sinks them below the
+        // new posts before the cap is applied, so they only take the room the cap leaves.
+        // It does mean each carried id costs a DIGEST_LOAD_CAP slot a new post could have
+        // had, which is why carryoverFrom() bounds the list by age, seen-ness and size.
         $carryover = array_values(array_filter(array_map('intval', $tracker->carryover ?? [])));
         $query->where(function ($q) use ($tracker, $carryover) {
             if ($tracker->lastmsgdate) {
@@ -2706,6 +2736,91 @@ class UnifiedDigestService
         $closestIds = $closest->pluck('id')->all();
         $rest = $sorted->reject(fn ($p) => in_array($p->id, $closestIds, true))->values();
         return $closest->concat($rest)->values();
+    }
+
+    /**
+     * New posts first, then the ones a previous digest could not fit, each keeping its
+     * scored order within its half.
+     *
+     * A carried post is older than the cursor by construction, so when the score is free to
+     * interleave it the member gets a digest that opens with last week's dates - the exact
+     * complaint the daily roll-up exists to avoid. Sinking the carried half means they fill
+     * whatever room DIGEST_POST_CAP has left after the new posts and no more.
+     *
+     * The trade is deliberate: a member whose genuine daily volume is already over the cap
+     * has no room left, so their carried posts wait until a quiet day or age out. That is
+     * better than showing them stale posts in place of today's.
+     */
+    private function newPostsFirst(Collection $posts, UserDigest $tracker): Collection
+    {
+        $carried = array_flip(array_map('intval', $tracker->carryover ?? []));
+
+        if ($carried === []) {
+            return $posts;
+        }
+
+        [$old, $new] = $posts->partition(fn ($p) => isset($carried[(int) $p->id]));
+
+        return $new->concat($old)->values();
+    }
+
+    /**
+     * Which of the posts the cap left out are worth offering again: the msgids stored on
+     * users_digests.carryover and re-admitted to the window by getPostsForUser().
+     *
+     * Two kinds are dropped rather than carried:
+     *
+     *  - Posts the member has ALREADY SEEN (in-app view, or an opened/clicked digest).
+     *    scoreAndSortAvailable multiplies those by freegle.digest.seen_penalty, so they
+     *    cannot win a slot against anything unseen; carrying them only spends the member's
+     *    DIGEST_LOAD_CAP window on posts that will never be shown, and since carried posts
+     *    are older than the cursor they spend it at the FRONT of the window, where they
+     *    displace genuinely new ones.
+     *  - Posts older than CARRYOVER_MAX_AGE_DAYS. Nothing else ever removes an id from this
+     *    list except the post getting an outcome or being deleted, so without an age bound
+     *    a busy member accumulates a permanent block of old posts.
+     *
+     * What survives both is then capped at DIGEST_POST_CAP, keeping the head of the list.
+     * The age bound alone does not bound the SIZE - a member posting-rich enough to drop
+     * hundreds fills the list with three days of RECENT posts (measured: the bound trims the
+     * mean by a fifth and the worst case by nine) - and size is what costs them, because the
+     * window query is oldest-first under DIGEST_LOAD_CAP, so every carried id is a slot a new
+     * post does not get and the member's cursor falls further behind. One digest's worth is
+     * also the most that could ever be shown, and droppedPostIds() is in the digest's own
+     * priority order, so the head is the part with a real chance.
+     *
+     * A card with no arrival is not carried: pinned clearances are force-included every day
+     * regardless of the cursor (getPinnedOpenPostsForUser), so carrying one is pointless.
+     *
+     * @param int[] $droppedIds msgids the email could not fit - UnifiedDigest::droppedPostIds()
+     * @param Collection $cards the cards the digest was built from ($card['message'] per card)
+     * @return int[]
+     */
+    private function carryoverFrom(array $droppedIds, Collection $cards): array
+    {
+        if ($droppedIds === []) {
+            return [];
+        }
+
+        $cutoff = now()->subDays(self::CARRYOVER_MAX_AGE_DAYS);
+        $byId = $cards->keyBy(fn ($c) => (int) $c['message']->id);
+
+        $keep = array_filter($droppedIds, function ($id) use ($byId, $cutoff) {
+            $card = $byId->get((int) $id);
+            $post = $card['message'] ?? null;
+
+            if (!$post || !empty($post->seen_by_user) || empty($post->arrival)) {
+                return false;
+            }
+
+            $arrival = $post->arrival instanceof \DateTimeInterface
+                ? $post->arrival
+                : \Illuminate\Support\Carbon::parse($post->arrival);
+
+            return $arrival >= $cutoff;
+        });
+
+        return array_slice(array_values($keep), 0, DigestStyle::DIGEST_POST_CAP);
     }
 
     /**
