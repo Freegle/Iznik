@@ -4,7 +4,7 @@ import { promisify } from 'node:util'
 import { readFile, writeFile } from 'node:fs/promises'
 import { existsSync, readdirSync, readlinkSync } from 'node:fs'
 import { out, outWarn, dbg, startGroup, endGroup, truncate } from '../log.js'
-import { DISCOURSE_BASE, formatReplyRaw, hasNonEmptyQuote } from '../discourse.js'
+import { DISCOURSE_BASE, PROFILE_PATH, formatReplyRaw, hasNonEmptyQuote } from '../discourse.js'
 import { partitionFailedChecks } from '../coverage-checks.js'
 import {
   getDb,
@@ -682,7 +682,7 @@ export async function postDiscourseReply(
 
   let apiKey: string | null = null
   try {
-    const profile = JSON.parse(await readFile('/home/edward/profile.json', 'utf8')) as {
+    const profile = JSON.parse(await readFile(PROFILE_PATH, 'utf8')) as {
       auth_pairs?: Array<{ user_api_key?: string }>
     }
     apiKey = profile.auth_pairs?.[0]?.user_api_key ?? null
@@ -737,7 +737,7 @@ export async function postDiscourseReply(
 export async function fetchReporterQuote(topicId: number, postNumber: number, maxLen = 300): Promise<string> {
   let apiKey: string | null = null
   try {
-    const profile = JSON.parse(await readFile('/home/edward/profile.json', 'utf8')) as {
+    const profile = JSON.parse(await readFile(PROFILE_PATH, 'utf8')) as {
       auth_pairs?: Array<{ user_api_key?: string }>
     }
     apiKey = profile.auth_pairs?.[0]?.user_api_key ?? null

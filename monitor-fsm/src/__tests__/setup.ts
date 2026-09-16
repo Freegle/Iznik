@@ -1,5 +1,5 @@
 import { afterAll } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -18,6 +18,14 @@ import { join } from 'node:path'
  */
 const dir = mkdtempSync(join(tmpdir(), 'monitor-fsm-test-'))
 process.env.MONITOR_FSM_DB_PATH = join(dir, 'monitor.db')
+
+// The Discourse API key is read from one developer's home directory by default, so
+// the posting tests pass there and fail anywhere else with "no Discourse API key
+// available". Every network call in those tests is mocked, so the value below is
+// never sent anywhere and is not a credential.
+const profile = join(dir, 'profile.json')
+writeFileSync(profile, JSON.stringify({ auth_pairs: [{ user_api_key: 'test-key-not-a-credential' }] }))
+process.env.MONITOR_FSM_PROFILE_PATH = profile
 
 // One directory per test file per run, so without this they pile up in /tmp on
 // every machine that runs the suite and on every CI build.
