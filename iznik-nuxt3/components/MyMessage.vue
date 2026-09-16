@@ -1534,6 +1534,19 @@ onMounted(async () => {
   :deep(*) {
     line-height: 1;
   }
+
+  /* ShowMore's "+N more" toggle is a Bootstrap link button. On the bar it
+     takes the white of the text around it, with an underline to keep it
+     reading as something you can tap. Size is inherited so it lines up with
+     the rest of the row. */
+  :deep(.show-more__toggle) {
+    --bs-btn-color: #fff;
+    --bs-btn-hover-color: #fff;
+    --bs-btn-active-color: #fff;
+    color: white;
+    font-size: inherit;
+    text-decoration: underline;
+  }
 }
 
 .group-link {
