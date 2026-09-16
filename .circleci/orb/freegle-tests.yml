@@ -1573,6 +1573,49 @@ commands:
             fi
             echo "claude-agent-sdk unit tests passed"
 
+  run-monitor-fsm-tests:
+    description: "Run the monitor-fsm unit tests (vitest). Fast, no containers."
+    steps:
+      - run:
+          name: Run monitor-fsm unit tests
+          command: |
+            set -e
+            # monitor-fsm had no CI: nothing under .circleci referenced it, so its
+            # suite only ran when someone typed npm test in that directory. It is
+            # the loop that triages Discourse and Sentry and opens fix PRs, and a
+            # silently broken action there costs days before anyone notices -
+            # check_bug_feedback threw on every run for a fortnight in September
+            # 2026 and no reporter confirmation was picked up in that time.
+            FSM_DIR=""
+            for d in ./monitor-fsm "$HOME/FreegleDocker/monitor-fsm" "$HOME/project/monitor-fsm"; do
+              if [ -d "$d" ]; then FSM_DIR="$d"; break; fi
+            done
+            if [ -z "$FSM_DIR" ]; then
+              echo "Could not find monitor-fsm (cwd: $(pwd))"
+              exit 1
+            fi
+            FSM_DIR=$(cd "$FSM_DIR" && pwd)
+            echo "Using $FSM_DIR"
+
+            # Some specs execute the Python the FSM shells out to, with urlopen and
+            # sleep stubbed, so the image needs python3 as well as Node. The host has
+            # both; the fallback is node:22 (bookworm) rather than alpine for the same
+            # reason, and because better-sqlite3 needs a toolchain when no prebuild
+            # matches.
+            if command -v node >/dev/null 2>&1 \
+               && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)' 2>/dev/null \
+               && command -v python3 >/dev/null 2>&1; then
+              echo "Running with host node $(node --version) and $(python3 --version)"
+              cd "$FSM_DIR"
+              npm ci --no-audit --no-fund
+              npx vitest run
+            else
+              echo "No suitable host Node (need >= 20) with python3 - running in node:22"
+              docker run --rm -v "$FSM_DIR":/app -w /app node:22 \
+                sh -c 'npm ci --no-audit --no-fund && npx vitest run'
+            fi
+            echo "monitor-fsm unit tests passed"
+
   run-playwright-tests:
     description: "Run Playwright tests via the status service API and upload coverage"
     parameters:
@@ -2438,6 +2481,10 @@ jobs:
       # Cheap, container-free, and covers the SQL guard and role gate on the AI
       # support helper - run before anything expensive starts.
       - run-agent-sdk-tests
+
+      # Same rationale: container-free, and the monitor loop is otherwise only
+      # tested on whichever machine last ran it by hand.
+      - run-monitor-fsm-tests
 
       - run:
           name: Determine changed paths
