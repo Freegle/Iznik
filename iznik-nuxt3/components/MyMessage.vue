@@ -59,8 +59,12 @@
                 >·</span
               >
               <!-- No home-community marker here: this is the member's own
-                   post, so which community it started on is not news to them. -->
-              <ShowMore :items="messageGroups" :limit="3" inline>
+                   post, so which community it started on is not news to them.
+                   One name at a time: the row shares its width with the
+                   location, the age and the id, which leaves room for about
+                   one community name at this size. The rest are behind the
+                   toggle. -->
+              <ShowMore :items="messageGroups" :limit="1" inline>
                 <template #item="{ item }"
                   ><nuxt-link
                     :to="'/explore/' + item.nameshort"
@@ -1524,7 +1528,8 @@ onMounted(async () => {
 .title-meta {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow: hidden;
   gap: 4px;
   margin-top: 2px;
   font-size: 0.68rem;
@@ -1533,6 +1538,29 @@ onMounted(async () => {
 
   :deep(*) {
     line-height: 1;
+  }
+
+  /* The row stays on one line whatever it holds, so the bar is a fixed
+     height. The community list is the only part that can grow, so it is the
+     only part that gives way; everything else holds its width. */
+  > * {
+    flex-shrink: 0;
+  }
+
+  /* Lay the list out as a row of its own so a long community name can
+     ellipsis without taking the "+N more" toggle with it. */
+  :deep(.show-more) {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    flex-shrink: 1;
+  }
+
+  :deep(.show-more__item) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* ShowMore's "+N more" toggle is a Bootstrap link button. On the bar it
@@ -1546,6 +1574,8 @@ onMounted(async () => {
     color: white;
     font-size: inherit;
     text-decoration: underline;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
 }
 
