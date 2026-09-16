@@ -1106,6 +1106,200 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertNull($tracker->fresh()->carryover);
     }
 
+    public function test_carried_posts_sit_below_the_new_ones_in_the_next_digest(): void
+    {
+        // A carried post is older than the cursor by construction, so letting the score
+        // interleave it gives the member a digest whose dates jump around - the exact thing
+        // the roll-up exists to avoid. The carried half sinks below the new posts.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+
+        for ($i = 1; $i <= $cap + 2; $i++) {
+            $this->createTestMessage($poster, $group, [
+                'subject' => "OFFER: Below{$i}Zq (TestLocation)",
+                'arrival' => now()->subHours(2),
+            ]);
+        }
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $carried = $this->digestTrackerFor($recipient)->carryover;
+        $this->assertCount(2, $carried, 'two posts did not fit under the cap');
+
+        // A quiet next day: two new posts arrive, so there is room for everything.
+        $fresh = [];
+        foreach ([1, 2] as $i) {
+            $fresh[] = $this->createTestMessage($poster, $group, [
+                'subject' => "OFFER: Fresh{$i}Zq (TestLocation)",
+            ])->id;
+        }
+        $this->digestTrackerFor($recipient)->update(['lastsent' => now()->subDay()]);
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $shown = array_map(
+            fn ($p) => (int) $p['msgid'],
+            $this->lastDailyDigest()->mailDescriptor()['posts']
+        );
+
+        $this->assertCount(4, $shown, 'all four fit under the cap');
+        $this->assertEqualsCanonicalizing($fresh, array_slice($shown, 0, 2), 'the new posts lead');
+        $this->assertEqualsCanonicalizing($carried, array_slice($shown, 2), 'the carried ones follow');
+    }
+
+    public function test_a_carried_post_stops_being_carried_once_it_is_too_old(): void
+    {
+        // Nothing removes an id from the carryover except being shown, or the post getting an
+        // outcome or being deleted - and a member whose daily volume is over the cap has no
+        // room to show one. Without the age bound they accumulate a permanent block of old
+        // posts at the head of every window.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+
+        for ($i = 1; $i <= $cap + 2; $i++) {
+            $this->createTestMessage($poster, $group, [
+                'subject' => "OFFER: Aged{$i}Zq (TestLocation)",
+                'arrival' => now()->subHours(2),
+            ]);
+        }
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        [$stale, $recent] = $this->digestTrackerFor($recipient)->carryover;
+
+        // Age one of the two past the bound, on the clock the digest window uses.
+        $aged = now()->subDays(UnifiedDigestService::CARRYOVER_MAX_AGE_DAYS + 1);
+        DB::table('messages')->where('id', $stale)->update(['arrival' => $aged]);
+        DB::table('messages_groups')->where('msgid', $stale)->update(['arrival' => $aged]);
+
+        // Next day, a full digest's worth of new posts, so neither carried post has room.
+        for ($i = 1; $i <= $cap; $i++) {
+            $this->createTestMessage($poster, $group, ['subject' => "OFFER: Next{$i}Zq (TestLocation)"]);
+        }
+        $this->digestTrackerFor($recipient)->update(['lastsent' => now()->subDay()]);
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $dropped = $this->lastDailyDigest()->droppedPostIds();
+        $this->assertContains($stale, $dropped, 'the aged post was still a candidate the cap cut');
+        $this->assertContains($recent, $dropped, 'so was the one still within the bound');
+
+        $this->assertSame([$recent], $this->digestTrackerFor($recipient)->carryover);
+    }
+
+    public function test_a_carried_post_the_member_has_since_seen_is_not_carried_again(): void
+    {
+        // scoreAndSortAvailable sinks a seen post by seen_penalty, so it can never win a slot
+        // against anything unseen. Carrying it spends a DIGEST_LOAD_CAP slot - at the FRONT of
+        // the window, since carried posts are older than the cursor - on a post that will
+        // never be shown.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+
+        for ($i = 1; $i <= $cap + 2; $i++) {
+            $this->createTestMessage($poster, $group, [
+                'subject' => "OFFER: Seen{$i}Zq (TestLocation)",
+                'arrival' => now()->subHours(2),
+            ]);
+        }
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        [$viewed, $unviewed] = $this->digestTrackerFor($recipient)->carryover;
+
+        // The member found one of them on the website in the meantime.
+        DB::table('messages_likes')->insert([
+            'msgid' => $viewed, 'userid' => $recipient->id, 'type' => 'View', 'count' => 1,
+        ]);
+
+        for ($i = 1; $i <= $cap; $i++) {
+            $this->createTestMessage($poster, $group, ['subject' => "OFFER: After{$i}Zq (TestLocation)"]);
+        }
+        $this->digestTrackerFor($recipient)->update(['lastsent' => now()->subDay()]);
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $dropped = $this->lastDailyDigest()->droppedPostIds();
+        $this->assertContains($viewed, $dropped, 'the seen post was still a candidate the cap cut');
+
+        $this->assertSame([$unviewed], $this->digestTrackerFor($recipient)->carryover);
+    }
+
+    public function test_the_carryover_never_holds_more_than_one_digest_worth(): void
+    {
+        // The age bound does not bound the SIZE: a member busy enough to drop hundreds fills
+        // the list with three days of recent posts. Size is what costs them, because the
+        // window query is oldest-first under DIGEST_LOAD_CAP. One digest's worth is also the
+        // most that could ever be shown, and droppedPostIds() is in the digest's own priority
+        // order, so the head is the part with a real chance.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+
+        for ($i = 1; $i <= 2 * $cap + 3; $i++) {
+            $this->createTestMessage($poster, $group, [
+                'subject' => "OFFER: Many{$i}Zq (TestLocation)",
+                'arrival' => now()->subHours(2),
+            ]);
+        }
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $dropped = $this->lastDailyDigest()->droppedPostIds();
+        $this->assertCount($cap + 3, $dropped, 'more than a digest\'s worth did not fit');
+
+        $carried = $this->digestTrackerFor($recipient)->carryover;
+        $this->assertCount($cap, $carried, 'the stored list is capped');
+        $this->assertSame(array_slice($dropped, 0, $cap), $carried, 'and it keeps the head');
+    }
+
+    /**
+     * A recipient on daily, someone to post, and the group they share.
+     *
+     * @return array{0: User, 1: User, 2: Group}
+     */
+    private function dailyDigestMembers(): array
+    {
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createMembership($poster, $group);
+
+        return [$recipient, $poster, $group];
+    }
+
+    private function digestTrackerFor(User $recipient): UserDigest
+    {
+        return UserDigest::where('userid', $recipient->id)
+            ->where('mode', UnifiedDigestService::MODE_DAILY)
+            ->firstOrFail();
+    }
+
+    /**
+     * The digest the run under test just spooled. Mail::assertSent also fails the test when
+     * nothing was sent, which is the assertion every caller here wants anyway.
+     */
+    private function lastDailyDigest(): \App\Mail\Digest\UnifiedDigest
+    {
+        $sent = [];
+        Mail::assertSent(\App\Mail\Digest\UnifiedDigest::class, function ($m) use (&$sent) {
+            $sent[] = $m;
+            return true;
+        });
+
+        return end($sent);
+    }
+
     /**
      * Daily defaults to OFF (empty allowlist = nobody) so a deploy can't
      * double-mail the whole userbase alongside V1's still-running daily cron.
