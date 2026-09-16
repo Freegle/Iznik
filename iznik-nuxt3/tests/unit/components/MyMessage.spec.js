@@ -385,9 +385,15 @@ describe('MyMessage', () => {
       expect(wrapper.find('.photo-area').exists()).toBe(true)
     })
 
-    it('renders title overlay', async () => {
+    it('renders the title bar above the photo, not over it', async () => {
       const wrapper = await createWrapper()
-      expect(wrapper.find('.title-overlay').exists()).toBe(true)
+      const bar = wrapper.find('.title-bar')
+      expect(bar.exists()).toBe(true)
+
+      // The bar must be a sibling of the content row rather than sitting
+      // inside the photo area, or it goes back to overlaying the picture.
+      expect(wrapper.find('.photo-area .title-bar').exists()).toBe(false)
+      expect(wrapper.find('.message-card > .title-bar').exists()).toBe(true)
     })
 
     it('renders MessageTag component', async () => {
