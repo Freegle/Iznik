@@ -20,6 +20,75 @@
             to you. It is not public yet.
           </notice-message>
 
+          <!-- Title bar, mobile only. Sits above the photo, so each card opens
+               with a solid band of the post's own colour. -->
+          <div class="title-bar d-lg-none">
+            <div class="title-row">
+              <div class="title-content">
+                <MessageTag
+                  :id="message.id"
+                  :inline="true"
+                  class="title-tag ps-1 pe-1"
+                />
+                <!-- Item name only. The subject carries the location in
+                     brackets, but this is the member's own post so they
+                     already know where it is; it goes in the meta line
+                     instead of eating the title. -->
+                <span class="title-subject">{{ subjectItemName }}</span>
+                <b-badge
+                  v-if="message.availablenow > 1"
+                  variant="info"
+                  class="title-count"
+                >
+                  {{ message.availablenow }} available
+                </b-badge>
+              </div>
+              <div class="photo-actions">
+                <button class="photo-action-btn" @click.stop="share">
+                  <v-icon icon="share-alt" />
+                </button>
+              </div>
+            </div>
+            <div class="title-meta">
+              <span v-if="postLocation" class="location">
+                <v-icon icon="map-marker-alt" class="me-1" />{{ postLocation }}
+              </span>
+              <span
+                v-if="postLocation && messageGroups.length"
+                class="title-sep"
+                >·</span
+              >
+              <!-- No home-community marker here: this is the member's own
+                   post, so which community it started on is not news to them. -->
+              <ShowMore :items="messageGroups" :limit="3" inline>
+                <template #item="{ item }"
+                  ><nuxt-link
+                    :to="'/explore/' + item.nameshort"
+                    class="group-link"
+                    @click.stop
+                    >{{ item.namedisplay }}</nuxt-link
+                  ></template
+                >
+              </ShowMore>
+              <span
+                v-if="messageGroups.length && timeAgoExpandedDisplay"
+                class="title-sep"
+                >·</span
+              >
+              <span v-if="timeAgoExpandedDisplay" class="group-time">{{
+                timeAgoExpandedDisplay
+              }}</span>
+              <span class="title-sep">·</span>
+              <nuxt-link
+                :to="'/message/' + message.id"
+                class="post-id-link"
+                @click.stop
+              >
+                #{{ message.id }}
+              </nuxt-link>
+            </div>
+          </div>
+
           <!-- Main content area — side-by-side at lg+ -->
           <div class="content-row">
             <div class="photo-section">
@@ -87,75 +156,6 @@
                   <div class="placeholder-pattern"></div>
                   <div class="icon-circle">
                     <v-icon :icon="categoryIcon" class="placeholder-icon" />
-                  </div>
-                </div>
-
-                <!-- Title overlay (mobile only) -->
-                <div class="title-overlay d-lg-none">
-                  <div class="title-row">
-                    <div class="title-content">
-                      <MessageTag
-                        :id="message.id"
-                        :inline="true"
-                        class="title-tag ps-1 pe-1"
-                      />
-                      <span class="title-subject"
-                        >{{ strippedSubject }}
-                        <b-badge
-                          v-if="message.availablenow > 1"
-                          variant="info"
-                          class="ms-1"
-                          style="font-size: 0.55em; vertical-align: middle"
-                        >
-                          {{ message.availablenow }} available
-                        </b-badge></span
-                      >
-                    </div>
-                    <div class="photo-actions">
-                      <button class="photo-action-btn" @click.stop="share">
-                        <v-icon icon="share-alt" />
-                      </button>
-                    </div>
-                  </div>
-                  <div v-if="message.area" class="info-row">
-                    <span class="location">
-                      <v-icon icon="map-marker-alt" class="me-1" />{{
-                        message.area
-                      }}
-                    </span>
-                  </div>
-                  <div class="group-row">
-                    <ShowMore :items="messageGroups" :limit="3" inline>
-                      <template #item="{ item }"
-                        ><v-icon
-                          v-if="item.isHome"
-                          icon="home"
-                          class="me-1 text-muted"
-                          title="Home community (where this was originally posted)"
-                        /><nuxt-link
-                          :to="'/explore/' + item.nameshort"
-                          class="group-link"
-                          @click.stop
-                          >{{ item.namedisplay }}</nuxt-link
-                        ></template
-                      >
-                    </ShowMore>
-                    <span
-                      v-if="messageGroups.length && timeAgoExpandedDisplay"
-                      class="group-time-separator"
-                      >·</span
-                    >
-                    <span v-if="timeAgoExpandedDisplay" class="group-time">{{
-                      timeAgoExpandedDisplay
-                    }}</span>
-                    <span class="group-time-separator">·</span>
-                    <nuxt-link
-                      :to="'/message/' + message.id"
-                      class="post-id-link"
-                      @click.stop
-                    >
-                      #{{ message.id }}
-                    </nuxt-link>
                   </div>
                 </div>
               </div>
@@ -598,11 +598,19 @@ const idRef = toRef(props, 'id')
 const {
   message,
   strippedSubject,
+  subjectItemName,
+  subjectLocation,
   gotAttachments: hasPhoto,
   timeAgoExpandedDisplay,
   placeholderClass,
   categoryIcon,
 } = useMessageDisplay(idRef)
+
+// Where the item is. The area is the friendlier form, so prefer it and fall
+// back to whatever the subject carried in brackets.
+const postLocation = computed(
+  () => message.value?.area || subjectLocation.value
+)
 
 // Start visible immediately if data is already in the store (prefetched before mount)
 const visible = ref(!!messageStore.byId(props.id))
@@ -1051,13 +1059,34 @@ onMounted(async () => {
   min-height: 1px;
 }
 
-/* Wrapper clips content to rounded shape — photo fills to the outer edge */
+/* Wrapper clips content to rounded shape, so the photo fills to the outer
+   edge. On mobile the card is full width and runs square, edge to edge;
+   corners are rounded only at lg+, where the card floats in the page. */
 .message-card-border {
   position: relative;
-  border-radius: var(--radius-md, 0.5rem);
+  border-radius: 0;
   overflow: hidden;
   box-shadow: var(--shadow-md);
-  margin-bottom: 12px;
+  margin-bottom: 16px;
+
+  @include media-breakpoint-up(lg) {
+    border-radius: var(--radius-md, 0.5rem);
+    margin-bottom: 12px;
+  }
+}
+
+/* The shadow carries the post's own colour, which ties the body of the card
+   back to its header and marks where the card ends. */
+.message-card-border--offer {
+  box-shadow:
+    0 5px 18px rgba($color-header, 0.7),
+    0 1px 4px rgba($color-header, 0.55);
+}
+
+.message-card-border--wanted {
+  box-shadow:
+    0 5px 18px rgba(darken($color-blue--light, 20%), 0.7),
+    0 1px 4px rgba(darken($color-blue--light, 20%), 0.55);
 }
 
 .message-card {
@@ -1412,19 +1441,23 @@ onMounted(async () => {
   }
 }
 
-.title-overlay {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 2rem 0.75rem 0.5rem;
-  background: linear-gradient(
-    to top,
-    rgba(0, 0, 0, 0.85) 0%,
-    rgba(0, 0, 0, 0.6) 70%,
-    transparent 100%
-  );
+/* Mobile title bar. Sits above the photo rather than over it, so the top of
+   each card is a solid band of colour and neighbouring posts cannot run
+   together. Colour comes from the post type via .message-card-border--*. */
+.title-bar {
+  padding: 0.4rem 0.6rem 0.45rem;
+  background: $color-gray--normal;
   color: white;
+}
+
+/* Both shades are dark enough for white text to clear WCAG AA: 7.1:1 on the
+   green, 6.8:1 on the blue. Keep them dark if they are ever changed. */
+.message-card-border--offer .title-bar {
+  background: $color-header;
+}
+
+.message-card-border--wanted .title-bar {
+  background: darken($color-blue--light, 20%);
 }
 
 .title-row {
@@ -1432,46 +1465,75 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 0.15rem;
 }
 
 .title-content {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: 0.35rem;
   flex: 1;
   min-width: 0;
 }
 
 .title-tag {
   flex-shrink: 0;
-  font-size: 0.6rem;
 }
 
-:deep(.title-tag .tagbadge) {
+/* Solid white with the bar colour reversed out of it. On a coloured bar this
+   stays legible and reads as a label rather than a second badge. */
+:deep(.title-tag.tagbadge) {
   font-size: 0.6rem;
+  background-color: white;
+  color: $color-header;
+
+  /* The tag is always all-caps, so it has no descenders, and the descent space
+     the line box reserves sits empty below the baseline. The padding is 1px
+     heavier on top to cancel that out, which puts equal space above and below
+     the glyphs. Keep it asymmetric. */
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  padding: 4.5px 7px 3.5px;
 }
 
+.message-card-border--wanted :deep(.title-tag.tagbadge) {
+  color: darken($color-blue--light, 20%);
+}
+
+/* One line, so the bar is a fixed height and every card matches. */
 .title-subject {
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.25;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.info-row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.7rem;
-  opacity: 0.9;
+/* Outside .title-subject, or the ellipsis would eat it. */
+.title-count {
+  flex-shrink: 0;
+  font-size: 0.55rem;
 }
 
-.group-row {
-  font-size: 0.65rem;
-  opacity: 0.85;
-  margin-top: 2px;
+/* Every child shares one font size and one line-height. In a centre-aligned
+   flex row a smaller child would get a shorter box and sit off from the text
+   beside it, so do not set a size on an individual item here. */
+.title-meta {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
+  margin-top: 2px;
+  font-size: 0.68rem;
+  line-height: 1;
+  opacity: 0.95;
+
+  :deep(*) {
+    line-height: 1;
+  }
 }
 
 .group-link {
@@ -1483,22 +1545,23 @@ onMounted(async () => {
   }
 }
 
-.group-time-separator {
+.title-sep {
   opacity: 0.6;
 }
 
 .group-time {
-  opacity: 0.7;
+  opacity: 0.85;
 }
 
 .post-id-link {
-  color: rgba(255, 255, 255, 0.5);
+  /* 0.8 alpha clears AA on the bar. Font size is inherited from .title-meta
+     so it lines up with the text beside it. */
+  color: rgba(255, 255, 255, 0.8);
   text-decoration: none;
-  font-size: 0.6rem;
   transition: all var(--transition-fast);
 
   &:hover {
-    color: rgba(255, 255, 255, 0.8);
+    color: white;
     text-decoration: underline;
   }
 }
