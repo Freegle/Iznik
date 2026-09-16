@@ -1216,6 +1216,18 @@ export const deployedReplyDeps = {
   renderAllViews,
 }
 
+/**
+ * check_bug_feedback's one call out to Discourse, behind a name a test can replace.
+ * What the scan finds then drives bug state, and that half is worth testing without
+ * a network.
+ */
+export const bugFeedbackDeps = {
+  runScan: async (script: string): Promise<string> => {
+    const { stdout } = await exec('python3', ['-c', script])
+    return stdout
+  },
+}
+
 export const actions: ActionDefinition[] = [
   {
     name: 'load_state',
@@ -1316,7 +1328,7 @@ results, edward_updates = classify_feedback(bugs, all_bugs, get_posts_after)
 print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates, 'fetchFailures': FETCH_FAILURES}))
 `
 
-      const { stdout } = await exec('python3', ['-c', script])
+      const stdout = await bugFeedbackDeps.runScan(script)
       let parsed: { confirmations: Array<any>; edwardUpdates: Array<any>; fetchFailures?: string[] }
       try { parsed = JSON.parse(stdout.trim() || '{}') } catch { parsed = { confirmations: [], edwardUpdates: [] } }
       const confirmations = parsed.confirmations ?? []
