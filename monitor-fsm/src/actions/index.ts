@@ -1297,7 +1297,7 @@ export const actions: ActionDefinition[] = [
       const script = `
 import json, urllib.request, re, sys, time
 
-p = json.load(open('/home/edward/profile.json'))
+p = json.load(open('${PROFILE_PATH}'))
 api_key = p['auth_pairs'][0]['user_api_key']
 headers = {'Api-Key': api_key}
 
@@ -1752,7 +1752,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates, 'fe
       const cursorsJson = JSON.stringify(trackedCursors)
       const script = `
 import json, urllib.request, re, html, sys, time
-p = json.load(open('/home/edward/profile.json'))
+p = json.load(open('${PROFILE_PATH}'))
 api_key = p['auth_pairs'][0]['user_api_key']
 headers = {'Api-Key': api_key}
 
@@ -1954,7 +1954,7 @@ print(json.dumps({'posts': posts_out, 'topicsSeen': topics_seen}))
       // ridden out (respecting Retry-After) instead of dropping the pre-check.
       const script = `
 import json, urllib.request, sys, time
-p = json.load(open('/home/edward/profile.json'))
+p = json.load(open('${PROFILE_PATH}'))
 api_key = p['auth_pairs'][0]['user_api_key']
 headers = {'Api-Key': api_key}
 
