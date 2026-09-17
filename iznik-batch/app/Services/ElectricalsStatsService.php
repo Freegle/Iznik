@@ -93,9 +93,17 @@ class ElectricalsStatsService
 
         $clusters = $this->clusters->cluster($this->itemRows($model, $from, $to));
 
-        $counts   = $this->buildCounts($model, $from, $to);
-        $impact   = $this->buildImpact($model, $from, $to);
-        $coverage = $this->buildCoverage($counts, $from, $to);
+        $counts    = $this->buildCounts($model, $from, $to);
+        $impact    = $this->buildImpact($model, $from, $to);
+        $coverage  = $this->buildCoverage($counts, $from, $to);
+        $estimates = $this->buildEstimates($coverage, $counts, $impact);
+
+        // The item lists are counted on the classified sample, the same sample every
+        // other figure on the page is scaled up from. Published raw they sat next to a
+        // headline scaled by ten, so the commonest electrical of the year read as 73
+        // televisions. Scale them the same way, so every number on the page is for the
+        // same thing: the whole window.
+        $scale = (float) ($estimates['scale_factor'] ?? 1.0);
 
         return [
             'generated_at'  => now()->toIso8601String(),
@@ -103,10 +111,10 @@ class ElectricalsStatsService
             'model'         => $model,
             'counts'        => $counts,
             'coverage'      => $coverage,
-            'estimates'     => $this->buildEstimates($coverage, $counts, $impact),
+            'estimates'     => $estimates,
             'impact'        => $impact,
-            'popular'       => $this->buildPopular($clusters),
-            'unusual'       => $this->buildUnusual($clusters),
+            'popular'       => $this->buildPopular($clusters, $scale),
+            'unusual'       => $this->buildUnusual($clusters, $scale),
             'success'       => $this->buildSuccessRates($model, $from, $settle),
             'condition'     => $this->buildCondition($model, $from, $to),
             'monthly_trend' => $this->buildMonthlyTrend($model),
@@ -351,16 +359,29 @@ class ElectricalsStatsService
      * split every common item across its brands and spellings and understated all of them:
      * on live there are 5,180 distinct names behind 7,065 electrical posts.
      */
-    protected function buildPopular(array $clusters, int $limit = 20): array
+    protected function buildPopular(array $clusters, float $scale = 1.0, int $limit = 20): array
     {
         $ranked = array_values($clusters);
 
         usort($ranked, fn($a, $b) => [$b['count'], $a['name']] <=> [$a['count'], $b['name']]);
 
         return array_map(
-            fn($c) => ['name' => $c['name'], 'count' => $c['count']],
+            fn($c) => $this->scaledItem($c, $scale),
             array_slice($ranked, 0, $limit)
         );
+    }
+
+    /**
+     * An item row for the page: the count scaled to the window, and the sample count it
+     * came from, so the two are never confused again.
+     */
+    protected function scaledItem(array $cluster, float $scale): array
+    {
+        return [
+            'name'   => $cluster['name'],
+            'count'  => (int) round($cluster['count'] * $scale),
+            'sample' => $cluster['count'],
+        ];
     }
 
     /**
@@ -380,7 +401,7 @@ class ElectricalsStatsService
      * curiosity when lamps are among the most offered things on the site. See
      * ItemClusterService::suppressVariantsOfPopular().
      */
-    protected function buildUnusual(array $clusters, int $limit = 20): array
+    protected function buildUnusual(array $clusters, float $scale = 1.0, int $limit = 20): array
     {
         $candidates = array_filter($clusters, fn($c) => $this->qualifiesAsUnusual($c));
 
@@ -389,10 +410,10 @@ class ElectricalsStatsService
         usort($ranked, fn($a, $b) => [$a['count'], $a['name']] <=> [$b['count'], $b['name']]);
 
         return [
+            // users and groups stay as counted: they are the evidence that a rare item is
+            // real, and scaling people would claim to know about people never seen.
             'items' => array_map(
-                fn($c) => [
-                    'name'   => $c['name'],
-                    'count'  => $c['count'],
+                fn($c) => $this->scaledItem($c, $scale) + [
                     'users'  => $c['users'],
                     'groups' => $c['groups'],
                 ],

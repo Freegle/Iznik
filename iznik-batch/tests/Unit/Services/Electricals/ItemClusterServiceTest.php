@@ -234,4 +234,56 @@ class ItemClusterServiceTest extends TestCase
             },
         ]);
     }
+
+    /**
+     * Real spellings taken from a year of live offers, where "Tv" was published as
+     * the commonest electrical at 73 while 287 posts in the same sample were TVs.
+     *
+     * Each of these is a television. None of the extra words changes what the thing
+     * is: a brand, a screen size, a panel type, a condition, or a size adjective.
+     */
+    #[Test]
+    public function it_folds_the_ways_people_type_a_television(): void
+    {
+        $names = [
+            'Tv',
+            'Samsung TV',
+            'Television',
+            'LG Smart TV 32"',
+            'Toshiba TV',
+            'Samsung 21 inch tv',
+            'Sony Bravia tv',
+            'Panasonic tv',
+            'Small tv',
+            'Flat screen TV',
+            'Toshiba 40inch TV',
+            '50" Plasma TV',
+            'Portable TV',
+        ];
+
+        $rows = [];
+        foreach ($names as $n => $name) {
+            $rows[] = [$name, $n + 1, 100 + $n, 200 + $n];
+        }
+
+        $clusters = $this->svc->cluster($this->rows($rows));
+
+        $counts = [];
+        foreach ($clusters as $key => $c) {
+            $counts[$key] = $c['count'];
+        }
+        arsort($counts);
+
+        $this->assertSame(
+            12,
+            $counts['tv'] ?? null,
+            'brand, screen size, panel type and size words should all fold into one item: '
+            . json_encode($counts)
+        );
+
+        // "Sony Bravia tv" is left on its own, on purpose. Bravia is a model, and telling
+        // a model from an item needs a catalogue this does not have; guessing would merge
+        // things that are genuinely different. It is the known edge of the folding.
+        $this->assertArrayHasKey('bravia tv', $counts);
+    }
 }
