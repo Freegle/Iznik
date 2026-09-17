@@ -42,6 +42,9 @@ nohup.out
 # Node modules
 node_modules/
 package-lock.json
+# Tracked anyway: CI runs `npm ci` here, which needs the lockfile, and a build
+# that re-resolves dependencies every time fails on days nothing changed here.
+!monitor-fsm/package-lock.json
 yesterday/2fa-gateway/node_modules/
 yesterday/api/node_modules/
 

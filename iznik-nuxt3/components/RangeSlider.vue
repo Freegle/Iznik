@@ -15,9 +15,10 @@
         :step="step"
         :value="localValue"
         :aria-label="ariaLabel"
-        :style="usableWidth"
+        :style="[{ touchAction: 'pan-y' }, usableWidth]"
         @input="onInput"
         @change="onChange"
+        @wheel="onWheel"
       />
       <div
         v-if="hasDeadZone"
@@ -148,6 +149,15 @@ function onChange(e) {
   localValue.value = v
   lastEmitted = v
   emit('change', v)
+}
+
+// Members reported this slider changing by itself while they scrolled the page past it. A
+// vertical touch drag over the track is handled by touch-action: pan-y above, but Chrome/Safari
+// separately opt a range input into mousewheel-changes-value the moment ANY wheel listener
+// overlaps its bounding box - including this one - so the value must only ever move on a
+// deliberate drag of the handle (onInput/onChange), never on an incidental scroll.
+function onWheel(e) {
+  e.preventDefault()
 }
 </script>
 <style scoped lang="scss">

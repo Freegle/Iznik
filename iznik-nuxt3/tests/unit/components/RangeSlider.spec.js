@@ -199,4 +199,27 @@ describe('RangeSlider', () => {
       expect(stub.attributes('title')).toBe('Not shown where you live')
     })
   })
+
+  // Members reported the ChitChat distance slider changing by itself while they scrolled the
+  // page (touch or mouse wheel) past it - the value must only move on a deliberate drag of the
+  // handle. The input must therefore tell the browser to treat a touch pan over the track as
+  // page scroll (not a drag), and must block the wheel-spin some engines apply to range inputs.
+  describe('scroll past the track must not change the value', () => {
+    it('marks the track pan-y, so a vertical touch scroll over it is not captured as a drag', () => {
+      const wrapper = createWrapper()
+      const style = wrapper.find('input').attributes('style') || ''
+      expect(style).toContain('touch-action: pan-y')
+    })
+
+    it('prevents the default wheel-spin so scrolling the mouse wheel over the track leaves the value untouched', async () => {
+      const wrapper = createWrapper()
+      const input = wrapper.find('input')
+      const event = new Event('wheel', { bubbles: true, cancelable: true })
+      input.element.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(true)
+      // No value change should have been emitted as a result of the wheel scroll.
+      expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+      expect(wrapper.emitted('change')).toBeFalsy()
+    })
+  })
 })
