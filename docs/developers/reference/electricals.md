@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-17
 covers:
   - iznik-batch/app/Services/EeeClassificationService.php
   - iznik-batch/app/Services/EeeComponentService.php
@@ -117,6 +117,14 @@ unusual on a site where fridge freezers are among the commonest things offered.
   above the 0.78 of a pair that genuinely should merge. No threshold separates the
   right merges from the wrong ones, so published counts are never merged on an
   embedding.
+- **Size and panel words are dropped after canonicalisation**, in
+  `ItemClusterService` rather than the shared canonicaliser, so nothing else that
+  canonicalises titles changes. The brand goes but the screen size and the display
+  technology do not, and those split one item across `21in tv`, `smart tv 32in`,
+  `flat screen tv` and `50in plasma tv`. Only an explicit list is dropped, and never
+  the last word, so `washing machine` cannot become `machine`. A model name is left
+  alone: `bravia tv` stays its own item, because separating a model from an item needs
+  a catalogue this does not have.
 - **Counts are of distinct posts, members and communities**, taken from the id sets,
   because a rippled post arrives once per group and summing would multiply it.
 - **The label is a name carrying no brand** where the cluster has one, even if a
@@ -146,6 +154,14 @@ approaches 100%, so the page gets more accurate over time with no flag day; the 
 prefers the estimates, states the coverage while they are not firm, and drops the
 caveat when they are. The stated assumption is that the classified sample is seasonally
 representative - the coverage figure is published alongside so a reader can weigh that.
+
+The item lists are scaled by the same factor. They were published raw beside a headline
+scaled from the same sample, so at 9.5% coverage the commonest electrical of the year
+read as 73 televisions. Each item carries both the scaled `count` and the `sample` it
+came from. The `users` and `groups` behind an unusual item are **not** scaled: they are
+the evidence that a rare item is real, and scaling them would assert people who were
+never seen. The qualifying thresholds run on those unscaled figures, so scaling cannot
+promote a one-off into the rare list.
 
 ## Alerting
 
