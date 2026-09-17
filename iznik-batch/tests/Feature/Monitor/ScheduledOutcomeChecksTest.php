@@ -248,4 +248,76 @@ class ScheduledOutcomeChecksTest extends TestCase
 
         $this->assertTrue($result->isBreach(), $result->message);
     }
+
+    /**
+     * The daily-digest window check. Its companion ProducedSinceCheck has a floor of 1, so it
+     * passes on any day at least one digest went out — which is why the 2026-09-15..17
+     * collapse (throughput down 13x, digests landing at 01:00, 40,000+ still sent) passed
+     * three days running. This one asserts the run FINISHED, not that it happened.
+     */
+    private function digestWindowCheck(): \App\Monitoring\OutcomeCheck
+    {
+        foreach ((new \App\Monitoring\ScheduledOutcomeRegistry())->checks() as $check) {
+            if ($check->slug() === 'mail:digest:unified --mode=daily window') {
+                return $check;
+            }
+        }
+
+        $this->fail('the daily-digest window check is not registered');
+    }
+
+    private function seedDailySend(string $sentAtUtc): void
+    {
+        $userid = DB::table('users')->insertGetId([
+            'firstname' => 'Digest',
+            'lastname' => 'Window',
+            'added' => now(),
+        ]);
+
+        DB::table('users_digests')->insert([
+            'userid' => $userid,
+            'mode' => 'daily',
+            'lastsent' => $sentAtUtc,
+        ]);
+    }
+
+    public function test_digest_window_check_is_quiet_when_the_run_finished_inside_its_window(): void
+    {
+        // 12:00 London on a BST day is 11:00 UTC. A healthy run's last send lands just inside
+        // it — 09-13 and 09-14 both ended at 11:59 London.
+        Carbon::setTestNow(Carbon::create(2026, 9, 14, 13, 0, 0, 'Europe/London'));
+        config(['freegle.digest.daily_allowlist' => '*']);
+        $this->seedDailySend('2026-09-14 10:59:00');
+
+        $result = $this->digestWindowCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isOk(), $result->message);
+    }
+
+    public function test_digest_window_check_breaches_when_the_run_overran(): void
+    {
+        // 09-15, the first broken day: sends carried on past the window and into the night.
+        Carbon::setTestNow(Carbon::create(2026, 9, 15, 13, 0, 0, 'Europe/London'));
+        config(['freegle.digest.daily_allowlist' => '*']);
+        $this->seedDailySend('2026-09-15 10:59:00');   // inside the window — must not count
+        $this->seedDailySend('2026-09-15 12:30:00');   // after it — must count
+
+        $result = $this->digestWindowCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isBreach(), $result->message);
+        $this->assertStringContainsString('overran', $result->message);
+    }
+
+    public function test_digest_window_check_ignores_yesterdays_late_sends(): void
+    {
+        // lastsent holds only each member's most recent send. Someone sent late YESTERDAY must
+        // not keep the check red today, or one bad day latches it on for good.
+        Carbon::setTestNow(Carbon::create(2026, 9, 16, 13, 0, 0, 'Europe/London'));
+        config(['freegle.digest.daily_allowlist' => '*']);
+        $this->seedDailySend('2026-09-15 23:30:00');
+
+        $result = $this->digestWindowCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isOk(), $result->message);
+    }
 }

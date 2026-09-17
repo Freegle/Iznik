@@ -66,6 +66,63 @@ class ScheduledOutcomeRegistry
                 ->enabledWhen(fn () => trim((string) config('freegle.digest.daily_allowlist', '')) !== '')
                 ->activeBetween(13, 24, $tz),
 
+            // The check above asks only "did ANY daily digest go out today?", floor 1. That is
+            // a liveness check, and a liveness check cannot see a collapse. On 2026-09-15..17
+            // the daily run fell to a thirteenth of its throughput and ran around the clock -
+            // members got their "morning" digest at 01:00 - and it passed all three days,
+            // because 40,000+ still went out. Sentry could not see it either: nothing threw,
+            // and windowed/overlapping jobs are deliberately excluded from sentryMonitor()
+            // (see routes/console.php).
+            //
+            // What went wrong IS visible, in the same column the check above already reads:
+            // the run stopped fitting in its window. mail:digest:unified --mode=daily is
+            // scheduled ->between('7:00','12:00') London, so on a healthy day the last send
+            // lands just inside 12:00 and nothing follows it. 09-13 and 09-14 both ended at
+            // 11:59 London; 09-15 ended at 00:59 the next morning.
+            //
+            // Deliberately NOT a volume floor. A floor would be a number guessed off one
+            // week's traffic, and it would have to be loose enough to survive a quiet day,
+            // which makes it too loose to catch a 2x slowdown. The window comes from the
+            // schedule itself and needs no tuning: either the run finished inside it or it
+            // did not.
+            (new CallbackCheck(
+                'mail:digest:unified --mode=daily window',
+                function (CarbonInterface $now) use ($tz) {
+                    $slug = 'mail:digest:unified --mode=daily window';
+                    $windowClose = $now->copy()->setTimezone($tz)
+                        ->startOfDay()->setTime(12, 0)->setTimezone('UTC');
+
+                    // users_digests.lastsent holds only each member's MOST RECENT send, so
+                    // this counts members whose latest daily digest went out after today's
+                    // window shut - not historical stragglers, whose lastsent is an earlier
+                    // day and therefore below today's cut.
+                    $late = DB::table('users_digests')
+                        ->where('mode', 'daily')
+                        ->where('lastsent', '>=', $windowClose)
+                        ->count();
+
+                    if ($late > 0) {
+                        $latest = DB::table('users_digests')
+                            ->where('mode', 'daily')
+                            ->where('lastsent', '>=', $windowClose)
+                            ->max('lastsent');
+
+                        return OutcomeResult::breach(
+                            $slug,
+                            "daily digest overran its 07:00-12:00 window: {$late} members were sent "
+                            . "one after it closed (latest {$latest} UTC). The run is not keeping up - "
+                            . 'check throughput before members start getting these overnight.'
+                        );
+                    }
+
+                    return OutcomeResult::ok($slug, 'daily digest finished inside its 07:00-12:00 window');
+                }
+            ))
+                ->describedAs('Daily digest finished inside its send window')
+                ->inCategory('fire-once-output')
+                ->enabledWhen(fn () => trim((string) config('freegle.digest.daily_allowlist', '')) !== '')
+                ->activeBetween(13, 24, $tz),
+
             // ---- Cursor/queue: is a worker stuck (backlog piling up)? -------
 
             // queue:background-tasks drains the Go-API -> Laravel task bridge.
