@@ -2448,6 +2448,58 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
+     * The opt-out verdict is now worked out for ALL of a poster's groups in one pass over their
+     * logs, instead of being asked per candidate group in SQL. So the thing that can newly go
+     * wrong is one group's history leaking into another's verdict. Two groups, identical areas,
+     * opposite histories, one run.
+     */
+    public function test_one_groups_ripple_opt_out_does_not_block_another_group(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $area = 'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))';
+        $blocked = $this->createTestGroup();
+        $allowed = $this->createTestGroup();
+        foreach ([$blocked, $allowed] as $g) {
+            DB::statement(
+                "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+                [$area, 3857, $g->id]
+            );
+        }
+
+        // Interleaved on purpose, so a per-group bucket that shared state between groups would
+        // get at least one of them wrong. Insertion order is ascending log id.
+        //   blocked: rippled in -> left            => opted out, no post
+        //   allowed: rippled in -> left -> MANUAL  => most recent join is manual, post goes in
+        $history = [
+            [$blocked, 'Joined', 'Rippled'],
+            [$allowed, 'Joined', 'Rippled'],
+            [$allowed, 'Left', null],
+            [$blocked, 'Left', null],
+            [$allowed, 'Joined', 'Manual'],
+        ];
+        foreach ($history as [$g, $subtype, $text]) {
+            DB::table('logs')->insert([
+                'timestamp' => now()->subDay(), 'type' => 'Group', 'subtype' => $subtype,
+                'user' => $posterId, 'groupid' => $g->id, 'text' => $text,
+            ]);
+        }
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $blocked->id)->first(),
+            'the group the poster left after a ripple-join is still blocked'
+        );
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $allowed->id)->first(),
+            'the group whose most recent join was manual is NOT blocked by the other group\'s opt-out'
+        );
+    }
+
+    /**
      * BUG FIX: a poster who left a group they were NOT rippled into (an ordinary/manual membership
      * they later left) IS still rippled in. Only a rippled-in-then-left opt-out blocks rippling -
      * an unrelated prior departure must not bar the post or the membership.
