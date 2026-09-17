@@ -281,6 +281,13 @@ class ChatNotificationIntegrationTest extends TestCase
 
         $receivedMessage = $this->mailpit->assertMessageSentTo($user->email_preferred);
 
+        // Both spam assertions below are conditional on a score coming back, and no
+        // spam checker answers in CI, so without this the test asserts nothing at all
+        // there. phpunit.xml sets failOnRisky, so an assertion-free test fails the run.
+        // Delivery is worth asserting on its own account, and the sibling
+        // test_chat_notification_passes_spam_checks already does it.
+        $this->assertNotNull($receivedMessage, "Message should have been sent");
+
         $spamReport = $this->mailpit->getSpamReport($receivedMessage);
 
         $saScore = $spamReport["spamassassin"]["score"];
