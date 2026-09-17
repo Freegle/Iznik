@@ -1255,6 +1255,154 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertSame(array_slice($dropped, 0, $cap), $carried, 'and it keeps the head');
     }
 
+    public function test_the_carryover_is_not_ORed_into_the_window_query(): void
+    {
+        // The carryover list is on messages.id; the window's range column is
+        // messages_groups.arrival. ORing them puts a predicate on a DIFFERENT table inside
+        // the range, so MySQL cannot index-merge, abandons the
+        // groupid(groupid,collection,deleted,arrival) index and — because the query is
+        // ORDER BY arrival ASC LIMIT — walks the arrival index from the oldest row of
+        // 11M forward instead. Measured on production 2026-09-17: 60-74s against 0.29s
+        // for the same query with the carryover arm removed, which is what pinned db2 at
+        // 98% of its cores and stopped the daily digest finishing inside its window.
+        // The two arms must therefore be two queries, not one.
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+
+        $carried = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: SplitCarriedZq (TestLocation)',
+            'arrival' => now()->subDays(2),
+        ]);
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: SplitFreshZq (TestLocation)',
+            'arrival' => now()->subHour(),
+        ]);
+
+        $tracker = $this->trackerWithCarryover($recipient, [$carried->id], now()->subDay());
+
+        $queries = [];
+        DB::listen(function ($q) use (&$queries) {
+            $queries[] = $q->sql;
+        });
+        $this->service->getPostsForUser($recipient, $tracker, UnifiedDigestService::MODE_DAILY);
+
+        // Exact, not approximate: the window arm carries the arrival range and the carryover
+        // arm carries the id list. Only the ORed form has both in one statement.
+        $isWindow = fn ($sql) => str_contains($sql, '`messages_groups`.`arrival` >');
+        $hasIdList = fn ($sql) => (bool) preg_match('/`messages`\.`id`\s+in\s*\(/i', $sql);
+
+        foreach ($queries as $sql) {
+            $this->assertFalse(
+                $isWindow($sql) && $hasIdList($sql),
+                "the carryover is ORed into the windowed query, which costs the groupid index:\n" . $sql
+            );
+        }
+
+        // ...and both arms did run, so this is not passing because nothing was queried.
+        $this->assertTrue(collect($queries)->contains($isWindow), 'the window arm did not run');
+        $this->assertTrue(collect($queries)->contains($hasIdList), 'the carryover arm did not run');
+    }
+
+    public function test_a_post_in_both_the_window_and_the_carryover_is_returned_once_per_copy(): void
+    {
+        // Splitting the arms means a post that satisfies BOTH comes back from both queries.
+        // On production 2026-09-17 that overlap was 234 of 1,921 rows. The merge has to
+        // de-duplicate on the (msgid, groupid) PAIR, not on msgid: the query deliberately
+        // returns one row per copy of a cross-posted item, and collapsing by msgid would
+        // silently drop a member's other communities from the digest.
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        $other = $this->createTestGroup();
+        $this->createMembership($recipient, $other, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createMembership($poster, $other);
+
+        // Cross-posted, and INSIDE the window as well as on the carryover list.
+        $both = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: OverlapZq (TestLocation)',
+            'arrival' => now()->subHour(),
+        ]);
+        MessageGroup::create([
+            'msgid' => $both->id,
+            'groupid' => $other->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subHour(),
+        ]);
+
+        $tracker = $this->trackerWithCarryover($recipient, [$both->id], now()->subDay());
+
+        $posts = $this->service->getPostsForUser($recipient, $tracker, UnifiedDigestService::MODE_DAILY);
+
+        $pairs = $posts->map(fn ($p) => (int) $p->id . ':' . (int) $p->groupid)->all();
+        $this->assertSame(
+            count($pairs),
+            count(array_unique($pairs)),
+            'a post on both the window and the carryover came back twice'
+        );
+        $this->assertCount(2, $pairs, 'both copies of the cross-posted item survive the de-duplication');
+    }
+
+    public function test_a_carryover_only_run_does_not_move_the_cursor_backwards(): void
+    {
+        // The cursor is taken from $posts->last() in arrival-ascending order. Carried posts
+        // are older than the cursor by construction, so when a run's window has nothing new
+        // and the carryover is all that comes back, last() is an OLD post and lastmsgdate
+        // regresses. The next run then re-opens a window the member has already been sent,
+        // which both re-offers posts and widens the scan this change exists to narrow.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+
+        // Staggered arrivals, so "backwards" is observable: the cap keeps the newest and
+        // drops the oldest, so everything carried is strictly older than the cursor. Minutes,
+        // not hours - a fresh tracker's window is arrival >= now()-1 day, and DIGEST_POST_CAP
+        // is 65, so hour-spacing would push most of these outside the first run's window.
+        for ($i = 1; $i <= $cap + 2; $i++) {
+            $this->createTestMessage($poster, $group, [
+                'subject' => "OFFER: Cursor{$i}Zq (TestLocation)",
+                'arrival' => now()->subMinutes($cap + 3 - $i),
+            ]);
+        }
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $tracker = $this->digestTrackerFor($recipient);
+        $cursorAfterFirstRun = $tracker->lastmsgdate;
+        $this->assertNotNull($cursorAfterFirstRun, 'the first run set a cursor');
+        $this->assertNotEmpty($tracker->carryover, 'the cap left something to carry');
+
+        // A quiet day: nothing new has arrived, so only the carried posts come back.
+        $tracker->update(['lastsent' => now()->subDay()]);
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $cursorAfterSecondRun = $this->digestTrackerFor($recipient)->lastmsgdate;
+        $this->assertNotNull($cursorAfterSecondRun);
+        $this->assertTrue(
+            $cursorAfterSecondRun->greaterThanOrEqualTo($cursorAfterFirstRun),
+            "a carryover-only run dragged the cursor back into a window already sent: "
+                . "{$cursorAfterFirstRun} -> {$cursorAfterSecondRun}"
+        );
+    }
+
+    /**
+     * A daily tracker with a carryover list and a cursor, as a run that hit the cap leaves it.
+     *
+     * @param int[] $carryover
+     */
+    private function trackerWithCarryover(User $recipient, array $carryover, \DateTimeInterface $cursor): UserDigest
+    {
+        $tracker = UserDigest::firstOrCreate(
+            ['userid' => $recipient->id, 'mode' => UnifiedDigestService::MODE_DAILY],
+        );
+        $tracker->update([
+            'carryover' => $carryover,
+            'lastmsgdate' => $cursor,
+            'lastsent' => now()->subDay(),
+        ]);
+
+        return $tracker->fresh();
+    }
+
     /**
      * A recipient on daily, someone to post, and the group they share.
      *

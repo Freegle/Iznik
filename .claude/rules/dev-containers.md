@@ -124,6 +124,24 @@ writes into your working tree and silently reverts your edits.
 Note also that a Laravel test cannot read the Go tree and a Go test cannot read the PHP tree, so
 a cross-language assertion has to go through a fixture or the API.
 
+## On the FreegleDocker host, `git checkout` is a deploy
+
+`batch-prod` bind-mounts `iznik-batch/` and runs against the **production** database. The tree is
+therefore what production executes, which makes ordinary git operations production actions:
+
+- **Committing to a branch and then switching away silently reverts the change out of production.**
+  Work committed on a branch is live from the moment it is written, and stops being live the moment
+  you `git checkout master`. Neither step prints anything about production. (Hit 2026-09-17: a
+  monitoring check was reported to the operator as live, then taken out of production by the
+  checkout that followed, with nothing to say so.)
+- **An uncommitted edit is live.** Staging a change in the working tree to try it out has already
+  shipped it.
+- PHP loads code at process start, so none of this reaches a long-running command until it next
+  starts. A multi-hour job keeps the code it began with.
+
+Check what production is running by grepping the file, not by recalling what you last did. The
+answer changes under you.
+
 ## Branches, clones and the tools around them
 
 - **Creating a worktree branches off your local master**, which may be behind or ahead of the

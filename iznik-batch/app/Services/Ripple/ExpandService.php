@@ -1821,6 +1821,51 @@ class ExpandService
     }
 
     /**
+     * The groups this member has opted out of rippling by leaving a ripple-join.
+     *
+     * "Most recent join wins": a group blocks rippling only when the member's LATEST
+     * Group/Joined log for it is a ripple-join (text='Rippled') and a Group/Left follows it.
+     * A group they last joined manually and then left does NOT block - they treated it as an
+     * ordinary group, so an ordinary leave is not a statement about rippling.
+     *
+     * Deliberately ONE indexed read of this member's own log rows, bucketed in PHP. Asked as a
+     * correlated NOT EXISTS per candidate group it becomes three nested probes of a 22M-row
+     * table, and the two inner ones have no usable composite index - `logs` carries `user`,
+     * `groupid` and `(type,subtype)` separately, so MySQL falls back to deciding per row
+     * whether an index helps. That plan has now stalled the pipeline twice: 4-minute stalls in
+     * addPosterMembershipToRippledGroups (2026-08-31, BATCH-83) and a 1,022-second query in
+     * rippleIntoNewGroups. Both call this instead. Do not inline it back.
+     *
+     * @return int[] groupids, ascending, deduplicated
+     */
+    private function rippleOptOutGroupIds(int $userid): array
+    {
+        $blocked = [];
+        $latestJoinText = [];
+
+        // Ordered by id, so the stream replays the member's history oldest-first and the last
+        // verdict written for a group is the one that stands.
+        foreach (DB::select(
+            "SELECT groupid, subtype, text FROM logs
+             WHERE user = ? AND type = 'Group' AND subtype IN ('Joined', 'Left')
+             ORDER BY id",
+            [$userid]
+        ) as $l) {
+            if ($l->subtype === 'Joined') {
+                $latestJoinText[$l->groupid] = $l->text;
+                // Any later join (manual or rippled) supersedes an earlier block:
+                // "most recent join wins".
+                unset($blocked[$l->groupid]);
+            } elseif (($latestJoinText[$l->groupid] ?? null) === 'Rippled') {
+                // A Left whose most recent prior Joined was a ripple-join.
+                $blocked[$l->groupid] = true;
+            }
+        }
+
+        return array_map('intval', array_keys($blocked));
+    }
+
+    /**
      * Ripple a post INTO every published group whose area the reach now covers (#6).
      *
      * "Crosses into a new group" = the reach polygon intersects the group's area. A
@@ -1910,6 +1955,19 @@ class ExpandService
             // ripple:opt-out), and the only one that also covers ripple-OUT (see initialiseNew).
             $inOptOut = $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN);
 
+            // Groups this poster has already opted out of by leaving a ripple-join, worked out
+            // in PHP from ONE indexed pass over their own Group Joined/Left logs. As a
+            // correlated NOT EXISTS here it was three nested `logs` probes per candidate group,
+            // two of which MySQL re-planned per row ("Range checked for each record") across
+            // 22.4M rows: one such query was measured running for 1,022 seconds, holding a core
+            // of a saturated db2 for the whole time. The same rewrite was applied to
+            // addPosterMembershipToRippledGroups on 2026-08-31 (BATCH-83); this is the call
+            // site it missed, and both now share rippleOptOutGroupIds().
+            $leftAfterRipple = $this->rippleOptOutGroupIds((int) $msg->fromuser);
+            $leftAfterRippleSql = $leftAfterRipple === []
+                ? ''
+                : 'AND g.id NOT IN (' . implode(',', $leftAfterRipple) . ')';
+
             // keep-raw: ST_Intersects/ST_GeometryType plus the correlated logs/ban NOT EXISTS arms the builder cannot render
             $targetGroups = DB::select(
                 "SELECT g.id
@@ -1934,30 +1992,7 @@ class ExpandService
                        WHERE rr.msgid = ?
                          AND JSON_CONTAINS(COALESCE(rr.rejected_groups, JSON_ARRAY()), CAST(g.id AS JSON))
                    )
-                   AND NOT EXISTS (
-                       -- Suppress re-rippling only when the poster's MOST RECENT Group/Joined log
-                       -- for this group is a ripple-join (text='Rippled') AND they then LEFT it -
-                       -- i.e. the membership they last opted out of was a rippled one. Most recent
-                       -- join wins: the NOT EXISTS lj2 makes lj the latest Joined, so a later
-                       -- manual/ordinary join (then leave) means they treated it as a normal group
-                       -- and rippling is NOT blocked; ll.id > lj.id requires the leave to follow
-                       -- that ripple-join. Sites B/C apply the identical rule.
-                       SELECT 1 FROM logs lj
-                       WHERE lj.user = ? AND lj.groupid = g.id
-                         AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled'
-                         AND NOT EXISTS (
-                             SELECT 1 FROM logs lj2
-                             WHERE lj2.user = lj.user AND lj2.groupid = lj.groupid
-                               AND lj2.type = 'Group' AND lj2.subtype = 'Joined'
-                               AND lj2.id > lj.id
-                         )
-                         AND EXISTS (
-                             SELECT 1 FROM logs ll
-                             WHERE ll.user = lj.user AND ll.groupid = lj.groupid
-                               AND ll.type = 'Group' AND ll.subtype = 'Left'
-                               AND ll.id > lj.id
-                         )
-                   )
+                   {$leftAfterRippleSql}
                    AND NOT EXISTS (
                        -- A ban is an explicit mod ejection: it withdraws the poster's live posts
                        -- and (modern ban) deletes their membership while recording a users_banned
@@ -1984,9 +2019,10 @@ class ExpandService
                    )",
                 // One binding per placeholder, in query order: the reach shape, the
                 // msgid twice (already on the group; turned away by the group), then the
-                // poster four times (rippled-then-left, users_banned, Banned membership,
-                // PROHIBITED posting status).
-                [$reachWkt, $msgid, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser, $msg->fromuser]
+                // poster three times (users_banned, Banned membership, PROHIBITED posting
+                // status). The ripple opt-out is spliced in as a group-id list above, so it
+                // has no placeholder.
+                [$reachWkt, $msgid, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser]
             );
 
             // A stored MODERATED posting status on the receiving group does NOT hold the copy.
@@ -2156,27 +2192,10 @@ class ExpandService
             // poster's ENTIRE log history per probe; a poster with a long history
             // stalled the serial expand pipeline for minutes per post (2026-08-31:
             // 4-minute stalls, engine idle, zero advances, Sentry BATCH-83 window).
-            $blocked = [];
-            $latestJoinText = [];
-            foreach (DB::select(
-                "SELECT groupid, subtype, text FROM logs
-                 WHERE user = ? AND type = 'Group' AND subtype IN ('Joined', 'Left')
-                 ORDER BY id",
-                [$posterId]
-            ) as $l) {
-                if ($l->subtype === 'Joined') {
-                    $latestJoinText[$l->groupid] = $l->text;
-                    // Any later join (manual or rippled) supersedes an earlier block:
-                    // "most recent join wins".
-                    unset($blocked[$l->groupid]);
-                } elseif (($latestJoinText[$l->groupid] ?? null) === 'Rippled') {
-                    // A Left whose most recent prior Joined was a ripple-join.
-                    $blocked[$l->groupid] = true;
-                }
-            }
-            $notBlockedSql = empty($blocked)
+            $blocked = $this->rippleOptOutGroupIds((int) $posterId);
+            $notBlockedSql = $blocked === []
                 ? ''
-                : 'AND mg.groupid NOT IN (' . implode(',', array_map('intval', array_keys($blocked))) . ')';
+                : 'AND mg.groupid NOT IN (' . implode(',', $blocked) . ')';
 
             $targets = DB::select(
                 "SELECT mg.groupid
