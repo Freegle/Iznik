@@ -49,6 +49,58 @@ class ScheduledOutcomeRegistry
                 ->inCategory('fire-once-output')
                 ->activeBetween(6, 24, $tz),
 
+            // The check above has a floor of 1, so it only says the 02:30 run started. That is
+            // the same shape that let the daily digest collapse for three days while its own
+            // check passed (see the digest window check below). Here the floor needs no
+            // guessing at all: stats:generate-daily writes for EVERY group, and over
+            // 2026-09-07..16 coverage was 507 of 507 on all ten days without exception, while
+            // the raw row count wandered between 4,227 and 4,395 with activity. So assert
+            // coverage rather than volume, and take the expected number from the groups table
+            // at check time - it then tracks communities being added or retired by itself.
+            (new CallbackCheck(
+                'stats:generate-daily coverage',
+                function (CarbonInterface $now) use ($tz) {
+                    $slug = 'stats:generate-daily coverage';
+                    $day = $now->copy()->setTimezone($tz)->startOfDay()->subDay()->toDateString();
+
+                    // Groups founded AFTER the day in question have no stats for it and must
+                    // not count against coverage. founded is NULL on a handful of the oldest
+                    // groups, which long pre-date any day this could check.
+                    $expected = DB::table('groups')
+                        ->where(function ($q) use ($day) {
+                            $q->whereNull('founded')->orWhere('founded', '<', $day);
+                        })
+                        ->count();
+
+                    if ($expected === 0) {
+                        return OutcomeResult::skipped($slug, 'no groups existed on ' . $day);
+                    }
+
+                    $covered = DB::table('stats')
+                        ->where('date', $day)
+                        ->distinct()
+                        ->count('groupid');
+
+                    if ($covered < $expected) {
+                        $missing = $expected - $covered;
+
+                        return OutcomeResult::breach(
+                            $slug,
+                            "daily stats cover {$covered} of {$expected} communities for {$day} - "
+                            . "{$missing} missing. The 02:30 run did not get through them all."
+                        );
+                    }
+
+                    return OutcomeResult::ok(
+                        $slug,
+                        "daily stats cover all {$expected} communities for {$day}"
+                    );
+                }
+            ))
+                ->describedAs('Every community got daily stats for yesterday')
+                ->inCategory('fire-once-output')
+                ->activeBetween(6, 24, $tz),
+
             // mail:digest:unified --mode=daily (07:00-12:00 London) records a
             // users_digests.lastsent for mode='daily' on each send. Inert
             // (skipped) until the daily pilot is enabled via the allowlist.

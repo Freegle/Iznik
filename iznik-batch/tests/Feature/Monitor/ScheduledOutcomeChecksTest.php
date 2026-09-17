@@ -250,6 +250,82 @@ class ScheduledOutcomeChecksTest extends TestCase
     }
 
     /**
+     * The daily-stats coverage check. Its companion ProducedSinceCheck also has a floor of 1,
+     * so it passes whenever the 02:30 run wrote a single row — against a real ~4,300 a day
+     * covering all 507 communities. Coverage is the assertion worth making, and the expected
+     * number comes from the groups table rather than from a guess.
+     */
+    private function statsCoverageCheck(): \App\Monitoring\OutcomeCheck
+    {
+        foreach ((new \App\Monitoring\ScheduledOutcomeRegistry())->checks() as $check) {
+            if ($check->slug() === 'stats:generate-daily coverage') {
+                return $check;
+            }
+        }
+
+        $this->fail('the daily-stats coverage check is not registered');
+    }
+
+    /** Give every group a stats row for $day, and return the ids seeded. */
+    private function seedStatsForAllGroups(string $day): array
+    {
+        $ids = DB::table('groups')->pluck('id')->all();
+
+        foreach ($ids as $id) {
+            DB::table('stats')->insert([
+                'date' => $day,
+                'end' => $day,
+                'groupid' => $id,
+                'type' => 'ApprovedMessageCount',
+                'count' => 1,
+            ]);
+        }
+
+        return $ids;
+    }
+
+    public function test_stats_coverage_ok_when_every_community_is_covered(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 9, 15, 7, 0, 0, 'Europe/London'));
+        $this->seedStatsForAllGroups('2026-09-14');
+
+        $result = $this->statsCoverageCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isOk(), $result->message);
+    }
+
+    public function test_stats_coverage_breaches_when_a_community_is_missed(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 9, 15, 7, 0, 0, 'Europe/London'));
+        $ids = $this->seedStatsForAllGroups('2026-09-14');
+        $this->assertNotEmpty($ids, 'there are groups to cover');
+
+        // One community's rows go missing — the 02:30 run stopped short. A floor of 1 cannot
+        // see that; coverage can.
+        DB::table('stats')->where('date', '2026-09-14')->where('groupid', end($ids))->delete();
+
+        $result = $this->statsCoverageCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isBreach(), $result->message);
+        $this->assertStringContainsString('1 missing', $result->message);
+    }
+
+    public function test_stats_coverage_ignores_a_community_founded_after_the_day(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 9, 15, 7, 0, 0, 'Europe/London'));
+        $this->seedStatsForAllGroups('2026-09-14');
+
+        // Founded after the day being checked, so it cannot have stats for it and must not
+        // count against coverage — otherwise every new community turns the check red for a day.
+        $new = $this->createTestGroup();
+        DB::table('groups')->where('id', $new->id)->update(['founded' => '2026-09-15 09:00:00']);
+
+        $result = $this->statsCoverageCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isOk(), $result->message);
+    }
+
+    /**
      * The daily-digest window check. Its companion ProducedSinceCheck has a floor of 1, so it
      * passes on any day at least one digest went out — which is why the 2026-09-15..17
      * collapse (throughput down 13x, digests landing at 01:00, 40,000+ still sent) passed
