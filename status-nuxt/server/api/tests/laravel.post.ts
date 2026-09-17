@@ -13,9 +13,19 @@ const REQUIRED_CONTAINERS = ['percona', 'batch', 'spatial-knn']
 export default defineEventHandler(async (event) => {
   console.log('Starting Laravel tests...')
 
-  // Read optional filter/testsuite params from request body
+  // Read optional filter/testsuite params from request body.
+  //
+  // Integration is in the default set. phpunit.xml keeps it as its own suite so it
+  // can be run alone, but leaving it out of the default meant CI never ran it: the
+  // orb posts here with no body, so 15 mail tests went unrun for as long as they
+  // have existed. One of them had been asserting a subject line that no longer
+  // appears anywhere in the code, and nothing said so.
+  //
+  // They need Mailpit, which runs in CI and in the local dev profile. Without it
+  // each one calls markTestSkipped, so including them cannot fail a run that has
+  // no Mailpit.
   let filter = ''
-  let testsuite = 'Unit,Feature'
+  let testsuite = 'Unit,Feature,Integration'
   try {
     const body = await readBody(event)
     if (body?.filter) filter = body.filter

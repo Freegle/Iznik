@@ -141,7 +141,15 @@ class ChatNotificationIntegrationTest extends TestCase
 
         $this->assertNotNull($receivedMessage);
         $subject = $this->mailpit->getSubject($receivedMessage);
-        $this->assertStringContainsString("sent you a message", $subject);
+        // This chat holds one TYPE_DEFAULT message and no TYPE_INTERESTED one, so the
+        // subject takes ChatNotification's fallback rather than the "Regarding: <item>"
+        // form, which needs an interested message to name.
+        //
+        // The expectation here was "sent you a message", which no longer appears anywhere
+        // in the code: 7a8279857 deliberately moved subject generation onto iznik-server's
+        // getChatEmailSubject() logic and added this fallback. Nothing caught the stale
+        // assertion because this suite was not in the default set CI runs.
+        $this->assertStringContainsString("You have a new message", $subject);
     }
 
     public function test_chat_notification_passes_spam_checks(): void
