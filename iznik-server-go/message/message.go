@@ -3525,6 +3525,17 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		return fiber.NewError(fiber.StatusInternalServerError, "Transaction failed")
 	}
 
+	// Capture any mod-applied hold on the group the draft is recorded against,
+	// before its messages_groups row is removed below. A hold is scoped to a
+	// specific (message, group) pair; capturing it here is what lets
+	// JoinAndPostAs restore it on repost without a mod having released it
+	// (Discourse 9946/8), without needing the old messages_groups row itself
+	// to survive.
+	var heldby *uint64
+	if len(groupids) > 0 {
+		tx.Table("messages_groups").Select("heldby").Where("msgid = ? AND groupid = ?", req.ID, groupids[0]).Scan(&heldby)
+	}
+
 	// messages_drafts is unique per msgid, so a message has at most one draft
 	// row. Record it against the first targeted group; on re-post via
 	// JoinAndPost the owner picks the destination group(s) again. INSERT IGNORE
@@ -3533,6 +3544,7 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		if err := tx.Table("messages_drafts").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 			"msgid":   req.ID,
 			"groupid": groupids[0],
+			"heldby":  heldby,
 			"userid":  myid,
 		}).Error; err != nil {
 			tx.Rollback()
@@ -3543,12 +3555,16 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// Remove the targeted group rows. With a groupid this is just that group;
 	// without one it's every group the message was on. Any groups not in the
 	// set keep their live posting.
-	// Identical golden to 3a50dbee0fa0
-	// (handleDeleteMessage); converted together per gate (h). Runs on tx (a
-	// *gorm.DB transaction), which the retired harness's dry-run build
-	// function rendered identically to the plain connection - same reasoning
-	// as the retired orm_wave2_pilot_test.go's handleMerge note (removed in
-	// d22ba1d6c).
+	//
+	// A hard delete is safe here: any mod-applied heldby was captured above
+	// into messages_drafts.heldby, which JoinAndPostAs re-applies to the fresh
+	// row it creates on repost - so a hold survives the pause without the old
+	// messages_groups row needing to survive too. Keeping the row alive
+	// (soft-delete) was tried and rejected (PR #1517): it leaves a Pending row
+	// with deleted=1 and heldby still set, a state several existing
+	// heldby-checking queries over messages_groups don't filter out (PR #998
+	// fixed exactly this shape of row causing a real stuck-Held message in
+	// production), so it widens an already-live risk instead of avoiding it.
 	if err := tx.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, groupids).
 		Delete(nil).Error; err != nil {
 		tx.Rollback()
@@ -3675,11 +3691,26 @@ func JoinAndPostAs(c *fiber.Ctx, caller uint64, author uint64, req PostMessageRe
 	}
 
 	// Find the group — from request, then messages_drafts, then messages_groups.
+	// Also fetch any hold RejectToDraft captured from the group the draft was
+	// taken back from, so it can be reapplied below (Discourse 9946/8) - but
+	// only if the message is still headed to that same group: a hold is
+	// scoped to a (message, group) pair, and applyPatchMessageCore clears
+	// messages_drafts.heldby whenever the member switches destination group
+	// via PATCH, so comparing draft.Groupid to the resolved groupid here also
+	// covers a groupid supplied directly on this request that bypasses the
+	// draft's stored group entirely.
+	type draftInfo struct {
+		Groupid uint64
+		Heldby  *uint64
+	}
+	var draft draftInfo
+	db.Table("messages_drafts").Select("groupid, heldby").Where("msgid = ?", req.ID).Limit(1).Scan(&draft)
+
 	groupid := uint64(0)
 	if req.Groupid != nil && *req.Groupid > 0 {
 		groupid = *req.Groupid
 	} else {
-		db.Table("messages_drafts").Select("groupid").Where("msgid = ?", req.ID).Limit(1).Scan(&groupid)
+		groupid = draft.Groupid
 	}
 	if groupid == 0 {
 		groupid = getPrimaryGroupForMessage(db, req.ID)
@@ -3790,8 +3821,11 @@ func JoinAndPostAs(c *fiber.Ctx, caller uint64, author uint64, req PostMessageRe
 		db.Table("messages").Where("id = ?", req.ID).Update("deliverypossible", *req.Deliverypossible)
 	}
 
-	// Submit: insert into messages_groups and clean up draft.
-	db.Table("messages_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+	// Submit: insert into messages_groups. INSERT IGNORE only fires for a
+	// group with no existing row (msgid, groupid unique key) - RejectToDraft
+	// hard-deletes the old row (see handleRejectToDraft), so there is always
+	// exactly a fresh insert or nothing to do here, never a row to revive.
+	createFields := map[string]interface{}{
 		"msgid":      req.ID,
 		"groupid":    groupid,
 		"collection": collection,
@@ -3801,7 +3835,14 @@ func JoinAndPostAs(c *fiber.Ctx, caller uint64, author uint64, req PostMessageRe
 		// Read from the row rather than msg.Type so a draft with no type stored
 		// writes NULL rather than an empty string the enum would reject.
 		"msgtype": gorm.Expr("(SELECT type FROM messages WHERE id = ?)", req.ID),
-	})
+	}
+	if draft.Heldby != nil && draft.Groupid == groupid {
+		// Restore the hold RejectToDraft captured for this exact group -
+		// preserves a mod's hold across a member's edit-and-repost without a
+		// mod having released it (Discourse 9946/8).
+		createFields["heldby"] = *draft.Heldby
+	}
+	db.Table("messages_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(createFields)
 
 	// Clear any previous outcomes (V1 parity: submit() always deletes outcomes before re-posting).
 	// Identical golden to 854c7e93efe3
@@ -4214,11 +4255,20 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	// rather than the original one from RejectToDraft.  Without this, the group
 	// change is silently dropped and the message is reposted to the wrong community.
 	// The UPDATE is a no-op when the message is not in draft state (0 rows affected).
+	//
+	// Only fires when the groupid is actually changing (WHERE groupid != ?):
+	// clearing heldby is deliberate here, not a side effect. RejectToDraft
+	// captured any mod hold against the ORIGINAL group; once this switches the
+	// draft to a different one, that hold no longer applies there, and leaving
+	// it set would let JoinAndPostAs's "does the draft's group match where
+	// we're posting" check compare the new group against itself and wrongly
+	// reapply a hold that belonged to a different group (Discourse 9946/8).
 	if req.Groupid != nil && *req.Groupid > 0 {
 		var groupExists int64
 		db.Table("groups").Where("id = ?", *req.Groupid).Count(&groupExists)
 		if groupExists > 0 {
-			db.Table("messages_drafts").Where("msgid = ?", req.ID).Update("groupid", *req.Groupid)
+			db.Table("messages_drafts").Where("msgid = ? AND groupid != ?", req.ID, *req.Groupid).
+				Updates(map[string]interface{}{"groupid": *req.Groupid, "heldby": gorm.Expr("NULL")})
 		}
 	}
 

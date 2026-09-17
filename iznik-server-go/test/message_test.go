@@ -6922,7 +6922,9 @@ func TestRejectToDraftOwner(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM messages_drafts WHERE msgid = ?", msgID).Scan(&draftCount)
 	assert.Equal(t, int64(1), draftCount, "Message should be in messages_drafts")
 
-	// Verify message is no longer in messages_groups.
+	// Verify message is no longer in messages_groups at all (hard-deleted; any
+	// mod-applied hold was captured into messages_drafts.heldby instead - see
+	// TestRejectToDraftPreservesModHold).
 	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ?", msgID).Scan(&mgCount)
 	assert.Equal(t, int64(0), mgCount, "Message should be removed from messages_groups")
 
@@ -6963,7 +6965,7 @@ func TestRejectToDraftPerGroup(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// groupA row gone, groupB still live.
+	// groupA row gone (hard-deleted), groupB row untouched and still live.
 	var countA, countB int64
 	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&countA)
 	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&countB)
@@ -7034,7 +7036,7 @@ func TestRejectToDraftOwnerWithdrawsAllGroups(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// All groups removed.
+	// All groups removed (hard-deleted).
 	var mgCount int64
 	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ?", msgID).Scan(&mgCount)
 	assert.Equal(t, int64(0), mgCount, "All groups should be removed when withdrawing without a groupid")
@@ -7244,6 +7246,83 @@ func TestRejectToDraftFullRepostFlow(t *testing.T) {
 	var textbody string
 	db.Raw("SELECT textbody FROM messages WHERE id = ?", msgID).Scan(&textbody)
 	assert.Equal(t, "Updated description for repost", textbody)
+}
+
+func TestRejectToDraftPreservesModHold(t *testing.T) {
+	// Discourse 9946/8: a moderator holds a pending post and mod-mails the
+	// member asking them to improve it. The member edits and reposts the
+	// same message (RejectToDraft -> PATCH -> JoinAndPost) without any mod
+	// releasing the hold. The repost must not clear the mod's hold — the
+	// post should still be Held, not visible in the queue as a fresh Pending
+	// post no mod has looked at.
+	prefix := uniquePrefix("r2d_hold")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, posterToken := CreateTestSession(t, posterID)
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+
+	// Mod holds the message.
+	holdBody, _ := json.Marshal(map[string]interface{}{
+		"id":     msgID,
+		"action": "Hold",
+	})
+	req := httptest.NewRequest("POST", "/api/message?jwt="+modToken, bytes.NewBuffer(holdBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var heldby uint64
+	db.Raw("SELECT COALESCE(heldby, 0) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&heldby)
+	require.Equal(t, modID, heldby, "message should be held by the mod before the member reposts")
+
+	// Poster (owner, not a mod) edits and reposts their own held message.
+	rtdBody, _ := json.Marshal(map[string]interface{}{
+		"id":     msgID,
+		"action": "RejectToDraft",
+	})
+	req = httptest.NewRequest("POST", "/api/message?jwt="+posterToken, bytes.NewBuffer(rtdBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	patchBody, _ := json.Marshal(map[string]interface{}{
+		"id":       msgID,
+		"textbody": "Improved description after mod feedback",
+	})
+	req = httptest.NewRequest("PATCH", "/api/message?jwt="+posterToken, bytes.NewBuffer(patchBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	joinBody, _ := json.Marshal(map[string]interface{}{
+		"id":     msgID,
+		"action": "JoinAndPost",
+	})
+	req = httptest.NewRequest("POST", "/api/message?jwt="+posterToken, bytes.NewBuffer(joinBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The repost must still be Pending (not silently Approved) and, critically,
+	// must still be held by the same mod - a member edit must not clear a
+	// mod-applied hold.
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
+	assert.Equal(t, "Pending", collection)
+
+	db.Raw("SELECT COALESCE(heldby, 0) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&heldby)
+	assert.Equal(t, modID, heldby, "hold must survive the member's edit-and-repost")
 }
 
 func TestRejectToDraftClearsOutcome(t *testing.T) {
@@ -10045,7 +10124,8 @@ func TestPatchMessageGroupidUpdatesDraft(t *testing.T) {
 	json.NewDecoder(resp3.Body).Decode(&joinResult)
 	assert.Equal(t, float64(group2ID), joinResult["groupid"], "JoinAndPost should use the new group, not the original")
 
-	// Message must be in group2 only.
+	// Message must be in group2 only (group1's row was hard-deleted by
+	// RejectToDraft, so this checks it's genuinely gone, not just not live).
 	var mgCount1 int64
 	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group1ID).Scan(&mgCount1)
 	assert.Equal(t, int64(0), mgCount1, "message must not land on original group1")
