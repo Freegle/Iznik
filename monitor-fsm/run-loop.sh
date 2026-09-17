@@ -134,6 +134,8 @@ while true; do
   iter=$((iter + 1))
   start=$(date +%s)
   echo "[$(stamp)] run-loop: iteration $iter starting"
+  # Say so when this checkout's FSM code is not master's. See the script.
+  ./scripts/warn-if-stale.sh || true
   # Don't let a non-zero exit abort the loop — the driver already surfaces
   # errors and returns non-zero on fatals. We want the loop to keep going
   # so a transient failure doesn't silently stop the monitor overnight.
