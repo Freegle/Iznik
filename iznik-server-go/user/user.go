@@ -17,6 +17,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/emailhygiene"
 	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/location"
 	log2 "github.com/freegle/iznik-server-go/log"
@@ -1855,6 +1856,10 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 	}
 
 	email := strings.TrimSpace(req.Email)
+	// Observe only - never reject. TrimSpace does not remove the invisible
+	// formatting characters that actually get through here (U+200F, U+202C and
+	// friends), so this says so in Sentry rather than silently storing one.
+	emailhygiene.Report(email, "user.handleAddEmail", myid)
 	targetID := req.ID
 	if targetID == 0 {
 		targetID = myid
@@ -2053,6 +2058,9 @@ func PutUser(c *fiber.Ctx) error {
 	}
 
 	email := strings.TrimSpace(req.Email)
+	// Observe only - never reject. Signup is where the evidence points: the bad
+	// addresses are 75% preferred=1 primaries and none are partner-sourced.
+	emailhygiene.Report(email, "user.PutUser", 0)
 	db := database.DBConn
 
 	// Check if email already exists.

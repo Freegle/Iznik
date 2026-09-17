@@ -5,6 +5,7 @@ import (
 	stdlog "log"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/emailhygiene"
 	"github.com/freegle/iznik-server-go/user"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -115,6 +116,10 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 		// reorder; see the retired ormharness's normalise_test.go
 		// TestNormaliseColumnOrder_Insert (removed in d22ba1d6c).
 		if email != "" {
+			// Observe only. Addresses here come from Google/Facebook/Apple and
+			// should be clean; if one is not, the source tag says so and the
+			// signup theory is wrong.
+			emailhygiene.Report(email, "session.socialAuth", userID)
 			canon := user.CanonicalizeEmail(email)
 			db.Table("users_emails").Create(map[string]interface{}{
 				"userid":    userID,
