@@ -424,7 +424,11 @@ func getApprovedMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) 
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine
 	// (clause/where.go buildExprs), which would diverge from the golden.
-	approvedWhereSQL := "messages_groups.groupid IN (?) AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
+	// messages_groups.deleted = 0 matches the eligibility check PostResponse runs before
+	// recording a vote. Without it the picker offers a post that has been withdrawn from
+	// the volunteer's own community, and the vote is then refused with a 403 (support
+	// referral SR-DYS36). Part of this one string, not a second Where(): see above.
+	approvedWhereSQL := "messages_groups.groupid IN (?) AND messages_groups.deleted = 0 AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
 		"AND microvolunteering = 1 AND messages_outcomes.id IS NULL AND messages.deleted IS NULL AND microactions.id IS NULL " +
 		"AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1) " +
 		"AND collection = ? AND autoreposts = 0"
