@@ -192,6 +192,102 @@ class MessageIllustrationsServiceTest extends TestCase
         );
     }
 
+    private function createMessageInSpatialWithArrival(string $subject, int $minutesAgo): object
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $arrival = now()->subMinutes($minutesAgo);
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => $subject,
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => $arrival,
+            'arrival' => $arrival,
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+        ]);
+
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => $arrival,
+        ]);
+
+        DB::statement(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            [$message->id, $group->id, 'Offer', $arrival]
+        );
+
+        return $message;
+    }
+
+    public function test_a_message_failed_in_one_pass_is_retried_once_a_later_message_succeeds(): void
+    {
+        // Discourse topic 9630/70: no AI image is ever generated for a title containing
+        // "medicine". The watermark (illustrations_last_arrival) used to advance to the max
+        // arrival across every message INSPECTED in a pass, not just the ones resolved. So a
+        // message whose generation fails is permanently excluded from all future runs the
+        // moment a later-arriving message in the same pass succeeds - it can never be retried.
+        $earlier = $this->createMessageInSpatialWithArrival('OFFER: Medicine Cabinet (TestTown)', 20);
+        $later = $this->createMessageInSpatialWithArrival('OFFER: Toaster (TestTown)', 10);
+
+        $attemptsForEarlier = 0;
+        $mock = $this->createMock(PollinationsService::class);
+        $mock->method('shouldSkipItem')->willReturn(false);
+        $mock->method('recordFailure')->willReturn(false);
+        $mock->method('buildMessagePrompt')->willReturnCallback(fn ($n) => "prompt for $n");
+        $mock->method('uploadImageAndCache')->willReturn('freegletusd-testuid123');
+        $mock->method('fetchBatch')->willReturnCallback(function ($items) use (&$attemptsForEarlier) {
+            $results = [];
+            $failed = [];
+            foreach ($items as $item) {
+                if ($item['name'] === 'Medicine Cabinet') {
+                    $attemptsForEarlier++;
+                    if ($attemptsForEarlier === 1) {
+                        $failed[$item['name']] = true;
+                        continue;
+                    }
+                }
+                $results[] = [
+                    'msgid' => $item['msgid'],
+                    'name' => $item['name'],
+                    'data' => 'fake-image-data-'.$item['name'],
+                    'hash' => 'hash-'.$item['name'],
+                ];
+            }
+
+            return ['results' => $results, 'failed' => $failed];
+        });
+
+        $service = new MessageIllustrationsService($mock);
+
+        // First cron run: the later "Toaster" message succeeds, "Medicine Cabinet" fails.
+        $service->processIllustrations();
+
+        $this->assertTrue(
+            DB::table('messages_attachments')->where('msgid', $later->id)->exists(),
+            'Toaster should have been illustrated on the first pass'
+        );
+        $this->assertFalse(
+            DB::table('messages_attachments')->where('msgid', $earlier->id)->exists(),
+            'Medicine Cabinet should not be illustrated yet - its generation failed'
+        );
+
+        // Second cron run: Medicine Cabinet would succeed this time if it is still a candidate.
+        $service->processIllustrations();
+
+        $this->assertTrue(
+            DB::table('messages_attachments')->where('msgid', $earlier->id)->exists(),
+            'Medicine Cabinet should be retried and illustrated on a later run, ' .
+            'not permanently excluded because a later message in the same pass succeeded'
+        );
+    }
+
     public function test_updates_last_arrival_in_config(): void
     {
         $this->createMessageInSpatial('OFFER: Toaster (TestTown)');
