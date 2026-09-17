@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-06
+last_reviewed: 2026-09-17
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -51,6 +51,22 @@ To prevent duplicate user accounts when the same TN user joins multiple groups:
 1. Strip `-g{groupid}` suffix: `john-g123@user.trashnothing.com` → `john@user.trashnothing.com`
 2. Strip plus addressing
 3. Remove dots (Gmail-style normalization)
+
+### Identifying the member behind an address
+
+A member's TN identity is the username in their per-group addresses - `bibiana` in
+`bibiana-g288@user.trashnothing.com` - and it is the whole of it, not a prefix of it.
+`tn:sync`'s duplicate check (`TNSyncCommand::mergeDuplicateTNUsers`) merges the accounts
+that share one, keeping the lowest `users_emails.id`.
+
+Per tick it reads only addresses added since the last run and probes for siblings of each
+with `LIKE '<username>-g%@user.trashnothing.com'`; one tick a day regroups the whole table
+instead, which is what catches a duplicate made by re-pointing an existing row. That
+`LIKE` is an index narrowing and not the test: its `%` runs on past the end of the
+username, so `bibiana-g%` also matches `bibiana-gomes-g4840@...`, a different member.
+Both passes decide on an exact username from `tnUsernameFromAddress()`. Merging two
+members into one account deletes one of them and re-points their mail, so the exact test
+is what stands between a longer username and being absorbed by its own prefix.
 
 **Key functions**:
 - `User::isTN()` - Check if user is from TN
