@@ -251,12 +251,57 @@ class ItemClusterService
             }
 
             $this->canonicalCache[$name] = [
-                'canonical' => $canonical,
+                'canonical' => $this->dropSizeAndPanelWords($canonical),
                 'brand'     => $result['brand'] ?? null,
             ];
         }
 
         return $this->canonicalCache[$name];
+    }
+
+    /**
+     * How big it is, and what the panel is made of, are not what it is.
+     *
+     * The shared canonicaliser strips the brand, so "Samsung TV" and "Television" both
+     * arrive as "tv". What it leaves is the screen size and the display technology, and
+     * those split one item across a dozen buckets: a year of live offers published "Tv"
+     * as the commonest electrical at 73 while 287 posts in the same sample were
+     * televisions, sitting under "21in tv", "smart tv 32in", "flat screen tv",
+     * "50in plasma tv" and so on.
+     *
+     * Only words that leave the item itself unchanged are dropped, and never the last
+     * word, so the head noun always survives: "washing machine" cannot become "machine".
+     * A model name such as "bravia tv" is left alone, because telling a model from an
+     * item needs a catalogue this does not have.
+     */
+    private const NEUTRAL_WORDS = [
+        // Display technology.
+        'plasma', 'lcd', 'led', 'oled', 'crt', 'smart', 'widescreen', 'flat', 'screen',
+        // Size and form, where the thing is the same either way.
+        'small', 'large', 'big', 'mini', 'compact', 'portable', 'slim', 'tabletop',
+        // Colour, which is never the item.
+        'colour', 'color', 'black', 'white', 'silver',
+    ];
+
+    private function dropSizeAndPanelWords(string $canonical): string
+    {
+        // "32in", "40 inch", "50\"" and the bare number left when a unit was already
+        // stripped, e.g. "21in tv" -> "tv".
+        $t = (string) preg_replace('~\b\d+\s*(?:in|ins|inch|inches|")\b~u', ' ', $canonical);
+
+        $words = preg_split('~\s+~u', trim($t), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        if (count($words) < 2) {
+            return trim($t) === '' ? $canonical : trim($t);
+        }
+
+        $last = array_pop($words);
+        $kept = array_values(array_filter(
+            $words,
+            fn($w) => ! in_array($w, self::NEUTRAL_WORDS, true) && ! preg_match('~^\d+$~', $w)
+        ));
+        $kept[] = $last;
+
+        return implode(' ', $kept);
     }
 
     /** @return string[] */
