@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-17
 owner: Freegle dev team
 covers:
   - docs/developers/reference/coding-standards.md
@@ -20,6 +20,10 @@ causes, never skip tests or make coverage optional, and never dismiss a failure 
 | **Laravel** | Batch processing | `iznik-batch/` |
 | **Vitest** | Frontend stores and components | `iznik-nuxt3/` |
 | **Playwright** | End-to-end user journeys | `iznik-nuxt3/tests/e2e/` |
+
+The Laravel run covers three PHPUnit suites: `Unit`, `Feature` and `Integration`. The
+`Integration` ones send real mail through Mailpit, so they skip themselves when it is not
+running. Pass `testsuite` in the request body to run a subset.
 
 ## Running them
 
