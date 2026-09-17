@@ -634,6 +634,58 @@ class TNSyncCommandTest extends TestCase
     }
 
     /**
+     * A username is not a prefix of an address. `bibiana-g%@user.trashnothing.com`
+     * also matches `bibiana-gomes-g4840@...`, so the probe on its own merged two
+     * unrelated members and deleted one of them (2026-09-13). A longer username that
+     * happens to start with `<username>-g` must be left alone.
+     */
+    public function test_incremental_scan_leaves_a_longer_username_alone(): void
+    {
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $shortBase = 'dee_' . uniqid('', true);
+        $longBase = $shortBase . '-gomes';
+
+        // The member with the longer name has been around a while.
+        $longUser = $this->createTestUser(['fullname' => 'Dee Gomes']);
+        $longEmail = "{$longBase}-g4840@user.trashnothing.com";
+        DB::table('users_emails')->insert([
+            'userid' => $longUser->id,
+            'email' => $longEmail,
+            'backwards' => strrev($longEmail),
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+
+        // Read past it, so the next run is genuinely incremental.
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        // A different member, whose name is the other's prefix, joins a group.
+        $shortUser = $this->createTestUser(['fullname' => 'Dee']);
+        $shortEmail = "{$shortBase}-g288@user.trashnothing.com";
+        DB::table('users_emails')->insert([
+            'userid' => $shortUser->id,
+            'email' => $shortEmail,
+            'backwards' => strrev($shortEmail),
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertNotNull(User::find($shortUser->id), 'the new arrival must survive');
+        $this->assertNotNull(User::find($longUser->id), 'the member with the longer name must survive');
+        $this->assertEquals(
+            $longUser->id,
+            DB::table('users_emails')->where('email', $longEmail)->value('userid'),
+            'the longer name keeps its own address'
+        );
+    }
+
+    /**
      * The hole the incremental check cannot see: a duplicate made by re-pointing an
      * existing row, which adds no new id. One tick a day re-scans everything to catch
      * those, which is the only reason narrowing the per-tick check is safe.

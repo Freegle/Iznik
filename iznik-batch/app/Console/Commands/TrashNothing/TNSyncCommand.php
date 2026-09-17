@@ -628,6 +628,16 @@ class TNSyncCommand extends Command
     private const DUP_FULL_SCAN_HOURS = 24;
 
     /**
+     * The Trash Nothing username inside a per-group address: `bibiana-g288@...` is
+     * `bibiana`. The whole duplicate check turns on this being the member's identity,
+     * so both passes have to derive it the same way.
+     */
+    private function tnUsernameFromAddress(string $email): string
+    {
+        return preg_replace('/-g\d+@user\.trashnothing\.com$/i', '', $email);
+    }
+
+    /**
      * Merge Trash Nothing accounts that are really the same person.
      *
      * This ran on every tick, and a tick is every minute. Each run streamed all ~400,000
@@ -676,13 +686,14 @@ class TNSyncCommand extends Command
                     ->orderBy('id')
                     ->cursor() as $row
             ) {
-                $username = preg_replace('/-g\d+@user\.trashnothing\.com$/i', '', $row->email);
+                $username = $this->tnUsernameFromAddress($row->email);
                 $groups[$username][] = (int) $row->userid;
             }
         } else {
             // Only addresses added since last time. For each, collect everyone sharing
-            // its Trash Nothing username - an indexed prefix match on the address, since
-            // email is uniquely indexed and 'username-g' anchors the left of it.
+            // its Trash Nothing username. The address is indexed, so a prefix LIKE finds
+            // the candidates cheaply - but it only narrows, it does not decide: see the
+            // exact-username test below.
             $newUsernames = [];
             foreach (
                 DB::table('users_emails')
@@ -692,7 +703,7 @@ class TNSyncCommand extends Command
                     ->where('id', '<=', $highWater)
                     ->cursor() as $row
             ) {
-                $newUsernames[preg_replace('/-g\d+@user\.trashnothing\.com$/i', '', $row->email)] = true;
+                $newUsernames[$this->tnUsernameFromAddress($row->email)] = true;
             }
 
             foreach (array_keys($newUsernames) as $username) {
@@ -710,6 +721,17 @@ class TNSyncCommand extends Command
                         ->orderBy('id')
                         ->cursor() as $row
                 ) {
+                    // '-g%' runs on past the end of the username, so 'bibiana-g%' also
+                    // matches 'bibiana-gomes-g4840@...' - a different member with a
+                    // longer name. Group on an exact username, the same test the full
+                    // pass applies. Without this two unrelated members are merged into
+                    // one account and one of them is deleted: on 2026-09-13 TN user
+                    // 8893880 went into TN user 8996910's account, and 8893880's reply
+                    // to an OFFER was then answered to 8996910.
+                    if ($this->tnUsernameFromAddress($row->email) !== $username) {
+                        continue;
+                    }
+
                     $groups[$username][] = (int) $row->userid;
                 }
             }
