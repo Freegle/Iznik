@@ -120,6 +120,9 @@ class MessageIllustrationsService
         $processed = 0;
         $wouldFetch = 0;
         $cachedHits = 0;
+        // Earliest arrival this run still owes work on, across all its passes. Once set
+        // it only moves earlier, so a later clean pass cannot save a watermark past it.
+        $pinned = null;
 
         while (true) {
             $msgs = DB::select("
@@ -147,6 +150,7 @@ class MessageIllustrationsService
             $newMessages = [];
             $maxArrival = $lastArrival;
             $createdThisPass = 0;
+            $unresolved = [];
 
             foreach ($msgs as $msg) {
                 $arrival = $msg->arrival;
@@ -170,9 +174,13 @@ class MessageIllustrationsService
                     ->value('externaluid');
 
                 if ($cached) {
-                    $cachedMessages[] = ['msgid' => $msg->msgid, 'itemName' => $itemName, 'uid' => $cached];
+                    $cachedMessages[] = ['msgid' => $msg->msgid, 'itemName' => $itemName, 'uid' => $cached, 'arrival' => $arrival];
                 } elseif (count($newMessages) < self::BATCH_SIZE) {
-                    $newMessages[] = ['msgid' => $msg->msgid, 'itemName' => $itemName];
+                    $newMessages[] = ['msgid' => $msg->msgid, 'itemName' => $itemName, 'arrival' => $arrival];
+                } else {
+                    // Past this pass's batch. It is a candidate we have not dealt with,
+                    // so the saved watermark must not move beyond it.
+                    $unresolved[] = $arrival;
                 }
             }
 
@@ -256,11 +264,39 @@ class MessageIllustrationsService
                 }
             }
 
+            // Anything we set out to illustrate and did not still needs doing, so the
+            // SAVED watermark must not move past it. Discourse 9630/70: the watermark
+            // advanced to the highest arrival INSPECTED, so a message whose generation
+            // failed was excluded from every future run the moment a later-arriving
+            // message in the same pass succeeded. It could never be retried.
+            $attempted = array_merge($cachedMessages, $newMessages);
+            if (! empty($attempted)) {
+                $illustrated = DB::table('messages_attachments')
+                    ->whereIn('msgid', array_column($attempted, 'msgid'))
+                    ->pluck('msgid')
+                    ->all();
+                foreach ($attempted as $a) {
+                    if (! in_array($a['msgid'], $illustrated)) {
+                        $unresolved[] = $a['arrival'];
+                    }
+                }
+            }
+            if (! empty($unresolved)) {
+                $earliest = min($unresolved);
+                if ($pinned === null || $earliest < $pinned) {
+                    $pinned = $earliest;
+                }
+            }
+
+            // The cursor still sweeps forward, so this run does not re-read what it has
+            // just tried: an immediate retry of a failure that is probably rate limiting
+            // only spends the next call. What we SAVE is the earliest point still owed
+            // work, which is where the next run picks up.
             if ($maxArrival > $lastArrival) {
                 $lastArrival = $maxArrival;
-                if (!$dryRun) {
-                    $this->setLastArrival($lastArrival);
-                }
+            }
+            if (!$dryRun) {
+                $this->setLastArrival($pinned ?? $lastArrival);
             }
 
             // The candidate query is inclusive of $lastArrival and selects on the absence of an
