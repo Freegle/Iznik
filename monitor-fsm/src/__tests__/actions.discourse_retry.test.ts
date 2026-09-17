@@ -14,8 +14,9 @@ import { parseRetryAfter, postDiscourseReply } from '../actions/index'
  * out to a Python helper that mirrors the same retry-with-backoff loop; that one
  * is covered by the FSM integration run.)
  *
- * postDiscourseReply reads the real /home/edward/profile.json for the API key,
- * but every network call is mocked, so no request leaves the machine.
+ * postDiscourseReply reads its API key from the fixture profile that
+ * src/__tests__/setup.ts writes, and every network call is mocked, so no request
+ * leaves the machine and the tests do not depend on which machine they run on.
  */
 
 type FakeResponse = {

@@ -7,13 +7,26 @@ import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V4_SQL, MIGRATION_V5_SQL,
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
-export const DEFAULT_DB_PATH = process.env.MONITOR_FSM_DB_PATH
-  ?? resolve(__dirname, '..', '..', 'monitor.db')
+/** The live database a real lap reads and writes. */
+export const LIVE_DB_PATH = resolve(__dirname, '..', '..', 'monitor.db')
+
+export const DEFAULT_DB_PATH = process.env.MONITOR_FSM_DB_PATH ?? LIVE_DB_PATH
 
 let _db: DB | null = null
 
 export function getDb(path: string = DEFAULT_DB_PATH): DB {
   if (_db) return _db
+  // Opening the live database applies schema migrations to it. A test that
+  // forgets its in-memory setup would therefore migrate, and then write to, the
+  // database a running lap is using. Tests get their own path from
+  // src/__tests__/setup.ts; refuse the live one outright so no test can reach it,
+  // whether by omission or by passing the path explicitly.
+  if (process.env.VITEST && resolve(path) === LIVE_DB_PATH) {
+    throw new Error(
+      `getDb: refusing to open the live database ${LIVE_DB_PATH} from a test. ` +
+      "Use getDb(':memory:'), or let src/__tests__/setup.ts supply MONITOR_FSM_DB_PATH."
+    )
+  }
   mkdirSync(dirname(path), { recursive: true })
   const db = new Database(path)
   db.pragma('journal_mode = WAL')
