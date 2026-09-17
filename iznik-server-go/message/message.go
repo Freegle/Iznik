@@ -4467,7 +4467,7 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		invalidateMessageSearchIndexes(db, req.ID, subjectChanged, textChanged)
 	}
 
-	if (subjectChanged || textChanged || typeChanged || locationChanged || itemsChanged || imagesChanged) && !isMod {
+	if subjectChanged || textChanged || typeChanged || locationChanged || itemsChanged || imagesChanged {
 		// Store oldtype/newtype only when type actually changed.
 		var oldType, newType interface{}
 		if typeChanged {
@@ -4513,30 +4513,36 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		// V1 parity: reviewrequired is only set when the message is Approved
 		// AND the member's posting status would put them in Pending (i.e. they
 		// are moderated). Unmoderated members' edits go live with no review.
+		// A moderator's own edit never requires review of itself - skip the
+		// computation entirely so a mod's own membership row (looked up by
+		// myid, the editor) can't push reviewRequired to 1 and queue mods to
+		// review the mod's own edit.
 		reviewRequired := 0
 		groupIDs := getAllGroupsForMessage(db, req.ID)
 
-		for _, gid := range groupIDs {
-			// Check if the message is currently Approved on this group.
-			var collection string
-			db.Table("messages_groups").Select("collection").Where("msgid = ? AND groupid = ?", req.ID, gid).Scan(&collection)
+		if !isMod {
+			for _, gid := range groupIDs {
+				// Check if the message is currently Approved on this group.
+				var collection string
+				db.Table("messages_groups").Select("collection").Where("msgid = ? AND groupid = ?", req.ID, gid).Scan(&collection)
 
-			if strings.EqualFold(collection, "Approved") {
-				// Check if the group is set to moderate all posts.
-				var groupModerated, groupClosed int
-				db.Table("groups").Select("COALESCE(JSON_EXTRACT(settings, '$.moderated'), 0), COALESCE(JSON_EXTRACT(settings, '$.closed'), 0)").Where("id = ?", gid).Row().Scan(&groupModerated, &groupClosed)
+				if strings.EqualFold(collection, "Approved") {
+					// Check if the group is set to moderate all posts.
+					var groupModerated, groupClosed int
+					db.Table("groups").Select("COALESCE(JSON_EXTRACT(settings, '$.moderated'), 0), COALESCE(JSON_EXTRACT(settings, '$.closed'), 0)").Where("id = ?", gid).Row().Scan(&groupModerated, &groupClosed)
 
-				if groupModerated == 1 || groupClosed == 1 {
-					// Group moderates all posts — this edit needs review.
-					reviewRequired = 1
-				} else {
-					// Check the member's individual posting status.
-					var postingStatus *string
-					db.Table("memberships").Select("ourPostingStatus").Where("userid = ? AND groupid = ?", myid, gid).Scan(&postingStatus)
-
-					// NULL, empty, or MODERATED → member is moderated → review required.
-					if postingStatus == nil || *postingStatus == "" || strings.EqualFold(*postingStatus, "MODERATED") || strings.EqualFold(*postingStatus, "PROHIBITED") {
+					if groupModerated == 1 || groupClosed == 1 {
+						// Group moderates all posts — this edit needs review.
 						reviewRequired = 1
+					} else {
+						// Check the member's individual posting status.
+						var postingStatus *string
+						db.Table("memberships").Select("ourPostingStatus").Where("userid = ? AND groupid = ?", myid, gid).Scan(&postingStatus)
+
+						// NULL, empty, or MODERATED → member is moderated → review required.
+						if postingStatus == nil || *postingStatus == "" || strings.EqualFold(*postingStatus, "MODERATED") || strings.EqualFold(*postingStatus, "PROHIBITED") {
+							reviewRequired = 1
+						}
 					}
 				}
 			}

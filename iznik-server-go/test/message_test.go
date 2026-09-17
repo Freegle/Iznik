@@ -2994,10 +2994,15 @@ func TestPatchMessageAsMod(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// Mod edits should NOT create review record.
+	// Mod edits create an edit record like an owner's, attributed to the mod, but must not
+	// queue the mod's own edit for review.
 	var editCount int64
 	db.Raw("SELECT COUNT(*) FROM messages_edits WHERE msgid = ? AND byuser = ?", msgID, modID).Scan(&editCount)
-	assert.Equal(t, int64(0), editCount)
+	assert.Equal(t, int64(1), editCount)
+
+	var reviewRequired int
+	db.Raw("SELECT reviewrequired FROM messages_edits WHERE msgid = ? AND byuser = ? ORDER BY id DESC LIMIT 1", msgID, modID).Scan(&reviewRequired)
+	assert.Equal(t, 0, reviewRequired)
 }
 
 func TestGetMessageReturnsEditsForMod(t *testing.T) {
@@ -6792,8 +6797,13 @@ func TestPatchMessageTypeChangeCreatesEditRecord(t *testing.T) {
 	assert.Contains(t, *newSubject, "WANTED")
 }
 
-func TestPatchMessageTypeChangeModNoEditRecord(t *testing.T) {
-	// Mod type changes should NOT create an edit record.
+func TestPatchMessageTypeChangeModCreatesEditRecord(t *testing.T) {
+	// A moderator's type change must create an edit record, same as an owner's, so the
+	// change is attributed (byuser) and the pre-edit value survives for the mod log's
+	// historical reconstruction (buildGetLogsQuery in logs.go). Previously the write was
+	// gated on "!isMod", so a moderator edit left no trace at all: the mod log's own
+	// "original post" entry silently showed the post-edit value, and there was no way to
+	// tell which moderator had made the change (Discourse 10162).
 	prefix := uniquePrefix("msgmod_typemod")
 	db := database.DBConn
 
@@ -6818,7 +6828,58 @@ func TestPatchMessageTypeChangeModNoEditRecord(t *testing.T) {
 
 	var editCount int64
 	db.Raw("SELECT COUNT(*) FROM messages_edits WHERE msgid = ? AND byuser = ?", msgID, modID).Scan(&editCount)
-	assert.Equal(t, int64(0), editCount, "Mod type change should not create edit record")
+	assert.Equal(t, int64(1), editCount, "Mod type change should create an edit record attributed to the mod")
+}
+
+func TestPatchMessageSubjectChangeModCreatesEditRecordWithAttribution(t *testing.T) {
+	// Reproduces Discourse 10162 post 10: a moderator edits a message's subject (e.g. to
+	// strip flagged wording) and the mod log loses all trace of the pre-edit subject and
+	// of who made the change. applyPatchMessageCore only wrote a messages_edits row
+	// (which both drives logs.go's historical subject reconstruction and carries the
+	// editor's user id) when the editor was the owner, never for a moderator.
+	prefix := uniquePrefix("msgmod_subjmod")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+
+	// Use a neutral placeholder for the pre-edit subject rather than any real flagged
+	// wording - the test only needs to prove the pre-edit value is preserved and
+	// attributed, not exercise any particular word.
+	origSubject := prefix + " origsubject FLAGGEDWORD"
+	cleanedSubject := prefix + " origsubject cleaned"
+	db.Exec("UPDATE messages SET subject = ? WHERE id = ?", origSubject, msgID)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":      msgID,
+		"subject": cleanedSubject,
+	})
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+modToken, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var editID uint64
+	var byuser uint64
+	var oldSubject, newSubject *string
+	var reviewRequired int
+	db.Raw("SELECT id, byuser, oldsubject, newsubject, reviewrequired FROM messages_edits WHERE msgid = ? ORDER BY id DESC LIMIT 1", msgID).
+		Row().Scan(&editID, &byuser, &oldSubject, &newSubject, &reviewRequired)
+
+	assert.NotZero(t, editID, "Mod subject change should create an edit record")
+	assert.Equal(t, modID, byuser, "Edit record should attribute the change to the editing moderator")
+	require.NotNil(t, oldSubject)
+	require.NotNil(t, newSubject)
+	assert.Equal(t, origSubject, *oldSubject, "oldsubject should preserve the pre-edit wording")
+	assert.Equal(t, cleanedSubject, *newSubject)
+	assert.Equal(t, 0, reviewRequired, "A moderator's own edit should never be queued for mod review")
 }
 
 // --- Tests: RejectToDraft / BackToDraft ---
