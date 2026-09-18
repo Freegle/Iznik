@@ -649,20 +649,32 @@ func Messages(c *fiber.Ctx) error {
 			return res[i].Arrival.After(res[j].Arrival)
 		})
 
-		// Apply the SAME distance filter the unread count uses (nearbyCount ->
-		// resolveMaxDistance, which reads ?maxDistance= else the member's saved
-		// browseMaxDistance). Without this the feed returned every in-reach post
-		// regardless of the member's distance preference while the count honoured it, so
-		// the unread badge (e.g. 3) and the unseen posts the client shows above its
-		// "You're up to date" divider (e.g. 9) drifted apart. Own posts have a blurred
-		// distance of ~0 from the viewer (it's their own location) so they always pass;
-		// only far reach posts drop. We match nearbyCount exactly — no pinned exemption —
-		// so the two never disagree; a pinned clearance beyond the slider is out of scope
-		// for that viewer just as it is uncounted.
+		// Apply the SAME budget the unread count uses (nearbyCount -> countWithinBudget):
+		// resolveMaxDistance for the crow-flies cap, AND resolveMaxMinutes so a candidate
+		// the routing engine already answered (m.Roadmins, stamped by candDriveMetrics
+		// above) is judged by drive time first, crow miles only as the fallback for rows it
+		// could not answer. Checking distance alone dropped a post whose road distance was
+		// well within the member's saved drive-time budget but whose straight-line distance
+		// exceeded their saved miles reading (a river, an estuary, a motorway detour) - the
+		// feed found nothing at the member's own "full range" while mygroups/all
+		// communities, which apply no server-side distance filter at all, still showed the
+		// same post. Own posts have a blurred distance of ~0 from the viewer (it's their own
+		// location) and carry no Roadmins (toSummary was called with nil above), so they
+		// always pass on the crow-flies arm; only far reach posts are affected. We match
+		// nearbyCount exactly - no pinned exemption - so the two never disagree; a pinned
+		// clearance beyond the slider is out of scope for that viewer just as it is
+		// uncounted.
 		maxDist := resolveMaxDistance(c, db, myid)
+		maxMinutes := resolveMaxMinutes(c, db, myid)
 		if maxDist < BrowseDistanceUnlimited {
 			kept := res[:0]
 			for _, m := range res {
+				if maxMinutes > 0 && m.Roadmins != nil {
+					if *m.Roadmins <= maxMinutes {
+						kept = append(kept, m)
+					}
+					continue
+				}
 				if m.Distance <= maxDist {
 					kept = append(kept, m)
 				}
