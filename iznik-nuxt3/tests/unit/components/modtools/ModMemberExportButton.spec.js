@@ -1,110 +1,83 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { defineComponent, ref, computed } from 'vue'
+import { ref } from 'vue'
+import ModMemberExportButton from '~/modtools/components/ModMemberExportButton.vue'
 
-// Since csv-writer is a node module that can't be easily mocked for browser tests,
-// we test the component logic by creating a simplified test component that mirrors
-// the real component's behavior without the csv-writer dependency
-const MockModMemberExportButton = defineComponent({
-  name: 'ModMemberExportButton',
-  props: {
-    groupid: {
-      type: Number,
-      required: true,
-    },
-    myrole: {
-      type: String,
-      default: 'Owner',
-    },
-    membercount: {
-      type: Number,
-      default: 100,
-    },
-    hasGroup: {
-      type: Boolean,
-      default: true,
-    },
+// Mock save-file so we can assert whether an export was actually written.
+const mockSaveAs = vi.fn().mockResolvedValue(undefined)
+vi.mock('save-file', () => ({
+  default: (blob, filename) => mockSaveAs(blob, filename),
+}))
+
+// Mock member store so we can assert whether a fetch was actually triggered.
+const mockMemberStore = {
+  clear: vi.fn(),
+  fetchMembers: vi.fn().mockResolvedValue(undefined),
+  getByGroup: vi.fn(() => []),
+  context: null,
+}
+vi.mock('~/stores/member', () => ({
+  useMemberStore: () => mockMemberStore,
+}))
+
+// Mock group store; tests vary myrole/membercount via mockGroup.
+let mockGroup = null
+vi.mock('~/stores/modgroup', () => ({
+  useModGroupStore: () => ({
+    get: () => mockGroup,
+  }),
+}))
+
+// Mock useOurModal (avoids needing a real router for its nav guard); the
+// component calls modal.value.show() directly, so give it a stub with one.
+const mockModalShow = vi.fn()
+const mockModalRef = ref({ show: mockModalShow, hide: vi.fn() })
+vi.mock('~/composables/useOurModal', () => ({
+  useOurModal: () => ({
+    modal: mockModalRef,
+    show: vi.fn(),
+    hide: vi.fn(),
+  }),
+}))
+
+const modalStubs = {
+  'b-modal': {
+    template: '<div class="modal"><slot /><slot name="footer" /></div>',
+    methods: { show: vi.fn(), hide: vi.fn() },
   },
-  setup(props) {
-    const showExportModal = ref(false)
-    const context = ref(null)
-    const cancelled = ref(false)
-    const fetched = ref(0)
-    const exportList = ref([])
-    const modalButtonLabel = ref('Cancel')
-
-    const group = computed(() => {
-      if (!props.hasGroup) return null
-      return {
-        id: props.groupid,
-        nameshort: 'Test Group',
-        myrole: props.myrole,
-        membercount: props.membercount,
-      }
-    })
-
-    // Member export has been GDPR-restricted since 2024 (topic 10085/7); this
-    // must stay false for every role, not just non-Owners.
-    const admin = computed(() => false)
-
-    const progressValue = computed(() => {
-      return group.value && group.value.membercount
-        ? Math.round((100 * fetched.value) / group.value.membercount)
-        : 0
-    })
-
-    function cancelit() {
-      cancelled.value = true
-      exportList.value = []
-      showExportModal.value = false
-    }
-
-    function download() {
-      modalButtonLabel.value = 'Cancel'
-      context.value = null
-      cancelled.value = false
-      exportList.value = []
-      fetched.value = 0
-      showExportModal.value = true
-    }
-
-    return {
-      showExportModal,
-      context,
-      cancelled,
-      fetched,
-      exportList,
-      modalButtonLabel,
-      group,
-      admin,
-      progressValue,
-      cancelit,
-      download,
-    }
+  'b-progress': { template: '<div class="progress"><slot /></div>' },
+  'b-progress-bar': {
+    template: '<div class="progress-bar"></div>',
+    props: ['value'],
   },
-  template: `
-    <div>
-      <button v-if="group" :disabled="!admin" @click="download">Export</button>
-      <div v-if="showExportModal" class="modal">
-        <div class="progress" :style="{ width: progressValue + '%' }"></div>
-        <button class="cancel-btn" @click="cancelit">{{ modalButtonLabel }}</button>
-      </div>
-    </div>
-  `,
-})
+}
 
 describe('ModMemberExportButton', () => {
-  function mountComponent(props = {}) {
-    return mount(MockModMemberExportButton, {
-      props: {
-        groupid: 789,
-        ...props,
-      },
+  function mountComponent({
+    groupid = 789,
+    hasGroup = true,
+    myrole = 'Owner',
+    membercount = 100,
+  } = {}) {
+    mockGroup = hasGroup
+      ? {
+          id: groupid,
+          nameshort: 'Test Group',
+          myrole,
+          membercount,
+        }
+      : null
+
+    return mount(ModMemberExportButton, {
+      props: { groupid },
+      global: { stubs: modalStubs },
     })
   }
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockMemberStore.context = null
+    mockMemberStore.getByGroup.mockReturnValue([])
   })
 
   describe('rendering', () => {
@@ -132,21 +105,6 @@ describe('ModMemberExportButton', () => {
   })
 
   describe('computed properties', () => {
-    it('group returns group object when hasGroup is true', () => {
-      const wrapper = mountComponent({ groupid: 789 })
-      expect(wrapper.vm.group).toEqual({
-        id: 789,
-        nameshort: 'Test Group',
-        myrole: 'Owner',
-        membercount: 100,
-      })
-    })
-
-    it('group returns null when hasGroup is false', () => {
-      const wrapper = mountComponent({ hasGroup: false })
-      expect(wrapper.vm.group).toBeNull()
-    })
-
     it('admin is always false, even when myrole is Owner (GDPR export restriction, topic 10085/7)', () => {
       const wrapper = mountComponent({ myrole: 'Owner' })
       expect(wrapper.vm.admin).toBe(false)
@@ -198,7 +156,27 @@ describe('ModMemberExportButton', () => {
   })
 
   describe('download method', () => {
-    it('resets state', () => {
+    // Regression test: the review on PR #1561 found that disabling the
+    // button only flipped the :disabled attribute, while download() ->
+    // exportChunk() -> memberStore.fetchMembers() + saveAs() stayed fully
+    // wired underneath. Calling download() directly (e.g. from devtools,
+    // bypassing the disabled button) must be a no-op, not just an unclickable
+    // button. This fails against the pre-fix download() and passes now that
+    // download() itself is gated on admin.
+    it('does nothing when called directly, even though myrole is Owner', async () => {
+      const wrapper = mountComponent({ myrole: 'Owner' })
+
+      wrapper.vm.download()
+      await wrapper.vm.$nextTick()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.showExportModal).toBe(false)
+      expect(mockModalShow).not.toHaveBeenCalled()
+      expect(mockMemberStore.fetchMembers).not.toHaveBeenCalled()
+      expect(mockSaveAs).not.toHaveBeenCalled()
+    })
+
+    it('does not reset state when called directly', () => {
       const wrapper = mountComponent()
       wrapper.vm.context = 'old'
       wrapper.vm.cancelled = true
@@ -207,17 +185,10 @@ describe('ModMemberExportButton', () => {
 
       wrapper.vm.download()
 
-      expect(wrapper.vm.modalButtonLabel).toBe('Cancel')
-      expect(wrapper.vm.context).toBeNull()
-      expect(wrapper.vm.cancelled).toBe(false)
-      expect(wrapper.vm.exportList).toEqual([])
-      expect(wrapper.vm.fetched).toBe(0)
-    })
-
-    it('shows export modal', () => {
-      const wrapper = mountComponent()
-      wrapper.vm.download()
-      expect(wrapper.vm.showExportModal).toBe(true)
+      expect(wrapper.vm.context).toBe('old')
+      expect(wrapper.vm.cancelled).toBe(true)
+      expect(wrapper.vm.exportList).toEqual([{ id: 1 }])
+      expect(wrapper.vm.fetched).toBe(50)
     })
   })
 
@@ -229,30 +200,25 @@ describe('ModMemberExportButton', () => {
       expect(wrapper.find('.progress').exists()).toBe(true)
     })
 
-    it('shows Cancel button in modal', async () => {
-      const wrapper = mountComponent()
-      wrapper.vm.showExportModal = true
-      wrapper.vm.modalButtonLabel = 'Cancel'
-      await wrapper.vm.$nextTick()
-      expect(wrapper.find('.cancel-btn').text()).toBe('Cancel')
-    })
-
     it('clicking cancel button closes modal', async () => {
       const wrapper = mountComponent()
       wrapper.vm.showExportModal = true
       await wrapper.vm.$nextTick()
-      await wrapper.find('.cancel-btn').trigger('click')
+      await wrapper.findAll('button').at(-1).trigger('click')
       expect(wrapper.vm.showExportModal).toBe(false)
     })
   })
 
   describe('button click', () => {
-    it('the button is disabled, so download() is invoked directly to verify it opens the modal', async () => {
+    it('clicking the disabled Export button does not start an export', async () => {
       const wrapper = mountComponent()
       expect(wrapper.find('button').attributes('disabled')).toBe('')
-      wrapper.vm.download()
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.showExportModal).toBe(true)
+
+      await wrapper.find('button').trigger('click')
+
+      expect(wrapper.vm.showExportModal).toBe(false)
+      expect(mockMemberStore.fetchMembers).not.toHaveBeenCalled()
+      expect(mockSaveAs).not.toHaveBeenCalled()
     })
   })
 })

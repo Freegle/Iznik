@@ -206,6 +206,11 @@ async function exportChunk() {
 }
 
 function download() {
+  // The :disabled binding only stops a mouse click; guard the actual entry
+  // point too, so calling download() directly can't bypass the GDPR
+  // restriction (topic 10085/7).
+  if (!admin.value) return
+
   modalButtonLabel.value = 'Cancel'
   context.value = null
   cancelled.value = false
