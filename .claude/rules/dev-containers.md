@@ -155,6 +155,27 @@ A worktree's own `iznik` can also arrive half-migrated - schema carrying foreign
 on a migration that has plainly already run. Drop `iznik` and `iznik_go_test` in **that
 worktree's** percona and run the script again.
 
+## Local full suites can starve the CircleCI runner into an infrastructure failure
+
+The self-hosted runner lives in its own WSL2 distro but on the **same physical machine** as your
+worktrees. Run two full suites locally while a pipeline is building and the job can die as
+`infrastructure_fail`, with its steps `canceled` rather than failed - so nothing in the CI output
+names a test, and the branch looks broken when it is not.
+
+Seen 2026-09-18: 90 containers up, 3GB of 94GB free, a full Go suite and a full Laravel suite
+running against a worktree. Pipeline #12011 died that way; the identical commit passed as #12015
+once the worktree's stack was stopped and 19GB came back.
+
+Before blaming the branch, check `free -g` and `docker ps -q | wc -l`, and stop the stacks you
+are not using:
+
+```bash
+cd /path/to/worktree
+COMPOSE_PROJECT_NAME=freegle-<name> docker-compose stop
+```
+
+`stop` rather than `down` - the containers come straight back with no rebuild.
+
 ## On the FreegleDocker host, `git checkout` is a deploy
 
 `batch-prod` bind-mounts `iznik-batch/` and runs against the **production** database. The tree is
