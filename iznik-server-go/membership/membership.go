@@ -837,9 +837,12 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 	// Query related pairs where at least one user is in a modded group.
 	// user1 < user2, notified = 0.
 	type relatedRow struct {
-		ID    uint64 `gorm:"column:id"`
-		User1 uint64 `gorm:"column:user1"`
-		User2 uint64 `gorm:"column:user2"`
+		ID    uint64  `gorm:"column:id"`
+		User1 uint64  `gorm:"column:user1"`
+		User2 uint64  `gorm:"column:user2"`
+		// Why the pair was linked, for the moderator to read on the card. NULL for rows
+		// written by the browser-session detector, which the frontend words for itself.
+		Reason *string `gorm:"column:reason"`
 	}
 
 	var rows []relatedRow
@@ -847,19 +850,19 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 	// Table() passes its name argument through verbatim (no quoting) once it
 	// contains a space, so a parenthesized UNION subquery can be given as the
 	// "table name" with its own bind args in Table()'s variadic args.
-	db.Table("(SELECT users_related.id, user1, user2 FROM users_related "+
+	db.Table("(SELECT users_related.id, user1, user2, reason FROM users_related "+
 		"INNER JOIN memberships ON users_related.user1 = memberships.userid "+
 		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = 'User' "+
 		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL "+
 		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ? "+
 		"UNION "+
-		"SELECT users_related.id, user1, user2 FROM users_related "+
+		"SELECT users_related.id, user1, user2, reason FROM users_related "+
 		"INNER JOIN memberships ON users_related.user2 = memberships.userid "+
 		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL "+
 		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' "+
 		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ?) t",
 		modGroupIDs, modGroupIDs).
-		Select("DISTINCT id, user1, user2").
+		Select("DISTINCT id, user1, user2, reason").
 		Order("id DESC").
 		Limit(limit).
 		Scan(&rows)
@@ -904,9 +907,10 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 		}
 
 		result = append(result, fiber.Map{
-			"id":    r.ID,
-			"user1": r.User1,
-			"user2": r.User2,
+			"id":     r.ID,
+			"user1":  r.User1,
+			"user2":  r.User2,
+			"reason": r.Reason,
 		})
 	}
 

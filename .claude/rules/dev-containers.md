@@ -160,6 +160,27 @@ During a merge or rebase conflict, `git checkout --ours <file>` or `--theirs <fi
 **entire file** with that side's pre-merge version, silently discarding every other hunk you had
 already resolved in it. Resolve hunks individually.
 
+## `setup-test-database.sh` races the batch container's own migrations
+
+The batch container's entrypoint (`iznik-batch/docker/entrypoint.sh`) runs `artisan migrate`
+itself, with a retry loop, whenever it starts. `scripts/setup-test-database.sh` also runs
+`artisan migrate`. Start the script while the container is still coming up and both run
+against `iznik` at once.
+
+What you see is not a race, it is a **migration chain that looks broken**: `Base table or
+view already exists: aviva_votes`, or `Duplicate column name 'heldby'`, on a database you
+just dropped. The obvious reading is that some migration is missing an idempotency guard,
+and you can lose a long time adding guards to migrations that were fine.
+
+The tell is that the failing migration is an arbitrary one, and a different one each run.
+Laravel writes the `migrations` row only after `up()` returns, so whichever process loses
+the race leaves the schema change applied with no row recorded, and the next attempt tries
+it again.
+
+Wait for `docker ps` to show the batch container settled before running the script, and run
+it once. If the database is already half-migrated, drop `iznik` first, or the recorded rows
+and the real schema stay out of step.
+
 ## See also
 
 - `CLAUDE.md` - the container quick reference and the worktree CLI.

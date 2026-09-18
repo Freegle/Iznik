@@ -3557,7 +3557,7 @@ func TestGetRelatedMembers(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.GreaterOrEqual(t, len(result), 1, "Should return at least one related pair")
 
-	// Find our specific pair — API returns {id, user1, user2} only.
+	// Find our specific pair — API returns {id, user1, user2, reason}.
 	var found bool
 	for _, entry := range result {
 		entryU1 := uint64(entry["user1"].(float64))
@@ -3570,6 +3570,57 @@ func TestGetRelatedMembers(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "Should find our specific related pair")
+}
+
+// The moderator card shows why a pair was flagged, so the detector's note has to survive
+// the trip through the API. Rows written by the browser-session detector have no note and
+// must come back as null rather than breaking the response.
+func TestGetRelatedMembersReturnsReason(t *testing.T) {
+	prefix := uniquePrefix("mem_related_reason")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user1ID, prefix+"_u1_login")
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user2ID, prefix+"_u2_login")
+	defer db.Exec("DELETE FROM users_logins WHERE uid IN (?, ?)", prefix+"_u1_login", prefix+"_u2_login")
+
+	u1, u2 := user1ID, user2ID
+	if u1 > u2 {
+		u1, u2 = u2, u1
+	}
+
+	reason := "Both accounts gave the same mobile number (ending 0373) in chat. " +
+		"#1: 2 messages, 14 May 2026 to 25 Jul 2026. #2: 1 message on 29 Aug 2026."
+	db.Exec("INSERT INTO users_related (user1, user2, notified, reason) VALUES (?, ?, 0, ?)", u1, u2, reason)
+	defer db.Exec("DELETE FROM users_related WHERE user1 = ? AND user2 = ?", u1, u2)
+
+	url := fmt.Sprintf("/api/memberships?collection=Related&jwt=%s", modToken)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	var found bool
+	for _, entry := range result {
+		if uint64(entry["user1"].(float64)) == u1 && uint64(entry["user2"].(float64)) == u2 {
+			found = true
+			assert.Equal(t, reason, entry["reason"], "The detector's note should reach the mod")
+			break
+		}
+	}
+	assert.True(t, found, "Should find the pair we inserted")
 }
 
 func TestGetRelatedMembersFiltersByGroup(t *testing.T) {

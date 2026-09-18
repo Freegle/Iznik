@@ -29,6 +29,12 @@ class MessageExpiryService
     public const AGE_EXPIRY_BATCH = 20000;
 
     /**
+     * Full Message models fetched at a time by the deadline pass. These carry the
+     * text columns, so the whole candidate set at once exhausts memory.
+     */
+    public const EXPIRE_CHUNK = 500;
+
+    /**
      * Process messages that have reached their deadline.
      */
     public function processDeadlineExpired(bool $dryRun = false): array
@@ -76,19 +82,57 @@ class MessageExpiryService
     {
         $earliestDate = now()->subDays(self::EXPIRE_LOOKBACK_DAYS);
 
-        // Stream in keyset-paginated chunks: the 90-day candidate set can be large and
-        // these are full Message models (incl. text columns), so a single get() exhausts
-        // memory. Keyset pagination by messages.id is also safe against the outcome rows
-        // we create as each message is expired (they only fall behind the cursor).
-        return Message::select('messages.*')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
-            ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages.id')
+        // Two passes, because one is unaffordable.
+        //
+        // This used to be a single `SELECT DISTINCT messages.*` joined to
+        // messages_groups and messages_outcomes, paginated with lazyById. The
+        // `ORDER BY messages.id LIMIT 500` that lazyById adds made the optimiser
+        // walk the PRIMARY key from the start of the table rather than range-scan
+        // `arrival` - it expects to fill 500 rows quickly and stop. It does not:
+        // the matches are all recent, so it traverses the old ids first. Measured
+        // live on 2026-09-18 that was 6,301,473 rows examined and 93 seconds, to
+        // find a candidate set of 7,712. The DISTINCT, needed only because the
+        // messages_groups join multiplies a post by the groups it rippled to,
+        // added a temporary table over every column of messages including the
+        // text.
+        //
+        // So: collect the ids first with no LIMIT, which leaves the optimiser no
+        // reason to prefer the PRIMARY key (295,588 rows examined, 0.4-1.0s), then
+        // fetch the full models by id in chunks. Same streaming, same memory.
+        $ids = Message::query()
             ->where('messages.arrival', '>=', $earliestDate)
             ->whereNotNull('messages.deadline')
             ->whereRaw('messages.deadline < CURDATE()')
-            ->whereNull('messages_outcomes.id')
-            ->distinct()
-            ->lazyById(500, 'messages.id', 'id');
+            // A post with no group is not on the site, so it cannot expire off it.
+            // This is a static property of the post, so it belongs in the pass that
+            // runs once rather than in the one that runs per chunk.
+            ->whereExists(fn ($q) => $q->selectRaw('1')
+                ->from('messages_groups')
+                ->whereColumn('messages_groups.msgid', 'messages.id'))
+            ->orderBy('messages.id')
+            ->pluck('messages.id')
+            ->all();
+
+        return \Illuminate\Support\LazyCollection::make(function () use ($ids) {
+            foreach (array_chunk($ids, self::EXPIRE_CHUNK) as $chunk) {
+                // The outcome check is re-run per chunk rather than folded into the
+                // pass above. Expiring a post writes an outcome, and a member can
+                // mark one TAKEN while this is running; either would make an id
+                // collected earlier stale. Re-checking keeps what the keyset
+                // pagination used to give, at the cost of one indexed lookup per row.
+                $messages = Message::select('messages.*')
+                    ->whereIn('messages.id', $chunk)
+                    ->whereNotExists(fn ($q) => $q->selectRaw('1')
+                        ->from('messages_outcomes')
+                        ->whereColumn('messages_outcomes.msgid', 'messages.id'))
+                    ->orderBy('messages.id')
+                    ->get();
+
+                foreach ($messages as $message) {
+                    yield $message;
+                }
+            }
+        });
     }
 
     /**

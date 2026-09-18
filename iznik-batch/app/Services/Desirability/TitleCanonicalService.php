@@ -42,6 +42,15 @@ class TitleCanonicalService
 
     private const PC_AREAS_1 = ['B', 'E', 'G', 'L', 'M', 'N', 'S', 'W'];
 
+    // Units of measure, so a leading number that is a dimension or rating is never
+    // read as a count: "20 litres fish tank" keeps its 20, "2 uplighters" loses it.
+    private const MEASURE_WORDS = 'inch|inches|ins|ft|feet|foot|cm|cms|mm|mms|metre|metres|meter|meters|litre|litres|liter|liters|ml|watt|watts|kw|volt|volts|amp|amps|kg|kgs|lb|lbs|oz|ozs|gram|grams|ounce|ounces|ton|tons|tonne|tonnes|yard|yards|mile|miles|degree|degrees|tog|togs|pint|pints|gallon|gallons|hour|hours|min|mins|minute|minutes|day|days|week|weeks|month|months|year|years|seater|seaters';
+
+    // Plural count nouns, which go with the number rather than surviving it:
+    // "4 pieces of sunlight roofing" is roofing, not "pieces of sunlight roofing".
+    // Kept plural so "3 piece suite" and "2 pair scissors" are left alone.
+    private const COUNT_NOUNS = 'pairs|pieces|sets|packs|packets|boxes|bags|rolls|sheets|lengths|items|pcs';
+
     // Places that are also common item words — never stripped as a bare trailing place.
     private const PLACE_HOMONYMS = ['chesterfield', 'sandwich', 'bath', 'derby', 'deal', 'hove', 'leek', 'diss', 'looe', 'mold', 'tring', 'ware', 'wells', 'street'];
 
@@ -188,6 +197,34 @@ class TitleCanonicalService
                 $s = $t;
             }
         }
+
+        // A leading count plus a plural count noun: the noun is part of the count,
+        // so both go. Runs before the bare-count arm, which would otherwise strip
+        // only the number and leave "pieces of sunlight roofing".
+        $countRe = '~^(\d+)\s+(?:'.self::COUNT_NOUNS.')\s+(?:of\s+)?~iu';
+        if (preg_match($countRe, $s, $mc)) {
+            $t = self::squish((string) preg_replace($countRe, '', $s));
+            if (mb_strlen($t) >= 3) {
+                $qty = $qty ?: ((int) $mc[1] ?: null);
+                $isMultiple = true;
+                $s = $t;
+            }
+        }
+
+        // A bare leading count before a plural noun: "2 uplighters" -> "uplighters".
+        // Deliberately not a bare "\d+\s+" strip, which would eat the spec out of
+        // "3 seater sofa", "50 inch tv" and "2 door wardrobe". The number only goes
+        // when the word after it is itself plural and is not a unit of measure - the
+        // shape of a count, not of a dimension.
+        if (preg_match('~^(\d+)\s+(?!(?:'.self::MEASURE_WORDS.')\b)\w+s\b~iu', $s, $mb)) {
+            $t = self::squish((string) preg_replace('~^\d+\s+~u', '', $s));
+            if (mb_strlen($t) >= 3) {
+                $qty = $qty ?: ((int) $mb[1] ?: null);
+                $isMultiple = true;
+                $s = $t;
+            }
+        }
+
         if (preg_match('~\s+(?:x\s*(\d+)|(\d+)\s*x|\(x?\s*\d+\))\s*$~iu', $s, $ms)) {
             $qty = $qty ?: ((int) (($ms[1] ?? '') ?: ($ms[2] ?? '')) ?: null);
             $isMultiple = true;
