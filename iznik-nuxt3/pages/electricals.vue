@@ -57,7 +57,7 @@
                 <h3 class="green">
                   {{ headlineCo2e.toLocaleString() }}
                   <br />
-                  TONNES CO2
+                  TONNES CO2e
                 </h3>
               </b-col>
             </b-row>
@@ -115,8 +115,8 @@
               The electricals given away {{ rangeLabel }} weighed
               <template v-if="isEstimated">an estimated</template>
               {{ headlineTonnes.toLocaleString() }} tonnes. That is
-              {{ headlineCo2e.toLocaleString() }} tonnes of CO2 kept out of the
-              air, worth £{{ headlineCarbonValue.toLocaleString() }} at the
+              {{ headlineCo2e.toLocaleString() }} tonnes of CO2e saved, worth
+              £{{ headlineCarbonValue.toLocaleString() }} at the
               government's carbon value of £{{
                 stats.impact.carbon_proxy_gbp_per_tonne
               }}
