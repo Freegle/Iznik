@@ -1,11 +1,13 @@
 ---
-last_reviewed: 2026-09-04
+last_reviewed: 2026-09-18
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
   - iznik-nuxt3/modtools/pages/chats/**
   - iznik-nuxt3/modtools/pages/spammers.vue
   - iznik-nuxt3/modtools/components/ModMember*.vue
+  - iznik-nuxt3/modtools/components/ModRelatedMember.vue
+  - iznik-batch/app/Console/Commands/User/DetectRelatedAccountsCommand.php
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-modtools-member-review.spec.js
   - iznik-nuxt3/tests/e2e/test-modtools-spammers.spec.js
@@ -69,9 +71,23 @@ leaving well-meaning members alone.
 ## Related members
 
 **Members > Related** (`/members/related`) surfaces pairs of accounts that look like the
-same person (same device, similar details, shared communities). You can **ignore** the
-pair, or send the member a friendly "let us know" email so **they** decide whether and how
-to merge their own accounts.
+same person, or the same household. Each card says why the pair was picked up:
+
+- both accounts were signed in from the same browser
+- both gave the same mobile number in chat
+- both gave the same street address in chat
+
+The note names the accounts and says how many messages the details appeared in, and when, so
+you can usually judge the pair without opening either chat.
+
+Most pairs are innocent. People forget a password and register again, or a couple share a
+phone. Nobody is blocked or flagged by appearing here. You can **ignore** the pair, or send
+the member a friendly "let us know" email so **they** decide whether and how to merge their
+own accounts. Merging helps, because replies sent to an account somebody has stopped using
+are never read.
+
+A shared postcode on its own is deliberately not enough to pair two accounts. A UK postcode
+covers around fifteen homes, so it would pair neighbours.
 
 ## Spammers
 
