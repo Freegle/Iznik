@@ -12,6 +12,21 @@ class MessageIllustrationsService
     private const CONFIG_KEY = 'illustrations_last_arrival';
     private const CLEANUP_WATERMARK_KEY = 'illustrations_cleanup_last_id';
 
+    // How long we keep holding the saved position for a post that is still waiting to be
+    // approved. Long enough for ordinary moderation, short enough that an abandoned post in
+    // a queue cannot stall the job indefinitely.
+    private const WAITING_WINDOW_DAYS = 3;
+
+    // Most passes a single run will make. Holding the saved position back means a run starts
+    // at the oldest post still waiting, so without a cap one run could try to work through
+    // days of backlog in a single go and outlast the 15 minute overlap lock.
+    private const MAX_PASSES = 6;
+
+    // How long a run may keep going. The job is scheduled every minute and will not overlap
+    // itself for 15, so a run that keeps finding work must still hand back in good time
+    // rather than swallow a quarter of an hour of ticks.
+    private const MAX_RUN_SECONDS = 300;
+
     public function __construct(private PollinationsService $pollinations) {}
 
     /**
@@ -124,7 +139,20 @@ class MessageIllustrationsService
         // it only moves earlier, so a later clean pass cannot save a watermark past it.
         $pinned = null;
 
+        $passes = 0;
+        $startedAt = microtime(true);
+
         while (true) {
+            if (++$passes > self::MAX_PASSES) {
+                break;
+            }
+
+            if (microtime(true) - $startedAt > self::MAX_RUN_SECONDS) {
+                Log::info('MessageIllustrations: out of time for this run, the next one carries on');
+                break;
+            }
+
+            $passStart = $lastArrival;
             $msgs = DB::select("
                 SELECT DISTINCT mg.msgid, m.subject, mg.arrival
                 FROM messages_groups mg
@@ -250,6 +278,16 @@ class MessageIllustrationsService
                     }
 
                     $uid = $this->pollinations->uploadImageAndCache($itemName, $imageData, $hash);
+                    if (! $uid) {
+                        // The picture was generated; storing it failed. That is a failure like
+                        // any other and has to be recorded, or the item never reaches the three
+                        // strikes that park it - and since the saved watermark is held at the
+                        // earliest item still owed work, one item nobody can store stops every
+                        // later message being illustrated at all. Production spent 2h20m on
+                        // 2026-09-18 retrying one football every minute while an NFS lock held
+                        // the image server, and nothing posted in that time got a picture.
+                        $this->pollinations->recordFailure($itemName);
+                    }
                     if ($uid) {
                         DB::table('messages_attachments')->insert([
                             'msgid' => $msgid,
@@ -288,6 +326,17 @@ class MessageIllustrationsService
                 }
             }
 
+            // A post is only a candidate once it is approved, because the query above needs a
+            // row in the spatial index and that holds approved posts. The watermark moves on
+            // arrival time regardless, so a post sitting in a moderation queue while the sweep
+            // goes past its arrival is never looked at again, and gets no illustration even
+            // after a moderator approves it. Discourse 9630/97 is two such posts. Hold the
+            // saved mark at the oldest post still waiting, so approval is not too late.
+            $waiting = $this->oldestWaitingForApproval();
+            if ($waiting !== null && ($pinned === null || $waiting < $pinned)) {
+                $pinned = $waiting;
+            }
+
             // The cursor still sweeps forward, so this run does not re-read what it has
             // just tried: an immediate retry of a failure that is probably rate limiting
             // only spends the next call. What we SAVE is the earliest point still owed
@@ -299,12 +348,21 @@ class MessageIllustrationsService
                 $this->setLastArrival($pinned ?? $lastArrival);
             }
 
-            // The candidate query is inclusive of $lastArrival and selects on the absence of an
-            // attachment, so a message we failed to illustrate comes back in the next pass
-            // unchanged. If a pass attaches nothing, the next one would see exactly the same rows:
-            // stop, rather than re-run the same query until MySQL kills it at 30s. Covers the
-            // empty-batch case too, and stops a dry run after one pass, which is what it wants.
-            if ($createdThisPass === 0) {
+            // The candidate query is inclusive of $lastArrival, so a pass that cannot move the
+            // cursor on would see exactly the same rows again: stop, rather than re-run the same
+            // query until MySQL kills it at 30s. Covers the empty-batch case too.
+            //
+            // The test used to be "this pass attached nothing", which is not the same thing. A
+            // pass whose candidates were all parked after earlier failures attaches nothing while
+            // still having moved on, and stopping there left everything newer unillustrated. That
+            // matters more now the saved position is held back to the oldest post still waiting
+            // for a moderator, because a run starts among the older posts rather than today's.
+            if ($lastArrival <= $passStart) {
+                break;
+            }
+
+            // A dry run is asking what one pass would do, not working through the backlog.
+            if ($dryRun) {
                 break;
             }
         }
@@ -324,6 +382,35 @@ class MessageIllustrationsService
         // "iron please" is a request for an iron, not for an "iron please" - and the clean
         // name is what finds the illustration we have already generated for one.
         return ItemName::stripCourtesy(trim($name ?? ''));
+    }
+
+    /**
+     * Arrival of the oldest post still waiting for a moderator, within the window we would
+     * still illustrate. Null when there is none.
+     *
+     * Bounded by WAITING_WINDOW_DAYS so one post left in a moderation queue for ever cannot
+     * hold the whole job at its arrival for ever: past that age we give up on it, which is
+     * the same thing the run already does with a post it cannot illustrate.
+     */
+    private function oldestWaitingForApproval(): ?string
+    {
+        $cutoff = date('Y-m-d H:i:s', strtotime('-' . self::WAITING_WINDOW_DAYS . ' days'));
+
+        $row = DB::selectOne("
+            SELECT MIN(mg.arrival) AS arrival
+            FROM messages_groups mg
+            INNER JOIN messages m ON m.id = mg.msgid
+            LEFT JOIN messages_attachments ma ON ma.msgid = m.id
+            LEFT JOIN messages_ai_declined maid ON maid.msgid = m.id
+            WHERE mg.collection = 'Pending'
+            AND mg.arrival >= ?
+            AND ma.id IS NULL
+            AND maid.msgid IS NULL
+            AND m.subject IS NOT NULL
+            AND m.subject != ''
+        ", [$cutoff]);
+
+        return $row?->arrival;
     }
 
     private function getLastArrival(): string
