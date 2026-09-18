@@ -153,6 +153,34 @@ select list defeats it entirely. Use `GROUP BY m.id`, or `AND mg.rippled_in = 0`
 only, and `COUNT(DISTINCT messages.id)` rather than `COUNT(*)`. See
 `.claude/rules/rippling.md`.
 
+## The chat list merges its rows by id, so a duplicated row is invisible
+
+`ListChatRooms` runs a second query and folds its rows into the outer list with
+`if chat1.ID == chat.ID`. A row returned twice is applied to the same entry twice, with the same
+values, so nothing about the API response changes. That has two consequences.
+
+The harmless one: dropping `SELECT DISTINCT` from that query cannot alter what any endpoint
+returns. The costly one: **no endpoint test can detect a join in it that starts fanning out.** A
+test that lists chats and asserts no duplicate ids passes whatever the SQL does - it is testing
+the merge loop, not the query. One was written here, passed against a deliberately broken join,
+and had to be thrown away.
+
+Assert on the query's own row count instead. `chat.ChatRoomListFrom(idlist)` exists so a test can
+run `SELECT COUNT(*)` over the real join list with every fan-out-capable table stacked; see
+`test/chatroom_joins_test.go`.
+
+## A DISTINCT over 1:1 joins removes nothing and is not free
+
+The mirror of the `messages_groups` note above. Where that one is a DISTINCT that cannot do the
+job asked of it, this is a DISTINCT with no job at all: if every join is on a primary key, on
+`id = (SELECT ... LIMIT 1)`, or on a derived table cut to `rn = 1`, no row can be duplicated and
+the keyword only buys a temporary table and a sort. On the chat room list - ~20 wide columns
+including two `JSON_EXTRACT`s and several correlated `COUNT(*)`s - that was 0.39 cores of db3
+continuously, 926,265 calls a day, and 621ms against 86ms over 15 members.
+
+Check each `SELECT DISTINCT` against its own join list rather than assuming either way. An equal
+row count proves a DISTINCT removed nothing, because DISTINCT can only ever remove.
+
 ## See also
 
 - `.claude/rules/laravel-batch-traps.md` - JSON null casting, in-place foreign keys.
