@@ -66,10 +66,22 @@ one BLOB into a `[]byte`". A populated column gives a scan error; a NULL column 
 that the `*Request` struct lacks is dropped. The handler returns `{"ret":0,"status":"Success"}`
 and the database is untouched.
 
-**When a moderator reports "it says it saved but nothing changed" on a group setting, check the
-request struct has a field for it before anything else.** This has bitten at least three times
-(group profile picture, microvolunteering options, and post visibility, which never had a field
-at all). The UI often hides it by recomputing its display from local state after the save.
+**When anyone reports "it says it saved but nothing changed" - on a group setting, a member
+setting, anything - check the request struct has a field for it before anything else.** This has
+bitten at least four times: group profile picture, microvolunteering options, post visibility, and
+`users.chatmodstatus`, the "Fully moderated" control that holds a member's chat for review. None
+of them had a field at all. The UI often hides it by recomputing its display from local state
+after the save, or by refetching a value the save never changed.
+
+Two things make this worse than a dropped write. A field the struct lacks cannot be granted by
+adding a permission check later - it is invisible to the handler - so the gap survives security
+review. And where the same column is written elsewhere in one direction only (chatmodstatus was
+set to `Unmoderated` by two other code paths and to nothing by any), the feature degrades one
+way and looks merely unused rather than broken.
+
+Worth grepping periodically: pull the keys every caller passes to the store's `edit()` and
+compare them against the `*Request` struct's json tags. Keys nested under `settings` are fine -
+that field is accepted and merged.
 
 ## Spatial geometries are lng/lat degrees mislabelled as SRID 3857
 
