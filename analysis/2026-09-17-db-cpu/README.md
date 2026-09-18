@@ -59,7 +59,7 @@ the first attempt at this reported a working capture as broken.
 - MySQL strips `/*comments*/` from `processlist.INFO` — a sampler cannot tag its own row with one.
   Match on the query text instead.
 - Replaying a captured statement into `EXPLAIN` after flattening its newlines truncates it at the
-  first `--` comment, with a syntax error that points at the very end. `longq.sh` stores newlines
+  first `--` comment, with a syntax error that points at the very end. `longq2.sh` stores newlines
   as `@@NL@@` for this reason; restore them before replaying.
 
 ## On a saturated node, rank by statement time — not by thread share
