@@ -248,4 +248,152 @@ class ScheduledOutcomeChecksTest extends TestCase
 
         $this->assertTrue($result->isBreach(), $result->message);
     }
+
+    /**
+     * The daily-stats coverage check. Its companion ProducedSinceCheck also has a floor of 1,
+     * so it passes whenever the 02:30 run wrote a single row — against a real ~4,300 a day
+     * covering all 507 communities. Coverage is the assertion worth making, and the expected
+     * number comes from the groups table rather than from a guess.
+     */
+    private function statsCoverageCheck(): \App\Monitoring\OutcomeCheck
+    {
+        foreach ((new \App\Monitoring\ScheduledOutcomeRegistry())->checks() as $check) {
+            if ($check->slug() === 'stats:generate-daily coverage') {
+                return $check;
+            }
+        }
+
+        $this->fail('the daily-stats coverage check is not registered');
+    }
+
+    /** Give every group a stats row for $day, and return the ids seeded. */
+    private function seedStatsForAllGroups(string $day): array
+    {
+        $ids = DB::table('groups')->pluck('id')->all();
+
+        foreach ($ids as $id) {
+            DB::table('stats')->insert([
+                'date' => $day,
+                'end' => $day,
+                'groupid' => $id,
+                'type' => 'ApprovedMessageCount',
+                'count' => 1,
+            ]);
+        }
+
+        return $ids;
+    }
+
+    public function test_stats_coverage_ok_when_every_community_is_covered(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 9, 15, 7, 0, 0, 'Europe/London'));
+        $this->seedStatsForAllGroups('2026-09-14');
+
+        $result = $this->statsCoverageCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isOk(), $result->message);
+    }
+
+    public function test_stats_coverage_breaches_when_a_community_is_missed(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 9, 15, 7, 0, 0, 'Europe/London'));
+        $ids = $this->seedStatsForAllGroups('2026-09-14');
+        $this->assertNotEmpty($ids, 'there are groups to cover');
+
+        // One community's rows go missing — the 02:30 run stopped short. A floor of 1 cannot
+        // see that; coverage can.
+        DB::table('stats')->where('date', '2026-09-14')->where('groupid', end($ids))->delete();
+
+        $result = $this->statsCoverageCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isBreach(), $result->message);
+        $this->assertStringContainsString('1 missing', $result->message);
+    }
+
+    public function test_stats_coverage_ignores_a_community_founded_after_the_day(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 9, 15, 7, 0, 0, 'Europe/London'));
+        $this->seedStatsForAllGroups('2026-09-14');
+
+        // Founded after the day being checked, so it cannot have stats for it and must not
+        // count against coverage — otherwise every new community turns the check red for a day.
+        $new = $this->createTestGroup();
+        DB::table('groups')->where('id', $new->id)->update(['founded' => '2026-09-15 09:00:00']);
+
+        $result = $this->statsCoverageCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isOk(), $result->message);
+    }
+
+    /**
+     * The daily-digest window check. Its companion ProducedSinceCheck has a floor of 1, so it
+     * passes on any day at least one digest went out — which is why the 2026-09-15..17
+     * collapse (throughput down 13x, digests landing at 01:00, 40,000+ still sent) passed
+     * three days running. This one asserts the run FINISHED, not that it happened.
+     */
+    private function digestWindowCheck(): \App\Monitoring\OutcomeCheck
+    {
+        foreach ((new \App\Monitoring\ScheduledOutcomeRegistry())->checks() as $check) {
+            if ($check->slug() === 'mail:digest:unified --mode=daily window') {
+                return $check;
+            }
+        }
+
+        $this->fail('the daily-digest window check is not registered');
+    }
+
+    private function seedDailySend(string $sentAtUtc): void
+    {
+        $userid = DB::table('users')->insertGetId([
+            'firstname' => 'Digest',
+            'lastname' => 'Window',
+            'added' => now(),
+        ]);
+
+        DB::table('users_digests')->insert([
+            'userid' => $userid,
+            'mode' => 'daily',
+            'lastsent' => $sentAtUtc,
+        ]);
+    }
+
+    public function test_digest_window_check_is_quiet_when_the_run_finished_inside_its_window(): void
+    {
+        // 12:00 London on a BST day is 11:00 UTC. A healthy run's last send lands just inside
+        // it — 09-13 and 09-14 both ended at 11:59 London.
+        Carbon::setTestNow(Carbon::create(2026, 9, 14, 13, 0, 0, 'Europe/London'));
+        config(['freegle.digest.daily_allowlist' => '*']);
+        $this->seedDailySend('2026-09-14 10:59:00');
+
+        $result = $this->digestWindowCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isOk(), $result->message);
+    }
+
+    public function test_digest_window_check_breaches_when_the_run_overran(): void
+    {
+        // 09-15, the first broken day: sends carried on past the window and into the night.
+        Carbon::setTestNow(Carbon::create(2026, 9, 15, 13, 0, 0, 'Europe/London'));
+        config(['freegle.digest.daily_allowlist' => '*']);
+        $this->seedDailySend('2026-09-15 10:59:00');   // inside the window — must not count
+        $this->seedDailySend('2026-09-15 12:30:00');   // after it — must count
+
+        $result = $this->digestWindowCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isBreach(), $result->message);
+        $this->assertStringContainsString('overran', $result->message);
+    }
+
+    public function test_digest_window_check_ignores_yesterdays_late_sends(): void
+    {
+        // lastsent holds only each member's most recent send. Someone sent late YESTERDAY must
+        // not keep the check red today, or one bad day latches it on for good.
+        Carbon::setTestNow(Carbon::create(2026, 9, 16, 13, 0, 0, 'Europe/London'));
+        config(['freegle.digest.daily_allowlist' => '*']);
+        $this->seedDailySend('2026-09-15 23:30:00');
+
+        $result = $this->digestWindowCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isOk(), $result->message);
+    }
 }

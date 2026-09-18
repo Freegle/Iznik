@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/emailhygiene"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -190,6 +191,10 @@ func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, erro
 	// Add email.
 	// Plain, isolated, literal single-row
 	// INSERT; no id readback needed here.
+	// Observe only. None of the 32 bad addresses on file belong to a partner
+	// account, against partners being 35.7% of members - so this arm is expected
+	// to stay silent, and will say so if that is wrong.
+	emailhygiene.Report(email, "user.partnerCreate", userid)
 	canon := CanonicalizeEmail(email)
 	db.Table("users_emails").Create(map[string]interface{}{
 		"userid":    userid,

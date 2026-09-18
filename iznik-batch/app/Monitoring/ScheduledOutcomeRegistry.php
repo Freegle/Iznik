@@ -49,6 +49,58 @@ class ScheduledOutcomeRegistry
                 ->inCategory('fire-once-output')
                 ->activeBetween(6, 24, $tz),
 
+            // The check above has a floor of 1, so it only says the 02:30 run started. That is
+            // the same shape that let the daily digest collapse for three days while its own
+            // check passed (see the digest window check below). Here the floor needs no
+            // guessing at all: stats:generate-daily writes for EVERY group, and over
+            // 2026-09-07..16 coverage was 507 of 507 on all ten days without exception, while
+            // the raw row count wandered between 4,227 and 4,395 with activity. So assert
+            // coverage rather than volume, and take the expected number from the groups table
+            // at check time - it then tracks communities being added or retired by itself.
+            (new CallbackCheck(
+                'stats:generate-daily coverage',
+                function (CarbonInterface $now) use ($tz) {
+                    $slug = 'stats:generate-daily coverage';
+                    $day = $now->copy()->setTimezone($tz)->startOfDay()->subDay()->toDateString();
+
+                    // Groups founded AFTER the day in question have no stats for it and must
+                    // not count against coverage. founded is NULL on a handful of the oldest
+                    // groups, which long pre-date any day this could check.
+                    $expected = DB::table('groups')
+                        ->where(function ($q) use ($day) {
+                            $q->whereNull('founded')->orWhere('founded', '<', $day);
+                        })
+                        ->count();
+
+                    if ($expected === 0) {
+                        return OutcomeResult::skipped($slug, 'no groups existed on ' . $day);
+                    }
+
+                    $covered = DB::table('stats')
+                        ->where('date', $day)
+                        ->distinct()
+                        ->count('groupid');
+
+                    if ($covered < $expected) {
+                        $missing = $expected - $covered;
+
+                        return OutcomeResult::breach(
+                            $slug,
+                            "daily stats cover {$covered} of {$expected} communities for {$day} - "
+                            . "{$missing} missing. The 02:30 run did not get through them all."
+                        );
+                    }
+
+                    return OutcomeResult::ok(
+                        $slug,
+                        "daily stats cover all {$expected} communities for {$day}"
+                    );
+                }
+            ))
+                ->describedAs('Every community got daily stats for yesterday')
+                ->inCategory('fire-once-output')
+                ->activeBetween(6, 24, $tz),
+
             // mail:digest:unified --mode=daily (07:00-12:00 London) records a
             // users_digests.lastsent for mode='daily' on each send. Inert
             // (skipped) until the daily pilot is enabled via the allowlist.
@@ -62,6 +114,63 @@ class ScheduledOutcomeRegistry
                 fn ($q) => $q->where('mode', 'daily'),
             ))
                 ->describedAs("Daily 'What's New' digest sent today")
+                ->inCategory('fire-once-output')
+                ->enabledWhen(fn () => trim((string) config('freegle.digest.daily_allowlist', '')) !== '')
+                ->activeBetween(13, 24, $tz),
+
+            // The check above asks only "did ANY daily digest go out today?", floor 1. That is
+            // a liveness check, and a liveness check cannot see a collapse. On 2026-09-15..17
+            // the daily run fell to a thirteenth of its throughput and ran around the clock -
+            // members got their "morning" digest at 01:00 - and it passed all three days,
+            // because 40,000+ still went out. Sentry could not see it either: nothing threw,
+            // and windowed/overlapping jobs are deliberately excluded from sentryMonitor()
+            // (see routes/console.php).
+            //
+            // What went wrong IS visible, in the same column the check above already reads:
+            // the run stopped fitting in its window. mail:digest:unified --mode=daily is
+            // scheduled ->between('7:00','12:00') London, so on a healthy day the last send
+            // lands just inside 12:00 and nothing follows it. 09-13 and 09-14 both ended at
+            // 11:59 London; 09-15 ended at 00:59 the next morning.
+            //
+            // Deliberately NOT a volume floor. A floor would be a number guessed off one
+            // week's traffic, and it would have to be loose enough to survive a quiet day,
+            // which makes it too loose to catch a 2x slowdown. The window comes from the
+            // schedule itself and needs no tuning: either the run finished inside it or it
+            // did not.
+            (new CallbackCheck(
+                'mail:digest:unified --mode=daily window',
+                function (CarbonInterface $now) use ($tz) {
+                    $slug = 'mail:digest:unified --mode=daily window';
+                    $windowClose = $now->copy()->setTimezone($tz)
+                        ->startOfDay()->setTime(12, 0)->setTimezone('UTC');
+
+                    // users_digests.lastsent holds only each member's MOST RECENT send, so
+                    // this counts members whose latest daily digest went out after today's
+                    // window shut - not historical stragglers, whose lastsent is an earlier
+                    // day and therefore below today's cut.
+                    $late = DB::table('users_digests')
+                        ->where('mode', 'daily')
+                        ->where('lastsent', '>=', $windowClose)
+                        ->count();
+
+                    if ($late > 0) {
+                        $latest = DB::table('users_digests')
+                            ->where('mode', 'daily')
+                            ->where('lastsent', '>=', $windowClose)
+                            ->max('lastsent');
+
+                        return OutcomeResult::breach(
+                            $slug,
+                            "daily digest overran its 07:00-12:00 window: {$late} members were sent "
+                            . "one after it closed (latest {$latest} UTC). The run is not keeping up - "
+                            . 'check throughput before members start getting these overnight.'
+                        );
+                    }
+
+                    return OutcomeResult::ok($slug, 'daily digest finished inside its 07:00-12:00 window');
+                }
+            ))
+                ->describedAs('Daily digest finished inside its send window')
                 ->inCategory('fire-once-output')
                 ->enabledWhen(fn () => trim((string) config('freegle.digest.daily_allowlist', '')) !== '')
                 ->activeBetween(13, 24, $tz),
