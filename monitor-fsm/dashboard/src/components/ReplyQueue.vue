@@ -2,7 +2,7 @@
   <div class="reply-queue">
     <div class="d-flex align-items-center justify-content-between mb-3">
       <h5 class="mb-0">
-        Answers to send
+        Replies to send
         <span class="badge bg-secondary ms-2">{{ pendingDrafts.length }}</span>
       </h5>
       <button class="btn btn-outline-secondary btn-sm" @click="refresh" :disabled="loading">
@@ -10,7 +10,7 @@
       </button>
     </div>
 
-    <p class="text-muted small mb-2">Answers written for a question somebody asked. Read it, change it if you need to, then Send. Replies about a fix go out on their own and never appear here.</p>
+    <p class="text-muted small mb-2">Answers to questions, and requests for the detail a report left out. Read it, change it if you need to, then Send. Replies about a fix go out on their own and never appear here.</p>
 
     <div v-if="loading" class="spinner-border spinner-border-sm" role="status">
       <span class="visually-hidden">Loading...</span>

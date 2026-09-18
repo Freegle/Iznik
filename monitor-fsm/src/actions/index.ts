@@ -31,6 +31,7 @@ import { getPhaseInfo } from '../phase.js'
 import { modelForAdversarialReview } from '../policy.js'
 import { groundingActions } from '../grounding.js'
 import { proseProblems } from '../prose.js'
+import { assessReportSpecifics, detailRequestBody } from '../specifics.js'
 
 const exec = promisify(execFile)
 
@@ -1246,6 +1247,19 @@ export const discoverTopicsDeps = {
   runScan: (script: string) => sh('python3', ['-c', script]),
 }
 
+// What a triage entry gives us to work from. `has_screenshot` and `identifiers`
+// come from the triage delegate, which sees the post itself: an image never
+// survives into the stripped text, and no pattern can recognise a group name.
+function specificsOf(c: Record<string, any>) {
+  const identifiers = (c.identifiers ?? {}) as { userRef?: string; groupName?: string }
+  return assessReportSpecifics({
+    text: `${c.summary ?? ''} ${c.originalPostText ?? ''}`,
+    hasScreenshot: c.has_screenshot === true || c.hasScreenshot === true,
+    groupName: identifiers.groupName ?? null,
+    userRef: identifiers.userRef ?? null,
+  })
+}
+
 export const actions: ActionDefinition[] = [
   {
     name: 'load_state',
@@ -1295,7 +1309,7 @@ export const actions: ActionDefinition[] = [
 
       // Edward-post scan: also include deferred (Edward may post "fix on the way" on a deferred bug)
       const allActiveBugs = db.prepare(
-        "SELECT topic, post, reporter FROM discourse_bug WHERE state IN ('open','investigating','deferred')"
+        "SELECT topic, post, reporter FROM discourse_bug WHERE state IN ('open','investigating','deferred','needs-detail')"
       ).all() as Array<{ topic: number; post: number; reporter: string | null }>
 
       if (allActiveBugs.length === 0) return { checked: 0, markedFixed: [], markedInvestigating: [], markedOffTopic: [] }
@@ -3575,8 +3589,69 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
   },
 
   {
+    name: 'ask_reporter_for_detail',
+    description: "Ask the person who reported a bug for something only they can tell you, when the report cannot be worked on without it: which member, which group, which post, what they saw, when it happened, what they were using. The question is queued for a human to approve and send, like every other reply; nothing is posted here. The bug is held as 'needs-detail' so it leaves the fix queue until they answer, and it returns to the queue on its own when a later post in the thread names something. Use this instead of deferring a report in silence. Params: {topic, post, questions: [1-3 short plain-English things to ask for, e.g. 'which group this was on']}. Returns {queued, reason?, problems?}.",
+    paramsSchema: {
+      type: 'object',
+      properties: {
+        topic: { type: 'number' },
+        post: { type: 'number' },
+        questions: {
+          type: 'array',
+          items: { type: 'string' },
+          description: "What to ask for, one short phrase each, at most three. Written to follow 'Please can you tell me ...', e.g. 'which member this was, with their email address'.",
+        },
+      },
+      required: ['topic', 'post', 'questions'],
+    },
+    handler: async (params) => {
+      const p = params as { topic?: unknown; post?: unknown; questions?: unknown }
+      const topic = Number(p.topic)
+      const post = Number(p.post)
+      const questions = (Array.isArray(p.questions) ? p.questions : [])
+        .map(q => String(q).trim())
+        .filter(Boolean)
+        .slice(0, 3)
+      if (!topic || !post) return { queued: false, reason: 'topic and post are both needed' }
+      if (questions.length === 0) return { queued: false, reason: 'no questions given' }
+
+      const db = getDb()
+      const bug = getDiscourseBug(db, topic, post)
+      if (!bug) return { queued: false, reason: `no bug recorded at ${topic}/${post}` }
+      if (['fixed', 'confirmed', 'off-topic', 'duplicate'].includes(bug.state)) {
+        return { queued: false, reason: `bug ${topic}/${post} is ${bug.state}` }
+      }
+
+      const body = detailRequestBody(questions)
+      // The questions are written by a model, so they go through the same readability
+      // check as everything else the monitor puts in front of a volunteer.
+      const problems = await proseProblems(body)
+      if (problems.length > 0) {
+        outWarn(`ask_reporter_for_detail: ${topic}/${post} question is too hard to read: ${problems[0]}`)
+        return { queued: false, reason: 'the question is too hard to read - ask again in plainer words', problems }
+      }
+
+      let quote = ''
+      try {
+        quote = (await questionAnswerDeps.fetchReporterQuote(topic, post)) ?? ''
+      } catch { quote = '' }
+      if (!quote.trim()) quote = (bug.excerpt ?? '').trim()
+      if (!quote) return { queued: false, reason: 'nothing to quote, so the reply would not show what it asks about' }
+
+      queueDiscourseDraft(db, { topic, post, username: bug.reporter ?? 'there', quote, body })
+      upsertDiscourseBug(db, {
+        topic, post,
+        state: 'needs-detail',
+        reason: `asked the reporter for: ${questions.join('; ')}`,
+      })
+      out(`ask_reporter_for_detail: queued a question for ${topic}/${post} and held it until there is an answer`)
+      return { queued: true }
+    },
+  },
+
+  {
     name: 'persist_classifications',
-    description: 'Persist TRIAGE classifications to the discourse_bug table so the status post reflects all identified bugs, not just ones with PRs. Upserts each bug/retest classification as "open" (or "deferred" if type is deferred, "feature-request" if type is feature_request). Already-fixed bugs are not downgraded. Returns {upserted: number, skipped: number}.',
+    description: 'Persist TRIAGE classifications to the discourse_bug table so the status post reflects all identified bugs, not just ones with PRs. A report that names nothing anyone could look up - "a member", "a group", "her post" - is held as "needs-detail" with a question to the reporter queued for approval, and released to "open" when a later post in the thread supplies an id, an email, a link or a screenshot. Upserts each other bug/retest classification as "open" (or "deferred" if type is deferred, "feature-request" if type is feature_request). Already-fixed bugs are not downgraded. Returns {upserted: number, skipped: number}.',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const ctx = context as any
@@ -3615,6 +3690,24 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         // Don't downgrade a bug already in fix-queued or fixed state
         const existing = db.prepare('SELECT state FROM discourse_bug WHERE topic = ? AND post = ?').get(c.topic, c.post) as { state: string } | undefined
         if (existing && ['fix-queued', 'fixed', 'confirmed', 'investigating'].includes(existing.state)) { skipped++; continue }
+
+        // A report held for want of detail is released as soon as a later post in the
+        // same thread names something that can be looked up. Without this it would sit
+        // there for ever, because the reply the reporter sent is a new post, not an
+        // edit of the one that was short on detail.
+        if (type === 'bug' || type === 'retest') {
+          const parked = db.prepare(
+            `SELECT topic, post FROM discourse_bug WHERE topic = ? AND state = 'needs-detail' ORDER BY first_seen_at LIMIT 1`
+          ).get(Number(c.topic)) as { topic: number; post: number } | undefined
+          if (parked && specificsOf(c).anchors.length > 0) {
+            db.prepare(
+              `UPDATE discourse_bug SET state = 'open', reason = 'reporter supplied the missing detail', last_seen_at = datetime('now') WHERE topic = ? AND post = ?`
+            ).run(parked.topic, parked.post)
+            out(`persist_classifications: ${c.topic}/${post} supplies the detail asked for - reopening ${parked.topic}/${parked.post}`)
+            skipped++
+            continue
+          }
+        }
 
         // Retest: a follow-up confirmation of an existing bug in the same topic.
         // Update the existing bug's last_seen_at; do NOT create a second entry for the same problem.
@@ -3757,6 +3850,29 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
             db.prepare(`UPDATE discourse_bug SET fixed_at = datetime('now'), deployed_at = datetime('now') WHERE topic = ? AND post = ?`).run(Number(c.topic), Number(c.post))
             upserted++
             continue
+          }
+        }
+
+        // Nothing to look up: hold the report and ask for what is missing, rather than
+        // sending it to a diagnosis that has to guess which member, group or post it
+        // means. Wrong guesses are where plausible-but-wrong fixes come from.
+        if ((type === 'bug' || type === 'retest') && finalState === 'open') {
+          const specifics = specificsOf(c)
+          if (specifics.isVague) {
+            finalState = 'needs-detail'
+            finalReason = `asked the reporter for: ${specifics.missing.join('; ')}`
+            const quote = String(c.originalPostText ?? c.summary ?? '').trim().slice(0, 300)
+            if (quote) {
+              queueDiscourseDraft(db, {
+                topic: Number(c.topic), post: Number(c.post),
+                username: c.user ?? 'there',
+                quote,
+                body: detailRequestBody(specifics.missing),
+              })
+              out(`persist_classifications: ${c.topic}/${c.post} names nothing that can be looked up - queued a question for approval`)
+            } else {
+              out(`persist_classifications: ${c.topic}/${c.post} names nothing that can be looked up, and has nothing to quote - held without asking`)
+            }
           }
         }
 

@@ -555,3 +555,23 @@ describe('question answering is wired into the parallel batch', () => {
     expect(actionsTs).toContain("name: 'persist_question_answers'")
   })
 })
+
+// ── Reports that are too vague to act on ─────────────────────────────────
+
+describe('triage supplies what the specificity check needs', () => {
+  const prompt: string = workflow.states.PARALLEL_ANALYZE_AND_FIX.prompt
+
+  it('asks for a screenshot flag, read before the HTML is stripped', () => {
+    expect(prompt).toContain('has_screenshot')
+    expect(prompt).toContain('BEFORE you strip it')
+  })
+
+  it('asks for the member and group the post names, and forbids guessing them', () => {
+    expect(prompt).toContain('identifiers')
+    expect(prompt).toContain('NEVER guess')
+  })
+
+  it('tells triage not to judge specificity itself', () => {
+    expect(prompt).toContain('NOT SPECIFIC ENOUGH')
+  })
+})

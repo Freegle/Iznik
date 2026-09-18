@@ -2,7 +2,7 @@ import Database, { type Database as DB } from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V4_SQL, MIGRATION_V5_SQL, MIGRATION_V6_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
+import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V4_SQL, MIGRATION_V5_SQL, MIGRATION_V6_SQL, MIGRATION_V7_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -88,6 +88,20 @@ function applySchema(db: DB): void {
     })()
     if (!allowsQuestion) {
       try { db.exec(MIGRATION_V6_SQL) } catch { /* already rebuilt */ }
+    }
+  }
+  if (current < 7) {
+    // Rebuild discourse_bug so 'needs-detail' is allowed, guarded the same way.
+    const allowsNeedsDetail = (() => {
+      try {
+        const row = db.prepare(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='discourse_bug'"
+        ).get() as { sql?: string } | undefined
+        return !!row?.sql && row.sql.includes("'needs-detail'")
+      } catch { return false }
+    })()
+    if (!allowsNeedsDetail) {
+      try { db.exec(MIGRATION_V7_SQL) } catch { /* already rebuilt */ }
     }
   }
   if (current < SCHEMA_VERSION) {

@@ -34,7 +34,7 @@
 
       </div>
 
-      <!-- Answers waiting to be sent. Replies about a fix are the same fixed
+      <!-- Replies waiting to be sent. Replies about a fix are the same fixed
            wording every time and go out on their own, so anything sitting here
            is an answer somebody wrote to a question, which a person reads before
            it is sent. Hidden when there is nothing waiting. -->

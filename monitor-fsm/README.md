@@ -99,6 +99,34 @@ out on its own; an answer is new prose about how Freegle works, so a person read
 answers are sent from the **Answers to send** panel on the dashboard. Rejecting one puts the question
 back in the queue, and the reason given is handed to the next attempt.
 
+### Reports that are too vague to act on
+
+The reports that cost the most time are the ones that point at one particular thing without saying
+which: "a member says a group deleted her post". Nobody can look that up. Such a report used to go
+into the fix pipeline anyway, where the diagnosis had nothing to hold on to and guessed, or it was
+parked as deferred and the person who wrote it never heard back.
+
+`assessReportSpecifics` (`src/specifics.ts`) decides this when the report is recorded, not by asking
+a model. A report is held when it names **nothing** that can be looked up:
+
+| Counts as something to work from | Comes from |
+|---|---|
+| a number of five digits or more (member, message or group id) | the text; four digits would match a year |
+| an email address | the text |
+| a link to ilovefreegle.org | the text |
+| a screenshot or attachment | triage, which sees the post before the HTML is stripped |
+| the name of a group | triage, which is told never to guess one |
+
+The ask is only ever about what the report itself points at vaguely, so a general report ("chat
+notification emails are going out twice") is not held and not asked about. At most three things are
+asked for, in one short reply that quotes the report.
+
+A held report is `needs-detail`: out of the fix queue, visible on the dashboard, and waiting. The
+question to the reporter is queued for approval like any other reply, because it goes to a
+volunteer. When a later post in the same thread finally names something, the held report goes back
+to `open` and the follow-up does not become a second report. Edward saying "this is expected" still
+closes it, as it does for any other state.
+
 ### TDD pipeline (single-bug path)
 
 `DIAGNOSE_BUG` (two phases on the Opus brain):
@@ -119,7 +147,7 @@ back in the queue, and the reason given is handed to the next attempt.
 open → investigating → fix-queued → fixed → (deployed reply auto-posted)
 ```
 
-Also: `deferred`, `off-topic`, `duplicate`, `feature-request`, `question`, `confirmed`.
+Also: `deferred`, `off-topic`, `duplicate`, `feature-request`, `question`, `needs-detail`, `confirmed`.
 
 `check_bug_feedback` (run each `LOAD_STATE`) scans follow-up Discourse posts for reporter confirmations and Edward's "working on it" / "fix applied" / "expected behaviour" replies, updating states automatically.
 
