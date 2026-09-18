@@ -1140,7 +1140,9 @@ func nearbyCount(myid uint64, maxDistanceMiles float64, maxMinutes float64) (uin
 				return 0, nil
 			}
 			reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial, ringAdmitted).
-				Select("COUNT(DISTINCT ms.msgid)").
+				// COUNT(*): every join in that builder is 1:1 - see the note on the
+				// countQuery COUNT below.
+				Select("COUNT(*)").
 				Scan(&count)
 			return count, nil
 		}
@@ -1156,7 +1158,14 @@ func nearbyCount(myid uint64, maxDistanceMiles float64, maxMinutes float64) (uin
 			return uint64(len(filterProbed(cands, probe))), nil
 		}
 		countQuery.
-			Select("COUNT(DISTINCT ms.msgid)").
+			// COUNT(*), not COUNT(DISTINCT ms.msgid). Nothing in the reach arm can repeat a
+			// msgid: messages_spatial.msgid is UNIQUE, messages and users join on their primary
+			// keys, rippling_reach.msgid IS the primary key of that table, and messages_likes
+			// has a UNIQUE (msgid, userid, type). The same builders are already used without
+			// DISTINCT to enumerate candidates on the degraded and distance-limited paths just
+			// below, where a duplicate would show up as a double-counted post - so the 1:1
+			// property is relied on either way, and the dedup was only ever paid for here.
+			Select("COUNT(*)").
 			Scan(&count)
 		return count, nil
 	}
