@@ -150,6 +150,21 @@ class DatabaseBackupCommandTest extends TestCase
         Mail::assertSent(BackupFailedMail::class);
     }
 
+    public function test_the_failure_alert_resolves_its_subject_and_view(): void
+    {
+        // Mail::fake() records the mailable without rendering it, so a mistyped view name
+        // would pass every test above and only throw at send time, which is precisely when
+        // the alert is needed.
+        $mail = new BackupFailedMail('a detail');
+
+        $this->assertSame('BACKUP ERROR: database backup failed', $mail->envelope()->subject);
+        $this->assertSame('emails.backup-failed-text', $mail->content()->text);
+        $this->assertTrue(
+            view()->exists($mail->content()->text),
+            'the alert view must resolve, or the alert throws when it fires'
+        );
+    }
+
     public function test_dry_run_prints_the_script_and_runs_nothing(): void
     {
         $this->configure(['enabled' => false]);
