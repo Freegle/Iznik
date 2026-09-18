@@ -212,31 +212,59 @@ class ItemClusterService
     /**
      * The name to print for a cluster.
      *
-     * Prefers a name the brand detector found no brand in, so a cluster of
-     * "Bosch dishwasher" and "Dishwasher" prints the plain one even when the
-     * branded spelling is commoner; among equals, the most used name wins.
+     * The cluster is keyed on the canonical form but labelled with one of the
+     * titles members actually wrote, so the page reads like the site rather than
+     * like a lookup table. Picking that title is a preference order, strongest
+     * first:
+     *
+     *  1. no brand was detected, so a cluster of "Bosch dishwasher" and
+     *     "Dishwasher" prints the plain one even when the branded spelling is
+     *     commoner;
+     *  2. no quantity was detected, because "2 X sanders" and "Lampshades x 2"
+     *     name a consignment rather than an item, and one member's two of a
+     *     thing should not become the name everybody else's is filed under;
+     *  3. not written in capitals, because the page is read by members and a
+     *     title that shouts is the member's emphasis and not the item's name;
+     *  4. the most used title;
+     *  5. the shortest, then alphabetical.
+     *
+     * The last step is not cosmetic. Without it the winner among equals is
+     * whichever row the database returned first, so the published label could
+     * change between runs with no change in the data.
      *
      * @param  array<string, array<int, true>>  $names  name => set of message ids
      */
     private function representative(array $names): string
     {
-        $best = '';
-        $bestRank = -1;
+        $best = null;
+        $bestRank = [];
 
         foreach ($names as $name => $msgids) {
-            $branded = $this->canonicaliseCached($name)['brand'] !== null;
-            $rank = count($msgids) + ($branded ? 0 : 1000000);
+            $c = $this->canonicaliseCached((string) $name);
+            $rank = [
+                $c['brand'] === null ? 1 : 0,
+                empty($c['counted']) ? 1 : 0,
+                $this->isShouting((string) $name) ? 0 : 1,
+                count($msgids),
+                -mb_strlen((string) $name),
+            ];
 
-            if ($rank > $bestRank) {
+            if ($best === null || $rank > $bestRank || ($rank === $bestRank && (string) $name < $best)) {
                 $bestRank = $rank;
-                $best = $name;
+                $best = (string) $name;
             }
         }
 
-        return $best;
+        return (string) $best;
     }
 
-    /** @return array{canonical:string, brand:?string} */
+    /** A title with letters in it and none of them lower case. */
+    private function isShouting(string $name): bool
+    {
+        return preg_match('~\p{Ll}~u', $name) !== 1 && preg_match('~\p{L}~u', $name) === 1;
+    }
+
+    /** @return array{canonical:string, brand:?string, counted:bool} */
     private function canonicaliseCached(string $name): array
     {
         if (! isset($this->canonicalCache[$name])) {
@@ -253,6 +281,7 @@ class ItemClusterService
             $this->canonicalCache[$name] = [
                 'canonical' => $this->dropSizeAndPanelWords($canonical),
                 'brand'     => $result['brand'] ?? null,
+                'counted'   => ($result['qty'] ?? null) !== null || ! empty($result['is_multiple']),
             ];
         }
 

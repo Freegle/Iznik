@@ -127,11 +127,16 @@ unusual on a site where fridge freezers are among the commonest things offered.
   a catalogue this does not have.
 - **Counts are of distinct posts, members and communities**, taken from the id sets,
   because a rippled post arrives once per group and summing would multiply it.
-- **The label is a name carrying no brand** where the cluster has one, even if a
-  branded spelling is commoner. This rests entirely on `brands.csv` recognising the
-  brand: an unrecognised one looks like an ordinary item word, wins the preference
-  for an unbranded name, and is published as the item - which is how `Corby trouser
-  press` and `Dolce gusto coffee machine` came to be item names on the page.
+- **The label is one of the titles members wrote**, chosen by preference, strongest
+  first: no brand detected, no quantity detected, not written in capitals, most used,
+  then shortest and alphabetical. The brand rule rests entirely on `brands.csv`
+  recognising the brand - an unrecognised one looks like an ordinary item word, wins
+  the preference for an unbranded name, and is published as the item, which is how
+  `Corby trouser press` and `Dolce gusto coffee machine` came to be item names. The
+  quantity rule keeps a consignment (`2 X sanders`, `Lampshades x 2`) from naming
+  everybody else's item. The last step is not cosmetic: without it the winner among
+  equals is whichever row the database returned first, so the label could change
+  between runs with no change in the data.
 
 The rare list then drops anything that is a **version of a common item**. A rival
 qualifies as common at ten or more offers and at least three times the candidate's

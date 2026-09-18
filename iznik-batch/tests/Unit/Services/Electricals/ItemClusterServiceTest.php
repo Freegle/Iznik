@@ -89,6 +89,49 @@ class ItemClusterServiceTest extends TestCase
     }
 
     /**
+     * A title naming a consignment should not become the name everybody else's
+     * item is filed under. "2 X sanders" was published as an item on the page
+     * because it happened to be the first row back for its cluster.
+     */
+    #[Test]
+    public function it_labels_a_cluster_with_a_name_carrying_no_quantity(): void
+    {
+        $clusters = $this->svc->cluster($this->rows([
+            ['2 X sanders', 1, 11, 21],
+            ['Lampshades x 2', 2, 12, 22],
+            ['Sander', 3, 13, 23],
+        ]));
+
+        $names = array_column($clusters, 'name');
+        $this->assertContains('Sander', $names, 'a plain name beats a counted one');
+        $this->assertNotContains('2 X sanders', $names);
+    }
+
+    /**
+     * Among names that rank equally the winner must not be whichever row the
+     * database happened to return first, or the published label changes between
+     * runs with no change in the data.
+     */
+    #[Test]
+    public function the_label_does_not_depend_on_row_order(): void
+    {
+        $rows = [
+            ['Toaster', 1, 11, 21],
+            ['toaster', 2, 12, 22],
+            ['TOASTER', 3, 13, 23],
+        ];
+
+        $forwards = $this->svc->cluster($this->rows($rows));
+        $backwards = $this->svc->cluster($this->rows(array_reverse($rows)));
+
+        $first = reset($forwards)['name'];
+        $second = reset($backwards)['name'];
+
+        $this->assertSame($first, $second);
+        $this->assertSame('Toaster', $first, 'a title in capitals is the member\'s emphasis, not the item\'s name');
+    }
+
+    /**
      * Rows arrive one per (post, group), so a post that rippled to three groups
      * arrives three times. Summing would treble it.
      */

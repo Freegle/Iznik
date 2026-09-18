@@ -241,6 +241,7 @@
 "beurer","Beurer","\bbeurer\b",TRUE,TRUE,FALSE
 "tanita","Tanita","\btanita\b",TRUE,TRUE,FALSE
 "tommee_tippee","Tommee Tippee","\btommee\s+tippee\b",TRUE,FALSE,FALSE
+"medela","Medela","\bmedela\b",TRUE,TRUE,FALSE
 "avent","Avent","\bavent\b",TRUE,FALSE,FALSE
 "chicco","Chicco","\bchicco\b",TRUE,FALSE,FALSE
 "britax","Britax","\bbritax\b",TRUE,FALSE,FALSE
