@@ -142,6 +142,21 @@ therefore what production executes, which makes ordinary git operations producti
 Check what production is running by grepping the file, not by recalling what you last did. The
 answer changes under you.
 
+## Never list `/srv/tusd-data` on the FreegleDocker host
+
+The upload store is **one flat NFS directory with millions of entries**. Listing it - `find /`,
+`du -x /`, `ls`, a shell tab-completion - holds the directory lock for every `getdents()`, each of
+which on NFS is a long chain of READDIRPLUS calls, and every tusd upload create, finish and
+delete queues behind it. (Hit 2026-09-18: two orphaned `find / -maxdepth 3 -iname iznik-batch`
+processes, left behind by an ssh command from another session, put 1,036 tusd threads into D
+state; uploads hung for ~25 minutes and the load average reached 1,049 with the CPU idle. The
+NFS server was healthy throughout - `nfsstat` and the admin UI both said so.)
+
+- The repos are under `/var/www/FreegleDocker`; look there, never `find /`.
+- If a whole-filesystem scan is unavoidable: `find / -xdev`, or `-path /srv/tusd-data -prune`.
+- monit (`ops/hosts/monit/batch-host/conf.d/tusd`) kills whatever is scanning once tusd is
+  starved, so a process of yours vanishing mid-scan is that, not a crash.
+
 ## Branches, clones and the tools around them
 
 - **Creating a worktree branches off your local master**, which may be behind or ahead of the
