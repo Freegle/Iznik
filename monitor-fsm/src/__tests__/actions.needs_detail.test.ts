@@ -120,6 +120,20 @@ describe('when the reporter comes back', () => {
     expect(getDiscourseBug(db, 9500, 6)).toBeNull()
   })
 
+  it('does not swallow a different person\'s report as if it were the answer', async () => {
+    await persist({}, {
+      classifications: [{
+        topic: 9500, post: 7, type: 'bug', user: 'Malcolm',
+        summary: 'Different problem entirely',
+        originalPostText: 'Mine is different: message 44120987 will not delete.',
+      }],
+    })
+    // The held report stays held: Malcolm was not the person we asked.
+    expect(getDiscourseBug(db, 9500, 3)?.state).toBe('needs-detail')
+    // And his own report is recorded rather than thrown away.
+    expect(getDiscourseBug(db, 9500, 7)?.state).toBe('open')
+  })
+
   it('leaves it held when the reply still names nothing', async () => {
     await persist({}, {
       classifications: [{

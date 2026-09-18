@@ -3697,9 +3697,15 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         // edit of the one that was short on detail.
         if (type === 'bug' || type === 'retest') {
           const parked = db.prepare(
-            `SELECT topic, post FROM discourse_bug WHERE topic = ? AND state = 'needs-detail' ORDER BY first_seen_at LIMIT 1`
-          ).get(Number(c.topic)) as { topic: number; post: number } | undefined
-          if (parked && specificsOf(c).anchors.length > 0) {
+            `SELECT topic, post, reporter FROM discourse_bug WHERE topic = ? AND state = 'needs-detail' ORDER BY first_seen_at LIMIT 1`
+          ).get(Number(c.topic)) as { topic: number; post: number; reporter: string | null } | undefined
+          // Only the person we asked. Somebody else posting in the same thread with a
+          // screenshot is more likely reporting their own problem, and treating that as the
+          // answer would swallow their report as well as releasing ours on the wrong evidence.
+          const sameReporter =
+            !!parked?.reporter && !!c.user &&
+            String(parked.reporter).toLowerCase() === String(c.user).toLowerCase()
+          if (parked && sameReporter && specificsOf(c).anchors.length > 0) {
             db.prepare(
               `UPDATE discourse_bug SET state = 'open', reason = 'reporter supplied the missing detail', last_seen_at = datetime('now') WHERE topic = ? AND post = ?`
             ).run(parked.topic, parked.post)
