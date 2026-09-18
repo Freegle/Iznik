@@ -2,6 +2,20 @@
 
 Date: 31 July 2026. Research basis: live production DB inspection (read-only, via the apiv2-live tunnel and SSH), codebase audits of iznik-server-go and iznik-batch, schema-change history audit, and web research with adversarial fact-checking of every load-bearing claim against primary sources (URLs at the end).
 
+> ## Decision, 18 September 2026: 2-node + garbd is the approach
+>
+> This evaluation judged the 2-node+garbd variant "weak" and costed an extra £90/mo backup
+> replica to make it safe. **That judgement is overturned.** It rested on two assumptions
+> that fresh measurement contradicts, both recorded in section 5 below.
+>
+> The agreed topology is: **disable Percona on db1, run garbd there, resize the node down.**
+> Backups move to **db2**, with bulk jobs drained and db1's and db2's apiv2 stopped for the
+> window, leaving db3 alone. That single point of failure for the duration is accepted.
+>
+> The 2-node+garbd rows in section 6 therefore stand at their headline cost with no £90/mo
+> addition. This does not change the Postgres recommendation itself; it changes only which
+> MySQL topology we run in the meantime.
+
 ## 1. Summary
 
 **Recommendation: migrate to PostgreSQL 18 with PostGIS, run as a two-node Patroni cluster (primary plus hot standby) with a lightweight etcd witness on an existing host. But do it in two stages, and do the cheap urgent things first.**
@@ -60,7 +74,7 @@ Four serious options. Group Replication / InnoDB Cluster (staying MySQL with Ora
 
 **Conclusion:** A (PXC 8.4) is the mandatory immediate step and the fallback destination; it is cheap, safe, and solves the EOL problem, but leaves both stated pain points unsolved. B (MariaDB) is strictly dominated: all of A's limitations, plus a real migration, plus spatial regressions, plus the shakiest vendor story; rejected. C (PostgreSQL) is the only option that answers the brief, at a real effort cost. Hence the two-stage recommendation: do A now, then do C deliberately.
 
-The 2-node+garbd variant of A is worth knowing about as a pure cost lever (£2,160/yr saved with near-zero effort) if we ever wanted savings without the Postgres project, with two caveats: during any node-down window the surviving node is a zero-redundancy single point of failure with SST/IST donor load landing on an already-hot fleet, and it loses the dedicated backup node, which is the whole reason backups do not hurt us today (see "Backups in a two-node world" in section 5; preserving backup isolation costs ~£90/mo and roughly halves the saving).
+The 2-node+garbd variant of A is **the agreed topology as of 18 September 2026** (£2,160/yr saved with near-zero effort). One caveat stands and is accepted: during any node-down window the surviving node is a zero-redundancy single point of failure with SST donor load landing on an already-hot fleet. The second caveat, losing the dedicated backup node, no longer applies, because the backup is eighteen minutes and moves to db2 behind a drain rather than to a member-facing node (see "Backups in a two-node world" in section 5).
 
 ## 5. Recommended target architecture (PostgreSQL)
 
@@ -78,7 +92,18 @@ Today backups are safe purely by architecture: db1 is a dedicated third node tha
 
 **PostgreSQL two-node answer (good, and a genuine point in its favour):** pgBackRest supports backup-from-standby (`backup-standby=y`): the base backup is a file-level copy taken from the **standby**, with only brief coordination against the primary, so the primary never carries backup I/O. There is no FTWRL-style lock anywhere in the process: `pg_backup_start` is non-blocking, file copying takes no SQL locks, and MVCC means neither reads nor writes on either node are blocked by the backup, nor can a long-running query block the backup. Continuous WAL archiving runs alongside, which also upgrades us from "nightly full" to point-in-time recovery. The backup load lands on the standby, which also serves batch reads, so: schedule the weekly full plus daily incrementals off-peak (incrementals are cheap), cap backup parallelism (`process-max`) and compression level if contention appears, and watch batch-query latency during the first backup cycles. Monthly restore drills into the dev/yesterday environment. Net: two nodes suffice for Postgres without recreating today's third box, because the standby we already pay for doubles as the backup source without locking anybody.
 
-**MySQL-family 2-node+garbd answer (weak, and the honest reason that option is cheaper than it looks):** the nightly xtrabackup would have to run on the read node with wsrep_desync=ON, which means one node effectively serves everything for the whole backup window, backup I/O rides on a serving node, and the historical lock-interference risks return. A node failure during the window is an outage. The clean fix is a small async replica (a plain binlog replica off the cluster, not a Galera member) as the dedicated backup source: roughly a ROCK-12 plus ~200GB block storage, about £90/mo, which erodes the 2-node saving from £180/mo to roughly £90/mo. That asymmetry (Postgres gets safe backups from a node we already pay for; two-node MySQL needs an extra box to keep backups safe) is itself part of the case for the Postgres topology.
+**MySQL-family 2-node+garbd answer.** ~~Weak, and the honest reason that option is cheaper than it looks.~~ **Superseded 18 September 2026 by measurement; see the decision note at the top of this document.** The original argument was that the nightly xtrabackup would have to run on the read node with wsrep_desync=ON, that one node would effectively serve everything for the whole backup window, and that a node failure during that window is an outage; the clean fix being a small async binlog replica off the cluster as a dedicated backup source, roughly a ROCK-12 plus ~200GB block storage, about £90/mo, eroding the 2-node saving from £180/mo to roughly £90/mo.
+
+Two of those assumptions were wrong, measured live on 18 September 2026:
+
+- **"The whole backup window" is 18 minutes.** The backup ran 04:00:00 to 04:17:36, streaming 53.1 GiB compressed out of 135.9 GB raw to `gs://freegle_backup_uk` at about 50 MiB/s. A single-node window of eighteen minutes overnight is a very different proposition from the hours the original wording implies. Catch-up afterwards is roughly 200 MB of writesets at the measured 183 KB/s write rate, well inside the gcache.
+- **The backup does not have to land on the member-facing node.** db3 is the sole active apiv2 backend in haproxy and takes every write; db2 serves bulk reads. Backing up on db2 with bulk drained touches no member traffic. (Note that `plans/2026-09-02-db2-cpu-reduction.md` shows db1 serving members, but its own text says that snapshot was taken during a failover; it is not steady state.)
+
+What survives from the original argument, and is accepted rather than solved: with two data nodes every SST streams off the one surviving node, because garbd holds no data and can never donate. That applies whenever a node needs rebuilding, not just during the backup, and it lands on db3. The 2 GB gcache makes it likely rather than rare: at 183 KB/s that is a 190 minute IST window, so anything out longer than about three hours needs a full 136 GB SST. **Raise gcache before making this change.**
+
+Also accepted: garbd cannot bootstrap after a total cluster stop, so recovery has one seqno comparison and no spare. Against that, garbd never applies writesets and so can never send flow control, whereas db1's mysqld has sent it 166 times in 16 days. Converting db1 rather than merely shrinking it removes that brake.
+
+One practical trap for the resize: db1's data directory is 167 GB on the root disk (`/dev/sda2`, 296 GB). Resizing "right down" means shedding that disk, so confirm with Krystal whether it can shrink at all before banking the saving, and delete the data directory on conversion rather than leaving a stale copy somebody could bootstrap from.
 
 ## 6. Costs (all Krystal prices verified on krystal.io/cloud pricing pages, 31 July 2026; ROCK-36 confirmed as a real purchasable SKU at £180/mo; pricing is exactly £15/vCPU/mo)
 
@@ -91,7 +116,7 @@ Today backups are safe purely by architecture: db1 is a dedicated third node tha
 | PostgreSQL, 2 x ROCK-24 + witness (tighter) | £240 | ~£3,000 to £3,400 | ~32 to 40% |
 | PostgreSQL, 3-node parity | £420 | £5,040+ | 0% |
 
-Note: the 2-node+garbd rows assume backups run on a serving node, which we should not accept (section 5); preserving today's backup isolation needs a ~£90/mo async backup replica, taking those options to ~£330/mo and roughly halving their saving. The PostgreSQL rows need no such addition because pgBackRest backs up from the standby.
+Note (revised 18 September 2026): the 2-node+garbd rows originally assumed backups run on a serving node and carried a ~£90/mo async backup replica to make that safe. Measurement removed that assumption (section 5), so those rows stand as shown. The saving is contingent on db1's 296 GB root disk actually shrinking, since 167 GB of it is the data directory. The PostgreSQL rows need no addition either, because pgBackRest backs up from the standby.
 
 **Programme cost, stated plainly:** at a blended £600 to £800/day contractor-equivalent rate, 37 to 43 person-weeks is roughly £110,000 to £170,000 of labour (or the opportunity-cost equivalent in staff time), plus a Postgres/Patroni setup review consultancy (~£8,000 to £15,000) and an optional go-live support retainer. The hosting saving can never justify that. The DDL pain, the spatial ceiling, EOL exposure and ecosystem longevity are the justification; treat the ~£100/mo hosting reduction as a bonus. (If pure cost reduction were the goal, PXC 8.4 at 2-node+garbd achieves £2,100/yr for near-zero effort.)
 
