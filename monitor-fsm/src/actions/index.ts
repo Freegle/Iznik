@@ -19,6 +19,8 @@ import {
   insertReviewerFeedback,
   listUnprocessedFeedback,
   upsertDiscourseBug,
+  getDiscourseBug,
+  listUnansweredQuestions,
   reopenBugAfterRejection,
   upsertPr,
   findTagDuplicate,
@@ -28,6 +30,7 @@ import { renderAllViews } from '../db/views.js'
 import { getPhaseInfo } from '../phase.js'
 import { modelForAdversarialReview } from '../policy.js'
 import { groundingActions } from '../grounding.js'
+import { proseProblems } from '../prose.js'
 
 const exec = promisify(execFile)
 
@@ -1207,6 +1210,12 @@ export function retestReplyBody(opts: { affectsApp: boolean; link?: string | nul
   if (opts.affectsApp) body += ' (but app releases may take up to one week)'
   if (opts.link) body += `\n\nTechnical details: ${opts.link}`
   return body
+}
+
+// Seam for unit tests: the question-answer path reaches Discourse only to fetch
+// the text it quotes, so tests substitute that one call.
+export const questionAnswerDeps = {
+  fetchReporterQuote,
 }
 
 export const deployedReplyDeps = {
@@ -2841,6 +2850,7 @@ If you omit the marker, your work is considered failed regardless of what actual
       // See extractJsonArrayMarker: parse from the full stream, not stdoutTail.
       const classifications = extractJsonArrayMarker(combined, 'CLASSIFICATIONS') ?? undefined
       const sentryIssues = extractJsonArrayMarker(combined, 'SENTRY_ISSUES') ?? undefined
+      const answers = extractJsonArrayMarker(combined, 'ANSWERS') ?? undefined
       const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
       // Summarise for the human watcher: what did the delegate actually do?
       let summary: string
@@ -2875,6 +2885,7 @@ If you omit the marker, your work is considered failed regardless of what actual
           stderrTail: redactSecrets(stderr.slice(-2000)),
           classifications,
           sentryIssues,
+          answers,
           prNumber,
           directPushSha,
           commitPushedSha,
@@ -3049,6 +3060,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         // result.sentryIssues instead of scraping stdoutTail.
         const classifications = extractJsonArrayMarker(combined, 'CLASSIFICATIONS') ?? undefined
         const sentryIssues = extractJsonArrayMarker(combined, 'SENTRY_ISSUES') ?? undefined
+        const answers = extractJsonArrayMarker(combined, 'ANSWERS') ?? undefined
         const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
 
         let summary: string
@@ -3102,6 +3114,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           analysisComplete,
           classifications,
           sentryIssues,
+          answers,
           failedReason: failedMatch ? failedMatch[1].trim() : undefined,
           stdoutTail: redactSecrets(result.textStream.slice(-1500)),
           stderrTail: redactSecrets(result.stderr.slice(-500)),
@@ -3454,6 +3467,114 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
   },
 
   {
+    name: 'list_unanswered_questions',
+    description: "Moderators' questions on Discourse that still have no reply, so they can be answered this iteration. A question is one that TRIAGE classified as type=question (state 'question' in discourse_bug) and that has no reply waiting for approval and none already sent. A reply the human turned down puts the question back in the list, with their reason in previousRejection so the next attempt can address it. Read-only. Returns {questions: [{topic, post, topicTitle, reporter, excerpt, featureArea, previousRejection}], count}.",
+    paramsSchema: {
+      type: 'object',
+      properties: { limit: { type: 'number', description: 'How many to return (1-5, default 3)' } },
+    },
+    handler: async (params) => {
+      const db = getDb()
+      const raw = Number((params as { limit?: unknown })?.limit ?? 3)
+      const limit = Number.isFinite(raw) ? Math.max(1, Math.min(5, Math.trunc(raw))) : 3
+      const questions = listUnansweredQuestions(db, limit)
+      if (questions.length > 0) {
+        out(`list_unanswered_questions: ${questions.length} unanswered - ${questions.map(q => `${q.topic}/${q.post}`).join(', ')}`)
+      }
+      return { questions, count: questions.length }
+    },
+  },
+
+  {
+    name: 'persist_question_answers',
+    description: "Turn the answers the question delegates wrote into replies waiting for approval. Reads context.questionAnswers: [{topic, post, answer, confidence: high|medium|low, needsHuman?, reason?, link?}]. Each answer is queued as a discourse_draft that a human approves and sends from the dashboard - NOTHING is posted to Discourse here. An answer the delegate is not confident about, or that asks for a human, defers the question instead. An answer that reads like documentation rather than plain English is refused and the question is left for another attempt; the second such attempt defers it to a human. Returns {queued, deferred, rejected, skipped}.",
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const ctx = context as { questionAnswers?: unknown }
+      const answers: Array<Record<string, unknown>> = Array.isArray(ctx?.questionAnswers)
+        ? (ctx.questionAnswers as Array<Record<string, unknown>>)
+        : []
+      const db = getDb()
+      let queued = 0, deferred = 0, rejected = 0, skipped = 0
+
+      const deferToHuman = (topic: number, post: number, why: string) => {
+        upsertDiscourseBug(db, { topic, post, state: 'deferred', reason: `needs a human answer: ${why}` })
+        out(`persist_question_answers: ${topic}/${post} left for a human - ${why}`)
+      }
+
+      for (const a of answers) {
+        const topic = Number(a?.topic)
+        const post = Number(a?.post ?? (a as { post_number?: unknown })?.post_number)
+        if (!topic || !post) { skipped++; continue }
+
+        // Only answer what is actually an open question. Anything else - a bug, a
+        // question already answered, a post we have never seen - is not ours to reply to.
+        const bug = getDiscourseBug(db, topic, post)
+        if (!bug || bug.state !== 'question') {
+          skipped++
+          continue
+        }
+
+        const answer = typeof a.answer === 'string' ? a.answer.trim() : ''
+        const confidence = String(a.confidence ?? '').toLowerCase()
+        const why = typeof a.reason === 'string' && a.reason.trim() ? a.reason.trim() : ''
+        if (a.needsHuman === true || !answer || confidence === 'low') {
+          deferToHuman(topic, post, why || (answer ? 'not confident enough in the answer' : 'no answer was produced'))
+          deferred++
+          continue
+        }
+
+        // The hook that scores anything Claude posts to Discourse cannot see a draft
+        // the monitor writes, so the same check runs here instead.
+        const problems = await proseProblems(answer)
+        if (problems.length > 0) {
+          const attemptsKey = `question_answer_rejects_${topic}_${post}`
+          const attempts = Number(kvGet(db, attemptsKey) ?? '0') + 1
+          kvSet(db, attemptsKey, String(attempts))
+          outWarn(`persist_question_answers: ${topic}/${post} answer is too hard to read (attempt ${attempts}): ${problems[0]}`)
+          if (attempts >= 2) {
+            deferToHuman(topic, post, 'two answers in a row were too hard to read')
+            deferred++
+          } else {
+            rejected++
+          }
+          continue
+        }
+
+        // Every reply quotes what it answers, so a reader of a long thread can see
+        // which question it belongs to. Discourse is the better source for the quote;
+        // the excerpt kept at triage is the fallback when it cannot be reached.
+        let quote = ''
+        try {
+          quote = (await questionAnswerDeps.fetchReporterQuote(topic, post)) ?? ''
+        } catch { quote = '' }
+        if (!quote.trim()) quote = (bug.excerpt ?? '').trim()
+        if (!quote) {
+          outWarn(`persist_question_answers: ${topic}/${post} has nothing to quote - not queueing a reply`)
+          skipped++
+          continue
+        }
+
+        const link = typeof a.link === 'string' && a.link.trim() ? a.link.trim() : ''
+        const body = link ? `${answer}\n\nTechnical details: ${link}` : answer
+        queueDiscourseDraft(db, {
+          topic, post,
+          username: bug.reporter ?? 'there',
+          quote,
+          body,
+        })
+        out(`persist_question_answers: queued an answer to ${topic}/${post} for approval`)
+        queued++
+      }
+
+      if (answers.length > 0) {
+        out(`persist_question_answers: ${queued} queued, ${deferred} left for a human, ${rejected} sent back for a rewrite, ${skipped} ignored`)
+      }
+      return { queued, deferred, rejected, skipped }
+    },
+  },
+
+  {
     name: 'persist_classifications',
     description: 'Persist TRIAGE classifications to the discourse_bug table so the status post reflects all identified bugs, not just ones with PRs. Upserts each bug/retest classification as "open" (or "deferred" if type is deferred, "feature-request" if type is feature_request). Already-fixed bugs are not downgraded. Returns {upserted: number, skipped: number}.',
     paramsSchema: { type: 'object', properties: {} },
@@ -3487,7 +3608,10 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           continue
         }
 
-        const state = type === 'deferred' ? 'deferred' : type === 'question' ? 'deferred' : 'open'
+        // A question is kept as 'question', not filed under 'deferred': the answering
+        // pass looks for exactly that state. Before this it was indistinguishable from
+        // everything else parked for later, so no question was ever answered.
+        const state = type === 'deferred' ? 'deferred' : type === 'question' ? 'question' : 'open'
         // Don't downgrade a bug already in fix-queued or fixed state
         const existing = db.prepare('SELECT state FROM discourse_bug WHERE topic = ? AND post = ?').get(c.topic, c.post) as { state: string } | undefined
         if (existing && ['fix-queued', 'fixed', 'confirmed', 'investigating'].includes(existing.state)) { skipped++; continue }

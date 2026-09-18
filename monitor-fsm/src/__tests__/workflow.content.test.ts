@@ -521,3 +521,37 @@ describe('PARALLEL_ANALYZE_AND_FIX prompt — Discourse auth header', () => {
     expect(prompt).toContain('REJECTED with HTTP 403')
   })
 })
+
+// ── Answering moderators' questions ──────────────────────────────────────
+
+describe('question answering is wired into the parallel batch', () => {
+  it('gathers the unanswered questions alongside the active topics', () => {
+    expect(workflow.states.CHECK_CI.readActions).toContain('list_unanswered_questions')
+  })
+
+  it('dispatches one task per unanswered question', () => {
+    const prompt: string = workflow.states.PARALLEL_ANALYZE_AND_FIX.prompt
+    expect(prompt).toContain('context._action_list_unanswered_questions.questions')
+    expect(prompt).toContain("id: 'question-<topic>-<post>'")
+    expect(prompt).toContain('ANSWERS=[')
+  })
+
+  it('tells the answering delegate to research rather than guess, and never to post', () => {
+    const prompt: string = workflow.states.PARALLEL_ANALYZE_AND_FIX.prompt
+    expect(prompt).toContain('do NOT post anything to Discourse')
+    expect(prompt).toContain('do not answer from memory')
+    expect(prompt).toContain('needsHuman')
+  })
+
+  it('collates the answers and queues them for approval', () => {
+    const prompt: string = workflow.states.COLLATE_RESULTS.prompt
+    expect(prompt).toContain("id starts with 'question-'")
+    expect(prompt).toContain('persist_question_answers')
+    expect(workflow.states.COLLATE_RESULTS.writeActions).toContain('persist_question_answers')
+  })
+
+  it('registers both question actions', () => {
+    expect(actionsTs).toContain("name: 'list_unanswered_questions'")
+    expect(actionsTs).toContain("name: 'persist_question_answers'")
+  })
+})

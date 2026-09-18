@@ -32,8 +32,20 @@
           />
         </div>
 
-        <!-- Reply Queue column removed: deployed-fix replies are the fixed
-             verbatim text and no longer need a per-draft review column here. -->
+      </div>
+
+      <!-- Answers waiting to be sent. Replies about a fix are the same fixed
+           wording every time and go out on their own, so anything sitting here
+           is an answer somebody wrote to a question, which a person reads before
+           it is sent. Hidden when there is nothing waiting. -->
+      <div v-if="pendingDrafts.length > 0" class="row g-3 mt-1">
+        <div class="col-12">
+          <ReplyQueue
+            :drafts="draftsData.state.drafts"
+            :loading="draftsData.state.loading"
+            @refresh="draftsData.refresh()"
+          />
+        </div>
       </div>
 
       <!-- Feature Requests (collapsible, only shown when non-empty) -->
@@ -130,13 +142,18 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useBugs, useCIRunner, useFeatureRequests, useIterations, usePrsLive } from './composables/useApi'
+import { useBugs, useCIRunner, useDrafts, useFeatureRequests, useIterations, usePrsLive } from './composables/useApi'
 import PrPanel from './components/PrPanel.vue'
 import BugPanel from './components/BugPanel.vue'
 import FeatureRequestPanel from './components/FeatureRequestPanel.vue'
 import IterTable from './components/IterTable.vue'
+import ReplyQueue from './components/ReplyQueue.vue'
 
 const bugsData = useBugs()
+const draftsData = useDrafts()
+const pendingDrafts = computed(() =>
+  draftsData.state.drafts.filter(d => !d.approved_at && !d.posted_at && !d.rejected_at),
+)
 const featureRequestsData = useFeatureRequests()
 const itersData = useIterations()
 const prsData = usePrsLive()
