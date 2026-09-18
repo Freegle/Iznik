@@ -176,7 +176,14 @@ class DetectRelatedAccountsCommand extends Command
                         continue;
                     }
 
-                    $reason = $this->reasonFor((string) $key, $u1, $users[$u1], $u2, $users[$u2]);
+                    $reason = $this->reasonFor(
+                        (string) $key,
+                        $u1,
+                        $users[$u1],
+                        $u2,
+                        $users[$u2],
+                        $this->sharedPostCount($u1, $u2)
+                    );
 
                     if ($dryRun) {
                         $this->line("Would link {$u1} + {$u2}: {$reason}");
@@ -348,10 +355,16 @@ class DetectRelatedAccountsCommand extends Command
      * what matched, how much of it there was, and when, so the mod can judge the pair
      * without opening both chat histories.
      *
+     * Where the two have also replied to the same posts, that is said last, because it is
+     * what separates an ordinary duplicate from somebody working the system. Two accounts
+     * belonging to one person will normally reply to different posts; replying to the same
+     * one means either the person forgot which account they were in, or they are putting
+     * themselves forward twice for the same item.
+     *
      * @param array{n:int,first:string,last:string,chats:array,label:string} $a
      * @param array{n:int,first:string,last:string,chats:array,label:string} $b
      */
-    private function reasonFor(string $key, int $u1, array $a, int $u2, array $b): string
+    private function reasonFor(string $key, int $u1, array $a, int $u2, array $b, int $sharedPosts = 0): string
     {
         $reason = sprintf(
             'Both accounts gave the same %s in chat. #%d: %s. #%d: %s.',
@@ -362,7 +375,34 @@ class DetectRelatedAccountsCommand extends Command
             $this->describeUse($b)
         );
 
+        if ($sharedPosts > 0) {
+            $reason .= $sharedPosts === 1
+                ? ' They have also both replied to the same post.'
+                : " They have also both replied to the same {$sharedPosts} posts.";
+        }
+
         return mb_substr($reason, 0, 255);
+    }
+
+    /**
+     * How many posts both accounts have replied to.
+     *
+     * Deliberately not a linking signal on its own: a popular offer gets replies from many
+     * unrelated people, so on its own this says nothing. It only means something once the
+     * two accounts are already tied together by contact details, which is why it is
+     * computed here, per pair, rather than scanned for.
+     */
+    private function sharedPostCount(int $u1, int $u2): int
+    {
+        return (int) DB::table('chat_messages AS a')
+            ->join('chat_messages AS b', function ($join) {
+                $join->on('b.refmsgid', '=', 'a.refmsgid');
+            })
+            ->where('a.userid', $u1)
+            ->where('b.userid', $u2)
+            ->whereNotNull('a.refmsgid')
+            ->distinct()
+            ->count('a.refmsgid');
     }
 
     /**

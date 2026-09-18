@@ -255,6 +255,49 @@ class DetectRelatedAccountsCommandTest extends TestCase
         $this->assertNull($this->pairFor($a->id, $b->id));
     }
 
+    public function test_note_says_when_the_pair_also_replied_to_the_same_post(): void
+    {
+        // This is what separates an ordinary duplicate from somebody putting themselves
+        // forward twice for the same item, so the mod should be told.
+        $a = $this->createTestUser();
+        $b = $this->createTestUser();
+        $offerer = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $post = $this->createTestMessage($offerer, $group);
+
+        $chatA = $this->newChat($a->id, $offerer->id);
+        $chatB = $this->newChat($b->id, $offerer->id);
+
+        DB::table('chat_messages')->insert([
+            ['chatid' => $chatA, 'userid' => $a->id, 'message' => 'May I have this? 07700900888',
+             'refmsgid' => $post->id, 'date' => date('Y-m-d H:i:s', strtotime('-3 days'))],
+            ['chatid' => $chatB, 'userid' => $b->id, 'message' => 'Please may I have this? 07700900888',
+             'refmsgid' => $post->id, 'date' => date('Y-m-d H:i:s', strtotime('-2 days'))],
+        ]);
+
+        $this->artisan('users:detect-related --days=30')->assertExitCode(0);
+
+        $pair = $this->pairFor($a->id, $b->id);
+        $this->assertNotNull($pair);
+        $this->assertStringContainsString('both replied to the same post', $pair->reason);
+        $this->assertLessThanOrEqual(255, strlen($pair->reason));
+    }
+
+    public function test_note_leaves_out_shared_posts_when_there_are_none(): void
+    {
+        $a = $this->createTestUser();
+        $b = $this->createTestUser();
+
+        $this->say($a->id, 'My number is 07700900444.');
+        $this->say($b->id, 'Mine is 07700900444.');
+
+        $this->artisan('users:detect-related --days=30')->assertExitCode(0);
+
+        $pair = $this->pairFor($a->id, $b->id);
+        $this->assertNotNull($pair);
+        $this->assertStringNotContainsString('same post', $pair->reason);
+    }
+
     public function test_ignores_a_postcode_with_no_street_address(): void
     {
         // Two people saying which area they are in. Without a house number there is no

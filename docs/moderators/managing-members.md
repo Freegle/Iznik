@@ -80,6 +80,11 @@ same person, or the same household. Each card says why the pair was picked up:
 The note names the accounts and says how many messages the details appeared in, and when, so
 you can usually judge the pair without opening either chat.
 
+If the two accounts have also replied to the same post, the note says so. That one is worth
+a closer look. Someone with two accounts normally replies to different posts, so replying to
+the same one means either they lost track of which account they were in, or they are putting
+themselves forward twice for the same item.
+
 Most pairs are innocent. People forget a password and register again, or a couple share a
 phone. Nobody is blocked or flagged by appearing here. You can **ignore** the pair, or send
 the member a friendly "let us know" email so **they** decide whether and how to merge their
