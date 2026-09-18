@@ -139,6 +139,51 @@ func TestReverseString_PreservesLength(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// resolveDisplayPostingStatus
+// ---------------------------------------------------------------------------
+
+func TestResolveDisplayPostingStatus(t *testing.T) {
+	moderated := "MODERATED"
+	def := "DEFAULT"
+	prohibited := "PROHIBITED"
+	blank := ""
+
+	tests := []struct {
+		name    string
+		rippled int
+		status  *string
+		want    *string
+	}{
+		// A member nobody has ever flagged must not read as individually Moderated
+		// (Discourse 10024/8) — a blank status resolves to DEFAULT, not MODERATED.
+		{"nil status, not rippled, resolves to DEFAULT", 0, nil, &def},
+		{"empty status, not rippled, resolves to DEFAULT", 0, &blank, &def},
+		// An explicit status is a moderator's actual decision and must survive unchanged.
+		{"DEFAULT stays DEFAULT", 0, &def, &def},
+		{"MODERATED stays MODERATED", 0, &moderated, &moderated},
+		{"PROHIBITED stays PROHIBITED", 0, &prohibited, &prohibited},
+		// Rippled memberships were never chosen by a moderator: a rippled row is passed
+		// through untouched rather than resolved to any explicit status (Discourse 10115).
+		{"nil status, rippled, stays nil", 1, nil, nil},
+		{"empty status, rippled, passed through unchanged", 1, &blank, &blank},
+		{"explicit status survives even when rippled", 1, &moderated, &moderated},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveDisplayPostingStatus(tt.rippled, tt.status)
+			if tt.want == nil {
+				assert.Nil(t, got)
+			} else {
+				if assert.NotNil(t, got) {
+					assert.Equal(t, *tt.want, *got)
+				}
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // SanitiseEmailLocal
 // ---------------------------------------------------------------------------
 

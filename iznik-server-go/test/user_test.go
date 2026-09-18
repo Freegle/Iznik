@@ -3277,7 +3277,7 @@ func TestGetUserMembershipsPostingStatus(t *testing.T) {
 		uid      uint64
 		expected interface{}
 	}{
-		{"NULL→MODERATED", nullUser, "MODERATED"},
+		{"NULL→DEFAULT", nullUser, "DEFAULT"},
 		{"DEFAULT stays DEFAULT", defaultUser, "DEFAULT"},
 		{"MODERATED stays MODERATED", moderatedUser, "MODERATED"},
 		{"PROHIBITED stays PROHIBITED", prohibitedUser, "PROHIBITED"},

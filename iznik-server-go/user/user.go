@@ -247,6 +247,19 @@ func GetUserByEmail(c *fiber.Ctx) error {
 	})
 }
 
+// resolveDisplayPostingStatus resolves the ourPostingStatus a moderator sees for a
+// membership. A blank status (NULL/empty) means no moderator ever set one — that is not
+// itself a moderation decision, so it reads as DEFAULT ("follow group default"), never
+// MODERATED. Rippled memberships (rippled = 1) are left unset: nobody chose them, so even
+// DEFAULT would misrepresent them as a per-group posting status (Discourse 10115).
+func resolveDisplayPostingStatus(rippled int, status *string) *string {
+	if rippled == 0 && (status == nil || *status == "") {
+		v := utils.POSTING_STATUS_DEFAULT
+		return &v
+	}
+	return status
+}
+
 func GetUser(c *fiber.Ctx) error {
 	modtools := c.Query("modtools") == "true"
 
@@ -1450,19 +1463,17 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 
 	wg.Wait()
 
-	// Resolve NULL ourPostingStatus → MODERATED.
-	// DEFAULT stays as DEFAULT — it's an explicit status meaning "follow group default".
-	// A membership rippling created for the poster (rippled = 1) is left unset: no
-	// moderator chose that membership, so a blank status there is not a moderation
-	// decision, and reading it as MODERATED put a "This member is Moderated" notice on
-	// every rippled-in copy (Discourse 10115).
+	// Resolve a blank ourPostingStatus for display. DEFAULT stays as DEFAULT — it's an
+	// explicit status meaning "follow group default". A blank/NULL status means no
+	// moderator ever set one, which is not itself a moderation decision, so it also
+	// resolves to DEFAULT rather than MODERATED — otherwise a member nobody has ever
+	// flagged shows a "This member is Moderated" notice (Discourse 10024/8). Rippled
+	// memberships (rippled = 1) are left unset entirely: no moderator chose them, so
+	// even DEFAULT would misrepresent them as a per-group posting status (Discourse 10115).
 	if modtools {
 		for i := range memberships {
 			m := &memberships[i]
-			if m.Rippled == 0 && (m.OurPostingStatus == nil || *m.OurPostingStatus == "") {
-				v := utils.POSTING_STATUS_MODERATED
-				m.OurPostingStatus = &v
-			}
+			m.OurPostingStatus = resolveDisplayPostingStatus(m.Rippled, m.OurPostingStatus)
 		}
 	} else {
 		// Non-modtools: strip posting status (mod-only field).
