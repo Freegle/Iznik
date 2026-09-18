@@ -710,14 +710,11 @@ func effectiveBrowseView(c *fiber.Ctx, db *gorm.DB, myid uint64) string {
 // never clear.
 func myGroupsMsgIDs(db *gorm.DB, myid uint64) []uint64 {
 	var ids []uint64
+	memberFilter, memberArgs := message.ApprovedInMyGroups(db, "ms.msgid", myid)
 	db.Table("messages_spatial ms").
 		Select("DISTINCT ms.msgid").
-		Where("ms.successful = 0 "+
-			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
-			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
-			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
-			"AND mg.collection = 'Approved' AND mg.deleted = 0)"+
-			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), myid).
+		Where("ms.successful = 0 AND "+memberFilter+
+			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), memberArgs...).
 		Scan(&ids)
 	return ids
 }
@@ -878,16 +875,13 @@ func Count(c *fiber.Ctx) error {
 // instead of sticking on rows the feed never renders.
 func myGroupsCountUnfiltered(db *gorm.DB, myid uint64) uint64 {
 	var count uint64 = 0
+	memberFilter, memberArgs := message.ApprovedInMyGroups(db, "ms.msgid", myid)
 	db.Table("messages_spatial ms").
 		Select("COUNT(DISTINCT ms.msgid)").
 		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
 		Where("ms.successful = 0 AND ml.msgid IS NULL AND ms.id > "+
-			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" "+
-			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
-			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
-			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
-			"AND mg.collection = 'Approved' AND mg.deleted = 0)"+
-			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), myid).
+			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" AND "+memberFilter+
+			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), memberArgs...).
 		Scan(&count)
 	return count
 }
@@ -914,16 +908,13 @@ func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64, maxMinute
 	// Haversine — the same measure the feed uses — so badge and list agree at the boundary.
 	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
 	var candidates []reachCandidateRow
+	memberFilter, memberArgs := message.ApprovedInMyGroups(db, "ms.msgid", myid)
 	db.Table("messages_spatial ms").
 		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
 		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
 		Where("ms.successful = 0 AND ml.msgid IS NULL AND ms.id > "+
-			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" "+
-			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
-			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
-			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
-			"AND mg.collection = 'Approved' AND mg.deleted = 0)"+
-			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), myid).
+			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" AND "+memberFilter+
+			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), memberArgs...).
 		Scan(&candidates)
 
 	return countWithinBudget(candidates, viewerLat, viewerLng, maxDistanceMiles, maxMinutes)

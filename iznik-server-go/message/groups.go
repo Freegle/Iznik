@@ -53,16 +53,16 @@ func Groups(c *fiber.Ctx) error {
 		spatialArgs = []interface{}{myid, utils.MESSAGE_LIKES_VIEW}
 	} else {
 		// Combined browse (gid=0): message must be approved in some group the viewer belongs to.
-		spatialGroupFilter = " AND EXISTS (" +
-			"SELECT 1 FROM messages_groups mg " +
-			"INNER JOIN memberships mem ON mem.groupid = mg.groupid " +
-			"WHERE mg.msgid = messages_spatial.msgid " +
-			"AND mem.userid = ? " +
-			"AND mg.collection = 'Approved' " +
-			"AND mg.deleted = 0" +
-			") "
-		// Placeholders for spatial arm: ?(likes userid), ?(likes type), ?(mem.userid)
-		spatialArgs = []interface{}{myid, utils.MESSAGE_LIKES_VIEW, myid}
+		// The viewer's groups are read first and inlined as constants where there are few
+		// enough of them, so MySQL can use the (msgid, groupid) index instead of walking every
+		// membership row each post has - see approvedInMyGroupsPredicate. Above the cap this
+		// returns the original memberships-join form, binding myid, which is why the arg list
+		// is appended to rather than written out.
+		memberFilter, memberArgs := ApprovedInMyGroups(db, "messages_spatial.msgid", myid)
+		spatialGroupFilter = " AND " + memberFilter + " "
+		// Placeholders for spatial arm: ?(likes userid), ?(likes type), then whatever the
+		// membership predicate binds (nothing in the constant form, myid in the fallback).
+		spatialArgs = append([]interface{}{myid, utils.MESSAGE_LIKES_VIEW}, memberArgs...)
 	}
 
 	// We want to include our own messages, so that it is less obvious if a message is delayed for approval and
