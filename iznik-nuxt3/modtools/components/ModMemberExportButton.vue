@@ -76,7 +76,9 @@ const modalButtonLabel = ref('Cancel')
 
 const group = computed(() => modGroupStore.get(props.groupid))
 
-const admin = computed(() => group.value?.myrole === 'Owner')
+// Member export has been GDPR-restricted since 2024 (see the tooltip below);
+// this must stay false for every role, not just non-Owners.
+const admin = computed(() => false)
 
 const progressValue = computed(() => {
   return group.value && group.value.membercount

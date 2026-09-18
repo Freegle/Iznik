@@ -43,7 +43,9 @@ const MockModMemberExportButton = defineComponent({
       }
     })
 
-    const admin = computed(() => group.value?.myrole === 'Owner')
+    // Member export has been GDPR-restricted since 2024 (topic 10085/7); this
+    // must stay false for every role, not just non-Owners.
+    const admin = computed(() => false)
 
     const progressValue = computed(() => {
       return group.value && group.value.membercount
@@ -118,9 +120,9 @@ describe('ModMemberExportButton', () => {
   })
 
   describe('button disabled state', () => {
-    it('button is enabled when admin (Owner)', () => {
+    it('button stays disabled for Owner too (GDPR export restriction, topic 10085/7)', () => {
       const wrapper = mountComponent({ myrole: 'Owner' })
-      expect(wrapper.find('button').attributes('disabled')).toBeUndefined()
+      expect(wrapper.find('button').attributes('disabled')).toBe('')
     })
 
     it('button is disabled when not admin (Moderator)', () => {
@@ -145,9 +147,9 @@ describe('ModMemberExportButton', () => {
       expect(wrapper.vm.group).toBeNull()
     })
 
-    it('admin returns true when myrole is Owner', () => {
+    it('admin is always false, even when myrole is Owner (GDPR export restriction, topic 10085/7)', () => {
       const wrapper = mountComponent({ myrole: 'Owner' })
-      expect(wrapper.vm.admin).toBe(true)
+      expect(wrapper.vm.admin).toBe(false)
     })
 
     it('admin returns false when myrole is not Owner', () => {
@@ -245,9 +247,11 @@ describe('ModMemberExportButton', () => {
   })
 
   describe('button click', () => {
-    it('clicking Export button opens modal', async () => {
+    it('the button is disabled, so download() is invoked directly to verify it opens the modal', async () => {
       const wrapper = mountComponent()
-      await wrapper.find('button').trigger('click')
+      expect(wrapper.find('button').attributes('disabled')).toBe('')
+      wrapper.vm.download()
+      await wrapper.vm.$nextTick()
       expect(wrapper.vm.showExportModal).toBe(true)
     })
   })
