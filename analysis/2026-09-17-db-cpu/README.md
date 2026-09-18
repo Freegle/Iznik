@@ -53,6 +53,47 @@ Validate any such capture by running a deliberately slow statement (`SELECT SLEE
 and confirming it appears. Background it with `nohup`, or ssh will kill it before it gets slow —
 the first attempt at this reported a working capture as broken.
 
+## mysqld is not the node
+
+db2 and db3 also run `iznik-spatial-go` and `iznik-routing-go`. During a dataset rebuild spatial
+takes **several cores**, and a watch that measures mysqld alone reports a quiet node while the box
+is nearly full:
+
+```
+db-2 node=7.26/8 mysqld=1.90 load=9.98    <- 5.4 cores are NOT mysqld
+```
+
+The tell is a load average that makes no sense against the CPU figure. Check `b` and `wa` in
+`vmstat` first: if they are zero, the load is runnable work, so something is burning CPU that you
+are not measuring. `ps -eo pcpu` will not find it either - that column is a LIFETIME average, so a
+process 17 days old sitting at 480% reads as 3.9%. Use `top -bn2`, or compute the node from
+`/proc/stat` as `dbpoll.sh` now does.
+
+`ReachOverflowDataset` rebuilds every 24 h (`RebuildInterval()`), reading ~30,000 rows with ten
+`JSON_EXTRACT` calls each and rasterising the rings. That is by design and the delta path between
+rebuilds is 2-minutely and cheap - but it is why db2 reads as busy for a few minutes a day with
+mysqld nearly idle.
+
+## Your own shell matches your own search
+
+Any `pgrep -f`, `pkill -f`, `grep -c`, or shell `case` pattern containing the string you are
+looking for **also matches the process doing the looking**. This cost real time in one session:
+
+- `pkill -f "timeout 16h"` killed the shell running it, along with the watchers.
+- `grep -cF overnight-digest-watch.sh` reported 6 watchers when there was 1.
+- A `case "$c" in *purge:chats*)` loop reported the job "still running" ten minutes after it ended.
+
+Match on the executable instead, which your shell cannot satisfy:
+
+```
+for p in /proc/[0-9]*; do
+  case "$(readlink $p/exe 2>/dev/null)" in */php) ... ;; esac
+done
+```
+
+Or check parentage before believing a count: a second PID with the first as its parent is a
+command-substitution subshell, not a duplicate.
+
 ## Three things that will bite
 
 - `mysql -B` escapes tabs and newlines **in the data**, so split on the two-character `\t`.
