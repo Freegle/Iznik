@@ -633,18 +633,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				// Mask rejected/regenerating AI images: if the externaluid matches an ai_image
-				// that is no longer active, return an empty externaluid so the frontend shows
-				// a placeholder instead of the rejected illustration.
-				db.Table("messages_attachments ma").
-					Select("ma.id, ma.msgid, bia.bulkitemid, ma.archived, "+
-						"CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid, "+
-						"ma.externalmods").
-					Joins("LEFT JOIN ai_images ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating', 'suppressed')").
-					Joins("LEFT JOIN messages_bulk_item_attachments bia ON bia.attachmentid = ma.id").
-					Where("ma.msgid = ?", id).
-					Order("ma.`primary` DESC, ma.id ASC").
-					Scan(&messageAttachments)
+				messageAttachments = FetchMessageAttachments(db, id, "ai_images")
 			}()
 
 			var messageReply []MessageReply

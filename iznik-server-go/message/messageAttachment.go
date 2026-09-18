@@ -2,6 +2,9 @@ package message
 
 import (
 	"encoding/json"
+	"log"
+
+	"gorm.io/gorm"
 )
 
 func (MessageAttachment) TableName() string {
@@ -41,4 +44,41 @@ func (a *MessageAttachment) ComputeAI() {
 	case float64:
 		a.AI = v != 0
 	}
+}
+
+// FetchMessageAttachments fetches the attachments for a single message, masking
+// rejected/regenerating/suppressed AI images via a LEFT JOIN against aiImagesTable
+// (always "ai_images" in production; a test may pass a different name to force
+// this query to fail deterministically without touching the real table).
+//
+// If the enriched query fails - e.g. the schema mismatch that made PR #305's
+// ai_images.status column unknown to production for a period - GORM's Scan
+// leaves the destination as an empty slice with no error surfaced, which would
+// otherwise make every real photo on the message vanish. Falling back to the
+// plain attachment data keeps photos visible even when the AI-masking join breaks.
+func FetchMessageAttachments(db *gorm.DB, id string, aiImagesTable string) []MessageAttachment {
+	var messageAttachments []MessageAttachment
+
+	result := db.Table("messages_attachments ma").
+		Select("ma.id, ma.msgid, bia.bulkitemid, ma.archived, "+
+			"CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid, "+
+			"ma.externalmods").
+		Joins("LEFT JOIN "+aiImagesTable+" ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating', 'suppressed')").
+		Joins("LEFT JOIN messages_bulk_item_attachments bia ON bia.attachmentid = ma.id").
+		Where("ma.msgid = ?", id).
+		Order("ma.`primary` DESC, ma.id ASC").
+		Scan(&messageAttachments)
+
+	if result.Error != nil {
+		log.Printf("Failed to fetch attachments for message %s, falling back: %v", id, result.Error)
+
+		messageAttachments = nil
+		db.Table("messages_attachments").
+			Select("id, msgid, archived, externaluid, externalmods").
+			Where("msgid = ?", id).
+			Order("`primary` DESC, id ASC").
+			Scan(&messageAttachments)
+	}
+
+	return messageAttachments
 }
