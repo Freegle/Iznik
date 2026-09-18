@@ -3,7 +3,7 @@
 -- Adds users_related.reason: the note shown to moderators on the Related Members card
 -- saying why two accounts were linked. Needed once more than one detector writes to the
 -- table - the first additional one is shared phone numbers in chat
--- (users:detect-related-phone). NULL means the row came from the original browser-session
+-- (users:detect-related). NULL means the row came from the original browser-session
 -- detector, or predates the column.
 --
 -- Safe to run more than once: the step only runs when the column is absent.

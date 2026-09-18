@@ -10,8 +10,8 @@ use Illuminate\Support\Facades\Schema;
  *
  * Until now every row was written by handleRelated() in iznik-server-go when the same
  * browser was seen signed in as more than one account, so "why" was always the same and
- * never needed saying. Once other detectors write here (the first is shared phone
- * numbers in chat, users:detect-related-phone) the mod has no way to judge a pair
+ * never needed saying. Once other detectors write here (the first is shared phone numbers
+ * and street addresses in chat, users:detect-related) the mod has no way to judge a pair
  * without being told what the evidence was. NULL means the row predates this column, or
  * came from the browser detector, which the UI words as the session-based reason.
  */
