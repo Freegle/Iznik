@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-17
+last_reviewed: 2026-09-18
 covers:
   - iznik-batch/app/Services/EeeClassificationService.php
   - iznik-batch/app/Services/EeeComponentService.php
@@ -128,7 +128,10 @@ unusual on a site where fridge freezers are among the commonest things offered.
 - **Counts are of distinct posts, members and communities**, taken from the id sets,
   because a rippled post arrives once per group and summing would multiply it.
 - **The label is a name carrying no brand** where the cluster has one, even if a
-  branded spelling is commoner.
+  branded spelling is commoner. This rests entirely on `brands.csv` recognising the
+  brand: an unrecognised one looks like an ordinary item word, wins the preference
+  for an unbranded name, and is published as the item - which is how `Corby trouser
+  press` and `Dolce gusto coffee machine` came to be item names on the page.
 
 The rare list then drops anything that is a **version of a common item**. A rival
 qualifies as common at ten or more offers and at least three times the candidate's

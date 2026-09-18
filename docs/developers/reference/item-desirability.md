@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-30
+last_reviewed: 2026-09-18
 covers:
   - iznik-batch/app/Services/Desirability/TitleCanonicalService.php
   - iznik-batch/app/Services/Desirability/DesirabilityService.php
@@ -61,7 +61,8 @@ rippled-post predictions as calibrated on their own.
 
 `TitleCanonicalService` reduces a subject to the item-type key the artifact is
 keyed on: strip the `OFFER: ... (location)` wrapper, postcodes, place names,
-quantities, condition/status phrases; detect and remove brands; apply the
+quantities, condition/status phrases; detect and remove brands (`brands.csv`);
+apply the
 synonym table; de-pluralise the trailing word when the corpus knows the stem
 (`resources/desirability/wordfreq.json` - corpus frequencies rather than a
 spelling dictionary, because hunspell's US dictionary rejects UK words like
@@ -70,10 +71,18 @@ were additionally merged by embedding clustering at a verified-safe cosine
 threshold (0.98: 100% pooling precision under human-style review; below that,
 too many "2 seater vs 3 seater" mistakes).
 
-The PHP port is pinned to the analysis pipeline by 300 golden fixtures in
-`tests/fixtures/desirability/golden-titles.json`. **If you change any cleaning
-rule, the artifact must be rebuilt** - otherwise new posts map to keys the
-artifact does not contain and silently score `default`.
+A leading number is only a quantity when what follows is a plural noun that is not
+a unit of measure: `2 uplighters` is two uplighters, `3 seater sofa` and `20 litres
+fish tank` are one item each. A plural count noun goes with the number it belongs
+to, so `4 pieces of sunlight roofing` is roofing.
+
+The 300 golden fixtures in `tests/fixtures/desirability/golden-titles.json` are the
+record of what this service does; the pipeline they were first taken from is gone.
+**If you change any cleaning rule, the artifact must be rebuilt** - otherwise new
+posts map to keys the artifact does not contain and silently score `default`. Note
+which way a change moves the keys: removing a brand or a count makes them more
+generic and so more likely to be in the artifact already, whereas a rule that adds
+a word to a key will miss.
 
 ## Pipeline
 
