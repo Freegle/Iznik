@@ -11,7 +11,7 @@ Copy the three scripts to `/root/` on a db node and start each with `setsid … 
 |---|---|
 | `pl-sampler.sh` | samples `information_schema.processlist` ~20×/s in bursts, one long-lived connection |
 | `cputrack.sh` | per-minute mysqld CPU and load, so "how busy was it at 02:00" is answerable afterwards |
-| `longq.sh` | full text of anything running ≥45 s, once per connection id |
+| `longq2.sh` | full text of anything running ≥10 s, EVERY sighting (see below) |
 | `analyse.mjs` | ranks a TSV by mean concurrent threads, by source host and by query shape |
 
 ## Why processlist and not the digest table
@@ -21,6 +21,37 @@ statements land in `statement/com/Execute` with no digest text. Ranking db2 from
 
 On **db3** it is the other way round — apiv2's Go driver sends text protocol, so the digest table
 is complete and covers the whole uptime. Prefer it there; it cannot be skewed by a transient.
+
+## The sampler already answers "how long did that take"
+
+`pl-sampler.sh` records every poll, so `max(time)` per `(connection id, host)` is a **true**
+duration for every statement it saw — not a sample of one. Before building anything to measure
+query durations, run this over its files:
+
+```
+zcat db-2-YYYYMMDD.tsv.gz; cat db-2-YYYYMMDD.tsv | awk -F'\t' '
+  NF>=9 && $6+0>=5 && $9!="" { k=$2":"$4; if ($6+0>mx[k]) mx[k]=$6+0; shape[k]=substr($9,1,40) }
+  END { for (k in mx) { s=shape[k]; n[s]++; sum[s]+=mx[k]; if (mx[k]>m[s]) m[s]=mx[k] }
+        for (s in n) printf "%5d %5d %7d  %s\n", n[s], m[s], sum[s], s }' | sort -k3 -rn
+```
+
+Split the input on a timestamp to compare before and after a change. That is how #1542 and #1543
+were verified: both fixed queries went from the top of the slow list to **absent**.
+
+Two capture scripts were written and debugged before anyone asked the sampler, and the first of
+them measured the wrong thing for four hours.
+
+## A capture keyed on connection id records a floor
+
+If a capture writes one row per connection id and skips that id afterwards, the duration it stores
+is whatever the statement had reached when a poll first caught it above the threshold. A query the
+CPU watch saw at 43 s appeared in such a file at 19 s, and a duty cycle derived from it was low by
+more than half. Append **every** sighting and take the max — that is what `longq2.sh` does, and it
+is why its rows for one statement climb (12 s, 17 s, 22 s).
+
+Validate any such capture by running a deliberately slow statement (`SELECT SLEEP(14), 'probe'`)
+and confirming it appears. Background it with `nohup`, or ssh will kill it before it gets slow —
+the first attempt at this reported a working capture as broken.
 
 ## Three things that will bite
 
