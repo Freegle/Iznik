@@ -73,7 +73,7 @@ class ScheduledOutcomeRegistry
                         ->count();
 
                     if ($expected === 0) {
-                        return OutcomeResult::skipped($slug, 'no groups existed on ' . $day);
+                        return OutcomeResult::skipped($slug, 'no groups existed on '.$day);
                     }
 
                     $covered = DB::table('stats')
@@ -87,7 +87,7 @@ class ScheduledOutcomeRegistry
                         return OutcomeResult::breach(
                             $slug,
                             "daily stats cover {$covered} of {$expected} communities for {$day} - "
-                            . "{$missing} missing. The 02:30 run did not get through them all."
+                            ."{$missing} missing. The 02:30 run did not get through them all."
                         );
                     }
 
@@ -137,43 +137,35 @@ class ScheduledOutcomeRegistry
             // which makes it too loose to catch a 2x slowdown. The window comes from the
             // schedule itself and needs no tuning: either the run finished inside it or it
             // did not.
-            (new CallbackCheck(
+            $this->finishedInsideWindow(
                 'mail:digest:unified --mode=daily window',
-                function (CarbonInterface $now) use ($tz) {
-                    $slug = 'mail:digest:unified --mode=daily window';
-                    $windowClose = $now->copy()->setTimezone($tz)
-                        ->startOfDay()->setTime(12, 0)->setTimezone('UTC');
+                'Daily digest finished inside its send window',
+                'users_digests',
+                'lastsent',
+                7,
+                12,
+                'members were sent one',
+                fn ($q) => $q->where('mode', 'daily'),
+                'Check throughput before members start getting these overnight.'
+            )
+                ->enabledWhen(fn () => trim((string) config('freegle.digest.daily_allowlist', '')) !== ''),
 
-                    // users_digests.lastsent holds only each member's MOST RECENT send, so
-                    // this counts members whose latest daily digest went out after today's
-                    // window shut - not historical stragglers, whose lastsent is an earlier
-                    // day and therefore below today's cut.
-                    $late = DB::table('users_digests')
-                        ->where('mode', 'daily')
-                        ->where('lastsent', '>=', $windowClose)
-                        ->count();
-
-                    if ($late > 0) {
-                        $latest = DB::table('users_digests')
-                            ->where('mode', 'daily')
-                            ->where('lastsent', '>=', $windowClose)
-                            ->max('lastsent');
-
-                        return OutcomeResult::breach(
-                            $slug,
-                            "daily digest overran its 07:00-12:00 window: {$late} members were sent "
-                            . "one after it closed (latest {$latest} UTC). The run is not keeping up - "
-                            . 'check throughput before members start getting these overnight.'
-                        );
-                    }
-
-                    return OutcomeResult::ok($slug, 'daily digest finished inside its 07:00-12:00 window');
-                }
-            ))
-                ->describedAs('Daily digest finished inside its send window')
-                ->inCategory('fire-once-output')
-                ->enabledWhen(fn () => trim((string) config('freegle.digest.daily_allowlist', '')) !== '')
-                ->activeBetween(13, 24, $tz),
+            // push:daily-posts trails the digest by 30 minutes and reads the SAME
+            // getPostsForUser(), so it shares the failure mode exactly: if that query gets
+            // slow again, this overruns too and members get push notifications at odd hours.
+            // Its cursor is its own row (mode='push').
+            $this->finishedInsideWindow(
+                'push:daily-posts window',
+                'Daily posts push finished inside its send window',
+                'users_digests',
+                'lastsent',
+                7,
+                12,
+                'members were pushed one',
+                fn ($q) => $q->where('mode', 'push'),
+                'It reads the same query as the daily digest - check that first.'
+            )
+                ->enabledWhen(fn () => trim((string) config('freegle.posts_push_allowlist', '')) !== ''),
 
             // ---- Cursor/queue: is a worker stuck (backlog piling up)? -------
 
@@ -329,7 +321,7 @@ class ScheduledOutcomeRegistry
                 function (string $raw) {
                     $decoded = json_decode($raw, true);
 
-                    return is_array($decoded) && !empty($decoded['updated_at'])
+                    return is_array($decoded) && ! empty($decoded['updated_at'])
                         ? Carbon::parse($decoded['updated_at'])
                         : null;
                 },
@@ -402,5 +394,80 @@ class ScheduledOutcomeRegistry
 
             return OutcomeResult::ok($slug, "config '{$key}' fresh ({$ageMinutes} min ago, max {$maxAgeMinutes})");
         });
+    }
+
+    /**
+     * A job scheduled inside a window must FINISH inside it.
+     *
+     * The companion ProducedSinceCheck on such a job only asks whether it ran at all. That is
+     * what let the daily digest collapse for three days in September 2026 while its own check
+     * passed on 40,000+ sends a day: throughput fell 13x, the run went round the clock, and
+     * members got their "morning" digest at 01:00.
+     *
+     * The assertion needs no tuning and no guessed figure. The job is scheduled
+     * ->between(open, close), so on a good day its last output lands inside `close` and nothing
+     * follows. Anything produced after that means the run did not fit.
+     *
+     * Deliberately NOT a volume floor. A floor is a number guessed off one week's traffic, it
+     * has to be low enough to survive a quiet day, and that makes it too low to catch a run
+     * going twice as slow. The window comes from the schedule itself.
+     *
+     * @param  string  $slug  check name; convention is "<command> window"
+     * @param  string  $description  one line for the status dot
+     * @param  string  $table  where the job records what it produced
+     * @param  string  $column  the timestamp column on that table (UTC)
+     * @param  int  $closeHour  the window's closing hour, LOCAL time
+     * @param  string  $what  plural noun for the message, e.g. "members"
+     * @param  callable|null  $where  extra narrowing, e.g. fn ($q) => $q->where('mode', 'daily')
+     * @param  string  $advice  what the reader should do about it
+     */
+    private function finishedInsideWindow(
+        string $slug,
+        string $description,
+        string $table,
+        string $column,
+        int $openHour,
+        int $closeHour,
+        string $what,
+        ?callable $where = null,
+        string $advice = 'The run is not keeping up.',
+    ): CallbackCheck {
+        $tz = config('freegle.timezone', 'Europe/London');
+
+        return (new CallbackCheck($slug, function (CarbonInterface $now) use (
+            $slug, $table, $column, $openHour, $closeHour, $what, $where, $advice, $tz
+        ) {
+            $close = $now->copy()->setTimezone($tz)
+                ->startOfDay()->setTime($closeHour, 0)->setTimezone('UTC');
+
+            // Many of these tables hold only the MOST RECENT row per subject, so comparing
+            // against today's close counts subjects served after it shut - not historical
+            // stragglers, whose timestamp is an earlier day and falls below the cut.
+            $q = DB::table($table)->where($column, '>=', $close);
+            if ($where !== null) {
+                $where($q);
+            }
+
+            $late = (clone $q)->count();
+            if ($late === 0) {
+                return OutcomeResult::ok(
+                    $slug,
+                    sprintf('finished inside its %02d:00-%02d:00 window', $openHour, $closeHour)
+                );
+            }
+
+            return OutcomeResult::breach($slug, sprintf(
+                'overran its %02d:00-%02d:00 window: %d %s served after it closed (latest %s UTC). %s',
+                $openHour,
+                $closeHour,
+                $late,
+                $what,
+                (clone $q)->max($column),
+                $advice
+            ));
+        }))
+            ->describedAs($description)
+            ->inCategory('fire-once-output')
+            ->activeBetween($closeHour + 1, 24, $tz);
     }
 }

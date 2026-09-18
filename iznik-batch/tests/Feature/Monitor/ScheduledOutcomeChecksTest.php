@@ -331,15 +331,60 @@ class ScheduledOutcomeChecksTest extends TestCase
      * collapse (throughput down 13x, digests landing at 01:00, 40,000+ still sent) passed
      * three days running. This one asserts the run FINISHED, not that it happened.
      */
-    private function digestWindowCheck(): \App\Monitoring\OutcomeCheck
+    private function registeredCheck(string $slug): \App\Monitoring\OutcomeCheck
     {
         foreach ((new \App\Monitoring\ScheduledOutcomeRegistry())->checks() as $check) {
-            if ($check->slug() === 'mail:digest:unified --mode=daily window') {
+            if ($check->slug() === $slug) {
                 return $check;
             }
         }
 
-        $this->fail('the daily-digest window check is not registered');
+        $this->fail("the check '{$slug}' is not registered");
+    }
+
+    private function digestWindowCheck(): \App\Monitoring\OutcomeCheck
+    {
+        return $this->registeredCheck('mail:digest:unified --mode=daily window');
+    }
+
+    /**
+     * push:daily-posts reads the SAME getPostsForUser() as the daily digest, so it shares the
+     * failure mode: if that query slows down again, this overruns too and members get push
+     * notifications at odd hours. It keeps its own cursor row (mode='push').
+     */
+    public function test_the_push_window_check_is_registered_and_scoped_to_its_own_cursor(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 9, 15, 13, 0, 0, 'Europe/London'));
+        config([
+            'freegle.posts_push_allowlist' => '*',
+            'freegle.digest.daily_allowlist' => '*',
+        ]);
+
+        // A DIGEST send after the window must not trip the PUSH check - the two share a table
+        // and are told apart only by the mode column.
+        $userid = DB::table('users')->insertGetId([
+            'firstname' => 'Push', 'lastname' => 'Window', 'added' => now(),
+        ]);
+        DB::table('users_digests')->insert([
+            'userid' => $userid, 'mode' => 'daily', 'lastsent' => '2026-09-15 12:30:00',
+        ]);
+
+        $this->assertTrue(
+            $this->registeredCheck('push:daily-posts window')->evaluate(Carbon::now())->isOk(),
+            'a late DAILY send must not be reported against the PUSH window'
+        );
+
+        // ...and a late push send does trip it.
+        $pushUser = DB::table('users')->insertGetId([
+            'firstname' => 'Push2', 'lastname' => 'Window', 'added' => now(),
+        ]);
+        DB::table('users_digests')->insert([
+            'userid' => $pushUser, 'mode' => 'push', 'lastsent' => '2026-09-15 12:30:00',
+        ]);
+
+        $result = $this->registeredCheck('push:daily-posts window')->evaluate(Carbon::now());
+        $this->assertTrue($result->isBreach(), $result->message);
+        $this->assertStringContainsString('overran', $result->message);
     }
 
     private function seedDailySend(string $sentAtUtc): void
