@@ -72,6 +72,28 @@ For any foreign key added to a big table:
 3. On the production cluster, run it node by node the way index adds are run.
 4. Combine index adds and foreign key adds into one ALTER so that dance happens once.
 
+## An index hint on a shared query builder helps one caller and wrecks the other
+
+`MessageSpatialService::qualifyingMemberships()` is deliberately shared: the reconciler
+(`upsertRecentMessages`) and `stillQualifyForIndex()` must agree about what belongs in the
+spatial index, and one builder is how that is guaranteed. They want opposite plans.
+
+The reconciler scans a whole date window with no id restriction, so it wants
+`FORCE INDEX (arrival)` - without it the optimiser drives from `collection`, a column with 21
+distinct values, and reads 5.5M rows to keep 6%. `stillQualifyForIndex()` is handed a handful of
+msgids and wants the msgid index; force `arrival` on it and every `ripple:expand` call scans the
+window instead of doing a keyed lookup.
+
+Nothing fails. Both return correct rows. One of them just quietly becomes a scan.
+
+So the hint lives on the reconciler's own membership source, passed in as an argument, and the
+shared builder stays unhinted by default. If you add a caller, decide which it is.
+`MessageSpatialServiceTest` asserts that `stillQualifyForIndex` emits no `FORCE INDEX`.
+
+The same shape applies to `IGNORE INDEX`: `NotificationExhortService` needs one because
+`deleted IS NULL` matches 95% of `users`, and it is scoped to that one query for the same reason.
+Either way the hint names an index, so it rots if the index is renamed - pin the name in a test.
+
 ## See also
 
 - `.claude/rules/go-api-traps.md` - the same class of silent wrong answer on the Go side.
