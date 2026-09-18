@@ -124,6 +124,37 @@ writes into your working tree and silently reverts your edits.
 Note also that a Laravel test cannot read the Go tree and a Go test cannot read the PHP tree, so
 a cross-language assertion has to go through a fixture or the API.
 
+## `setup-test-database.sh` reads the env var, not the worktree `.env`
+
+Its container prefix is `${COMPOSE_PROJECT_NAME:-freegle}`. Compose reads that from the
+worktree's `.env`; a plain shell script does not. So run bare from inside a worktree it targets
+`freegle-percona` and `freegle-batch` - the **main** instance - and says so in one line of
+output that is easy to read past:
+
+```
+Verifying required containers...
+freegle-percona is running
+```
+
+It then migrates the main database, reloads its fixtures, rolls the fixture post dates forward
+and re-clones `iznik_go_test`, all against the instance another session is probably using. The
+`DROP DATABASE` is gated behind `SELF_HOSTED_RUNNER=true`, so that much is spared. Per
+`.claude/rules/tests-and-ci.md` it also disrupts the spatial index, so the main instance needs a
+re-index afterwards before its failures mean anything.
+
+Always:
+
+```bash
+COMPOSE_PROJECT_NAME=freegle-<name> ./scripts/setup-test-database.sh
+```
+
+Check the "is running" lines name your own prefix before letting it continue.
+
+A worktree's own `iznik` can also arrive half-migrated - schema carrying foreign keys that the
+`migrations` table does not record - which surfaces as `Duplicate foreign key constraint name`
+on a migration that has plainly already run. Drop `iznik` and `iznik_go_test` in **that
+worktree's** percona and run the script again.
+
 ## On the FreegleDocker host, `git checkout` is a deploy
 
 `batch-prod` bind-mounts `iznik-batch/` and runs against the **production** database. The tree is
