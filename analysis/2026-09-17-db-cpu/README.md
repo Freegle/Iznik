@@ -53,6 +53,26 @@ Validate any such capture by running a deliberately slow statement (`SELECT SLEE
 and confirming it appears. Background it with `nohup`, or ssh will kill it before it gets slow —
 the first attempt at this reported a working capture as broken.
 
+## Your own shell matches your own search
+
+Any `pgrep -f`, `pkill -f`, `grep -c`, or shell `case` pattern containing the string you are
+looking for **also matches the process doing the looking**. This cost real time in one session:
+
+- `pkill -f "timeout 16h"` killed the shell running it, along with the watchers.
+- `grep -cF overnight-digest-watch.sh` reported 6 watchers when there was 1.
+- A `case "$c" in *purge:chats*)` loop reported the job "still running" ten minutes after it ended.
+
+Match on the executable instead, which your shell cannot satisfy:
+
+```
+for p in /proc/[0-9]*; do
+  case "$(readlink $p/exe 2>/dev/null)" in */php) ... ;; esac
+done
+```
+
+Or check parentage before believing a count: a second PID with the first as its parent is a
+command-substitution subshell, not a duplicate.
+
 ## Three things that will bite
 
 - `mysql -B` escapes tabs and newlines **in the data**, so split on the two-character `\t`.
