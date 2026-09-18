@@ -3750,6 +3750,58 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(1, $stats['emails_sent'], 'the sentinel value means unlimited — unaffected by the new filter');
     }
 
+    public function test_daily_digest_filters_completed_post_beyond_distance_preference(): void
+    {
+        // Discourse 10167/1: a member with a distance limit saw a "came and
+        // went" (Taken) post from far outside it. $posts (live) is narrowed by
+        // filterByDistancePreference; $completedPosts must be too.
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'browseMaxDistance' => 2,
+            'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278],
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($poster, $group);
+
+        // ~0.9 miles away, inside the 2-mile cap — keeps the digest non-empty
+        // so this test isolates the completed-post filtering, not the send/no-send decision.
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Near item (London)',
+            'lat' => 51.52,
+            'lng' => -0.1278,
+        ]);
+
+        // Taken, ~330 miles away (Edinburgh) — outside the 2-mile cap.
+        $farTaken = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Far taken item (Edinburgh)',
+            'lat' => 55.9533,
+            'lng' => -3.1889,
+        ]);
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $farTaken->id,
+            'outcome' => 'Taken',
+            'timestamp' => now(),
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(1, $stats['emails_sent'], 'the near live post still sends the digest');
+
+        $completedIds = $this->lastDailyDigest()->mailDescriptor()['completed'];
+        $this->assertNotContains(
+            $farTaken->id,
+            $completedIds,
+            "a came-and-went post beyond the recipient's distance preference must not appear in the digest"
+        );
+    }
+
     // ─── OUTBOUND (author-side) distance preference ─────────────────────
     // The SAME setting, read from the POST AUTHOR, also caps who sees their post:
     // a recipient beyond the author's browseMaxDistance of the post is filtered
