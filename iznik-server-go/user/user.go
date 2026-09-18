@@ -2027,6 +2027,7 @@ type UserPatchRequest struct {
 	Newslettersallowed *utils.FlexInt   `json:"newslettersallowed,omitempty"`
 	Aboutme            *string          `json:"aboutme,omitempty"`
 	Newsfeedmodstatus  *string          `json:"newsfeedmodstatus,omitempty"`
+	Chatmodstatus      *string          `json:"chatmodstatus,omitempty"`
 	Email              *string          `json:"email,omitempty"`
 	Source             *string          `json:"source,omitempty"`
 	Password           *string          `json:"password,omitempty"`
@@ -2417,6 +2418,23 @@ func ProcessSettingsUpdate(settingsJSON []byte, myid uint64, setClauses *[]strin
 	return settingsJSON
 }
 
+// canModerateUser reports whether myid is a mod or owner of any group that
+// targetID is also a member of. Callers check auth.IsAdminOrSupport first.
+//
+// The two inline copies of this join inside PatchUser are deliberately left
+// alone - their comments mark them as a tracked converted pair - so this is
+// used by newer callers rather than being retrofitted onto them.
+func canModerateUser(db *gorm.DB, myid uint64, targetID uint64) bool {
+	var sharedModGroup int64
+	db.Table("memberships m1").
+		Select("COUNT(*)").
+		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
+		Where("m1.userid = ? AND m2.userid = ? AND m1.role IN (?, ?)", myid, targetID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).
+		Scan(&sharedModGroup)
+
+	return sharedModGroup > 0
+}
+
 // PatchUser updates user profile fields.
 //
 // @Summary Update user profile
@@ -2438,6 +2456,59 @@ func PatchUser(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
+
+	// Handle chatmodstatus for another user (mod action).
+	//
+	// This field was absent from UserPatchRequest until now, so BodyParser
+	// silently dropped it and the ModTools "Chat Moderation" control (the
+	// Fully/Moderated/Unmoderated dropdown in ModSupportUser.vue) was a no-op:
+	// mods set "Fully moderated", got a success response, and nothing changed.
+	// The only writes to the column were the ones setting 'Unmoderated'
+	// (ApproveAllFuture here, and FreegleUserService on first reply), so a
+	// member could be let out of moderation but never put into it.
+	//
+	// The enforcement side was always live - ChatProcessService::process()
+	// holds every User2User message from a 'Fully' member for review - so
+	// restoring the write path is all that is needed.
+	if req.Chatmodstatus != nil && req.ID > 0 && req.ID != myid {
+		// Fully-moderating someone is a shadow ban, so gate it exactly as the
+		// sibling newsfeedmodstatus control below is gated: admin/support, or a
+		// mod of a group they share with the target. A group mod can already ban
+		// a member outright, so holding their chat for review is not a greater
+		// power than they have.
+		if !auth.IsAdminOrSupport(myid) && !canModerateUser(db, myid, req.ID) {
+			return fiber.NewError(fiber.StatusForbidden, "Not authorized to moderate this user")
+		}
+
+		// chatmodstatus is an ENUM. Without this check an unrecognised value is
+		// coerced to '' by MySQL in non-strict mode, which reads back as neither
+		// Moderated nor Fully and so quietly drops the member out of the spam
+		// checks that 'Moderated' would have applied.
+		switch *req.Chatmodstatus {
+		case utils.CHATMODSTATUS_MODERATED, utils.CHATMODSTATUS_UNMODERATED, utils.CHATMODSTATUS_FULLY:
+		default:
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid chatmodstatus")
+		}
+
+		if err := db.Table("users").Where("id = ?", req.ID).
+			Update("chatmodstatus", *req.Chatmodstatus).Error; err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to update chatmodstatus")
+		}
+
+		// Leave an audit trail - putting a member under full moderation is not
+		// visible to them, so the record of who did it needs to survive.
+		text := "chatmodstatus set to " + *req.Chatmodstatus
+		target := req.ID
+		log2.Log(log2.LogEntry{
+			Type:    log2.LOG_TYPE_USER,
+			Subtype: log2.LOG_SUBTYPE_EDIT,
+			User:    &target,
+			Byuser:  &myid,
+			Text:    &text,
+		})
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+	}
 
 	// Handle newsfeedmodstatus for another user (mod action).
 	if req.Newsfeedmodstatus != nil && req.ID > 0 && req.ID != myid {

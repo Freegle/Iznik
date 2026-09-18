@@ -7,6 +7,8 @@ covers:
   - iznik-nuxt3/modtools/pages/spammers.vue
   - iznik-nuxt3/modtools/components/ModMember*.vue
   - iznik-nuxt3/modtools/components/ModRelatedMember.vue
+  - iznik-nuxt3/modtools/components/ModSupportUser.vue
+  - iznik-batch/app/Services/ChatProcessService.php
   - iznik-batch/app/Console/Commands/User/DetectRelatedAccountsCommand.php
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-modtools-member-review.spec.js
@@ -113,6 +115,28 @@ note that both people in the chat can see. "Delete All" clears the queue.
 Some chats are held because a post has not yet rippled out to the member who replied.
 Those release automatically; you do not need to do anything. See
 [./rippling-out.md](./rippling-out.md).
+
+### Putting one member's chat under review
+
+A member's own **Support** record has a **Chat Moderation** setting, which decides what
+happens to every message they send:
+
+- **Moderated** - the default. Messages are checked for worry words and held if they match.
+- **Unmoderated** - those checks are skipped.
+- **Fully moderated** - every message they send is held for review before it reaches the
+  other person.
+
+"Fully moderated" is effectively a shadow ban: the member sees their message sent as normal
+and gets no indication that it is waiting for a moderator. Use it for someone whose messages
+all need reading before they go out - for example a member who keeps returning under new
+accounts. Set it on each account you have linked to them; it follows the account, not the
+person. The setting is recorded in the member's logs, with who changed it.
+
+Once a member is under review, later messages in the same conversation stay held while an
+earlier one is unreviewed, so a chat cannot get ahead of the queue.
+
+Approving a held message with **approve all future** turns the setting off for that member,
+so use plain approve if you want them to stay under review.
 
 (This is different from moderating the **ChitChat** discussion feed, which is done on the
 main Freegle site by the ChitChat Moderation team, not in ModTools.)
