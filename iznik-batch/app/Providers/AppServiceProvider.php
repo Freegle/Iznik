@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Console\BackupDrain;
 use App\Console\FlockEventMutex;
 use App\Console\ResilientCacheEventMutex;
 use App\Console\SchedulerMutex;
@@ -17,6 +18,7 @@ use Illuminate\Console\Scheduling\EventMutex;
 use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\ServiceProvider;
 use Symfony\Component\Process\ExecutableFinder;
 
@@ -119,6 +121,24 @@ class AppServiceProvider extends ServiceProvider
         $this->registerSpamCheckListener();
         $this->blockMigrationsInProduction();
         $this->stampLogsWithCommandLine();
+        $this->pauseQueueDuringBackup();
+    }
+
+    /**
+     * Stop queue workers picking up new jobs while the nightly backup runs.
+     *
+     * App\Console\BackupDrain holds the SCHEDULE off, but the supervisor workers consume
+     * continuously and would keep hitting the database right through the backup window,
+     * which defeats the point of draining.
+     *
+     * A Looping listener returning false makes the worker sleep instead of reserving the
+     * next job. Nothing is lost: jobs stay on the queue and are picked up when the window
+     * closes. A job already in flight when the window opens runs to completion, which is
+     * why the window starts before the backup does.
+     */
+    protected function pauseQueueDuringBackup(): void
+    {
+        Queue::looping(static fn (): bool => ! BackupDrain::active());
     }
 
     /**

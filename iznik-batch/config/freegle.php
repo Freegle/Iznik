@@ -127,6 +127,50 @@ return [
         'overlay' => env('FREEGLE_SCHEDULE_OVERLAY', 'routes/console.deployment.php'),
     ],
 
+    'backup' => [
+        // Batch work is held off while the nightly database backup runs, because the
+        // backup desyncs a node and that node is the one serving bulk reads under the
+        // two-node topology. See App\Console\BackupDrain.
+        //
+        // OFF by default: this does nothing until BACKUP_DRAIN_ENABLED is set on the
+        // batch host. A malformed start time or a duration of zero also leaves it off,
+        // so a typo can never hold the whole schedule back.
+        'drain' => [
+            'enabled' => (bool) env('BACKUP_DRAIN_ENABLED', false),
+            // HH:MM in the app timezone. Set this EARLIER than the backup's own cron so
+            // jobs already running have time to finish: that gap is the drain, the rest
+            // of the window is the delay.
+            'start' => env('BACKUP_DRAIN_START', '03:50'),
+            // Long enough to cover the pre-roll plus the backup, with headroom. The
+            // backup itself measured about 18 minutes on 18 September 2026.
+            'minutes' => (int) env('BACKUP_DRAIN_MINUTES', 45),
+            // Artisan command names that run anyway, matched without their arguments.
+            // Keep this short: anything here is competing with the backup.
+            'always_run' => array_values(array_filter(array_map(
+                'trim',
+                explode(',', (string) env('BACKUP_DRAIN_ALWAYS_RUN', ''))
+            ))),
+        ],
+
+        // Taking the nightly physical backup. OFF by default: until this is switched on,
+        // the shell script on the database node remains the thing that runs, and this
+        // command refuses to do anything.
+        'database' => [
+            'enabled' => (bool) env('BACKUP_DB_ENABLED', false),
+            // The node being backed up. xtrabackup copies a local data directory, so the
+            // whole pipeline runs there and only control flow crosses ssh.
+            'host' => env('BACKUP_DB_HOST', ''),
+            'ssh_key' => env('BACKUP_DB_SSH_KEY', '/etc/backup-ssh-key'),
+            // The backup measured about 18 minutes; allow generously for a bad night.
+            'ssh_timeout_seconds' => (int) env('BACKUP_DB_SSH_TIMEOUT', 7200),
+            'xtrabackup' => env('BACKUP_DB_XTRABACKUP', '/usr/bin/xtrabackup'),
+            'gsutil' => env('BACKUP_DB_GSUTIL', '/usr/lib/google-cloud-sdk/platform/gsutil/gsutil'),
+            'bucket' => env('BACKUP_DB_BUCKET', 'gs://freegle_backup_uk'),
+            'compress_threads' => (int) env('BACKUP_DB_COMPRESS_THREADS', 4),
+            'alert_email' => env('BACKUP_DB_ALERT_EMAIL', 'geek-alerts@ilovefreegle.org'),
+        ],
+    ],
+
     'branding' => [
         'name' => env('FREEGLE_SITE_NAME', 'Freegle'),
         'logo_url' => env('FREEGLE_LOGO_URL', 'https://www.ilovefreegle.org/icon.png'),
