@@ -316,6 +316,16 @@ Schedule::command('items:backfill-popularity')
     ->sendOutputTo(cronLog('items:backfill-popularity'))
     ->runInBackground();
 
+// Link accounts that gave the same mobile number or street address in chat, so they show up
+// in ModTools Related Members. Daily rather than hourly: nothing here is urgent, and a
+// duplicate account that has sat unnoticed for years does not need spotting within the hour.
+// The scan window overlaps the gap between runs so a slow day never drops anything.
+Schedule::command('users:detect-related --days=3')
+    ->dailyAt('04:20')
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('users:detect-related'))
+    ->runInBackground();
+
 // Auto-approve pending messages after 48 hours.
 // V1: cron/autoapprove.php
 Schedule::command('messages:auto-approve')
