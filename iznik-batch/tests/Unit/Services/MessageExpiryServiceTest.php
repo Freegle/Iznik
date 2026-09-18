@@ -163,6 +163,62 @@ class MessageExpiryServiceTest extends TestCase
         Mail::assertSent(DeadlineReached::class, 1);
     }
 
+    /**
+     * A post with no group row is not on the site, so there is nothing to expire
+     * it off. The candidate query used to get this from an INNER JOIN to
+     * messages_groups; it now gets it from a WHERE EXISTS, and the two have to
+     * agree.
+     */
+    public function test_message_with_no_group_is_not_expired(): void
+    {
+        Mail::fake();
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $message = $this->createTestMessage($user, $group);
+        $message->deadline = now()->subDays(1)->format('Y-m-d');
+        $message->save();
+
+        DB::table('messages_groups')->where('msgid', $message->id)->delete();
+
+        $stats = $this->service->processDeadlineExpired();
+
+        $this->assertEquals(0, $stats['processed']);
+        $this->assertEquals(0, MessageOutcome::where('msgid', $message->id)->count());
+        Mail::assertNothingSent();
+    }
+
+    /**
+     * The candidate ids are collected in one pass and the full models fetched in
+     * chunks, so a candidate set that straddles a chunk boundary must still be
+     * processed in full.
+     */
+    public function test_every_candidate_is_processed_across_chunk_boundaries(): void
+    {
+        Mail::fake();
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $deadline = now()->subDays(1)->format('Y-m-d');
+        $wanted = MessageExpiryService::EXPIRE_CHUNK + 2;
+
+        for ($i = 0; $i < $wanted; $i++) {
+            $message = $this->createTestMessage($user, $group);
+            $message->deadline = $deadline;
+            $message->save();
+        }
+
+        // Dry run: this is about the chunking, and writing 502 outcomes and
+        // sending 502 mails to prove it would only make the test slow.
+        $stats = $this->service->processDeadlineExpired(true);
+
+        $this->assertEquals($wanted, $stats['processed']);
+    }
+
     public function test_expiry_clears_messages_outcomes_intended(): void
     {
         Mail::fake();
