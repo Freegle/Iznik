@@ -103,6 +103,17 @@ func TestChatWarnNotHold_OnDeliversWithReason(t *testing.T) {
 	_, rejectedSeen := got[rejectedID]
 	assert.False(t, rejectedSeen, "a message a moderator rejected stays hidden whatever the flag")
 
+	// A hold that comes from who the sender is, not what they wrote (a shadow ban is
+	// recorded with the generic 'Spam' reason), is not a warning to tap through.
+	shadowID := insertHeldChatMessage(t, chatID, senderID, "Cheap watches here", "Spam", 0)
+	chainID := insertHeldChatMessage(t, chatID, senderID, "Still here", "Last", 0)
+	defer db.Exec("DELETE FROM chat_messages WHERE id IN (?, ?)", shadowID, chainID)
+	got = fetchChatMessagesAs(t, chatID, recipientToken)
+	_, shadowSeen := got[shadowID]
+	assert.False(t, shadowSeen, "a shadow-banned sender's message stays hidden")
+	_, chainSeen := got[chainID]
+	assert.False(t, chainSeen, "the hold that chains from it stays hidden too")
+
 	plain, plainSeen := got[plainID]
 	if assert.True(t, plainSeen) {
 		_, hasSensitive := plain["sensitive"]
@@ -201,5 +212,40 @@ func TestChatWarnNotHold_ListCountsHeldButMasksSnippet(t *testing.T) {
 	own, ownListed := mine[chatID]
 	if assert.True(t, ownListed) {
 		assert.Equal(t, "Send me £20 first", own["snippet"], "the sender's own preview is not masked")
+	}
+}
+
+// A moderator opening a member's chat for review reads the real preview, not the mask.
+func TestChatWarnNotHold_ModeratorSeesRealPreview(t *testing.T) {
+	t.Setenv("CHAT_WARN_NOT_HOLD", "1")
+	db := database.DBConn
+	prefix := uniquePrefix("warnmod")
+	groupID := CreateTestGroup(t, prefix)
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	recipientID := CreateTestUser(t, prefix+"_recipient", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, senderID, groupID, "Member")
+	CreateTestMembership(t, recipientID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	chatID := CreateTestChatRoom(t, senderID, &recipientID, nil, "User2User")
+
+	heldID := insertHeldChatMessage(t, chatID, senderID, "Send me £20 first", "Money", 0)
+	defer db.Exec("DELETE FROM chat_messages WHERE id = ?", heldID)
+
+	_, modToken := CreateTestSession(t, modID)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chat/%d?jwt=%s", chatID, modToken), nil)
+	resp, err := getApp().Test(req, -1)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	assert.Equal(t, 200, resp.StatusCode)
+	var room map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&room)
+	assert.Equal(t, "Send me £20 first", room["snippet"], "the moderator reads what was written")
+
+	_, recipientToken := CreateTestSession(t, recipientID)
+	mine := fetchChatListAs(t, recipientToken)
+	if r, ok := mine[chatID]; assert.True(t, ok) {
+		assert.Equal(t, chat.SensitiveSnippet, r["snippet"], "the member still gets the mask")
 	}
 }

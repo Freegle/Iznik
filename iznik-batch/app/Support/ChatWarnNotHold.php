@@ -22,6 +22,31 @@ class ChatWarnNotHold
     }
 
     /**
+     * Stored reasons that mean "a person decided this sender is not to be heard", not "the
+     * content check saw something". A member on full chat moderation (a shadow ban) is held
+     * with the generic Spam reason; Last is the hold that chains from it; Fully is the
+     * explicit form. None of those is a warning to tap through. Shared with the Go API
+     * (chat.HeldReasonsNeverDelivered).
+     */
+    public const NEVER_DELIVERED = ['Spam', 'Fully', 'Last'];
+
+    /**
+     * Whether a message may reach the recipient. A clean message always may. A held one may
+     * only under the experiment, and only when it was held for something the member can be
+     * warned about; a hold with no recorded reason cannot be explained, so it stays a hold.
+     */
+    public static function deliverable(bool $reviewrequired, ?string $reportreason): bool
+    {
+        if (! $reviewrequired) {
+            return true;
+        }
+
+        return self::enabled()
+            && $reportreason !== null
+            && ! in_array($reportreason, self::NEVER_DELIVERED, true);
+    }
+
+    /**
      * Turn the stored moderator-facing reportreason into the short key the member-facing
      * wording is picked by. Anything unknown, including no reason, is "checked".
      */

@@ -1183,7 +1183,7 @@ class PushNotificationService
         $msg = DB::table('chat_messages as cm')
             ->join('chat_rooms as cr', 'cm.chatid', '=', 'cr.id')
             ->where('cm.id', $messageId)
-            ->select('cm.userid as sender', 'cm.reviewrequired', 'cm.reviewrejected',
+            ->select('cm.userid as sender', 'cm.reviewrequired', 'cm.reviewrejected', 'cm.reportreason',
                 'cr.chattype', 'cr.user1', 'cr.user2', 'cr.groupid')
             ->first();
 
@@ -1192,8 +1192,9 @@ class PushNotificationService
         }
 
         // Held for review: nobody is pushed today. Under the warn-not-hold experiment the
-        // recipient is, with a warning in place of the text (see buildChatMessagePayload).
-        if ($msg->reviewrequired && ! ChatWarnNotHold::enabled()) {
+        // recipient is, with a warning in place of the text (see buildChatMessagePayload),
+        // unless the hold is about the sender rather than the message.
+        if (! ChatWarnNotHold::deliverable((bool) $msg->reviewrequired, $msg->reportreason)) {
             return $empty;
         }
 
@@ -1327,7 +1328,8 @@ class PushNotificationService
         // member actually sees, so it is what the limit should apply to.
         // A held message delivered under the warn-not-hold experiment carries the
         // warning, never the guarded text.
-        if ($row->reviewrequired && ChatWarnNotHold::enabled() && (int) $row->sender_id !== $recipientUserId) {
+        if ($row->reviewrequired && (int) $row->sender_id !== $recipientUserId
+            && ChatWarnNotHold::deliverable(true, $row->reportreason)) {
             $message = ChatWarnNotHold::warningText(ChatWarnNotHold::reason($row->reportreason));
         } else {
             $message = EmojiUtils::decodeEmojis($row->message ?? '');
