@@ -178,6 +178,35 @@ class ScheduledOutcomeChecksTest extends TestCase
         $this->assertTrue($result->isOk(), $result->message);
     }
 
+    public function test_backlog_check_is_skipped_while_work_is_held_off_for_the_backup(): void
+    {
+        // Same stale row as the breach case below, but batch work is deliberately held off
+        // for the nightly backup: the backlog is the drain doing its job, not a stuck
+        // worker. Skipped, never ok - nothing was assessed.
+        config()->set('freegle.backup.drain', [
+            'enabled' => true, 'start' => '03:50', 'minutes' => 45, 'always_run' => [],
+        ]);
+        Carbon::setTestNow(Carbon::create(2026, 6, 12, 4, 10, 0, config('app.timezone')));
+        $this->seedBackgroundTask(Carbon::now()->subMinutes(20));
+
+        $check = new BacklogCheck(
+            'test:backlog',
+            'background_tasks',
+            'created_at',
+            10,
+            fn ($q) => $q->whereNull('processed_at')->whereNull('failed_at')->where('attempts', '<', 3),
+        );
+
+        $during = $check->evaluate(Carbon::now());
+        $this->assertTrue($during->isSkipped(), $during->message);
+        $this->assertStringContainsString('held off for the backup', $during->message);
+
+        // Ten minutes after the window closes the workers have had their max age to catch
+        // up, and the same row is a real breach again.
+        $after = $check->evaluate(Carbon::create(2026, 6, 12, 4, 45, 0, config('app.timezone')));
+        $this->assertTrue($after->isBreach(), $after->message);
+    }
+
     public function test_backlog_check_breaches_when_stale_pending(): void
     {
         Carbon::setTestNow(Carbon::create(2026, 6, 12, 10, 0, 0));

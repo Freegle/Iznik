@@ -94,6 +94,28 @@ The same shape applies to `IGNORE INDEX`: `NotificationExhortService` needs one 
 `deleted IS NULL` matches 95% of `users`, and it is scoped to that one query for the same reason.
 Either way the hint names an index, so it rots if the index is renamed - pin the name in a test.
 
+## A schedule filter skips a fixed-time job, it does not delay it
+
+Laravel's scheduler has no catch-up. `$event->skip()` or `->when()` answering "not now" for a
+`dailyAt('04:20')` means that job does not run that day, and nothing says so. Every-minute jobs
+are only delayed, which is why a filter that holds work off for a window looks harmless in
+testing. The backup drain window (`App\Console\BackupDrain`) had four daily jobs inside it on
+the day it was written.
+
+When you add a window-shaped filter, list the once-a-day jobs it covers and move them out;
+`BackupDrainWindowTest` does that check for the drain. When you add a `dailyAt()`, keep it out
+of the window.
+
+## A contextual binding does not reach a `handle()` parameter
+
+`$this->app->when(SomeCommand::class)->needs(Runner::class)->give(...)` only applies while the
+container is *building* `SomeCommand`. Parameters of `handle()` are resolved by
+`Container::call()` with an empty build stack, so they get the plain binding. A command that
+asked for its ssh runner in `handle()` received the monitoring runner and its thirty-second
+timeout, and would have reported the node unreachable every night.
+
+Inject through the constructor, and assert in a test which runner the built command holds.
+
 ## See also
 
 - `.claude/rules/go-api-traps.md` - the same class of silent wrong answer on the Go side.
