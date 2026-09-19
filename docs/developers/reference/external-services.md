@@ -110,3 +110,10 @@ every visitor - so only publishable keys belong in it (a Stripe *publishable* ke
 advert publisher id). Server-side secrets go in `.env` (development, see `.env.example`) and
 `.env.background` (production batch, see `.env.background.example`), and in the batch tier
 are read through `iznik-batch/config/freegle.php` rather than `env()` at the point of use.
+
+## Experiment switches
+
+`GROUPLESS` in `nuxt.config.ts` (and `CHAT_WARN_NOT_HOLD`, `REPLY_GATE_AFTER`, `REPORTS_RESOLVE`
+for the API and batch) are the self-moderating community thought experiment's switches. They
+are not external services; they are listed in
+[deployment-switches.md](deployment-switches.md#self-moderating-community-experiment-switches).

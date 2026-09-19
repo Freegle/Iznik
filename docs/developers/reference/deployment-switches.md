@@ -161,6 +161,23 @@ hundred used to have to edit it. Now it drops a file at `routes/console.deployme
 loaded first. With the default `full` profile the overlay simply adds to Freegle's
 schedule. With `overlay-only` the rest of the file is skipped, so only the overlay runs.
 
+## Self-moderating community experiment switches
+
+Four switches from the thought experiment in
+`plans/active/2026-09-19-self-moderating-community.md`. Every one is off unless set, so a
+deployment that sets none of them runs exactly as before. They are plumbed through
+`docker-compose.yml` for the API and the dev frontend so they can be tried locally.
+
+| Switch | Read by | On |
+|---|---|---|
+| `CHAT_WARN_NOT_HOLD=1` | Go API (`chat/warnnothold.go`) and batch (`config('freegle.moderation.chat_warn_not_hold')`) | A chat message the content check held is delivered behind a warning, in the app, the push and the email, instead of waiting for a moderator |
+| `REPLY_GATE_AFTER=N` | Go API (`chat/replygate.go`) | The (N+1)th reply in a day is refused with HTTP 428 until the member answers a graded micro-volunteering task correctly |
+| `GROUPLESS=1` | Member site at build time (`composables/useGroupless.js`) | No community identity anywhere a member looks; one rules page at `/rules` |
+| `REPORTS_RESOLVE=1` | Go API (`microvolunteering/resolve.go`) | Two member reports take a post down and tell the poster and the reporters, instead of queueing it for a moderator |
+
+Set the Go and batch values together: `CHAT_WARN_NOT_HOLD` is one variable read by both
+tiers, and a mismatch delivers a message in the app that the email then withholds.
+
 ## Promises that become agreements
 
 A Freegle promise is one-sided: the item's owner promises it to someone, and that is the
