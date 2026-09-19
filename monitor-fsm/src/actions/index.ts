@@ -457,6 +457,43 @@ export function classifyReviewBlockers(
 }
 
 /**
+ * Promote "the same bug is still here" findings to blockers when the twin sits in a file
+ * this PR already edits.
+ *
+ * The review rubric files these as warnings, and the same rubric calls a partial
+ * implementation a blocker. An identical defect left live in a file the author had open is
+ * a partial implementation, so the two rules disagreed and the weaker one won: PR #1559
+ * shipped with its review saying, in as many words, that `List()` in the file it edits has
+ * the same missing condition. Deciding this in code rather than in the prompt means the
+ * model cannot classify its way past it, which is the point of the gate.
+ *
+ * A twin somewhere the PR never went stays a warning. Widening one fix into a sweep of the
+ * whole codebase is how a bug fix turns into a refactor nobody asked for.
+ */
+export function promoteUnfixedCallSites(
+  issues: Array<{ category?: string; description?: string; severity?: string }>,
+  changedFiles: string[],
+): { promoted: Array<{ category?: string; description?: string; severity: string }>; remaining: Array<{ category?: string; description?: string; severity?: string }> } {
+  // "call site", "same bug", "same pattern", "identical", "not updated", "still" + unfixed.
+  const SAME_DEFECT = /call.?sites?|same (?:bug|pattern|defect|issue)|identical|not updated|unfixed|left unfixed/i
+  const basenames = changedFiles.map((f) => f.split('/').pop() ?? f).filter(Boolean)
+
+  const promoted: Array<{ category?: string; description?: string; severity: string }> = []
+  const remaining: Array<{ category?: string; description?: string; severity?: string }> = []
+
+  for (const issue of issues) {
+    const text = `${issue.category ?? ''} ${issue.description ?? ''}`
+    const namesAChangedFile = basenames.some((b) => text.includes(b))
+    if (issue.severity === 'warning' && SAME_DEFECT.test(text) && namesAChangedFile) {
+      promoted.push({ ...issue, severity: 'error' })
+    } else {
+      remaining.push(issue)
+    }
+  }
+  return { promoted, remaining }
+}
+
+/**
  * Decide what a failed adversarial review should DO, encoding the "expand fixes, don't
  * close them" policy. A review that passed → 'pass'. A review that failed only on
  * completable blockers, and hasn't already been expanded too many times → 'expand'
@@ -4007,6 +4044,34 @@ ${diff.length > 20000 ? '\n(diff truncated — only the first 20 000 chars shown
         } // end reviewOnce
 
         let r = await reviewOnce()
+
+        // A defect the PR leaves live in a file it has already edited is a partial fix, not
+        // a note for later. Promoting it here rather than in the rubric means the review
+        // cannot pass it by calling it a warning, and the existing expansion path then
+        // sends the fix back to be finished on the same branch.
+        if (r && r.issues.length > 0) {
+          const { stdout: filesOut } = await exec(
+            'gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'files', '-q', '.files[].path'],
+            { timeout: 20 * 1000 },
+          ).catch(() => ({ stdout: '' }))
+          const changedFiles = (filesOut || '').split('\n').map((f) => f.trim()).filter(Boolean)
+          const { promoted } = promoteUnfixedCallSites(r.issues, changedFiles)
+          if (promoted.length > 0) {
+            for (const p of promoted) {
+              out(`adversarial_review_pr: PR #${prNumber} leaves the same defect in a file it edits - treating as a blocker: ${(p.description ?? '').slice(0, 120)}`)
+            }
+            const promotedSet = new Set(promoted.map((p) => `${p.category}|${p.description}`))
+            r = {
+              passed: false,
+              blockers: [...r.blockers, ...promoted],
+              issues: r.issues.map((i) =>
+                promotedSet.has(`${i.category}|${i.description}`) ? { ...i, severity: 'error' } : i,
+              ),
+              summary: r.summary,
+            }
+          }
+        }
+
         if (!r) {
           return {
             passed: false,

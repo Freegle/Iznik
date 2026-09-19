@@ -170,6 +170,8 @@ Every PR the monitor opens must be human-reviewed before merging. The monitor ca
 
 The `VERIFY_DISCOURSE_BATCH` state does an adversarial review, but it is itself an LLM call. It adds a bar, but it is not a substitute for human judgment.
 
+One part of it is not a judgement call: if the review says the same defect is still live in a file the PR already edits, that is a partial fix and it blocks, whatever severity the review gave it. The fix is then expanded on the same branch. PR #1559 is why: its own review said `List()` in the file it changed had the identical missing condition, and it passed anyway.
+
 ### Rejected PRs — keep them open and push a corrected fix
 
 When you reject a PR (close it without merging), `sync_pr_states` detects the closed state on the next iteration, reopens the bug with a `pr_rejections` counter, and records reviewer feedback. The convention is: **keep the PR open or push a corrected fix to the same branch** rather than closing and starting fresh. If you do close a PR, leave a comment explaining why — the monitor reads `reviewer_feedback` to guide the re-diagnosis.
