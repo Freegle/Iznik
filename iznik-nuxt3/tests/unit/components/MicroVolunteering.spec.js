@@ -358,6 +358,11 @@ describe('MicroVolunteering', () => {
       })
       expect(wrapper.text()).toContain('Before you send more replies')
       expect(wrapper.emitted('verified')).toBeFalsy()
+      // It opens on top of the full-screen reply composer, so it carries the class
+      // that lifts it above that overlay.
+      expect(wrapper.find('[modal-class="reply-gate-modal"]').exists()).toBe(
+        true
+      )
     })
 
     it('opens on a correct answer', async () => {

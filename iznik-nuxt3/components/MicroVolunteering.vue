@@ -66,6 +66,7 @@
         :no-close-on-backdrop="force || gate"
         :hide-header-close="force || gate"
         :no-close-on-esc="force || gate"
+        :modal-class="gate ? 'reply-gate-modal' : undefined"
         no-fade
       >
         <template #header>
@@ -559,5 +560,15 @@ onMounted(async () => {
 
 .text-danger {
   color: $color-red;
+}
+</style>
+<style lang="scss">
+/* The reply composer is a full-screen overlay at z-index 9999, above where a modal
+   normally sits. The gate opens on top of that composer, so it goes higher still. */
+.reply-gate-modal {
+  /* Bootstrap sets the modal's own z-index inline from --bs-modal-zindex, so both
+     the variable and the property need overriding. */
+  --bs-modal-zindex: 10001;
+  z-index: 10001 !important;
 }
 </style>
