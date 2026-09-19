@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\Lockdown\LockdownService;
 use App\Services\LokiService;
 use App\Services\Ripple\RippleReplyService;
+use App\Support\ChatWarnNotHold;
 use App\Support\EmojiUtils;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -1186,7 +1187,13 @@ class PushNotificationService
                 'cr.chattype', 'cr.user1', 'cr.user2', 'cr.groupid')
             ->first();
 
-        if (! $msg || $msg->reviewrequired || $msg->reviewrejected) {
+        if (! $msg || $msg->reviewrejected) {
+            return $empty;
+        }
+
+        // Held for review: nobody is pushed today. Under the warn-not-hold experiment the
+        // recipient is, with a warning in place of the text (see buildChatMessagePayload).
+        if ($msg->reviewrequired && ! ChatWarnNotHold::enabled()) {
             return $empty;
         }
 
@@ -1300,7 +1307,7 @@ class PushNotificationService
             ->join('chat_rooms as cr', 'cm.chatid', '=', 'cr.id')
             ->leftJoin('users as su', 'cm.userid', '=', 'su.id')
             ->where('cm.id', $messageId)
-            ->select('cm.id as msgid', 'cm.message', 'cm.type', 'cm.date',
+            ->select('cm.id as msgid', 'cm.message', 'cm.type', 'cm.date', 'cm.reviewrequired', 'cm.reportreason',
                 'cm.userid as sender_id', 'su.fullname as sender_name',
                 'cr.id as chatid', 'cr.chattype', 'cr.user1', 'cr.groupid')
             ->first();
@@ -1318,7 +1325,13 @@ class PushNotificationService
         // truncating: cutting at 256 could otherwise slice an escape in half and
         // leave a fragment like \\u1f6 on screen, and the decoded text is what the
         // member actually sees, so it is what the limit should apply to.
-        $message = EmojiUtils::decodeEmojis($row->message ?? '');
+        // A held message delivered under the warn-not-hold experiment carries the
+        // warning, never the guarded text.
+        if ($row->reviewrequired && ChatWarnNotHold::enabled() && (int) $row->sender_id !== $recipientUserId) {
+            $message = ChatWarnNotHold::warningText(ChatWarnNotHold::reason($row->reportreason));
+        } else {
+            $message = EmojiUtils::decodeEmojis($row->message ?? '');
+        }
         if (mb_strlen($message) > 256) {
             $message = mb_substr($message, 0, 253) . '...';
         }
