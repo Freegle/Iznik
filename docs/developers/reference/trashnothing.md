@@ -145,6 +145,13 @@ group. `IncomingMailService::handleSubscribe()` handles it: it finds the group b
 `nameshort`, finds or creates the user from the envelope-from, and adds an Approved
 membership on daily digest.
 
+"Finds or creates the user" reads on the canon, not on the address. TN sends one of these
+per group and each comes from a different per-group alias, so matching the address alone
+meant the second alias found nothing and created a second Freegle account for the same
+member. Every `-gNNNN` alias canonicalises to one value, so the canon lookup finds the
+account the member already has; the new alias is then attached to it, and later mail from
+it matches outright.
+
 Two things gate and record that join:
 
 - **A ban blocks it.** A row in `users_banned` for that (user, group) means the subscribe

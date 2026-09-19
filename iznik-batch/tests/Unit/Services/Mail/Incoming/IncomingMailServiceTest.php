@@ -130,6 +130,65 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals(RoutingResult::DROPPED, $result);
     }
 
+    /**
+     * Trash Nothing sends one Subscribe mail per group, each from a different
+     * per-group alias. Matching on the address alone meant the second alias found
+     * nothing and created a second Freegle account for the same member; 96 such pairs
+     * are live on production, and the first symptom was a partner API 403 on a post
+     * owned by the account TN's own identifiers did not resolve to.
+     *
+     * The canon fallback is what closes it: every -gNNNN alias of one member
+     * canonicalises to the same value.
+     */
+    public function test_subscribe_from_a_second_tn_alias_joins_the_existing_account(): void
+    {
+        $group = $this->createTestGroup();
+        $tnBase = 'tnsub'.str_replace('.', '', uniqid('', true));
+
+        $existing = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tnmember')]);
+        DB::table('users_emails')->insert([
+            'userid' => $existing->id,
+            'email' => "{$tnBase}-g101@user.trashnothing.com",
+            'canon' => "{$tnBase}@usertrashnothingcom",
+            'backwards' => strrev("{$tnBase}-g101@user.trashnothing.com"),
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+
+        $usersBefore = DB::table('users')->count();
+
+        // A different TN group, so a different alias, never seen here before.
+        $secondAlias = "{$tnBase}-g202@user.trashnothing.com";
+        $email = $this->createMinimalEmail([
+            'From' => $secondAlias,
+            'To' => $group->nameshort.'-subscribe@groups.ilovefreegle.org',
+            'Subject' => 'Subscribe',
+        ]);
+
+        $result = $this->service->route($this->parser->parse(
+            $email,
+            $secondAlias,
+            $group->nameshort.'-subscribe@groups.ilovefreegle.org'
+        ));
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+
+        $this->assertSame(
+            $usersBefore,
+            DB::table('users')->count(),
+            'a second alias of a known member must not mint a second account'
+        );
+        $this->assertTrue(
+            DB::table('memberships')->where('userid', $existing->id)->where('groupid', $group->id)->exists(),
+            'the join must land on the account the member already has'
+        );
+        $this->assertSame(
+            $existing->id,
+            (int) DB::table('users_emails')->where('email', $secondAlias)->value('userid'),
+            'the new alias must be attached so later mail from it matches outright'
+        );
+    }
+
     public function test_routes_subscribe_to_system(): void
     {
         $group = $this->createTestGroup();

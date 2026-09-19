@@ -1176,11 +1176,18 @@ class IncomingMailService
             return $this->dropped("Subscribe to unknown group");
         }
 
-        // Find or create the user
+        // Find or create the user.
+        //
+        // findUserByEmail falls back to a canon lookup, which is the thing that stops a
+        // Trash Nothing member's second per-group address creating a second Freegle
+        // account: canon strips the -gNNNN suffix, so every alias of one member reduces
+        // to the same value. Matching the address alone, as this did, is how the member
+        // in Discourse's 403 report came to hold two accounts - TN sends a Subscribe
+        // mail per group, each from a different alias.
         $envFrom = $email->envelopeFrom;
-        $userEmail = UserEmail::where('email', $envFrom)->first();
+        $user = $this->findUserByEmail($envFrom);
 
-        if ($userEmail === null) {
+        if ($user === null) {
             // Create a new user
             $user = User::create([
                 'fullname' => $email->fromName,
@@ -1189,12 +1196,14 @@ class IncomingMailService
                 'lastaccess' => now(),
             ]);
 
-            // Add their email
+            // Add their email. canon is what the lookup above reads, so leaving it null
+            // here would mean the member's NEXT alias created yet another account.
             UserEmail::create([
                 'userid' => $user->id,
                 'email' => $envFrom,
                 'preferred' => 1,
                 'added' => now(),
+                'canon' => $this->canonicalizeEmail($envFrom),
             ]);
 
             Log::info('Created new user for subscribe', [
@@ -1203,14 +1212,10 @@ class IncomingMailService
                 'created_new' => true,
             ]);
         } else {
-            $user = User::find($userEmail->userid);
-            if ($user === null) {
-                Log::warning('User email exists but user not found', [
-                    'email' => $envFrom,
-                ]);
-
-                return $this->dropped("User email exists but user not found for subscribe");
-            }
+            // It may have matched on canon rather than on the address itself - another
+            // per-group alias of the same member. Attach this one so later mail from it
+            // matches outright.
+            $this->addEmailToUser($user->id, $envFrom);
 
             // Update last access
             $user->lastaccess = now();
