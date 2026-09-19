@@ -132,23 +132,42 @@ class BackupDrain
 
             self::$applied[$event] = true;
 
-            $name = self::commandName($event);
-
-            // The backup's own commands are never held off. The window exists FOR the
-            // backup, so holding it back would deadlock the whole arrangement. Structural
-            // rather than left to the safelist, because getting this wrong in config would
-            // silently stop backups.
-            if ($name !== null && str_starts_with($name, 'backup:')) {
-                continue;
-            }
-
-            if ($name !== null && in_array($name, $always, true)) {
+            if (self::exempt($event, $always)) {
                 continue;
             }
 
             // Evaluated on each due-check, so the answer tracks the clock.
             $event->skip(static fn (): bool => self::active());
         }
+    }
+
+    /**
+     * Is this event left alone by the drain?
+     *
+     * The backup's own commands are never held off. The window exists FOR the backup, so
+     * holding it back would deadlock the whole arrangement. Structural rather than left to
+     * the safelist, because getting this wrong in config would silently stop backups.
+     * Anything in `always_run` is left alone too.
+     *
+     * Public so BackupDrainWindowTest can ask the same question apply() does, rather than
+     * keeping its own copy of the rule.
+     *
+     * @param  string[]|null  $always  the safelist; read from config when not given
+     */
+    public static function exempt(Event $event, ?array $always = null): bool
+    {
+        $always ??= array_values(array_filter(array_map(
+            'strval',
+            (array) config('freegle.backup.drain.always_run', [])
+        )));
+
+        $name = self::commandName($event);
+
+        if ($name !== null && str_starts_with($name, 'backup:')) {
+            return true;
+        }
+
+        return $name !== null && in_array($name, $always, true);
     }
 
     /**

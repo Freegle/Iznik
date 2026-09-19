@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-18
+last_reviewed: 2026-09-19
 owner: Freegle dev team
 covers:
   - iznik-batch/config/freegle.php
@@ -56,6 +56,9 @@ variables like every other Freegle setting.
 | `backup.drain.always_run` | `BACKUP_DRAIN_ALWAYS_RUN` | empty | Comma-separated artisan command names that run anyway, matched without their arguments. Anything listed is competing with the backup, so keep it short. |
 | `backup.database.enabled` | `BACKUP_DB_ENABLED` | `false` | Takes the nightly physical backup from Laravel instead of the shell script on the database node. Off ships as a no-op: the command refuses and the scheduled entry does not fire. |
 | `backup.database.host` | `BACKUP_DB_HOST` | empty | The node being backed up. xtrabackup copies a local data directory, so the pipeline runs there and only control flow crosses ssh. Empty is a configuration error rather than a default. |
+| `backup.database.ssh_key` | `BACKUP_DB_SSH_KEY` | `/etc/monitoring-ssh-key` | The private key the batch container uses to reach the node, at its path inside the container. The default is the monitoring key, which docker-compose already mounts and which is the root shell the backup needs anyway. |
+| `backup.database.ssh_timeout_seconds` | `BACKUP_DB_SSH_TIMEOUT` | `7200` | How long the ssh session may run. The backup measured eighteen minutes; the monitoring probe's thirty seconds would kill it partway. |
+| `backup.database.target_dir` | `BACKUP_DB_TARGET_DIR` | `/backup` | xtrabackup's scratch directory on the node. Streaming writes nothing of size there. |
 | `backup.database.bucket` | `BACKUP_DB_BUCKET` | `gs://freegle_backup_uk` | Where the compressed stream goes. |
 | `backup.database.compress_threads` | `BACKUP_DB_COMPRESS_THREADS` | `4` | xtrabackup compression threads. More finishes sooner and competes harder. |
 | `backup.database.alert_email` | `BACKUP_DB_ALERT_EMAIL` | `geek-alerts@ilovefreegle.org` | Where a failure is mailed. Plain text, no template, because this has to work when the database is unhappy. |
@@ -84,6 +87,13 @@ Two halves, both driven by the settings above:
 A job already running when the window opens is left to finish, which is why `start` is set
 earlier than the backup's own cron. That gap is the drain; the rest is the delay.
 
+**A job that fires once a day inside the window is skipped, not delayed.** Laravel's
+scheduler has no catch-up: a `dailyAt()` that falls in the window simply does not run that
+day. Every-minute jobs and anything with a second slot later in the day are only delayed.
+So nothing once-a-day may be scheduled inside the window, and
+`BackupDrainWindowTest` fails the build if something is. Move the job, or move the window
+and the backup together; the same test checks that the backup itself still sits inside it.
+
 `php artisan backup:drain-status` reports whether the hold is in force and exits 0 if it
 is, for the backup script to check before it desyncs. It deliberately does not stop a
 backup: a backup that did not run is worse than one that ran alongside some batch work.
@@ -100,7 +110,19 @@ and the shell script remains what actually runs until then. `--dry-run` prints t
 would run on the node without running anything, which is the way to review it before
 switching over.
 
-Two deliberate differences from the script:
+The command reaches the node with its own ssh runner, bound in `AppServiceProvider` with the
+key and timeout above and injected through the command's constructor. That is deliberate: a
+contextual binding only applies while the container is building a class, so a runner asked
+for as a `handle()` parameter would be the monitoring one, with its thirty-second timeout.
+
+The node reports back with three markers on its output, and the command treats a missing
+one as failure: `FREEGLE_BACKUP_ABORT=` when it stopped before desyncing (a tool that is
+not executable, or a desync that did not take), `FREEGLE_BACKUP_RESULT=` with the
+pipeline's exit status, and `FREEGLE_BACKUP_RESYNC=` from the exit trap, saying whether
+the node rejoined flow control. A good backup on a node that is still desynced alerts too.
+The alert carries the last forty lines the node printed.
+
+Deliberate differences from the script:
 
 - **`set -o pipefail`.** The script ran `xtrabackup ... | gsutil cp -` and then tested `$?`,
   which in bash is the status of the last command in the pipeline. An xtrabackup that died
@@ -109,6 +131,9 @@ Two deliberate differences from the script:
   have caught it.
 - **The desync is released from a trap on EXIT**, not from the last line, so a kill, a
   timeout or a failure anywhere above it cannot leave the node desynced.
+- **The tools are checked before the desync, and a desync that does not take is fatal.**
+  A backup taken on a node still inside flow control stalls every node's writes for the
+  duration, which is worse than no backup.
 
 The `/etc` and crontab sweep at the end of the shell script is a separate concern and has
 not moved; that part of the script still runs.
