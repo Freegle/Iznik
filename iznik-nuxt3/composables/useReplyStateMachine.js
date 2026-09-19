@@ -130,6 +130,8 @@ export const ReplyState = {
   SHOWING_WELCOME: 'SHOWING_WELCOME',
   COMPLETED: 'COMPLETED',
   ERROR: 'ERROR',
+  // Experiment: the send was refused until a graded micro-volunteering task is passed.
+  REPLY_GATE: 'REPLY_GATE',
 }
 
 // States where the user has started but not completed
@@ -489,6 +491,35 @@ export function useReplyStateMachine(messageId, options = {}) {
   }
 
   // Show the graceful reach explanation and keep the typed text; do NOT force a re-login.
+  // Experiment: the reply gate. The API refuses the (N+1)th reply of the day with 428
+  // until the member has passed a graded micro-volunteering task. Not an error and not
+  // an auth problem: the reply is kept and sent again once the gate opens.
+  function isReplyGateError(error) {
+    if (!error) return false
+    const status = error.status || error.response?.status
+    return status === 428
+  }
+
+  function handleReplyGate(callback) {
+    transitionTo(ReplyState.REPLY_GATE, { event: ReplyEvent.ERROR_OCCURRED })
+    error.value = null
+    action('reply_gate_shown', { message_id: messageId })
+    callback?.()
+  }
+
+  async function onGatePassed() {
+    action('reply_gate_passed', { message_id: messageId })
+    transitionTo(ReplyState.CREATING_CHAT, { event: ReplyEvent.RETRY })
+    await handleCreateChat()
+  }
+
+  function onGateFailed() {
+    action('reply_gate_failed', { message_id: messageId })
+    transitionTo(ReplyState.ERROR, { event: ReplyEvent.ERROR_OCCURRED })
+    error.value =
+      "You've replied to a lot of posts today. Please try again tomorrow."
+  }
+
   function handleNotInReach(callback) {
     transitionTo(ReplyState.ERROR, { event: ReplyEvent.ERROR_OCCURRED })
     error.value =
@@ -1167,6 +1198,11 @@ export function useReplyStateMachine(messageId, options = {}) {
         return
       }
 
+      if (isReplyGateError(e)) {
+        handleReplyGate(callback)
+        return
+      }
+
       if (isAuthError(e)) {
         handleAuthError()
         callback?.()
@@ -1296,5 +1332,7 @@ export function useReplyStateMachine(messageId, options = {}) {
     getDebugInfo,
     initialize,
     fallbackToComposing,
+    onGatePassed,
+    onGateFailed,
   }
 }

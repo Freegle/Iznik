@@ -265,8 +265,7 @@ const noLongerNeeded = computed(() => {
 // A 403 means the post is no longer ours to check; anything else is a real error.
 async function recordResponse(params) {
   try {
-    await microVolunteeringStore.respond(params)
-    return true
+    return (await microVolunteeringStore.respond(params)) ?? true
   } catch (e) {
     if (e?.response?.status === 403) {
       refused.value = true
@@ -325,7 +324,7 @@ function notRight(callback) {
 
 async function sendComments(callback) {
   // Record the result with comments.
-  const recorded = await recordResponse({
+  const result = await recordResponse({
     msgid: props.id,
     groupid: groupid.value,
     response: 'Reject',
@@ -333,22 +332,30 @@ async function sendComments(callback) {
     msgcategory: msgcategory.value,
   })
   await refreshNotificationCount()
-  callback()
+  if (typeof callback === 'function') {
+    callback()
+  }
 
-  if (recorded) emit('next')
+  // The mark (true/false) when the post was already settled by other members, else
+  // undefined. Only the reply gate cares.
+  if (result) emit('next', result.graded)
 }
 
 async function approve(callback) {
   // Approved - that's it.
-  const recorded = await recordResponse({
+  const result = await recordResponse({
     msgid: props.id,
     groupid: groupid.value,
     response: 'Approve',
   })
   await refreshNotificationCount()
-  callback()
+  if (typeof callback === 'function') {
+    callback()
+  }
 
-  if (recorded) emit('next')
+  // The mark (true/false) when the post was already settled by other members, else
+  // undefined. Only the reply gate cares.
+  if (result) emit('next', result.graded)
 }
 
 // After recording a response the server has already marked the "post to check"
