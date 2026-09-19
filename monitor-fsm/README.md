@@ -49,10 +49,11 @@ LOAD_STATE → CHECK_CI → CI_ROUTER
 
 `PARALLEL_ANALYZE_AND_FIX` launches (simultaneously via `delegate_parallel_tasks`):
 - One sub-agent per Discourse topic with new posts (triage only — classify each post as bug/question/feature-request/off-topic/etc.)
+- One sub-agent per unanswered question (research only - read the code and the docs, then write a short answer)
 - One Sentry scan sub-agent
 - At most one PR-fix sub-agent (the "focus PR" — one at a time to avoid flooding the single self-hosted CI runner)
 
-`COLLATE_RESULTS` merges classifications and Sentry data from all parallel agents, then routes to `WORK_ROUTER`.
+`COLLATE_RESULTS` merges classifications, answers and Sentry data from all parallel agents, then routes to `WORK_ROUTER`.
 
 **Phase C — Bug fixing:**
 
@@ -69,6 +70,67 @@ LOAD_STATE → CHECK_CI → CI_ROUTER
 - Dirty PRs (need rebase) → `REBASE_DIRTY_PRS`
 - No PR created this iteration → `WRITE_COVERAGE` (mandatory coverage PR, rotating Go → Vitest → Laravel)
 - Gate passed → `WRAP_UP → SCHEDULE_NEXT → END`
+
+### Answering questions
+
+Not every post is a bug. Triage has always been able to tell a question from a bug report, but a
+question was then filed under `deferred` and nobody ever went back to it. Questions are now kept as
+`question` and answered.
+
+`list_unanswered_questions` (run in `CHECK_CI`, alongside the topic scan) picks up questions with no
+reply waiting and none already sent, and `PARALLEL_ANALYZE_AND_FIX` gives each one a research
+sub-agent that runs beside the triage and Sentry agents. The sub-agent reads the thread, then looks
+for the answer in `docs/` and in the code that actually runs - Go, Nuxt and Laravel, never the dead
+V1 PHP - and writes two to four sentences for somebody reading them once, on a phone. It emits
+`ANSWERS=[{topic, post, answer, confidence, link?}]`, or says a human should take it.
+
+`persist_question_answers` (in `COLLATE_RESULTS`) turns each answer into a reply **waiting for
+approval**, in the same `discourse_draft` table the fix replies use. Three things can stop an answer
+getting that far:
+
+- the sub-agent says it is not confident, or asks for a human - the question is deferred, with the reason
+- the answer reads like documentation rather than English - it is thrown away and the question is asked
+  again next time round. `.claude/pr-complexity.mjs`, the same scorer the Discourse posting hook uses,
+  decides this (reading grade 11, sentences of 30 words). Two failures in a row defer it to a human.
+- there is nothing to quote, so the reply could not show what it answers
+
+Answers are sent from the **Replies to send** panel on the dashboard, not posted by the run. An
+answer is new prose asserting how Freegle works, so a person reads it before a moderator does.
+Rejecting one puts the question back in the queue, and the reason given is handed to the next
+attempt. Asking for missing detail is different and goes straight out: see below.
+
+### Reports that are too vague to act on
+
+The reports that cost the most time are the ones that point at one particular thing without saying
+which: "a member says a group deleted her post". Nobody can look that up. Such a report used to go
+into the fix pipeline anyway, where the diagnosis had nothing to hold on to and guessed, or it was
+parked as deferred and the person who wrote it never heard back.
+
+`assessReportSpecifics` (`src/specifics.ts`) decides this when the report is recorded, not by asking
+a model. A report is held when it names **nothing** that can be looked up:
+
+| Counts as something to work from | Comes from |
+|---|---|
+| a number of five digits or more (member, message or group id) | the text; four digits would match a year |
+| an email address | the text |
+| a link to ilovefreegle.org | the text |
+| a screenshot or attachment | triage, which sees the post before the HTML is stripped |
+| the name of a group | triage, which is told never to guess one |
+
+The ask is only ever about what the report itself points at vaguely, so a general report ("chat
+notification emails are going out twice") is not held and not asked about. At most three things are
+asked for, in one short reply that quotes the report.
+
+A held report is `needs-detail`: out of the fix queue, visible on the dashboard, and waiting. The
+question to the reporter is **posted**, like the "fix applied, please retest" reply and for the same
+reason - a question nobody sends is a question nobody answers. One per reporting post, recorded so
+the same person is not asked the same thing every lap. When a later post in the same thread finally
+names something, the held report goes back to `open` and the follow-up does not become a second
+report. Edward saying "this is expected" still closes it, as it does for any other state.
+
+`ask_reporter_for_detail` is the same thing from the diagnosis side: when a fix cannot proceed
+without something only the reporter knows - which browser, what time, what they saw - it asks, in at
+most three short questions, and holds the report until there is an answer.
 
 ### TDD pipeline (single-bug path)
 
@@ -90,7 +152,7 @@ LOAD_STATE → CHECK_CI → CI_ROUTER
 open → investigating → fix-queued → fixed → (deployed reply auto-posted)
 ```
 
-Also: `deferred`, `off-topic`, `duplicate`, `feature-request`, `confirmed`.
+Also: `deferred`, `off-topic`, `duplicate`, `feature-request`, `question`, `needs-detail`, `confirmed`.
 
 `check_bug_feedback` (run each `LOAD_STATE`) scans follow-up Discourse posts for reporter confirmations and Edward's "working on it" / "fix applied" / "expected behaviour" replies, updating states automatically.
 

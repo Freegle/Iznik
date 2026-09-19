@@ -2,7 +2,7 @@
   <div class="reply-queue">
     <div class="d-flex align-items-center justify-content-between mb-3">
       <h5 class="mb-0">
-        Reply Queue
+        Replies to send
         <span class="badge bg-secondary ms-2">{{ pendingDrafts.length }}</span>
       </h5>
       <button class="btn btn-outline-secondary btn-sm" @click="refresh" :disabled="loading">
@@ -10,14 +10,14 @@
       </button>
     </div>
 
-    <p class="text-muted small mb-2">Replies for bugs confirmed live. Send to post to Discourse.</p>
+    <p class="text-muted small mb-2">Answers to questions, and requests for the detail a report left out. Read it, change it if you need to, then Send. Replies about a fix go out on their own and never appear here.</p>
 
     <div v-if="loading" class="spinner-border spinner-border-sm" role="status">
       <span class="visually-hidden">Loading...</span>
     </div>
 
     <div v-else-if="pendingDrafts.length === 0" class="alert alert-info small">
-      No pending replies.
+      Nothing waiting to be sent.
     </div>
 
     <div v-else class="space-y-3">
@@ -30,7 +30,7 @@
               rel="noopener"
               class="text-decoration-none fw-bold small"
             >
-              Bug #{{ draft.topic }}
+              {{ draft.pr_number ? 'Bug' : 'Question' }} #{{ draft.topic }}
             </a>
             <div class="small text-muted">
               by {{ draft.username }}
