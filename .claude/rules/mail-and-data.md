@@ -3,6 +3,8 @@ paths:
   - "iznik-batch/app/Mail/**"
   - "iznik-batch/app/Services/*Digest*"
   - "iznik-batch/app/Services/Mail/**"
+  - "iznik-batch/app/Console/Commands/TrashNothing/**"
+  - "iznik-server-go/user/partner.go"
   - "iznik-batch/resources/views/**"
   - "scripts/bulk2/**"
   - "ops/hosts/mail-host/**"
@@ -163,6 +165,57 @@ report nothing and fall back rather than guess.
 The same count still feeds `mxgroup_max_delivered_per_hour` in the suppression decision
 unscaled, which makes a provider look healthier than it is and so errs towards not suppressing.
 Scaling it would change when real mail stops being generated, so it wants its own change.
+
+## `users_emails.backwards` cannot be filtered on and be complete
+
+The column exists so domain search has an index: reverse an address and a domain suffix becomes
+a prefix. It holds three different things, and all three are live. For
+`i9-g4707@user.trashnothing.com`:
+
+| Written from | Value | TN rows on production |
+|---|---|---|
+| the address | `moc.gnihtonhsart.resu@7074g-9i` | 450,846 |
+| `canon` (strips the `-gNNNN` suffix **and** the dots in the domain) | `mocgnihtonhsartresu@9i` | 1,752,575 |
+| nothing at all | `NULL` | 13,772 |
+
+The split is not historical - the id ranges overlap almost exactly - so it is per code path, and
+it is not confined to Trash Nothing: gmail is 105,308 dotted against 252,338 stripped, yahoo
+162,201 against 128,001.
+
+So **a prefix test on `backwards` silently returns a fraction of the rows**, and no set of
+prefixes reaches the NULLs at any price. `tn:sync`'s duplicate-account merge filtered on one
+prefix from 2026-05-14 (5e2a90450) and its visibility fell to 20%. Duplicate Trash Nothing
+accounts then piled up for three months - 96 live pairs - while the check reported finding
+"roughly zero a day", which reads like success. The first symptom to reach us was a partner API
+403. Every test it had built `backwards` as `strrev($email)`, the one form the filter matched,
+so the suite stayed green throughout.
+
+**The index is not worth the incompleteness, because it is not being used.** EXPLAIN on
+production picks a full scan for every form of that filter - each prefix matches far too much of
+the table for a range scan to win. Measured 2026-09-19 over 4.2M rows: `backwards` 3.3s finding
+94 of the 96 split usernames, `email LIKE '%@user.trashnothing.com'` 5.1s finding all 96. Filter
+on the address and group in PHP; that is where 5e2a90450's real speedup came from anyway.
+
+## Go's CanonicalizeEmail is not PHP's canonicalizeEmail
+
+They share a name and a purpose and agree on almost nothing:
+
+| | PHP `IncomingMailService::canonicalizeEmail` | Go `user.CanonicalizeEmail` |
+|---|---|---|
+| TN `-gNNNN` suffix | stripped | kept |
+| dots in local part | stripped for gmail/googlemail only | stripped for every domain |
+| dots in domain | stripped | kept |
+| googlemail -> gmail | yes | no |
+
+`canon` is the column both write and both match on, so the disagreement is silent and one-way: a
+row Go writes cannot be found by a PHP canon lookup, and vice versa. Go writes `canon` in
+`CreatePartnerUser`, `EnsurePartnerIdentifiers`, social auth and signup. PHP's `findUserByEmail`
+canon fallback is what stops a member's second address minting a second account, so a row with a
+Go-written canon has no such protection.
+
+Aligning them is not a rename: donation matching and social auth both look up on `canon`, so
+changing the general Go function changes who those match. Fix it at the specific site and say
+which semantics you mean.
 
 ## See also
 

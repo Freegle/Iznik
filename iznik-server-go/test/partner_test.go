@@ -214,3 +214,99 @@ func TestEnsurePartnerIdentifiersAttachesNewAlias(t *testing.T) {
 	db.Raw("SELECT COALESCE(tnuserid, 0) FROM users WHERE id = ?", other).Scan(&stamped)
 	assert.Equal(t, uint64(66669), stamped, "an unstamped account must gain the tnuserid")
 }
+
+// The live failure of 2026-09-19 (TN post 47243586, member "i9"): TN supplies a
+// tnuserid and a per-group alias that BOTH resolve to the same account, while
+// the message belongs to a THIRD account carrying a DIFFERENT per-group alias
+// of the same TN member.
+//
+// TN mints one alias per TN GROUP - `<username>-g<tngroupid>@user.trashnothing.com`
+// - so a member active in two TN groups has two aliases. Before the alias
+// back-fill landed (2026-08-11) a second alias arriving for the first time
+// minted a second Freegle account, and 96 such pairs are still live.
+//
+// FindTNCandidates only ever looked at the tnuserid and the ONE alias in the
+// request, so it returned a single candidate, HealTNDivergence and
+// actAsOwnerCandidate both no-opped on len < 2, and the Promise 403'd
+// "Not your message" against the sibling that actually owns the post.
+func TestPartnerPromiseActsAsTNUsernameSibling(t *testing.T) {
+	prefix := uniquePrefix("partner_sibling")
+	db := database.DBConn
+
+	partnerKey := prefix + "_key"
+	db.Exec("INSERT INTO partners_keys (partner, `key`, domain) VALUES (?, ?, ?)",
+		prefix+"_partner", partnerKey, "test.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// The account TN's identifiers resolve to: it holds BOTH the tnuserid stamp
+	// and the alias TN sends, so nothing about the request looks diverged.
+	stamped := CreateTestUser(t, prefix+"_stamped", "User")
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66670)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 66670, stamped)
+	sentAlias := prefix + "-g4707@test.com"
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", stamped, sentAlias)
+
+	// The sibling: same TN username, a different TN group's alias, and it owns
+	// the post TN is acting on.
+	sibling := CreateTestUser(t, prefix+"_sibling", "User")
+	siblingAlias := prefix + "-g1586@test.com"
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", sibling, siblingAlias)
+
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, sibling, groupID, prefix+" subject", 51.5, -0.1)
+	db.Exec("UPDATE messages SET tnpostid = ?, fromaddr = ? WHERE id = ?", 474747, siblingAlias, msgID)
+	defer db.Exec("UPDATE messages SET tnpostid = NULL WHERE id = ?", msgID)
+
+	body := `{"tnpostid":"474747","action":"Promise"}`
+	req := httptest.NewRequest("POST",
+		fmt.Sprintf("/api/message?partner=%s&tnuserid=66670&email=%s", partnerKey, url.QueryEscape(sentAlias)),
+		strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "the promise must land on the sibling that owns the post")
+
+	// Acting as the owner, NOT merging: the review of the 94 live pairs is a
+	// separate, gated step, so both accounts must survive this call intact.
+	var count int64
+	db.Table("messages_promises").Where("msgid = ? AND userid = ?", msgID, sibling).Count(&count)
+	assert.Equal(t, int64(1), count, "the promise must be recorded against the owning sibling")
+
+	var stillThere int64
+	db.Table("users").Where("id IN (?, ?)", stamped, sibling).Count(&stillThere)
+	assert.Equal(t, int64(2), stillThere, "acting as a sibling must not merge the accounts")
+}
+
+// The sibling lookup is scoped to the partner's own domain and to the exact TN
+// username: a partner must not reach an account whose alias merely starts with
+// the same characters, nor one in a different domain.
+func TestFindTNSiblingsScopedToUsernameAndDomain(t *testing.T) {
+	prefix := uniquePrefix("partner_scope")
+	db := database.DBConn
+
+	mine := CreateTestUser(t, prefix+"_mine", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", mine, prefix+"-g1@test.com")
+
+	sib := CreateTestUser(t, prefix+"_sib", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", sib, prefix+"-g2@test.com")
+
+	// The shape that actually bites: a LONGER username whose own alias still
+	// matches the shorter one's "<username>-g%" narrowing, because the % runs on
+	// past the end of the name. iznik-batch merged two unrelated members this way
+	// on 2026-09-13, so the exact-username test is load-bearing, not belt and braces.
+	longer := CreateTestUser(t, prefix+"_longer", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", longer, prefix+"-gomes-g3@test.com")
+
+	// Right username, wrong domain - outside the partner's reach.
+	otherDomain := CreateTestUser(t, prefix+"_other", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", otherDomain, prefix+"-g4@elsewhere.com")
+
+	got := user.FindTNSiblings(db, prefix+"-g1@test.com")
+	assert.Contains(t, got, sib, "the sibling sharing the TN username must be found")
+	assert.NotContains(t, got, longer, "a longer username that shares a prefix is a different member")
+	assert.NotContains(t, got, otherDomain, "a different domain is outside the partner's reach")
+	assert.NotContains(t, got, mine, "the account the alias itself resolves to is not its own sibling")
+
+	// A non-TN-shaped address has no siblings at all.
+	assert.Empty(t, user.FindTNSiblings(db, "plain@test.com"))
+}
