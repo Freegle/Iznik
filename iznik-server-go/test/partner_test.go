@@ -310,3 +310,37 @@ func TestFindTNSiblingsScopedToUsernameAndDomain(t *testing.T) {
 	// A non-TN-shaped address has no siblings at all.
 	assert.Empty(t, user.FindTNSiblings(db, "plain@test.com"))
 }
+
+// Pin what the two columns HOLD, which nothing did before: the direction was
+// got wrong once and every test stayed green.
+//
+// V1's User::addEmail writes canonMail($email) and strrev(canonMail($email)) at
+// both its insert sites, and canonMail strips the -gNNNN suffix and the dots out
+// of the domain on purpose ("the format we have historically used"). So for a
+// partner alias both columns derive from the canon, and every per-group alias of
+// one member reduces to the same pair.
+func TestCreatePartnerUserStoresV1CanonAndBackwards(t *testing.T) {
+	prefix := uniquePrefix("partner_canon")
+	db := database.DBConn
+
+	email := prefix + "-g4707@user.trashnothing.com"
+	userID, err := user.CreatePartnerUser(db, 0, email)
+	require.NoError(t, err)
+
+	var row struct {
+		Canon     string `gorm:"column:canon"`
+		Backwards string `gorm:"column:backwards"`
+	}
+	db.Table("users_emails").Select("canon, backwards").
+		Where("userid = ? AND email = ?", userID, email).Scan(&row)
+
+	wantCanon := prefix + "@usertrashnothingcom"
+	assert.Equal(t, wantCanon, row.Canon,
+		"canon drops the per-group suffix and the domain dots, so a member's aliases agree")
+	assert.Equal(t, user.ReverseString(wantCanon), row.Backwards,
+		"backwards is REVERSE(canon), the definition V1 writes")
+
+	// A second alias of the same member must reduce to the same canon, which is
+	// what stops it minting another account.
+	assert.Equal(t, wantCanon, user.CanonicalizePartnerEmail(prefix+"-g1586@user.trashnothing.com"))
+}
