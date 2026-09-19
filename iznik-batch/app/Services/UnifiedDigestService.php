@@ -1951,7 +1951,11 @@ class UnifiedDigestService
         $posts = $this->newPostsFirst($posts, $digestTracker);
 
         $completedPosts = $this->deduplicateCompletedPosts(
-            $allPosts->filter(fn ($p) => $p->has_success)->values()
+            $this->filterByDistancePreference(
+                $allPosts->filter(fn ($p) => $p->has_success)->values(),
+                $user,
+                $latlng
+            )
         );
 
         if ($posts->isEmpty() && $pinnedCards->isEmpty()) {

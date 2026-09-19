@@ -124,6 +124,58 @@ writes into your working tree and silently reverts your edits.
 Note also that a Laravel test cannot read the Go tree and a Go test cannot read the PHP tree, so
 a cross-language assertion has to go through a fixture or the API.
 
+## `setup-test-database.sh` reads the env var, not the worktree `.env`
+
+Its container prefix is `${COMPOSE_PROJECT_NAME:-freegle}`. Compose reads that from the
+worktree's `.env`; a plain shell script does not. So run bare from inside a worktree it targets
+`freegle-percona` and `freegle-batch` - the **main** instance - and says so in one line of
+output that is easy to read past:
+
+```
+Verifying required containers...
+freegle-percona is running
+```
+
+It then migrates the main database, reloads its fixtures, rolls the fixture post dates forward
+and re-clones `iznik_go_test`, all against the instance another session is probably using. The
+`DROP DATABASE` is gated behind `SELF_HOSTED_RUNNER=true`, so that much is spared. Per
+`.claude/rules/tests-and-ci.md` it also disrupts the spatial index, so the main instance needs a
+re-index afterwards before its failures mean anything.
+
+Always:
+
+```bash
+COMPOSE_PROJECT_NAME=freegle-<name> ./scripts/setup-test-database.sh
+```
+
+Check the "is running" lines name your own prefix before letting it continue.
+
+A worktree's own `iznik` can also arrive half-migrated - schema carrying foreign keys that the
+`migrations` table does not record - which surfaces as `Duplicate foreign key constraint name`
+on a migration that has plainly already run. Drop `iznik` and `iznik_go_test` in **that
+worktree's** percona and run the script again.
+
+## Local full suites can starve the CircleCI runner into an infrastructure failure
+
+The self-hosted runner lives in its own WSL2 distro but on the **same physical machine** as your
+worktrees. Run two full suites locally while a pipeline is building and the job can die as
+`infrastructure_fail`, with its steps `canceled` rather than failed - so nothing in the CI output
+names a test, and the branch looks broken when it is not.
+
+Seen 2026-09-18: 90 containers up, 3GB of 94GB free, a full Go suite and a full Laravel suite
+running against a worktree. Pipeline #12011 died that way; the identical commit passed as #12015
+once the worktree's stack was stopped and 19GB came back.
+
+Before blaming the branch, check `free -g` and `docker ps -q | wc -l`, and stop the stacks you
+are not using:
+
+```bash
+cd /path/to/worktree
+COMPOSE_PROJECT_NAME=freegle-<name> docker-compose stop
+```
+
+`stop` rather than `down` - the containers come straight back with no rebuild.
+
 ## On the FreegleDocker host, `git checkout` is a deploy
 
 `batch-prod` bind-mounts `iznik-batch/` and runs against the **production** database. The tree is
@@ -141,6 +193,21 @@ therefore what production executes, which makes ordinary git operations producti
 
 Check what production is running by grepping the file, not by recalling what you last did. The
 answer changes under you.
+
+## Never list `/srv/tusd-data` on the FreegleDocker host
+
+The upload store is **one flat NFS directory with millions of entries**. Listing it - `find /`,
+`du -x /`, `ls`, a shell tab-completion - holds the directory lock for every `getdents()`, each of
+which on NFS is a long chain of READDIRPLUS calls, and every tusd upload create, finish and
+delete queues behind it. (Hit 2026-09-18: two orphaned `find / -maxdepth 3 -iname iznik-batch`
+processes, left behind by an ssh command from another session, put 1,036 tusd threads into D
+state; uploads hung for ~25 minutes and the load average reached 1,049 with the CPU idle. The
+NFS server was healthy throughout - `nfsstat` and the admin UI both said so.)
+
+- The repos are under `/var/www/FreegleDocker`; look there, never `find /`.
+- If a whole-filesystem scan is unavoidable: `find / -xdev`, or `-path /srv/tusd-data -prune`.
+- monit (`ops/hosts/monit/batch-host/conf.d/tusd`) kills whatever is scanning once tusd is
+  starved, so a process of yours vanishing mid-scan is that, not a crash.
 
 ## Branches, clones and the tools around them
 
