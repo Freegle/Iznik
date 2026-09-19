@@ -1213,10 +1213,58 @@ export function retestReplyBody(opts: { affectsApp: boolean; link?: string | nul
   return body
 }
 
-// Seam for unit tests: the question-answer path reaches Discourse only to fetch
-// the text it quotes, so tests substitute that one call.
+// Seam for unit tests: the question paths reach Discourse to fetch the text they
+// quote and to post. Tests substitute both.
 export const questionAnswerDeps = {
   fetchReporterQuote,
+  postDiscourseReply,
+}
+
+/**
+ * Ask the reporter for what a report leaves out, and record that we asked.
+ *
+ * Posted rather than queued. A reply that asks which group a report means is the
+ * same kind of thing as the "fix applied, please retest" reply: it is how the
+ * monitor talks to the person who reported something, and a question nobody sends
+ * is a question nobody answers. Edward, 2026-09-19: "we are allowed to post once a
+ * fix has been put live, we should also be allowed to post in order to clarify what
+ * fixes are needed."
+ *
+ * Returns true when it went out. A failure leaves nothing recorded, so the next
+ * iteration finds the report still short of detail and tries again.
+ */
+async function askReporterOnDiscourse(
+  db: ReturnType<typeof getDb>,
+  args: { topic: number; post: number; username: string; quote: string; body: string },
+): Promise<boolean> {
+  // One question per reporting post. The queue used to prevent a second ask by
+  // holding an unsent draft; now that the question goes straight out, the record of
+  // having sent it is what stops us asking the same person the same thing every lap.
+  const alreadyAsked = db.prepare(
+    'SELECT 1 FROM discourse_draft WHERE topic = ? AND post = ? AND posted_at IS NOT NULL LIMIT 1',
+  ).get(args.topic, args.post)
+  if (alreadyAsked) {
+    dbg(`askReporterOnDiscourse: ${args.topic}/${args.post} has already been asked`)
+    return true
+  }
+
+  const raw = formatReplyRaw({
+    username: args.username,
+    post: args.post,
+    topic: args.topic,
+    quote: args.quote,
+    body: args.body,
+  })
+  const res = await questionAnswerDeps.postDiscourseReply(args.topic, raw, args.post)
+  if (!res.ok) {
+    outWarn(`askReporterOnDiscourse: could not ask ${args.topic}/${args.post}: ${res.error}`)
+    return false
+  }
+  recordPostedReply(db, {
+    topic: args.topic, post: args.post,
+    username: args.username, quote: args.quote, body: args.body,
+  })
+  return true
 }
 
 export const deployedReplyDeps = {
@@ -3638,13 +3686,16 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       if (!quote.trim()) quote = (bug.excerpt ?? '').trim()
       if (!quote) return { queued: false, reason: 'nothing to quote, so the reply would not show what it asks about' }
 
-      queueDiscourseDraft(db, { topic, post, username: bug.reporter ?? 'there', quote, body })
+      const asked = await askReporterOnDiscourse(db, {
+        topic, post, username: bug.reporter ?? 'there', quote, body,
+      })
+      if (!asked) return { queued: false, reason: 'could not post the question to Discourse' }
       upsertDiscourseBug(db, {
         topic, post,
         state: 'needs-detail',
         reason: `asked the reporter for: ${questions.join('; ')}`,
       })
-      out(`ask_reporter_for_detail: queued a question for ${topic}/${post} and held it until there is an answer`)
+      out(`ask_reporter_for_detail: asked ${topic}/${post} and held it until there is an answer`)
       return { queued: true }
     },
   },
@@ -3869,13 +3920,15 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
             finalReason = `asked the reporter for: ${specifics.missing.join('; ')}`
             const quote = String(c.originalPostText ?? c.summary ?? '').trim().slice(0, 300)
             if (quote) {
-              queueDiscourseDraft(db, {
+              const asked = await askReporterOnDiscourse(db, {
                 topic: Number(c.topic), post: Number(c.post),
                 username: c.user ?? 'there',
                 quote,
                 body: detailRequestBody(specifics.missing),
               })
-              out(`persist_classifications: ${c.topic}/${c.post} names nothing that can be looked up - queued a question for approval`)
+              out(asked
+                ? `persist_classifications: ${c.topic}/${c.post} names nothing that can be looked up - asked the reporter`
+                : `persist_classifications: ${c.topic}/${c.post} names nothing that can be looked up - could not ask, will retry`)
             } else {
               out(`persist_classifications: ${c.topic}/${c.post} names nothing that can be looked up, and has nothing to quote - held without asking`)
             }

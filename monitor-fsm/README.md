@@ -94,10 +94,10 @@ getting that far:
   decides this (reading grade 11, sentences of 30 words). Two failures in a row defer it to a human.
 - there is nothing to quote, so the reply could not show what it answers
 
-**Nothing here posts to Discourse.** A reply about a fix is the same fixed wording every time and goes
-out on its own; an answer is new prose about how Freegle works, so a person reads it first. Approved
-answers are sent from the **Answers to send** panel on the dashboard. Rejecting one puts the question
-back in the queue, and the reason given is handed to the next attempt.
+Answers are sent from the **Replies to send** panel on the dashboard, not posted by the run. An
+answer is new prose asserting how Freegle works, so a person reads it before a moderator does.
+Rejecting one puts the question back in the queue, and the reason given is handed to the next
+attempt. Asking for missing detail is different and goes straight out: see below.
 
 ### Reports that are too vague to act on
 
@@ -122,10 +122,15 @@ notification emails are going out twice") is not held and not asked about. At mo
 asked for, in one short reply that quotes the report.
 
 A held report is `needs-detail`: out of the fix queue, visible on the dashboard, and waiting. The
-question to the reporter is queued for approval like any other reply, because it goes to a
-volunteer. When a later post in the same thread finally names something, the held report goes back
-to `open` and the follow-up does not become a second report. Edward saying "this is expected" still
-closes it, as it does for any other state.
+question to the reporter is **posted**, like the "fix applied, please retest" reply and for the same
+reason - a question nobody sends is a question nobody answers. One per reporting post, recorded so
+the same person is not asked the same thing every lap. When a later post in the same thread finally
+names something, the held report goes back to `open` and the follow-up does not become a second
+report. Edward saying "this is expected" still closes it, as it does for any other state.
+
+`ask_reporter_for_detail` is the same thing from the diagnosis side: when a fix cannot proceed
+without something only the reporter knows - which browser, what time, what they saw - it asks, in at
+most three short questions, and holds the report until there is an answer.
 
 ### TDD pipeline (single-bug path)
 

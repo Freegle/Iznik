@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { getDb, resetDbForTests, upsertDiscourseBug, getDiscourseBug } from '../db/index.js'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -7,6 +7,7 @@ type Handler = (params: Record<string, unknown>, context: Record<string, unknown
 let persist: Handler
 let workRouter: Handler
 let db: ReturnType<typeof getDb>
+let posted: Array<{ topic: number; raw: string; post?: number }>
 
 const VAGUE = {
   topic: 9500, post: 3, type: 'bug', user: 'Sue',
@@ -17,17 +18,32 @@ const VAGUE = {
 beforeEach(async () => {
   resetDbForTests()
   db = getDb(':memory:')
-  const { actions } = await import('../actions/index.js')
+  const mod = await import('../actions/index.js')
+  const { actions } = mod
+  // The question goes to Discourse for real in production. Tests record the call
+  // instead of making it, and assert on what would have been posted.
+  posted = []
+  vi.spyOn(mod.questionAnswerDeps, 'postDiscourseReply').mockImplementation(
+    async (topic: number, raw: string, post?: number) => {
+      posted.push({ topic, raw, post })
+      return { ok: true }
+    },
+  )
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const find = (n: string) => (actions.find((a: any) => a.name === n)!).handler
   persist = find('persist_classifications')
   workRouter = find('work_router_decide')
 })
 
-afterEach(() => resetDbForTests())
+afterEach(() => {
+  vi.restoreAllMocks()
+  resetDbForTests()
+})
 
-const pendingDrafts = () =>
-  db.prepare('SELECT * FROM discourse_draft WHERE posted_at IS NULL AND rejected_at IS NULL').all() as any[]
+// Every question the monitor sends is recorded as a posted reply, which is also
+// what stops it asking the same thing twice.
+const sentReplies = () =>
+  db.prepare('SELECT * FROM discourse_draft WHERE posted_at IS NOT NULL').all() as any[]
 
 describe('a report with nothing to look up', () => {
   it('is held rather than sent for diagnosis', async () => {
@@ -37,16 +53,19 @@ describe('a report with nothing to look up', () => {
     expect(bug?.reason ?? '').toContain('asked the reporter')
   })
 
-  it('asks the reporter for what is missing, quoting them, and waits for approval', async () => {
+  it('asks the reporter for what is missing, quoting them', async () => {
     await persist({}, { classifications: [VAGUE] })
-    const drafts = pendingDrafts()
-    expect(drafts).toHaveLength(1)
-    expect(drafts[0].body).toContain('which member')
-    expect(drafts[0].body).toContain('which group')
-    expect(drafts[0].quote).toContain('not showing her post')
-    expect(drafts[0].username).toBe('Sue')
-    expect(drafts[0].approved_at).toBeNull()
-    expect(drafts[0].posted_at).toBeNull()
+    expect(posted).toHaveLength(1)
+    expect(posted[0].topic).toBe(9500)
+    expect(posted[0].post).toBe(3)
+    expect(posted[0].raw).toContain('which member')
+    expect(posted[0].raw).toContain('which group')
+    expect(posted[0].raw).toContain('[quote=')
+    expect(posted[0].raw).toContain('not showing her post')
+
+    const recorded = sentReplies()
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0].username).toBe('Sue')
   })
 
   it('is kept out of the fix queue while it waits', async () => {
@@ -59,7 +78,7 @@ describe('a report with nothing to look up', () => {
   it('does not ask twice', async () => {
     await persist({}, { classifications: [VAGUE] })
     await persist({}, { classifications: [VAGUE] })
-    expect(pendingDrafts()).toHaveLength(1)
+    expect(sentReplies()).toHaveLength(1)
   })
 })
 
@@ -73,7 +92,7 @@ describe('a report that names something', () => {
       }],
     })
     expect(getDiscourseBug(db, 9501, 1)?.state).toBe('open')
-    expect(pendingDrafts()).toHaveLength(0)
+    expect(sentReplies()).toHaveLength(0)
   })
 
   it('goes straight into the queue when the post has a screenshot', async () => {
@@ -169,14 +188,15 @@ describe('ask_reporter_for_detail', () => {
     })
   })
 
-  it('queues the question for approval and holds the report', async () => {
+  it('asks the question and holds the report', async () => {
     const res = await ask({ topic: 9700, post: 2, questions: ['which member this was', 'what browser they were using'] }, {})
     expect(res.queued).toBe(true)
-    const draft = pendingDrafts()[0]
-    expect(draft.body).toContain('which member this was')
-    expect(draft.body).toContain('what browser they were using')
-    expect(draft.quote).toContain('photo will not upload')
-    expect(draft.posted_at).toBeNull()
+    expect(posted).toHaveLength(1)
+    expect(posted[0].raw).toContain('which member this was')
+    expect(posted[0].raw).toContain('what browser they were using')
+    expect(posted[0].raw).toContain('photo will not upload')
+    const draft = sentReplies()[0]
+    expect(draft.posted_at).not.toBeNull()
     const bug = getDiscourseBug(db, 9700, 2)
     expect(bug?.state).toBe('needs-detail')
     expect(bug?.reason ?? '').toContain('which member this was')
@@ -184,13 +204,13 @@ describe('ask_reporter_for_detail', () => {
 
   it('asks at most three things', async () => {
     await ask({ topic: 9700, post: 2, questions: ['one thing', 'two thing', 'three thing', 'four thing'] }, {})
-    expect(pendingDrafts()[0].body).not.toContain('four thing')
+    expect(posted[0].raw).not.toContain('four thing')
   })
 
   it('will not ask about a report it has never seen', async () => {
     const res = await ask({ topic: 1, post: 1, questions: ['which group'] }, {})
     expect(res.queued).toBe(false)
-    expect(pendingDrafts()).toHaveLength(0)
+    expect(sentReplies()).toHaveLength(0)
   })
 
   it('will not ask about something already fixed', async () => {
@@ -206,7 +226,7 @@ describe('ask_reporter_for_detail', () => {
     }, {})
     expect(res.queued).toBe(false)
     expect(res.reason).toContain('plainer')
-    expect(pendingDrafts()).toHaveLength(0)
+    expect(sentReplies()).toHaveLength(0)
   })
 
   it('will not send an empty question', async () => {
