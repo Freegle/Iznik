@@ -305,6 +305,160 @@ class MessageIllustrationsServiceTest extends TestCase
         $this->assertNotNull($lastArrival, 'Config should have last arrival set after processing');
     }
 
+    public function test_does_not_park_an_item_when_the_store_fails(): void
+    {
+        // Storing failing is a system problem, not a problem with this picture. On
+        // 2026-09-18 an NFS lock made every store fail for 2h20m. Recording those as
+        // failures of the items would park each one for a day once it hit three
+        // strikes, so posts would still have no picture long after storage came back.
+        $message = $this->createMessageInSpatial('OFFER: Dunlop football (TestTown)');
+
+        $mock = $this->createMock(PollinationsService::class);
+        $mock->method('shouldSkipItem')->willReturn(false);
+        $mock->method('buildMessagePrompt')->willReturnCallback(fn ($n) => "prompt for $n");
+        $mock->method('fetchBatch')->willReturn([
+            'results' => [[
+                'name' => 'Dunlop football',
+                'data' => 'rawjpegbytes',
+                'hash' => 'hash-football',
+                'msgid' => $message->id,
+            ]],
+            'failed' => [],
+        ]);
+        $mock->method('uploadImageAndCache')->willReturn(null);
+        $mock->expects($this->never())
+            ->method('recordFailure');
+
+        $this->makeService($mock)->processIllustrations();
+
+        $this->assertEquals(
+            0,
+            DB::table('messages_attachments')->where('msgid', $message->id)->count(),
+            'The store failed, so there should be no attachment'
+        );
+    }
+
+    public function test_a_pass_of_parked_items_does_not_stop_the_run(): void
+    {
+        // A pass whose candidates have all been parked after earlier failures attaches nothing,
+        // but it has still moved on. Stopping there left everything newer with no picture, which
+        // matters now a run starts among the older posts rather than today's.
+        $parked = $this->createMessageInSpatial('OFFER: Cursed Item (TestTown)');
+        DB::table('messages_groups')->where('msgid', $parked->id)->update(['arrival' => now()->subMinutes(30)]);
+        DB::statement('UPDATE messages_spatial SET arrival = ? WHERE msgid = ?', [now()->subMinutes(30), $parked->id]);
+
+        $later = $this->createMessageInSpatial('OFFER: Toaster (TestTown)');
+        DB::table('ai_images')->insert([
+            'name' => 'Toaster',
+            'externaluid' => 'freegletusd-toaster',
+            'imagehash' => 'hash001',
+        ]);
+
+        $mock = $this->createMock(PollinationsService::class);
+        $mock->method('buildMessagePrompt')->willReturnCallback(fn ($n) => "prompt for $n");
+        $mock->method('recordFailure')->willReturn(true);
+        $mock->method('uploadImageAndCache')->willReturn('freegletusd-testuid123');
+        $mock->method('fetchBatch')->willReturn(['results' => [], 'failed' => []]);
+        // Everything in the first pass is parked; the later post is not.
+        $mock->method('shouldSkipItem')->willReturnCallback(fn ($name) => $name === 'Cursed Item');
+
+        $this->makeService($mock)->processIllustrations();
+
+        $this->assertEquals(
+            1,
+            DB::table('messages_attachments')->where('msgid', $later->id)->count(),
+            'The later post should still get its picture even though the pass before it attached nothing'
+        );
+    }
+
+    public function test_does_not_move_past_a_post_still_waiting_for_a_moderator(): void
+    {
+        // Discourse 9630/97. A post is only a candidate once it is approved, because the query
+        // needs a row in the spatial index. The saved position moves on arrival time whatever
+        // happens, so a post sitting in a moderation queue while the sweep goes past its
+        // arrival is never looked at again, and gets no picture even after it is approved.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $waiting = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: Medicine Cabinet (TestTown)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now()->subMinutes(20),
+            'arrival' => now()->subMinutes(20),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+        ]);
+        MessageGroup::create([
+            'msgid' => $waiting->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now()->subMinutes(20),
+        ]);
+
+        // A later post, already approved, which this run does illustrate.
+        $this->createMessageInSpatial('OFFER: Toaster (TestTown)');
+        DB::table('ai_images')->insert([
+            'name' => 'Toaster',
+            'externaluid' => 'freegletusd-toaster',
+            'imagehash' => 'hash001',
+        ]);
+
+        $this->makeService()->processIllustrations();
+
+        $saved = DB::table('config')->where('key', 'illustrations_last_arrival')->value('value');
+        $this->assertNotNull($saved);
+        $this->assertLessThanOrEqual(
+            now()->subMinutes(20)->format('Y-m-d H:i:s'),
+            substr($saved, 0, 19),
+            'The saved position must not move past a post that is still waiting to be approved'
+        );
+    }
+
+    public function test_gives_up_on_a_post_left_in_a_queue_for_days(): void
+    {
+        // The hold above is bounded: a post abandoned in a moderation queue must not stop the
+        // job moving on for ever.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $stale = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: Forgotten Thing (TestTown)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now()->subDays(10),
+            'arrival' => now()->subDays(10),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+        ]);
+        MessageGroup::create([
+            'msgid' => $stale->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now()->subDays(10),
+        ]);
+
+        $this->createMessageInSpatial('OFFER: Toaster (TestTown)');
+        DB::table('ai_images')->insert([
+            'name' => 'Toaster',
+            'externaluid' => 'freegletusd-toaster',
+            'imagehash' => 'hash001',
+        ]);
+
+        $this->makeService()->processIllustrations();
+
+        $saved = DB::table('config')->where('key', 'illustrations_last_arrival')->value('value');
+        $this->assertGreaterThan(
+            now()->subDays(9)->format('Y-m-d H:i:s'),
+            substr($saved, 0, 19),
+            'A post left in a queue for ten days should not hold the job at its arrival'
+        );
+    }
+
     /**
      * Build a message with the given attachments. Returns [messageId, attachmentIds].
      *

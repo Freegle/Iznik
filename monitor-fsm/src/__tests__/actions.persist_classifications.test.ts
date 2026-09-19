@@ -144,11 +144,11 @@ describe('persist_classifications action', () => {
     expect(bug?.reason).toBe('Needs research')
   })
 
-  it('inserts question classification as deferred', async () => {
+  it('inserts question classification as a question, for the answering pass to pick up', async () => {
     await persistClassificationsHandler({}, {
       classifications: [{ topic: 131, post: 9, type: 'question', user: 'iris' }],
     })
-    expect(getDiscourseBug(db, 131, 9)?.state).toBe('deferred')
+    expect(getDiscourseBug(db, 131, 9)?.state).toBe('question')
   })
 
   it('skips classifications without topic or post', async () => {
@@ -303,7 +303,7 @@ describe('regression detection in persist_classifications', () => {
       ],
     })
     const bug = getDiscourseBug(db, 303, 2)
-    // question goes to deferred via normal path, not regression
+    // a question is filed as a question, not flagged as a regression
     expect(bug?.reason ?? '').not.toContain('REGRESSION')
   })
 

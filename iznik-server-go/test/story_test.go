@@ -602,3 +602,33 @@ func TestStoryReviewListIgnoresPublicFlag(t *testing.T) {
 	// Cleanup.
 	db.Exec("DELETE FROM users_stories WHERE id = ?", storyID)
 }
+
+// TestReviewStory_ExcludesRippleOnlyMembership is the moderator-facing half of
+// TestGroupStory_ExcludesRippleOnlyMembership. The review listing picks stories by the author's
+// membership of a group the viewer moderates, so without the same rippled = 0 condition a story
+// by somebody whose only tie to that group is a post that rippled there lands in its review
+// queue. The public feed and the review queue have to agree about what a membership means.
+func TestReviewStory_ExcludesRippleOnlyMembership(t *testing.T) {
+	prefix := uniquePrefix("story_rev_rippled")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	authorID := CreateTestUser(t, prefix+"_author", "User")
+	CreateTestMembership(t, authorID, groupID, "Member")
+	// The author's only tie to this group is a post of theirs that rippled in.
+	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", authorID, groupID)
+
+	storyID := CreateTestStory(t, authorID, "Rippled Review "+prefix, "story text", false, true)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/story?reviewed=0&limit=1000&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var ids []uint64
+	json2.Unmarshal(rsp(resp), &ids)
+	assert.NotContains(t, ids, storyID,
+		"a ripple-only membership must not put a story in that group's review queue")
+}
