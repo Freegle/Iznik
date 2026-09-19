@@ -72,7 +72,12 @@ func ResolveReports(db *gorm.DB, msgid uint64) {
 		Where("msgid = ? AND actiontype = ? AND result = ? AND userid <> ?", msgid, ChallengeCheckMessage, "Reject", post.Fromuser).
 		Scan(&reporters)
 
-	db.Table("messages").Where("id = ?", msgid).Update("deleted", gorm.Expr("NOW()"))
+	// The write is the guard: whichever of two simultaneous reports gets here first takes
+	// the post down, and the other finds nothing to do.
+	took := db.Table("messages").Where("id = ? AND deleted IS NULL", msgid).Update("deleted", gorm.Expr("NOW()"))
+	if took.Error != nil || took.RowsAffected == 0 {
+		return
+	}
 	db.Table("messages_groups").Where("msgid = ?", msgid).Update("deleted", gorm.Expr("1"))
 	FreezeReachIfOriginPending(db, msgid)
 
