@@ -1190,7 +1190,10 @@ class IncomingMailService
         if ($user === null) {
             // A row for this address with no user behind it is a broken state, not a new
             // member. users_emails.email is UNIQUE, so creating here would collide on it
-            // and throw where this used to drop cleanly.
+            // and throw where this drops cleanly. A foreign key on users_emails.userid
+            // means it cannot arise on its own; the guard is for the case where that key
+            // is not there, and costs one indexed check on a path that only runs for an
+            // address nobody has seen before.
             if (UserEmail::where('email', $envFrom)->exists()) {
                 Log::warning('User email exists but user not found', [
                     'email' => $envFrom,

@@ -202,19 +202,28 @@ class IncomingMailServiceTest extends TestCase
 
     /**
      * A users_emails row whose user is gone is a broken state, not a new member.
-     * users_emails.email is UNIQUE, so taking the create branch would collide on it.
+     * users_emails.email is UNIQUE, so taking the create branch would collide on it
+     * and throw where this drops cleanly.
+     *
+     * A foreign key on users_emails.userid means the state cannot arise on its own,
+     * on production or here, so the row has to be forced in with the constraint off.
+     * The guard is kept for the case where that key is not there - a restore, or a
+     * migration part way through - because the cost of it is one indexed existence
+     * check on a path that only runs for an address nobody has seen before.
      */
     public function test_subscribe_drops_when_the_address_has_no_user_behind_it(): void
     {
         $group = $this->createTestGroup();
         $orphan = $this->uniqueEmail('orphan');
 
+        DB::statement('SET FOREIGN_KEY_CHECKS=0');
         DB::table('users_emails')->insert([
             'userid' => 0,
             'email' => $orphan,
             'preferred' => 0,
             'added' => now(),
         ]);
+        DB::statement('SET FOREIGN_KEY_CHECKS=1');
 
         $usersBefore = DB::table('users')->count();
 
