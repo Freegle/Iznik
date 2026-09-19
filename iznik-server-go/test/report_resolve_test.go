@@ -142,3 +142,26 @@ func TestReportsResolve_OnTakesDownAndTellsEveryone(t *testing.T) {
 	assert.Len(t, modMailsIn(posterRoom(f)), 1, "the poster is told once")
 	assert.Empty(t, modMailsIn(room3), "a report after the takedown gets no separate outcome")
 }
+
+// A moderator's report is a quorum of one today; under the experiment it is final too.
+func TestReportsResolve_ModeratorReportIsFinal(t *testing.T) {
+	t.Setenv("REPORTS_RESOLVE", "1")
+	prefix := uniquePrefix("reportmod")
+	f := setupReports(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, f.groupID, "Moderator")
+	roomID := CreateTestChatRoom(t, modID, nil, &f.groupID, "User2Mod")
+	_, token := CreateTestSession(t, modID)
+	body, _ := json.Marshal(map[string]interface{}{"message": "Selling, not freegling", "refmsgid": f.msgID})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/chat/%d/message?jwt=%s", roomID, token), bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req, -1)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var deleted *string
+	database.DBConn.Table("messages").Select("deleted").Where("id = ?", f.msgID).Scan(&deleted)
+	assert.NotNil(t, deleted, "one moderator report takes the post down")
+	assert.NotEqual(t, uint64(0), posterRoom(f), "the poster is told")
+	assert.Len(t, modMailsIn(roomID), 1, "the moderator is told the outcome like any reporter")
+}

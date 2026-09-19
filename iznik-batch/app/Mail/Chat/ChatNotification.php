@@ -769,7 +769,8 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         // Under the warn-not-hold experiment a held message from the other person is
         // described, not quoted: the member reads the text in the app, behind the warning.
         $sensitive = null;
-        if ($message->reviewrequired && ! $isFromRecipient && \App\Support\ChatWarnNotHold::enabled()) {
+        if ($message->reviewrequired && ! $isFromRecipient
+            && \App\Support\ChatWarnNotHold::deliverable(true, $message->reportreason)) {
             $sensitive = \App\Support\ChatWarnNotHold::reason($message->reportreason);
             $displayText = \App\Support\ChatWarnNotHold::warningText($sensitive);
         } else {

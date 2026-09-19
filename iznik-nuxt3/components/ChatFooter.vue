@@ -837,8 +837,12 @@ const send = async (callback) => {
         sending.value = false
         const status = e?.response?.status
         if (status === 428) {
-          // The reply gate: keep the text, show the task, send again on success.
+          // The reply gate: keep the text, show the task, send again on success. The
+          // button's spinner is released here, or it spins for its 20 second timeout.
           showReplyGate.value = true
+          if (typeof callback === 'function') {
+            callback()
+          }
           return
         }
         if (status === 403) {
@@ -883,8 +887,10 @@ const gatePassed = async () => {
 
 const gateFailed = () => {
   showReplyGate.value = false
+  // Honest about what happens next: the gate is checked afresh on every send, so a
+  // later try with a right answer gets through. Nothing is locked until tomorrow.
   sendError.value =
-    "You've replied to a lot of posts today. Please try again tomorrow."
+    "You've replied to a lot of posts today, and that didn't match what other freeglers said. Your message is kept; have another go in a while."
 }
 
 const fetchMessages = async () => {

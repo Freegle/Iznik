@@ -49,14 +49,23 @@ func SensitiveReason(reportreason *string) string {
 // warning is not bypassed by the preview.
 const SensitiveSnippet = "New message - tap to view"
 
+// HeldReasonsNeverDelivered are the stored reasons that mean "a person decided this sender
+// is not to be heard", not "the content check saw something". A member on full chat
+// moderation (a shadow ban) is held with the generic 'Spam' reason; 'Last' is the hold that
+// chains from it; 'Fully' is the explicit form. None of those is a warning to tap through.
+// A missing reason is treated the same way, because it cannot be explained to the member.
+const HeldReasonsNeverDelivered = "'Spam', 'Fully', 'Last'"
+
 // deliverableSQL is the predicate that says a message from somebody else may be shown to a
 // member. col is the column prefix, such as "cmv." or "", exactly as the caller writes SQL.
 //
-// Normally a message held for review is not deliverable. Under the experiment only a
-// rejected message is withheld; a held one is delivered and the client warns.
+// Normally a message held for review is not deliverable. Under the experiment a message the
+// content check held is delivered and the client warns; a message held because of who sent
+// it (HeldReasonsNeverDelivered) stays hidden, and so does a rejected one.
 func deliverableSQL(col string) string {
 	if WarnNotHold() {
-		return col + "reviewrejected = 0"
+		return "(" + col + "reviewrequired = 0 OR (" + col + "reportreason IS NOT NULL AND " +
+			col + "reportreason NOT IN (" + HeldReasonsNeverDelivered + "))) AND " + col + "reviewrejected = 0"
 	}
 	return col + "reviewrequired = 0 AND " + col + "reviewrejected = 0"
 }

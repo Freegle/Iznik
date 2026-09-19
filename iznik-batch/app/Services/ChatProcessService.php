@@ -234,7 +234,7 @@ class ChatProcessService
         // Under the warn-not-hold experiment a held message is delivered behind a warning,
         // so the recipient is told about it and the room surfaces, exactly as for a clean
         // message. The review flag stays set for moderators.
-        $deliverable = !$review || \App\Support\ChatWarnNotHold::enabled();
+        $deliverable = \App\Support\ChatWarnNotHold::deliverable((bool) $review, $reviewreason);
 
         if ($deliverable) {
             BackgroundTask::create([

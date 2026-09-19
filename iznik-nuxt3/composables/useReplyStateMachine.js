@@ -516,8 +516,10 @@ export function useReplyStateMachine(messageId, options = {}) {
   function onGateFailed() {
     action('reply_gate_failed', { message_id: messageId })
     transitionTo(ReplyState.ERROR, { event: ReplyEvent.ERROR_OCCURRED })
+    // The gate is checked afresh on every send, so a later try with a right answer
+    // gets through. Say that, rather than promising a lock that does not exist.
     error.value =
-      "You've replied to a lot of posts today. Please try again tomorrow."
+      "You've replied to a lot of posts today, and that didn't match what other freeglers said. Your reply is kept; have another go in a while."
   }
 
   function handleNotInReach(callback) {

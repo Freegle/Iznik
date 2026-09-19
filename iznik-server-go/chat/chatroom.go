@@ -293,6 +293,11 @@ func GetChatRoom(id uint64, myid uint64) (ChatRoomListEntry, bool) {
 	}
 	chats = listChats(participant, []string{room.Chattype}, "2009-09-11", "", id, id, true, false)
 	if len(chats) > 0 {
+		// The list ran as the participant, so a held message's preview was masked for them.
+		// The caller here is a moderator, who reads the text as before.
+		if WarnNotHold() && chats[0].Chatmsgheld {
+			chats[0].Snippet = getSnippet(chats[0].Chatmsgtype, chats[0].Chatmsg, chats[0].Refmsgtype)
+		}
 		return chats[0], false
 	}
 

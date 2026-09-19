@@ -1639,6 +1639,8 @@ services:
         required: false
     restart: "no"
     environment:
+      # Self-moderating community experiment: the batch tier reads the same switch as the API.
+      - CHAT_WARN_NOT_HOLD=${CHAT_WARN_NOT_HOLD:-}
       - APP_NAME=Freegle Batch Jobs
       - APP_KEY=base64:JXsa9TVxy8PQIrAgimIh0+4v8U7rSYhd3/+an8WYYQc=
       - APP_ENV=local

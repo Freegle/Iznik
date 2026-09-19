@@ -839,4 +839,39 @@ class ChatProcessServiceTest extends TestCase
         $latest = DB::table('chat_rooms')->where('id', $room->id)->value('latestmessage');
         $this->assertEquals($old->format('Y-m-d H:i:s'), \Carbon\Carbon::parse($latest)->format('Y-m-d H:i:s'));
     }
+
+    /**
+     * A shadow ban is a decision about the sender, not the message: it stays a hold under
+     * the experiment, with no push and no room surfacing.
+     */
+    public function test_warn_not_hold_keeps_a_shadow_banned_sender_held(): void
+    {
+        config(['freegle.moderation.chat_warn_not_hold' => true]);
+
+        $sender = $this->createTestUser(['chatmodstatus' => 'Fully']);
+        $recipient = $this->createTestUser();
+        $old = now()->subDays(40);
+        $room = $this->createTestChatRoom($sender, $recipient, ['latestmessage' => $old]);
+
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => 'Hello there',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $updated->reviewrequired);
+
+        $pushed = DB::table('background_tasks')
+            ->where('task_type', \App\Models\BackgroundTask::TASK_PUSH_NOTIFY_CHAT_MESSAGE)
+            ->get()
+            ->filter(fn ($t) => (int) (json_decode($t->data, true)['message_id'] ?? 0) === (int) $msg->id);
+        $this->assertCount(0, $pushed, 'a shadow-banned sender is not delivered');
+
+        $latest = DB::table('chat_rooms')->where('id', $room->id)->value('latestmessage');
+        $this->assertEquals($old->format('Y-m-d H:i:s'), \Carbon\Carbon::parse($latest)->format('Y-m-d H:i:s'));
+    }
 }

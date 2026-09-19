@@ -1110,6 +1110,11 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 
 	// A moderator's report is quorum on its own: pull the post to Pending everywhere.
 	if reporterIsModOf(db, reporterID, groupid) {
+		if ReportsResolve() {
+			// Experiment: a moderator's report is final. See resolve.go.
+			ResolveReports(db, msgid)
+			return
+		}
 		SendForReviewAllGroups(db, msgid, reason, nil, nil)
 	} else {
 		// Aggregate quorum (all distinct Reject verdicts, reports or in-app checks)
