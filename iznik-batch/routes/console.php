@@ -321,7 +321,7 @@ Schedule::command('items:backfill-popularity')
 // duplicate account that has sat unnoticed for years does not need spotting within the hour.
 // The scan window overlaps the gap between runs so a slow day never drops anything.
 Schedule::command('users:detect-related --days=3')
-    ->dailyAt('04:20')
+    ->dailyAt('04:40')
     ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('users:detect-related'))
     ->runInBackground();
@@ -544,7 +544,7 @@ Schedule::command('purge:logs')
 // Daily syntactic email validation (last 30 days only).
 // V1: cron/email_validate.php
 Schedule::command('emails:validate')
-    ->dailyAt('04:30')
+    ->dailyAt('04:50')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('emails:validate'))
     ->runInBackground();
@@ -610,10 +610,10 @@ Schedule::command('chats:update-expected')
     ->runInBackground();
 
 // The nightly backstop: re-check every waiting message, catching anything the two
-// triggers above cannot see. 04:30 sits in the quiet gap after the purge/stats cluster
-// and clear of db1's 04:00-04:17 backup window.
+// triggers above cannot see. 04:50 sits in the quiet gap after the purge/stats cluster
+// and clear of the backup drain window (BackupDrainWindowTest keeps it there).
 Schedule::command('chats:update-expected --full')
-    ->dailyAt('04:30')
+    ->dailyAt('04:50')
     ->withoutOverlapping(60)
     ->sendOutputTo(cronLog('chats:update-expected-full'))
     ->runInBackground();
@@ -1032,7 +1032,7 @@ if (config('freegle.mail.relay_logs.enabled') && config('freegle.mail.relay_logs
 
 // Clean up old sent emails - run daily.
 Schedule::command('mail:spool:process --cleanup --cleanup-days=7')
-    ->dailyAt('04:00')
+    ->dailyAt('04:40')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('mail:spool:process'))
     ->runInBackground();
@@ -1809,6 +1809,10 @@ Schedule::command('partnerships:reminders')
 // Nightly physical database backup. OFF unless BACKUP_DB_ENABLED is set; until then the
 // shell script on the database node is still what runs. Scheduled inside the drain window
 // on purpose: BackupDrain never holds "backup:" commands off.
+//
+// Nothing ELSE that fires once a day may sit inside that window (03:50-04:35 by default):
+// the drain skips a due job, it does not delay it, so a dailyAt() in the window never
+// runs. BackupDrainWindowTest fails the build if one is added.
 Schedule::command('backup:database')
     ->dailyAt('04:00')
     ->when(fn () => config('freegle.backup.database.enabled', false))

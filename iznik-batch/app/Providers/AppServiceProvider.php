@@ -57,6 +57,20 @@ class AppServiceProvider extends ServiceProvider
             );
         });
 
+        // How backup:database reaches the database node. The backup runs for about
+        // eighteen minutes, so it cannot share the monitoring probe's 30-second
+        // timeout. Contextual, and the command takes the runner in its CONSTRUCTOR:
+        // contextual bindings only apply while the container is building a class, so
+        // a handle() parameter would silently get the monitoring runner instead.
+        $this->app->when(\App\Console\Commands\Backup\DatabaseBackupCommand::class)
+            ->needs(\App\Monitoring\HostCommandRunner::class)
+            ->give(function () {
+                return new \App\Monitoring\SshHostCommandRunner(
+                    (string) config('freegle.backup.database.ssh_key', '/etc/monitoring-ssh-key'),
+                    (int) config('freegle.backup.database.ssh_timeout_seconds', 7200),
+                );
+            });
+
         // How mail:deferrals:scan reaches the outbound relay. Deliberately a
         // separate key and a longer timeout from the monitoring probe above:
         // that key is a root shell across the whole estate, whereas this one

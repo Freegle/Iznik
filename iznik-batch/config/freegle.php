@@ -160,10 +160,19 @@ return [
             // The node being backed up. xtrabackup copies a local data directory, so the
             // whole pipeline runs there and only control flow crosses ssh.
             'host' => env('BACKUP_DB_HOST', ''),
-            'ssh_key' => env('BACKUP_DB_SSH_KEY', '/etc/backup-ssh-key'),
-            // The backup measured about 18 minutes; allow generously for a bad night.
+            // The key AppServiceProvider hands this command's ssh runner. docker-compose mounts
+            // the monitoring key at this path; the backup needs the same root shell on the
+            // node (xtrabackup reads the data directory, mysql sets wsrep_desync), so it is
+            // the default rather than a path nothing mounts.
+            'ssh_key' => env('BACKUP_DB_SSH_KEY', '/etc/monitoring-ssh-key'),
+            // The backup measured about 18 minutes; allow generously for a bad night. The
+            // monitoring runner's 30 seconds would kill it partway.
             'ssh_timeout_seconds' => (int) env('BACKUP_DB_SSH_TIMEOUT', 7200),
             'xtrabackup' => env('BACKUP_DB_XTRABACKUP', '/usr/bin/xtrabackup'),
+            // xtrabackup's scratch directory on the node. Streaming writes nothing of size
+            // there, but the shell script always gave one and the default would otherwise be
+            // a directory under the ssh user's home.
+            'target_dir' => env('BACKUP_DB_TARGET_DIR', '/backup'),
             'gsutil' => env('BACKUP_DB_GSUTIL', '/usr/lib/google-cloud-sdk/platform/gsutil/gsutil'),
             'bucket' => env('BACKUP_DB_BUCKET', 'gs://freegle_backup_uk'),
             'compress_threads' => (int) env('BACKUP_DB_COMPRESS_THREADS', 4),
