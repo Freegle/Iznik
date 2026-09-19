@@ -15,7 +15,7 @@
             <b-spinner />
           </div>
           <template v-else>
-            <template v-if="commonGroups.length">
+            <template v-if="commonGroups.length && !groupless">
               <h4>Which community is this about?</h4>
               <b-form-select
                 v-model="groupid"
@@ -28,6 +28,9 @@
                 </option>
               </b-form-select>
             </template>
+            <p v-else-if="groupless" class="text-muted">
+              Tell us what's wrong and we'll let you know what happens.
+            </p>
             <p v-else class="text-muted">
               We'll pass this to our central volunteers who deal with this kind
               of thing.
@@ -45,7 +48,11 @@
             <h4>What's wrong?</h4>
             <b-form-textarea
               v-model="comments"
-              placeholder="Please tell us what's wrong.  This will go to our lovely volunteers, who will try to help you."
+              :placeholder="
+                groupless
+                  ? 'Please tell us what\'s wrong.'
+                  : 'Please tell us what\'s wrong.  This will go to our lovely volunteers, who will try to help you.'
+              "
             />
           </template>
         </b-col>
@@ -60,9 +67,13 @@
   </b-modal>
 </template>
 <script setup>
+import { useGroupless } from '~/composables/useGroupless'
+
 import { ref, onMounted } from 'vue'
 import { useChatStore } from '~/stores/chat'
 import { useOurModal } from '~/composables/useOurModal'
+// Experiment: no community identity on the member site.
+const groupless = useGroupless()
 
 const props = defineProps({
   user: {
@@ -88,7 +99,12 @@ onMounted(async () => {
   try {
     const groups = await chatStore.commonGroups(props.chatid)
     commonGroups.value = Array.isArray(groups) ? groups : []
-    if (commonGroups.value.length === 1) {
+    // With no community identity the member is never asked; the first shared
+    // community is used as the routing label.
+    if (
+      commonGroups.value.length === 1 ||
+      (groupless && commonGroups.value.length)
+    ) {
       groupid.value = commonGroups.value[0].id
     }
   } catch (e) {
