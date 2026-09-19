@@ -163,8 +163,13 @@ class ChatNotificationService
 
         // For User2User chats, only include reviewed messages.
         if ($chatType === ChatRoom::TYPE_USER2USER) {
-            $query->where('chat_messages.reviewrequired', 0)
-                ->where('chat_messages.processingrequired', 0)
+            // Held messages are not emailed, unless the warn-not-hold experiment is on, in
+            // which case the mail carries a warning in place of the text
+            // (ChatNotification::prepareMessage).
+            if (! \App\Support\ChatWarnNotHold::enabled()) {
+                $query->where('chat_messages.reviewrequired', 0);
+            }
+            $query->where('chat_messages.processingrequired', 0)
                 ->where('chat_messages.processingsuccessful', 1);
         }
 

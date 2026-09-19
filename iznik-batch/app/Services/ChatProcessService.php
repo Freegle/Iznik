@@ -231,7 +231,12 @@ class ChatProcessService
         // V1 parity: ChatMessage::process() called notifyMembers() here when the
         // message wasn't held/banned (the spam/ban paths above early-return).
         // Hand off to a background task so we don't block this cron on FCM round-trips.
-        if (!$review) {
+        // Under the warn-not-hold experiment a held message is delivered behind a warning,
+        // so the recipient is told about it and the room surfaces, exactly as for a clean
+        // message. The review flag stays set for moderators.
+        $deliverable = !$review || \App\Support\ChatWarnNotHold::enabled();
+
+        if ($deliverable) {
             BackgroundTask::create([
                 'task_type' => BackgroundTask::TASK_PUSH_NOTIFY_CHAT_MESSAGE,
                 'data' => ['message_id' => $id],

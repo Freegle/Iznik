@@ -16,9 +16,8 @@ class ChatProcessServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ChatProcessService();
+        $this->service = new ChatProcessService;
     }
-
 
     // --- Ban handling (Discourse: replies silently destroyed) ---
 
@@ -715,7 +714,7 @@ class ChatProcessServiceTest extends TestCase
             ->first();
 
         $this->assertNotNull($task, 'Expected a push_notify_chat_message task to be queued for a successfully processed message');
-        $data = json_decode($task->data, TRUE);
+        $data = json_decode($task->data, true);
         $this->assertEquals($msg->id, $data['message_id']);
     }
 
@@ -771,5 +770,73 @@ class ChatProcessServiceTest extends TestCase
             ->first();
 
         $this->assertNull($task, 'Spammer messages must not push');
+    }
+
+    /**
+     * Experiment: warn, do not hold. A message the content check flags is still marked
+     * reviewrequired for moderators, but with the flag on it is delivered: the recipient
+     * is pushed and the room surfaces in their list.
+     */
+    public function test_warn_not_hold_delivers_a_held_message(): void
+    {
+        config(['freegle.moderation.chat_warn_not_hold' => true]);
+
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2, ['latestmessage' => now()->subDays(40)]);
+
+        $msg = $this->createTestChatMessage($room, $user1, [
+            'message' => 'Pay me first at https://not-a-whitelisted-site.example/deal',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $updated->reviewrequired, 'moderators still see it in review');
+        $this->assertNotNull($updated->reportreason);
+
+        $task = DB::table('background_tasks')
+            ->where('task_type', \App\Models\BackgroundTask::TASK_PUSH_NOTIFY_CHAT_MESSAGE)
+            ->orderByDesc('id')
+            ->first();
+        $this->assertNotNull($task, 'the recipient is pushed about a held message');
+        $this->assertEquals($msg->id, json_decode($task->data, true)['message_id']);
+
+        $latest = DB::table('chat_rooms')->where('id', $room->id)->value('latestmessage');
+        $this->assertGreaterThan(now()->subDay(), \Carbon\Carbon::parse($latest), 'the room surfaces in the list');
+    }
+
+    public function test_hold_without_the_flag_neither_pushes_nor_surfaces(): void
+    {
+        config(['freegle.moderation.chat_warn_not_hold' => false]);
+
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $old = now()->subDays(40);
+        $room = $this->createTestChatRoom($user1, $user2, ['latestmessage' => $old]);
+
+        $msg = $this->createTestChatMessage($room, $user1, [
+            'message' => 'Pay me first at https://not-a-whitelisted-site.example/deal',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $updated->reviewrequired);
+
+        $pushed = DB::table('background_tasks')
+            ->where('task_type', \App\Models\BackgroundTask::TASK_PUSH_NOTIFY_CHAT_MESSAGE)
+            ->get()
+            ->filter(fn ($t) => (int) (json_decode($t->data, true)['message_id'] ?? 0) === (int) $msg->id);
+        $this->assertCount(0, $pushed, 'a held message is not pushed today');
+
+        $latest = DB::table('chat_rooms')->where('id', $room->id)->value('latestmessage');
+        $this->assertEquals($old->format('Y-m-d H:i:s'), \Carbon\Carbon::parse($latest)->format('Y-m-d H:i:s'));
     }
 }

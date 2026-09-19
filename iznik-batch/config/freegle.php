@@ -717,6 +717,21 @@ return [
     'routing_server_url' => env('ROUTING_SERVER_URL', 'http://spatial:8194'),
 
     // Rippling-out reach engine parameters (ripple:expand / ReachService).
+    /*
+    |--------------------------------------------------------------------------
+    | Moderation experiments
+    |--------------------------------------------------------------------------
+    |
+    | Thought-experiment switches for a self-moderating community. Off unless set.
+    | chat_warn_not_hold: a chat message the content check flags is delivered to the
+    | recipient behind a warning instead of waiting for a moderator. The Go API reads
+    | the same CHAT_WARN_NOT_HOLD variable, so the two tiers agree.
+    |
+    */
+    'moderation' => [
+        'chat_warn_not_hold' => filter_var(env('CHAT_WARN_NOT_HOLD', false), FILTER_VALIDATE_BOOLEAN),
+    ],
+
     'ripple' => [
         // Master activation switch for the whole rippling-out feature. Ships DARK (false) so all the
         // server + app code can deploy (and clear the app stores) ahead of go-live; flip

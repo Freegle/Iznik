@@ -1763,4 +1763,33 @@ class PushNotificationServiceTest extends TestCase
             $this->assertFalse(PushNotificationService::isDeadTokenError($error), "'$error' must NOT delete the subscription");
         }
     }
+
+
+    public function test_warn_not_hold_pushes_a_held_message_with_a_warning_not_the_text(): void
+    {
+        config(['freegle.moderation.chat_warn_not_hold' => true]);
+
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => 'Send me £20 first',
+            'reviewrequired' => 1,
+        ]);
+        DB::table('chat_messages')->where('id', $msg->id)->update(['reportreason' => 'Money']);
+
+        $result = $this->service->getChatMessageRecipients($msg->id);
+        $this->assertEqualsCanonicalizing([$recipient->id], $result['fd'], 'the recipient is told');
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
+        $this->assertStringNotContainsString('£20', $payload['message'], 'the push does not carry the guarded text');
+        $this->assertSame(\App\Support\ChatWarnNotHold::warningText('money'), $payload['message']);
+
+        $rejected = $this->createTestChatMessage($room, $sender, ['reviewrequired' => 1, 'reviewrejected' => 1]);
+        $this->assertEquals([], $this->service->getChatMessageRecipients($rejected->id)['fd'], 'a rejected message is never pushed');
+    }
 }
