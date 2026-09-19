@@ -305,13 +305,12 @@ class MessageIllustrationsServiceTest extends TestCase
         $this->assertNotNull($lastArrival, 'Config should have last arrival set after processing');
     }
 
-    public function test_records_a_failure_when_storing_the_picture_fails(): void
+    public function test_does_not_park_an_item_when_the_store_fails(): void
     {
-        // Production, 2026-09-18: the run sat on one item for 2h20m, retrying it every minute
-        // while an NFS lock held the image server. The picture was generated each time and
-        // storing it failed, and a failed store was the one outcome nobody recorded. The item
-        // never reached the three strikes that park it, and because the saved position is held
-        // at the earliest item still owed work, nothing behind it was illustrated at all.
+        // Storing failing is a system problem, not a problem with this picture. On
+        // 2026-09-18 an NFS lock made every store fail for 2h20m. Recording those as
+        // failures of the items would park each one for a day once it hit three
+        // strikes, so posts would still have no picture long after storage came back.
         $message = $this->createMessageInSpatial('OFFER: Dunlop football (TestTown)');
 
         $mock = $this->createMock(PollinationsService::class);
@@ -327,17 +326,15 @@ class MessageIllustrationsServiceTest extends TestCase
             'failed' => [],
         ]);
         $mock->method('uploadImageAndCache')->willReturn(null);
-        $mock->expects($this->atLeastOnce())
-            ->method('recordFailure')
-            ->with('Dunlop football')
-            ->willReturn(false);
+        $mock->expects($this->never())
+            ->method('recordFailure');
 
         $this->makeService($mock)->processIllustrations();
 
         $this->assertEquals(
             0,
             DB::table('messages_attachments')->where('msgid', $message->id)->count(),
-            'Storing the picture failed, so there should be no attachment'
+            'The store failed, so there should be no attachment'
         );
     }
 

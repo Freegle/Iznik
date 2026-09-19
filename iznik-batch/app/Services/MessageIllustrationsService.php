@@ -278,16 +278,14 @@ class MessageIllustrationsService
                     }
 
                     $uid = $this->pollinations->uploadImageAndCache($itemName, $imageData, $hash);
-                    if (! $uid) {
-                        // The picture was generated; storing it failed. That is a failure like
-                        // any other and has to be recorded, or the item never reaches the three
-                        // strikes that park it - and since the saved watermark is held at the
-                        // earliest item still owed work, one item nobody can store stops every
-                        // later message being illustrated at all. Production spent 2h20m on
-                        // 2026-09-18 retrying one football every minute while an NFS lock held
-                        // the image server, and nothing posted in that time got a picture.
-                        $this->pollinations->recordFailure($itemName);
-                    }
+                    // A failed store is deliberately NOT recorded as a failure of this item.
+                    // Storage failing is a system problem, not something wrong with this
+                    // picture: when the image server is unreachable every item fails, so
+                    // recording it would park them all for a day (three strikes, then
+                    // FAILED_CACHE_EXPIRY) and they would still have no picture long after
+                    // storage came back. Stalling on the first one is the better failure:
+                    // on 2026-09-18 an NFS lock stalled the job for 2h20m, and the moment
+                    // the lock cleared the blocked items were stored and the job moved on.
                     if ($uid) {
                         DB::table('messages_attachments')->insert([
                             'msgid' => $msgid,
