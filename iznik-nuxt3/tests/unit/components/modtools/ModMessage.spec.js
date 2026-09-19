@@ -284,11 +284,13 @@ describe('ModMessage', () => {
             props: ['old', 'new'],
           },
           ModMessageDuplicate: {
-            template: '<div class="mod-message-duplicate"><slot /></div>',
+            template:
+              '<div class="mod-message-duplicate" :data-messageid="messageid"><slot /></div>',
             props: ['messageid'],
           },
           ModMessageCrosspost: {
-            template: '<div class="mod-message-crosspost"><slot /></div>',
+            template:
+              '<div class="mod-message-crosspost" :data-messageid="messageid"><slot /></div>',
             props: ['messageid'],
           },
           ModMessageRelated: {
@@ -2315,6 +2317,49 @@ describe('ModMessage', () => {
       const labelSpan = spinButton.find('span.d-none.d-sm-inline')
       expect(labelSpan.exists()).toBe(true)
       expect(labelSpan.text()).toBe('Back to Pending')
+    })
+  })
+
+  describe('Duplicate detection across rippled-in groups (Discourse 10063/4)', () => {
+    it('flags a history entry as a duplicate when the shared group was only reached by rippling in, not shown as a crosspost', async () => {
+      // The history entry's origin group (300) differs from the current
+      // message's group (789), but groupids shows it also reached 789 by
+      // rippling in. checkHistory() must match on groupids, not the
+      // origin-only groupid, or this real duplicate is missed and the
+      // message is shown as a crosspost instead.
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'Updated User',
+        memberships: [{ id: 789, groupid: 789 }],
+        messagehistory: [
+          {
+            id: 111,
+            subject: 'OFFER: Test Item (Location)',
+            arrival: '2024-01-14T10:00:00Z',
+            daysago: 1,
+            groupid: 300,
+            groupids: [300, 789],
+            collection: 'Approved',
+            outcome: null,
+          },
+        ],
+      })
+
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            { groupid: 789, namedisplay: 'Test Group', collection: 'Pending' },
+          ],
+        }
+      )
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+
+      const duplicates = wrapper.findAll('.mod-message-duplicate')
+      expect(duplicates.length).toBe(1)
+      expect(duplicates[0].attributes('data-messageid')).toBe('111')
+      expect(wrapper.find('.mod-message-crosspost').exists()).toBe(false)
     })
   })
 })
