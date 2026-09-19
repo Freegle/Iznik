@@ -97,6 +97,11 @@ vi.mock('pinia', async (importOriginal) => {
   }
 })
 
+const mockGroupless = { value: false }
+vi.mock('~/composables/useGroupless', () => ({
+  useGroupless: () => mockGroupless.value,
+}))
+
 describe('MessageHistory', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -351,6 +356,17 @@ describe('MessageHistory', () => {
       const wrapper = wrapperWithCollection(null)
       const btn = wrapper.find('.b-button')
       expect(btn.attributes('to')).toContain('/messages/approved/')
+    })
+  })
+
+
+  describe('groupless site (experiment)', () => {
+    it('shows when, not where', async () => {
+      mockGroupless.value = true
+      const wrapper = await createWrapper({ showSummaryDetails: true })
+      expect(wrapper.text()).not.toContain('Freegle London')
+      expect(wrapper.text()).not.toMatch(/\bon\b/)
+      mockGroupless.value = false
     })
   })
 })

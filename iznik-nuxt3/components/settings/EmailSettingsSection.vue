@@ -46,7 +46,7 @@
           />
         </div>
 
-        <button class="link-btn mt-2" @click="toggleAdvanced">
+        <button v-if="!groupless" class="link-btn mt-2" @click="toggleAdvanced">
           Show advanced settings
         </button>
       </div>
@@ -181,6 +181,8 @@
 </template>
 
 <script setup>
+import { useGroupless } from '~/composables/useGroupless'
+
 import { ref, computed, defineEmits, watch, useId } from 'vue'
 import { useAuthStore } from '~/stores/auth'
 import SettingsGroup from '~/components/SettingsGroup'
@@ -188,6 +190,8 @@ import SettingsEmailInfo from '~/components/SettingsEmailInfo'
 import NoticeMessage from '~/components/NoticeMessage'
 import OurToggle from '~/components/OurToggle'
 import { useMe } from '~/composables/useMe'
+// Experiment: no community identity on the member site.
+const groupless = useGroupless()
 
 // Unique per instance so label/for pairs never clash when the component renders twice.
 const formId = useId()
