@@ -1590,4 +1590,73 @@ describe('reach gate (rippling-out reply eligibility)', () => {
     // Not the reach message — a different 403 must not be mislabelled as "closest first".
     expect(result.error.value).not.toContain(CLOSEST)
   })
+
+
+describe('reply gate (428 from the send)', () => {
+  function setupLoggedIn() {
+    mockMeValue = { id: 10 }
+    mockMyidValue = 10
+    mockMyGroupsValue = { 0: { id: 100 } }
+    mockMessageFetch.mockResolvedValue({
+      id: MSG_ID,
+      groups: [{ groupid: 100 }],
+    })
+  }
+
+  it('moves to REPLY_GATE instead of ERROR and keeps the reply', async () => {
+    await setupLoggedIn()
+    const gateErr = Object.assign(new Error('reply_gate'), {
+      status: 428,
+      response: { status: 428, data: { message: 'reply_gate' } },
+    })
+    mockReplyToPostFn.mockRejectedValue(gateErr)
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    await result.submit()
+    await flushPromises()
+
+    expect(result.state.value).toBe(ReplyState.REPLY_GATE)
+    expect(result.error.value).toBeNull()
+    expect(mockForceLogin.value).toBe(false)
+  })
+
+  it('sends the reply again once the gate is passed', async () => {
+    await setupLoggedIn()
+    const gateErr = Object.assign(new Error('reply_gate'), { status: 428 })
+    mockReplyToPostFn.mockRejectedValueOnce(gateErr).mockResolvedValueOnce(MSG_ID)
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    await result.submit()
+    await flushPromises()
+    expect(result.state.value).toBe(ReplyState.REPLY_GATE)
+
+    await result.onGatePassed()
+    await flushPromises()
+    expect(mockReplyToPostFn).toHaveBeenCalledTimes(2)
+    expect(result.state.value).toBe(ReplyState.COMPLETED)
+  })
+
+  it('explains and goes back to composing when the gate is failed', async () => {
+    await setupLoggedIn()
+    const gateErr = Object.assign(new Error('reply_gate'), { status: 428 })
+    mockReplyToPostFn.mockRejectedValue(gateErr)
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    await result.submit()
+    await flushPromises()
+
+    result.onGateFailed()
+    expect(result.state.value).toBe(ReplyState.ERROR)
+    expect(result.error.value).toContain('replied to a lot of posts today')
+  })
+})
 })

@@ -110,6 +110,13 @@ somewhere else:
 
 After merging master into a worktree, rebuild. Do not restart.
 
+- **The batch container runs its own `php artisan migrate` on first start, and it is slow**
+  (fifteen minutes or more on a fresh volume). `setup-test-database.sh` runs a second
+  `migrate` against the same database, and the two race: one adds a foreign key the other
+  has already added and dies with "Duplicate foreign key constraint name", or "Column
+  already exists". Nothing in either output says the other run exists. Wait until
+  `docker top <project>-batch` shows no `artisan migrate` before seeding.
+
 ## Its test API can escape to the main instance
 
 The worktree's status API runners have escaped to the **main** containers because of a

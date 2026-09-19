@@ -758,6 +758,12 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 
 		if roomType == utils.CHAT_TYPE_USER2USER {
+			// Experiment: a frequent replier answers a graded micro-volunteering task
+			// before the next reply is accepted. See replygate.go. Checked before any
+			// write, so a refused reply leaves nothing behind.
+			if replyGateBlocks(db, myid) {
+				return fiber.NewError(ReplyGateStatus, ReplyGateMessage)
+			}
 			latlng := user.GetLatLng(myid)
 			if latlng.Lat != 0 || latlng.Lng != 0 {
 				reach.haveLocation = true

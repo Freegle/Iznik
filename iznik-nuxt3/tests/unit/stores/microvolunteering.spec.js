@@ -65,6 +65,17 @@ describe('microvolunteering store', () => {
     })
   })
 
+
+  describe('respond (graded)', () => {
+    it('returns the API response so a graded task can read its mark', async () => {
+      const store = useMicroVolunteeringStore()
+      store.init({ public: {} })
+      mockResponse.mockResolvedValueOnce({ ret: 0, status: 'Success', graded: false })
+      const out = await store.respond({ msgid: 1, response: 'Approve' })
+      expect(out).toEqual({ ret: 0, status: 'Success', graded: false })
+    })
+  })
+
   describe('fetch', () => {
     it('fetches and stores microvolunteerings', async () => {
       const store = useMicroVolunteeringStore()
