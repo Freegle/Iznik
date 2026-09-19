@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-15
+last_reviewed: 2026-09-18
 owner: Freegle dev team
 covers:
   - .env.example
@@ -37,6 +37,7 @@ These are load-bearing. A failure here is visible to members within minutes.
 | **Facebook and Apple sign-in** | The other two social sign-in routes (`LoginModal.vue`) | As above, per provider |
 | **Stripe** | Card donations | Donations stop; ads stay on ([donations-and-gift-aid.md](donations-and-gift-aid.md)) |
 | **PayPal** | The other donation route | As above |
+| **Google Cloud Storage** | Where the nightly database backup is streamed (`gs://freegle_backup_uk`), and where the Yesterday system reads it back from | Nothing breaks that day, but there is no backup and no Yesterday environment until it returns. Worth noticing quickly, because the Yesterday restore is also the only thing that proves a backup is restorable |
 
 ## What would degrade the site
 
