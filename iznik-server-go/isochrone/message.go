@@ -710,14 +710,14 @@ func effectiveBrowseView(c *fiber.Ctx, db *gorm.DB, myid uint64) string {
 // never clear.
 func myGroupsMsgIDs(db *gorm.DB, myid uint64) []uint64 {
 	var ids []uint64
+	memberFilter, memberArgs := message.ApprovedInMyGroups(db, "ms.msgid", myid)
+	// No DISTINCT: messages_spatial.msgid carries a UNIQUE index, and membership is tested by a
+	// subquery rather than a join, so nothing here can repeat a msgid. The keyword only bought a
+	// temporary table and a sort.
 	db.Table("messages_spatial ms").
-		Select("DISTINCT ms.msgid").
-		Where("ms.successful = 0 "+
-			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
-			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
-			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
-			"AND mg.collection = 'Approved' AND mg.deleted = 0)"+
-			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), myid).
+		Select("ms.msgid").
+		Where("ms.successful = 0 AND "+memberFilter+
+			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), memberArgs...).
 		Scan(&ids)
 	return ids
 }
@@ -878,16 +878,20 @@ func Count(c *fiber.Ctx) error {
 // instead of sticking on rows the feed never renders.
 func myGroupsCountUnfiltered(db *gorm.DB, myid uint64) uint64 {
 	var count uint64 = 0
+	memberFilter, memberArgs := message.ApprovedInMyGroups(db, "ms.msgid", myid)
 	db.Table("messages_spatial ms").
-		Select("COUNT(DISTINCT ms.msgid)").
+		// COUNT(*), not COUNT(DISTINCT ms.msgid): messages_spatial.msgid is UNIQUE and the
+		// messages_likes join matches at most one row (UNIQUE on msgid, userid, type), so no
+		// msgid can appear twice. COUNT(DISTINCT) over ~27,000 candidate rows is dedup work for
+		// an answer that cannot differ - and this runs 14,283 times a day for the nav badge.
+		// NB this is NOT the messages_groups case in .claude/rules/go-api-traps.md, where a join
+		// genuinely fans out and COUNT(DISTINCT messages.id) is required; nor the reach-arm
+		// COUNTs below, which go through reachCandidateQuery and were left alone.
+		Select("COUNT(*)").
 		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
 		Where("ms.successful = 0 AND ml.msgid IS NULL AND ms.id > "+
-			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" "+
-			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
-			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
-			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
-			"AND mg.collection = 'Approved' AND mg.deleted = 0)"+
-			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), myid).
+			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" AND "+memberFilter+
+			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), memberArgs...).
 		Scan(&count)
 	return count
 }
@@ -914,16 +918,13 @@ func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64, maxMinute
 	// Haversine — the same measure the feed uses — so badge and list agree at the boundary.
 	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
 	var candidates []reachCandidateRow
+	memberFilter, memberArgs := message.ApprovedInMyGroups(db, "ms.msgid", myid)
 	db.Table("messages_spatial ms").
 		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
 		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
 		Where("ms.successful = 0 AND ml.msgid IS NULL AND ms.id > "+
-			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" "+
-			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
-			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
-			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
-			"AND mg.collection = 'Approved' AND mg.deleted = 0)"+
-			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), myid).
+			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" AND "+memberFilter+
+			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), memberArgs...).
 		Scan(&candidates)
 
 	return countWithinBudget(candidates, viewerLat, viewerLng, maxDistanceMiles, maxMinutes)
@@ -1139,7 +1140,9 @@ func nearbyCount(myid uint64, maxDistanceMiles float64, maxMinutes float64) (uin
 				return 0, nil
 			}
 			reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial, ringAdmitted).
-				Select("COUNT(DISTINCT ms.msgid)").
+				// COUNT(*): every join in that builder is 1:1 - see the note on the
+				// countQuery COUNT below.
+				Select("COUNT(*)").
 				Scan(&count)
 			return count, nil
 		}
@@ -1155,7 +1158,14 @@ func nearbyCount(myid uint64, maxDistanceMiles float64, maxMinutes float64) (uin
 			return uint64(len(filterProbed(cands, probe))), nil
 		}
 		countQuery.
-			Select("COUNT(DISTINCT ms.msgid)").
+			// COUNT(*), not COUNT(DISTINCT ms.msgid). Nothing in the reach arm can repeat a
+			// msgid: messages_spatial.msgid is UNIQUE, messages and users join on their primary
+			// keys, rippling_reach.msgid IS the primary key of that table, and messages_likes
+			// has a UNIQUE (msgid, userid, type). The same builders are already used without
+			// DISTINCT to enumerate candidates on the degraded and distance-limited paths just
+			// below, where a duplicate would show up as a double-counted post - so the 1:1
+			// property is relied on either way, and the dedup was only ever paid for here.
+			Select("COUNT(*)").
 			Scan(&count)
 		return count, nil
 	}

@@ -1181,7 +1181,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 
 			idlist := "(" + strings.Join(ids, ",") + ") "
 
-			sql = "SELECT DISTINCT chat_rooms.id, chat_rooms.chattype, chat_rooms.groupid, chat_rooms.user1, chat_rooms.user2, " +
+			sql = "SELECT chat_rooms.id, chat_rooms.chattype, chat_rooms.groupid, chat_rooms.user1, chat_rooms.user2, " +
 				"CASE WHEN JSON_EXTRACT(u1.settings, '$.useprofile') IS NULL THEN 1 ELSE JSON_EXTRACT(u1.settings, '$.useprofile') END AS u1useprofile, " +
 				"CASE WHEN JSON_EXTRACT(u2.settings, '$.useprofile') IS NULL THEN 1 ELSE JSON_EXTRACT(u2.settings, '$.useprofile') END AS u2useprofile, " +
 				"(SELECT COUNT(*) AS count FROM chat_messages WHERE id > " +
@@ -1217,28 +1217,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				"  (cmv.userid = ? OR (cmv.reviewrequired = 0 AND cmv.reviewrejected = 0 AND " +
 				"   NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr2 WHERE rhr2.chatmsgid = cmv.id AND rhr2.status <> 'released')))) AS hasvisiblemsg, " +
 				"rcm.* " +
-				"FROM chat_rooms " +
-				"LEFT JOIN `groups` ON groups.id = chat_rooms.groupid " +
-				"LEFT JOIN users u1 ON chat_rooms.user1 = u1.id " +
-				"LEFT JOIN users u2 ON chat_rooms.user2 = u2.id " +
-				// Profile image join must match GetProfileRecord() logic: latest image
-				// (ORDER BY id DESC LIMIT 1) so the icon is identical to what the user
-				// store returns. Users may have multiple images; picking an arbitrary
-				// one causes avatar mismatch between chat list and chat header (#281).
-				"LEFT JOIN users_images i1 ON i1.id = (SELECT id FROM users_images WHERE userid = u1.id ORDER BY id DESC LIMIT 1) " +
-				"LEFT JOIN users_images i2 ON i2.id = (SELECT id FROM users_images WHERE userid = u2.id ORDER BY id DESC LIMIT 1) " +
-				"LEFT JOIN groups_images i3 ON i3.id = (SELECT id FROM groups_images WHERE groupid = chat_rooms.groupid ORDER BY id DESC LIMIT 1) " +
-				"LEFT JOIN chat_messages ON chat_messages.id = " +
-				"  (SELECT id FROM chat_messages WHERE chat_messages.chatid = chat_rooms.id AND reviewrequired = 0 AND reviewrejected = 0 AND (processingsuccessful = 1 OR chat_messages.userid = ?) AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') ORDER BY chat_messages.id DESC LIMIT 1) " +
-				"LEFT JOIN messages ON messages.id = chat_messages.refmsgid " +
-				"LEFT JOIN (WITH cm AS (SELECT chat_messages.id AS lastmsg, chat_messages.chatid, chat_messages.message AS chatmsg," +
-				" chat_messages.date AS lastdate, chat_messages.type AS chatmsgtype, ROW_NUMBER() OVER (PARTITION BY chatid ORDER BY id DESC) AS rn " +
-				// Rippling held-reply gate inside the deliverable branch: a held reply must not be the
-				// poster's snippet/preview. The trailing `OR userid = ?` still lets the sender see their
-				// own message, matching FetchChatMessages. Param-free (correlates on chat_messages.id).
-				" FROM chat_messages WHERE chatid IN " + idlist + " AND (reviewrequired = 0 AND reviewrejected = 0 AND (processingsuccessful = 1 OR chat_messages.userid = ?) AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') OR userid = ?)) " +
-				"  SELECT * FROM cm WHERE rn = 1) rcm ON rcm.chatid = chat_rooms.id " +
-				"WHERE chat_rooms.id IN " + idlist
+				ChatRoomListFrom(idlist)
 
 			// The extra trailing myid feeds the hasvisiblemsg "own messages always count"
 			// check; it sits between the lastmsgseen and lastmsg-join placeholders, all of
@@ -2018,3 +1997,49 @@ func getChatName(db *gorm.DB, chattype string, groupid uint64, user1 uint64, use
 // directly instead: ORM migration sites 3519e352775b and d44b753b35c8
 // (tier9). listChats' idlist (a different, inline
 // "("+strings.Join(ids,",")+")" construction) is unrelated to this helper.
+
+// ChatRoomListFrom is the FROM/JOIN list (and room restriction) of the chat room list query,
+// named so that the property the select list depends on can be asserted in a test instead of
+// assumed.
+//
+// That property: every join here yields AT MOST ONE row per chat room. `groups`, `users` and
+// `messages` join on their primary keys; i1, i2, i3 and the latest-message join each match a
+// primary key against a scalar (SELECT ... ORDER BY ... LIMIT 1); and rcm is a derived table cut
+// to rn = 1 per chatid. Nothing can fan out, which is why the select list above runs without
+// DISTINCT. TestChatRoomListJoinsYieldOneRowPerRoom stacks extra rows on every one of those
+// tables and checks the row count does not move.
+//
+// It used to carry SELECT DISTINCT. The keyword removed nothing - it cannot, given the joins -
+// but it bought a temporary table and a sort of ~20 wide columns, including two JSON_EXTRACTs
+// and several correlated COUNT(*) subqueries, on all 926,265 calls a day. It was the single
+// largest consumer on db3 at 0.39 cores continuously; dropping it measured 621ms -> 86ms across
+// 15 members with 5 to 57 rooms, with zero row-count differences.
+//
+// Binds three parameters, all the viewer's own id, in this order:
+//  1. the latest-deliverable-message join - "... OR it is my own message"
+//  2. the rcm snippet CTE - the same "or my own message" arm
+//  3. the rcm snippet CTE - its trailing "OR userid = ?"
+func ChatRoomListFrom(idlist string) string {
+	return "FROM chat_rooms " +
+		"LEFT JOIN `groups` ON groups.id = chat_rooms.groupid " +
+		"LEFT JOIN users u1 ON chat_rooms.user1 = u1.id " +
+		"LEFT JOIN users u2 ON chat_rooms.user2 = u2.id " +
+		// Profile image join must match GetProfileRecord() logic: latest image
+		// (ORDER BY id DESC LIMIT 1) so the icon is identical to what the user
+		// store returns. Users may have multiple images; picking an arbitrary
+		// one causes avatar mismatch between chat list and chat header (#281).
+		"LEFT JOIN users_images i1 ON i1.id = (SELECT id FROM users_images WHERE userid = u1.id ORDER BY id DESC LIMIT 1) " +
+		"LEFT JOIN users_images i2 ON i2.id = (SELECT id FROM users_images WHERE userid = u2.id ORDER BY id DESC LIMIT 1) " +
+		"LEFT JOIN groups_images i3 ON i3.id = (SELECT id FROM groups_images WHERE groupid = chat_rooms.groupid ORDER BY id DESC LIMIT 1) " +
+		"LEFT JOIN chat_messages ON chat_messages.id = " +
+		"  (SELECT id FROM chat_messages WHERE chat_messages.chatid = chat_rooms.id AND reviewrequired = 0 AND reviewrejected = 0 AND (processingsuccessful = 1 OR chat_messages.userid = ?) AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') ORDER BY chat_messages.id DESC LIMIT 1) " +
+		"LEFT JOIN messages ON messages.id = chat_messages.refmsgid " +
+		"LEFT JOIN (WITH cm AS (SELECT chat_messages.id AS lastmsg, chat_messages.chatid, chat_messages.message AS chatmsg," +
+		" chat_messages.date AS lastdate, chat_messages.type AS chatmsgtype, ROW_NUMBER() OVER (PARTITION BY chatid ORDER BY id DESC) AS rn " +
+		// Rippling held-reply gate inside the deliverable branch: a held reply must not be the
+		// poster's snippet/preview. The trailing `OR userid = ?` still lets the sender see their
+		// own message, matching FetchChatMessages. Param-free (correlates on chat_messages.id).
+		" FROM chat_messages WHERE chatid IN " + idlist + " AND (reviewrequired = 0 AND reviewrejected = 0 AND (processingsuccessful = 1 OR chat_messages.userid = ?) AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') OR userid = ?)) " +
+		"  SELECT * FROM cm WHERE rn = 1) rcm ON rcm.chatid = chat_rooms.id " +
+		"WHERE chat_rooms.id IN " + idlist
+}
