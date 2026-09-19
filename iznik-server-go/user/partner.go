@@ -196,18 +196,19 @@ func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, erro
 	// account, against partners being 35.7% of members - so this arm is expected
 	// to stay silent, and will say so if that is wrong.
 	emailhygiene.Report(email, "user.partnerCreate", userid)
-	// canon is what a PHP canon lookup matches on; backwards is what a domain
-	// search matches on, and those want DIFFERENT strings. iznik-batch's
-	// User::addEmail stores canonMail() and strrev(strtolower(email)) respectively;
-	// storing reverseString(canon) here put a value in backwards that no domain
-	// prefix search expects. See .claude/rules/mail-and-data.md.
+	// backwards is REVERSE(canon), not REVERSE(email). V1's User::addEmail writes
+	// strrev(canonMail($email)) at both its insert sites, and canonMail strips the
+	// dots out of the domain on purpose ("the format we have historically used"), so
+	// the canon-derived value is the column's definition and the majority of the
+	// table. Fixing the canon above therefore fixes this too.
+	// See .claude/rules/mail-and-data.md.
 	db.Table("users_emails").Create(map[string]interface{}{
 		"userid":    userid,
 		"email":     email,
 		"preferred": gorm.Expr("1"),
 		"added":     gorm.Expr("NOW()"),
 		"canon":     CanonicalizePartnerEmail(email),
-		"backwards": reverseString(strings.ToLower(email)),
+		"backwards": reverseString(CanonicalizePartnerEmail(email)),
 	})
 
 	return userid, nil
@@ -239,14 +240,14 @@ func EnsurePartnerIdentifiers(db *gorm.DB, userid, tnuserid uint64, email string
 		var count int64
 		db.Table("users_emails").Where("userid = ? AND email = ?", userid, email).Count(&count)
 		if count == 0 {
-			// See CreatePartnerUser: canon and backwards hold different strings.
+			// See CreatePartnerUser: backwards is REVERSE(canon).
 			db.Clauses(clause.Insert{Modifier: "IGNORE"}).Table("users_emails").Create(map[string]interface{}{
 				"userid":    userid,
 				"email":     email,
 				"preferred": gorm.Expr("0"),
 				"added":     gorm.Expr("NOW()"),
 				"canon":     CanonicalizePartnerEmail(email),
-				"backwards": reverseString(strings.ToLower(email)),
+				"backwards": reverseString(CanonicalizePartnerEmail(email)),
 			})
 		}
 	}

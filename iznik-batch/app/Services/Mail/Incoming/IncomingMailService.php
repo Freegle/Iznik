@@ -4303,11 +4303,10 @@ class IncomingMailService
                 'email' => $email,
                 'preferred' => 0,
                 'canon' => $this->canonicalizeEmail($email),
-                // canon is what a canon lookup reads; backwards is what a domain search
-                // reads, and they want different strings. Leaving backwards null, as this
-                // did, is one source of the rows no domain prefix can find - see
-                // .claude/rules/mail-and-data.md.
-                'backwards' => strrev(strtolower($email)),
+                // backwards is REVERSE(canon), the definition V1's User::addEmail uses at
+                // both its insert sites. Leaving it null, as this did, is one source of the
+                // rows no domain prefix can find - see .claude/rules/mail-and-data.md.
+                'backwards' => strrev($this->canonicalizeEmail($email)),
             ]);
 
             Log::info('Added forwarding email to user', [

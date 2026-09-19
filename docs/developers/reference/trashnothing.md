@@ -81,6 +81,9 @@ index, because `backwards` holds three different things for one address:
 | `canon` (suffix and domain dots stripped) | `mocgnihtonhsartresu@9i` | 1,752,575 |
 | nothing | `NULL` | 13,772 |
 
+The canon form is the column's definition: V1's `User::addEmail` writes `strrev(canonMail($email))`
+at both its insert sites, so the address-shaped rows are the deviation, not the target.
+
 Filtering on one prefix reads a fifth of the table, and nothing reaches the NULLs. That is what
 happened between 2026-05-14 and 2026-09: the check reported "roughly zero duplicates a day",
 which read like success, while for each split member it could see only one of the two accounts

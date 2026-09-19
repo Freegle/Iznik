@@ -194,9 +194,9 @@ class IncomingMailServiceTest extends TestCase
             'without a canon the member next alias would create another account'
         );
         $this->assertSame(
-            strrev($secondAlias),
+            strrev("{$tnBase}@usertrashnothingcom"),
             $attached->backwards,
-            'a null backwards is a row no domain search can find'
+            'backwards is REVERSE(canon), the definition V1 writes at both its insert sites'
         );
     }
 

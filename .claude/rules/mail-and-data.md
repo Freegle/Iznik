@@ -166,35 +166,56 @@ The same count still feeds `mxgroup_max_delivered_per_hour` in the suppression d
 unscaled, which makes a provider look healthier than it is and so errs towards not suppressing.
 Scaling it would change when real mail stops being generated, so it wants its own change.
 
-## `users_emails.backwards` cannot be filtered on and be complete
+## `users_emails.backwards` is REVERSE(canon), and cannot be filtered on and be complete
 
-The column exists so domain search has an index: reverse an address and a domain suffix becomes
-a prefix. It holds three different things, and all three are live. For
-`i9-g4707@user.trashnothing.com`:
+The column is there so a domain search has an index: reverse an address and a domain suffix
+becomes a prefix. What gets reversed is **the canon, not the address**. V1's `User::addEmail`
+writes `strrev(User::canonMail($email))` at both its insert sites, and `canonMail` strips the
+dots out of the domain on purpose:
 
-| Written from | Value | TN rows on production |
-|---|---|---|
-| the address | `moc.gnihtonhsart.resu@7074g-9i` | 450,846 |
-| `canon` (strips the `-gNNNN` suffix **and** the dots in the domain) | `mocgnihtonhsartresu@9i` | 1,752,575 |
-| nothing at all | `NULL` | 13,772 |
+```php
+# Remove dots from the RHS - saves a little space and is the format we have historically used.
+```
 
-The split is not historical - the id ranges overlap almost exactly - so it is per code path, and
-it is not confined to Trash Nothing: gmail is 105,308 dotted against 252,338 stripped, yahoo
-162,201 against 128,001.
+So `i9-g4707@user.trashnothing.com` is stored as `mocgnihtonhsartresu@9i`, with the `-gNNNN`
+suffix and the domain dots gone. Three forms are live on production:
 
-So **a prefix test on `backwards` silently returns a fraction of the rows**, and no set of
-prefixes reaches the NULLs at any price. `tn:sync`'s duplicate-account merge filtered on one
-prefix from 2026-05-14 (5e2a90450) and its visibility fell to 20%. Duplicate Trash Nothing
-accounts then piled up for three months - 96 live pairs - while the check reported finding
-"roughly zero a day", which reads like success. The first symptom to reach us was a partner API
-403. Every test it had built `backwards` as `strrev($email)`, the one form the filter matched,
-so the suite stayed green throughout.
+| Written from | Value | Rows | Written by |
+|---|---|---|---|
+| `canon` - the definition | `mocgnihtonhsartresu@9i` | 1,752,575 | V1 |
+| the address | `moc.gnihtonhsart.resu@7074g-9i` | 450,846 | `UserEmail::booted()`, `User::addEmail` in iznik-batch |
+| nothing | `NULL` | 13,772 | inserts that omit the column |
 
-**The index is not worth the incompleteness, because it is not being used.** EXPLAIN on
-production picks a full scan for every form of that filter - each prefix matches far too much of
-the table for a range scan to win. Measured 2026-09-19 over 4.2M rows: `backwards` 3.3s finding
-94 of the 96 split usernames, `email LIKE '%@user.trashnothing.com'` 5.1s finding all 96. Filter
-on the address and group in PHP; that is where 5e2a90450's real speedup came from anyway.
+The second form is the deviation, not the fix. Outside Trash Nothing the same split shows up
+everywhere: gmail is 252,338 canon-style against 105,308 address-style, yahoo 128,001 against
+162,201.
+
+**So a prefix test on `backwards` is incomplete whichever form you assume**, and nothing reaches
+the NULLs at any price. `tn:sync`'s duplicate-account merge assumed the address form from
+2026-05-14 (5e2a90450) and its visibility fell to 20%. Duplicate Trash Nothing accounts then
+piled up for three months - 96 live pairs - while the check reported finding "roughly zero a
+day", which reads like success. The first symptom to reach us was a partner API 403. Every test
+it had built `backwards` as `strrev($email)`, the one form the filter matched, so the suite
+stayed green throughout.
+
+**V1 did not trust the column either.** Its Support Tools search pairs the `backwards` arm with a
+second `canon` arm built from the search term with every dot removed, and says why:
+
+```php
+# canonMail might not strip the dots out if we don't have a full email to search on, but for this
+# Support Tools search we want to try quite hard.
+```
+
+The Go member search inherited the same shape and compensates differently, with an
+`email LIKE '%term%'` arm that finds the rows regardless, so **it is not the thing that breaks**.
+What breaks is any consumer filtering on `backwards` alone: `users:fix-tn-names` does exactly
+that and sees 20.5% of Trash Nothing members.
+
+**The index is not buying what it looks like it buys.** EXPLAIN on production picks a full scan
+for every form of that filter, because each prefix matches far too much of the table. Measured
+2026-09-19 over 4.2M rows: `backwards` 3.3s finding 94 of the 96 split usernames, `email LIKE
+'%@user.trashnothing.com'` 5.1s finding all 96. If you need every row, filter on the address and
+group in PHP; that is where 5e2a90450's real speedup came from anyway.
 
 ## Go's CanonicalizeEmail is not PHP's canonicalizeEmail
 
