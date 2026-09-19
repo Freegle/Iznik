@@ -189,6 +189,65 @@ class BackupDrainTest extends TestCase
         $this->assertFalse($this->passes($events[1]));
     }
 
+    public function test_the_sentry_monitored_events_keep_running(): void
+    {
+        // The scheduler heartbeat and the outcome monitor carry Sentry Crons check-ins.
+        // Two consecutive misses raise an issue, and a 45-minute hold is nine misses, so
+        // holding them off would page every night about a scheduler that is fine.
+        $this->configure(['always_run' => []]);
+        $this->at('2026-09-18 04:00:00');
+
+        $schedule = new Schedule();
+        $schedule->call(fn () => null)->everyFiveMinutes()->name('scheduler-heartbeat');
+        $schedule->command('monitor:scheduled-outcomes')->everyTenMinutes();
+        $schedule->call(fn () => null)->everyMinute()->name('some-other-closure');
+        BackupDrain::apply($schedule);
+
+        $events = $schedule->events();
+        $this->assertTrue($this->passes($events[0]), 'the heartbeat must still check in');
+        $this->assertTrue($this->passes($events[1]), 'the outcome monitor must still check in');
+        $this->assertFalse($this->passes($events[2]), 'an ordinary closure is held off');
+    }
+
+    public function test_safelist_matches_a_named_closure_too(): void
+    {
+        $this->configure(['always_run' => ['keep-me']]);
+        $this->at('2026-09-18 04:00:00');
+
+        $schedule = new Schedule();
+        $schedule->call(fn () => null)->everyMinute()->name('keep-me');
+        $schedule->call(fn () => null)->everyMinute()->name('hold-me');
+        BackupDrain::apply($schedule);
+
+        $events = $schedule->events();
+        $this->assertTrue($this->passes($events[0]));
+        $this->assertFalse($this->passes($events[1]));
+    }
+
+    // ------------------------------------------------------------- heldOffWithin
+
+    public function test_held_off_within_covers_the_window_and_one_max_age_after_it(): void
+    {
+        // A backlog check with a 10-minute max age must not call the drain a stuck worker:
+        // not during the window, and not for the 10 minutes after it when the workers are
+        // catching up.
+        $this->configure();
+
+        $this->assertFalse(BackupDrain::heldOffWithin(10, Carbon::parse('2026-09-18 03:39:00', config('app.timezone'))));
+        $this->assertTrue(BackupDrain::heldOffWithin(10, Carbon::parse('2026-09-18 03:50:00', config('app.timezone'))));
+        $this->assertTrue(BackupDrain::heldOffWithin(10, Carbon::parse('2026-09-18 04:34:59', config('app.timezone'))));
+        $this->assertTrue(BackupDrain::heldOffWithin(10, Carbon::parse('2026-09-18 04:44:59', config('app.timezone'))), 'still catching up');
+        $this->assertFalse(BackupDrain::heldOffWithin(10, Carbon::parse('2026-09-18 04:45:00', config('app.timezone'))));
+        $this->assertFalse(BackupDrain::heldOffWithin(10, Carbon::parse('2026-09-18 12:00:00', config('app.timezone'))));
+    }
+
+    public function test_held_off_within_is_false_when_the_drain_is_off(): void
+    {
+        $this->configure(['enabled' => false]);
+
+        $this->assertFalse(BackupDrain::heldOffWithin(60, Carbon::parse('2026-09-18 04:00:00', config('app.timezone'))));
+    }
+
     public function test_applying_twice_does_not_double_up(): void
     {
         // routes/console.php is re-evaluated on every scheduler tick, so apply() must be

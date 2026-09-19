@@ -142,12 +142,26 @@ class BackupDrain
     }
 
     /**
+     * Events that must keep running through the window whatever the config says.
+     *
+     * Both carry Sentry Crons check-ins (->sentryMonitor() in routes/console.php), and
+     * Sentry raises a missed-check-in issue after two consecutive misses. A 45-minute hold
+     * is nine missed heartbeats, so holding them off would page every night about a
+     * scheduler that is fine. Neither touches the database in a way the drain cares
+     * about: the heartbeat does nothing at all, and the outcome monitor runs a few
+     * aggregate queries whose cursor checks know about the drain (BacklogCheck).
+     */
+    private const KEEPS_RUNNING = ['scheduler-heartbeat', 'monitor:scheduled-outcomes'];
+
+    /**
      * Is this event left alone by the drain?
      *
      * The backup's own commands are never held off. The window exists FOR the backup, so
      * holding it back would deadlock the whole arrangement. Structural rather than left to
      * the safelist, because getting this wrong in config would silently stop backups.
-     * Anything in `always_run` is left alone too.
+     * The Sentry-monitored events in KEEPS_RUNNING are structural for the same reason.
+     * Anything in `always_run` is left alone too, matched on the artisan command name or,
+     * for a scheduled closure, on its ->name().
      *
      * Public so BackupDrainWindowTest can ask the same question apply() does, rather than
      * keeping its own copy of the rule.
@@ -162,12 +176,63 @@ class BackupDrain
         )));
 
         $name = self::commandName($event);
+        $label = trim((string) $event->description);
 
         if ($name !== null && str_starts_with($name, 'backup:')) {
             return true;
         }
 
-        return $name !== null && in_array($name, $always, true);
+        foreach (array_merge(self::KEEPS_RUNNING, $always) as $keep) {
+            if ($keep !== '' && ($name === $keep || $label === $keep)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Was batch work held off at any point in the last $minutes, including right now?
+     *
+     * For checks that measure how long work has been waiting: a backlog that is $minutes
+     * old is a stuck worker on any other night, and the drain working as intended on this
+     * one. Answers true from the start of the window until $minutes after it closes.
+     */
+    public static function heldOffWithin(int $minutes, ?CarbonInterface $at = null): bool
+    {
+        if (self::active($at)) {
+            return true;
+        }
+
+        $config = config('freegle.backup.drain', []);
+
+        if (! ($config['enabled'] ?? false)) {
+            return false;
+        }
+
+        $length = (int) ($config['minutes'] ?? 0);
+        if ($length <= 0) {
+            return false;
+        }
+
+        $tz = config('app.timezone') ?: 'UTC';
+        $now = $at ? Carbon::parse($at)->setTimezone($tz) : Carbon::now($tz);
+
+        $start = self::startOn($now, (string) ($config['start'] ?? ''), $tz);
+        if ($start === null) {
+            return false;
+        }
+
+        $since = $now->copy()->subMinutes(max(0, $minutes));
+
+        foreach ([$start, $start->copy()->subDay()] as $from) {
+            $end = $from->copy()->addMinutes($length);
+            if ($end->greaterThan($since) && $from->lessThanOrEqualTo($now)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

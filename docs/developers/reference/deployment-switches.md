@@ -100,7 +100,13 @@ backup: a backup that did not run is worse than one that ran alongside some batc
 
 `backup:` commands are never held off, structurally rather than through `always_run`. The
 window exists for the backup, so holding the backup back inside it would mean it never ran,
-and leaving that to a config entry would be a way to stop backups silently.
+and leaving that to a config entry would be a way to stop backups silently. The scheduler
+heartbeat and `monitor:scheduled-outcomes` are structural exemptions for a different
+reason: both carry Sentry Crons check-ins, and two consecutive misses raise an issue, so a
+45-minute hold would page every night about a scheduler that is fine. Their cursor-staleness
+checks (`BacklogCheck`) report *skipped* rather than a breach from the start of the window
+until one max-age after it closes, because a backlog then is the drain doing its job.
+`always_run` matches an artisan command name or, for a scheduled closure, its `->name()`.
 
 ### Taking the backup from Laravel
 
