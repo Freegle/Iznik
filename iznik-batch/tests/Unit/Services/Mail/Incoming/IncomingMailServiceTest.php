@@ -182,10 +182,21 @@ class IncomingMailServiceTest extends TestCase
             DB::table('memberships')->where('userid', $existing->id)->where('groupid', $group->id)->exists(),
             'the join must land on the account the member already has'
         );
+        $attached = DB::table('users_emails')->where('email', $secondAlias)->first();
         $this->assertSame(
             $existing->id,
-            (int) DB::table('users_emails')->where('email', $secondAlias)->value('userid'),
+            (int) $attached->userid,
             'the new alias must be attached so later mail from it matches outright'
+        );
+        $this->assertSame(
+            "{$tnBase}@usertrashnothingcom",
+            $attached->canon,
+            'without a canon the member next alias would create another account'
+        );
+        $this->assertSame(
+            strrev($secondAlias),
+            $attached->backwards,
+            'a null backwards is a row no domain search can find'
         );
     }
 
