@@ -1,10 +1,11 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-18
 owner: Freegle ops
 covers:
   - ops/hosts/README.md
   - ops/hosts/SERVICES.md
   - ops/hosts/monit/batch-host/conf.d/disk.conf
+  - ops/hosts/monit/batch-host/conf.d/tusd
   - ops/hosts/monit/db-node/conf.d/mysql.conf
   - yesterday/README.md
 ---
@@ -91,8 +92,11 @@ Two monit traps from that page, repeated here because they bite:
 ## What alerts you, and what does not
 
 **You will be told about:** monit service failures and disk alarms (by email to the ops
-alert address), application exceptions (Sentry), CI failures (CircleCI), and members
-complaining, which is a real and fast monitoring channel.
+alert address), uploads stalling behind a scan of the upload store (monit kills the scanner
+and mails you its command line - see
+[`ops/hosts/monit/batch-host/conf.d/tusd`](../../../ops/hosts/monit/batch-host/conf.d/tusd)),
+application exceptions (Sentry), CI failures (CircleCI), and members complaining, which is a
+real and fast monitoring channel.
 
 **Nothing currently tells you about:**
 
