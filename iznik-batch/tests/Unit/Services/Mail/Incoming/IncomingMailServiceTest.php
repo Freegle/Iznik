@@ -200,6 +200,40 @@ class IncomingMailServiceTest extends TestCase
         );
     }
 
+    /**
+     * A users_emails row whose user is gone is a broken state, not a new member.
+     * users_emails.email is UNIQUE, so taking the create branch would collide on it.
+     */
+    public function test_subscribe_drops_when_the_address_has_no_user_behind_it(): void
+    {
+        $group = $this->createTestGroup();
+        $orphan = $this->uniqueEmail('orphan');
+
+        DB::table('users_emails')->insert([
+            'userid' => 0,
+            'email' => $orphan,
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+
+        $usersBefore = DB::table('users')->count();
+
+        $email = $this->createMinimalEmail([
+            'From' => $orphan,
+            'To' => $group->nameshort.'-subscribe@groups.ilovefreegle.org',
+            'Subject' => 'Subscribe',
+        ]);
+
+        $result = $this->service->route($this->parser->parse(
+            $email,
+            $orphan,
+            $group->nameshort.'-subscribe@groups.ilovefreegle.org'
+        ));
+
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+        $this->assertSame($usersBefore, DB::table('users')->count());
+    }
+
     public function test_routes_subscribe_to_system(): void
     {
         $group = $this->createTestGroup();
