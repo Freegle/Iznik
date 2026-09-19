@@ -4896,6 +4896,52 @@ func TestMessageHistory_NoDuplicatesOnRipple(t *testing.T) {
 		"a post rippled to another group appears once in posting history, not per group")
 }
 
+// TestGetUserMessageHistory_GroupidsIncludesRippledInGroups covers Discourse #10063/4:
+// rippled-in posts going unflagged for real duplicates. ModMessage.vue's checkHistory()
+// flags a duplicate/crosspost by checking whether the message being moderated shares a
+// group with an earlier message from the same author. It compares the current message's
+// full, unfiltered group list against each history entry's Groupid - which
+// GetUserMessageHistory restricts to rippled_in = 0 (the origin group only, to keep one
+// row per message and avoid the Discourse #9851 regression). So whenever the ONLY group
+// two messages share is one the earlier message reached by rippling in, rather than its
+// own origin group, the check silently missed it. Groupids carries every group the
+// message reached - origin and rippled-in - so checkHistory can test full reach while
+// Groupid/the one-row-per-message shape used for display stays exactly as it was.
+func TestGetUserMessageHistory_GroupidsIncludesRippledInGroups(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mh_grpids")
+
+	userID := CreateTestUser(t, prefix, "User")
+	originGroup := CreateTestGroup(t, prefix)
+	rippledGroup := CreateTestGroup(t, prefix+"r")
+
+	msgID := CreateTestMessage(t, userID, originGroup, prefix+" Table", 55.9533, -3.1883)
+
+	// Rippling-out: an Approved messages_groups row (rippled_in=1) on a receiving group -
+	// same pattern as TestMessageHistory_NoDuplicatesOnRipple.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, deleted, rippled_in) VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, rippledGroup)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledGroup)
+	})
+
+	history := user2.GetUserMessageHistory(userID)
+
+	var found *user2.UserMessageHistory
+	for i := range history {
+		if history[i].ID == msgID {
+			found = &history[i]
+		}
+	}
+	require.NotNil(t, found, "message must appear in history")
+
+	assert.Contains(t, found.Groupids, rippledGroup,
+		"Groupids must include a group this message reached by rippling in, not just its "+
+			"origin group - otherwise checkHistory() in ModMessage.vue cannot detect a "+
+			"duplicate/crosspost whose only shared group came from rippling (Discourse 10063/4)")
+	assert.Contains(t, found.Groupids, originGroup,
+		"Groupids must also include the message's own origin group")
+}
+
 // TestUserInfo_OfferCountNotInflatedByRipple guards the COUNT(DISTINCT) fix in
 // GetUserInfo: a post rippled to N groups counts as ONE offer, not N (Discourse
 // #9851 - offer/wanted numbers showing incorrectly on chitchat).

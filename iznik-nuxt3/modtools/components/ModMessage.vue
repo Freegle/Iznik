@@ -1734,10 +1734,18 @@ function checkHistory(duplicateCheck) {
           // No point displaying any group tag in the duplicate.
           histMsg.subject = histMsg.subject.replace(/\[.*\](.*)/, '$1')
 
-          // Check whether there are groups in common.
+          // Check whether there are groups in common.  Use the full set of
+          // groups this history entry reached (origin + rippled-in), not just
+          // histMsg.groupid (origin only) - otherwise a duplicate/crosspost
+          // whose only shared group came from this earlier message rippling
+          // in was silently never flagged (Discourse 10063/4).
+          const histGroupIds =
+            histMsg.groupids && histMsg.groupids.length
+              ? histMsg.groupids
+              : [histMsg.groupid]
           const groupsInCommon = message.value.groups
             .map((g) => g.groupid)
-            .filter((g) => g === histMsg.groupid).length
+            .filter((g) => histGroupIds.includes(g)).length
 
           const key = histMsg.id + '-' + histMsg.arrival
 

@@ -172,6 +172,11 @@ type UserMessageHistory struct {
 	Collection string    `json:"collection"`
 	Daysago    int       `json:"daysago"`
 	Outcome    *string   `json:"outcome"`
+	// AllGroupIds is a raw comma-separated scan target for every group this message
+	// reached (origin plus rippled-in), unlike Groupid above which is origin-only.
+	// Parsed into Groupids after Scan; not returned directly.
+	AllGroupIds string   `json:"-" gorm:"column:allgroupids"`
+	Groupids    []uint64 `json:"groupids" gorm:"-"`
 }
 
 func (MembershipHistory) TableName() string {
@@ -527,6 +532,14 @@ func GetUserMessageHistory(userid uint64) []UserMessageHistory {
 			"(SELECT MAX(mp.date) FROM messages_postings mp WHERE mp.msgid = m.id AND mp.groupid = mg.groupid), "+
 			"m.arrival) AS arrival, "+
 			"mg.groupid, mg.collection, "+
+			// All groups this message reached, origin AND rippled-in. checkHistory()
+			// in ModMessage.vue uses this (not the origin-only Groupid above) to test
+			// group overlap against the message currently being moderated, which is
+			// itself never rippled_in-filtered. Without this, a duplicate/crosspost
+			// whose only shared group came from this earlier message rippling in was
+			// silently never flagged (Discourse 10063/4).
+			"(SELECT GROUP_CONCAT(DISTINCT mg2.groupid) FROM messages_groups mg2 "+
+			"WHERE mg2.msgid = m.id AND mg2.deleted = 0) AS allgroupids, "+
 			"(SELECT outcome FROM messages_outcomes WHERE messages_outcomes.msgid = m.id ORDER BY timestamp DESC LIMIT 1) AS outcome").
 		Joins("INNER JOIN messages_groups mg ON m.id = mg.msgid").
 		// rippled_in = 0: a post rippled OUT gets an extra messages_groups row
@@ -544,6 +557,17 @@ func GetUserMessageHistory(userid uint64) []UserMessageHistory {
 	for ix, h := range history {
 		history[ix].Daysago = int(now.Sub(h.Arrival).Hours() / 24)
 		history[ix].Postdate = h.Arrival
+
+		if h.AllGroupIds != "" {
+			parts := strings.Split(h.AllGroupIds, ",")
+			ids := make([]uint64, 0, len(parts))
+			for _, p := range parts {
+				if id, err := strconv.ParseUint(p, 10, 64); err == nil {
+					ids = append(ids, id)
+				}
+			}
+			history[ix].Groupids = ids
+		}
 	}
 
 	return history
