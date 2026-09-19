@@ -213,6 +213,20 @@ row Go writes cannot be found by a PHP canon lookup, and vice versa. Go writes `
 canon fallback is what stops a member's second address minting a second account, so a row with a
 Go-written canon has no such protection.
 
+Measured on production 2026-09-19, of 4,476,251 `users_emails` rows, the ones a PHP canon lookup
+cannot find are:
+
+| | Rows | Worth fixing |
+|---|---|---|
+| canon holding the address unchanged, outside Trash Nothing | 51,546 | yes |
+| canon holding the address unchanged, Trash Nothing | 41,803 | done at the partner write sites |
+| no canon, a real mailbox | 4,010 | yes |
+| no canon, a `@users.ilovefreegle.org` proxy address | 136,047 | no - matching one member to another has no meaning for these |
+
+About a thousand a day are added to the first group, so it grows. The practical effect is that
+duplicate prevention is weaker for those addresses than for the 94.8% of the table that is
+PHP-shaped, not that anything breaks loudly.
+
 Aligning them is not a rename: donation matching and social auth both look up on `canon`, so
 changing the general Go function changes who those match. Fix it at the specific site and say
 which semantics you mean.
