@@ -8,17 +8,21 @@
       <client-only>
         <span :title="group.arrival" class="time"
           >{{ grouparrivalago(group.arrival) }}
-          <span v-if="showSummaryDetails">on </span>
+          <span v-if="showSummaryDetails && !groupless">on </span>
         </span>
       </client-only>
       <v-icon
-        v-if="showSummaryDetails && parseInt(group.groupid) === postHomeGroupId"
+        v-if="
+          showSummaryDetails &&
+          !groupless &&
+          parseInt(group.groupid) === postHomeGroupId
+        "
         icon="home"
         class="me-1 text-muted"
         title="Home community (where this was originally posted)"
       />
       <nuxt-link
-        v-if="group.groupid in groups && showSummaryDetails"
+        v-if="group.groupid in groups && showSummaryDetails && !groupless"
         no-prefetch
         :to="'/explore/' + groups[group.groupid].exploreLink + '?noguard=true'"
         :title="'Click to view ' + groups[group.groupid].namedisplay"
@@ -88,6 +92,8 @@
   </div>
 </template>
 <script setup>
+import { useGroupless } from '~/composables/useGroupless'
+
 import dayjs from 'dayjs' // MT
 import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
@@ -99,6 +105,8 @@ import { timeago } from '~/composables/useTimeFormat'
 import { useMiscStore } from '~/stores/misc'
 import { useMe } from '~/composables/useMe'
 import { homeGroupFirst, homeGroupId } from '~/composables/rippleStatus'
+// Experiment: no community identity on the member site.
+const groupless = useGroupless()
 
 const props = defineProps({
   id: {

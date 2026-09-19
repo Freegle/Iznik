@@ -48,6 +48,11 @@ async function createWrapper(props = {}) {
   return wrapper
 }
 
+const mockGroupless = { value: false }
+vi.mock('~/composables/useGroupless', () => ({
+  useGroupless: () => mockGroupless.value,
+}))
+
 describe('ChatReportModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -120,6 +125,20 @@ describe('ChatReportModal', () => {
         .find((b) => b.text().includes('Close'))
       await closeBtn.trigger('click')
       expect(mockHide).toHaveBeenCalled()
+    })
+  })
+
+
+  describe('groupless site (experiment)', () => {
+    it('never asks which community, and promises an outcome', async () => {
+      mockGroupless.value = true
+      const wrapper = await createWrapper()
+      await flushPromises()
+      expect(wrapper.find('[data-testid="group-select"]').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('Which community')
+      expect(wrapper.text()).not.toContain('volunteers')
+      expect(wrapper.text()).toContain('let you know what happens')
+      mockGroupless.value = false
     })
   })
 })

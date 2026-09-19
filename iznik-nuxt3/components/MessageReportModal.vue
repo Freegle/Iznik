@@ -16,7 +16,12 @@
           <div class="preview-subject">{{ message?.subject }}</div>
         </div>
 
-        <p class="report-explanation">
+        <p v-if="groupless" class="report-explanation">
+          If something's wrong with this post, please let us know. If enough
+          people agree, it will be taken down, and we'll let you know what
+          happens.
+        </p>
+        <p v-else class="report-explanation">
           If something's wrong with this post, please let us know. Your report
           will be sent to local volunteers who will review it and take
           appropriate action.
@@ -56,7 +61,7 @@
           </div>
         </div>
 
-        <div v-if="showGroupSelector" class="report-groups">
+        <div v-if="showGroupSelector && !groupless" class="report-groups">
           <label class="form-label"
             >Which communities should be notified?</label
           >
@@ -87,7 +92,11 @@
           <b-form-textarea
             v-model="additionalDetails"
             rows="3"
-            placeholder="Please provide any additional information that might help our volunteers."
+            :placeholder="
+              groupless
+                ? 'Anything else we should know?'
+                : 'Please provide any additional information that might help our volunteers.'
+            "
           />
         </div>
 
@@ -100,7 +109,11 @@
       <div v-else class="report-success">
         <v-icon icon="check-circle" class="success-icon" />
         <h5>Report submitted</h5>
-        <p>
+        <p v-if="groupless">
+          Thank you for helping keep Freegle safe. We'll let you know what
+          happens.
+        </p>
+        <p v-else>
           Thank you for helping keep Freegle safe. Our volunteers will review
           this post and take appropriate action.
         </p>
@@ -132,6 +145,8 @@
 </template>
 
 <script setup>
+import { useGroupless } from '~/composables/useGroupless'
+
 import { ref, computed, watch } from 'vue'
 import { useRuntimeConfig } from 'nuxt/app'
 import { useMessageStore } from '~/stores/message'
@@ -140,6 +155,8 @@ import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
 import { useOurModal } from '~/composables/useOurModal'
+// Experiment: no community identity on the member site.
+const groupless = useGroupless()
 
 const props = defineProps({
   id: {

@@ -55,6 +55,11 @@ vi.mock('~/stores/auth', () => ({
   }),
 }))
 
+const mockGroupless = { value: false }
+vi.mock('~/composables/useGroupless', () => ({
+  useGroupless: () => mockGroupless.value,
+}))
+
 describe('EmailSettingsSection', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -707,6 +712,16 @@ describe('EmailSettingsSection', () => {
       }
       await wrapper.vm.$nextTick()
       expect(wrapper.vm.relevantallowedLocal).toBe(false)
+    })
+  })
+
+
+  describe('groupless site (experiment)', () => {
+    it('has one set of email settings and no per-community list', () => {
+      mockGroupless.value = true
+      const wrapper = createWrapper()
+      expect(wrapper.text()).not.toContain('Show advanced settings')
+      mockGroupless.value = false
     })
   })
 })

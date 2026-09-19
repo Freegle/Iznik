@@ -166,6 +166,23 @@ vi.mock('vue', async (importOriginal) => {
   }
 })
 
+vi.mock('~/stores/group', () => ({
+  useGroupStore: () => ({
+    get: (id) => ({
+      id,
+      nameshort: 'testville',
+      namedisplay: 'Freegle Testville',
+    }),
+    fetch: vi.fn().mockResolvedValue(null),
+    fetchBatch: vi.fn().mockResolvedValue(null),
+  }),
+}))
+
+const mockGroupless = { value: false }
+vi.mock('~/composables/useGroupless', () => ({
+  useGroupless: () => mockGroupless.value,
+}))
+
 describe('MessageExpanded', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -1353,6 +1370,26 @@ describe('MessageExpanded', () => {
       ]
       const wrapper = await createWrapper()
       expect(wrapper.findAll('.thumbnail-item .proxy-image').length).toBe(2)
+    })
+  })
+
+
+  describe('groupless site (experiment)', () => {
+    it('says which communities a post is on today', async () => {
+      mockGroupless.value = false
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.posted-on-groups').exists()).toBe(true)
+      expect(wrapper.text()).toContain('On:')
+      expect(wrapper.text()).toContain('Freegle Testville')
+    })
+
+    it('does not say which communities a post is on', async () => {
+      mockGroupless.value = true
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.posted-on-groups').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('On:')
+      expect(wrapper.text()).not.toContain('Freegle Testville')
+      mockGroupless.value = false
     })
   })
 })

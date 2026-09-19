@@ -5,7 +5,8 @@
         <div class="media">
           <b-card border-variant="success" :class="{ 'ms-auto': !amUser }">
             <b-card-title>
-              <div v-if="group">
+              <h4 v-if="groupless">Message from Freegle</h4>
+              <div v-else-if="group">
                 <h4>
                   <ProfileImage
                     v-if="group"
@@ -91,6 +92,8 @@
   </div>
 </template>
 <script setup>
+import { useGroupless } from '~/composables/useGroupless'
+
 import { ref, computed } from 'vue'
 import NoticeMessage from './NoticeMessage'
 import ChatButton from './ChatButton'
@@ -103,6 +106,8 @@ import {
 import ProfileImage from '~/components/ProfileImage'
 import GroupSelect from '~/components/GroupSelect'
 import { useRouter } from '#imports'
+// Experiment: no community identity on the member site.
+const groupless = useGroupless()
 
 const props = defineProps({
   chatid: {
