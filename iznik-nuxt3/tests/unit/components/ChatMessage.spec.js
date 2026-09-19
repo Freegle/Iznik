@@ -137,6 +137,12 @@ describe('ChatMessage', () => {
           ChatMessageWarning: {
             template: '<div class="chat-message-warning" />',
           },
+          ChatMessageSensitive: {
+            template:
+              '<div class="chat-message-sensitive" @click="$emit(\'reveal\')" />',
+            props: ['reason'],
+            emits: ['reveal'],
+          },
           ConfirmModal: {
             template: '<div class="confirm-modal" />',
             emits: ['confirm', 'hidden'],
@@ -171,6 +177,39 @@ describe('ChatMessage', () => {
     it('renders ChatMessageDateRead', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.find('.chat-message-date-read').exists()).toBe(true)
+    })
+  })
+
+  describe('sensitive messages (warn, do not hold)', () => {
+    it('shows the warning instead of the message when the API flags it', async () => {
+      const { setupChat } = await import('~/composables/useChat')
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({ ...mockChatMessage, sensitive: 'money' }),
+      })
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.chat-message-sensitive').exists()).toBe(true)
+      expect(wrapper.find('.chat-message-text').exists()).toBe(false)
+    })
+
+    it('shows the message once the member taps through', async () => {
+      const { setupChat } = await import('~/composables/useChat')
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({ ...mockChatMessage, sensitive: 'money' }),
+      })
+      const wrapper = await createWrapper()
+      await wrapper.find('.chat-message-sensitive').trigger('click')
+      expect(wrapper.find('.chat-message-sensitive').exists()).toBe(false)
+      expect(wrapper.find('.chat-message-text').exists()).toBe(true)
+    })
+
+    it('shows an ordinary message straight away', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.chat-message-sensitive').exists()).toBe(false)
+      expect(wrapper.find('.chat-message-text').exists()).toBe(true)
     })
   })
 
