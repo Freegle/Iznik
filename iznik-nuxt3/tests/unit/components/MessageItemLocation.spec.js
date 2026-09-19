@@ -231,6 +231,7 @@ describe('MessageItemLocation', () => {
         subject: 'Offer: Books (Glasgow)',
         availablenow: 2,
         availableinitially: 5,
+        partgone: true,
       })
       const wrapper = createWrapper()
       expect(wrapper.text()).toContain('Part gone, some still available')

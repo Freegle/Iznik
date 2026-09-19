@@ -198,6 +198,7 @@ describe('OutcomeModal', () => {
         type: 'Offer',
         availablenow: 2,
         availableinitially: 5,
+        partgone: true,
         groups: [{ groupid: 456 }],
         replies: [],
       })
