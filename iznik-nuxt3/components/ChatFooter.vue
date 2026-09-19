@@ -352,6 +352,15 @@
       @hidden="showNudgeWarningModal = false"
     />
     <MicroVolunteering v-if="showMicrovolunteering" />
+    <!-- Experiment: the reply gate. The send was refused (428) until a graded
+         micro-volunteering task is passed; the typed message is kept and sent again. -->
+    <MicroVolunteering
+      v-if="showReplyGate"
+      gate
+      force
+      @verified="gatePassed"
+      @failed="gateFailed"
+    />
   </div>
 </template>
 <script setup>
@@ -454,6 +463,7 @@ const { lastTyping } = storeToRefs(miscStore)
 const sending = ref(false)
 const uploading = ref(false)
 const showMicrovolunteering = ref(false)
+const showReplyGate = ref(false)
 const showNotices = ref(true)
 const showSpammerWarning = ref(true)
 const showPromise = ref(false)
@@ -826,6 +836,11 @@ const send = async (callback) => {
       } catch (e) {
         sending.value = false
         const status = e?.response?.status
+        if (status === 428) {
+          // The reply gate: keep the text, show the task, send again on success.
+          showReplyGate.value = true
+          return
+        }
         if (status === 403) {
           sendError.value =
             "Sorry, your message couldn't be sent just now. Please try again."
@@ -859,6 +874,17 @@ const send = async (callback) => {
     // For the send-on-enter case we are passed the native event, whereas for SpinButton we are passed a callback.
     callback()
   }
+}
+
+const gatePassed = async () => {
+  showReplyGate.value = false
+  await send()
+}
+
+const gateFailed = () => {
+  showReplyGate.value = false
+  sendError.value =
+    "You've replied to a lot of posts today. Please try again tomorrow."
 }
 
 const fetchMessages = async () => {

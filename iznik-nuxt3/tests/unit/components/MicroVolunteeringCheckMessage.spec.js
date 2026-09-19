@@ -518,4 +518,44 @@ describe('MicroVolunteeringCheckMessage', () => {
       expect(mockMessageFetch).toHaveBeenCalledWith(456, true)
     })
   })
+
+  describe('graded answers (reply gate)', () => {
+    it('emits next with the mark the server gave the answer', async () => {
+      mockMicroVolunteeringRespond.mockResolvedValueOnce({
+        ret: 0,
+        status: 'Success',
+        graded: false,
+      })
+      const wrapper = createWrapper()
+      await flushPromises()
+
+      const approveBtn = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Yes'))
+      await approveBtn.trigger('click')
+      await flushPromises()
+
+      const child = wrapper.findComponent(MicroVolunteeringCheckMessage)
+      expect(child.emitted('next')).toBeTruthy()
+      expect(child.emitted('next')[0]).toEqual([false])
+    })
+
+    it('emits next with nothing when the answer could not be marked', async () => {
+      mockMicroVolunteeringRespond.mockResolvedValueOnce({
+        ret: 0,
+        status: 'Success',
+      })
+      const wrapper = createWrapper()
+      await flushPromises()
+
+      const approveBtn = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Yes'))
+      await approveBtn.trigger('click')
+      await flushPromises()
+
+      const child = wrapper.findComponent(MicroVolunteeringCheckMessage)
+      expect(child.emitted('next')[0]).toEqual([undefined])
+    })
+  })
 })
