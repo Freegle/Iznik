@@ -190,8 +190,8 @@ func Group(c *fiber.Ctx) error {
 		Select("DISTINCT users_stories.id").
 		Joins("INNER JOIN memberships ON memberships.userid = users_stories.userid").
 		Joins("INNER JOIN users ON users.id = users_stories.userid").
-		Where("memberships.groupid = ? AND reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL",
-			groupid64, reviewed, public).
+		Where("memberships.groupid = ? AND memberships.collection = ? AND memberships.rippled = 0 AND reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL",
+			groupid64, utils.COLLECTION_APPROVED, reviewed, public).
 		Order("date DESC").
 		Limit(int(limit64)).
 		Pluck("id", &ids)

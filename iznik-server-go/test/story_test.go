@@ -211,6 +211,34 @@ func TestListStoryGroupReviewedFilter(t *testing.T) {
 	assert.NotContains(t, unreviewedIDs, reviewedID)
 }
 
+// TestGroupStory_ExcludesRippleOnlyMembership verifies that a membership created purely as a
+// side effect of rippling (memberships.rippled = 1) does not attribute a member's story to that
+// group's public Stories feed. A ripple-only membership is not a relationship with the
+// community (see rippling/membership.go's IsRippleOnlyMembership) - it exists only so a post
+// that rippled there can be moderated - so it must not decide which group's Stories page shows
+// somebody's story either.
+func TestGroupStory_ExcludesRippleOnlyMembership(t *testing.T) {
+	prefix := uniquePrefix("story_rippled")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// Downgrade the membership to ripple-only: the user's sole tie to this group is a post of
+	// theirs that rippled in, not anything they did themselves.
+	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", userID, groupID)
+
+	storyID := CreateTestStory(t, userID, "Rippled Membership "+prefix, "story text", true, true)
+
+	url := fmt.Sprintf("/api/story/group/%d?limit=1000", groupID)
+	resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var ids []uint64
+	json2.Unmarshal(rsp(resp), &ids)
+	assert.NotContains(t, ids, storyID, "A ripple-only membership must not attribute a story to that group's feed")
+}
+
 func TestListStoryNewsletterReviewedFilter(t *testing.T) {
 	prefix := uniquePrefix("story_nlrev")
 	userID := CreateTestUser(t, prefix, "User")
