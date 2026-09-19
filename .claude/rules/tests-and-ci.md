@@ -12,6 +12,23 @@ paths:
 The theme here is **a green result that means nothing**. Read the shape of a pass before
 trusting it.
 
+## A red that is the status container, not the tests
+
+Every suite in CI is started and polled through the status container over HTTP. The poll
+substitutes `{"status":"error"}` when curl cannot reach it. The status API itself never reports
+`error` - its states are `started`, `running`, `completed`, `failed`, `idle`, `unknown`,
+`offline` - so that value always means the container was unreachable, never that a test failed.
+
+It used to be reported as "tests failed", with test logs printed, which sends you into the code
+after a failure nobody recorded. What it looks like: suites stopping mid-run with no failing
+test named anywhere. Build 36418 had Go reporting 2417 of 3694 tests with no failures among
+them, Laravel stopped at 59%, Playwright cut mid-test, 19-21Gi of memory free and the watchdog
+never fired.
+
+A genuine failure names a test. If nothing is named, look at the status container rather than
+the diff - and treat the unreachability itself as the bug to chase, because every suite polls
+that one container and they all go red together.
+
 ## A green run that did not finish
 
 - **Vitest through the status API.** A run that dies partway still reports

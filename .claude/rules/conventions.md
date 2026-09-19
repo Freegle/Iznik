@@ -39,6 +39,17 @@ The per-community controls for whether posts ripple in or out are deliberately *
 as moderator settings in the interface. They are changed deliberately, centrally, through a
 command. Do not add toggles for them.
 
+## Moderators do not export member data
+
+There is no member export in ModTools, and adding one back is not a small convenience. The
+reason is data protection: a moderator needs to see members to moderate them, and that is not
+the same as being able to take the list away. A button that writes the list to a file was
+removed for exactly this reason (Discourse 10085/7), after a spell where it came back.
+
+Disabling a button does not achieve this. The list is fetched from `/memberships`, so anything
+that only hides the interface leaves the data one call away. If the capability is not wanted,
+the code goes.
+
 ## See also
 
 - `docs/developers/reference/coding-standards.md` - the rest of the coding rules.
