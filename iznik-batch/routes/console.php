@@ -1805,3 +1805,20 @@ Schedule::command('partnerships:reminders')
     ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('partnerships:reminders'))
     ->runInBackground();
+
+// Nightly physical database backup. OFF unless BACKUP_DB_ENABLED is set; until then the
+// shell script on the database node is still what runs. Scheduled inside the drain window
+// on purpose: BackupDrain never holds "backup:" commands off.
+Schedule::command('backup:database')
+    ->dailyAt('04:00')
+    ->when(fn () => config('freegle.backup.database.enabled', false))
+    ->withoutOverlapping(480)
+    ->sendOutputTo(cronLog('backup:database'))
+    ->runInBackground();
+
+// =============================================================================
+// BACKUP DRAIN (see App\Console\BackupDrain)
+// =============================================================================
+// Last, so it covers every command defined above and a new job cannot be forgotten.
+// Off unless BACKUP_DRAIN_ENABLED is set; the window is re-checked on each tick.
+\App\Console\BackupDrain::apply(app(\Illuminate\Console\Scheduling\Schedule::class));
