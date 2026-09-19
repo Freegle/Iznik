@@ -34,6 +34,7 @@
           <MessageAvailability
             v-if="message"
             :availablenow="message.availablenow"
+            :partgone="message.partgone"
             :availableinitially="message.availableinitially"
             :bulkcount="message.bulkcount"
             badge-class="ms-2 me-2 mt-0 align-top"

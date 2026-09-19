@@ -42,18 +42,49 @@ describe('MessageAvailability', () => {
 
   describe('ordinary post that is part gone', () => {
     it('says part gone instead of a number', () => {
-      const wrapper = createWrapper({ availablenow: 2, availableinitially: 5 })
+      const wrapper = createWrapper({
+        availablenow: 5,
+        availableinitially: 5,
+        partgone: true,
+      })
       expect(wrapper.text()).toContain('Part gone, some still available')
     })
 
     it('gives no number at all', () => {
-      const wrapper = createWrapper({ availablenow: 2, availableinitially: 5 })
+      const wrapper = createWrapper({
+        availablenow: 5,
+        availableinitially: 5,
+        partgone: true,
+      })
       expect(wrapper.text()).not.toMatch(/[0-9]/)
     })
 
-    it('still says part gone when the count has run down to zero', () => {
-      const wrapper = createWrapper({ availablenow: 0, availableinitially: 5 })
-      expect(wrapper.text()).toContain('Part gone, some still available')
+    it('says part gone even though the counts still agree', () => {
+      // The server stopped decrementing availablenow for ordinary posts, because
+      // nobody is asked how many each person took. The badge must follow the taker,
+      // not the arithmetic, or a post whose items have gone would read "5 available".
+      const wrapper = createWrapper({
+        availablenow: 5,
+        availableinitially: 5,
+        partgone: true,
+      })
+      expect(wrapper.text()).not.toContain('5 available')
+    })
+
+    it('says a number while nobody has taken any', () => {
+      const wrapper = createWrapper({
+        availablenow: 5,
+        availableinitially: 5,
+        partgone: false,
+      })
+      expect(wrapper.text()).toContain('5 available')
+    })
+
+    it('ignores a count that drifted under the old flow', () => {
+      // Posts part-taken before this change carry a lowered availablenow. Without a
+      // taker recorded they are not treated as part gone on that basis alone.
+      const wrapper = createWrapper({ availablenow: 2, availableinitially: 5 })
+      expect(wrapper.text()).toContain('2 available')
     })
   })
 
@@ -63,6 +94,7 @@ describe('MessageAvailability', () => {
         availablenow: 2,
         availableinitially: 5,
         bulkcount: 4,
+        partgone: true,
       })
       expect(wrapper.text()).toContain('2 available')
     })

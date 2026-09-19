@@ -13,6 +13,7 @@
         <div>
           <MessageAvailability
             :availablenow="message.availablenow"
+            :partgone="message.partgone"
             :availableinitially="message.availableinitially"
             :bulkcount="message.bulkcount"
             badge-class="lg ms-2"

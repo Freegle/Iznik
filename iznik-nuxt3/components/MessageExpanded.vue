@@ -230,6 +230,7 @@
                 >{{ subjectItemName }}
                 <MessageAvailability
                   :availablenow="message.availablenow"
+                  :partgone="message.partgone"
                   :availableinitially="message.availableinitially"
                   :bulkcount="message.bulkcount"
                   badge-class="ms-1"
