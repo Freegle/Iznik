@@ -6,7 +6,6 @@ use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
-use SplObjectStorage;
 
 /**
  * Holds batch work off while the nightly database backup runs.
@@ -37,8 +36,16 @@ use SplObjectStorage;
  */
 class BackupDrain
 {
-    /** Events already given a filter, so a repeated apply() does not stack them up. */
-    private static ?SplObjectStorage $applied = null;
+    /**
+     * Events already given a filter, so a repeated apply() does not stack them up.
+     *
+     * A WeakMap, not an SplObjectStorage: the store must not be what keeps an Event alive.
+     * routes/console.php calls apply() as the console routes load, which happens on every
+     * application boot, and the schedule has over 150 events. Holding each one strongly meant
+     * a test suite retained every event of every boot, along with the closures and container
+     * they reference, until PHP ran out of memory partway through a run.
+     */
+    private static ?\WeakMap $applied = null;
 
     /**
      * Is batch work being held off right now?
@@ -111,7 +118,7 @@ class BackupDrain
      */
     public static function apply(Schedule $schedule): void
     {
-        self::$applied ??= new SplObjectStorage();
+        self::$applied ??= new \WeakMap();
 
         $always = array_values(array_filter(array_map(
             'strval',
@@ -119,11 +126,11 @@ class BackupDrain
         )));
 
         foreach ($schedule->events() as $event) {
-            if (self::$applied->contains($event)) {
+            if (isset(self::$applied[$event])) {
                 continue;
             }
 
-            self::$applied->attach($event);
+            self::$applied[$event] = true;
 
             $name = self::commandName($event);
 
