@@ -198,6 +198,20 @@ day", which reads like success. The first symptom to reach us was a partner API 
 it had built `backwards` as `strrev($email)`, the one form the filter matched, so the suite
 stayed green throughout.
 
+**Setting `backwards` on an Eloquent write does nothing.** `UserEmail::booted()` hooks `saving`
+and overwrites it whenever the email is dirty, which on a create is always:
+
+```php
+if ($record->isDirty('email') || is_null($record->backwards)) {
+    $record->backwards = strrev(strtolower((string) $record->email));
+}
+```
+
+So a `UserEmail::create([... 'backwards' => strrev($canon)])` is silently discarded and the row
+lands in the address form regardless. Only a raw `DB::table('users_emails')->insert()` keeps what
+you pass. That hook is the single place every Eloquent write gets its value from, so it is where
+the format has to change, not at the call sites.
+
 **V1 did not trust the column either.** Its Support Tools search pairs the `backwards` arm with a
 second `canon` arm built from the search term with every dot removed, and says why:
 
