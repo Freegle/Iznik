@@ -70,6 +70,11 @@ type ChatMessage struct {
 	// sender) that delivery was still coming when it was not. Use RipplingHold to tell the
 	// terminal states apart.
 	HeldByRippling bool `json:"heldbyrippling,omitempty" gorm:"-"`
+	// Sensitive is set for the recipient of a message the content check held, when the
+	// warn-not-hold experiment is on (see warnnothold.go). It names the kind of care to take;
+	// the client shows the text behind a warning the member taps through. Never set for
+	// the sender or for a moderator, who see the moderation fields instead.
+	Sensitive string `json:"sensitive,omitempty" gorm:"-"`
 	// RipplingHold is the rippling reply-hold row in whatever state it reached, including one
 	// already released or abandoned. Moderators only. HeldByRippling covers a live hold only,
 	// so once a hold released it went false and the delay left no trace anywhere in ModTools -
@@ -224,7 +229,10 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 		// The PHP notification paths honour this gate; the in-app chat fetch must too, or the
 		// poster reads the held reply here once chats:process-incoming flips processingsuccessful.
 		// The sender still sees their own message (userid = ? branch); only the poster is gated.
-		reviewFilter = "(userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 " +
+		// deliverableSQL drops the reviewrequired = 0 test under the warn-not-hold experiment,
+		// so a held message reaches the recipient (tagged Sensitive below) instead of a
+		// moderator's queue.
+		reviewFilter = "(userid = ? OR (" + deliverableSQL("") + " AND processingsuccessful = 1 " +
 			"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')))"
 	}
 
@@ -359,6 +367,9 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 
 		// strip review/processing fields from non-mod responses.
 		if !modAccess {
+			if WarnNotHold() && a.Reviewrequired && a.Userid != userID {
+				messages[ix].Sensitive = SensitiveReason(a.Reportreason)
+			}
 			messages[ix].Reviewrequired = false
 			messages[ix].Reviewrejected = false
 			messages[ix].Processingrequired = false

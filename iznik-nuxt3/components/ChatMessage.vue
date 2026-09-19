@@ -3,7 +3,15 @@
     :class="{ selected: selected, deleted: isMessageDeleted }"
     @click="selectMe"
   >
-    <div v-if="chatmessage?.type === 'Default'">
+    <!-- Experiment: warn, do not hold. The API delivers a message the content check
+         flagged with a short `sensitive` reason instead of hiding it until a moderator
+         looks. Show the warning first; the member taps through to the message. -->
+    <ChatMessageSensitive
+      v-if="chatmessage?.sensitive && !revealed"
+      :reason="chatmessage.sensitive"
+      @reveal="revealed = true"
+    />
+    <div v-else-if="chatmessage?.type === 'Default'">
       <chat-message-text
         :id="id"
         :chatid="chatid"
@@ -204,6 +212,7 @@ import { durationMinutes } from '~/composables/useTimeFormat'
 import { ref, computed } from '#imports'
 import SupportLink from '~/components/SupportLink.vue'
 import ChatMessageWarning from '~/components/ChatMessageWarning'
+import ChatMessageSensitive from '~/components/ChatMessageSensitive'
 import 'vue-simple-context-menu/dist/vue-simple-context-menu.css'
 import { useMe } from '~/composables/useMe'
 
@@ -250,6 +259,8 @@ const { myid } = useMe()
 
 // Data properties as refs
 const selected = ref(false)
+// A flagged message stays behind its warning until the member chooses to read it.
+const revealed = ref(false)
 const showDeleteMessageResultModal = ref(false)
 const deleteMessageSucceeded = ref(null)
 const showConfirmModal = ref(false)
