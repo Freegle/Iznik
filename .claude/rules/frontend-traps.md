@@ -47,6 +47,26 @@ It is not working around a fixed iOS bug. With `autocapitalize="sentences"`, iOS
 at the start of a sentence, so Return reports `shiftKey: true` and our send-on-enter handlers
 treat it as a newline. The keyboard is behaving as designed; the attribute is the fix.
 
+## A range input moves its value on a press anywhere on the track
+
+`<input type="range">` jumps the handle to wherever the track is pressed. On a phone that makes
+the beginning of a scroll indistinguishable from a deliberate adjustment, so members found their
+ChitChat distance had changed and nothing said why.
+
+It is easy to fix the wrong half of this. `touch-action: pan-y` and a `preventDefault` on wheel
+both look like the cause, both are worth having, and neither stops a plain press on the track
+from moving the handle. The suite passed after that first attempt and the complaint stayed.
+
+`RangeSlider.vue` covers the track either side of the handle with two inert divs, leaving a gap
+around the handle, so the only press the input can receive is one on the handle itself. The gap
+is positioned from the same fraction the browser lays the handle out with, and sized from the
+same custom property that sizes the handle, so the two cannot drift apart. Change the handle
+size in `--range-slider-thumb` and nowhere else.
+
+Unit tests cannot see any of this: jsdom has no layout, so the covers are in the DOM in the
+right order whatever their geometry would really be. Check it in a browser, with
+`document.elementFromPoint` at the handle and at both ends of the track.
+
 ## Enter bound twice sends twice
 
 A comment box bound `keydown.enter` on the wrapping element **and** `keyup.enter` on the

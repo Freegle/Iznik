@@ -77,6 +77,19 @@ Coverage checks fail on deltas no change caused, and chasing them wastes days:
 - The Playwright flag wanders between builds and has discrete states it flips between.
 - A major version upgrade of a test runner re-baselines its measurement, so the first comparison
   against master is meaningless.
+- **A decrease on a branch that DOES change files of that language is still not automatically
+  yours.** Measure the changed file itself, both sides. Put the base version in the tree, run the
+  suite filtered to its spec with coverage on, and read `LF/LH`, `BRF/BRH`, `FNF/FNH` for that
+  file out of `coverage/lcov.info` in the runner container; then do the same for the branch
+  version. A file fully covered on **both** sides cannot have lowered anything, because every
+  line the branch adds is a covered one. On the slider fix the component was 28/28 lines and
+  11/11 branches before, 33/33 and 17/17 after, and the check still said -0.007%. Without that
+  measurement the only moves left are padding the branch with unrelated tests or waiving the
+  check, and both are wrong. When it really is wandering, run the whole suite twice with
+  coverage on the SAME code and diff the per-file `LH` counts: the culprit is usually a spec that
+  never waits for a timer its component schedules, so the lines behind that timer are covered
+  only when the timing happens to suit. `PostMap.vue`'s 200ms re-fit debounce was one, worth six
+  lines and 0.014% on its own.
 
 Read what the build uploaded before believing what it reports. Do not make coverage optional to
 get past it.
