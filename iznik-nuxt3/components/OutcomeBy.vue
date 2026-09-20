@@ -30,7 +30,7 @@
       </div>
       <div
         v-if="isBulk"
-        :class="'ms-1 took ' + (availablenow <= 1 ? 'd-none' : '')"
+        :class="'took ' + (availablenow <= 1 ? 'd-none' : '')"
       >
         <NumberIncrementDecrement
           v-model="user.count"
@@ -44,7 +44,7 @@
       <button
         v-else
         type="button"
-        class="remove-taker ms-1"
+        class="remove-taker"
         :aria-label="'Remove ' + (user.displayname || 'this person')"
         @click="removeTaker(user)"
       >
@@ -366,85 +366,66 @@ select {
 // placed in a fourth column the grid did not define, which put it past the
 // right edge).
 .layout {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  column-gap: 0.5rem;
+  row-gap: 0.75rem;
   border: 1px solid $color-gray--faded;
   border-radius: var(--radius-sm, 0.375rem);
   padding: 10px;
 
-  grid-template-rows: auto auto;
-  grid-template-columns: 1fr auto;
-  grid-column-gap: 5px;
-
-  @include media-breakpoint-up(md) {
-    grid-template-rows: auto;
-    grid-template-columns: 1fr auto auto;
-  }
-
   .select {
+    // Own line on a phone, so the name never squeezes the controls. From md up
+    // it takes whatever width the controls leave. min-width lets a long display
+    // name shrink rather than push the stepper out of the card.
+    flex: 1 1 100%;
     min-width: 0;
     overflow-wrap: anywhere;
-
-    grid-column: 1 / 3;
-    grid-row: 1;
-
-    @include media-breakpoint-up(md) {
-      grid-column: 1 / 2;
-    }
   }
 
   .ratings {
-    justify-self: start;
+    // The thumb buttons are inline-block, so this is what keeps them side by
+    // side. The layout used to pin them into a fixed 165px column, which is
+    // narrower than two large buttons, so thumbs-down wrapped underneath.
     white-space: nowrap;
-    margin-top: 1rem;
-
-    grid-column: 1 / 2;
-    grid-row: 2;
-
-    @include media-breakpoint-up(md) {
-      margin-top: 0;
-      grid-column: 2 / 3;
-      grid-row: 1;
-    }
+    flex: 0 0 auto;
   }
 
   .took {
-    justify-self: end;
-    width: 160px;
-    max-width: 100%;
-    margin-top: 1rem;
-
-    grid-column: 2 / 3;
-    grid-row: 2;
-
-    @include media-breakpoint-up(md) {
-      margin-top: 0;
-      grid-column: 3 / 4;
-      grid-row: 1;
-    }
+    flex: 0 0 auto;
+    // Holds the stepper against the right edge whether or not it shares a line
+    // with the ratings. Do not put Bootstrap's .ms-1 (or any m*-* utility) on
+    // this element: those are !important and silently beat the auto margin.
+    margin-left: auto;
   }
 
+
   .remove-taker {
-    justify-self: end;
+    // The right-edge element on an ordinary post, where a bulk post has the
+    // stepper, so it is aligned the same way and carries the same warning: no
+    // Bootstrap m*-* utility here, they are !important and silently beat this
+    // margin.
+    flex: 0 0 auto;
+    margin-left: auto;
     align-self: center;
-    margin-top: 1rem;
     padding: 0 0.5rem;
     background: none;
     border: none;
     color: $color-gray--dark;
 
-    grid-column: 2 / 3;
-    grid-row: 2;
-
     &:hover,
     &:focus {
       color: $color-red;
     }
+  }
 
-    @include media-breakpoint-up(md) {
-      margin-top: 0;
-      grid-column: 3 / 4;
-      grid-row: 1;
+  @include media-breakpoint-up(md) {
+    // Name, ratings and stepper all fit on one line from md up.
+    flex-wrap: nowrap;
+
+    .select {
+      flex: 1 1 auto;
     }
   }
 }

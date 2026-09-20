@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -217,4 +218,47 @@ func TestCronJobsIncludesApproxLocsRefresh(t *testing.T) {
 	}
 
 	t.Errorf("cronJobs is missing %q - it would not appear in SysAdmin > Cron Jobs", command)
+}
+
+func TestPickCronJobStatusPrefersTheLatestStart(t *testing.T) {
+	at := func(s string) *time.Time {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatalf("bad time %q: %v", s, err)
+		}
+		return &v
+	}
+	statuses := []cronJobStatus{
+		// An argument-less row left behind by a schedule change, exact match.
+		{Command: "messages:chase-up", LastRunAt: at("2026-08-13T18:00:00Z")},
+		{Command: "messages:chase-up --languishing-only", LastRunAt: at("2026-09-20T09:00:00Z")},
+		{Command: "messages:chase-up --skip-languishing", LastRunAt: at("2026-09-20T14:00:00Z")},
+		// A stale un-sharded digest row plus live shards, one of which never started.
+		{Command: "mail:digest:unified --mode=immediate", LastRunAt: at("2026-05-27T09:07:49Z")},
+		{Command: "mail:digest:unified --mode=daily --shard=0 --shards=8", LastRunAt: at("2026-09-20T10:59:00Z")},
+		{Command: "mail:digest:unified --mode=immediate --shard=3 --shards=8", LastRunAt: at("2026-09-20T14:17:00Z")},
+		{Command: "mail:digest:unified --mode=reach --shard=1 --shards=4", LastRunAt: nil},
+		// A different command that merely shares a prefix string.
+		{Command: "mail:digest:mark-seen", LastRunAt: at("2026-09-20T14:00:00Z")},
+	}
+
+	if s := pickCronJobStatus("messages:chase-up", statuses); s == nil || s.Command != "messages:chase-up --skip-languishing" {
+		t.Errorf("chase-up: picked %v, want the 14:00 --skip-languishing row", s)
+	}
+	if s := pickCronJobStatus("mail:digest:unified", statuses); s == nil || s.Command != "mail:digest:unified --mode=immediate --shard=3 --shards=8" {
+		t.Errorf("digest: picked %v, want the 14:17 immediate shard", s)
+	}
+	if s := pickCronJobStatus("mail:digest:mark-seen", statuses); s == nil || s.Command != "mail:digest:mark-seen" {
+		t.Errorf("mark-seen: picked %v, want its own exact row", s)
+	}
+	if s := pickCronJobStatus("mail:digest", statuses); s != nil {
+		t.Errorf("a bare prefix that is not a command must not match, got %v", s)
+	}
+	if s := pickCronJobStatus("nothing:here", statuses); s != nil {
+		t.Errorf("unknown command: got %v, want nil", s)
+	}
+	only := []cronJobStatus{{Command: "tn:sync", LastRunAt: nil}}
+	if s := pickCronJobStatus("tn:sync", only); s == nil || s.Command != "tn:sync" {
+		t.Errorf("a never-started row is still returned when it is the only match, got %v", s)
+	}
 }

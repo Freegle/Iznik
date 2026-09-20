@@ -2,7 +2,7 @@ import Database, { type Database as DB } from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V4_SQL, MIGRATION_V5_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
+import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V4_SQL, MIGRATION_V5_SQL, MIGRATION_V6_SQL, MIGRATION_V7_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -72,6 +72,36 @@ function applySchema(db: DB): void {
     })()
     if (!allowsFeatureRequest) {
       try { db.exec(MIGRATION_V5_SQL) } catch (e) { /* already rebuilt */ }
+    }
+  }
+  if (current < 6) {
+    // Rebuild discourse_bug so 'question' is allowed. Same shape as the v5 guard:
+    // skip when the constraint already allows it, because one DB was patched by
+    // hand out-of-band and rebuilding it again would be pointless work.
+    const allowsQuestion = (() => {
+      try {
+        const row = db.prepare(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='discourse_bug'"
+        ).get() as { sql?: string } | undefined
+        return !!row?.sql && row.sql.includes("'question'")
+      } catch { return false }
+    })()
+    if (!allowsQuestion) {
+      try { db.exec(MIGRATION_V6_SQL) } catch { /* already rebuilt */ }
+    }
+  }
+  if (current < 7) {
+    // Rebuild discourse_bug so 'needs-detail' is allowed, guarded the same way.
+    const allowsNeedsDetail = (() => {
+      try {
+        const row = db.prepare(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='discourse_bug'"
+        ).get() as { sql?: string } | undefined
+        return !!row?.sql && row.sql.includes("'needs-detail'")
+      } catch { return false }
+    })()
+    if (!allowsNeedsDetail) {
+      try { db.exec(MIGRATION_V7_SQL) } catch { /* already rebuilt */ }
     }
   }
   if (current < SCHEMA_VERSION) {
@@ -189,6 +219,51 @@ export function listOpenDiscourseBugs(db: DB): DiscourseBugRow[] {
     WHERE state NOT IN ('fixed','confirmed','off-topic','duplicate','feature-request')
     ORDER BY topic, post
   `).all() as DiscourseBugRow[]
+}
+
+export interface UnansweredQuestionRow {
+  topic: number
+  post: number
+  topicTitle: string | null
+  reporter: string | null
+  excerpt: string | null
+  featureArea: string | null
+  /** Why the human turned down the previous attempt at this answer, if they did. */
+  previousRejection: string | null
+}
+
+/**
+ * Questions from moderators that still have no reply.
+ *
+ * "No reply" means no draft that is waiting for approval and none that has been
+ * sent - a draft the human REJECTED puts the question back in the queue, with
+ * their reason attached so the next attempt can do better.
+ *
+ * Two rejections is where that stops. A question can be one nobody should reply
+ * to at all (10012/1 was turned down because a moderator had already answered it
+ * in the thread), and without a limit it would be handed to a fresh agent every
+ * iteration for ever.
+ */
+export function listUnansweredQuestions(db: DB, limit = 3): UnansweredQuestionRow[] {
+  return db.prepare(`
+    SELECT b.topic, b.post, b.topic_title AS topicTitle, b.reporter, b.excerpt,
+           b.feature_area AS featureArea,
+           (SELECT d.rejection_reason FROM discourse_draft d
+             WHERE d.topic = b.topic AND d.post = b.post AND d.rejected_at IS NOT NULL
+             ORDER BY d.rejected_at DESC LIMIT 1) AS previousRejection
+    FROM discourse_bug b
+    WHERE b.state = 'question'
+      AND NOT EXISTS (
+        SELECT 1 FROM discourse_draft d
+        WHERE d.topic = b.topic AND d.post = b.post AND d.rejected_at IS NULL
+      )
+      AND (
+        SELECT COUNT(*) FROM discourse_draft d
+        WHERE d.topic = b.topic AND d.post = b.post AND d.rejected_at IS NOT NULL
+      ) < 2
+    ORDER BY b.last_seen_at DESC
+    LIMIT ?
+  `).all(limit) as UnansweredQuestionRow[]
 }
 
 export function listFeatureRequests(db: DB): DiscourseBugRow[] {

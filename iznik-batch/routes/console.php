@@ -321,7 +321,7 @@ Schedule::command('items:backfill-popularity')
 // duplicate account that has sat unnoticed for years does not need spotting within the hour.
 // The scan window overlaps the gap between runs so a slow day never drops anything.
 Schedule::command('users:detect-related --days=3')
-    ->dailyAt('04:20')
+    ->dailyAt('04:40')
     ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('users:detect-related'))
     ->runInBackground();
@@ -544,7 +544,7 @@ Schedule::command('purge:logs')
 // Daily syntactic email validation (last 30 days only).
 // V1: cron/email_validate.php
 Schedule::command('emails:validate')
-    ->dailyAt('04:30')
+    ->dailyAt('04:50')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('emails:validate'))
     ->runInBackground();
@@ -610,10 +610,10 @@ Schedule::command('chats:update-expected')
     ->runInBackground();
 
 // The nightly backstop: re-check every waiting message, catching anything the two
-// triggers above cannot see. 04:30 sits in the quiet gap after the purge/stats cluster
-// and clear of db1's 04:00-04:17 backup window.
+// triggers above cannot see. 04:50 sits in the quiet gap after the purge/stats cluster
+// and clear of the backup drain window (BackupDrainWindowTest keeps it there).
 Schedule::command('chats:update-expected --full')
-    ->dailyAt('04:30')
+    ->dailyAt('04:50')
     ->withoutOverlapping(60)
     ->sendOutputTo(cronLog('chats:update-expected-full'))
     ->runInBackground();
@@ -1032,7 +1032,7 @@ if (config('freegle.mail.relay_logs.enabled') && config('freegle.mail.relay_logs
 
 // Clean up old sent emails - run daily.
 Schedule::command('mail:spool:process --cleanup --cleanup-days=7')
-    ->dailyAt('04:00')
+    ->dailyAt('04:40')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('mail:spool:process'))
     ->runInBackground();
@@ -1355,13 +1355,15 @@ Schedule::command('integrations:sync-whatjobs')
 // Early-morning sync ahead of the 07:00 UK daily digest. The every-3h UTC
 // schedule above starts at 09:00 UTC, so the morning digest would otherwise
 // ship jobs last synced ~21:00 the night before (9-10h stale -> closed
-// postings -> clicks don't convert to billable). Run at 05:00 UK so the sync
-// (and the post-swap KNN rebuild it triggers) completes before the digest.
-// Pinned to the local zone so it tracks BST/GMT with the digest; shares the
-// command mutex with the run above via withoutOverlapping.
+// postings -> clicks don't convert to billable). Runs at 04:40 UTC, on the
+// same clock as the backup drain window (03:50-04:35 UTC), so it starts just
+// after batch work resumes in both BST and GMT: 05:40 or 04:40 London, and
+// the run takes about 15 minutes, well before the digest. It used to be pinned
+// to 05:00 London, which is 04:00 UTC in summer, inside the window, and the
+// drain skipped it. Shares the command mutex with the run above via
+// withoutOverlapping.
 Schedule::command('integrations:sync-whatjobs')
-    ->timezone(config('freegle.timezone'))
-    ->dailyAt('05:00')
+    ->dailyAt('04:40')
     ->withoutOverlapping(240)
     ->sendOutputTo(cronLog('integrations:sync-whatjobs'))
     ->runInBackground();
@@ -1805,3 +1807,24 @@ Schedule::command('partnerships:reminders')
     ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('partnerships:reminders'))
     ->runInBackground();
+
+// Nightly physical database backup. OFF unless BACKUP_DB_ENABLED is set; until then the
+// shell script on the database node is still what runs. Scheduled inside the drain window
+// on purpose: BackupDrain never holds "backup:" commands off.
+//
+// Nothing ELSE that fires once a day may sit inside that window (03:50-04:35 by default):
+// the drain skips a due job, it does not delay it, so a dailyAt() in the window never
+// runs. BackupDrainWindowTest fails the build if one is added.
+Schedule::command('backup:database')
+    ->dailyAt('04:00')
+    ->when(fn () => config('freegle.backup.database.enabled', false))
+    ->withoutOverlapping(480)
+    ->sendOutputTo(cronLog('backup:database'))
+    ->runInBackground();
+
+// =============================================================================
+// BACKUP DRAIN (see App\Console\BackupDrain)
+// =============================================================================
+// Last, so it covers every command defined above and a new job cannot be forgotten.
+// Off unless BACKUP_DRAIN_ENABLED is set; the window is re-checked on each tick.
+\App\Console\BackupDrain::apply(app(\Illuminate\Console\Scheduling\Schedule::class));

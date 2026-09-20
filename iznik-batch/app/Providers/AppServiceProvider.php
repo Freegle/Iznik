@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Console\BackupDrain;
 use App\Console\FlockEventMutex;
 use App\Console\ResilientCacheEventMutex;
 use App\Console\SchedulerMutex;
@@ -17,6 +18,7 @@ use Illuminate\Console\Scheduling\EventMutex;
 use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\ServiceProvider;
 use Symfony\Component\Process\ExecutableFinder;
 
@@ -54,6 +56,20 @@ class AppServiceProvider extends ServiceProvider
                 (int) config('freegle.monitoring.host_ssh_timeout_seconds', 30),
             );
         });
+
+        // How backup:database reaches the database node. The backup runs for about
+        // eighteen minutes, so it cannot share the monitoring probe's 30-second
+        // timeout. Contextual, and the command takes the runner in its CONSTRUCTOR:
+        // contextual bindings only apply while the container is building a class, so
+        // a handle() parameter would silently get the monitoring runner instead.
+        $this->app->when(\App\Console\Commands\Backup\DatabaseBackupCommand::class)
+            ->needs(\App\Monitoring\HostCommandRunner::class)
+            ->give(function () {
+                return new \App\Monitoring\SshHostCommandRunner(
+                    (string) config('freegle.backup.database.ssh_key', '/etc/monitoring-ssh-key'),
+                    (int) config('freegle.backup.database.ssh_timeout_seconds', 7200),
+                );
+            });
 
         // How mail:deferrals:scan reaches the outbound relay. Deliberately a
         // separate key and a longer timeout from the monitoring probe above:
@@ -119,6 +135,24 @@ class AppServiceProvider extends ServiceProvider
         $this->registerSpamCheckListener();
         $this->blockMigrationsInProduction();
         $this->stampLogsWithCommandLine();
+        $this->pauseQueueDuringBackup();
+    }
+
+    /**
+     * Stop queue workers picking up new jobs while the nightly backup runs.
+     *
+     * App\Console\BackupDrain holds the SCHEDULE off, but the supervisor workers consume
+     * continuously and would keep hitting the database right through the backup window,
+     * which defeats the point of draining.
+     *
+     * A Looping listener returning false makes the worker sleep instead of reserving the
+     * next job. Nothing is lost: jobs stay on the queue and are picked up when the window
+     * closes. A job already in flight when the window opens runs to completion, which is
+     * why the window starts before the backup does.
+     */
+    protected function pauseQueueDuringBackup(): void
+    {
+        Queue::looping(static fn (): bool => ! BackupDrain::active());
     }
 
     /**

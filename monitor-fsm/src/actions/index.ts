@@ -19,6 +19,8 @@ import {
   insertReviewerFeedback,
   listUnprocessedFeedback,
   upsertDiscourseBug,
+  getDiscourseBug,
+  listUnansweredQuestions,
   reopenBugAfterRejection,
   upsertPr,
   findTagDuplicate,
@@ -28,6 +30,8 @@ import { renderAllViews } from '../db/views.js'
 import { getPhaseInfo } from '../phase.js'
 import { modelForAdversarialReview } from '../policy.js'
 import { groundingActions } from '../grounding.js'
+import { proseProblems } from '../prose.js'
+import { assessReportSpecifics, detailRequestBody } from '../specifics.js'
 
 const exec = promisify(execFile)
 
@@ -1246,6 +1250,60 @@ export function retestReplyBody(opts: { affectsApp: boolean; link?: string | nul
   return body
 }
 
+// Seam for unit tests: the question paths reach Discourse to fetch the text they
+// quote and to post. Tests substitute both.
+export const questionAnswerDeps = {
+  fetchReporterQuote,
+  postDiscourseReply,
+}
+
+/**
+ * Ask the reporter for what a report leaves out, and record that we asked.
+ *
+ * Posted rather than queued. A reply that asks which group a report means is the
+ * same kind of thing as the "fix applied, please retest" reply: it is how the
+ * monitor talks to the person who reported something, and a question nobody sends
+ * is a question nobody answers. Edward, 2026-09-19: "we are allowed to post once a
+ * fix has been put live, we should also be allowed to post in order to clarify what
+ * fixes are needed."
+ *
+ * Returns true when it went out. A failure leaves nothing recorded, so the next
+ * iteration finds the report still short of detail and tries again.
+ */
+async function askReporterOnDiscourse(
+  db: ReturnType<typeof getDb>,
+  args: { topic: number; post: number; username: string; quote: string; body: string },
+): Promise<boolean> {
+  // One question per reporting post. The queue used to prevent a second ask by
+  // holding an unsent draft; now that the question goes straight out, the record of
+  // having sent it is what stops us asking the same person the same thing every lap.
+  const alreadyAsked = db.prepare(
+    'SELECT 1 FROM discourse_draft WHERE topic = ? AND post = ? AND posted_at IS NOT NULL LIMIT 1',
+  ).get(args.topic, args.post)
+  if (alreadyAsked) {
+    dbg(`askReporterOnDiscourse: ${args.topic}/${args.post} has already been asked`)
+    return true
+  }
+
+  const raw = formatReplyRaw({
+    username: args.username,
+    post: args.post,
+    topic: args.topic,
+    quote: args.quote,
+    body: args.body,
+  })
+  const res = await questionAnswerDeps.postDiscourseReply(args.topic, raw, args.post)
+  if (!res.ok) {
+    outWarn(`askReporterOnDiscourse: could not ask ${args.topic}/${args.post}: ${res.error}`)
+    return false
+  }
+  recordPostedReply(db, {
+    topic: args.topic, post: args.post,
+    username: args.username, quote: args.quote, body: args.body,
+  })
+  return true
+}
+
 export const deployedReplyDeps = {
   checkPrDeployed,
   postDiscourseReply,
@@ -1272,6 +1330,37 @@ export const bugFeedbackDeps = {
  */
 export const discoverTopicsDeps = {
   runScan: (script: string) => sh('python3', ['-c', script]),
+}
+
+// What a triage entry gives us to work from. `has_screenshot` and `identifiers`
+// come from the triage delegate, which sees the post itself: an image never
+// survives into the stripped text, and no pattern can recognise a group name.
+//
+// Judged on what the REPORTER wrote, not on the summary. The summary is the
+// delegate's paraphrase, and a paraphrase tidies the vagueness away: "a couple of
+// posts duplicated, one person asking for cash" became "duplicate posts and posts
+// offering items in exchange for cash", which names nothing but no longer reads as
+// though it does. Assessed on that, the report looked specific enough to fix, and a
+// moderator's aside in a policy discussion became PR #1574 (closed). The summary is
+// still searched for anchors, because an id the delegate pulled out is still an id.
+function specificsOf(c: Record<string, any>) {
+  const identifiers = (c.identifiers ?? {}) as { userRef?: string; groupName?: string }
+  const verbatim = String(c.originalPostText ?? '').trim()
+  return assessReportSpecifics({
+    text: verbatim || String(c.summary ?? ''),
+    anchorText: `${c.summary ?? ''} ${verbatim}`,
+    hasScreenshot: c.has_screenshot === true || c.hasScreenshot === true,
+    groupName: identifiers.groupName ?? null,
+    userRef: identifiers.userRef ?? null,
+  })
+}
+
+// A bug with no verbatim text cannot be judged for specifics at all, and "cannot
+// judge" must not read as "fine". Triage is asked for originalPostText on every bug;
+// when it is missing the report is held rather than sent to a diagnosis that would be
+// working from a paraphrase.
+function hasReporterWords(c: Record<string, any>): boolean {
+  return String(c.originalPostText ?? '').trim().length > 0
 }
 
 export const actions: ActionDefinition[] = [
@@ -1323,7 +1412,7 @@ export const actions: ActionDefinition[] = [
 
       // Edward-post scan: also include deferred (Edward may post "fix on the way" on a deferred bug)
       const allActiveBugs = db.prepare(
-        "SELECT topic, post, reporter FROM discourse_bug WHERE state IN ('open','investigating','deferred')"
+        "SELECT topic, post, reporter FROM discourse_bug WHERE state IN ('open','investigating','deferred','needs-detail')"
       ).all() as Array<{ topic: number; post: number; reporter: string | null }>
 
       if (allActiveBugs.length === 0) return { checked: 0, markedFixed: [], markedInvestigating: [], markedOffTopic: [] }
@@ -2878,6 +2967,7 @@ If you omit the marker, your work is considered failed regardless of what actual
       // See extractJsonArrayMarker: parse from the full stream, not stdoutTail.
       const classifications = extractJsonArrayMarker(combined, 'CLASSIFICATIONS') ?? undefined
       const sentryIssues = extractJsonArrayMarker(combined, 'SENTRY_ISSUES') ?? undefined
+      const answers = extractJsonArrayMarker(combined, 'ANSWERS') ?? undefined
       const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
       // Summarise for the human watcher: what did the delegate actually do?
       let summary: string
@@ -2912,6 +3002,7 @@ If you omit the marker, your work is considered failed regardless of what actual
           stderrTail: redactSecrets(stderr.slice(-2000)),
           classifications,
           sentryIssues,
+          answers,
           prNumber,
           directPushSha,
           commitPushedSha,
@@ -3086,6 +3177,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         // result.sentryIssues instead of scraping stdoutTail.
         const classifications = extractJsonArrayMarker(combined, 'CLASSIFICATIONS') ?? undefined
         const sentryIssues = extractJsonArrayMarker(combined, 'SENTRY_ISSUES') ?? undefined
+        const answers = extractJsonArrayMarker(combined, 'ANSWERS') ?? undefined
         const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
 
         let summary: string
@@ -3139,6 +3231,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           analysisComplete,
           classifications,
           sentryIssues,
+          answers,
           failedReason: failedMatch ? failedMatch[1].trim() : undefined,
           stdoutTail: redactSecrets(result.textStream.slice(-1500)),
           stderrTail: redactSecrets(result.stderr.slice(-500)),
@@ -3491,8 +3584,180 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
   },
 
   {
+    name: 'list_unanswered_questions',
+    description: "Moderators' questions on Discourse that still have no reply, so they can be answered this iteration. A question is one that TRIAGE classified as type=question (state 'question' in discourse_bug) and that has no reply waiting for approval and none already sent. A reply the human turned down puts the question back in the list, with their reason in previousRejection so the next attempt can address it. Read-only. Returns {questions: [{topic, post, topicTitle, reporter, excerpt, featureArea, previousRejection}], count}.",
+    paramsSchema: {
+      type: 'object',
+      properties: { limit: { type: 'number', description: 'How many to return (1-5, default 3)' } },
+    },
+    handler: async (params) => {
+      const db = getDb()
+      const raw = Number((params as { limit?: unknown })?.limit ?? 3)
+      const limit = Number.isFinite(raw) ? Math.max(1, Math.min(5, Math.trunc(raw))) : 3
+      const questions = listUnansweredQuestions(db, limit)
+      if (questions.length > 0) {
+        out(`list_unanswered_questions: ${questions.length} unanswered - ${questions.map(q => `${q.topic}/${q.post}`).join(', ')}`)
+      }
+      return { questions, count: questions.length }
+    },
+  },
+
+  {
+    name: 'persist_question_answers',
+    description: "Turn the answers the question delegates wrote into replies waiting for approval. Reads context.questionAnswers: [{topic, post, answer, confidence: high|medium|low, needsHuman?, reason?, link?}]. Each answer is queued as a discourse_draft that a human approves and sends from the dashboard - NOTHING is posted to Discourse here. An answer the delegate is not confident about, or that asks for a human, defers the question instead. An answer that reads like documentation rather than plain English is refused and the question is left for another attempt; the second such attempt defers it to a human. Returns {queued, deferred, rejected, skipped}.",
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const ctx = context as { questionAnswers?: unknown }
+      const answers: Array<Record<string, unknown>> = Array.isArray(ctx?.questionAnswers)
+        ? (ctx.questionAnswers as Array<Record<string, unknown>>)
+        : []
+      const db = getDb()
+      let queued = 0, deferred = 0, rejected = 0, skipped = 0
+
+      const deferToHuman = (topic: number, post: number, why: string) => {
+        upsertDiscourseBug(db, { topic, post, state: 'deferred', reason: `needs a human answer: ${why}` })
+        out(`persist_question_answers: ${topic}/${post} left for a human - ${why}`)
+      }
+
+      for (const a of answers) {
+        const topic = Number(a?.topic)
+        const post = Number(a?.post ?? (a as { post_number?: unknown })?.post_number)
+        if (!topic || !post) { skipped++; continue }
+
+        // Only answer what is actually an open question. Anything else - a bug, a
+        // question already answered, a post we have never seen - is not ours to reply to.
+        const bug = getDiscourseBug(db, topic, post)
+        if (!bug || bug.state !== 'question') {
+          skipped++
+          continue
+        }
+
+        const answer = typeof a.answer === 'string' ? a.answer.trim() : ''
+        const confidence = String(a.confidence ?? '').toLowerCase()
+        const why = typeof a.reason === 'string' && a.reason.trim() ? a.reason.trim() : ''
+        if (a.needsHuman === true || !answer || confidence === 'low') {
+          deferToHuman(topic, post, why || (answer ? 'not confident enough in the answer' : 'no answer was produced'))
+          deferred++
+          continue
+        }
+
+        // The hook that scores anything Claude posts to Discourse cannot see a draft
+        // the monitor writes, so the same check runs here instead.
+        const problems = await proseProblems(answer)
+        if (problems.length > 0) {
+          const attemptsKey = `question_answer_rejects_${topic}_${post}`
+          const attempts = Number(kvGet(db, attemptsKey) ?? '0') + 1
+          kvSet(db, attemptsKey, String(attempts))
+          outWarn(`persist_question_answers: ${topic}/${post} answer is too hard to read (attempt ${attempts}): ${problems[0]}`)
+          if (attempts >= 2) {
+            deferToHuman(topic, post, 'two answers in a row were too hard to read')
+            deferred++
+          } else {
+            rejected++
+          }
+          continue
+        }
+
+        // Every reply quotes what it answers, so a reader of a long thread can see
+        // which question it belongs to. Discourse is the better source for the quote;
+        // the excerpt kept at triage is the fallback when it cannot be reached.
+        let quote = ''
+        try {
+          quote = (await questionAnswerDeps.fetchReporterQuote(topic, post)) ?? ''
+        } catch { quote = '' }
+        if (!quote.trim()) quote = (bug.excerpt ?? '').trim()
+        if (!quote) {
+          outWarn(`persist_question_answers: ${topic}/${post} has nothing to quote - not queueing a reply`)
+          skipped++
+          continue
+        }
+
+        const link = typeof a.link === 'string' && a.link.trim() ? a.link.trim() : ''
+        const body = link ? `${answer}\n\nTechnical details: ${link}` : answer
+        queueDiscourseDraft(db, {
+          topic, post,
+          username: bug.reporter ?? 'there',
+          quote,
+          body,
+        })
+        out(`persist_question_answers: queued an answer to ${topic}/${post} for approval`)
+        queued++
+      }
+
+      if (answers.length > 0) {
+        out(`persist_question_answers: ${queued} queued, ${deferred} left for a human, ${rejected} sent back for a rewrite, ${skipped} ignored`)
+      }
+      return { queued, deferred, rejected, skipped }
+    },
+  },
+
+  {
+    name: 'ask_reporter_for_detail',
+    description: "Ask the person who reported a bug for something only they can tell you, when the report cannot be worked on without it: which member, which group, which post, what they saw, when it happened, what they were using. The question is queued for a human to approve and send, like every other reply; nothing is posted here. The bug is held as 'needs-detail' so it leaves the fix queue until they answer, and it returns to the queue on its own when a later post in the thread names something. Use this instead of deferring a report in silence. Params: {topic, post, questions: [1-3 short plain-English things to ask for, e.g. 'which group this was on']}. Returns {queued, reason?, problems?}.",
+    paramsSchema: {
+      type: 'object',
+      properties: {
+        topic: { type: 'number' },
+        post: { type: 'number' },
+        questions: {
+          type: 'array',
+          items: { type: 'string' },
+          description: "What to ask for, one short phrase each, at most three. Written to follow 'Please can you tell me ...', e.g. 'which member this was, with their email address'.",
+        },
+      },
+      required: ['topic', 'post', 'questions'],
+    },
+    handler: async (params) => {
+      const p = params as { topic?: unknown; post?: unknown; questions?: unknown }
+      const topic = Number(p.topic)
+      const post = Number(p.post)
+      const questions = (Array.isArray(p.questions) ? p.questions : [])
+        .map(q => String(q).trim())
+        .filter(Boolean)
+        .slice(0, 3)
+      if (!topic || !post) return { queued: false, reason: 'topic and post are both needed' }
+      if (questions.length === 0) return { queued: false, reason: 'no questions given' }
+
+      const db = getDb()
+      const bug = getDiscourseBug(db, topic, post)
+      if (!bug) return { queued: false, reason: `no bug recorded at ${topic}/${post}` }
+      if (['fixed', 'confirmed', 'off-topic', 'duplicate'].includes(bug.state)) {
+        return { queued: false, reason: `bug ${topic}/${post} is ${bug.state}` }
+      }
+
+      const body = detailRequestBody(questions)
+      // The questions are written by a model, so they go through the same readability
+      // check as everything else the monitor puts in front of a volunteer.
+      const problems = await proseProblems(body)
+      if (problems.length > 0) {
+        outWarn(`ask_reporter_for_detail: ${topic}/${post} question is too hard to read: ${problems[0]}`)
+        return { queued: false, reason: 'the question is too hard to read - ask again in plainer words', problems }
+      }
+
+      let quote = ''
+      try {
+        quote = (await questionAnswerDeps.fetchReporterQuote(topic, post)) ?? ''
+      } catch { quote = '' }
+      if (!quote.trim()) quote = (bug.excerpt ?? '').trim()
+      if (!quote) return { queued: false, reason: 'nothing to quote, so the reply would not show what it asks about' }
+
+      const asked = await askReporterOnDiscourse(db, {
+        topic, post, username: bug.reporter ?? 'there', quote, body,
+      })
+      if (!asked) return { queued: false, reason: 'could not post the question to Discourse' }
+      upsertDiscourseBug(db, {
+        topic, post,
+        state: 'needs-detail',
+        reason: `asked the reporter for: ${questions.join('; ')}`,
+      })
+      out(`ask_reporter_for_detail: asked ${topic}/${post} and held it until there is an answer`)
+      return { queued: true }
+    },
+  },
+
+  {
     name: 'persist_classifications',
-    description: 'Persist TRIAGE classifications to the discourse_bug table so the status post reflects all identified bugs, not just ones with PRs. Upserts each bug/retest classification as "open" (or "deferred" if type is deferred, "feature-request" if type is feature_request). Already-fixed bugs are not downgraded. Returns {upserted: number, skipped: number}.',
+    description: 'Persist TRIAGE classifications to the discourse_bug table so the status post reflects all identified bugs, not just ones with PRs. A report that names nothing anyone could look up - "a member", "a group", "her post" - is held as "needs-detail" with a question to the reporter queued for approval, and released to "open" when a later post in the thread supplies an id, an email, a link or a screenshot. Upserts each other bug/retest classification as "open" (or "deferred" if type is deferred, "feature-request" if type is feature_request). Already-fixed bugs are not downgraded. Returns {upserted: number, skipped: number}.',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const ctx = context as any
@@ -3524,10 +3789,37 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           continue
         }
 
-        const state = type === 'deferred' ? 'deferred' : type === 'question' ? 'deferred' : 'open'
+        // A question is kept as 'question', not filed under 'deferred': the answering
+        // pass looks for exactly that state. Before this it was indistinguishable from
+        // everything else parked for later, so no question was ever answered.
+        const state = type === 'deferred' ? 'deferred' : type === 'question' ? 'question' : 'open'
         // Don't downgrade a bug already in fix-queued or fixed state
         const existing = db.prepare('SELECT state FROM discourse_bug WHERE topic = ? AND post = ?').get(c.topic, c.post) as { state: string } | undefined
         if (existing && ['fix-queued', 'fixed', 'confirmed', 'investigating'].includes(existing.state)) { skipped++; continue }
+
+        // A report held for want of detail is released as soon as a later post in the
+        // same thread names something that can be looked up. Without this it would sit
+        // there for ever, because the reply the reporter sent is a new post, not an
+        // edit of the one that was short on detail.
+        if (type === 'bug' || type === 'retest') {
+          const parked = db.prepare(
+            `SELECT topic, post, reporter FROM discourse_bug WHERE topic = ? AND state = 'needs-detail' ORDER BY first_seen_at LIMIT 1`
+          ).get(Number(c.topic)) as { topic: number; post: number; reporter: string | null } | undefined
+          // Only the person we asked. Somebody else posting in the same thread with a
+          // screenshot is more likely reporting their own problem, and treating that as the
+          // answer would swallow their report as well as releasing ours on the wrong evidence.
+          const sameReporter =
+            !!parked?.reporter && !!c.user &&
+            String(parked.reporter).toLowerCase() === String(c.user).toLowerCase()
+          if (parked && sameReporter && specificsOf(c).anchors.length > 0) {
+            db.prepare(
+              `UPDATE discourse_bug SET state = 'open', reason = 'reporter supplied the missing detail', last_seen_at = datetime('now') WHERE topic = ? AND post = ?`
+            ).run(parked.topic, parked.post)
+            out(`persist_classifications: ${c.topic}/${post} supplies the detail asked for - reopening ${parked.topic}/${parked.post}`)
+            skipped++
+            continue
+          }
+        }
 
         // Retest: a follow-up confirmation of an existing bug in the same topic.
         // Update the existing bug's last_seen_at; do NOT create a second entry for the same problem.
@@ -3670,6 +3962,35 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
             db.prepare(`UPDATE discourse_bug SET fixed_at = datetime('now'), deployed_at = datetime('now') WHERE topic = ? AND post = ?`).run(Number(c.topic), Number(c.post))
             upserted++
             continue
+          }
+        }
+
+        // Nothing to look up: hold the report and ask for what is missing, rather than
+        // sending it to a diagnosis that has to guess which member, group or post it
+        // means. Wrong guesses are where plausible-but-wrong fixes come from.
+        if ((type === 'bug' || type === 'retest') && finalState === 'open') {
+          const specifics = specificsOf(c)
+          if (!hasReporterWords(c)) {
+            finalState = 'needs-detail'
+            finalReason = 'triage returned no verbatim post text, so the report could not be judged for specifics'
+            out(`persist_classifications: ${c.topic}/${c.post} has no verbatim text to judge - held`)
+          } else if (specifics.isVague) {
+            finalState = 'needs-detail'
+            finalReason = `asked the reporter for: ${specifics.missing.join('; ')}`
+            const quote = String(c.originalPostText ?? c.summary ?? '').trim().slice(0, 300)
+            if (quote) {
+              const asked = await askReporterOnDiscourse(db, {
+                topic: Number(c.topic), post: Number(c.post),
+                username: c.user ?? 'there',
+                quote,
+                body: detailRequestBody(specifics.missing),
+              })
+              out(asked
+                ? `persist_classifications: ${c.topic}/${c.post} names nothing that can be looked up - asked the reporter`
+                : `persist_classifications: ${c.topic}/${c.post} names nothing that can be looked up - could not ask, will retry`)
+            } else {
+              out(`persist_classifications: ${c.topic}/${c.post} names nothing that can be looked up, and has nothing to quote - held without asking`)
+            }
           }
         }
 

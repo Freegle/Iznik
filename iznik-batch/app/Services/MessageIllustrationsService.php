@@ -12,6 +12,20 @@ class MessageIllustrationsService
     private const CONFIG_KEY = 'illustrations_last_arrival';
     private const CLEANUP_WATERMARK_KEY = 'illustrations_cleanup_last_id';
 
+    // How far back the pending branch looks. Long enough for ordinary moderation, short
+    // enough that a post abandoned in a queue is not retried for ever.
+    private const PENDING_WINDOW_DAYS = 3;
+
+    // Most passes a single run will make. Holding the saved position back means a run starts
+    // at the oldest post still waiting, so without a cap one run could try to work through
+    // days of backlog in a single go and outlast the 15 minute overlap lock.
+    private const MAX_PASSES = 6;
+
+    // How long a run may keep going. The job is scheduled every minute and will not overlap
+    // itself for 15, so a run that keeps finding work must still hand back in good time
+    // rather than swallow a quarter of an hour of ticks.
+    private const MAX_RUN_SECONDS = 300;
+
     public function __construct(private PollinationsService $pollinations) {}
 
     /**
@@ -124,23 +138,77 @@ class MessageIllustrationsService
         // it only moves earlier, so a later clean pass cannot save a watermark past it.
         $pinned = null;
 
+        $passes = 0;
+        $startedAt = microtime(true);
+
         while (true) {
+            if (++$passes > self::MAX_PASSES) {
+                break;
+            }
+
+            if (microtime(true) - $startedAt > self::MAX_RUN_SECONDS) {
+                Log::info('MessageIllustrations: out of time for this run, the next one carries on');
+                break;
+            }
+
+            $passStart = $lastArrival;
+            // Two branches, because the two collections are found in different ways.
+            //
+            // Approved posts come through messages_spatial, which is the cheap index of live,
+            // located, recent posts and is what keeps this query off a full scan.
+            //
+            // Pending posts are NOT in that index - the index job drops everything that is not
+            // approved - so the mention of 'Pending' in the old single query never matched
+            // anything. The join won, silently, from the May migration onwards, and a post
+            // waiting for a moderator got no picture until it was approved. Discourse 9630/97.
+            //
+            // The pending branch is therefore not watermarked. It drives off the collection
+            // index, so it costs the size of the moderation queue (~1.1k rows in production,
+            // 172 of them undeleted) however far back the saved position is, and it drains
+            // itself: a post drops out the moment it has a picture. Not watermarking it is
+            // the point - a watermark sweeping past a post that is not yet a candidate is the
+            // bug being fixed here.
+            //
+            // It is capped at half the batch so that a backed-up moderation queue, or an
+            // outage in which every generation fails, cannot fill every slot and starve the
+            // approved branch. Candidates are merged and sorted by arrival, so without the cap
+            // the oldest waiting posts would take the lot.
             $msgs = DB::select("
-                SELECT DISTINCT mg.msgid, m.subject, mg.arrival
-                FROM messages_groups mg
-                INNER JOIN messages m ON m.id = mg.msgid
-                INNER JOIN messages_spatial ms ON ms.msgid = mg.msgid
-                LEFT JOIN messages_attachments ma ON ma.msgid = m.id
-                LEFT JOIN messages_ai_declined maid ON maid.msgid = m.id
-                WHERE mg.arrival >= ?
-                AND mg.collection IN ('Approved', 'Pending')
-                AND ma.id IS NULL
-                AND maid.msgid IS NULL
-                AND m.subject IS NOT NULL
-                AND m.subject != ''
-                ORDER BY mg.arrival ASC, mg.msgid ASC
+                SELECT msgid, subject, arrival FROM (
+                    SELECT DISTINCT mg.msgid, m.subject, mg.arrival
+                    FROM messages_groups mg
+                    INNER JOIN messages m ON m.id = mg.msgid
+                    INNER JOIN messages_spatial ms ON ms.msgid = mg.msgid
+                    LEFT JOIN messages_attachments ma ON ma.msgid = m.id
+                    LEFT JOIN messages_ai_declined maid ON maid.msgid = m.id
+                    WHERE mg.arrival >= ?
+                    AND mg.collection = 'Approved'
+                    AND ma.id IS NULL
+                    AND maid.msgid IS NULL
+                    AND m.subject IS NOT NULL
+                    AND m.subject != ''
+
+                    UNION
+
+                    (SELECT DISTINCT mg.msgid, m.subject, mg.arrival
+                    FROM messages_groups mg
+                    INNER JOIN messages m ON m.id = mg.msgid
+                    LEFT JOIN messages_attachments ma ON ma.msgid = m.id
+                    LEFT JOIN messages_ai_declined maid ON maid.msgid = m.id
+                    WHERE mg.collection = 'Pending'
+                    AND mg.arrival >= ?
+                    AND mg.deleted = 0
+                    AND m.deleted IS NULL
+                    AND ma.id IS NULL
+                    AND maid.msgid IS NULL
+                    AND m.subject IS NOT NULL
+                    AND m.subject != ''
+                    ORDER BY mg.arrival ASC
+                    LIMIT ?)
+                ) candidates
+                ORDER BY arrival ASC, msgid ASC
                 LIMIT ?
-            ", [$lastArrival, self::BATCH_SIZE * 2]);
+            ", [$lastArrival, $this->pendingWindowStart(), self::BATCH_SIZE, self::BATCH_SIZE * 2]);
 
             if (empty($msgs)) {
                 break;
@@ -149,7 +217,6 @@ class MessageIllustrationsService
             $cachedMessages = [];
             $newMessages = [];
             $maxArrival = $lastArrival;
-            $createdThisPass = 0;
             $unresolved = [];
 
             foreach ($msgs as $msg) {
@@ -195,7 +262,6 @@ class MessageIllustrationsService
                             'contenttype' => 'image/jpeg',
                         ]);
                         $processed++;
-                        $createdThisPass++;
                         Log::info("MessageIllustrations: used cached illustration for message {$cached['msgid']}: {$cached['itemName']}");
                     }
                     $cachedHits++;
@@ -250,6 +316,14 @@ class MessageIllustrationsService
                     }
 
                     $uid = $this->pollinations->uploadImageAndCache($itemName, $imageData, $hash);
+                    // A failed store is deliberately NOT recorded as a failure of this item.
+                    // Storage failing is a system problem, not something wrong with this
+                    // picture: when the image server is unreachable every item fails, so
+                    // recording it would park them all for a day (three strikes, then
+                    // FAILED_CACHE_EXPIRY) and they would still have no picture long after
+                    // storage came back. Stalling on the first one is the better failure:
+                    // on 2026-09-18 an NFS lock stalled the job for 2h20m, and the moment
+                    // the lock cleared the blocked items were stored and the job moved on.
                     if ($uid) {
                         DB::table('messages_attachments')->insert([
                             'msgid' => $msgid,
@@ -258,7 +332,6 @@ class MessageIllustrationsService
                             'contenttype' => 'image/jpeg',
                         ]);
                         $processed++;
-                        $createdThisPass++;
                         Log::info("MessageIllustrations: created illustration for message {$msgid}: {$itemName}");
                     }
                 }
@@ -299,12 +372,21 @@ class MessageIllustrationsService
                 $this->setLastArrival($pinned ?? $lastArrival);
             }
 
-            // The candidate query is inclusive of $lastArrival and selects on the absence of an
-            // attachment, so a message we failed to illustrate comes back in the next pass
-            // unchanged. If a pass attaches nothing, the next one would see exactly the same rows:
-            // stop, rather than re-run the same query until MySQL kills it at 30s. Covers the
-            // empty-batch case too, and stops a dry run after one pass, which is what it wants.
-            if ($createdThisPass === 0) {
+            // The candidate query is inclusive of $lastArrival, so a pass that cannot move the
+            // cursor on would see exactly the same rows again: stop, rather than re-run the same
+            // query until MySQL kills it at 30s. Covers the empty-batch case too.
+            //
+            // The test used to be "this pass attached nothing", which is not the same thing. A
+            // pass whose candidates were all parked after earlier failures attaches nothing while
+            // still having moved on, and stopping there left everything newer unillustrated. That
+            // matters more now the saved position is held back to the oldest post still waiting
+            // for a moderator, because a run starts among the older posts rather than today's.
+            if ($lastArrival <= $passStart) {
+                break;
+            }
+
+            // A dry run is asking what one pass would do, not working through the backlog.
+            if ($dryRun) {
                 break;
             }
         }
@@ -324,6 +406,16 @@ class MessageIllustrationsService
         // "iron please" is a request for an iron, not for an "iron please" - and the clean
         // name is what finds the illustration we have already generated for one.
         return ItemName::stripCourtesy(trim($name ?? ''));
+    }
+
+    /**
+     * The oldest arrival the pending branch will still illustrate. A post abandoned in a
+     * moderation queue is not worth a generation call for ever; past this it waits for
+     * approval, which puts it in front of the approved branch at its new arrival time.
+     */
+    private function pendingWindowStart(): string
+    {
+        return date('Y-m-d H:i:s', strtotime('-' . self::PENDING_WINDOW_DAYS . ' days'));
     }
 
     private function getLastArrival(): string

@@ -117,6 +117,35 @@ describe('OutcomeBy', () => {
       expect(wrapper.find('.layout').exists()).toBe(true)
     })
 
+    it('keeps Bootstrap spacing utilities off the stepper wrapper', async () => {
+      // The stepper is held against the right edge of the row by
+      // margin-left: auto. Bootstrap's m*-* utilities are !important, so one
+      // of them on this element silently beats that margin: the stepper
+      // drifts back to the left and nothing errors or warns. It was .ms-1
+      // that did exactly this before.
+      //
+      // The stepper is only on a bulk post now, so the message needs a
+      // bulkcount for it to render at all. Without one this test passed
+      // vacuously on the element simply not being there.
+      const bulkMessage = { ...mockMessage, bulkcount: 4 }
+      mockMessageStore.byId.mockReturnValue(bulkMessage)
+      mockMessageStore.fetch.mockResolvedValue(bulkMessage)
+      const wrapper = await createWrapper({ availablenow: 2, left: 2 })
+      const took = wrapper.find('.took')
+      expect(took.exists()).toBe(true)
+      expect(took.classes().filter((c) => /^m[tbsexy]?-/.test(c))).toEqual([])
+    })
+
+    it('keeps Bootstrap spacing utilities off the remove button too', async () => {
+      // An ordinary post carries the remove button where a bulk post carries
+      // the stepper, held right by the same margin-left: auto, so it can be
+      // silently beaten the same way.
+      const wrapper = await createWrapper({ availablenow: 2, left: 2 })
+      const remove = wrapper.find('.remove-taker')
+      expect(remove.exists()).toBe(true)
+      expect(remove.classes().filter((c) => /^m[tbsexy]?-/.test(c))).toEqual([])
+    })
+
     it('shows please tell us label for single item', async () => {
       const wrapper = await createWrapper({ availablenow: 1 })
       expect(wrapper.text()).toContain('Please tell us who took this item')
