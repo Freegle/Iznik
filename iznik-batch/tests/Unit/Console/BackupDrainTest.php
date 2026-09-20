@@ -224,28 +224,58 @@ class BackupDrainTest extends TestCase
         $this->assertFalse($this->passes($events[1]));
     }
 
-    // ------------------------------------------------------------- heldOffWithin
+    // ------------------------------------------------------------ explainsBacklog
 
-    public function test_held_off_within_covers_the_window_and_one_max_age_after_it(): void
+    private function at2(string $time): Carbon
     {
-        // A backlog check with a 10-minute max age must not call the drain a stuck worker:
-        // not during the window, and not for the 10 minutes after it when the workers are
-        // catching up.
-        $this->configure();
-
-        $this->assertFalse(BackupDrain::heldOffWithin(10, Carbon::parse('2026-09-18 03:39:00', config('app.timezone'))));
-        $this->assertTrue(BackupDrain::heldOffWithin(10, Carbon::parse('2026-09-18 03:50:00', config('app.timezone'))));
-        $this->assertTrue(BackupDrain::heldOffWithin(10, Carbon::parse('2026-09-18 04:34:59', config('app.timezone'))));
-        $this->assertTrue(BackupDrain::heldOffWithin(10, Carbon::parse('2026-09-18 04:44:59', config('app.timezone'))), 'still catching up');
-        $this->assertFalse(BackupDrain::heldOffWithin(10, Carbon::parse('2026-09-18 04:45:00', config('app.timezone'))));
-        $this->assertFalse(BackupDrain::heldOffWithin(10, Carbon::parse('2026-09-18 12:00:00', config('app.timezone'))));
+        return Carbon::parse($time, config('app.timezone'));
     }
 
-    public function test_held_off_within_is_false_when_the_drain_is_off(): void
+    public function test_explains_a_short_threshold_once_the_hold_has_outlasted_it(): void
+    {
+        // A ten-minute backlog check: nothing created inside the window can be ten minutes
+        // old until ten minutes in, so a stale row before then predates the hold and is a
+        // real breach. From then until the workers have caught up, it is the drain.
+        $this->configure();
+
+        $this->assertFalse(BackupDrain::explainsBacklog(10, $this->at2('2026-09-18 03:39:00')));
+        $this->assertFalse(BackupDrain::explainsBacklog(10, $this->at2('2026-09-18 03:50:00')), 'window just opened: a stale row predates it');
+        $this->assertFalse(BackupDrain::explainsBacklog(10, $this->at2('2026-09-18 03:59:59')));
+        $this->assertTrue(BackupDrain::explainsBacklog(10, $this->at2('2026-09-18 04:01:00')));
+        $this->assertTrue(BackupDrain::explainsBacklog(10, $this->at2('2026-09-18 04:34:59')));
+        $this->assertTrue(BackupDrain::explainsBacklog(10, $this->at2('2026-09-18 04:44:59')), 'still catching up');
+        $this->assertFalse(BackupDrain::explainsBacklog(10, $this->at2('2026-09-18 04:45:00')));
+        $this->assertFalse(BackupDrain::explainsBacklog(10, $this->at2('2026-09-18 12:00:00')));
+    }
+
+    public function test_never_explains_a_threshold_longer_than_the_window(): void
+    {
+        // The rippling backlog check allows a day. A 45-minute hold cannot make a row a day
+        // late, so that check must keep being assessed - including during the window, and
+        // including the morning after. The first live morning it was skipped for 24 hours.
+        $this->configure();
+
+        foreach (['2026-09-18 03:50:00', '2026-09-18 04:10:00', '2026-09-18 04:40:00', '2026-09-18 09:00:00', '2026-09-19 03:00:00', '2026-09-19 04:10:00'] as $when) {
+            $this->assertFalse(BackupDrain::explainsBacklog(1440, $this->at2($when)), $when);
+        }
+    }
+
+    public function test_catch_up_grace_is_capped_below_a_long_threshold(): void
+    {
+        // A 30-minute check is excused after the window only while the workers catch up,
+        // not for its own 30 minutes.
+        $this->configure();
+
+        $this->assertTrue(BackupDrain::explainsBacklog(30, $this->at2('2026-09-18 04:30:00')));
+        $this->assertTrue(BackupDrain::explainsBacklog(30, $this->at2('2026-09-18 04:49:59')));
+        $this->assertFalse(BackupDrain::explainsBacklog(30, $this->at2('2026-09-18 04:50:00')));
+    }
+
+    public function test_explains_nothing_when_the_drain_is_off(): void
     {
         $this->configure(['enabled' => false]);
 
-        $this->assertFalse(BackupDrain::heldOffWithin(60, Carbon::parse('2026-09-18 04:00:00', config('app.timezone'))));
+        $this->assertFalse(BackupDrain::explainsBacklog(10, $this->at2('2026-09-18 04:10:00')));
     }
 
     public function test_applying_twice_does_not_double_up(): void

@@ -109,8 +109,11 @@ and leaving that to a config entry would be a way to stop backups silently. The 
 heartbeat and `monitor:scheduled-outcomes` are structural exemptions for a different
 reason: both carry Sentry Crons check-ins, and two consecutive misses raise an issue, so a
 45-minute hold would page every night about a scheduler that is fine. Their cursor-staleness
-checks (`BacklogCheck`) report *skipped* rather than a breach from the start of the window
-until one max-age after it closes, because a backlog then is the drain doing its job.
+checks (`BacklogCheck`) report *skipped* rather than a breach once the hold has lasted longer
+than the check's own maximum age, and for up to fifteen minutes after the window while the
+workers catch up, because a backlog then is the drain doing its job. A check whose maximum
+age is longer than the window, such as the 24-hour rippling backlog check, is never skipped:
+a 45-minute hold cannot explain a day-old row.
 `always_run` matches an artisan command name or, for a scheduled closure, its `->name()`.
 
 ### Taking the backup from Laravel
