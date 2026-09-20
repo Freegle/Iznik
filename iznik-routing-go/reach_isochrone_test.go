@@ -26,38 +26,6 @@ func TestEngineReachedNodesMatchesFlatIsochrone(t *testing.T) {
 	compareReached(t, flat.ReachedNodes, engineReached, secs, "point")
 }
 
-func TestEngineMultiSourceMatchesFlat(t *testing.T) {
-	if testing.Short() {
-		t.Skip("short mode")
-	}
-	g, eng := buildBristolEngine(t)
-
-	// A handful of junction seeds spread around Bristol, as a group boundary
-	// would produce.
-	coords := [][2]float64{
-		{51.4545, -2.5879}, {51.47, -2.60}, {51.44, -2.55}, {51.46, -2.62},
-	}
-	seeds := make([]NodeID, 0, len(coords))
-	for _, c := range coords {
-		if v := nearestDriveNode(g, c[0], c[1]); v != noNode {
-			seeds = append(seeds, v)
-		}
-	}
-	if len(seeds) < 3 {
-		t.Fatalf("only %d seeds snapped", len(seeds))
-	}
-	const secs = float32(10 * 60)
-
-	flat := multiSourceIsochrone(g, seeds, secs)
-
-	prev := reachEngine()
-	setReachLive(eng)
-	defer func() { setReachLive(prev) }()
-	engineIso := engineOrFlatMultiSource(g, seeds, secs)
-
-	compareReached(t, flat.ReachedNodes, engineIso.ReachedNodes, secs, "multi")
-}
-
 func TestEngineFairnessMatchesFlat(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short mode")

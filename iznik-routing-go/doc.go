@@ -178,7 +178,7 @@ package main
 //     type: string
 //   + name: polygons
 //     in: query
-//     description: Set to 0 to omit the per-tick polygon geometry (slim form for the batch; each tick keeps drive_min, cumulative_users and reachable_group_ids)
+//     description: Set to 0 to omit the per-tick polygon geometry (slim form for the batch; each tick keeps drive_min and cumulative_users)
 //     required: false
 //     type: string
 //
@@ -260,32 +260,6 @@ package main
 //     description: Whether to group results by poster (true/false)
 //     required: false
 //     type: boolean
-//
-// Responses:
-//
-//	200: routingGenericResponse
-//	400: routingErrorResponse
-
-// swagger:route GET /v1/groups/nearby routing getNearbyGroups
-//
-// Nearby groups
-//
-// Returns a GeoJSON FeatureCollection of freegle groups whose area overlaps
-// with or is near the given lat/lng point.
-//
-// Parameters:
-//   + name: lat
-//     in: query
-//     description: Latitude of query point
-//     required: true
-//     type: number
-//     format: double
-//   + name: lng
-//     in: query
-//     description: Longitude of query point
-//     required: true
-//     type: number
-//     format: double
 //
 // Responses:
 //

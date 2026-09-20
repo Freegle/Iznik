@@ -6,25 +6,21 @@ import (
 	"testing"
 )
 
-// The batch requests polygons=0: each tick then carries only drive_min,
-// cumulative_users and reachable_group_ids - the polygon key is omitted entirely,
-// keeping the response (and what the batch stores) to bytes per tick instead of a
-// ~20k-vertex polygon per tick.
+// The batch requests polygons=0: each tick then carries only drive_min and
+// cumulative_users - the polygon key is omitted entirely, keeping the response
+// (and what the batch stores) to bytes per tick instead of a ~20k-vertex
+// polygon per tick.
 func TestRippleScheduleEntry_PolygonOmittedWhenSlim(t *testing.T) {
 	b, err := json.Marshal(rippleScheduleEntry{
-		Tick:              1,
-		DriveMin:          12.5,
-		CumulativeUsers:   100,
-		ReachableGroupIDs: []int64{21656},
+		Tick:            1,
+		DriveMin:        12.5,
+		CumulativeUsers: 100,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(b), `"polygon"`) {
 		t.Errorf("slim tick entry must omit the polygon key: %s", b)
-	}
-	if !strings.Contains(string(b), `"reachable_group_ids":[21656]`) {
-		t.Errorf("slim tick entry must keep reachable_group_ids: %s", b)
 	}
 }
 

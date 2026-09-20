@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"testing"
-	"time"
 )
 
 // The stored-label membership endpoint must agree with the engine's own live
@@ -97,10 +96,9 @@ func TestReachEvalVerdicts(t *testing.T) {
 }
 
 // The extended arms of the endpoint: budget "max" evaluates at the label's own
-// full budget (first-reply targeting), a rejected group's area forces "out"
-// whatever the label says (the durable record of a per-group retraction), and
-// discover surfaces label-admitted posts the caller's candidate list missed -
-// but only the admitted ones, and never ids the caller already asked about.
+// full budget (first-reply targeting), and discover surfaces label-admitted
+// posts the caller's candidate list missed - but only the admitted ones, and
+// never ids the caller already asked about.
 func TestReachEvalMaxRejectedDiscover(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short mode")
@@ -122,17 +120,12 @@ func TestReachEvalMaxRejectedDiscover(t *testing.T) {
 			switch id {
 			case 1: // tick 1: 5-minute current budget - "out" today, "in" at max
 				out = append(out, evalRow{msgid: 1, blob: blob, tick: 1, maxMin: 30, schedule: schedule})
-			case 2: // full budget, but the member sits in a rejected group's area
-				out = append(out, evalRow{msgid: 2, blob: blob, tick: 2, maxMin: 30, schedule: schedule, rejected: "[99]"})
 			case 6: // discover: label admits the member
 				out = append(out, evalRow{msgid: 6, blob: blob, tick: 2, maxMin: 30, schedule: schedule})
 			case 7: // discover: label does NOT admit at the current budget
 				out = append(out, evalRow{msgid: 7, blob: blob, tick: 1, maxMin: 30, schedule: schedule})
 			case 8: // discover: admitted by its label but FROZEN (held)
 				out = append(out, evalRow{msgid: 8, blob: blob, tick: 2, maxMin: 30, schedule: schedule, held: true})
-			case 9: // beyond the current budget, but the member stands in the
-				// post's ORIGIN group's area, which the stored reach unions in
-				out = append(out, evalRow{msgid: 9, blob: blob, tick: 1, maxMin: 30, schedule: schedule, originGid: 55})
 			}
 		}
 		return out, nil
@@ -177,26 +170,6 @@ func TestReachEvalMaxRejectedDiscover(t *testing.T) {
 	}
 	resetReachEvalForTest()
 
-	// Rejected group: seed the area cache with a box around the member, so
-	// msgid 2 is "out" despite its label admitting the point.
-	groupAreaMu.Lock()
-	groupAreaCache[99] = groupAreaEntry{
-		rings: [][][2]float64{{
-			{memberLng - 0.01, memberLat - 0.01}, {memberLng + 0.01, memberLat - 0.01},
-			{memberLng + 0.01, memberLat + 0.01}, {memberLng - 0.01, memberLat + 0.01},
-			{memberLng - 0.01, memberLat - 0.01},
-		}},
-		expires: time.Now().Add(time.Hour),
-	}
-	groupAreaMu.Unlock()
-	got, _ = call(map[string]any{
-		"lat": memberLat, "lng": memberLng, "msgids": []uint64{2},
-	})
-	if got[2] != "out" {
-		t.Fatalf("rejected-area msgid 2: got %q want out", got[2])
-	}
-	resetReachEvalForTest()
-
 	// Discover: the leaf loader offers 1 (already asked), 6 (admitted),
 	// 7 (label says out at its current budget) and 8 (admitted but held -
 	// frozen posts are hidden on every surface and must not be resurrected).
@@ -229,37 +202,6 @@ func TestReachEvalMaxRejectedDiscover(t *testing.T) {
 	}
 	resetReachEvalForTest()
 
-	// Origin-group union: out at the current budget, but flagged so callers
-	// let the cell grid (which holds the union) decide.
-	groupAreaMu.Lock()
-	groupAreaCache[55] = groupAreaEntry{
-		rings: [][][2]float64{{
-			{memberLng - 0.01, memberLat - 0.01}, {memberLng + 0.01, memberLat - 0.01},
-			{memberLng + 0.01, memberLat + 0.01}, {memberLng - 0.01, memberLat + 0.01},
-			{memberLng - 0.01, memberLat - 0.01},
-		}},
-		expires: time.Now().Add(time.Hour),
-	}
-	groupAreaMu.Unlock()
-	app := newApp(g, "", false)
-	b, _ := json.Marshal(map[string]any{"lat": memberLat, "lng": memberLng, "msgids": []uint64{9}})
-	req := httptest.NewRequest("POST", "/v1/reach-eval", bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := app.Test(req, 60000)
-	if err != nil || resp.StatusCode != 200 {
-		t.Fatalf("origin-area call: err=%v status=%v", err, resp.StatusCode)
-	}
-	var parsedOrigin struct {
-		Results []reachEvalResult `json:"results"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&parsedOrigin); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(parsedOrigin.Results) != 1 || parsedOrigin.Results[0].Verdict != "out" || !parsedOrigin.Results[0].OriginArea {
-		t.Fatalf("origin-area msgid 9: got %+v want out+origin_area", parsedOrigin.Results)
-	}
-	resetReachEvalForTest()
-
 	// A member point that does not snap to the road network degrades to
 	// all-nolabels (200), never a 4xx - a 4xx would trip the callers' shared
 	// routing breaker on one member's ordinary location.
@@ -269,7 +211,7 @@ func TestReachEvalMaxRejectedDiscover(t *testing.T) {
 	if got[1] != "nolabels" || len(disc) != 0 {
 		t.Fatalf("ocean point: got %v disc %v want nolabels/none", got, disc)
 	}
-	fmt.Println("max/rejected/discover/held/empty/origin/ocean ok")
+	fmt.Println("max/discover/held/empty/ocean ok")
 }
 
 // A region with more live posts than discover will evaluate must lose its OLDEST
@@ -344,43 +286,6 @@ func TestReachEvalDiscoverNewestFirstBeyondCap(t *testing.T) {
 	for _, old := range []uint64{1, 2, 3} {
 		if got[old] {
 			t.Fatalf("oldest post %d discovered ahead of a newer one: %v", old, got)
-		}
-	}
-}
-
-// POLYGON and MULTIPOLYGON group areas both subtract, including even-odd
-// holes - a MULTIPOLYGON that silently parsed to nothing would let a
-// moderator's per-group retraction leak.
-func TestWktAreaRings(t *testing.T) {
-	poly, err := wktAreaRings("POLYGON((0 0, 4 0, 4 4, 0 4, 0 0),(1 1, 3 1, 3 3, 1 3, 1 1))")
-	if err != nil || len(poly) != 2 {
-		t.Fatalf("polygon: rings=%d err=%v", len(poly), err)
-	}
-	multi, err := wktAreaRings("MULTIPOLYGON(((0 0, 4 0, 4 4, 0 4, 0 0),(1 1, 3 1, 3 3, 1 3, 1 1)),((10 10, 12 10, 12 12, 10 12, 10 10)))")
-	if err != nil || len(multi) != 3 {
-		t.Fatalf("multipolygon: rings=%d err=%v", len(multi), err)
-	}
-	evenOdd := func(rings [][][2]float64, lng, lat float64) bool {
-		n := 0
-		for _, r := range rings {
-			if pointInRing(lng, lat, r) {
-				n++
-			}
-		}
-		return n%2 == 1
-	}
-	cases := []struct {
-		lng, lat float64
-		want     bool
-	}{
-		{0.5, 0.5, true}, // first part, outside the hole
-		{2, 2, false},    // inside the hole
-		{11, 11, true},   // second part
-		{7, 7, false},    // between the parts
-	}
-	for _, c := range cases {
-		if got := evenOdd(multi, c.lng, c.lat); got != c.want {
-			t.Fatalf("(%v,%v): got %v want %v", c.lng, c.lat, got, c.want)
 		}
 	}
 }

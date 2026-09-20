@@ -32,7 +32,7 @@ type Replier struct {
 	Lat       float64 `json:"lat"`
 	Lng       float64 `json:"lng"`
 	ReplyTime string  `json:"reply_time"`
-	// Email-frequency setting on the membership for the post's group.
+	// Email-frequency setting on the user's account.
 	// -1 = immediate, 0 = off (?), 1..24 = digest hours.  Most users are 24
 	// (daily digest) so apparent "lead time" includes their digest wait;
 	// "true" attention cost is best measured on immediate-only repliers.
@@ -215,20 +215,17 @@ func main() {
 			ph[i] = "?"
 			args[i] = id
 		}
-		// Join replier→approxloc for location AND replier→memberships
-		// (via the post's group) for the email-frequency setting.  The
-		// post's group is messages_groups.groupid.
+		// Join replier→approxloc for location and replier→users for the
+		// email-frequency setting.
 		q3 := `SELECT cm.refmsgid,
 		              cm.userid,
 		              DATE_FORMAT(cm.date, '%Y-%m-%d %H:%i:%s') AS reply_time,
 		              ual.lat,
 		              ual.lng,
-		              m.emailfrequency
+		              u.emailfrequency
 		         FROM chat_messages cm
 		         LEFT JOIN users_approxlocs ual ON ual.userid = cm.userid
-		         LEFT JOIN messages_groups mg ON mg.msgid = cm.refmsgid
-		         LEFT JOIN memberships m
-		           ON m.userid = cm.userid AND m.groupid = mg.groupid
+		         LEFT JOIN users u ON u.id = cm.userid
 		         WHERE cm.refmsgid IN (` + strings.Join(ph, ",") + `)
 		           AND cm.type = 'Interested'
 		           AND cm.reviewrejected = 0

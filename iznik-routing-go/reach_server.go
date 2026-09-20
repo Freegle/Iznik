@@ -404,72 +404,7 @@ func handleReachLabels() fiber.Handler {
 			"fp":      fmt.Sprintf("%d", e.partFP),
 			"ms":      float64(time.Since(start).Microseconds()) / 1000,
 		}
-		// With the post's msgid we can also answer the origin-group union
-		// road-natively (reach_union.go): the smallest budget at which this
-		// label covers 90% of the origin group's road nodes, and the
-		// partition regions the group's area occupies (merged into the
-		// stored leaves so union-admitted members discover the post).
-		if msgid := uint64(c.QueryInt("msgid")); msgid != 0 {
-			secs, unionLeaves := unionForMsgid(e, lbl, msgid)
-			resp["origin_union_secs"] = secs
-			resp["union_leaves"] = unionLeaves
-		}
 		return c.JSON(resp)
-	}
-}
-
-// unionForMsgid resolves the post's origin group and computes the union
-// threshold + area regions for one label. unionNever when the group has no
-// area, no road nodes, or the label never covers it.
-func unionForMsgid(e *ReachEngine, lbl *ReachLabels, msgid uint64) (float32, []int32) {
-	gid := originGroupForMsgidFn(msgid)
-	if gid == 0 {
-		return unionNever, []int32{}
-	}
-	rings := groupAreaRings(gid)
-	if len(rings) == 0 {
-		return unionNever, []int32{}
-	}
-	secs, leaves := unionSecsForLabel(e, lbl, rings)
-	if leaves == nil {
-		leaves = []int32{}
-	}
-	return secs, leaves
-}
-
-// handleReachUnion handles POST /v1/reach-union: the backfill face of the
-// union computation, for posts whose labels are ALREADY stored - decode the
-// blob, compute origin_union_secs + union leaves, no label refetch.
-func handleReachUnion() fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		e := reachEngine()
-		if e == nil {
-			return fiber.NewError(fiber.StatusNotImplemented, "reach engine not configured (REACH_DIR)")
-		}
-		var req struct {
-			Labels string `json:"labels"`
-			Msgid  uint64 `json:"msgid"`
-		}
-		if err := c.BodyParser(&req); err != nil || req.Labels == "" || req.Msgid == 0 {
-			return fiber.NewError(fiber.StatusBadRequest, "labels (base64) and msgid required")
-		}
-		raw, err := base64.StdEncoding.DecodeString(req.Labels)
-		if err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "labels not base64")
-		}
-		lbl, eng, err := decodeLabelsAnyBuild(raw)
-		if err != nil {
-			return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-		}
-		secs, leaves := unionForMsgid(eng, lbl, req.Msgid)
-		if leaves == nil {
-			leaves = []int32{}
-		}
-		return c.JSON(fiber.Map{
-			"origin_union_secs": secs,
-			"union_leaves":      leaves,
-			"fp":                fmt.Sprintf("%d", eng.partFP),
-		})
 	}
 }
 
@@ -782,53 +717,6 @@ func handleBlurBatch(g *Graph) fiber.Handler {
 	}
 }
 
-// engineGroupProximity is groupProximity answered from the reach engine when
-// it is live: two label queries replace two bounded full-graph sweeps.
-// Returns handled=false to fall through to the sweep when the engine is off.
-func engineGroupProximity(lat, lng float64, seeds []NodeID, maxSecs float32) (ProxPoint, ProxPoint, bool, bool) {
-	e := reachEngine()
-	if e == nil || len(seeds) == 0 {
-		return ProxPoint{}, ProxPoint{}, false, false
-	}
-
-	// P: the group point with the smallest road time from the offer.
-	lbl := e.QueryLabelsCached(lat, lng, maxSecs)
-	pNode := noNode
-	var pCost float32
-	for _, s := range seeds {
-		if c := e.ArrivalAtBaseNode(lbl, s); c <= maxSecs {
-			if pNode == noNode || c < pCost {
-				pNode, pCost = s, c
-			}
-		}
-	}
-	if pNode == noNode {
-		return ProxPoint{}, ProxPoint{}, false, true // offer can't reach the group
-	}
-	closest := ProxPoint{
-		Lat: float64(e.G.Nodes[pNode].Lat), Lng: float64(e.G.Nodes[pNode].Lng),
-		DriveMin: float64(pCost) / 60,
-	}
-
-	// Q: the group point with the largest road time FROM P.
-	lblP := e.QueryLabelsCached(closest.Lat, closest.Lng, maxSecs)
-	qNode := noNode
-	var qCost float32 = -1
-	for _, s := range seeds {
-		if c := e.ArrivalAtBaseNode(lblP, s); c <= maxSecs && c > qCost {
-			qNode, qCost = s, c
-		}
-	}
-	if qNode == noNode {
-		return ProxPoint{}, ProxPoint{}, false, true
-	}
-	furthest := ProxPoint{
-		Lat: float64(e.G.Nodes[qNode].Lat), Lng: float64(e.G.Nodes[qNode].Lng),
-		DriveMin: float64(qCost) / 60,
-	}
-	return closest, furthest, true, true
-}
-
 // handleLeaf answers which partition region(s) a point belongs to: one leaf
 // for a junction, one or two for a mid-lane point (its lane's two ends can
 // sit in different regions across a cut). -1 entries are dropped. Used to
@@ -892,43 +780,4 @@ func engineOrFlatIsochrone(g *Graph, lat, lng float64, secs float32) IsochroneRe
 		}
 	}
 	return Isochrone(g, lat, lng, secs)
-}
-
-// engineOrFlatMultiSource is the group-boundary form: one label query per
-// seed, min-merged at the LABEL level (a few KB each), then one expansion -
-// instead of one full-graph multi-source sweep.
-func engineOrFlatMultiSource(g *Graph, seeds []NodeID, secs float32) IsochroneResult {
-	e := reachEngine()
-	if e == nil || len(seeds) == 0 {
-		return multiSourceIsochrone(g, seeds, secs)
-	}
-	var merged *ReachLabels
-	type chainSeed struct {
-		node NodeID
-		base float32
-	}
-	var chainSeeds []chainSeed
-	seeded := false
-	for _, s := range seeds {
-		if s != noNode {
-			seeded = true
-		}
-		lbl := e.QueryLabelsFromNode(s, secs)
-		// The merge collapses per-seed origin-chain info, so remember each
-		// mid-chain seed for the along-chain refinement after expansion.
-		if lbl.originChain != 0 {
-			chainSeeds = append(chainSeeds, chainSeed{lbl.originChain, lbl.seedBase})
-		}
-		if merged == nil {
-			merged = lbl
-		} else {
-			MergeLabels(merged, lbl)
-		}
-	}
-	merged.originChain = 0 // per-seed refinement below covers them all
-	reached := e.ReachedNodes(merged, secs)
-	for _, cs := range chainSeeds {
-		e.refineOriginChain(reached, cs.node, cs.base, secs)
-	}
-	return IsochroneResult{ReachedNodes: reached, OriginFound: seeded}
 }

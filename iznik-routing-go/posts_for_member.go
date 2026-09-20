@@ -101,8 +101,7 @@ func handlePostsForMember(g *Graph, spatialURL string) fiber.Handler {
 			       msgtype,
 			       arrival,
 			       successful,
-			       promised,
-			       COALESCE(groupid, 0)
+			       promised
 			  FROM messages_spatial
 			 WHERE arrival BETWEEN ? AND ?
 			   AND msgtype IN ('Offer','Wanted')
@@ -124,13 +123,12 @@ func handlePostsForMember(g *Graph, spatialURL string) fiber.Handler {
 			Arrival    time.Time `json:"arrival"`
 			Successful bool      `json:"successful"`
 			Promised   bool      `json:"promised"`
-			GroupID    int64     `json:"groupid"`
 		}
 		out := make([]post, 0, 64)
 		for rows.Next() {
 			var p post
 			if err := rows.Scan(&p.MsgID, &p.Lng, &p.Lat, &p.MsgType,
-				&p.Arrival, &p.Successful, &p.Promised, &p.GroupID); err != nil {
+				&p.Arrival, &p.Successful, &p.Promised); err != nil {
 				continue
 			}
 			out = append(out, p)

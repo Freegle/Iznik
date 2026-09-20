@@ -197,10 +197,8 @@ func handleFairness(g *Graph) fiber.Handler {
 }
 
 // handleCatchment handles GET /v1/catchment?lat=&lng=&minutes=&mode=&friction=1
-// Returns the inbound catchment polygon for a group: the area from which posts would ripple
-// far enough to reach it — seeded from the group's whole boundary (via groupid) so corridor
-// reach into the group's edges is captured (a centroid-only seed misses e.g. an M62 offer
-// clipping HullFreegle's western strip).
+// Returns the inbound catchment polygon for a point: the area from which posts would ripple
+// far enough to reach it.
 func handleCatchment(g *Graph) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		minutes, _ := strconv.ParseFloat(c.Query("minutes", "30"), 64)
@@ -209,26 +207,9 @@ func handleCatchment(g *Graph) fiber.Handler {
 		}
 		secs := float32(minutes * 60)
 
-		if gidStr := c.Query("groupid"); gidStr != "" {
-			gid, err := strconv.ParseInt(gidStr, 10, 64)
-			if err != nil {
-				return fiber.NewError(fiber.StatusBadRequest, "invalid groupid")
-			}
-			seeds, ok := groupSeedNodes(g, gid)
-			if !ok {
-				return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
-			}
-			iso := engineOrFlatMultiSource(g, seeds, secs)
-			poly := IsochronePolygon(g, iso.ReachedNodes, NetworkResolution(g, iso.ReachedNodes))
-			// Drive-time bands (heatmap): how rapidly a post from each area would ripple in.
-			bands := catchmentBands(g, iso, secs, 6)
-			return c.JSON(fiber.Map{"catchment": poly, "bands": bands, "seeds": len(seeds)})
-		}
-
-		// Point form (ad-hoc): catchment of a single location.
 		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
 		if err != nil || !validLat(lat) {
-			return fiber.NewError(fiber.StatusBadRequest, "lat or groupid required")
+			return fiber.NewError(fiber.StatusBadRequest, "lat required")
 		}
 		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
 		if err != nil || !validLng(lng) {
@@ -239,8 +220,8 @@ func handleCatchment(g *Graph) fiber.Handler {
 		// coarse=1 asks for the region-scale form: same reach, drawn on a grid sized to
 		// a fixed cell budget rather than to the road network, so the cost stops growing
 		// with the area (see catchment_coarse.go). Ripple expansion asks for it because
-		// the three things it does with the answer - group intersection, sandwich bounds,
-		// origin-group union - cannot see the difference, and it walks every post up a
+		// the things it does with the answer - sandwich bounds and reach comparisons -
+		// cannot see the difference, and it walks every post up a
 		// schedule of ever-larger budgets. An older server ignores the parameter and
 		// returns the exact form, which is a slower right answer rather than a wrong one.
 		var (
@@ -255,8 +236,7 @@ func handleCatchment(g *Graph) fiber.Handler {
 			poly = IsochronePolygon(g, iso.ReachedNodes, res)
 			// Sandwich bounds for the reach containment queries (see bounds.go): derived on
 			// the same grid as the exact polygon, so the superset/subset guarantees hold by
-			// construction. Shipped only on the point form — it is what materialises
-			// rippling_reach tick polygons; the groupid form is a display view.
+			// construction. This is what materialises rippling_reach tick polygons.
 			bounds = IsochroneBounds(g, iso.ReachedNodes, res)
 		}
 
@@ -322,9 +302,9 @@ func handleDriveTime(g *Graph) fiber.Handler {
 			return fiber.NewError(fiber.StatusBadRequest, "tolng required")
 		}
 
-		// Bounded like every other search here. The ceiling is 120 to match
-		// handleGroupProximity; callers pass the post's own final tick budget, which is
-		// well under that, and the cost scales with it.
+		// Bounded like every other search here. The ceiling is 120; callers pass
+		// the post's own final tick budget, which is well under that, and the
+		// cost scales with it.
 		minutes, _ := strconv.ParseFloat(c.Query("max_minutes", "60"), 64)
 		if minutes <= 0 || minutes > 120 {
 			minutes = 60
@@ -355,92 +335,6 @@ func handleDriveTime(g *Graph) fiber.Handler {
 		return c.JSON(fiber.Map{
 			"reachable": true,
 			"drive_min": float64(cost) / 60,
-		})
-	}
-}
-
-// handleGroupExtent returns the group's own road "diameter": the widest road drive-time between
-// two points inside the group. It sets a yardstick on the catchment view — a post rippling in
-// from no further away than the group already spans internally is unremarkable.
-func handleGroupExtent(g *Graph) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		gid, err := strconv.ParseInt(c.Query("groupid"), 10, 64)
-		if err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "groupid required")
-		}
-		minutes, _ := strconv.ParseFloat(c.Query("max_minutes", "240"), 64)
-		if minutes <= 0 || minutes > 480 {
-			minutes = 240
-		}
-
-		seeds, okS := groupSeedNodes(g, gid)
-		if !okS {
-			return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
-		}
-		from, to, milesBetween, ok := groupDiameter(g, seeds, float32(minutes*60))
-		if !ok {
-			return c.JSON(fiber.Map{"reachable": false})
-		}
-
-		// Reverse-geocode both endpoints. Best-effort: on any failure the postcode/place fields
-		// are simply absent (omitempty) — the core reachable/minutes/miles response is unaffected.
-		db := ensureGroupsDB()
-		from.Postcode, from.Place = resolvePlace(db, from.Lat, from.Lng)
-		to.Postcode, to.Place = resolvePlace(db, to.Lat, to.Lng)
-
-		return c.JSON(fiber.Map{
-			"reachable": true,
-			"from":      from,
-			"to":        to,
-			"minutes":   to.DriveMin,
-			"miles":     milesBetween,
-		})
-	}
-}
-
-// handleGroupProximity handles GET /v1/group-proximity?groupid=&lat=&lng=&mode=&max_minutes=
-// For an offer at (lat,lng) rippling into groupid, returns the nearest in-group point P and the
-// in-group point furthest FROM P (Q), each with road drive-time, plus quicker = (offer→P < P→Q).
-// Backs the moderator "this post is quicker to get to for Freeglers in {P} than {P} is to {Q}"
-// line, which is shown only when quicker is true.
-func handleGroupProximity(g *Graph) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
-		if err != nil || !validLat(lat) {
-			return fiber.NewError(fiber.StatusBadRequest, "lat required")
-		}
-		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
-		if err != nil || !validLng(lng) {
-			return fiber.NewError(fiber.StatusBadRequest, "lng required")
-		}
-		gid, err := strconv.ParseInt(c.Query("groupid"), 10, 64)
-		if err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "groupid required")
-		}
-		minutes, _ := strconv.ParseFloat(c.Query("max_minutes", "120"), 64)
-		if minutes <= 0 || minutes > 240 {
-			minutes = 120
-		}
-
-		seeds, okS := groupSeedNodes(g, gid)
-		if !okS {
-			return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
-		}
-		// Reach-engine fast path (drive): two label queries instead of two
-		// bounded full-graph sweeps — this call backs the proximity-notes
-		// cron, whose sweeps were a measured ~12 CPU-hours/day standing tax.
-		closest, furthest, ok, handled := engineGroupProximity(lat, lng, seeds, float32(minutes*60))
-		if !handled {
-			closest, furthest, ok = groupProximity(g, lat, lng, seeds, float32(minutes*60))
-		}
-		if !ok {
-			return c.JSON(fiber.Map{"reachable": false})
-		}
-		return c.JSON(fiber.Map{
-			"reachable": true,
-			"closest":   closest,
-			"furthest":  furthest,
-			"quicker":   closest.DriveMin < furthest.DriveMin,
 		})
 	}
 }
@@ -627,13 +521,9 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	v1.Get("/quintile", handleQuintile(g))
 	v1.Post("/quintiles", handleQuintiles(g))
 	v1.Get("/catchment", gated(handleCatchment(g)))
-	v1.Get("/group-proximity", gated(handleGroupProximity(g)))
 	v1.Get("/drive-time", gated(handleDriveTime(g)))
-	v1.Get("/group-extent", gated(handleGroupExtent(g)))
-	v1.Get("/group-actives", handleGroupActives())
 	v1.Get("/nearby-freeglers", gated(handleNearbyFreeglers(g, spatialURL)))
 	v1.Get("/ripple-schedule", gated(handleRippleSchedule(g, spatialURL)))
-	v1.Get("/reachable-groups", gated(handleReachableGroups(g)))
 	v1.Post("/ripple-eval", gated(handleRippleEval(g, spatialURL)))
 	v1.Get("/posts-for-member", gated(handlePostsForMember(g, spatialURL)))
 	v1.Get("/digest-simulator", gated(handleDigestSimulator(g, spatialURL)))
@@ -641,14 +531,11 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	// graph computation (gated); arrival evaluation is table lookups (ungated).
 	v1.Get("/reach-labels", gated(handleReachLabels()))
 	v1.Post("/reach-arrival", handleReachArrival())
-	v1.Post("/reach-union", handleReachUnion())
 	v1.Post("/drive-metrics", gated(handleDriveMetrics()))
 	v1.Get("/blur", handleBlur(g))
 	v1.Post("/blur-batch", handleBlurBatch(g))
 	v1.Get("/leaf", handleLeaf())
 	v1.Post("/reach-eval", handleReachEval())
-	v1.Get("/groups/nearby", handleNearbyGroups())
-	v1.Get("/groups/list", handleGroupsList())
 
 	// Swagger UI (Redoc) — mirrors the v2 Go API pattern.
 	app.Get("/swagger", func(c *fiber.Ctx) error {

@@ -93,7 +93,7 @@ func TestExternalPort_RequiresAuth(t *testing.T) {
 		"/v1/isochrone?lat=51.4545&lng=-2.5879&minutes=5",
 		"/v1/fairness?lat=51.4545&lng=-2.5879&minutes=5&mode=drive&fairness=0.5",
 		"/v1/nearby-freeglers?lat=51.4545&lng=-2.5879",
-		"/v1/groups/nearby?lat=51.4545&lng=-2.5879",
+		"/v1/posts-for-member?lat=51.4545&lng=-2.5879",
 	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		resp, err := app.Test(req, 5000)
@@ -234,103 +234,6 @@ func TestIsochroneEndpoint_DefaultMinutes(t *testing.T) {
 	}
 	if resp.StatusCode != 200 {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
-	}
-}
-
-// TestNearbyGroups_NoDBReturnsEmptyCollection verifies that /v1/groups/nearby
-// returns a valid GeoJSON FeatureCollection (empty) when no MySQL is configured.
-func TestNearbyGroups_NoDBReturnsEmptyCollection(t *testing.T) {
-	// Clear MYSQL_HOST so ensureGroupsDB cannot reconnect even if groupsDB is nil.
-	t.Setenv("MYSQL_HOST", "")
-	groupsDB = nil // ensure no DB for this test
-	app := newInternalApp(t)
-	req := httptest.NewRequest(http.MethodGet, "/v1/groups/nearby?lat=51.75&lng=-1.25", nil)
-	resp, err := app.Test(req, 5000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != 200 {
-		t.Errorf("expected 200, got %d", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	var fc groupsCollection
-	if err := json.Unmarshal(body, &fc); err != nil {
-		t.Fatalf("invalid JSON: %v\nbody: %s", err, body)
-	}
-	if fc.Type != "FeatureCollection" {
-		t.Errorf("expected FeatureCollection, got %q", fc.Type)
-	}
-	if fc.Features == nil {
-		t.Error("features must be [] not null")
-	}
-}
-
-// TestGroupExtentEndpoint_UnknownGroup404 verifies /v1/group-extent 404s when the group can't be
-// seeded (here: no MySQL configured, so groupSeedNodes fails) — this is a DB-free HTTP-level
-// assertion, matching the existing pattern for this handler family, since seeding the group
-// normally needs the `groups` table which isn't available in this package's standalone go test.
-func TestGroupExtentEndpoint_UnknownGroup404(t *testing.T) {
-	t.Setenv("MYSQL_HOST", "")
-	groupsDB = nil
-	app := newInternalApp(t)
-	req := httptest.NewRequest(http.MethodGet, "/v1/group-extent?groupid=1", nil)
-	resp, err := app.Test(req, 5000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != 404 {
-		t.Errorf("expected 404, got %d", resp.StatusCode)
-	}
-}
-
-// TestGroupActives_NoDBReturns503 verifies /v1/group-actives degrades to 503 (not a
-// misleadingly-confident zero/floor response) when no MySQL is configured.
-func TestGroupActives_NoDBReturns503(t *testing.T) {
-	t.Setenv("MYSQL_HOST", "")
-	groupsDB = nil
-	app := newInternalApp(t)
-	req := httptest.NewRequest(http.MethodGet, "/v1/group-actives?groupid=123", nil)
-	resp, err := app.Test(req, 5000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != 503 {
-		t.Errorf("expected 503, got %d", resp.StatusCode)
-	}
-}
-
-func TestGroupActives_MissingGroupidReturns400(t *testing.T) {
-	app := newInternalApp(t)
-	req := httptest.NewRequest(http.MethodGet, "/v1/group-actives", nil)
-	resp, err := app.Test(req, 5000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != 400 {
-		t.Errorf("expected 400, got %d", resp.StatusCode)
-	}
-}
-
-// TestWktPolygonToCoords_DegreeCoords verifies that WKT coordinates in degree
-// range (as stored in the production polyindex) are returned as-is without
-// Mercator conversion.
-func TestWktPolygonToCoords_DegreeCoords(t *testing.T) {
-	// A simple polygon in WGS84 degrees stored as SRID 3857 data.
-	wkt := "POLYGON((-1.3 51.6, -1.1 51.6, -1.1 51.9, -1.3 51.9, -1.3 51.6))"
-	coords, err := wktPolygonToCoords(wkt)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(coords) == 0 || len(coords[0]) < 4 {
-		t.Fatalf("expected ring with ≥4 points, got %v", coords)
-	}
-	// First point should be (-1.3, 51.6) — degree range, not Mercator meters.
-	got := coords[0][0]
-	if got[0] < -180 || got[0] > 180 || got[1] < -90 || got[1] > 90 {
-		t.Errorf("point %v looks like Mercator meters, expected WGS84 degrees", got)
-	}
-	if got[0] != -1.3 || got[1] != 51.6 {
-		t.Errorf("expected [-1.3 51.6], got %v", got)
 	}
 }
 

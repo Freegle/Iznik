@@ -17,23 +17,19 @@ package main
 //
 // What it stores per post is exactly what ReachService::storeLabels writes, so
 // an apply is a straight replay:
-//   - the label blob            (rippling_reach.reach_labels)
-//   - origin_union_secs         (rippling_reach.origin_union_secs)
-//   - the merged leaf set       (rippling_reach_leaves), label leaves with the
-//     origin-group union leaves merged in, deduped, exactly as the handler's
-//     caller merges them
+//   - the label blob   (rippling_reach.reach_labels)
+//   - the leaf set     (rippling_reach_leaves), the label's own reached leaves
 //
 //   ./iznik-routing-go reach labels-export --dir /path/to/new/artifacts \
 //        --out /path/labels.bin [--limit N] [--workers N]
 //
 // File format (little-endian):
 //   magic  "FRLX"                     4 bytes
-//   version uint32 = 2                4
+//   version uint32 = 3                4
 //   partFP  uint64                    8   the partition these labels are for
 //   count   uint64                    8   number of records that follow
 //   records:
 //     msgid      uint64
-//     unionSecs  float32                  (-1 = union never activates)
 //     labelLen   uint32, label []byte
 //     leafCount  uint32, leaves []int32
 //
@@ -54,7 +50,7 @@ import (
 )
 
 const labelsExportMagic = "FRLX"
-const labelsExportVersion = uint32(2)
+const labelsExportVersion = uint32(3)
 
 type labelExportRow struct {
 	msgid    uint64
@@ -64,9 +60,8 @@ type labelExportRow struct {
 }
 
 type labelExportOut struct {
-	unionSecs float32
-	blob      []byte
-	leaves    []int32
+	blob   []byte
+	leaves []int32
 }
 
 func reachLabelsExportCmd(args []string) {
@@ -88,12 +83,11 @@ func reachLabelsExportCmd(args []string) {
 		log.Fatalf("labels-export: --dir or REACH_DIR required")
 	}
 
-	// The union needs the post's origin group and that group's area rings,
-	// both of which come from the shared pool that startServer would normally
-	// open. Read-only use here.
+	// Reading each post's coordinates and budget from rippling_reach needs the
+	// shared pool that startServer would normally open. Read-only use here.
 	initGroupsDB()
 	if groupsDB == nil {
-		log.Fatalf("labels-export: no database (MYSQL_HOST etc.) - the origin-group union cannot be computed")
+		log.Fatalf("labels-export: no database (MYSQL_HOST etc.) - rippling_reach cannot be read")
 	}
 
 	log.Printf("labels-export: loading engine from %s", artDir)
@@ -134,25 +128,11 @@ func reachLabelsExportCmd(args []string) {
 				for leaf := range lbl.Reached {
 					leaves = append(leaves, leaf)
 				}
-				// The origin-group union rides along, exactly as the backfill
-				// merges it: members the union admits must DISCOVER the post.
-				secs, unionLeaves := unionForMsgid(eng, lbl, r.msgid)
-				seen := make(map[int32]struct{}, len(leaves))
-				for _, l := range leaves {
-					seen[l] = struct{}{}
-				}
-				for _, l := range unionLeaves {
-					if _, dup := seen[l]; !dup {
-						seen[l] = struct{}{}
-						leaves = append(leaves, l)
-					}
-				}
 				sort.Slice(leaves, func(a, b int) bool { return leaves[a] < leaves[b] })
 
 				results[i] = labelExportOut{
-					unionSecs: secs,
-					blob:      eng.EncodeLabels(lbl),
-					leaves:    leaves,
+					blob:   eng.EncodeLabels(lbl),
+					leaves: leaves,
 				}
 
 				mu.Lock()
@@ -192,7 +172,6 @@ func reachLabelsExportCmd(args []string) {
 	for i, r := range rows {
 		res := results[i]
 		must(r.msgid)
-		must(res.unionSecs)
 		must(uint32(len(res.blob)))
 		if _, err := w.Write(res.blob); err != nil {
 			log.Fatalf("labels-export: write: %v", err)

@@ -341,19 +341,15 @@ func stepCurve(s float64, numTicks int, x float64) float64 {
 
 // rippleScheduleEntry is a single tick of the density-driven ripple schedule.
 // Polygon is a pointer so the slim form (polygons=0) omits the key entirely: the
-// batch needs only drive_min/cumulative_users/reachable_group_ids per tick, and a
-// ~20k-vertex polygon per tick is what made schedule calls slow (~7s of a 10.5s
-// London call) and stored schedules huge. The explorer keeps the default (with
-// polygons) for the animation.
+// batch needs only drive_min/cumulative_users per tick, and a ~20k-vertex polygon
+// per tick is what made schedule calls slow (~7s of a 10.5s London call) and
+// stored schedules huge. The explorer keeps the default (with polygons) for the
+// animation.
 type rippleScheduleEntry struct {
 	Tick            int             `json:"tick"`
 	DriveMin        float64         `json:"drive_min"`
 	CumulativeUsers int             `json:"cumulative_users"`
 	Polygon         *GeoJSONPolygon `json:"polygon,omitempty"`
-	// ReachableGroupIDs is the targeting decision AT THIS TICK: groups with >=1
-	// active in-polygon member road-reachable within this tick's drive-time.
-	// The explorer tints groups from this, so the display is the decision.
-	ReachableGroupIDs []int64 `json:"reachable_group_ids"`
 }
 
 // wantTickPolygons: only an explicit polygons=0 disables per-tick polygons, so
@@ -366,11 +362,6 @@ type rippleScheduleResponse struct {
 	TotalFreeglers int                   `json:"total_freeglers"`
 	MaxDriveMin    float64               `json:"max_drive_min"`
 	Schedule       []rippleScheduleEntry `json:"schedule"`
-	// ReachableGroupIDs is the set of groups containing >=1 road node reachable
-	// within the max budget - the water/toll-correct ripple-targeting signal
-	// (plan 2026-07-06). Present (non-null) when computed, so batch can tell it
-	// apart from an older server that omits the field. No omitempty on purpose.
-	ReachableGroupIDs []int64 `json:"reachable_group_ids"`
 	// OverflowRural is one ring per density-band ceiling, for members the audience cap shut
 	// out of a post they are within their own travel-time budget of. Present only when
 	// rural_access was requested AND the cap actually bound - see ruraloverflow.go. omitempty
@@ -585,24 +576,6 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 			return c.JSON(empty)
 		}
 
-		// Road-reachable ripple targeting: a group is reached iff at least one
-		// active member who lives inside the group's own polygon has a street
-		// node in the Dijkstra reached set (see snapMembers /
-		// groupIDsWithinSeconds). The snaps carry each member's drive-time, so
-		// the same decision is made per tick below - the explorer tints exactly
-		// what targeting decides. Empty (non-nil) if no group DB is configured,
-		// which the batch treats as "gate not available".
-		var memberSnaps []memberSnap
-		if db := ensureGroupsDB(); db != nil {
-			minLat, maxLat, minLng, maxLng := reachedBBox(g, iso.ReachedNodes)
-			if members, err := queryActiveMembersInBox(db, minLat, maxLat, minLng, maxLng); err == nil {
-				memberSnaps = snapMembers(g, iso.ReachedNodes, members)
-			} else {
-				log.Printf("ripple-schedule: active-member query failed: %v", err)
-			}
-		}
-		reachableGroups := groupIDsWithinSeconds(memberSnaps, maxSecs)
-
 		// --- Step 2: get candidate freeglers via spatial, by BOUNDING BOX ---
 		// The candidate polygon is deliberately just the reach's bbox, not the detailed
 		// boundary: Step 3 filters each candidate exactly (their street node must be in
@@ -717,11 +690,10 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 			}
 
 			schedule = append(schedule, rippleScheduleEntry{
-				Tick:              k,
-				DriveMin:          float64(driveSecs) / 60.0,
-				CumulativeUsers:   target,
-				Polygon:           tickPoly,
-				ReachableGroupIDs: groupIDsWithinSeconds(memberSnaps, driveSecs),
+				Tick:            k,
+				DriveMin:        float64(driveSecs) / 60.0,
+				CumulativeUsers: target,
+				Polygon:         tickPoly,
 			})
 		}
 
@@ -783,11 +755,10 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 
 		// Named schedResp, not resp: the within_coords call above already holds `resp`.
 		schedResp := rippleScheduleResponse{
-			TotalFreeglers:    total,
-			MaxDriveMin:       maxDriveMin,
-			Schedule:          schedule,
-			ReachableGroupIDs: reachableGroups,
-			OverflowRural:     overflowRural,
+			TotalFreeglers: total,
+			MaxDriveMin:    maxDriveMin,
+			Schedule:       schedule,
+			OverflowRural:  overflowRural,
 		}
 		if overflowFairness != nil {
 			schedResp.OverflowFairness = overflowFairness.Rings

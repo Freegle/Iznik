@@ -112,7 +112,7 @@ func TestBounds_IncludingNegativeOffsets(t *testing.T) {
 
 // The new size guard on the construction path. Decode has always refused an
 // absurd grid; until recently FromGeometry would happily allocate one, which
-// is reachable from /v1/groups/intersecting with a large group area.
+// is reachable with a large input polygon.
 func TestFromPolygonWKT_RefusesAnAbsurdlyLargeExtent(t *testing.T) {
 	// ~10 degrees square: at 0.0003 degrees a side that is over a billion
 	// cells, well past MaxCells.

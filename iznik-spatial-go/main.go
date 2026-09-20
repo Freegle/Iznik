@@ -42,7 +42,6 @@ func main() {
 		&MessagesDataset{},
 		&NewsfeedDataset{},
 		&UserApproxLocsDataset{},
-		&GroupsDataset{},
 		&JobsDataset{},
 		&PostcodesDataset{},
 		&ReachDataset{},
@@ -285,44 +284,6 @@ func main() {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(fiber.Map{"wkt": wkt, "geojson": json.RawMessage(gj)})
-	})
-
-	// POST /v1/groups/intersecting — encoded cell bytes in, the groups whose
-	// area shares at least one covered cell out, each flagged with whether
-	// the grid lies entirely WITHIN that group. The cell form of the
-	// ST_Intersects/ST_Within pair the rejection clip, the retraction pass
-	// and the crosspost count ask; answered here so the comparison happens on
-	// the same lattice as the reach itself.
-	api.Post("/v1/groups/intersecting", func(c *fiber.Ctx) error {
-		state, ok := srv.getDataset("groups")
-		if !ok {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
-		}
-		ds, ok := state.ds.(*GroupsDataset)
-		if !ok {
-			return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "dataset does not answer intersecting"})
-		}
-		cs, err := cellset.Decode(c.Body())
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
-		}
-
-		var rel []GroupCellRelation
-		err = state.withIndex(func(idx *Index) error {
-			var e error
-			rel, e = ds.IntersectingCells(idx, cs)
-			return e
-		})
-		if err == errIndexNotReady {
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
-		}
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
-		}
-		if rel == nil {
-			rel = []GroupCellRelation{}
-		}
-		return c.JSON(fiber.Map{"groups": rel})
 	})
 
 	// GET /v1/:dataset/knn	// GET /v1/:dataset/knn

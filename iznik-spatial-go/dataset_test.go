@@ -142,11 +142,11 @@ func TestMessagesDataset_Query(t *testing.T) {
 	items := []Item{
 		{
 			ExtID: 50, MinLng: 0.01, MaxLng: 0.01, MinLat: 51.50, MaxLat: 51.50,
-			Extra: map[string]any{"msgtype": "Offer", "groupid": int64(1), "promised": int64(0)},
+			Extra: map[string]any{"msgtype": "Offer", "promised": int64(0)},
 		},
 		{
 			ExtID: 51, MinLng: 1.00, MaxLng: 1.00, MinLat: 51.50, MaxLat: 51.50,
-			Extra: map[string]any{"msgtype": "Wanted", "groupid": int64(2), "promised": int64(0)},
+			Extra: map[string]any{"msgtype": "Wanted", "promised": int64(0)},
 		},
 	}
 	require.NoError(t, InsertItems(idx, items, nil))
@@ -206,12 +206,6 @@ func TestPostcodesDataset_Meta(t *testing.T) {
 
 func TestUserApproxLocsDataset_ApplyDeltaNotSupported(t *testing.T) {
 	ds := &UserApproxLocsDataset{}
-	err := ds.ApplyDelta(nil, nil, zeroTime)
-	assert.ErrorIs(t, err, ErrDeltaNotSupported)
-}
-
-func TestGroupsDataset_ApplyDeltaNotSupported(t *testing.T) {
-	ds := &GroupsDataset{}
 	err := ds.ApplyDelta(nil, nil, zeroTime)
 	assert.ErrorIs(t, err, ErrDeltaNotSupported)
 }

@@ -27,7 +27,7 @@ func (d *MessagesDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Tim
 		SELECT ms.msgid,
 		       ST_X(ms.point) AS lng,
 		       ST_Y(ms.point) AS lat,
-		       COALESCE(ms.msgtype, '') AS msgtype, ms.groupid,
+		       COALESCE(ms.msgtype, '') AS msgtype,
 		       CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END AS promised,
 		       ms.successful
 		FROM messages_spatial ms
@@ -44,9 +44,9 @@ func (d *MessagesDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Tim
 		var msgid int64
 		var lng, lat float64
 		var msgtype string
-		var groupid, promised int64
+		var promised int64
 		var successful int
-		if err := rows.Scan(&msgid, &lng, &lat, &msgtype, &groupid, &promised, &successful); err != nil {
+		if err := rows.Scan(&msgid, &lng, &lat, &msgtype, &promised, &successful); err != nil {
 			return fmt.Errorf("scan: %w", err)
 		}
 		if successful == 1 {
@@ -61,7 +61,7 @@ func (d *MessagesDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Tim
 				MaxLng: lng,
 				MinLat: lat,
 				MaxLat: lat,
-				Extra:  map[string]any{"msgtype": msgtype, "groupid": groupid, "promised": promised},
+				Extra:  map[string]any{"msgtype": msgtype, "promised": promised},
 			}
 			if err := InsertItems(idx, []Item{item}, nil); err != nil {
 				log.Printf("messages delta: upsert msgid=%d: %v", msgid, err)
@@ -104,7 +104,7 @@ func loadMessages(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 		SELECT ms.msgid,
 		       ST_X(ms.point) AS lng,
 		       ST_Y(ms.point) AS lat,
-		       COALESCE(ms.msgtype, '') AS msgtype, ms.groupid,
+		       COALESCE(ms.msgtype, '') AS msgtype,
 		       CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END AS promised
 		FROM messages_spatial ms
 		LEFT JOIN messages_promises mp ON mp.msgid = ms.msgid
@@ -122,8 +122,8 @@ func loadMessages(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 		var msgid int64
 		var lng, lat float64
 		var msgtype string
-		var groupid, promised int64
-		if err := rows.Scan(&msgid, &lng, &lat, &msgtype, &groupid, &promised); err != nil {
+		var promised int64
+		if err := rows.Scan(&msgid, &lng, &lat, &msgtype, &promised); err != nil {
 			return fmt.Errorf("scan: %w", err)
 		}
 		items = append(items, Item{
@@ -132,7 +132,7 @@ func loadMessages(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 			MaxLng: lng,
 			MinLat: lat,
 			MaxLat: lat,
-			Extra:  map[string]any{"msgtype": msgtype, "groupid": groupid, "promised": promised},
+			Extra:  map[string]any{"msgtype": msgtype, "promised": promised},
 		})
 	}
 	if err := rows.Err(); err != nil {

@@ -33,11 +33,6 @@ package main
 // is the operator saying out loud which partition they are staging; a file
 // for some other build is refused before a single row is written.
 //
-// origin_union_secs is in the file but is NOT written here: it lives in a
-// live-read column with no staging twin. It is a road time, not a region
-// number, so the old value stays valid across the switch; refreshing it is a
-// separate, unhurried step after cutover.
-//
 // One UPDATE per post, autocommit, paced by --sleep-ms: the Galera rule for
 // any bulk change to the 7 GB table. Leaves go in per-post chunks of 500, the
 // same shape ReachService::storeLabels uses on the live table. Idempotent: a
@@ -216,10 +211,8 @@ func reachLabelsApplyCmd(args []string) {
 			break
 		}
 		var msgid uint64
-		var unionSecs float32
 		var labelLen, leafCount uint32
 		read(&msgid)
-		read(&unionSecs)
 		read(&labelLen)
 		blob := make([]byte, labelLen)
 		if _, err := io.ReadFull(r, blob); err != nil {

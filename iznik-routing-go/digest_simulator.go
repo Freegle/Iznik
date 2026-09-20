@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
@@ -51,27 +50,6 @@ func digestDedupKey(fromuser int64, subject string, locationid int64) string {
 	return fmt.Sprintf("%d|%s|%s", fromuser, normalizeDigestSubject(subject), loc)
 }
 
-func appendUniqueInt64(s []int64, v int64) []int64 {
-	for _, x := range s {
-		if x == v {
-			return s
-		}
-	}
-	return append(s, v)
-}
-
-func appendUniqueStr(s []string, v string) []string {
-	if v == "" {
-		return s
-	}
-	for _, x := range s {
-		if x == v {
-			return s
-		}
-	}
-	return append(s, v)
-}
-
 // handleDigestSimulator models the Problem-2 selection algorithm.
 // Given a member at (lat, lng) and a set of weight knobs, it computes
 // which posts from the reachable pool would actually land in the
@@ -82,7 +60,6 @@ func appendUniqueStr(s []string, v string) []string {
 //   - closeness:  1 - drive_min / max_drive_min       (closer = higher)
 //   - freshness:  1 - age_h / window_h                (newer = higher)
 //   - budget:     exp(-engagement / budget_decay)     (fewer eyeballs = higher)
-//   - anchor:     1 if post.groupid in home_groups, else 0  (home-group bonus)
 //
 // Weights are all >= 0; weight 0 disables a signal.  After scoring, the
 // top `cap` posts are selected.  If `group_by_poster` is true, multiple
@@ -95,7 +72,7 @@ func appendUniqueStr(s []string, v string) []string {
 //
 // GET /v1/digest-simulator?lat=...&lng=...&max_minutes=30
 //
-//	&w_closeness=1.0&w_freshness=0.5&w_budget=1.0&w_anchor=0
+//	&w_closeness=1.0&w_freshness=0.5&w_budget=1.0
 //	&cap=50&group_by_poster=false
 func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -120,7 +97,6 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 		wClose := parseFloatQuery(c, "w_closeness", 1.0, 0, 10)
 		wFresh := parseFloatQuery(c, "w_freshness", 0.5, 0, 10)
 		wBudget := parseFloatQuery(c, "w_budget", 1.0, 0, 10)
-		wAnchor := parseFloatQuery(c, "w_anchor", 0, 0, 10)
 		// Default to the send's DIGEST_POST_CAP (65); the topCap clamp below also
 		// hard-limits to 65 so the preview never shows more than the member receives.
 		cap := int(parseFloatQuery(c, "cap", 65, 1, 1000))
@@ -152,37 +128,6 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 				JSON(fiber.Map{"error": "database not available"})
 		}
 
-		// Home-group identification: the four groups whose polygons cover
-		// the member's location, or failing that the four closest by
-		// centroid.  Four matches the doc's "4.5 average" figure.
-		homeGroups := map[int64]struct{}{}
-		homeGroupList := []fiber.Map{}
-		grows, err := db.Query(`
-			SELECT id, nameshort, ST_AsGeoJSON(polyindex)
-			  FROM `+"`groups`"+`
-			 WHERE ST_Contains(polyindex, ST_GeomFromText(?, 3857))
-			 LIMIT 8
-		`, "POINT("+strconv.FormatFloat(lng, 'f', 8, 64)+" "+strconv.FormatFloat(lat, 'f', 8, 64)+")")
-		if err == nil {
-			for grows.Next() {
-				var id int64
-				var name, polyJSON string
-				if err := grows.Scan(&id, &name, &polyJSON); err == nil {
-					homeGroups[id] = struct{}{}
-					// Parse the polygon JSON so the client gets it as an
-					// object rather than a string.
-					var polyObj any
-					_ = json.Unmarshal([]byte(polyJSON), &polyObj)
-					homeGroupList = append(homeGroupList, fiber.Map{
-						"id":      id,
-						"name":    name,
-						"polygon": polyObj,
-					})
-				}
-			}
-			grows.Close()
-		}
-
 		// Pull the reachable pool with engagement signals.  Limit to a
 		// safety ceiling; in dense cities we won't realistically need more
 		// than a few hundred to fill a digest cap of 100.
@@ -196,8 +141,6 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 			       ms.arrival,
 			       ms.successful,
 			       ms.promised,
-			       COALESCE(ms.groupid, 0)            AS groupid,
-			       COALESCE(g.nameshort, '')          AS groupname,
 			       COALESCE(m.fromuser, 0)            AS fromuser,
 			       COALESCE(m.subject, '')            AS subject,
 			       (SELECT COALESCE(SUM(ml.count), 0)
@@ -230,7 +173,6 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 			       COALESCE(m.textbody, '')           AS textbody
 			  FROM messages_spatial ms
 			  LEFT JOIN messages m ON m.id = ms.msgid
-			  LEFT JOIN `+"`groups`"+` g ON g.id = ms.groupid
 			 WHERE ms.arrival >= ?
 			   AND ms.msgtype IN ('Offer','Wanted')
 			   AND ST_Contains(ST_GeomFromText(?, 3857), ms.point)
@@ -252,30 +194,22 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 			Arrival          time.Time `json:"arrival"`
 			Successful       bool      `json:"successful"`
 			Promised         bool      `json:"promised"`
-			GroupID          int64     `json:"groupid"`
-			GroupName        string    `json:"groupname"`
 			FromUser         int64     `json:"fromuser"`
 			Views            int       `json:"views"`
 			Replies          int       `json:"replies"`
 			DriveMin         float64   `json:"drive_min"`
 			AgeH             float64   `json:"age_h"`
-			HomeGroup        bool      `json:"home_group"`
 			ThumbAttachID    int64     `json:"thumb_attachment_id"`
 			ThumbExternalUID string    `json:"thumb_externaluid"`
 			ScoreClose       float64   `json:"score_close"`
 			ScoreFresh       float64   `json:"score_fresh"`
 			ScoreBudg        float64   `json:"score_budget"`
-			ScoreAnch        float64   `json:"score_anchor"`
 			Score            float64   `json:"score"`
 			HasOutcome       bool      `json:"has_outcome"`
 			HasSuccess       bool      `json:"has_success"`
 			TnPostID         int64     `json:"tnpostid"`
 			LocationID       int64     `json:"-"`
 			TextBody         string    `json:"-"`
-			// Cross-post merge (dedup): the representative carries every group the
-			// item was posted to, mirroring the send's "Posted to: A, B, C".
-			PostedToGroups []int64  `json:"posted_to_groups,omitempty"`
-			PostedToNames  []string `json:"posted_to_names,omitempty"`
 		}
 		pool := make([]scored, 0, 128)     // available (!has_outcome) -> Top picks
 		completed := make([]scored, 0, 16) // has_success -> "came and went"
@@ -283,21 +217,17 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 		for rows.Next() {
 			var p scored
 			if err := rows.Scan(&p.MsgID, &p.Lng, &p.Lat, &p.MsgType,
-				&p.Arrival, &p.Successful, &p.Promised, &p.GroupID,
-				&p.GroupName, &p.FromUser, &p.Subject, &p.Views, &p.Replies,
+				&p.Arrival, &p.Successful, &p.Promised,
+				&p.FromUser, &p.Subject, &p.Views, &p.Replies,
 				&p.ThumbAttachID, &p.ThumbExternalUID,
 				&p.HasOutcome, &p.HasSuccess, &p.TnPostID, &p.LocationID, &p.TextBody); err != nil {
 				continue
 			}
-			_, isHome := homeGroups[p.GroupID]
 			// Section exactly like the real send (UnifiedDigestService::getPostsForUser):
 			//   available (!has_outcome)              -> Top picks (scored, deduped, capped 65)
 			//   has_success (Taken/Received)          -> "came and went" (deduped)
 			//   has_outcome && !has_success (withdrawn/expired) -> neither.
-			// The send's came-and-went is drawn from the member's own groups, so for
-			// the preview we keep only home-group completed posts (a cross-group
-			// completed post the member never saw is noise).
-			if p.HasOutcome && !(p.HasSuccess && isHome) {
+			if p.HasOutcome && !p.HasSuccess {
 				continue
 			}
 			// Drive-time to this post via nearest reached node.
@@ -312,15 +242,13 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 				p.DriveMin = maxMinutes
 			}
 			p.AgeH = now.Sub(p.Arrival).Hours()
-			p.HomeGroup = isHome
 
-			s := scoreDigestPost(p.DriveMin, p.AgeH, p.Views, p.Replies, p.HomeGroup,
-				digestSimWeights{Closeness: wClose, Freshness: wFresh, Budget: wBudget, Anchor: wAnchor},
+			s := scoreDigestPost(p.DriveMin, p.AgeH, p.Views, p.Replies,
+				digestSimWeights{Closeness: wClose, Freshness: wFresh, Budget: wBudget},
 				digestSimEnv{MaxMinutes: maxMinutes, WindowH: windowH, BudgetDecay: budgetDecay})
 			p.ScoreClose = s.Close
 			p.ScoreFresh = s.Fresh
 			p.ScoreBudg = s.Budget
-			p.ScoreAnch = s.Anchor
 			p.Score = s.Total
 			if p.HasSuccess {
 				completed = append(completed, p)
@@ -341,21 +269,17 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 			}
 			return normalizeDigestBody(a.TextBody) == normalizeDigestBody(b.TextBody)
 		}
-		// Collapse cross-posts (TN cross-posts + rippled copies) exactly like the
-		// real send (deduplicatePosts): same dedup key + matching body merges into
-		// the top-scoring representative, carrying every group ("Posted to: A,B,C").
+		// Collapse cross-posts (TN cross-posts) exactly like the real send
+		// (deduplicatePosts): same dedup key + matching body merges into the
+		// top-scoring representative.
 		dedupCrossPosts := func(in []scored) []scored {
 			out := make([]scored, 0, len(in))
 			idx := map[string]int{}
 			for _, p := range in {
 				key := digestDedupKey(p.FromUser, p.Subject, p.LocationID)
 				if ei, ok := idx[key]; ok && bodiesMatch(&out[ei], &p) {
-					out[ei].PostedToGroups = appendUniqueInt64(out[ei].PostedToGroups, p.GroupID)
-					out[ei].PostedToNames = appendUniqueStr(out[ei].PostedToNames, p.GroupName)
 					continue
 				}
-				p.PostedToGroups = appendUniqueInt64(nil, p.GroupID)
-				p.PostedToNames = appendUniqueStr(nil, p.GroupName)
 				out = append(out, p)
 				if _, ok := idx[key]; !ok {
 					idx[key] = len(out) - 1
@@ -380,19 +304,6 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 		selected := dedupedAvailable[:topCap]
 		deferred := dedupedAvailable[topCap:]
 
-		homeSelected := 0
-		homePool := 0
-		for _, p := range dedupedAvailable {
-			if p.HomeGroup {
-				homePool++
-			}
-		}
-		for _, p := range selected {
-			if p.HomeGroup {
-				homeSelected++
-			}
-		}
-
 		return c.JSON(fiber.Map{
 			"max_drive_min":       maxMinutes,
 			"window_hours":        windowH,
@@ -401,9 +312,6 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 			"selected_count":      len(selected),
 			"deferred_count":      len(deferred),
 			"came_and_went_count": len(cameAndWent),
-			"home_groups":         homeGroupList,
-			"home_selected":       homeSelected,
-			"home_pool":           homePool,
 			"top_picks":           selected,
 			"selected":            selected, // back-compat alias
 			"deferred":            deferred,
@@ -413,7 +321,6 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 				"closeness":    wClose,
 				"freshness":    wFresh,
 				"budget":       wBudget,
-				"anchor":       wAnchor,
 				"cap":          digestPostCap,
 				"group_poster": groupByPoster,
 				"window_hours": windowH,
@@ -447,7 +354,6 @@ type digestSimWeights struct {
 	Closeness float64
 	Freshness float64
 	Budget    float64
-	Anchor    float64
 }
 
 // digestSimEnv carries the bound-defining context (max drive, window
@@ -462,7 +368,7 @@ type digestSimEnv struct {
 // digestSimScores is what scoreDigestPost returns: each component's
 // contribution in [0, 1] plus their weighted sum.
 type digestSimScores struct {
-	Close, Fresh, Budget, Anchor, Total float64
+	Close, Fresh, Budget, Total float64
 }
 
 // scoreDigestPost computes the per-post score components used by the
@@ -472,7 +378,6 @@ type digestSimScores struct {
 //	close:  1 - drive_min / max_drive_min  (closer = higher; clamped ≥ 0)
 //	fresh:  1 - age_h / window_h           (newer  = higher; clamped ≥ 0)
 //	budget: exp(-engagement_rate / k)      (fewer eyeballs per hour = higher)
-//	anchor: 1 if homeGroup else 0
 //
 // engagement_rate is (views + 3*replies) / max(ageH, 1) — a per-hour
 // rate so an 18-h-old post with 1 view isn't unfairly penalised vs a
@@ -482,7 +387,7 @@ type digestSimScores struct {
 // budgetDecay is divided by 12 to match the existing tuning (the knob
 // is exposed in minutes-equivalent units; / 12 converts to the rate-
 // scale the exp() expects).
-func scoreDigestPost(driveMin, ageH float64, views, replies int, homeGroup bool,
+func scoreDigestPost(driveMin, ageH float64, views, replies int,
 	w digestSimWeights, env digestSimEnv) digestSimScores {
 
 	var s digestSimScores
@@ -504,11 +409,6 @@ func scoreDigestPost(driveMin, ageH float64, views, replies int, homeGroup bool,
 	engagement := float64(views+3*replies) / rateAgeH
 	s.Budget = math.Exp(-engagement / (env.BudgetDecay / 12))
 
-	if homeGroup {
-		s.Anchor = 1.0
-	}
-
-	s.Total = w.Closeness*s.Close + w.Freshness*s.Fresh +
-		w.Budget*s.Budget + w.Anchor*s.Anchor
+	s.Total = w.Closeness*s.Close + w.Freshness*s.Fresh + w.Budget*s.Budget
 	return s
 }

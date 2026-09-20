@@ -20,7 +20,7 @@ for its nearby-freegler queries.
 
 ## Datasets
 
-The index is rebuilt from MySQL and kept in sync. Eight datasets are served:
+The index is rebuilt from MySQL and kept in sync. Seven datasets are served:
 
 | Name | Geometry | Source table | Spatial column | Sync |
 |------|----------|--------------|----------------|------|
@@ -28,7 +28,6 @@ The index is rebuilt from MySQL and kept in sync. Eight datasets are served:
 | `messages` | Point | `messages_spatial` | `point` | incremental on `messages_spatial.modified`; nightly full rebuild |
 | `newsfeed` | Point | `newsfeed` | `position` | incremental on `newsfeed.modified`; nightly full rebuild |
 | `userapproxlocs` | Point | `users_approxlocs` | `position` | full rebuild every 15 min (no incremental) |
-| `groups` | Polygon | `groups` | `polyindex` | full rebuild every 15 min (no incremental) |
 | `jobs` | Polygon | `jobs` | `geometry` | incremental on `jobs.seenat`; nightly full rebuild |
 | `reach` | Cell grid | `rippling_reach` | `polygon_cells` (the legacy `polygon` while it still exists, per row) | incremental on `updated_at` every 2 min + reconcile; daily full rebuild. Answers `/containing`, not knn — **exactly** from a cell grid, so `partial` is only ever returned for a row still on the legacy geometry. **Labels-truth retirement**: a labelled row whose grid has drained (`reach_labels` set, `polygon_cells` NULL) is REMOVED from this index — containment for it is served by the routing server's label evaluation (the reach-eval discover arm) — and once the operator drops the grid columns the dataset serves empty |
 | `reachoverflow` | Cell grid | `rippling_reach` | `overflow_cells` JSON, one ring per lane (the legacy `overflow_bounds` while it still exists, per lane) | incremental on `updated_at` every 2 min + reconcile; daily full rebuild. Answers `/containing`, not knn. **Ids are packed**: `msgid << 4 \| lane code`, so one index answers a per-lane question — see `dataset_reachoverflow.go` |
@@ -136,7 +135,7 @@ schedules:
 - **Nightly full rebuild** of all datasets at **03:00 UTC**.
 - **Per-dataset delta sync** on each dataset's own interval — incremental for
   datasets with a "modified"/timestamp trigger; a periodic full rebuild (every
-  **15 min**) for the rebuild-only datasets (`userapproxlocs`, `groups`).
+  **15 min**) for the rebuild-only dataset (`userapproxlocs`).
 
 `last_sync` for each dataset is visible via `GET /v1/{dataset}/status`.
 

@@ -404,61 +404,6 @@ func TestBlurBatchMatchesSingle(t *testing.T) {
 	}
 }
 
-// TestGroupProximityEngineMatchesSweep: the engine path must agree with the
-// flat two-sweep implementation for the same offer + seed set. The flat path
-// prunes to a bounding box, so where they differ the engine must be finding a
-// strictly better (shorter) road — never a worse one.
-func TestGroupProximityEngineMatchesSweep(t *testing.T) {
-	if testing.Short() {
-		t.Skip("short mode")
-	}
-	g, eng := buildBristolEngine(t)
-	prev := reachEngine()
-	setReachLive(eng)
-	defer func() { setReachLive(prev) }()
-
-	// Synthetic "group": a spread of drive-snappable junctions east of centre.
-	var seeds []NodeID
-	for v := NodeID(1); v <= NodeID(g.NodeCount()) && len(seeds) < 120; v += 211 {
-		if eng.Ov.IdxOf(v) != 0 && (g.DriveSnappable == nil || g.DriveSnappable.Get(int(v))) {
-			nd := g.Nodes[v]
-			if nd.Lng > -2.58 && nd.Lat > 51.43 && nd.Lat < 51.49 {
-				seeds = append(seeds, v)
-			}
-		}
-	}
-	if len(seeds) < 25 {
-		t.Fatalf("degenerate seed set: %d", len(seeds))
-	}
-
-	for _, offer := range [][2]float64{{51.4545, -2.5879}, {51.4700, -2.6100}} {
-		maxSecs := float32(1800)
-		ec, ef, eok, handled := engineGroupProximity(offer[0], offer[1], seeds, maxSecs)
-		if !handled {
-			t.Fatal("engine path should handle drive mode")
-		}
-		fc, ff, fok := groupProximity(g, offer[0], offer[1], seeds, maxSecs)
-		if eok != fok {
-			t.Fatalf("reachable disagreement: engine %v sweep %v", eok, fok)
-		}
-		if !eok {
-			continue
-		}
-		if math.Abs(ec.DriveMin-fc.DriveMin) > 0.02 {
-			if ec.DriveMin > fc.DriveMin {
-				t.Fatalf("engine P %.3fmin worse than sweep %.3fmin", ec.DriveMin, fc.DriveMin)
-			}
-			t.Logf("engine found better P: %.3f vs %.3f (sweep bbox clipped)", ec.DriveMin, fc.DriveMin)
-		}
-		// Q is defined relative to P; only compare when P agreed.
-		if ec.Lat == fc.Lat && ec.Lng == fc.Lng {
-			if math.Abs(ef.DriveMin-ff.DriveMin) > 0.02 && ef.DriveMin < ff.DriveMin {
-				t.Fatalf("engine Q %.3fmin shorter than sweep %.3fmin: engine missed a farther point", ef.DriveMin, ff.DriveMin)
-			}
-		}
-	}
-}
-
 func TestLeafEndpointAndBudgetOverride(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short mode")

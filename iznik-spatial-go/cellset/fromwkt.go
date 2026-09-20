@@ -24,7 +24,7 @@ func FromPolygonWKT(wkt string) (*CellSet, error) {
 
 // FromGeometry rasterises an already-parsed POLYGON or MULTIPOLYGON with the
 // same rule as FromPolygonWKT - the entry point for geometries that arrive as
-// WKB (e.g. group areas from the groups index) rather than text.
+// WKB rather than text.
 func FromGeometry(g geom.Geometry) (*CellSet, error) {
 	edges := polygonEdges(g)
 	if len(edges) == 0 {
@@ -51,8 +51,7 @@ func FromGeometry(g geom.Geometry) (*CellSet, error) {
 	// The SAME bound Decode enforces, applied on the way IN. Decode has always
 	// refused an absurd grid before allocating for it, but until this check the
 	// construction path did not - so a legitimately enormous input allocated
-	// whatever its extent implied. That matters because this is reachable from
-	// /v1/groups/intersecting with a group's own area: a national-scale
+	// whatever its extent implied. That matters because a national-scale
 	// boundary spanning ~10 degrees is 33,000 cells a side, over a billion
 	// cells, a 139MB bitmap, inside the spatial server. Refusing is correct -
 	// the caller treats a rasterise failure as "cannot answer" and falls back

@@ -31,24 +31,15 @@ type evalLabelEntry struct {
 
 // Current-budget cache: the tick advances on a schedule measured in hours,
 // so a short TTL keeps the JSON parsing off the hot path.
-// Everything row-mutable rides here on the SHORT TTL: a moderator's
-// retraction (rejected), a freeze (held) and the advancing tick must all
-// bite within a minute, where the immutable label blob can cache for ten.
+// Everything row-mutable rides here on the SHORT TTL: a freeze (held) and
+// the advancing tick must both bite within a minute, where the immutable
+// label blob can cache for ten.
 type evalBudgetEntry struct {
-	used      time.Time // last time a request loaded or relied on this entry; the eviction order
-	secs      float32   // current tick budget
-	maxSecs   float32   // the row's maximum budget
-	rejected  []int64   // group ids whose areas are subtracted from this reach
-	held      bool      // frozen (back in moderation): never discoverable
-	originGid int64     // the post's origin group (its area is union-admitted)
-	// Road-native origin-group union threshold (reach_union.go):
-	// unionKnown=false (column NULL) = not computed yet, keep the
-	// transitional origin_area no-verdict behaviour; unionSecs=unionNever =
-	// computed, the union never activates; >=0 = the budget at which the
-	// origin group's whole area becomes admitted.
-	unionKnown bool
-	unionSecs  float32
-	expires    time.Time
+	used    time.Time // last time a request loaded or relied on this entry; the eviction order
+	secs    float32   // current tick budget
+	maxSecs float32   // the row's maximum budget
+	held    bool      // frozen (back in moderation): never discoverable
+	expires time.Time
 }
 
 var (
@@ -68,8 +59,8 @@ var evalCacheCap = 20000
 
 // evalRecentGrace is how long an entry a request has just loaded OR relied on
 // is immune from eviction: the window between evalLoad (which touches every
-// entry the request will read, reloaded or not) and the verdict loop, which
-// resolveAreas' MySQL round trips sit inside.
+// entry the request will read, reloaded or not) and the verdict loop that
+// reads it.
 const evalRecentGrace = 10 * time.Second
 
 // discoverMaxItems bounds how many leaf candidates one discover evaluates. It
@@ -87,16 +78,12 @@ var discoverMaxItems = 10000
 
 // evalRow is one candidate's stored state, however loaded.
 type evalRow struct {
-	msgid      uint64
-	blob       []byte
-	tick       int
-	maxMin     float64
-	schedule   string
-	rejected   string // rejected_groups JSON: group areas subtracted from this reach
-	held       bool   // status='held': frozen, hidden on every surface
-	originGid  int64  // the post's origin group id (0 = unknown)
-	unionKnown bool   // origin_union_secs column non-NULL
-	unionSecs  float32
+	msgid    uint64
+	blob     []byte
+	tick     int
+	maxMin   float64
+	schedule string
+	held     bool // status='held': frozen, hidden on every surface
 }
 
 // evalRowLoader fetches candidate rows; a var so tests can inject rows
@@ -122,8 +109,7 @@ var evalRowLoader = func(ids []uint64) ([]evalRow, error) {
 	}
 	rows, err := db.Query(
 		"SELECT rr.msgid, COALESCE(IF(rr.reach_labels_next_fp = ?, rr.reach_labels_next, NULL), rr.reach_labels), "+
-			"rr.tick, rr.max_drive_min, rr.schedule, rr.rejected_groups, rr.status, rr.origin_union_secs, "+
-			"(SELECT mg.groupid FROM messages_groups mg WHERE mg.msgid = rr.msgid AND mg.deleted = 0 ORDER BY mg.arrival ASC LIMIT 1) "+
+			"rr.tick, rr.max_drive_min, rr.schedule, rr.status "+
 			"FROM rippling_reach rr WHERE rr.msgid IN ("+
 			strings.Join(ph, ",")+")", args...)
 	if err != nil {
@@ -134,10 +120,9 @@ var evalRowLoader = func(ids []uint64) ([]evalRow, error) {
 	for rows.Next() {
 		var r evalRow
 		var blob []byte
-		var maxMin, unionSecs sql.NullFloat64
-		var origin sql.NullInt64
-		var schedule, rejected, status sql.NullString
-		if err := rows.Scan(&r.msgid, &blob, &r.tick, &maxMin, &schedule, &rejected, &status, &unionSecs, &origin); err != nil {
+		var maxMin sql.NullFloat64
+		var schedule, status sql.NullString
+		if err := rows.Scan(&r.msgid, &blob, &r.tick, &maxMin, &schedule, &status); err != nil {
 			// Every column is NOT NULL or scanned through a Null type, so a scan
 			// error is the connection failing under us, not a row's data. Dropping
 			// the row would let the caller cache "no reach row" for it.
@@ -146,11 +131,7 @@ var evalRowLoader = func(ids []uint64) ([]evalRow, error) {
 		r.blob = blob
 		r.maxMin = maxMin.Float64
 		r.schedule = schedule.String
-		r.rejected = rejected.String
 		r.held = status.String == "held"
-		r.originGid = origin.Int64
-		r.unionKnown = unionSecs.Valid
-		r.unionSecs = float32(unionSecs.Float64)
 		out = append(out, r)
 	}
 	// A result set cut short by a dropped connection ends the loop exactly like
@@ -186,13 +167,6 @@ type reachEvalResult struct {
 	// build) and the caller must keep its cell-grid verdict.
 	Verdict string   `json:"verdict"`
 	Arrival *float32 `json:"arrival,omitempty"`
-	// OriginArea on an "out": the member stands inside the post's ORIGIN
-	// group's area. The stored reach deliberately unions that area in once
-	// the isochrone covers most of it (ExpandService::unionWithOriginGroupArea),
-	// so road time alone must not retract it - callers treat out+origin_area
-	// as NO verdict and let their cell grid decide, which is exactly the
-	// union the grid materialised.
-	OriginArea bool `json:"origin_area,omitempty"`
 }
 
 // handleReachEval handles POST /v1/reach-eval.
@@ -246,37 +220,6 @@ func handleReachEval() fiber.Handler {
 
 		useMax := req.Budget == "max"
 
-		// A member inside a REJECTED group's area is out of that post's reach
-		// whatever the label says - the durable record of a per-group mod
-		// retraction is rejected_groups; the cells clip was only its
-		// materialisation. The area tests can hit MySQL, so they are resolved
-		// OUT HERE and the verdict loop below only reads the result map -
-		// evalMu is process-wide and must never be held across a round trip.
-		areaHit := map[int64]bool{}
-		resolveAreas := func(ids []uint64) {
-			gids := map[int64]bool{}
-			evalMu.Lock()
-			for _, id := range ids {
-				if be, ok := evalBudgets[id]; ok {
-					for _, gid := range be.rejected {
-						if _, done := areaHit[gid]; !done {
-							gids[gid] = true
-						}
-					}
-					if be.originGid != 0 {
-						if _, done := areaHit[be.originGid]; !done {
-							gids[be.originGid] = true
-						}
-					}
-				}
-			}
-			evalMu.Unlock()
-			for gid := range gids {
-				areaHit[gid] = groupAreaContains(gid, req.Lat, req.Lng)
-			}
-		}
-		resolveAreas(req.Msgids)
-
 		verdictFor := func(id uint64, discovering bool) reachEvalResult {
 			le, ok := evalLabels[id]
 			be := evalBudgets[id]
@@ -300,11 +243,6 @@ func handleReachEval() fiber.Handler {
 				// label verdict - the caller's own status filters apply.)
 				return reachEvalResult{Msgid: id, Verdict: "out"}
 			}
-			for _, gid := range be.rejected {
-				if areaHit[gid] {
-					return reachEvalResult{Msgid: id, Verdict: "out"}
-				}
-			}
 			budget := be.secs
 			if useMax {
 				budget = be.maxSecs
@@ -314,22 +252,7 @@ func handleReachEval() fiber.Handler {
 				a := arr
 				return reachEvalResult{Msgid: id, Verdict: "in", Arrival: &a}
 			}
-			inOriginArea := be.originGid != 0 && areaHit[be.originGid]
-			if inOriginArea && be.unionKnown {
-				// Road-native union (reach_union.go): once the budget passes
-				// the stored threshold, the origin group's whole area is
-				// admitted - the definitive answer, no cells needed.
-				if be.unionSecs >= 0 && budget >= be.unionSecs {
-					return reachEvalResult{Msgid: id, Verdict: "in"}
-				}
-				return reachEvalResult{Msgid: id, Verdict: "out"}
-			}
-			return reachEvalResult{
-				Msgid: id, Verdict: "out",
-				// Transitional (threshold not computed yet): flag it so the
-				// callers let the cell grid - which holds the union - decide.
-				OriginArea: inOriginArea,
-			}
+			return reachEvalResult{Msgid: id, Verdict: "out"}
 		}
 
 		results := make([]reachEvalResult, 0, len(req.Msgids))
@@ -387,7 +310,6 @@ func handleReachEval() fiber.Handler {
 					log.Printf("reach-eval discover: labels unavailable for %d region candidates: %v", len(fresh), err)
 					return fiber.NewError(fiber.StatusServiceUnavailable, "labels unavailable: "+err.Error())
 				}
-				resolveAreas(fresh)
 				evalMu.Lock()
 				for _, id := range fresh {
 					if r := verdictFor(id, true); r.Verdict == "in" {
@@ -447,10 +369,6 @@ func evalLoad(e *ReachEngine, ids []uint64) error {
 				lbl, lblEng = decoded, eng
 			}
 		}
-		var rejected []int64
-		if r.rejected != "" {
-			_ = json.Unmarshal([]byte(r.rejected), &rejected)
-		}
 		ttl := evalLabelTTL
 		if lbl == nil {
 			// A row mid-backfill grows a label soon: re-check on the short
@@ -459,15 +377,11 @@ func evalLoad(e *ReachEngine, ids []uint64) error {
 		}
 		evalLabels[r.msgid] = evalLabelEntry{lbl: lbl, eng: lblEng, expires: now.Add(ttl)}
 		evalBudgets[r.msgid] = evalBudgetEntry{
-			used:       now,
-			secs:       currentBudgetSecs(r.tick, r.maxMin, r.schedule),
-			maxSecs:    float32(r.maxMin * 60),
-			rejected:   rejected,
-			held:       r.held,
-			originGid:  r.originGid,
-			unionKnown: r.unionKnown,
-			unionSecs:  r.unionSecs,
-			expires:    now.Add(evalBudgetTTL),
+			used:    now,
+			secs:    currentBudgetSecs(r.tick, r.maxMin, r.schedule),
+			maxSecs: float32(r.maxMin * 60),
+			held:    r.held,
+			expires: now.Add(evalBudgetTTL),
 		}
 	}
 	// Ids with no reach row at all: cache as no-labels so repeats stay cheap.
@@ -547,76 +461,9 @@ func resetReachEvalForTest() {
 	evalLabels = map[uint64]evalLabelEntry{}
 	evalBudgets = map[uint64]evalBudgetEntry{}
 	evalMu.Unlock()
-	groupAreaMu.Lock()
-	groupAreaCache = map[int64]groupAreaEntry{}
-	groupAreaMu.Unlock()
 	leafCandMu.Lock()
 	leafCandCache = map[int32]leafCandEntry{}
 	leafCandMu.Unlock()
-}
-
-// groupAreaContains answers "is this point inside group gid's area", from the
-// group's stored polygon (cached). False on any failure - failing open on a
-// rejected-group subtraction would resurrect a post a moderator retracted,
-// so absence of the polygon keeps the member OUT only when the group truly
-// has no area (nothing was subtracted then either).
-type groupAreaEntry struct {
-	rings   [][][2]float64
-	expires time.Time
-}
-
-var (
-	groupAreaMu    sync.Mutex
-	groupAreaCache = map[int64]groupAreaEntry{}
-)
-
-// groupAreaRings loads (cached) the group's area as a flat ring list; nil
-// when the group has no polygonal area or the database is unavailable.
-func groupAreaRings(gid int64) [][][2]float64 {
-	now := time.Now()
-	groupAreaMu.Lock()
-	entry, ok := groupAreaCache[gid]
-	groupAreaMu.Unlock()
-	if !ok || now.After(entry.expires) {
-		var rings [][][2]float64
-		if db := groupsDB; db != nil {
-			var wkt sql.NullString
-			if err := db.QueryRow("SELECT ST_AsText(polyindex) FROM `groups` WHERE id = ? AND polyindex IS NOT NULL AND ST_GeometryType(polyindex) <> 'POINT'", gid).Scan(&wkt); err == nil && wkt.Valid {
-				if r, err := wktAreaRings(wkt.String); err == nil {
-					rings = r
-				}
-			}
-		}
-		entry = groupAreaEntry{rings: rings, expires: now.Add(10 * time.Minute)}
-		groupAreaMu.Lock()
-		groupAreaCache[gid] = entry
-		if len(groupAreaCache) > 5000 {
-			groupAreaCache = map[int64]groupAreaEntry{gid: entry}
-		}
-		groupAreaMu.Unlock()
-	}
-	return entry.rings
-}
-
-func groupAreaContains(gid int64, lat, lng float64) bool {
-	rings := groupAreaRings(gid)
-	if len(rings) == 0 {
-		return false
-	}
-	return pointInRings(lng, lat, rings)
-}
-
-// pointInRings is pure even-odd over every ring: correct for holes AND for
-// the disjoint parts of a MULTIPOLYGON (whose rings are flattened into one
-// list). The one containment loop the eval and the union sampler share.
-func pointInRings(lng, lat float64, rings [][][2]float64) bool {
-	crossings := 0
-	for _, ring := range rings {
-		if pointInRing(lng, lat, ring) {
-			crossings++
-		}
-	}
-	return crossings%2 == 1
 }
 
 // leafCandidates: which posts' stored leaves cover the member's region(s) -
