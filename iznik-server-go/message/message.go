@@ -4000,7 +4000,10 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, []uint64, error) {
 	// The sync's job is to STOP divergence, not tolerate it: merge the twins
 	// (falls back to the split candidates if the merge fails).
 	candidates = user.HealTNDivergence(db, candidates)
-	return candidates[0], candidates, nil
+	// The member may hold further accounts carrying a DIFFERENT per-group alias
+	// (see user.FindTNSiblings). Added after the heal, so they widen owner
+	// arbitration without being merged.
+	return candidates[0], user.WithTNSiblings(db, candidates, email), nil
 }
 
 // actAsOwnerCandidate returns the message owner's id when the owner is one of
@@ -5587,6 +5590,9 @@ func PostMessage(c *fiber.Ctx) error {
 			// candidates for per-message arbitration if the merge fails).
 			partnerCandidates = user.HealTNDivergence(db, partnerCandidates)
 			myid = partnerCandidates[0]
+			// Same as resolvePartnerAuth: the member's other accounts join the
+			// candidate set for owner arbitration only, never for merging.
+			partnerCandidates = user.WithTNSiblings(db, partnerCandidates, email)
 		}
 	}
 

@@ -782,8 +782,14 @@ func UserEmails(c *fiber.Ctx) error {
 		var userLookup struct {
 			UserID uint64 `gorm:"column:userid"`
 		}
-		// First try users_emails table (for users with multiple emails)
-		result := db.Table("users_emails").Select("userid").Where("email = ? AND backwards IS NULL", email).Limit(1).Scan(&userLookup)
+		// First try users_emails table (for users with multiple emails).
+		//
+		// This used to carry "AND backwards IS NULL", which made it miss almost every
+		// real address: only 140,057 of 4,476,456 rows have a null there, and 136,047 of
+		// those are Freegle's own @users.ilovefreegle.org proxy addresses. A member
+		// looked up by their own address fell through to the users.email fallback
+		// instead. V1 has no such condition anywhere.
+		result := db.Table("users_emails").Select("userid").Where("email = ?", email).Limit(1).Scan(&userLookup)
 		if result.Error != nil || userLookup.UserID == 0 {
 			// Fallback to users table (for new users whose email is only in users.email)
 			var userFallback struct {

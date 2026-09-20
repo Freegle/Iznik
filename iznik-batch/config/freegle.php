@@ -394,6 +394,11 @@ return [
         'api_key' => env('FREEGLE_TN_API_KEY', ''),
         'api_base_url' => env('FREEGLE_TN_API_BASE_URL', 'https://trashnothing.com/fd/api'),
         'sync_date_file' => env('FREEGLE_TN_SYNC_DATE_FILE', '/etc/tn_sync_last_date.txt'),
+
+        // Merge the duplicate TN accounts the old address filter could not see. Off
+        // until the backlog has been reviewed with "tn:sync --report-duplicates": it is
+        // ~96 pairs of live members and merging a pair deletes one of them.
+        'merge_legacy_duplicates' => env('FREEGLE_TN_MERGE_LEGACY_DUPLICATES', false),
     ],
 
     // Discourse forum REST API (V1 discourse_not_signed_up.php).
