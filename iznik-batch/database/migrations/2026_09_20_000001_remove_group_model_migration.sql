@@ -32,6 +32,12 @@ SET @s := (SELECT IF(COUNT(*) = 0, "ALTER TABLE users ADD COLUMN welcomed TIMEST
 PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @s := (SELECT IF(COUNT(*) = 0, "ALTER TABLE users ADD COLUMN modconfigid BIGINT UNSIGNED NULL", 'SELECT 1') FROM information_schema.columns WHERE table_schema = @db AND table_name = 'users' AND column_name = 'modconfigid');
 PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @s := (SELECT IF(COUNT(*) = 0, "ALTER TABLE users ADD COLUMN reviewrequestedat BIGINT UNSIGNED NULL", 'SELECT 1') FROM information_schema.columns WHERE table_schema = @db AND table_name = 'users' AND column_name = 'reviewrequestedat');
+PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @s := (SELECT IF(COUNT(*) = 0, "ALTER TABLE users ADD COLUMN reviewreason BIGINT UNSIGNED NULL", 'SELECT 1') FROM information_schema.columns WHERE table_schema = @db AND table_name = 'users' AND column_name = 'reviewreason');
+PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @s := (SELECT IF(COUNT(*) = 0, "ALTER TABLE users ADD COLUMN reviewedat BIGINT UNSIGNED NULL", 'SELECT 1') FROM information_schema.columns WHERE table_schema = @db AND table_name = 'users' AND column_name = 'reviewedat');
+PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @s := (SELECT IF(COUNT(*) = 0, "ALTER TABLE messages ADD COLUMN collection ENUM('Incoming','Pending','Approved','Spam','Rejected') NOT NULL DEFAULT 'Pending', ADD INDEX collection (collection)", 'SELECT 1') FROM information_schema.columns WHERE table_schema = @db AND table_name = 'messages' AND column_name = 'collection');
 PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -101,6 +107,11 @@ INNER JOIN (SELECT userid, MIN(date) AS banned, MIN(byuser) AS bannedby FROM use
 SET u.banned = b.banned, u.bannedby = b.bannedby
 WHERE u.banned IS NULL;
 
+UPDATE users u
+INNER JOIN (SELECT userid, MAX(reviewrequestedat) AS requestedat, MAX(reviewedat) AS reviewedat
+            FROM memberships WHERE reviewrequestedat IS NOT NULL GROUP BY userid) m ON m.userid = u.id
+SET u.reviewrequestedat = m.requestedat, u.reviewedat = m.reviewedat,
+    u.reviewreason = (SELECT x.reviewreason FROM memberships x WHERE x.userid = u.id AND x.reviewrequestedat = m.requestedat LIMIT 1);
 UPDATE users SET welcomed = COALESCE(welcomed, added, NOW()) WHERE welcomed IS NULL;
 
 -- Verify pass 2:

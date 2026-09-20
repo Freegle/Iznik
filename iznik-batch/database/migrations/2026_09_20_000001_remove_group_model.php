@@ -85,6 +85,15 @@ return new class extends Migration
             if (! Schema::hasColumn('users', 'modconfigid')) {
                 $table->unsignedBigInteger('modconfigid')->nullable();
             }
+            if (! Schema::hasColumn('users', 'reviewrequestedat')) {
+                $table->timestamp('reviewrequestedat')->nullable()->index('reviewrequestedat');
+            }
+            if (! Schema::hasColumn('users', 'reviewreason')) {
+                $table->string('reviewreason')->nullable();
+            }
+            if (! Schema::hasColumn('users', 'reviewedat')) {
+                $table->timestamp('reviewedat')->nullable();
+            }
         });
 
         Schema::table('messages', function (Blueprint $table) {
@@ -195,6 +204,20 @@ return new class extends Migration
             ");
         }
 
+        if (Schema::hasTable('memberships')) {
+            // The member review flag was per membership; keep the most recent request and its reason.
+            DB::statement(<<<'SQL'
+                UPDATE users u
+                INNER JOIN (
+                    SELECT userid, MAX(reviewrequestedat) AS requestedat, MAX(reviewedat) AS reviewedat
+                    FROM memberships WHERE reviewrequestedat IS NOT NULL GROUP BY userid
+                ) m ON m.userid = u.id
+                SET u.reviewrequestedat = m.requestedat,
+                    u.reviewedat = m.reviewedat,
+                    u.reviewreason = (SELECT x.reviewreason FROM memberships x
+                                      WHERE x.userid = u.id AND x.reviewrequestedat = m.requestedat LIMIT 1)
+            SQL);
+        }
         DB::statement('UPDATE users SET welcomed = COALESCE(welcomed, added, NOW()) WHERE welcomed IS NULL');
     }
 

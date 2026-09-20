@@ -350,7 +350,7 @@ Per-community statistics (`stats`, `stats_outcomes`, `stats_summaries`, `users_d
 - `chat_rooms.groupid` is gone. A `User2Mod` room is a member's room with Freegle; the recipients are the national moderators. Two members can always chat.
 
 ### Rules
-- One rule set, site-wide, at `/rules`. Personal details are always kept out of posts.
+- One rule set, site-wide, at `/rules`, and the same rules are the judge's questions. Personal details are always kept out of posts.
 
 ### TrashNothing
 - Inbound mail to `<nameshort>@groups...` resolves the short name through `partner_areas`; the post's location is the mail's postcode, else the area centre.
@@ -376,6 +376,32 @@ Per-community statistics (`stats`, `stats_outcomes`, `stats_summaries`, `users_d
     members, events and volunteering, spammers), each describing what the system already
     did and offering one action on top. Pending, spam and edit-review queues, badge counts,
     hold and release, and "approve" as a verb are gone. Support tools stay.
+
+### Rules as questions (AI judgement)
+Edward's direction on 2026-09-20: "much bigger use of ai models to check/review. for example
+rework rules from keyword approach to ai judgement, e.g. 'Does this post refer to animals (not
+just accessories)?'" The brief is `.claude-agent-status/briefs/ai-judgement.md`; in short:
+- The site rules are questions a model answers about a post, a chat message, an event, a
+  volunteering opportunity, a newsfeed post or a report: money, legality, medicines,
+  age-restricted, live animals, weapons, cash value, not an item, scam, decency, unsafe, vague.
+  Each answer carries a confidence and a one-line reason a member can read.
+- Every word list goes: concern keywords, worry words, vague words, greeting spam, the
+  not-an-item heuristics. Exact checks stay as code: phone numbers, emails, addresses, link
+  domains, Spamhaus, language, subject repeat, known spammers, bulk mail, image spam.
+- A takedown question answered yes with confidence at or above the threshold takes the post
+  down and tells the poster why in the judge's words. Below the threshold, or a wait question,
+  is the short automatic wait. The judge being down never holds or removes anything.
+- One `TakedownService` in the batch does every takedown and restore and tells the poster; the
+  content check, the judge, report resolution and ModTools all use it.
+- Reports resolve in the batch: quorum two, one if the judge agrees with the reporter, three if
+  it disagrees. Go only records the report.
+- The judge runs on `JUDGEMENT_MODEL` (default `claude-opus-5`); chat on `JUDGEMENT_CHAT_MODEL`.
+  Prompt caching on the questions. A `judgement:eval` command measures accuracy on a fixture
+  set; it is not a test, so the suite never needs a key.
+
+### What used to be human
+`docs/developers/reference/retired-human-loops.md` lists every task a person used to do, what
+replaced it, how, the risk and the mitigation. It is written from the code and updated with it.
 
 ## Ownership and waves
 
