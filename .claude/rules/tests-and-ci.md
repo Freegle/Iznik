@@ -85,7 +85,11 @@ Coverage checks fail on deltas no change caused, and chasing them wastes days:
   line the branch adds is a covered one. On the slider fix the component was 28/28 lines and
   11/11 branches before, 33/33 and 17/17 after, and the check still said -0.007%. Without that
   measurement the only moves left are padding the branch with unrelated tests or waiving the
-  check, and both are wrong.
+  check, and both are wrong. When it really is wandering, run the whole suite twice with
+  coverage on the SAME code and diff the per-file `LH` counts: the culprit is usually a spec that
+  never waits for a timer its component schedules, so the lines behind that timer are covered
+  only when the timing happens to suit. `PostMap.vue`'s 200ms re-fit debounce was one, worth six
+  lines and 0.014% on its own.
 
 Read what the build uploaded before believing what it reports. Do not make coverage optional to
 get past it.
