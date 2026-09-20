@@ -83,7 +83,10 @@ func buildPublicApp(srv *server) *fiber.App {
 	// Photon-compatible place search (file-backed; absent file = 503s, which
 	// is the normal state on instances without the artifact).
 	startPlaces()
-	registerPlacesRoutes(api, mysqlDB)
+	// srv.mysqlDB, not mysqlDB: master added this call in main(), where the handle is a
+	// local; this branch extracted buildPublicApp(srv), so the handle reaches here on the
+	// server. The merge took both without conflict and would not compile.
+	registerPlacesRoutes(api, srv.mysqlDB)
 
 	api.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
