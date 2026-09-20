@@ -123,6 +123,20 @@ function worktreeBases(repoCwd: string): string[] {
   return ['origin/master', 'master', 'HEAD']
 }
 
+
+// The delegate's brief documents its own markers, and the brief can appear in the
+// delegate's output stream. Every other marker is immune because its capture group
+// cannot match the placeholder - PR_NUMBER=(\d+) will not match "<number>" - but
+// ANALYSIS_COMPLETE=([^\n]+) matches anything, so it matched the template line
+// "ANALYSIS_COMPLETE=<one-line summary>" from the instructions and reported that as
+// the delegate's finding. Anchor to the start of a line, so the indented line in the
+// brief cannot match, and take the LAST one, so a genuine marker wins over any echo.
+export function lastMarker(text: string, name: string): RegExpMatchArray | null {
+  const all = [...text.matchAll(new RegExp('^' + name + '=([^\n]+)$', 'gm'))]
+
+  return all.length > 0 ? all[all.length - 1] : null
+}
+
 export function freshestCICheck(ctx: any): any {
   const direct = ctx?._action_check_my_open_pr_ci ?? {}
   const viaGate = ctx?._action_coverage_gate_decide?.red ?? {}
@@ -2953,7 +2967,7 @@ If you omit the marker, your work is considered failed regardless of what actual
       const prMatch = combined.match(/PR_NUMBER=(\d+)/)
       const directMatch = combined.match(/DIRECT_PUSH=([a-f0-9]+)/)
       const commitMatch = combined.match(/COMMIT_PUSHED=([a-f0-9]+)/)
-      const analysisMatch = combined.match(/ANALYSIS_COMPLETE=([^\n]+)/)
+      const analysisMatch = lastMarker(combined, 'ANALYSIS_COMPLETE')
       const failedMatch = combined.match(/DELEGATE_FAILED=([^\n]+)/)
       // exitCode 143 = SIGTERM (silence watchdog or hard cap fired).
       // Surface an explicit `timedOut` flag and `timeoutReason` so the
@@ -3163,7 +3177,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         const prMatch = combined.match(/PR_NUMBER=(\d+)/)
         const directMatch = combined.match(/DIRECT_PUSH=([a-f0-9]+)/)
         const commitMatch = combined.match(/COMMIT_PUSHED=([a-f0-9]+)/)
-        const analysisMatch = combined.match(/ANALYSIS_COMPLETE=([^\n]+)/)
+        const analysisMatch = lastMarker(combined, 'ANALYSIS_COMPLETE')
         const failedMatch = combined.match(/DELEGATE_FAILED=([^\n]+)/)
         const timedOut = result.killReason !== null || result.code === 143
         const prNumber = prMatch ? Number(prMatch[1]) : undefined
