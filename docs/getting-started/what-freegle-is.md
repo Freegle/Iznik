@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 ---
 
@@ -13,15 +13,15 @@ platform only make sense once you know what the service is trying to do.
 Freegle is a UK charity that runs a website and apps where people give away things they no
 longer need, and ask for things they need, **for free, locally**. Someone posts a sofa;
 people nearby reply; the two of them arrange collection in a private chat; the sofa is
-collected instead of going to landfill. Nothing is sold, and there is no delivery. It is
-made up of hundreds of local communities across the UK, and it is used by a few million
-people.
+collected instead of going to landfill. Nothing is sold, and there is no delivery. It is used by a few million people across the UK, reached by one national service
+rather than a patchwork of local ones.
 
 Two consequences of that shape run through everything:
 
-- **It is a local service, so geography is central.** Distance, travel time and community
-  boundaries are first-class concepts, not a filter bolted on at the end. That is why there
-  are dedicated spatial and routing services and a self-hosted geocoder.
+- **It is a local service, so geography is central.** Distance and travel time are
+  first-class concepts, not a filter bolted on at the end: a post ripples out from the
+  poster's location over time rather than being addressed to anywhere in particular. That
+  is why there are dedicated spatial and routing services and a self-hosted geocoder.
 - **It is free and charity-funded, so cost matters.** We self-host where it is cheaper and
   we can carry the operational burden. Adverts and donations pay for it, and there is a
   deliberate mechanism to turn the adverts off once donations have covered the day.
@@ -31,14 +31,14 @@ Two consequences of that shape run through everything:
 | Who | What they use |
 |---|---|
 | **Members** | The website (`ilovefreegle.org`) and the mobile apps |
-| **Moderators** | **ModTools** (`modtools.org`), a separate app for running a community. Volunteers, at least two per community |
-| **Central volunteers** | ModTools plus their own tools, working across all communities rather than one |
+| **Moderators** | **ModTools** (`modtools.org`), a separate app. Volunteers, national rather than tied to one place - no more than a handful at a time |
 | **Staff** | A very small paid team |
 
 Almost everyone who runs Freegle is a **volunteer**. That shows up throughout the software:
-moderation is designed to be quick and forgiving, email is the main way volunteers are
-reached, and a change that increases moderator workload is a change that costs the charity
-real volunteer goodwill.
+the system is built to reach an outcome on its own, and a volunteer improves on a decision
+it already made rather than clearing a queue. See
+[retired-human-loops.md](../developers/reference/retired-human-loops.md) for what used to
+be a person's job, and what does it now.
 
 The people, and who to ask about what, are in [who-does-what.md](who-does-what.md).
 
@@ -51,17 +51,16 @@ You will meet these constantly. They are Freegle's words, not industry standard.
 | **OFFER** | A post giving something away. Shown to members as "Give" |
 | **WANTED** | A post asking for something. Shown to members as "Ask" |
 | **TAKEN** / **RECEIVED** | The outcomes: the giver marks TAKEN, the receiver marks RECEIVED |
-| **Group** / **community** | A local Freegle community. `group` in the database, "community" to members |
 | **Rippling out** | A post starts near the poster and reaches further away over time if nobody local takes it, so posters never choose an audience. See [../members/rippling-out.md](../members/rippling-out.md) |
 | **Reach** | How far a post has travelled, expressed as travel time rather than miles |
 | **ModTools** / **MT** | The moderator app. Same codebase, different site |
 | **FD** | "Freegle Direct" - the member site. You will see `SITE: 'FD'` and `'MT'` in configuration |
-| **Pending** | A post or member waiting for a moderator |
-| **Held** | A post deliberately kept back, usually for a check |
+| **Pending** | A short automatic wait before a post goes live, not a queue for a moderator |
+| **Held** | Something flagged for a check. A held chat message is delivered anyway, with a warning attached, rather than blocked outright |
 | **Chat** | A private conversation between two members, or between a member and moderators. Always "chat", never "conversation" |
-| **Digest** | The email of recent posts in a community |
+| **Digest** | The email of recent posts near a member |
 | **Story** | A member's account of something they gave or got, used in newsletters |
-| **TN** | TrashNothing, a separate reuse site whose members use Freegle communities. See [../developers/reference/trashnothing.md](../developers/reference/trashnothing.md) |
+| **TN** | TrashNothing, a separate reuse site whose members post into Freegle. See [../developers/reference/trashnothing.md](../developers/reference/trashnothing.md) |
 | **Iznik** | The name of this software. Historical; the repository is called Iznik, the service is called Freegle |
 
 "Iznik" catches people out. If a directory, container or document says Iznik, it means
@@ -91,8 +90,9 @@ In one sentence each:
   retired; if you find references to "v1", they are history.
 - **Laravel batch** (`iznik-batch/`) - everything that happens on a schedule or in the
   background, and the owner of the database schema through its migrations.
-- **Spatial and routing** (`iznik-spatial-go/`, `iznik-routing-go/`) - which community
-  covers a point, how long it takes to drive somewhere, and how far a post should reach.
+- **Spatial and routing** (`iznik-spatial-go/`, `iznik-routing-go/`) - point-in-polygon
+  checks for reach and TrashNothing partner areas, how long it takes to drive somewhere,
+  and how far a post should reach.
 - **Mail** - both directions. A large amount of Freegle happens over email, including all
   TrashNothing traffic.
 - **Database** - one Percona XtraDB Cluster (three nodes), with reads and writes routed
@@ -120,7 +120,7 @@ Worth calibrating early, because it sets your priorities.
 | Severity | Example |
 |---|---|
 | **Emergency** | The database cluster is unhealthy; mail has stopped flowing; the site is down |
-| **Serious** | Members cannot sign in; posts are not reaching anyone; the moderation queue is invisible |
+| **Serious** | Members cannot sign in; posts are not reaching anyone; ModTools stops showing what the system has done |
 | **Annoying** | An advert slot is empty; a digest went out late; a map tile is missing |
 
 Mail stopping is an emergency and is easy to miss, because a mail system that has stopped

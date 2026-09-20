@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 ---
 
@@ -41,7 +41,7 @@ day to.
 | [`.claude/rules/frontend-traps.md`](../../.claude/rules/frontend-traps.md) | Nuxt frontend: build flags, hanging awaits, iOS |
 | [`.claude/rules/tests-and-ci.md`](../../.claude/rules/tests-and-ci.md) | Green results that mean nothing |
 | [`.claude/rules/dev-containers.md`](../../.claude/rules/dev-containers.md) | Testing code that is not the code you are looking at |
-| [`.claude/rules/rippling.md`](../../.claude/rules/rippling.md) | One post, many group rows, and what that breaks |
+| [`.claude/rules/rippling.md`](../../.claude/rules/rippling.md) | The reach mechanism, and what breaks it |
 | [`.claude/rules/modtools.md`](../../.claude/rules/modtools.md) | "It isn't showing" and what actually causes it |
 | [`.claude/rules/browse-and-search.md`](../../.claude/rules/browse-and-search.md) | Three feed endpoints, sorting, stacking |
 | [`.claude/rules/mail-and-data.md`](../../.claude/rules/mail-and-data.md) | Digest cursors, unsubscribe, tables with no writer |

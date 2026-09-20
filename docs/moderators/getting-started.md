@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/index.vue
@@ -20,72 +20,50 @@ separate application from the main Freegle site, but you log in with the same ac
 
 - Go to modtools.org and log in. If you are not signed in, a login box opens
   automatically.
-- You will only see moderation features for the communities you actually moderate.
+- Moderators are national: once you are a moderator, you see the same tools and the same
+  members and posts as every other moderator. There is no community to pick, and nothing
+  is filtered down to one.
 - Support sometimes sends a one-click link that logs you straight into a specific member
-  or community for help; that is what the `/login` page handles.
+  for help; that is what the `/login` page handles.
 
-## The dashboard
+## The home page
 
-![The ModTools dashboard](assets/dashboard.png)
+The home page is your daily starting point. It is built from nine lists, each showing
+what Freegle already did and, where there is one, the one thing a moderator can add:
 
-The dashboard (the ModTools home page) is your daily starting point.
+- **Just published** and **Taken down** - posts, and why. See
+  [Moderating posts](moderating-posts.md).
+- **Held chat messages** and **Messages to Freegle** - things waiting on a reply. See
+  [Moderating posts](moderating-posts.md).
+- **New members** and **Flagged members** - people, and what Freegle noticed about them.
+  See [Managing members](managing-members.md).
+- **Completed freegles** - posts marked Taken, Received or Withdrawn. See
+  [Moderating posts](moderating-posts.md).
+- **Events and volunteering** - what members have added. See
+  [Moderating posts](moderating-posts.md).
+- **Spammers** - the shared spammer list. See [Managing members](managing-members.md).
 
-It shows:
-
-- a greeting and the current app versions,
-- highlights from the volunteers' Discourse forum, and nudges if your community is missing
-  rules or you are missing a profile,
-- a community picker and a date range, then
-- statistics: recent activity counts, active moderators, popular posts, top posters and
-  repliers, and your community's impact (weight and CO2 diverted), with an activity graph.
-
-The **red badges** next to the menu items are your work list: pending posts, chat review,
-spam reports, stories and so on. They update automatically, so the numbers tell you where
-attention is needed.
+None of these is a queue you must clear. Freegle has already acted on everything in it;
+you are looking for the exceptions the checks would not catch, or a decision worth a
+second opinion.
 
 ## Roles and permissions
 
-Freegle has two independent kinds of role. It helps to know which is which.
-
-**Your role on a community** (set per community):
-
-- **Member** - an ordinary member.
-- **Moderator** - can moderate that community.
-- **Owner** - full responsibility for the community: can add and remove other volunteers
-  and controls the membership list. Every community must have at least two owners.
-
-**Your system-wide role** (across all of Freegle):
-
-- **User**, then **Moderator**, then **Support**, then **Admin**. Support and Admin unlock
-  the support and sysadmin tools (see
-  [running your community](running-your-community.md)).
+Your **system-wide role** - **User**, then **Moderator**, then **Support**, then
+**Admin** - controls what you can see: Support and Admin unlock the support and sysadmin
+tools (see [Other ModTools pages](README.md#other-modtools-pages)).
 
 On top of that, some features are gated by specific **permissions** (for example
 Newsletter, Spam admin, Gift Aid, Clearance), granted independently of your role. If you
-cannot see a feature this guide mentions, you may not have that permission on that
-community yet.
+cannot see a feature this guide mentions, you may not have that permission yet.
 
-You can see Freegle's volunteer **teams** and who is on them under `/teams`. A team can also
-unlock a page in its own right: being on the **Partnerships** team puts
-[Partnerships](partnerships.md) in your menu, for managing council sponsorship deals.
-
-## Switching between communities
-
-Almost every list and queue has a **community picker** at the top. Use it to work on:
-
-- **All my communities** at once,
-- a **single community**, or
-- **all Freegle communities** system-wide (Admins only).
-
-Your choice is remembered per page and reflected in the URL, so you can bookmark or share
-a link to exactly the view you want.
+You can see Freegle's volunteer **teams** and who is on them under `/teams`. A team can
+also unlock a page in its own right.
 
 ## Your personal settings
 
 Under **Settings** there is a **Personal** tab for your own preferences as a moderator:
 for example whether to get ChitChat email, and your notification and beep preferences.
-This is separate from a community's settings, which are covered in
-[running your community](running-your-community.md).
 
 ## Talking to other moderators
 
@@ -97,4 +75,4 @@ urgent, `mentors@ilovefreegle.org` reaches experienced volunteers who can help.
 
 - The core of the job: [Moderating posts](moderating-posts.md).
 - Looking after people: [Managing members](managing-members.md).
-- Configuring things: [Running your community](running-your-community.md).
+- Everything else ModTools does: [README](README.md#other-modtools-pages).

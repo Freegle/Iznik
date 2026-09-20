@@ -1,21 +1,19 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/index.vue
   - iznik-nuxt3/components/LoginModal.vue
-  - iznik-nuxt3/pages/explore/**
   - iznik-nuxt3/pages/browse/**
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-browse.spec.js
-  - iznik-nuxt3/tests/e2e/test-explore.spec.js
   - iznik-nuxt3/tests/e2e/test-homepage.spec.js
 ---
 
 # Getting started
 
-This guide gets you from never having used Freegle to browsing your local community and
-ready to give or get your first item.
+This guide gets you from never having used Freegle to browsing what is nearby and ready
+to give or get your first item.
 
 ## Creating an account
 
@@ -36,19 +34,9 @@ To sign up:
 Already have an account? Choose **Log in** in the same box. Forgotten your password? Use
 the "forgotten password" link and we will email you a link to get back in.
 
-## Finding and joining your local community
-
-Freegle is made up of hundreds of local communities across the UK. You can belong to as
-many as you like, but most people start with the one covering where they live.
-
-![Exploring communities](assets/explore.png)
-
-1. Go to **Explore** (`/explore`).
-2. Search for your town or postcode, or browse the map.
-3. Open the community that covers your area and click **Join community**.
-
-You do not always have to join a community to use it. When you post, Freegle works out
-the right community from the postcode you give, and joins you automatically if needed.
+There is nothing to join and nowhere to pick from. Freegle is one national service, and
+your account is all you need - what you see and who sees your posts is worked out from
+distance, not from membership of anything.
 
 ## Browsing what is on offer
 
@@ -73,8 +61,8 @@ driving for everyone.
 
 What this means for you as a member:
 
-- **When you post**, you do not pick a community. Your post reflects where the item
-  actually is, based on your postcode, and reaches the right people automatically.
+- **When you post**, your post reflects where the item actually is, based on your
+  postcode, and reaches the right people automatically. You do not pick where it goes.
 - **On Browse**, the "Nearby" view shows posts that have reached your area, closest and
   most relevant first, rather than simply newest.
 - **You can always reply** to a post you can see. If a post has not quite reached your
@@ -86,8 +74,14 @@ What this means for you as a member:
 There is a fuller explanation for members in
 [./rippling-out.md](./rippling-out.md).
 
+## A few ground rules
+
+The full rules are one page, the same for everyone: `/rules`. Everything on Freegle is
+free, only legal items are allowed, and personal details stay out of posts. See
+[Getting something](getting.md#a-few-ground-rules) for the short version.
+
 ## Next steps
 
 - Ready to give something away? See [Giving something away](giving.md).
 - Looking for something? See [Getting something](getting.md).
-- Want to control your emails and communities? See [Your account](your-account.md).
+- Want to control your emails? See [Your account](your-account.md).

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-06
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -97,7 +97,7 @@ a real bound, not a hint:
 
 - **Chat membership is complete** — every room the member is in. **Message bodies are
   windowed** to the rooms active inside `since`. A moderator is in the roster of every
-  Mod2Mod and User2Mod chat on their groups (one real admin: 18,664 rooms, of which 332
+  Mod2Mod and User2Mod chat they take part in (one real admin: 18,664 rooms, of which 332
   had any activity in 90 days), and pulling every message for all of them could not finish
   inside the caller's timeout — so that member could not be investigated at all.
 - **Loki logs are clamped to 30 days** whatever `since` says, because production Loki

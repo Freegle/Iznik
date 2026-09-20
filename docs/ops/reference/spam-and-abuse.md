@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-04
+last_reviewed: 2026-09-20
 owner: Freegle ops
 covers:
   - conf/rspamd
@@ -8,6 +8,8 @@ covers:
   - iznik-batch/app/Services/ChatSpamService.php
   - iznik-batch/app/Services/SpamCleanupService.php
   - iznik-batch/app/Services/SpamCheck/RspamdService.php
+  - iznik-batch/app/Services/Judgement/**
+  - iznik-batch/app/Services/ReportResolutionService.php
 ---
 
 # Spam and abuse
@@ -86,32 +88,38 @@ Everything that reaches the platform - by mail, website or app - passes through
 human should look before this goes live**. The relevant entry points are
 `checkMessage()` for posts and `checkChatMessage()` for chat.
 
-A third, `checkGroupOwnRules()`, runs as a post ripples into another community. The post
-was already weighed against the rules of the community it was posted on, Freegle-wide
-keywords included, and a moderator there may have approved it knowing that. So only the
-receiving community's **own** keywords and worry words are asked. A match makes that
-community's copy Pending with the reasons recorded in
-`messages_groups.contentcheck_reasons`, and auto-approve leaves such a copy for a human
-rather than releasing it when the veto window runs out.
+Two kinds of check run here, and they work differently:
 
-Reference data lives in its own tables, each with a moderator-facing editor in ModTools:
+- **Deterministic checks** look for something a pattern can catch reliably: a phone
+  number, an email or postal address, a link to a messaging-app domain, a hit against
+  the Spamhaus Domain Block List, the wrong language for the site, a subject repeated
+  across posts, a reference to a known spammer, a burst of volunteer mail, or an image
+  that matches known spam. These are exact and explainable, and they still run.
+- **The judge** answers a fixed set of yes/no questions about a post or chat message -
+  is it free, is it legal, is it an actual item, does it look like a scam, and so on -
+  using the Anthropic Claude API. It replaces the old fuzzy keyword and worry-word
+  lists, which matched on phrasing and misspelling rather than on what a post actually
+  said. See [External services](../../developers/reference/external-services.md#ai-judgement)
+  for what is sent, what never is, and what happens if the judge is unavailable.
+
+A confident "no" on a serious question (scam, banned item, indecent) takes the post
+down and tells the poster why. A low-confidence answer holds the post for a human rather
+than guessing. A clean answer, or an unavailable judge, lets the post go live after the
+usual short wait - the judge can only stop or hold a post, never delay one further by
+being slow.
+
+**Known accounts and country signals still use plain tables**, because these are facts
+about who is posting, not judgements about what they wrote:
 
 | Table | What it holds |
 |---|---|
-| `spam_keywords` | Phrases that flag or block a post |
-| `worrywords` | Words that signal a safeguarding or welfare concern rather than spam - these route to people, not to a bin |
-| `spam_users` | Known bad accounts, shared across communities |
+| `spam_users` | Known bad accounts |
 | `spam_countries` | Country-level signals |
-| `spam_whitelist_ips`, `spam_whitelist_links`, `spam_whitelist_subjects` | Explicit exemptions, because a blunt keyword list catches real posts |
 
-The whitelists exist because the keyword lists over-match. A migration that moved
-keywords without carrying the whitelist branch across once turned thirteen legitimate
-place and shop names into flag words. If you change how keyword matching works, check
-the whitelist path is still honoured.
-
-Matching is deliberately fuzzy (inflections, Damerau-Levenshtein distance) because
-spammers misspell on purpose. That also means it produces false positives, which is why
-the outcome is "hold for a moderator", not "delete".
+Reported posts and chat messages go through `ReportResolutionService`, which runs every
+minute. A report is acted on once there is enough agreement: two member reports, or one
+moderator report, is normally enough; if the judge agrees with the report, one member
+report is enough on its own; if the judge disagrees, it takes three.
 
 ## Chat spam and cleanup
 
@@ -131,20 +139,28 @@ no filter has. What they see and do is documented for them in
 [../../moderators/moderating-posts.md](../../moderators/moderating-posts.md) and
 [../../moderators/managing-members.md](../../moderators/managing-members.md).
 
-## Why there is no AI moderator
+## Why the judge answers narrow questions, not "approve or reject"
 
-This was measured rather than assumed. `llm-modbot/` holds a fine-tuning experiment on
-production moderation data, and the result was negative for the thing that matters:
+An AI moderator that decides "approve or reject" on its own was tried and measured, not
+assumed to work. `llm-modbot/` holds a fine-tuning experiment on production moderation
+data, and the result was negative for the thing that matters:
 
 - **Approve/reject decisions**: 63.5% accuracy fine-tuned against 63.0% for the base
   model. No meaningful improvement. A small model cannot learn these calls from message
-  text alone, because the common rejection reasons depend on facts outside the text.
+  text alone, because the common rejection reasons - "duplicate", "out of area", "posted
+  too soon" - depend on facts outside the text.
 - **Subject-line correction**: exact match went from 3% to 17%. A real improvement, still
   far from usable.
 
-See [`llm-modbot/RESULTS.md`](../../../llm-modbot/RESULTS.md) before proposing this again.
-The useful reading is that AI helps with formatting and spelling, and does not help with
-judgement.
+See [`llm-modbot/RESULTS.md`](../../../llm-modbot/RESULTS.md) before proposing a single
+"should this post be approved" model again.
+
+The judge is deliberately not that. It is a large, general-purpose model rather than a
+small fine-tuned one, and it is never asked for an open verdict - only fixed, narrow
+questions with a defined right answer ("is this a real, physical item?", "does this look
+like a scam?"). Anything that needs context outside the post - duplicate, out of area,
+too soon, or a judgement call about a specific member - still goes to a human, exactly
+as the experiment above says it must.
 
 ## Operational notes
 

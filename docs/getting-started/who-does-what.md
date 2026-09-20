@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 ---
 
@@ -32,10 +32,10 @@ change.
 
 | Address (config key) | Who they are | What the system sends them |
 |---|---|---|
-| `support_addr` | **Support** volunteers | Member support mail. Also receives newsfeed (ChitChat) reports, and chat reports where the two members share no community (via `spam_addr`) |
-| `spam_addr` | **Spam** team | Chat reports between members with no community in common - the shape of a scam. Defaults to Support |
+| `support_addr` | **Support** volunteers | Member support mail. Also receives newsfeed (ChitChat) reports, and most chat reports (routed to `spam_addr` when they look like a scam) |
+| `spam_addr` | **Spam** team | Chat reports that look like the shape of a scam rather than a genuine dispute. Defaults to Support |
 | `mentors_addr` | **Mentors** | Escalations from moderators, and where new moderators go for help |
-| `centralmods_addr` | **Volunteer Support** (central moderators) | The Discourse coverage report: which communities have nobody signed up, which volunteers are missing. Weekly, plus any day a community is unrepresented |
+| `centralmods_addr` | **Volunteer Support** | The volunteer coverage report: whether there are enough moderators signed up to keep up with the work. Weekly |
 | `fundraising_addr` | **Fundraising** | The daily donation summary: every donation that came in today, flagged for recurring and birthday givers |
 | `thanks_addr` | **Thanks** team | The daily thank-prep digest - one card per donor, written to be replied to. Defaults to Fundraising |
 | `treasurer_addr` | **Treasurer** | Named in the monthly TrashNothing invoice as where the invoice should be sent |
@@ -54,25 +54,27 @@ Two details worth knowing before you debug a "missing email":
 
 ## Moderators
 
-Every community has its own volunteer moderators - **at least two per community**, which is
-a rule the Volunteer Support team enforces, not something the code checks. They approve and
-reject posts, handle member disputes, and set their community's own settings.
+Moderators are **national**, not tied to a community - there is no community left to be tied
+to. A handful of volunteers, given the `Moderator`, `Support` or `Admin` system role, see the
+same members and posts as every other moderator.
 
 What matters technically:
 
 - **Moderators are members with extra permissions**, not a separate user type. The same
-  account, the same tables.
+  account, the same tables. The role that grants it is `users.systemrole`.
 - **They work in ModTools**, a different frontend build from the same repository. If you
   break a shared component you break both surfaces
   ([../moderators/README.md](../moderators/README.md)).
-- **Almost every moderation decision is per community.** A post in three communities can be
-  approved in one and pending in another, and a moderator deleting it deletes their copy.
-  This surprises everyone once.
-- **Some settings are deliberately not moderator-controllable**, because they affect other
-  communities rather than their own.
+- **A post has one copy and one moderation state.** There is no version per community to
+  keep in step any more, so what a moderator sees and what a poster is told can never
+  disagree.
+- **Most of what a moderator used to decide is now decided automatically**, by content
+  checks and the judge, before a moderator ever sees the post. See
+  [retired-human-loops.md](../developers/reference/retired-human-loops.md) for the full
+  audit of what replaced what.
 
-Support volunteers and mentors sit above the per-community moderators and pick up what
-those moderators escalate.
+Support volunteers and mentors sit above ordinary moderators and pick up what is
+escalated.
 
 ## Money: who does which part
 
@@ -128,9 +130,10 @@ Three habits that keep the human side working:
 2. **When you add an automated email, decide who acts on it.** An alert nobody owns is
    noise, and noise gets filtered, and then the real alert is missed too.
 3. **Prefer giving a volunteer a better list over automating their judgement.** That is the
-   pattern throughout: the code assembles the facts, a human decides. It is also why we
-   measured an AI moderator and did not ship it
-   ([../ops/reference/spam-and-abuse.md](../ops/reference/spam-and-abuse.md)).
+   pattern throughout: the code assembles the facts, a human decides, or the judge answers
+   a fixed question rather than an open one. See
+   [../ops/reference/spam-and-abuse.md](../ops/reference/spam-and-abuse.md) for why the AI
+   judge is built that way.
 
 ## Where to find the current people
 

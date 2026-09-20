@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-15
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 covers:
   - docs/developers/reference/architecture.md
@@ -50,7 +50,7 @@ Freegle (internally "Iznik") is a monorepo. The main pieces:
 | `iznik-server-go/` | Go API, **version 2** - the primary API. | `iznik-server-go/README.md` |
 | `iznik-batch/` | Laravel batch processing: digests, notifications, scheduled jobs. Owns the database schema (migrations). | `iznik-batch/README.md` |
 | `iznik-routing-go/` | Go service for drive-time routing, used by rippling, browse and the sysadmin analytics; includes the reach engine (region labels instead of repeated searches - see `iznik-routing-go/REACH-ENGINE.md`), which also answers per-point drive-time evals without a full-graph sweep. | `iznik-routing-go/README.md` |
-| `iznik-spatial-go/` | Go service for spatial lookups (which community covers a point, etc). | `iznik-spatial-go/README.md` |
+| `iznik-spatial-go/` | Go service for spatial lookups (point-in-polygon evals for reach, TrashNothing partner areas, etc). | `iznik-spatial-go/README.md` |
 | `status-nuxt/` | Development status dashboard and test runner. | - |
 | `freegle-app/` | A Kotlin Multiplatform native app. An experiment; it does not ship. See [./reference/mobile-app.md](./reference/mobile-app.md). | - |
 
@@ -70,7 +70,7 @@ as **separate Netlify sites from the same branch** (`npm run build` for the memb
 `cd modtools && npm run build` for ModTools).
 
 State lives in **Pinia stores** (`iznik-nuxt3/stores/`). Auth, the current user (`me`),
-and per-group membership and roles are the ones you will meet first.
+and their system-wide role are the ones you will meet first.
 
 ## How the pieces talk
 
@@ -130,20 +130,17 @@ and per-group membership and roles are the ones you will meet first.
   rings as well as the reach, because a map that stops at the committed outline tells a
   moderator a post did not get somewhere the mail has already invited people from.
 
-  The third rule is that a post has one home. Everything said to a poster about their
-  post comes from the community it was posted on; a community the post only rippled into
-  moderates its own copy silently, and a membership rippling created is not a
-  relationship its moderators can write to. The home is the earliest `messages_groups`
-  row with `rippled_in = 0` - identified from that column and nothing else, because an
-  arrival-time window breaks the moment a post is approved slowly (§9 of the algorithm
-  reference explains why).
+  The third rule is that a post has exactly one copy. There is one `messages` row, one
+  location and one moderation state - no per-community duplicate to keep in step, and
+  nothing a poster is told can disagree with what a moderator sees, because there is only
+  the one record for both to read.
 - **Getting a first reply in** sits alongside rippling and attacks the 44% of rippled posts
   that get no reply at all: a passthrough for a silent post's first reply, individual mail to
   the members who have asked for that specific item (an open post of the opposite type, or a
   saved search), and Freegle's own chat messages to the poster.
   See [./reference/first-reply.md](./reference/first-reply.md).
 - **TrashNothing / LoveJunk** is a partner integration where external users post into
-  Freegle communities. See [./reference/trashnothing.md](./reference/trashnothing.md).
+  Freegle. See [./reference/trashnothing.md](./reference/trashnothing.md).
 - **Logging and observability** run through Loki, with client-side tracing. See
   [../ops/reference/logging.md](../ops/reference/logging.md) and [APIs and data](apis-and-data.md).
 

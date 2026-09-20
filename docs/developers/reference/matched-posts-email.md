@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-28
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 covers:
   - iznik-server-go/message/postmatches.go
@@ -35,8 +35,8 @@ This is a **separate** mail from the daily digest's relevance ranking
    minutes.
 2. **Driver query** (`MatchedPostsService::freshPosts`) selects Offer/Wanted posts
    that arrived in the last `fresh_window_minutes` (default 20), are still open,
-   and already have an embedding — a small set (~100/run on prod) bounded by the
-   `messages_groups.arrival` index.
+   and already have an embedding — a small set (~100/run on prod) bounded by an
+   index on the message's own arrival time.
 3. For each fresh post, the service calls apiv2 **`GET /message/{id}/matches`**
    (`iznik-server-go/message/postmatches.go`), which returns the opposite-type
    open posts near it from the in-memory vector store — bbox-scoped, reach-filtered

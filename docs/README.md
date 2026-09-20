@@ -8,7 +8,7 @@ Pick the section that fits you:
 | Section | Who it's for |
 |---------|--------------|
 | **[Using Freegle](members/README.md)** | You use Freegle to give away and pick up things for free. |
-| **[Running a community](moderators/README.md)** | You are a volunteer moderator looking after a local Freegle community. |
+| **[Moderating](moderators/README.md)** | You are a volunteer moderator helping look after Freegle. |
 | **[Getting started](getting-started/README.md)** | You are new to the technical side, or picking it up from someone else. Start here. |
 | **[Building Freegle](developers/README.md)** | You write the software behind Freegle. |
 | **[Running the service](ops/README.md)** | You keep Freegle's computers and systems running. |
@@ -34,19 +34,18 @@ the pictures are taken automatically from the real app rather than added by hand
 
 New to Freegle? Here is what the common words mean:
 
-- **Freegle** - a UK network of local groups where people give away and pick up unwanted
-  things for free, instead of throwing them out.
+- **Freegle** - a UK-wide service where people give away and pick up unwanted things for
+  free, instead of throwing them out.
 - **Freegler** - someone who uses Freegle.
 - **OFFER** - a post giving something away.
 - **WANTED** - a post asking for something.
 - **TAKEN / RECEIVED** - how you close a post once the item has changed hands: TAKEN when
   you have given something away, RECEIVED when you have got something.
-- **Community / group** - a local Freegle area you belong to. You can belong to several.
 - **Rippling out** - Freegle shows your post to people close by first, then gradually to
   people further away if nobody nearby wants it. See
   [more about rippling](./members/rippling-out.md).
-- **ModTools** - the separate app that volunteer moderators use to run a community
-  (modtools.org).
-- **ChitChat** - a place for community chat, separate from the give-and-get posts.
+- **ModTools** - the separate app that volunteer moderators use (modtools.org).
+- **ChitChat** - a newsfeed for general chat between members, separate from the
+  give-and-get posts.
 - **TrashNothing** and **LoveJunk** - partner apps whose users can also see and reply to
   Freegle posts.

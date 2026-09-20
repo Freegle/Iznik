@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-19
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/settings/**
@@ -20,13 +20,14 @@ This guide covers the parts you are most likely to want.
 
 ![Your settings](assets/settings.png)
 
-This is the setting people ask about most. You control how much Freegle emails you, per
-community.
+This is the setting people ask about most. You control how much Freegle emails you with
+one set of choices that covers every post, wherever it comes from - there is no per-community
+version of it to think about.
 
 - **Simple mode** gives you one "Email level" (Off, Basic or Standard) plus how often you
   want to hear about new OFFERs and WANTEDs.
-- **Advanced mode** ("Show advanced settings") lets you set, for each community you belong
-  to, how often you get new-post emails, and toggle things like:
+- **Advanced mode** ("Show advanced settings") lets you set how often you get new-post
+  emails, and toggle things like:
   - replies to your own posts,
   - a copy of messages you send,
   - ChitChat and notifications,
@@ -40,12 +41,12 @@ post has been up a while with no replies: whether you could deliver it, whether 
 gone by a date, and how many people have looked at it. They come with buttons, so answering
 takes one tap and updates your post. They are on by default and can be turned off here.
 
-You can set each community to **immediate**, **daily digest**, or **no emails**. If you
-turn emails right down, Freegle warns you to check your Chats regularly so you do not miss
-a reply.
+You can set your emails to **immediate**, **daily digest**, or **no emails**. If you turn
+emails right down, Freegle warns you to check your Chats regularly so you do not miss a
+reply.
 
 There is also a weekly **Community Event Roundup** email (sent Thursdays) listing local
-events. It is on by default and can be turned off in Settings.
+events near you. It is on by default and can be turned off in Settings.
 
 If you are in the app, you can also turn on a **daily push notification** of new posts.
 
@@ -61,25 +62,10 @@ you might only want to look at things in your own town, while still being happy 
 few towns away to come and collect something you are giving away. Choose **Link them again** to
 go back to one slider.
 
-## Your communities
-
-You can belong to as many local communities as you like. It is best to stick to ones near
-where you live or visit, because that is where you can realistically give and collect.
-Joining a great many communities can flag your account for a routine review by
-moderators, so there is no benefit to joining everywhere.
-
-- Each community has its own email frequency, set in Email settings above.
-- To **leave** a community, use **Unsubscribe** (`/unsubscribe`) and pick the community.
-  Leaving stops its posts reaching you.
-- If you are a **moderator or owner** of a community, it is not in that list, and Freegle
-  refuses a leave request for it. Ask another owner to change your role first. This stops
-  you dropping your own role by accident; a community a post rippled you into is not
-  protected this way, because leaving it is how you stop that post reaching there.
-
 ## The Unsubscribe link in our emails
 
 Most email apps show an **Unsubscribe** link at the top of, or inside, our emails. Clicking
-it turns off **the kind of email you were reading** — so unsubscribing from a What's New
+it turns off **the kind of email you were reading**, so unsubscribing from a What's New
 digest stops digests, and nothing else. It does not delete your account.
 
 Because of that, you may still get other kinds of email from us: chat messages, newsletters
@@ -102,7 +88,7 @@ and old. From here you edit, repost, promise, and mark items TAKEN or RECEIVED. 
 [Giving something away](giving.md) and [Getting something](getting.md).
 
 Note that old posts stay in your history and cannot be deleted. They are kept for
-community statistics and so you always have a record of what you gave or received.
+Freegle's own statistics and so you always have a record of what you gave or received.
 
 ## Account and privacy
 
@@ -121,17 +107,17 @@ community statistics and so you always have a record of what you gave or receive
 - **If you stop using Freegle**: after six months without a visit your account goes
   dormant and we stop emailing you. We do not remove member data for inactivity, so your
   posting history stays intact and you can pick up where you left off just by logging back
-  in. Accounts that signed up but never joined a community do have their personal data
-  removed automatically after six months. See
+  in. Accounts that signed up but never posted, replied or logged back in do have their
+  personal data removed automatically after six months. See
   [/privacy](https://www.ilovefreegle.org/privacy) for the full policy.
 
 ## More things members do
 
-- **ChitChat** (`/chitchat`): a community discussion feed, separate from OFFER and WANTED
+- **ChitChat** (`/chitchat`): a general discussion feed, separate from OFFER and WANTED
   posts. Chat about local goings-on, ask for recommendations, and so on. If a ChitChat
   post looks like an item request, Freegle nudges you to use Give or Ask instead.
-- **Stories** (`/stories`): share why you freegle. Good stories may feature in a
-  community newsletter.
+- **Stories** (`/stories`): share why you freegle. Good stories may feature in the
+  newsletter.
 - **Community events** (`/communityevents`) and **volunteering** (`/volunteerings`):
   browse and add local events and volunteering opportunities.
 - **Invite a friend** (`/promote`): invite someone by email, or print a poster.
@@ -141,5 +127,5 @@ community statistics and so you always have a record of what you gave or receive
 ## Next steps
 
 - New here? Start with [Getting started](getting-started.md).
-- The moderators who run your community have their own guide under
+- Freegle's national moderators have their own guide under
   [../moderators/](../moderators/README.md).

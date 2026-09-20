@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-15
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/components/DistanceSliders.vue
@@ -11,11 +11,6 @@ covers:
 ---
 
 # Rippling Out - A Guide for Members
-
-> **Current reference document.** Supersedes the draft at
-> `plans/rippling-out-rollout/CHANGES-FOR-MEMBERS.md`.
-
----
 
 ## What is rippling out?
 
@@ -30,83 +25,33 @@ it, it reaches further afield automatically - you do not need to do anything ext
 If enough people nearby reply to your post, it stops spreading further - it already has
 plenty of interest, so there is no need to show it to people further away.
 
----
-
-## What happens when your post ripples into a new community?
-
-When your post reaches a new Freegle community, two things happen automatically.
-
-### You are joined as a member
-
-You are added as a normal member of that community so that:
-
-- People there can reply to your post and get in touch.
-- Moderators can contact you if they need to.
-- Your post behaves just like any other post in that community.
-
-This is invisible to you in day-to-day use. You will see these communities listed under
-your "My Communities" in Settings.
-
-### Your email settings are adjusted on your behalf
-
-We do not want your inbox filling up with new post alerts from every community your item
-travels through. So we apply these defaults for any community you are joined to via
-rippling:
-
-- **If you were on "immediate" emails** on your home community, the rippled communities
-  are set to daily digest instead. You still hear about them - just once a day rather
-  than instantly.
-- **If you were already on daily digest or no emails**, those settings are kept exactly
-  as they are.
-- **If you have left every community**, the communities your post reaches start with all
-  emails turned off, rather than on a daily digest. Leaving everything is about as clear a
-  signal as there is, so we do not use rippling to start emailing you again.
-- **Community events and volunteering emails** carry over the setting you already use on
-  your own community, so you get no extra emails.
-
-You can adjust any of these settings yourself at any time - see below.
-
----
-
-## The intro email
-
-Instead of receiving a separate welcome email for every community your post ripples
-into (which could be quite a few), you get **one single email** that explains:
-
-- That your post is now reaching nearby communities beyond your own.
-- What email settings we applied on your behalf.
-- How to change them or leave a community if you prefer.
-- A welcome message from each community your post reached (so you still see what each
-  community wanted to say, without a separate welcome email from every one).
-
-This is a one-off notice about your own post. It is sent even if you normally have
-emails turned off for group-feed messages, because it is about something that just
-happened to your account.
+There is nothing to join and nothing to opt out of. Freegle is one national service, and
+how far any single post reaches is worked out from distance alone - not from which
+community, if any, you or anyone else belongs to.
 
 ---
 
 ## Your daily "What's New" email
 
-Because rippling switches your immediate alerts to a daily digest (see above), and joins
-you to more communities, your daily "What's New" email can now gather posts from several
-communities. To keep the email a sensible length - and to stop it being clipped partway
-through by email providers like Gmail - it lists up to around 65 posts. If there are more
-than that, the email shows the first batch and links you to the website to browse the
-rest, and the subject line simply says "What's New" rather than giving an exact post
-count. Nothing is missing - everything is always there on the browse page.
+Your daily "What's New" email lists posts that have reached you, nearest and freshest
+first. To keep the email a sensible length - and to stop it being clipped partway through
+by email providers like Gmail - it lists up to around 65 posts. If there are more than
+that, the email shows the first batch and links you to the website to browse the rest, and
+the subject line simply says "What's New" rather than giving an exact post count. Nothing
+is missing - everything is always there on the browse page.
 
 ---
 
 ## Getting posts that ripple towards you
 
-Rippling works in the other direction too: posts from neighbouring communities ripple
-towards you. If you have a community set to **immediate emails**, you will get an alert
-the moment a rippling post first reaches your area - just as you would for a post made
-directly in that community. You only ever get **one** alert per post, however far it
-later travels, and only once it is actually close enough for you to reply.
+Rippling works in the other direction too: as other people's posts spread outwards, they
+eventually reach you. If your emails are set to **immediate**, you get an alert the moment
+a post first reaches close enough for you to reply. You only ever get **one** alert per
+post, however far it later travels, and only once it is actually close enough for you to
+reply.
 
-If you would rather not hear about them straight away, set that community to daily digest
-in Settings - those posts then simply appear in your next "What's New" instead.
+If you would rather not hear about them straight away, set your emails to daily digest in
+Settings - those posts then simply appear in your next "What's New" instead.
 
 ---
 
@@ -114,10 +59,10 @@ in Settings - those posts then simply appear in your next "What's New" instead.
 
 If your item is still available after a while, we remind you shortly before we
 automatically repost it ("Will Repost: ..."), and later we check in to ask what happened
-("What happened to: ..."). Even though your post may be live in several communities at
-once through rippling, you only ever get **one** reminder and **one** check-in each time -
-not one per community. Whatever you choose - mark it taken, withdraw it, or promise it to
-someone - applies to your post everywhere it has reached, so a single tap settles it.
+("What happened to: ..."). You only ever get **one** reminder and **one** check-in for a
+post, however far it has rippled. Whatever you choose - mark it taken, withdraw it, or
+promise it to someone - applies everywhere the post has reached, so a single tap settles
+it.
 
 ---
 
@@ -125,24 +70,16 @@ someone - applies to your post everywhere it has reached, so a single tap settle
 
 ### Changing your email settings
 
-You can adjust how often you hear from any community in **Settings** at any time. You
-can set individual communities to immediate, daily, or no emails, just as you can for
-any other community you belong to.
+You control how often Freegle emails you - immediate, daily digest, or no emails - in
+**Settings**. This one setting covers every post, wherever it comes from; there is no
+per-community version of it to think about.
 
-### Leaving a community
+### Taking a post out of circulation
 
-If you would rather not be a member of a community your post rippled into, you can leave
-it in Settings.
-
-Two things happen when you leave:
-
-1. Your post is **removed from that community** - people there will no longer see it.
-2. You will **not be re-joined** to that community. That is not just for this post: any
-   future post of yours ripples past that community and leaves you out of it, unless you
-   choose to join it yourself.
-
-Your post carries on being visible in every other community it reached, so leaving one
-community does not affect the rest.
+There is no community to leave to stop a post reaching further. If you want to stop a
+post spreading, or stop it being shown at all, mark it **Taken** or **withdraw** it from
+**My Posts** (`/myposts`). That removes it everywhere at once, however far it has already
+rippled.
 
 ---
 
@@ -160,8 +97,7 @@ up your street. The old travel-time slider and transport picker are gone: the sy
 out the right distance for you and widens it automatically over time, so more posts appear
 in your Nearby view as they ripple towards you. You will not see distant posts you cannot
 yet reply to cluttering the list or map - Nearby stays genuinely nearby. You can still sort
-by "Newest posted" or "Closest" if you prefer, and "All my communities" still shows
-everything in the communities you belong to.
+by "Newest posted" or "Closest" if you prefer.
 
 ### A distance slider, if you want one
 
@@ -206,29 +142,28 @@ drive. Using it to stop your spare sofa reaching somebody twenty minutes away wo
 one less thing gets reused, and it would not help anybody. So Freegle only holds your own
 posts back when you have actually asked it to.
 
-Freegle remembers your choice, along with your other filters (which posts, which communities,
-and sort order), so you do not need to set them again next time you visit.
+Freegle remembers your choice, along with your other filters and sort order, so you do not
+need to set them again next time you visit.
 
-### When you post, there is no group to choose
+### Where your post goes
 
-When you create a post you no longer pick which community it goes to. Your post simply
-reflects where the item actually is (based on the postcode you give), and rippling then
-shows it to the right people, closest first. You no longer need to think about "which
-group should I post to?" or post to a second group for more reach - the system handles
+When you create a post you do not pick where it goes. Your post simply reflects where the
+item actually is (based on the postcode you give), and rippling then shows it to the right
+people, closest first. You do not need to post twice for more reach - the system handles
 that for you.
 
 ### "You can always reply - we'll pass it on"
 
 On the default Nearby view, every post you see has already reached you, so your reply
 goes straight to the owner. Only if you move away from that default - for example by
-switching to "All my communities", or widening what you are looking at - might you come
-across a post that has not rippled out to your area yet. You can still reply: we simply
-**hold your message for a short while, then pass it on**. That gives people closer to the
-item a head start, which is the whole point of rippling out, but it is a short wait rather
-than an open-ended one - usually under an hour, and never more than three. The wait depends
-on how far outside the post's current area you are, so if you are only just outside it, it
-is very short. If the post ripples out to you sooner than that, your reply goes straight
-through at that moment instead.
+widening the distance you are browsing at - might you come across a post that has not
+rippled out to your area yet. You can still reply: we simply **hold your message for a
+short while, then pass it on**. That gives people closer to the item a head start, which
+is the whole point of rippling out, but it is a short wait rather than an open-ended one -
+usually under an hour, and never more than three. The wait depends on how far outside the
+post's current reach you are, so if you are only just outside it, it is very short. If the
+post ripples out to you sooner than that, your reply goes straight through at that moment
+instead.
 
 You do not need to do anything or come back. It is delivered automatically, and your reply
 shows as "waiting to send" until then. Nothing is lost.
@@ -243,10 +178,6 @@ shows as "waiting to send" until then. Nothing is lost.
 | Nearby browse order | Unseen posts first, then seen; each ordered by closeness, freshness and interest, not just newest |
 | Distance slider | Optional "Nearer/Further" control in Browse and Settings; narrows what you see and are emailed about, and how far away other people see your own posts; starts at "Further" (no extra limit) |
 | Browse filters | Remembered between visits, including the distance slider |
-| New communities | You are joined automatically so replies and contact work |
-| Email defaults | Immediate is switched to daily; no-email and daily are unchanged |
-| Community events/volunteering emails | Carried over from your own community's setting |
-| Intro email | One bundled email explains what happened and how to change things |
-| Repost reminders / check-ins | One per item, not one per community |
-| Leaving a community | Removes your post from it; you are not re-joined, now or by a later post |
-| Changing settings | Adjust per community in Settings at any time |
+| Email frequency | One setting - immediate, daily digest, or no emails - covers every post, wherever it comes from |
+| Repost reminders / check-ins | One per item, however far it has rippled |
+| Taking a post out of circulation | Mark it Taken or withdraw it from My Posts; that removes it everywhere at once |

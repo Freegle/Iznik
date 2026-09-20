@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-12
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/ask/**
@@ -25,8 +25,8 @@ posted, or post a **WANTED** describing what you are looking for. Often you will
    when you could collect.
 3. Send it. This starts a private **chat** with the person offering.
 
-Replies go **privately** to the person offering, not onto the community board. That keeps
-the board readable when a popular item gets lots of replies. Say a little about yourself:
+Replies go **privately** to the person offering, not shown to anyone else. That keeps
+Browse readable when a popular item gets lots of replies. Say a little about yourself:
 offers are not first come first served, and many people like to give to whoever will make
 good use of the item.
 
@@ -37,13 +37,21 @@ you when: either when the post is due to reach your area, or, if it is never goi
 spread quite that far, when it stops spreading and your reply goes anyway. It shows as
 "waiting to send" until it has gone.
 
+### If you are replying to a lot of posts
+
+After five replies in a day, Freegle asks you to answer one quick question about somebody
+else's post before your next reply goes out - for example, whether it looks like a genuine
+item. This is not a punishment: it is there so that one very active account cannot crowd
+out replies from everyone else. Your reply is not lost while you do this. Get the question
+right and it sends straight away; get it wrong and you can simply try again.
+
 ## Posting a WANTED
 
 If nobody is offering what you need, post a WANTED and let it find you.
 
 1. Click **Ask** (`/ask`), or the **+** button in the app.
 2. Describe what you are looking for, and add a photo if it helps.
-3. Enter your postcode. As with an OFFER, Freegle works out your local community for you.
+3. Enter your postcode. As with an OFFER, Freegle works out where you are from it.
 4. Confirm your email if you are not logged in, then click **Freegle it!**
 
 A WANTED has no delivery or deadline step. People who have the item can reply to you.
@@ -65,6 +73,10 @@ Everything after the first reply happens in the **chat** (`/chats`).
 If the person offering **promises** the item to you, you will see a "promised to you"
 banner in the chat.
 
+Occasionally a message you or the other person sends gets held for a moderator to look at
+first, rather than blocked outright - Freegle still delivers it to the chat straight away,
+just with a warning banner on it so you know it is under review.
+
 ### Staying safe
 
 - Arrange collection somewhere you are comfortable, and tell someone where you are going.
@@ -85,6 +97,9 @@ TAKEN. You do not need to do anything, though a thank-you in the chat is always 
 
 ## A few ground rules
 
+The full rules are one page, the same for everyone: `/rules`. A few worth knowing before
+you start:
+
 - **Everything is free.** Do not offer or ask for payment, and do not swap item for item.
   Freegle is about giving, not trading.
 - **Only legal items.** If something cannot legally be given away, it is not for Freegle.
@@ -98,4 +113,4 @@ TAKEN. You do not need to do anything, though a thank-you in the chat is always 
 ## Next steps
 
 - Want to give something back? See [Giving something away](giving.md).
-- Manage your emails, communities and profile in [Your account](your-account.md).
+- Manage your emails and profile in [Your account](your-account.md).
