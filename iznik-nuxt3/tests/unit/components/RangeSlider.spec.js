@@ -263,6 +263,16 @@ describe('RangeSlider', () => {
       ).toContain('--range-slider-fraction: 1')
     })
 
+    it('keeps the gap on the handle when the range collapses to a single value', () => {
+      // A member's band can cap their maximum right down to the minimum, leaving a slider with
+      // nowhere to travel. Dividing by that empty range would put NaN in the custom property,
+      // the gap would go missing, and the handle could not be grabbed at all.
+      const wrapper = createWrapper({ min: 5, max: 5, modelValue: 5 })
+      expect(
+        wrapper.find('.range-slider__input-wrap').attributes('style')
+      ).toContain('--range-slider-fraction: 0')
+    })
+
     it('marks the handle pan-y, so a vertical touch scroll from it is page scroll, not a drag', () => {
       const wrapper = createWrapper()
       const style = wrapper.find('input').attributes('style') || ''
