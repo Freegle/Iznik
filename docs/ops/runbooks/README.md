@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 ---
 
@@ -72,6 +72,19 @@ provider queues on the relay; the batch side notices and pauses generation for i
   delay from a provider throttling us, which call for opposite responses.
 - Pause the every-minute automation before touching its state by hand, and judge an
   address on sustained deliveries, never on a one-off probe.
+
+## Restarting a database node, or rejoining one to the cluster
+
+The database is a three-node Galera cluster. A node that is stopped cleanly rejoins by
+itself on the next start, catching up incrementally if the others' write-set cache still
+covers its downtime and by a full copy from a donor otherwise. The service wrapper does the
+position recovery and refuses two unsafe automatic starts; nearly every manual step beyond
+stop and start makes a rejoin slower.
+
+- Full steps: **[database-node-restart-and-rejoin.md](database-node-restart-and-rejoin.md)**.
+- Stop with the service, never a kill; do not remove the data directory or touch the state
+  file; a joining node refusing connections for 10 to 18 minutes is a full copy in
+  progress, not a hang.
 
 ## Adding a runbook
 
