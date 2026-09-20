@@ -16,11 +16,32 @@ INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 [ -z "$COMMAND" ] && exit 0
 
-# Only fire for `gh pr create`.
-echo "$COMMAND" | grep -qE '\bgh[[:space:]]+pr[[:space:]]+create\b' || exit 0
+# Decide whether to fire from the command with heredoc BODIES stripped, and skip
+# commands that merely QUOTE the trigger rather than run it. A grep whose pattern
+# contains the words, or a commit message showing an example, is not opening a PR.
+# Both were observed firing this hook before this guard existed.
+TRIGGER=$(echo "$COMMAND" | awk '
+  {
+    if (tag != "") { if ($0 ~ ("^[[:space:]]*" tag "[[:space:]]*$")) tag = ""; next }
+    line = $0
+    if (match(line, /<<-?["'"'"'"]?[A-Za-z_][A-Za-z0-9_]*["'"'"'"]?/)) {
+      t = substr(line, RSTART, RLENGTH)
+      sub(/^<<-?/, "", t); gsub(/["'"'"'"]/, "", t)
+      tag = t
+    }
+    print line
+  }')
+
+# Only fire for an actual `gh pr create` invocation.
+echo "$TRIGGER" | grep -qE '(^|[;&|]|&&|\|\|)[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*gh[[:space:]]+pr[[:space:]]+create\b' || exit 0
+
+# A grep/rg/awk whose PATTERN contains the trigger is searching, not creating.
+echo "$TRIGGER" | grep -qE '\b(grep|rg|ag|ack|awk|sed)\b' \
+  && ! echo "$TRIGGER" | grep -qE '(^|[;&|])[[:space:]]*(cd[[:space:]]+[^;&|]+[[:space:]]*(&&|;)[[:space:]]*)?([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*gh[[:space:]]+pr[[:space:]]+create\b' \
+  && exit 0
 
 # Explicit override (env in the command, or already exported).
-if echo "$COMMAND" | grep -qE '\bALLOW_DIRTY_PR=1\b' || [ "${ALLOW_DIRTY_PR:-}" = "1" ]; then
+if echo "$TRIGGER" | grep -qE '\bALLOW_DIRTY_PR=1\b' || [ "${ALLOW_DIRTY_PR:-}" = "1" ]; then
   exit 0
 fi
 

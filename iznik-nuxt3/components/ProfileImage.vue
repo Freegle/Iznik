@@ -10,19 +10,6 @@
       :width="width"
       :height="width"
     />
-    <NuxtPicture
-      v-else-if="externaluid"
-      format="webp"
-      fit="cover"
-      provider="uploadcare"
-      :src="externaluid"
-      :modifiers="externalmods"
-      :class="className"
-      class="circle"
-      :alt="altText"
-      :width="width"
-      :height="width"
-    />
     <b-img
       v-else-if="image?.indexOf('data:image') === 0"
       :class-name="className"

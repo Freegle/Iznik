@@ -145,10 +145,6 @@ describe('members/approved/[[id]]/[[term]].vue page', () => {
           ModMergeButton: {
             template: '<div class="mod-merge-button" />',
           },
-          ModMemberExportButton: {
-            template: '<div class="mod-member-export-button" />',
-            props: ['groupid'],
-          },
           ModMembers: {
             template: '<div class="mod-members" />',
           },

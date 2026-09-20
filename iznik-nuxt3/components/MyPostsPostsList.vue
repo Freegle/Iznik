@@ -114,16 +114,16 @@
           </nuxt-link>
         </template>
         <template v-else-if="props.type === 'Wanted'">
-          <nuxt-link to="/find" class="mobile-btn mobile-btn--find">
-            <v-icon icon="search" class="me-2" />Find stuff
+          <nuxt-link to="/ask" class="mobile-btn mobile-btn--ask">
+            <v-icon icon="shopping-cart" class="me-2" />Ask for stuff
           </nuxt-link>
         </template>
         <template v-else>
           <nuxt-link to="/give" class="mobile-btn mobile-btn--give">
             <v-icon icon="gift" class="me-2" />Give stuff
           </nuxt-link>
-          <nuxt-link to="/find" class="mobile-btn mobile-btn--find">
-            <v-icon icon="search" class="me-2" />Find stuff
+          <nuxt-link to="/ask" class="mobile-btn mobile-btn--ask">
+            <v-icon icon="shopping-cart" class="me-2" />Ask for stuff
           </nuxt-link>
         </template>
       </div>
@@ -251,30 +251,25 @@ const upcomingTrysts = computed(() => {
     const message = messageStore.byId(post.id)
     if (post.type === 'Offer' && message?.promises?.length) {
       message.promises.forEach((p) => {
+        // The promisee's profile may not have loaded yet. The collection still
+        // exists, so show it under a placeholder name rather than dropping it.
         const user = userStore?.byId(p.userid)
         const isSomeone = p.userid === myid.value
+        const tryst = trystStore?.getByUser(p.userid)
 
-        if (isSomeone || user) {
-          const tryst = trystStore?.getByUser(p.userid)
-
-          // If tryst.arrangedfor is in the future or within the last hour
-          if (
-            tryst &&
-            new Date(tryst.arrangedfor).getTime() >
-              new Date().getTime() - 60 * 60 * 1000
-          ) {
-            const date = tryst
-              ? dayjs(tryst.arrangedfor).format('dddd Do HH:mm a')
-              : null
-
-            ret.push({
-              id: p.userid,
-              name: isSomeone ? 'Someone' : user.displayname,
-              tryst,
-              trystdate: date,
-              subject: message.subject,
-            })
-          }
+        // If tryst.arrangedfor is in the future or within the last hour
+        if (
+          tryst &&
+          new Date(tryst.arrangedfor).getTime() >
+            new Date().getTime() - 60 * 60 * 1000
+        ) {
+          ret.push({
+            id: p.userid,
+            name: isSomeone ? 'Someone' : user?.displayname || 'Freegler',
+            tryst,
+            trystdate: dayjs(tryst.arrangedfor).format('dddd Do HH:mm a'),
+            subject: message.subject,
+          })
         }
       })
     }
@@ -322,9 +317,12 @@ const visibleCollectionGroups = computed(() => {
 </script>
 <style scoped lang="scss">
 @import 'assets/css/_color-vars.scss';
+@import 'assets/css/navbar.scss';
 
 .my-posts-list {
-  padding: 0;
+  /* Room for the fixed bottom navigation bar, which slides back over the end
+     of the list when scrolling stops (Discourse 9808/805). */
+  padding: 0 0 $page-bottom-padding;
 }
 
 .loading-state {
@@ -595,7 +593,7 @@ const visibleCollectionGroups = computed(() => {
     }
   }
 
-  &--find {
+  &--ask {
     background: $color-secondary;
     color: $color-white;
 

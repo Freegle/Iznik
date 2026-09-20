@@ -13,6 +13,8 @@ use Tests\TestCase;
  * description, lowercases and trims it, then applies the CATEGORY_RULES
  * constant (an ordered set of regex patterns) to return one of:
  *   'primary_eee'      — the component itself requires electricity as its primary function
+ *   'distinct_function_eee' — a substantive electrical function alongside a
+ *                        non-electrical basic function (fish tank pump, spa jets)
  *   'supplementary_eee'— electrical feature that supports a non-electrical item
  *   'non_electrical'   — purely mechanical / structural component
  *   'unknown'          — no pattern matched; needs manual review
@@ -44,6 +46,92 @@ class EeeComponentAutoCategoryTest extends TestCase
             $this->service->autoCategory($input),
             $message !== '' ? $message : "Category for: {$input}"
         );
+    }
+
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SECTION: distinct_function_eee — a substantive electrical function
+    // alongside a non-electrical basic function.
+    //
+    // The Environment Agency names fish tanks with a pump, spa baths, loft
+    // ladders with electronic controls, roller screens with electronic winders
+    // and riser chairs as EEE. None of them has an electrical BASIC function, so
+    // a primary-function test gets every one of them wrong.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * @dataProvider provideDistinctFunctionCases
+     */
+    public function test_distinct_function_eee(string $input): void
+    {
+        $this->assertCategory('distinct_function_eee', $input);
+    }
+
+    public static function provideDistinctFunctionCases(): array
+    {
+        return array_map(fn($c) => [$c], [
+            // Powered water/air circulation — fish tanks, ponds, spa baths
+            'filter pump', 'filtration pump', 'pond pump', 'tank pump',
+            'circulation pump', 'air pump',
+            'pump and filter', 'pump filter', 'powered filter',
+            'aerator', 'air stone', 'airstone', 'protein skimmer',
+            // Spa / hydrotherapy
+            'whirlpool jets', 'spa jets', 'hydrotherapy jets', 'massage jets',
+            'air jets', 'jet nozzles', 'air blower',
+            // Powered movement fitted to otherwise non-electrical furniture.
+            // 'recliner motor' and 'bed adjustment motor' are omitted: the existing
+            // primary_eee motor rules claim them first, which gives the same is_eee.
+            'riser actuator', 'lift mechanism',
+            'powered recliner', 'powered riser', 'electric winder',
+            'bed actuator',
+            // Wearable / equipment sensors that are a fundamental feature
+            'heart rate monitor', 'heart rate sensor', 'heart rate strap',
+            'fitness tracker', 'activity sensor', 'step counter',
+        ]);
+    }
+
+    /**
+     * A powered filtration unit must not be swallowed by the passive
+     * '/\bfilter\b/' rule in non_electrical. This was a live bug: "filter pump"
+     * classified as non_electrical, which made a fish tank with a pump come out
+     * as containing no electrical components at all — the exact case the
+     * Environment Agency names as in scope.
+     */
+    public function test_filter_pump_is_not_swallowed_by_passive_filter_rule(): void
+    {
+        $this->assertCategory('distinct_function_eee', 'filter pump');
+        $this->assertCategory('distinct_function_eee', 'filtration pump');
+
+        // Passive filter elements must still classify as non_electrical.
+        $this->assertCategory('non_electrical', 'lint filter');
+        $this->assertCategory('non_electrical', 'coffee filter');
+    }
+
+    /**
+     * Manual pumps are not electrical and must not be caught by the powered
+     * pump patterns.
+     */
+    public function test_manual_pumps_are_not_distinct_function(): void
+    {
+        foreach (['foot pump', 'hand pump', 'bicycle pump'] as $input) {
+            $this->assertNotSame(
+                'distinct_function_eee',
+                $this->service->autoCategory($input),
+                "Manual pump wrongly treated as powered: {$input}"
+            );
+        }
+    }
+
+    /**
+     * Components that only support or control a non-electrical basic function
+     * must stay supplementary, so the text signal decides. This is what keeps a
+     * gas cooker out of scope, which the guidance names explicitly.
+     */
+    public function test_support_and_control_components_stay_supplementary(): void
+    {
+        $this->assertCategory('supplementary_eee', 'electronic ignition');
+        $this->assertCategory('supplementary_eee', 'indicator light');
+        $this->assertCategory('supplementary_eee', 'electronic control panel');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -440,7 +528,6 @@ class EeeComponentAutoCategoryTest extends TestCase
             'electronic ignition'   => ['electronic ignition'],
             'electric ignition'     => ['electric ignition'],
             'pulse sensor'          => ['pulse sensor'],
-            'heart rate sensor'     => ['heart rate sensor'],
             'infrared receiver'     => ['infrared receiver'],
             'infrared emitter'      => ['infrared emitter'],
             'infrared transmitter'  => ['infrared transmitter'],

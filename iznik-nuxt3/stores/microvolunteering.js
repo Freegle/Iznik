@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import api from '~/api'
 
-export const useMicroVolunteeringStore = defineStore({
-  id: 'microvolunteering',
+export const useMicroVolunteeringStore = defineStore('microvolunteering', {
   state: () => ({
     list: {},
   }),

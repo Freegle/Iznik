@@ -42,7 +42,7 @@
 </template>
 <script setup>
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
-import Supercluster from 'supercluster/dist/supercluster'
+import Supercluster from 'supercluster'
 import ClusterIcon from './ClusterIcon'
 import { MAX_MAP_ZOOM } from '~/constants'
 
@@ -185,7 +185,7 @@ const index = computed(() => {
 
 const clusters = computed(() => {
   // Reading mapEpoch makes this recompute on map zoom/pan (see above).
-  // eslint-disable-next-line no-unused-expressions
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- deliberate reactive-dependency read
   mapEpoch.value
 
   let clustersList = []

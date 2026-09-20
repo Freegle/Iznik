@@ -27,6 +27,19 @@ class WhatJobsService
     const MIN_SWAP_RATIO = 0.5;
     const SWAP_RATIO_MIN_EXISTING = 1000;
 
+    // Where the feed-change gate keeps what it knows about each feed (validators
+    // and a content hash) between runs. One row in the existing config table, so
+    // there is no schema step.
+    const GATE_CONFIG_KEY = 'whatjobs.feed_state';
+
+    // The gate may never skip for longer than this. Six syncs a day all deciding
+    // "unchanged" would leave the jobs table - and the jobs.seenat freshness check
+    // that watches it (ScheduledOutcomeRegistry, 24h floor) - untouched for a day,
+    // and would turn a gate bug that wrongly reports "unchanged" into a silent
+    // permanent stall. Forcing a real rebuild once inside the monitor's window means
+    // the existing alarm still fires if anything here breaks.
+    const MAX_SKIP_HOURS = 20;
+
     // UK bounding box for geocoder
     const UK_SWLAT = 49.959999905;
     const UK_SWLNG = -7.57216793459;
@@ -467,8 +480,26 @@ class WhatJobsService
         // parseFeed yields each job as it parses the XML, so we stream straight
         // from XML → DB. Holding the full ~180k-job result in PHP memory used
         // to FatalError at 512M; this keeps peak memory at one batch (~200 rows).
-        $tmp1 = $feed1 ? $this->downloadFeed($feed1) : null;
-        $tmp2 = $feed2 ? $this->downloadFeed($feed2) : null;
+        // Ask the feeds whether anything actually changed before paying for a rebuild.
+        // A dry run is a diagnostic, so it always parses.
+        $gate = $this->evaluateFeedGate(array_filter([$feed1, $feed2]), $dryRun);
+
+        if ($gate['skip']) {
+            Log::info('WhatJobs sync skipped - feeds unchanged', [
+                'reasons'      => $gate['reasons'],
+                'last_rebuild' => $gate['last_rebuild'],
+            ]);
+
+            return [
+                'total'    => 0,
+                'inserted' => 0,
+                'skipped_unchanged' => true,
+                'reasons'  => $gate['reasons'],
+            ];
+        }
+
+        $tmp1 = $feed1 ? ($gate['paths'][$feed1] ?? null) : null;
+        $tmp2 = $feed2 ? ($gate['paths'][$feed2] ?? null) : null;
 
         // Build a single generator that yields from both feeds in sequence so
         // insertJobs() sees one continuous stream (and the second feed's geocode
@@ -529,6 +560,12 @@ class WhatJobsService
         }
 
         $this->swapTables();
+
+        // Only now, with the table actually rebuilt, are the new validators safe to
+        // keep. Storing them earlier would mean a refused swap (see above) left us
+        // believing the live table already matched the feed, and the gate would skip
+        // every run after it.
+        $this->commitFeedGateState($gate['state']);
 
         // The swap drops rows for postings that have closed/left the feed. The
         // spatial server's "jobs" index backs both the web jobs page and the
@@ -598,6 +635,14 @@ class WhatJobsService
         return false;
     }
 
+    /**
+     * ETag/Last-Modified from the last downloadFeed() response, recorded so the gate can
+     * report what the feed claims about itself. Nothing acts on these yet - see fetchFeed.
+     *
+     * @var array{etag: ?string, last_modified: ?string}|null
+     */
+    protected ?array $lastFeedHeaders = null;
+
     protected function downloadFeed(string $url): ?string
     {
         $gzFile  = tempnam(sys_get_temp_dir(), 'whatjobs_gz_');
@@ -615,6 +660,11 @@ class WhatJobsService
                 @unlink($xmlFile);
                 return null;
             }
+
+            $this->lastFeedHeaders = [
+                'etag' => $response->header('ETag') ?: null,
+                'last_modified' => $response->header('Last-Modified') ?: null,
+            ];
 
             // Stream-decompress to avoid loading everything into memory
             $gz  = gzopen($gzFile, 'rb');
@@ -636,6 +686,189 @@ class WhatJobsService
     }
 
     /**
+     * Fetch one feed and say whether it is worth reparsing.
+     *
+     * WhatJobs regenerates its feed roughly once a day, but we sync six times a day, so
+     * most runs reparse content we already loaded: three consecutive runs one day produced
+     * byte-identical parse fingerprints, kept counts matching to the digit. Each of those
+     * pointless runs costs 25-45 minutes of batch-host CPU, around a gigabyte of row images
+     * replicated to every Galera node, and a rebuild of the spatial jobs index on each db
+     * host.
+     *
+     * The test is a hash of the feed's own content. The feed's ETag is recorded alongside
+     * it but nothing acts on it: an ETag comes back through a CDN, which can preserve one
+     * across a genuine regeneration, and the agreed rollout is to watch the decisions this
+     * makes for a week before trusting a 304 to skip a transfer. Hashing what we downloaded
+     * settles the question ourselves, and the download was never the expensive part.
+     *
+     * The hash is over the decompressed XML rather than the gzip, because gzip's header
+     * carries a modification time - identical content recompressed is different bytes.
+     *
+     * $prev is what we stored last time; an empty array forces "changed".
+     *
+     * status: 'downloaded' (reparse it) | 'unchanged' (skip if the other feeds agree) |
+     *         'failed' (fail open - run the full pipeline)
+     */
+    protected function fetchFeed(string $url, array $prev): array
+    {
+        $this->lastFeedHeaders = null;
+
+        // Deliberately routed through downloadFeed so there is a single place that knows
+        // how to obtain a feed.
+        $path = $this->downloadFeed($url);
+
+        if ($path === null) {
+            return ['status' => 'failed', 'reason' => 'download-failed', 'path' => null];
+        }
+
+        $hash = @hash_file('sha256', $path) ?: null;
+        $identical = $hash !== null && isset($prev['hash']) && $prev['hash'] === $hash;
+
+        return [
+            'status'        => $identical ? 'unchanged' : 'downloaded',
+            'reason'        => $identical ? 'identical-content' : 'changed',
+            'path'          => $path,
+            'etag'          => $this->lastFeedHeaders['etag'] ?? null,
+            'last_modified' => $this->lastFeedHeaders['last_modified'] ?? null,
+            'hash'          => $hash,
+        ];
+    }
+
+    /**
+     * Decide whether this run has anything to do.
+     *
+     * It skips only when EVERY configured feed says unchanged, because the sync
+     * rebuilds the whole jobs table from all feeds at once - one changed feed means
+     * the whole pipeline runs.
+     *
+     * The gate fails open throughout: a download error, an unreadable stored state,
+     * a dry run, --force, or a rebuild older than MAX_SKIP_HOURS all produce a normal
+     * full run. The worst a broken gate can do is cost what today already costs.
+     */
+    protected function evaluateFeedGate(array $urls, bool $dryRun): array
+    {
+        $state = $this->readFeedGateState();
+        $lastRebuild = $state['last_rebuild'] ?? null;
+
+        $bypass = null;
+        if ($dryRun) {
+            $bypass = 'dry-run';
+        } elseif ($this->forceFullSync) {
+            $bypass = 'forced';
+        } elseif (!$urls) {
+            $bypass = 'no-feeds';
+        } elseif ($lastRebuild === null) {
+            $bypass = 'no-previous-rebuild';
+        } elseif (strtotime($lastRebuild) < strtotime('-' . self::MAX_SKIP_HOURS . ' hours')) {
+            // Guaranteed rebuild: see MAX_SKIP_HOURS.
+            $bypass = 'rebuild-overdue';
+        }
+
+        $results = [];
+        foreach ($urls as $url) {
+            $prev = $bypass ? [] : ($state['feeds'][$this->feedStateKey($url)] ?? []);
+            $results[$url] = $this->fetchFeed($url, $prev);
+        }
+
+        $newState = $state;
+        $newState['feeds'] = $state['feeds'] ?? [];
+        $reasons = [];
+        $allUnchanged = $urls !== [];
+
+        foreach ($results as $url => $r) {
+            $reasons[$this->feedStateKey($url)] = $r['reason'] ?? $r['status'];
+            if ($r['status'] !== 'unchanged') {
+                $allUnchanged = false;
+            }
+            if ($r['status'] !== 'failed') {
+                $newState['feeds'][$this->feedStateKey($url)] = [
+                    'etag'          => $r['etag'] ?? null,
+                    'last_modified' => $r['last_modified'] ?? null,
+                    'hash'          => $r['hash'] ?? null,
+                ];
+            }
+        }
+
+        $skip = $bypass === null && $allUnchanged;
+
+        if ($skip) {
+            // Nothing will be parsed, so drop the files we did fetch, and record that
+            // the gate ran. commitFeedGateState is NOT called here: last_rebuild must
+            // keep pointing at the last real rebuild, or the MAX_SKIP_HOURS floor
+            // would never trigger.
+            foreach ($results as $r) {
+                if (!empty($r['path'])) {
+                    @unlink($r['path']);
+                }
+            }
+            $newState['last_checked'] = now()->toDateTimeString();
+            $this->writeFeedGateState($newState);
+        }
+
+        $paths = [];
+        foreach ($results as $url => $r) {
+            $paths[$url] = $r['path'] ?? null;
+        }
+
+        return [
+            'skip'         => $skip,
+            'bypass'       => $bypass,
+            'reasons'      => $reasons,
+            'paths'        => $paths,
+            'last_rebuild' => $lastRebuild,
+            'state'        => $newState,
+        ];
+    }
+
+    /**
+     * Short stable identifier for a feed URL, so the stored state does not carry
+     * credentials that some feed URLs embed as query parameters.
+     */
+    protected function feedStateKey(string $url): string
+    {
+        return substr(hash('sha256', $url), 0, 16);
+    }
+
+    protected function readFeedGateState(): array
+    {
+        try {
+            $raw = DB::table('config')->where('key', self::GATE_CONFIG_KEY)->value('value');
+            $decoded = $raw ? json_decode($raw, true) : null;
+
+            return is_array($decoded) ? $decoded : [];
+        } catch (\Throwable $e) {
+            // Fail open - an unreadable state just means a full run.
+            Log::warning('WhatJobs: could not read feed gate state', ['error' => $e->getMessage()]);
+
+            return [];
+        }
+    }
+
+    protected function writeFeedGateState(array $state): void
+    {
+        try {
+            DB::table('config')->upsert(
+                [['key' => self::GATE_CONFIG_KEY, 'value' => json_encode($state)]],
+                ['key'],
+                ['value'],
+            );
+        } catch (\Throwable $e) {
+            Log::warning('WhatJobs: could not store feed gate state', ['error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Record a completed rebuild: the validators the feeds gave us this run, plus the
+     * timestamp the MAX_SKIP_HOURS floor is measured from.
+     */
+    protected function commitFeedGateState(array $state): void
+    {
+        $state['last_rebuild'] = now()->toDateTimeString();
+        $state['last_checked'] = $state['last_rebuild'];
+        $this->writeFeedGateState($state);
+    }
+
+    /**
      * Parse a WhatJobs / Clickcast XML feed.
      *
      * Yields job arrays one at a time so callers can stream them into
@@ -650,7 +883,10 @@ class WhatJobsService
         $cutoff = now()->subDays(self::MAX_AGE_DAYS)->timestamp;
 
         $reader = new \XMLReader();
-        if (!$reader->open($filePath)) {
+        // open() raises a warning for a missing file, which Laravel turns into an
+        // ErrorException before this check can run. Suppress it so the warning
+        // logged below is what callers actually see.
+        if (!@$reader->open($filePath)) {
             Log::warning('WhatJobs: failed to open feed file', ['path' => $filePath]);
             return;
         }
@@ -732,6 +968,14 @@ class WhatJobsService
                 continue;
             }
 
+            // When the feed gives no postcode, the advert often prints one in its
+            // own text - exact where city/state guessing is not (measured
+            // 2026-08-31: 1.6% of jobs carry one; the same postcode-first path
+            // then pins them to the right district deterministically).
+            if ($zip === '' && preg_match('/\b[A-Za-z]{1,2}[0-9][0-9A-Za-z]?\s*[0-9][A-Za-z]{2}\b/', $description, $pcInText)) {
+                $zip = $pcInText[0];
+            }
+
             $geom = $this->geocodeCityState($city, $state, $country, $geocodeCache, $zip);
             if (!$geom) {
                 $this->dropStats['geocode_fail'] = ($this->dropStats['geocode_fail'] ?? 0) + 1;
@@ -797,6 +1041,16 @@ class WhatJobsService
      */
     public bool $forceRegeocode = false;
 
+    /**
+     * When true, the feed-change gate is bypassed and the feeds are reparsed and
+     * reloaded whatever they contain. Set by --force, and used for the guaranteed
+     * rebuild the gate schedules for itself (see MAX_SKIP_HOURS).
+     *
+     * A public property rather than a sync() argument because sync()'s signature is
+     * an override point for tests.
+     */
+    public bool $forceFullSync = false;
+
     public function geocodeCityState(
         string $city,
         string $state,
@@ -804,6 +1058,13 @@ class WhatJobsService
         array &$cache,
         string $zip = ''
     ): ?array {
+        // The feed decorates some city names with a qualifier suffix -
+        // "bloomsbury (neighbourhood)", "smithfield (area)". Photon's fuzzy
+        // matching tolerated those; the places geocoder is exact-then-prefix,
+        // so they surfaced as city_no_match after the 2026-08-31 cutover.
+        // Strip the qualifier before anything keys or queries on the city.
+        $city = trim(preg_replace('/\s*\([^)]*\)\s*$/', '', $city));
+
         if ($country === 'Guernsey') {
             $this->recordGeocodeFail('country_guernsey', $city, $state, $country);
             return null;
@@ -860,7 +1121,13 @@ class WhatJobsService
 
             if (count($geo) && $geo[0]->geom) {
                 $bbox = $this->bboxFromWkt($geo[0]->geom);
-                if ($bbox) {
+                // Trust the cache only inside the UK envelope: each sync seeds
+                // itself from the previous run's jobs table, so one bad geocode
+                // (a Belfast cluster was stored in the Gulf of Guinea) otherwise
+                // survives every subsequent sync forever. An out-of-UK cached
+                // value falls through to a fresh geocode, which self-corrects
+                // the tuple in the table this run builds.
+                if ($bbox && $this->bboxWithinUK($bbox)) {
                     $cache[$cacheKey] = $bbox;
                     return $bbox;
                 }
@@ -1140,6 +1407,11 @@ class WhatJobsService
                 // e.g. East-of-England jobs landed at ~lat 51.5 (London). Map the
                 // extent to the right corners.
                 [$swlng, $nelat, $nelng, $swlat] = array_map('floatval', $props['extent']);
+                if (!$this->bboxWithinUK([$swlat, $swlng, $nelat, $nelng])) {
+                    // The geocoder ignored the bbox param - never accept (or
+                    // let the jobs-table cache memorise) an out-of-UK answer.
+                    continue;
+                }
                 return [$swlat, $swlng, $nelat, $nelng, $this->boxPoly($swlat, $swlng, $nelat, $nelng)];
             }
 
@@ -1151,6 +1423,9 @@ class WhatJobsService
                     if ($coords) {
                         $lat   = (float) $coords[1];
                         $lng   = (float) $coords[0];
+                        if (!$this->bboxWithinUK([$lat, $lng, $lat, $lng])) {
+                            continue; // same out-of-UK guard as the extent branch
+                        }
                         $swlng = $lng - 0.0005;
                         $swlat = $lat - 0.0005;
                         $nelat = $lat + 0.0005;
@@ -1163,6 +1438,22 @@ class WhatJobsService
         }
 
         return null;
+    }
+
+    /**
+     * True when a [swlat, swlng, nelat, nelng, ...] bbox centres inside the UK
+     * envelope (0.1 degree coastal margin). Both the geocoder (bbox param
+     * unenforced by Photon historically) and the jobs-table cache (self-
+     * seeding) have produced out-of-UK answers; Freegle only serves UK jobs,
+     * so nothing downstream can ever use one.
+     */
+    private function bboxWithinUK(array $b): bool
+    {
+        $lat = ($b[0] + $b[2]) / 2;
+        $lng = ($b[1] + $b[3]) / 2;
+
+        return $lat >= self::UK_SWLAT - 0.1 && $lat <= self::UK_NELAT + 0.1
+            && $lng >= self::UK_SWLNG - 0.1 && $lng <= self::UK_NELNG + 0.1;
     }
 
     private function bboxFromWkt(string $wkt): ?array
@@ -1436,8 +1727,14 @@ class WhatJobsService
         return $rows ? (float) $rows[0]->count : 1.0;
     }
 
-    private function getKeywords(string $str): array
+    private function getKeywords(?string $str): array
     {
+        // Feed jobs can arrive with no title (parseFeed yields title=null and
+        // jobs.title is nullable) — no title means no keyword signal.
+        if ($str === null) {
+            return [];
+        }
+
         $words = array_values(array_filter(
             array_map(fn ($w) => preg_replace('/[^A-Za-z]/', '', $w), explode(' ', $str)),
             fn ($w) => strlen($w) > 2

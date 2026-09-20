@@ -231,6 +231,28 @@ class ChatNotificationService
                     continue;
                 }
 
+                // The member's provider is refusing our mail. Deliberately
+                // AFTER the preference check: someone who has chat
+                // notifications turned off was never going to get this email,
+                // so recording it as owed would earn them a "you have unread
+                // messages" catch-up they never asked for.
+                //
+                // Skips without touching chat_roster.lastmsgemailed, so the
+                // watermark stays where it is and the catch-up can still see
+                // there are unread messages. These are never replayed
+                // individually - a stack of days-old notifications arriving
+                // at once is its own harm - they become one summary instead.
+                //
+                // The message id is passed as the per-mail identity. Because this
+                // path deliberately does not advance the watermark, the same unread
+                // messages come round again on every run; without an identity the
+                // counter recorded each pass as another held mail and reached 10,777
+                // for one member in 106 minutes on 2026-08-20.
+                if (app(\App\Services\Mail\MailSuppressionService::class)
+                    ->shouldSkip($sendingTo->email_preferred, (int) $sendingTo->id, 'chat', (int) $message->id)) {
+                    continue;
+                }
+
                 // Get the sender in the conversation.
                 // For Mod2Mod, the sender is always the message author.
                 // For User2User/User2Mod:
@@ -252,6 +274,42 @@ class ChatNotificationService
                         'to_user' => $sendingTo->id,
                     ]);
                 } else {
+                    // CLAIM BEFORE SENDING. This used to send first and advance the
+                    // watermark afterwards, which is only safe if the second write
+                    // cannot fail. It can: on 2026-08-24, while db3 was desynced for a
+                    // table rebuild and ~1,800 commits were blocked, the mail went out
+                    // and the watermark write timed out, so every subsequent run found
+                    // the same message unnotified and sent it again. Two members
+                    // received the same notification 258 and 247 times in 50 minutes.
+                    //
+                    // Advancing the watermark first inverts the failure mode. A
+                    // conditional UPDATE is the claim: it only moves lastmsgemailed
+                    // forward from below this message, so two concurrent runs cannot
+                    // both claim it, and a claim that affects no rows means someone
+                    // else already has it. If the claim times out we send nothing.
+                    //
+                    // That trade is deliberate: the cost of a lost claim is ONE missed
+                    // notification, which the unread catch-up summary already covers,
+                    // against hundreds of duplicates for the same member. Prefer
+                    // at-most-once wherever the side effect leaves our control.
+                    $claimed = ChatRoster::where('chatid', $chatRoom->id)
+                        ->where('userid', $sendingTo->id)
+                        ->where(function ($q) use ($message) {
+                            $q->whereNull('lastmsgemailed')
+                                ->orWhere('lastmsgemailed', '<', $message->id);
+                        })
+                        ->update([
+                            // lastmsgnotified is used by V1's push notification cron
+                            // (notification_chaseup.php) to avoid re-notifying users for
+                            // messages already handled by email.
+                            'lastmsgemailed' => $message->id,
+                            'lastmsgnotified' => $message->id,
+                        ]);
+
+                    if (! $claimed) {
+                        continue;
+                    }
+
                     // Send the notification email.
                     $this->sendNotificationEmail(
                         $sendingTo,
@@ -260,14 +318,6 @@ class ChatNotificationService
                         $message,
                         $chatType
                     );
-
-                    // Update roster with last message emailed and notified.
-                    // lastmsgnotified is used by V1's push notification cron (notification_chaseup.php)
-                    // to avoid re-notifying users for messages already handled by email.
-                    $roster->update([
-                        'lastmsgemailed' => $message->id,
-                        'lastmsgnotified' => $message->id,
-                    ]);
 
                     // Update message mailedtoall if all members have been notified.
                     $this->updateMailedToAll($message);
@@ -553,6 +603,25 @@ class ChatNotificationService
 
         $spooler = $this->spooler ?? app(EmailSpoolerService::class);
         $spooler->spool($mailable, $sendingTo->email_preferred, 'chat');
+    }
+
+    /**
+     * Whether a chase-up should be held back because the recipient's provider
+     * is refusing our mail.
+     *
+     * Asked by the caller rather than swallowed here, because
+     * ChatChaseupExpectedService marks the expectation as chased once this
+     * returns - and a chase-up we never sent must not count as one we did, or
+     * the member is recorded as having been reminded when they were not.
+     */
+    public function chaseupSuppressed(User $sendingTo, ?int $mailKey = null): bool
+    {
+        // $mailKey is the chat message being chased. Like the notification path
+        // above, this skips WITHOUT marking the expectation as chased, so the
+        // same expectation comes round on every run; without an identity the
+        // held-mail counter recorded each pass as another withheld mail.
+        return app(\App\Services\Mail\MailSuppressionService::class)
+            ->shouldSkip($sendingTo->email_preferred, (int) $sendingTo->id, 'chat', $mailKey);
     }
 
     /**

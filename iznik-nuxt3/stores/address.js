@@ -3,8 +3,7 @@ import { nextTick } from 'vue'
 import { convertStructuredToUnstructured } from 'postman-paf'
 import api from '~/api'
 
-export const useAddressStore = defineStore({
-  id: 'address',
+export const useAddressStore = defineStore('address', {
   state: () => ({
     list: [],
     listById: {},

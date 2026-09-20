@@ -160,4 +160,66 @@ describe('RangeSlider', () => {
       expect(input.element.value).toBe('3')
     })
   })
+  // A shared axis: several sliders with different maxima stacked on one scale, so the thumb
+  // positions can be read against each other. The unavailable tail is drawn as an inert stub rather
+  // than by widening the input, so keyboard and assistive tech cannot reach a value the caller has
+  // ruled out.
+  describe('shared axis dead zone', () => {
+    it('draws no dead zone by default', () => {
+      const wrapper = createWrapper({ min: 5, max: 20 })
+      expect(wrapper.find('.range-slider__deadzone').exists()).toBe(false)
+    })
+
+    it('draws no dead zone when the axis matches the maximum', () => {
+      const wrapper = createWrapper({ min: 5, max: 45, axisMax: 45 })
+      expect(wrapper.find('.range-slider__deadzone').exists()).toBe(false)
+    })
+
+    it('gives the input its share of the axis and the stub the rest', () => {
+      // 5..20 of a 5..45 axis is 15/40 = 37.5%.
+      const wrapper = createWrapper({ min: 5, max: 20, axisMax: 45 })
+      expect(wrapper.find('input').attributes('style')).toContain('37.5')
+      expect(wrapper.find('.range-slider__deadzone').exists()).toBe(true)
+    })
+
+    it('keeps the input max at the reachable value, not the axis', () => {
+      const wrapper = createWrapper({ min: 5, max: 20, axisMax: 45 })
+      expect(wrapper.find('input').attributes('max')).toBe('20')
+    })
+
+    it('hides the stub from assistive tech and explains it on hover', () => {
+      const wrapper = createWrapper({
+        min: 5,
+        max: 20,
+        axisMax: 45,
+        deadZoneTitle: 'Not shown where you live',
+      })
+      const stub = wrapper.find('.range-slider__deadzone')
+      expect(stub.attributes('aria-hidden')).toBe('true')
+      expect(stub.attributes('title')).toBe('Not shown where you live')
+    })
+  })
+
+  // Members reported the ChitChat distance slider changing by itself while they scrolled the
+  // page (touch or mouse wheel) past it - the value must only move on a deliberate drag of the
+  // handle. The input must therefore tell the browser to treat a touch pan over the track as
+  // page scroll (not a drag), and must block the wheel-spin some engines apply to range inputs.
+  describe('scroll past the track must not change the value', () => {
+    it('marks the track pan-y, so a vertical touch scroll over it is not captured as a drag', () => {
+      const wrapper = createWrapper()
+      const style = wrapper.find('input').attributes('style') || ''
+      expect(style).toContain('touch-action: pan-y')
+    })
+
+    it('prevents the default wheel-spin so scrolling the mouse wheel over the track leaves the value untouched', async () => {
+      const wrapper = createWrapper()
+      const input = wrapper.find('input')
+      const event = new Event('wheel', { bubbles: true, cancelable: true })
+      input.element.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(true)
+      // No value change should have been emitted as a result of the wheel scroll.
+      expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+      expect(wrapper.emitted('change')).toBeFalsy()
+    })
+  })
 })

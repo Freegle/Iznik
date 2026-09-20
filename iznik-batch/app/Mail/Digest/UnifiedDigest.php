@@ -7,6 +7,7 @@ use App\Mail\MjmlMailable;
 use App\Mail\Traits\AmpEmail;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\AvatarResolver;
+use App\Mail\Traits\RoadDistances;
 use App\Mail\Traits\TrackableEmail;
 use App\Models\Membership;
 use App\Models\Message;
@@ -33,6 +34,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     use AmpEmail;
     use AvatarResolver;
     use LoggableEmail;
+    use RoadDistances;
     use TrackableEmail;
 
     public string $userSite;
@@ -40,6 +42,12 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     public string $deliveryUrl;
 
     protected Collection $preparedPosts;
+
+    /** The live posts that fit under DIGEST_POST_CAP; what the body, AMP and tracking show. */
+    protected Collection $cappedPosts;
+
+    /** @var int[] msgids of live posts that did not fit; the service re-offers them next run */
+    protected array $droppedPostIds = [];
 
     /** @var Collection lightweight "came and went" (Taken/Received) entries for the greyed daily section */
     protected Collection $preparedCompletedPosts;
@@ -79,6 +87,22 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // Look up digest number for this user.
         $this->digestNumber = $this->getDigestNumber();
 
+        // Apply the post cap here, once, so the tracking record, the rendered body and the
+        // AMP part all describe the same set, and the service can carry the posts left out
+        // over to the member's next digest (droppedPostIds()). $this->posts keeps the whole
+        // eligible set: the subject and the "N new posts" line still describe that.
+        $cards = $this->posts->values();
+        $kept = $this->keptUnderCap(
+            $cards,
+            DigestStyle::DIGEST_POST_CAP,
+            fn ($card) => (int) ($card['message']->fromuser ?? 0) === (int) $this->user->id
+        );
+        $this->cappedPosts = $cards->only($kept)->values();
+        $this->droppedPostIds = $cards->except($kept)
+            ->map(fn ($c) => (int) $c['message']->id)
+            ->values()
+            ->all();
+
         // Initialize email tracking BEFORE preparePosts so trackedUrl() works.
         $userId = $this->user->exists ? $this->user->id : null;
 
@@ -98,7 +122,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             $this->getSubject(),
             [
                 'mode' => $this->mode,
-                'post_count' => $this->posts->count(),
+                'post_count' => $this->cappedPosts->count(),
                 // Ordered msgids of every post shown, position = array index.
                 // Matches the per-post link/image position labels ("post_{i}"
                 // / "image_{i}") so an OPEN with no click is still attributable
@@ -106,7 +130,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 // positions map back to a msgid, and a post's "shown at
                 // position P in N digests" denominator is recoverable. Without
                 // this only the rare clicked post can be attributed.
-                'post_msgids' => $this->posts->map(fn ($p) => $p['message']->id)->values()->all(),
+                'post_msgids' => $this->cappedPosts->map(fn ($p) => $p['message']->id)->values()->all(),
                 'digest_number' => $this->digestNumber,
                 'has_amp' => $this->ampForRecipient(),
             ],
@@ -216,6 +240,18 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->user->id ?? null;
+    }
+
+    /**
+     * The live posts this digest had to leave out at DIGEST_POST_CAP, as msgids. The service
+     * stores them on the member's digest tracker and puts them back into the next run's
+     * window, so a post that was eligible but did not fit is not lost when the cursor moves.
+     *
+     * @return int[]
+     */
+    public function droppedPostIds(): array
+    {
+        return $this->droppedPostIds;
     }
 
     /**
@@ -529,11 +565,10 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // posts and get clipped by Gmail (~102KB) mid-post with no graceful overflow. When the
         // cap bites, the template shows an intro under "In this digest" sending the reader to
         // the website for the rest. (Immediate digests are single-post, so this never bites.)
-        $postCap = DigestStyle::DIGEST_POST_CAP;
-        $liveMorePosts = max(0, $this->preparedPosts->count() - $postCap);
-        $livePosts = $liveMorePosts > 0
-            ? $this->preparedPosts->take($postCap)->values()
-            : $this->preparedPosts;
+        // The recipient's own post(s) are always reserved a slot rather than being subject to
+        // the same score-ordered cut as everyone else's — see keptUnderCap().
+        $livePosts = $this->preparedPosts;
+        $liveMorePosts = count($this->droppedPostIds);
 
         $result = $this->mjmlView('emails.mjml.digest.unified', array_merge([
             'user' => $this->user,
@@ -621,32 +656,20 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
 
             // AMP-ONLY post cap. AMP for Email hard-limits the AMP document to
             // 200,000 bytes; a large daily digest's cards push it over and Gmail
-            // rejects the WHOLE AMP. Cap the cards here (the summary and the
-            // <amp-state> map are derived from $ampPosts too, so capping once
-            // shrinks all three) and surface an "and N more — browse all" link.
-            // The HTML and text parts still carry EVERY post; this cap is AMP
-            // only. applyAmpToMessage()'s 199KB guard remains the final backstop.
-            $ampCap = DigestStyle::DIGEST_POST_CAP;
-            $ampMorePosts = max(0, $ampPosts->count() - $ampCap);
-            if ($ampMorePosts > 0) {
-                $ampPosts = $ampPosts->take($ampCap)->values();
-            }
+            // rejects the WHOLE AMP. The cards come from the prepared posts, which
+            // the constructor already capped at DIGEST_POST_CAP with the recipient's
+            // own post(s) reserved (keptUnderCap()), so the AMP part shows the same
+            // set as the HTML/text parts and the summary strip (derived from
+            // $ampPosts too) shrinks with it. Surface an "and N more — browse all"
+            // link for the posts left out. applyAmpToMessage()'s 199KB guard
+            // remains the final backstop.
+            $ampMorePosts = count($this->droppedPostIds);
 
-            // Build the shared per-post metadata map for the AMP template.
-            // Storing {title, token, expiry} once per message in an
-            // <amp-state> at the top of the body — instead of inlining the
-            // full token + title in each post's tap-state — drops the
-            // per-post button payload from ~400 bytes to ~110 bytes, which
-            // is what brings a 200-post AMP digest in under the 200 KB cap.
-            $ampPostMeta = $ampPosts->mapWithKeys(fn ($p) => [
-                (int) $p['message']->id => [
-                    't' => (string) $p['itemName'],
-                    'k' => (string) ($p['ampReplyToken'] ?? ''),
-                    'e' => (int) ($p['ampReplyExp'] ?? 0),
-                ],
-            ])->toArray();
-            $ampApiUrl = rtrim(config('freegle.amp.api_url', 'https://api.ilovefreegle.org/amp'), '/');
-
+            // The view needs no shared reply state: a multi-post card's Reply
+            // is a link to the post on the website (the in-email reply drawer
+            // came up blank in the Gmail phone apps on some handsets, support
+            // ref SR-FV6KC), and the single-post immediate form carries its
+            // own action-xhr URL on the post (prepareAmpPosts).
             $this->renderAmpTemplate('emails.amp.digest.unified', [
                 'user' => $this->user,
                 'posts' => $ampPosts,
@@ -657,9 +680,6 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 'unsubscribeUrl' => $this->trackedUrl($this->userSite . '/unsubscribe', 'amp_unsubscribe', 'unsubscribe'),
                 'browseUrl' => $this->trackedUrl($this->userSite . '/browse', 'amp_browse', 'browse'),
                 'userSite' => $this->userSite,
-                'ampPostMeta' => $ampPostMeta,
-                'ampApiUrl' => $ampApiUrl,
-                'ampUserId' => (int) $this->user->id,
                 // Jobs + sponsors reach the AMP body too (V1 parity — the MJML
                 // and text parts already carry these; AMP previously dropped
                 // them). Same data the MJML view above receives.
@@ -878,7 +898,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
      */
     protected function preparePosts(): Collection
     {
-        $totalPosts = $this->posts->count();
+        $posts = $this->cappedPosts;
+        $totalPosts = $posts->count();
 
         // Get user's location for distance calculation.
         $userLat = null;
@@ -894,7 +915,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // Batch-load all groups referenced by any post so each card can show
         // group name(s) without an N+1 per post. namefull is the friendly name;
         // nameshort drives the /explore link.
-        $allGroupIds = $this->posts
+        $allGroupIds = $posts
             ->flatMap(fn ($p) => $p['postedToGroups'])
             ->filter()
             ->unique()
@@ -904,7 +925,11 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 ->get(['id', 'nameshort', 'namefull'])->keyBy('id')->all()
             : [];
 
-        return $this->posts->map(fn ($post, $index) => $this->prepareCard(
+        // One routing call for the whole digest: road miles per post, matching
+        // what the site shows. Posts the engine cannot answer keep crow-flies.
+        $this->fillRoadMiles($userLat, $userLng, $posts->map(fn ($p) => $p['message']));
+
+        return $posts->map(fn ($post, $index) => $this->prepareCard(
             $post['message'],
             $post['postedToGroups'],
             $index,
@@ -912,6 +937,40 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             $userLat,
             $userLng
         ));
+    }
+
+    /**
+     * Apply DIGEST_POST_CAP to a prepared card collection without letting it
+     * drop the recipient's own post(s). The cap exists purely to keep the
+     * rendered email under a provider's size limit (Gmail clipping the HTML
+     * body, or the AMP 200KB ceiling) — it was never meant to make a member's
+     * own post vanish from their own digest on a day busy enough with
+     * rippled-in posts to overflow the cap (Discourse 10029/17). Every card
+     * with isOwnPost=true is reserved a slot; the best-scoring "other" cards
+     * (original order is score order) fill whatever room is left. Cards that
+     * do survive keep their original relative order, so an own post that was
+     * already ranked inside the cap stays at its ranked position rather than
+     * being pushed to the end alongside lower-ranked own posts.
+     *
+     * The cap is never exceeded: a member with more own posts than the cap gets
+     * the first $limit of them and no others, because the whole point of the cap
+     * is the provider size limit, which does not care whose posts they are.
+     * Returns the keys of the cards to keep, in their original order; the constructor
+     * derives the shown set and droppedPostIds() from them.
+     */
+    private function keptUnderCap(Collection $cards, int $limit, callable $isOwn): array
+    {
+        if ($cards->count() <= $limit) {
+            return $cards->keys()->all();
+        }
+
+        [$own, $others] = $cards->partition($isOwn);
+        $keep = $own->take($limit)->keys()
+            ->merge($others->take(max(0, $limit - $own->count()))->keys())
+            ->sort()
+            ->values();
+
+        return $keep->all();
     }
 
     /**
@@ -1070,8 +1129,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         $arrivalIso = $arrival->toIso8601String();
 
         // Calculate distance from user.
-        $distanceText = null;
-        if ($userLat !== null && $userLng !== null && $message->lat && $message->lng) {
+        $distanceText = $this->roadDistanceText((int) $message->id);
+        if ($distanceText === null && $userLat !== null && $userLng !== null && $message->lat && $message->lng) {
             $miles = $this->haversineDistance($userLat, $userLng, (float) $message->lat, (float) $message->lng);
             $distanceText = $miles < 1 ? '< 1 mile' : round($miles) . ' miles';
         }

@@ -27,8 +27,12 @@
         :title="reputation.title"
         data-testid="reputation"
       >
-        <span v-if="reputation.up" class="text-success me-1"><v-icon icon="thumbs-up" /> {{ reputation.up }}</span>
-        <span v-if="reputation.down" class="text-danger"><v-icon icon="thumbs-down" /> {{ reputation.down }}</span>
+        <span v-if="reputation.up" class="text-success me-1"
+          ><v-icon icon="thumbs-up" /> {{ reputation.up }}</span
+        >
+        <span v-if="reputation.down" class="text-danger"
+          ><v-icon icon="thumbs-down" /> {{ reputation.down }}</span
+        >
       </span>
       <b-badge
         v-if="otherAllocations.length"
@@ -37,7 +41,8 @@
         :title="'Already collecting: ' + otherAllocations.join(', ')"
         data-testid="also-collecting"
       >
-        <v-icon icon="truck" class="me-1" />also collecting {{ otherAllocations.length }} more
+        <v-icon icon="truck" class="me-1" />also collecting
+        {{ otherAllocations.length }} more
       </b-badge>
     </div>
 
@@ -59,13 +64,20 @@
     <!-- Collection times + transport. -->
     <div class="cand__collect">
       <span class="cand__collabel">Can collect</span>
-      <span v-if="interest.cancollect" class="cand__collectval">{{ interest.cancollect }}</span>
+      <span v-if="interest.cancollect" class="cand__collectval">{{
+        interest.cancollect
+      }}</span>
       <span v-else class="cand__collectval text-muted">not said yet</span>
     </div>
 
     <!-- One merged status + AI indicator. -->
     <div class="cand__status">
-      <b-badge v-if="status" :variant="status.variant" data-testid="cand-status">{{ status.label }}</b-badge>
+      <b-badge
+        v-if="status"
+        :variant="status.variant"
+        data-testid="cand-status"
+        >{{ status.label }}</b-badge
+      >
       <b-badge
         v-if="aiSent"
         variant="light"
@@ -97,7 +109,9 @@
         size="sm"
         class="ms-1 mb-1"
         :disabled="!interest.chatid"
-        :title="interest.chatid ? 'Open the chat with this person' : 'No chat yet'"
+        :title="
+          interest.chatid ? 'Open the chat with this person' : 'No chat yet'
+        "
         data-testid="open-chat"
         @click="showChat = true"
       >
@@ -114,19 +128,32 @@
     />
 
     <!-- Escalation reason: why the AI handed this conversation to you. -->
-    <div v-if="needsYou && note" class="cand__note" data-testid="escalation-note">
+    <div
+      v-if="needsYou && note"
+      class="cand__note"
+      data-testid="escalation-note"
+    >
       <v-icon icon="circle-exclamation" class="me-1" />{{ note }}
     </div>
 
     <!-- Score breakdown, revealed on click. -->
-    <div v-if="showBreakdown && breakdown.length" class="cand__breakdown" data-testid="score-breakdown">
+    <div
+      v-if="showBreakdown && breakdown.length"
+      class="cand__breakdown"
+      data-testid="score-breakdown"
+    >
       <span class="cand__bdtitle small text-muted">Why this score:</span>
       <span v-for="f in breakdown" :key="f.k" class="cand__bditem small">
         {{ f.k }} <strong>+{{ f.v }}</strong>
       </span>
     </div>
-    <p v-if="excludedNotTold" class="cand__excluded small text-muted" data-testid="excluded-note">
-      Not told yet — they're only notified when you finish allocating, so you can still change your mind.
+    <p
+      v-if="excludedNotTold"
+      class="cand__excluded small text-muted"
+      data-testid="excluded-note"
+    >
+      Not told yet — they're only notified when you finish allocating, so you
+      can still change your mind.
     </p>
   </div>
 </template>
@@ -169,17 +196,28 @@ const busy = ref(false)
 const showBreakdown = ref(false)
 const showChat = ref(false)
 const qty = ref(props.interest.quantity)
-watch(() => props.interest.quantity, (v) => (qty.value = v))
+watch(
+  () => props.interest.quantity,
+  (v) => (qty.value = v)
+)
 
-const displayName = computed(() => userStore.byId(props.interest.userid)?.displayname || 'Freegler')
+const displayName = computed(
+  () => userStore.byId(props.interest.userid)?.displayname || 'Freegler'
+)
 
 const reputation = computed(() => {
   const r = userStore.byId(props.interest.userid)?.info?.ratings
   if (!r || (!r.Up && !r.Down)) return null
-  return { up: r.Up || 0, down: r.Down || 0, title: `${r.Up || 0} thumbs up, ${r.Down || 0} down` }
+  return {
+    up: r.Up || 0,
+    down: r.Down || 0,
+    title: `${r.Up || 0} thumbs up, ${r.Down || 0} down`,
+  }
 })
 
-const status = computed(() => candidateStatus(props.interest.state, props.helperState))
+const status = computed(() =>
+  candidateStatus(props.interest.state, props.helperState)
+)
 const actions = computed(() => clearanceActions(props.interest.state))
 const inactive = computed(() => isInactiveState(props.interest.state))
 const needsYou = computed(() => isNeedsYouState(props.helperState))
@@ -215,7 +253,12 @@ async function setState(state) {
   if (busy.value) return
   busy.value = true
   try {
-    await messageStore.bulkInterestState(props.messageId, props.bulkitemid, props.interest.userid, state)
+    await messageStore.bulkInterestState(
+      props.messageId,
+      props.bulkitemid,
+      props.interest.userid,
+      state
+    )
     emit('changed', { userid: props.interest.userid, state })
   } catch (e) {
     console.error('Failed to change interest state', e)
@@ -233,7 +276,13 @@ async function saveQty() {
   try {
     await messageStore.bulkInterest(
       props.messageId,
-      [{ bulkitemid: props.bulkitemid, quantity: n, cancollect: props.interest.cancollect }],
+      [
+        {
+          bulkitemid: props.bulkitemid,
+          quantity: n,
+          cancollect: props.interest.cancollect,
+        },
+      ],
       props.interest.userid
     )
     emit('changed', { userid: props.interest.userid, quantity: n })
@@ -267,7 +316,9 @@ defineExpose({
 
 .cand {
   display: grid;
-  grid-template-columns: 3.2rem minmax(9rem, 1fr) auto minmax(7rem, 12rem) auto auto;
+  grid-template-columns:
+    3.2rem minmax(9rem, 1fr) auto minmax(7rem, 12rem)
+    auto auto;
   align-items: center;
   column-gap: 0.75rem;
   row-gap: 0.25rem;

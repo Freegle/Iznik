@@ -1,10 +1,20 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  beforeAll,
+  afterAll,
+} from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
 // Import with .js extension to bypass vitest.config alias that maps
 // ~/stores/auth → tests/unit/mocks/auth-store.js (for component tests).
 // This test needs the real store implementation.
 import { useAuthStore } from '~/stores/auth.js'
+import { abortAllPendingRequests } from '~/api/BaseAPI'
 
 const mockLogin = vi.fn()
 const mockLogout = vi.fn()
@@ -16,6 +26,20 @@ const mockSave = vi.fn()
 const mockSetAppOutOfDate = vi.fn()
 const mockSignUp = vi.fn()
 const mockTrackConversion = vi.fn()
+const mockForgetSession = vi.fn()
+const mockRestoreSession = vi.fn()
+const mockUnbounce = vi.fn()
+const mockUserSave = vi.fn()
+const mockAddEmail = vi.fn()
+const mockRemoveEmail = vi.fn()
+const mockMerge = vi.fn()
+const mockUpdateMembership = vi.fn()
+const mockLeaveGroup = vi.fn()
+const mockJoinGroup = vi.fn()
+
+vi.mock('~/composables/useClientLog', () => ({
+  action: vi.fn(),
+}))
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -27,15 +51,36 @@ vi.mock('~/api', () => ({
       lostPassword: mockLostPassword,
       unsubscribe: mockUnsubscribe,
       save: mockSave,
+      forget: mockForgetSession,
+      restore: mockRestoreSession,
     },
     user: {
       signUp: mockSignUp,
+      unbounce: mockUnbounce,
+      save: mockUserSave,
+      addEmail: mockAddEmail,
+      removeEmail: mockRemoveEmail,
+      merge: mockMerge,
+    },
+    memberships: {
+      update: mockUpdateMembership,
+      leaveGroup: mockLeaveGroup,
+      joinGroup: mockJoinGroup,
     },
   }),
 }))
 
 vi.mock('~/composables/useTrackConversion', () => ({
   trackConversion: (...args) => mockTrackConversion(...args),
+}))
+
+const mockSaveSessionForRestore = vi.fn()
+const mockRestoreSessionFromDevice = vi.fn()
+const mockClearRestoredSession = vi.fn()
+vi.mock('~/composables/useSessionRestore', () => ({
+  saveSessionForRestore: (...args) => mockSaveSessionForRestore(...args),
+  restoreSessionFromDevice: (...args) => mockRestoreSessionFromDevice(...args),
+  clearRestoredSession: (...args) => mockClearRestoredSession(...args),
 }))
 
 vi.mock('~/api/BaseAPI', () => ({
@@ -67,24 +112,66 @@ vi.mock('~/stores/group', () => ({
   useGroupStore: () => ({ list: {}, fetchBatch: mockFetchBatch }),
 }))
 
+const mockMobileStore = {
+  isApp: false,
+  mobilePushId: null,
+  acceptedMobilePushId: false,
+  isiOS: false,
+  deviceuserinfo: 'test-device',
+}
 vi.mock('~/stores/mobile', () => ({
-  useMobileStore: () => ({ isApp: false }),
+  useMobileStore: () => mockMobileStore,
 }))
 
+const mockMiscStore = {
+  modtools: false,
+  source: null,
+  setAppOutOfDate: mockSetAppOutOfDate,
+  marketingConsent: undefined,
+}
 vi.mock('~/stores/misc', () => ({
-  useMiscStore: () => ({
-    modtools: false,
-    source: null,
-    setAppOutOfDate: mockSetAppOutOfDate,
-  }),
+  useMiscStore: () => mockMiscStore,
 }))
 
 describe('auth store', () => {
   let store
+  let logSpy
+
+  // The real auth store logs from fire-and-forget async paths - the Google and
+  // Facebook logout catch blocks, and the marketing-consent sync - which can
+  // emit AFTER the test that triggered them has finished. Vitest forwards every
+  // console call to the main process over the worker RPC, so a log still in
+  // flight when the worker closes surfaces as
+  //   EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending
+  // and vitest exits non-zero even though every test passed (observed on
+  // CircleCI 33421: 16,148 passed, 1 unhandled error, build failed).
+  //
+  // beforeAll/afterAll rather than the per-test spy used elsewhere in these
+  // specs: the racing log arrives between tests, so the stub has to outlive
+  // any single one of them.
+  beforeAll(() => {
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+  })
+
+  afterAll(() => {
+    logSpy.mockRestore()
+  })
 
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    Object.assign(mockMobileStore, {
+      isApp: false,
+      mobilePushId: null,
+      acceptedMobilePushId: false,
+      isiOS: false,
+      deviceuserinfo: 'test-device',
+    })
+    Object.assign(mockMiscStore, {
+      modtools: false,
+      source: null,
+      marketingConsent: undefined,
+    })
     store = useAuthStore()
     store.init({ public: { BUILD_DATE: '2026-01-01' }, app: {} })
   })
@@ -109,6 +196,63 @@ describe('auth store', () => {
       store.setAuth('test-jwt', 'test-persistent')
       expect(store.auth.jwt).toBe('test-jwt')
       expect(store.auth.persistent).toBe('test-persistent')
+    })
+
+    it('hands the persistent token to Block Store for the next device', () => {
+      store.setAuth('test-jwt', 'test-persistent')
+      expect(mockSaveSessionForRestore).toHaveBeenCalledWith('test-persistent')
+    })
+  })
+
+  describe('wipeAuth', () => {
+    it('clears credentials, the user, and the Block Store copy', () => {
+      store.setAuth('dead-jwt', 'dead-persistent')
+      store.setUser({ id: 123 })
+      mockClearRestoredSession.mockClear()
+
+      store.wipeAuth()
+
+      expect(store.auth.jwt).toBeNull()
+      expect(store.auth.persistent).toBeNull()
+      expect(store.user).toBeNull()
+      // Without this, an Android device whose localStorage was evicted keeps
+      // re-adopting the same dead token from Block Store and loops back to
+      // the login screen.
+      expect(mockClearRestoredSession).toHaveBeenCalled()
+    })
+  })
+
+  describe('adoptRestoredSession', () => {
+    it('adopts the session a previous device left in Block Store', async () => {
+      mockRestoreSessionFromDevice.mockResolvedValue('transferred-persistent')
+
+      expect(await store.adoptRestoredSession()).toBe(true)
+      expect(store.auth.persistent).toBe('transferred-persistent')
+      // No JWT: the persistent token alone authenticates, and GET /session mints one.
+      expect(store.auth.jwt).toBeNull()
+    })
+
+    it('returns false when Block Store holds nothing', async () => {
+      mockRestoreSessionFromDevice.mockResolvedValue(null)
+
+      expect(await store.adoptRestoredSession()).toBe(false)
+      expect(store.auth.persistent).toBeNull()
+    })
+
+    it('leaves an existing jwt alone', async () => {
+      store.setAuth('live-jwt', null)
+
+      expect(await store.adoptRestoredSession()).toBe(false)
+      expect(mockRestoreSessionFromDevice).not.toHaveBeenCalled()
+      expect(store.auth.jwt).toBe('live-jwt')
+    })
+
+    it('leaves an existing persistent token alone', async () => {
+      store.setAuth(null, 'live-persistent')
+
+      expect(await store.adoptRestoredSession()).toBe(false)
+      expect(mockRestoreSessionFromDevice).not.toHaveBeenCalled()
+      expect(store.auth.persistent).toBe('live-persistent')
     })
   })
 
@@ -313,7 +457,29 @@ describe('auth store', () => {
     })
   })
 
+  // logout() on the web (isApp false) starts disableGoogleAutoselect's retry
+  // loop: a real setTimeout every 100ms for up to five seconds, each tick
+  // writing a console line, because window.google never arrives here. Left on
+  // real timers those ticks outlive this file and race the worker's shutdown,
+  // which fails the whole run with "Closing rpc while onUserConsoleLog was
+  // pending" while every test passes (CI 35052, 2026-09-04). Any describe that
+  // reaches logout() owns the clock, so the retry never fires for real, and
+  // drops the pending timers with it. Not file-wide: the fetchUser tests below
+  // wait on real timers on purpose.
+  const ownTheClock = () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    })
+  }
+
   describe('logout', () => {
+    ownTheClock()
+
     it('resets user but preserves loginCount and loggedInEver', async () => {
       mockLogin.mockResolvedValue({ jwt: 'jwt', persistent: 'p' })
       mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
@@ -328,6 +494,16 @@ describe('auth store', () => {
       expect(store.auth.jwt).toBeNull()
       expect(store.loginCount).toBe(1)
       expect(store.loggedInEver).toBe(true)
+    })
+
+    it('clears the transferable session, so a device restore does not sign us back in', async () => {
+      mockLogin.mockResolvedValue({ jwt: 'jwt', persistent: 'p' })
+      mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
+      await store.login({ email: 'a@b.com', password: 'x' })
+
+      await store.logout()
+
+      expect(mockClearRestoredSession).toHaveBeenCalled()
     })
   })
 
@@ -344,6 +520,30 @@ describe('auth store', () => {
         expect(() => store.disableGoogleAutoselect()).not.toThrow()
       } finally {
         globalThis.window = originalWindow
+      }
+    })
+
+    it('stops retrying once Google has clearly not loaded', () => {
+      // Privacy extensions block the Google script outright, and the retry used
+      // to reschedule itself for ever: a timer plus a console line every 100ms
+      // for the life of the page. In the unit tests those logs outlive the test
+      // file and race the worker shutdown, which fails the whole run with
+      // "Closing rpc while onUserConsoleLog was pending" while every test
+      // passes. Drive the retries with fake timers and check they stop.
+      const originalGoogle = globalThis.window.google
+      delete globalThis.window.google
+
+      vi.useFakeTimers()
+      try {
+        store.disableGoogleAutoselect()
+
+        // Well past the five-second budget.
+        vi.advanceTimersByTime(30000)
+
+        expect(vi.getTimerCount()).toBe(0)
+      } finally {
+        vi.useRealTimers()
+        globalThis.window.google = originalGoogle
       }
     })
 
@@ -599,6 +799,454 @@ describe('auth store', () => {
       const result = await store.unsubscribe('any@example.com')
       expect(result.worked).toBe(false)
       expect(result.unknown).toBe(false)
+    })
+  })
+
+  describe('abortPendingRequests', () => {
+    it('delegates to abortAllPendingRequests', () => {
+      store.abortPendingRequests()
+      expect(abortAllPendingRequests).toHaveBeenCalled()
+    })
+  })
+
+  describe('forget', () => {
+    ownTheClock() // forget() ends in logout(), and with it the retry loop
+
+    it('calls session.forget then logs out', async () => {
+      mockLogin.mockResolvedValue({ jwt: 'jwt', persistent: 'p' })
+      mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
+      await store.login({ email: 'a@b.com', password: 'x' })
+
+      await store.forget()
+
+      expect(mockForgetSession).toHaveBeenCalled()
+      expect(store.user).toBeNull()
+    })
+  })
+
+  describe('restore', () => {
+    it('calls session.restore then fetches the user', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockFetchv2.mockResolvedValue({ me: { id: 7 }, groups: [] })
+
+      await store.restore()
+
+      expect(mockRestoreSession).toHaveBeenCalled()
+      expect(store.user.id).toBe(7)
+    })
+  })
+
+  describe('logout with mobile app social-login cleanup', () => {
+    it.each([
+      ['Facebook and Google logout both succeed', true, true],
+      ['Facebook logout throws, Google still attempted', false, true],
+      ['Google logout throws, Facebook already done', true, false],
+    ])('%s', async (label, fbOk, googleOk) => {
+      const { SocialLogin } = await import('@capgo/capacitor-social-login')
+      mockMobileStore.isApp = true
+      let call = 0
+      SocialLogin.logout.mockImplementation(({ provider }) => {
+        call++
+        if (provider === 'facebook' && !fbOk) {
+          return Promise.reject(new Error('fb logout failed'))
+        }
+        if (provider === 'google' && !googleOk) {
+          return Promise.reject(new Error('google logout failed'))
+        }
+        return Promise.resolve()
+      })
+
+      await expect(store.logout()).resolves.toBeUndefined()
+      expect(call).toBe(2)
+      // logoutPushId() must still run (it zaps mobileStore.acceptedMobilePushId).
+      expect(mockMobileStore.acceptedMobilePushId).toBe(false)
+    })
+  })
+
+  describe('saveAboutMe / saveEmail / saveMicrovolunteering', () => {
+    it('saveAboutMe saves aboutme and refetches the user', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockSave.mockResolvedValue({ ret: 0 })
+      mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
+
+      await store.saveAboutMe('Hello world')
+
+      expect(mockSave).toHaveBeenCalledWith({ aboutme: 'Hello world' })
+      expect(store.user.id).toBe(1)
+    })
+
+    it('saveEmail saves email and refetches the user', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockSave.mockResolvedValue({ ret: 0 })
+      mockFetchv2.mockResolvedValue({ me: { id: 2 }, groups: [] })
+
+      await store.saveEmail('new@example.com')
+
+      expect(mockSave).toHaveBeenCalledWith({ email: 'new@example.com' })
+      expect(store.user.id).toBe(2)
+    })
+
+    it('saveMicrovolunteering saves trustlevel for the current user', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      store.user = { id: 55 }
+      mockUserSave.mockResolvedValue({ ret: 0 })
+      mockFetchv2.mockResolvedValue({ me: { id: 55 }, groups: [] })
+
+      await store.saveMicrovolunteering('Advanced')
+
+      expect(mockUserSave).toHaveBeenCalledWith({
+        id: 55,
+        trustlevel: 'Advanced',
+      })
+      expect(store.user.id).toBe(55)
+    })
+  })
+
+  describe('unbounce / unbounceMT', () => {
+    it('unbounce clears bouncing on the current user', async () => {
+      store.user = { id: 3, bouncing: 1 }
+
+      await store.unbounce(3)
+
+      expect(mockUnbounce).toHaveBeenCalledWith(3)
+      expect(store.user.bouncing).toBe(0)
+    })
+
+    it('unbounceMT unbounces another user without touching current user', async () => {
+      store.user = { id: 3, bouncing: 1 }
+
+      await store.unbounceMT(999)
+
+      expect(mockUnbounce).toHaveBeenCalledWith(999)
+      // Only the target user is unbounced server-side; our own state is untouched.
+      expect(store.user.bouncing).toBe(1)
+    })
+  })
+
+  describe('setGroup / leaveGroup / joinGroup', () => {
+    it('setGroup updates membership and refetches by default', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
+
+      await store.setGroup({ groupid: 5, role: 'Member' })
+
+      expect(mockUpdateMembership).toHaveBeenCalledWith({
+        groupid: 5,
+        role: 'Member',
+      })
+      expect(mockFetchv2).toHaveBeenCalled()
+    })
+
+    it('setGroup skips the refetch when nofetch is set', async () => {
+      await store.setGroup({ groupid: 5, role: 'Member' }, true)
+
+      expect(mockUpdateMembership).toHaveBeenCalled()
+      expect(mockFetchv2).not.toHaveBeenCalled()
+    })
+
+    it('leaveGroup leaves and returns the refetched user', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockFetchv2.mockResolvedValue({ me: { id: 9 }, groups: [] })
+
+      const user = await store.leaveGroup(9, 20)
+
+      expect(mockLeaveGroup).toHaveBeenCalledWith({ userid: 9, groupid: 20 })
+      expect(user.id).toBe(9)
+    })
+
+    it('joinGroup joins and returns the refetched user', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockJoinGroup.mockResolvedValue({})
+      mockFetchv2.mockResolvedValue({ me: { id: 9 }, groups: [] })
+
+      const user = await store.joinGroup(9, 20, true)
+
+      expect(mockJoinGroup).toHaveBeenCalledWith({
+        userid: 9,
+        groupid: 20,
+        manual: true,
+      })
+      expect(user.id).toBe(9)
+    })
+
+    it('joinGroup swallows a banned-member 403 and returns the current user silently', async () => {
+      store.user = { id: 9 }
+      const err = new Error('Failed - banned')
+      err.response = { status: 403, data: 'Failed - banned' }
+      mockJoinGroup.mockRejectedValue(err)
+
+      const user = await store.joinGroup(9, 20, false)
+
+      expect(user.id).toBe(9)
+      expect(mockFetchv2).not.toHaveBeenCalled()
+    })
+
+    it('joinGroup rethrows a non-banned failure', async () => {
+      const err = new Error('Server error')
+      err.response = { status: 500, data: 'boom' }
+      mockJoinGroup.mockRejectedValue(err)
+
+      await expect(store.joinGroup(9, 20, false)).rejects.toThrow(
+        'Server error'
+      )
+    })
+  })
+
+  describe('logoutPushId', () => {
+    it('zaps acceptedMobilePushId', () => {
+      mockMobileStore.acceptedMobilePushId = 'some-token'
+
+      store.logoutPushId()
+
+      expect(mockMobileStore.acceptedMobilePushId).toBe(false)
+    })
+  })
+
+  describe('savePushId', () => {
+    it('does nothing when not logged in', async () => {
+      store.user = null
+      mockMobileStore.mobilePushId = 'token-123'
+
+      await store.savePushId()
+
+      expect(mockSave).not.toHaveBeenCalled()
+    })
+
+    it('does nothing when there is no mobile push token', async () => {
+      store.user = { id: 1 }
+      mockMobileStore.mobilePushId = null
+
+      await store.savePushId()
+
+      expect(mockSave).not.toHaveBeenCalled()
+    })
+
+    it('sends FCMAndroid type and marks accepted on success', async () => {
+      store.user = { id: 1 }
+      mockMobileStore.mobilePushId = 'android-token'
+      mockMobileStore.isiOS = false
+      mockSave.mockResolvedValue({ ret: 0 })
+
+      await store.savePushId()
+
+      expect(mockSave).toHaveBeenCalledWith({
+        notifications: {
+          push: {
+            type: 'FCMAndroid',
+            subscription: 'android-token',
+            deviceuserinfo: 'test-device',
+          },
+        },
+      })
+      expect(mockMobileStore.acceptedMobilePushId).toBe('android-token')
+    })
+
+    it('sends FCMIOS type on iOS', async () => {
+      store.user = { id: 1 }
+      mockMobileStore.mobilePushId = 'ios-token'
+      mockMobileStore.isiOS = true
+      mockSave.mockResolvedValue({ ret: 0 })
+
+      await store.savePushId()
+
+      expect(mockSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          notifications: expect.objectContaining({
+            push: expect.objectContaining({ type: 'FCMIOS' }),
+          }),
+        })
+      )
+    })
+
+    it('does not throw and leaves acceptedMobilePushId unset when the save fails', async () => {
+      store.user = { id: 1 }
+      mockMobileStore.mobilePushId = 'android-token'
+      mockMobileStore.acceptedMobilePushId = false
+      mockSave.mockRejectedValue(new Error('network down'))
+
+      await expect(store.savePushId()).resolves.toBeUndefined()
+
+      expect(mockMobileStore.acceptedMobilePushId).toBe(false)
+    })
+  })
+
+  describe('makeEmailPrimary / removeEmail / merge', () => {
+    it('makeEmailPrimary adds the email as primary and refetches the user', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      store.user = { id: 4 }
+      mockFetchv2.mockResolvedValue({ me: { id: 4 }, groups: [] })
+
+      const user = await store.makeEmailPrimary('primary@example.com')
+
+      expect(mockAddEmail).toHaveBeenCalledWith(4, 'primary@example.com', true)
+      expect(user.id).toBe(4)
+    })
+
+    it('removeEmail removes the email and refetches when a user is logged in', async () => {
+      store.user = { id: 4 }
+      mockFetchv2.mockResolvedValue({ me: { id: 4 }, groups: [] })
+
+      await store.removeEmail('old@example.com')
+
+      expect(mockRemoveEmail).toHaveBeenCalledWith(4, 'old@example.com')
+    })
+
+    it('removeEmail is a no-op when nobody is logged in', async () => {
+      store.user = null
+
+      await store.removeEmail('old@example.com')
+
+      expect(mockRemoveEmail).not.toHaveBeenCalled()
+    })
+
+    it('merge merges two accounts by email/id/reason', async () => {
+      await store.merge({
+        email1: 'a@example.com',
+        email2: 'b@example.com',
+        id1: 1,
+        id2: 2,
+        reason: 'Duplicate account',
+      })
+
+      expect(mockMerge).toHaveBeenCalledWith(
+        'a@example.com',
+        'b@example.com',
+        1,
+        2,
+        'Duplicate account'
+      )
+    })
+  })
+
+  describe('fetchUser marketing consent sync', () => {
+    it('syncs local marketing consent to the profile when it differs', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockMiscStore.marketingConsent = true
+      mockFetchv2.mockResolvedValue({
+        me: { id: 1, marketingconsent: false },
+        groups: [],
+      })
+      mockSave.mockResolvedValue({})
+
+      await store.fetchUser()
+
+      expect(mockSave).toHaveBeenCalledWith({ marketingconsent: true })
+      expect(store.user.marketingconsent).toBe(true)
+    })
+
+    it('does not resync when local consent already matches the profile', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockMiscStore.marketingConsent = true
+      mockFetchv2.mockResolvedValue({
+        me: { id: 1, marketingconsent: true },
+        groups: [],
+      })
+
+      await store.fetchUser()
+
+      expect(mockSave).not.toHaveBeenCalled()
+    })
+
+    it('survives the consent-sync save failing', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockMiscStore.marketingConsent = true
+      mockFetchv2.mockResolvedValue({
+        me: { id: 1, marketingconsent: false },
+        groups: [],
+      })
+      mockSave.mockRejectedValue(new Error('save failed'))
+
+      await expect(store.fetchUser()).resolves.toBeDefined()
+      expect(store.user.id).toBe(1)
+    })
+  })
+
+  describe('fetchUser session refresh and work/discourse tracking', () => {
+    it('updates auth tokens when the session response includes a refreshed jwt', async () => {
+      store.setAuth('old-jwt', 'old-p')
+      mockFetchv2.mockResolvedValue({
+        me: { id: 1 },
+        groups: [],
+        jwt: 'refreshed-jwt',
+      })
+
+      await store.fetchUser()
+
+      expect(store.auth.jwt).toBe('refreshed-jwt')
+      expect(store.auth.persistent).toBe('old-p')
+    })
+
+    it('records ModTools work counts and Discourse stats when present', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockFetchv2.mockResolvedValue({
+        me: { id: 1 },
+        groups: [],
+        work: { pending: 3 },
+        discourse: { unread: 2 },
+      })
+
+      await store.fetchUser()
+
+      expect(store.work).toEqual({ pending: 3 })
+      expect(store.discourse).toEqual({ unread: 2 })
+    })
+  })
+
+  describe('fetchUser error handling', () => {
+    it('preserves auth on a genuine server error (5xx)', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      const err = new Error('Internal error')
+      err.response = { status: 500 }
+      mockFetchv2.mockRejectedValue(err)
+
+      await store.fetchUser()
+
+      expect(store.auth.jwt).toBe('valid-jwt')
+      expect(store.user).toBeNull()
+    })
+
+    it('wipes auth on 401', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      const err = new Error('Unauthorized')
+      err.response = { status: 401 }
+      mockFetchv2.mockRejectedValue(err)
+
+      await store.fetchUser()
+
+      expect(store.auth.jwt).toBeNull()
+      expect(store.user).toBeNull()
+    })
+
+    it('wipes auth on a network error with no response', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockFetchv2.mockRejectedValue(new Error('network down'))
+
+      await store.fetchUser()
+
+      expect(store.auth.jwt).toBeNull()
+    })
+  })
+
+  describe('member getter', () => {
+    it('returns the role for a group the user belongs to', () => {
+      store.user = { id: 1 }
+      store.groups = [{ groupid: 10, role: 'Owner' }]
+
+      expect(store.member(10)).toBe('Owner')
+      expect(store.member('10')).toBe('Owner')
+    })
+
+    it('returns false when the user does not belong to the group', () => {
+      store.user = { id: 1 }
+      store.groups = [{ groupid: 10, role: 'Owner' }]
+
+      expect(store.member(20)).toBe(false)
+    })
+
+    it('returns false when nobody is logged in', () => {
+      store.user = null
+
+      expect(store.member(10)).toBe(false)
     })
   })
 })

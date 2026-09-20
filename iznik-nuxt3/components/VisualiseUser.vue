@@ -39,7 +39,7 @@ const marker = ref(null)
 const currlat = ref(null)
 const currlng = ref(null)
 
-if (process.client) {
+if (import.meta.client) {
   await import('leaflet/dist/leaflet-src.esm')
 }
 

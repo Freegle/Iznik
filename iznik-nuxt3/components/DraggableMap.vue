@@ -79,7 +79,7 @@ const zoom = ref(14)
 const runtimeConfig = useRuntimeConfig()
 const serviceUrl = runtimeConfig.public.GEOCODE
 
-if (process.client) {
+if (import.meta.client) {
   await import('leaflet/dist/leaflet-src.esm')
 }
 
@@ -91,7 +91,7 @@ const mapWidth = computed(() => {
 const mapHeight = computed(() => {
   let height = 0
 
-  if (process.client) {
+  if (import.meta.client) {
     height = Math.floor(window.innerHeight / 2)
     height = height < 200 ? 200 : height
   }
@@ -147,17 +147,14 @@ function idle() {
 
 async function ready() {
   mapObject.value = map.value.leafletObject
-  if (process.client && mapObject.value) {
+  if (import.meta.client && mapObject.value) {
     try {
-      const { Geocoder } = await import('leaflet-control-geocoder/src/control')
-      const { Photon } = await import(
-        'leaflet-control-geocoder/src/geocoders/photon'
-      )
+      const { Geocoder, geocoders } = await import('leaflet-control-geocoder')
 
       new Geocoder({
         placeholder: 'Search for a place...',
         defaultMarkGeocode: false,
-        geocoder: new Photon({
+        geocoder: new geocoders.Photon({
           geocodingQueryParams: {
             bbox: '-7.57216793459, 49.959999905, 1.68153079591, 58.6350001085',
           },

@@ -181,8 +181,12 @@ class MatchedPostsService
     }
 
     /**
-     * Load the given posts as Message models, keyed by id, restricted to those
-     * still live (approved, not deleted, no Taken/Received outcome).
+     * Load the given posts as Message models, keyed by id, restricted to those still live
+     * (approved, not deleted, no outcome that ends the post).
+     *
+     * Withdrawn counts alongside Taken and Received: the poster has taken the item off
+     * Freegle, so mailing it to someone as a match offers them something to reply to that
+     * is not there.
      */
     private function loadOpenMessages(array $ids): Collection
     {
@@ -198,7 +202,7 @@ class MatchedPostsService
                 $q->select(DB::raw(1))
                     ->from('messages_outcomes')
                     ->whereColumn('messages_outcomes.msgid', 'messages.id')
-                    ->whereIn('messages_outcomes.outcome', ['Taken', 'Received']);
+                    ->whereIn('messages_outcomes.outcome', ['Taken', 'Received', 'Withdrawn']);
             })
             ->with(['attachments', 'fromUser', 'groups'])
             ->get()

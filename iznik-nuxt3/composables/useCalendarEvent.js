@@ -35,7 +35,10 @@ export function buildIcs(eventData, opts = {}) {
   const now = opts.now || new Date()
   const start = compactLocal(eventData.startDate, eventData.startTime)
   const end = compactLocal(eventData.startDate, eventData.endTime)
-  const dtstamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')
+  const dtstamp = now
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}Z$/, 'Z')
   const uid = `freegle-${start}-${end}@ilovefreegle.org`
   const tz = eventData.timeZone
 

@@ -21,8 +21,8 @@
     <!-- App-icon long-press shortcut labels -->
     <string name="shortcut_give_short">Give</string>
     <string name="shortcut_give_long">Give something away</string>
-    <string name="shortcut_find_short">Ask</string>
-    <string name="shortcut_find_long">Ask for something</string>
+    <string name="shortcut_ask_short">Ask</string>
+    <string name="shortcut_ask_long">Ask for something</string>
     <string name="shortcut_chats_short">Chats</string>
     <string name="shortcut_chats_long">My chats</string>
 </resources>

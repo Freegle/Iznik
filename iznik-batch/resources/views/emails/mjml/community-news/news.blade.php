@@ -9,7 +9,7 @@
     <mj-section mj-class="bg-green-light" padding="24px 0 20px">
       <mj-column>
         <mj-text font-size="22px" font-weight="bold" mj-class="text-header" line-height="1.3" padding="0 25px 12px">
-          What&rsquo;s on around {{ $areaName }}
+          What&rsquo;s on near you
         </mj-text>
         <mj-text font-size="15px" color="#333333" line-height="1.7" padding="0 25px 0">
           {!! nl2br(e($intro)) !!}
@@ -80,8 +80,8 @@
         <mj-text font-size="14px" color="#555555" line-height="1.7" padding="0 25px 16px" align="center">
           We send this now and then to freeglers who like a bit of local goings-on. Not your cup of tea? No worries &mdash; just turn off &ldquo;Newsletters &amp; stories&rdquo; in <a href="{{ $settingsUrl }}" style="color:#338808; font-weight:bold;">your email settings</a> and these will stop.
         </mj-text>
-        <mj-button href="{{ $findUrl }}" mj-class="btn-success" font-size="14px" border-radius="4px" align="center">
-          Give &amp; find things near you
+        <mj-button href="{{ $askUrl }}" mj-class="btn-success" font-size="14px" border-radius="4px" align="center">
+          Give &amp; ask for things near you
         </mj-button>
       </mj-column>
     </mj-section>

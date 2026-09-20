@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 ---
 
@@ -12,15 +12,45 @@ date.
 
 If a page here ever disagrees with the code, the code wins - and the page is a bug to fix.
 
+**Just joined?** Read [../getting-started/README.md](../getting-started/README.md)
+first. It covers what Freegle is, why the architecture is the way it is, who the human
+teams are, and what to do in your first day, week and month. Come back here once you
+have the stack running.
+
 ## Start here
 
-1. **[Architecture and codebase map](01-architecture.md)** - the components, how they fit
+1. **[Architecture and codebase map](architecture.md)** - the components, how they fit
    together, and where things live.
-2. **[Local development](02-local-development.md)** - getting a working environment,
+2. **[Local development](local-development.md)** - getting a working environment,
    running the stack, and worktrees for parallel work.
-3. **[Testing](03-testing.md)** - the four test suites and how to run them.
-4. **[APIs and data](04-apis-and-data.md)** - the v2 API, how the frontend talks to
+3. **[Testing](testing.md)** - the four test suites and how to run them.
+4. **[APIs and data](apis-and-data.md)** - the v2 API, how the frontend talks to
    it, the data model, and recipes for common changes.
+
+## Traps worth reading before you start
+
+`.claude/rules/` collects the things in this codebase that fail **silently** - no error, no
+warning, a plausible wrong answer, and a green test run. They are ordinary markdown, one file per
+area, and they are the fastest way to avoid losing a day to something the team has already lost a
+day to.
+
+| File | Area |
+|---|---|
+| [`.claude/rules/go-api-traps.md`](../../.claude/rules/go-api-traps.md) | The Go API: GORM, Fiber, spatial SQL |
+| [`.claude/rules/laravel-batch-traps.md`](../../.claude/rules/laravel-batch-traps.md) | Laravel batch: mail, test fakes, schema guards |
+| [`.claude/rules/frontend-traps.md`](../../.claude/rules/frontend-traps.md) | Nuxt frontend: build flags, hanging awaits, iOS |
+| [`.claude/rules/tests-and-ci.md`](../../.claude/rules/tests-and-ci.md) | Green results that mean nothing |
+| [`.claude/rules/dev-containers.md`](../../.claude/rules/dev-containers.md) | Testing code that is not the code you are looking at |
+| [`.claude/rules/rippling.md`](../../.claude/rules/rippling.md) | One post, many group rows, and what that breaks |
+| [`.claude/rules/modtools.md`](../../.claude/rules/modtools.md) | "It isn't showing" and what actually causes it |
+| [`.claude/rules/browse-and-search.md`](../../.claude/rules/browse-and-search.md) | Three feed endpoints, sorting, stacking |
+| [`.claude/rules/mail-and-data.md`](../../.claude/rules/mail-and-data.md) | Digest cursors, unsubscribe, tables with no writer |
+| [`.claude/rules/monitor-fsm.md`](../../.claude/rules/monitor-fsm.md) | Why it can look idle when it is broken |
+| [`.claude/rules/conventions.md`](../../.claude/rules/conventions.md) | Settled decisions that are easy to re-derive wrongly |
+
+They live under `.claude/` rather than here because they double as Claude Code path-scoped rules:
+each declares the globs it applies to, so the right page loads automatically when someone opens a
+file in that area. Keeping one copy means they cannot drift apart.
 
 ## The authoritative reference docs
 
@@ -36,15 +66,27 @@ Read these directly; the pages above link into them rather than copy them:
 | Logging and observability | [../ops/reference/logging.md](../ops/reference/logging.md) |
 | Spatial services (plain English) | [./reference/spatial-servers.md](./reference/spatial-servers.md) |
 | Rippling out algorithm | [./reference/rippling-algorithm.md](./reference/rippling-algorithm.md) |
+| Third-party services we depend on | [./reference/external-services.md](./reference/external-services.md) |
+| Deployment switches (running another service on this code) | [./reference/deployment-switches.md](./reference/deployment-switches.md) |
+| Partner integrations (TrashNothing, LoveJunk, and others) | [./reference/partner-integrations.md](./reference/partner-integrations.md) |
+| Advertising | [./reference/ads.md](./reference/ads.md) |
+| Donations and Gift Aid | [./reference/donations-and-gift-aid.md](./reference/donations-and-gift-aid.md) |
+| The mobile apps | [./reference/mobile-app.md](./reference/mobile-app.md) |
+| Electricals and reuse reporting | [./reference/electricals.md](./reference/electricals.md) |
+| Item desirability scoring | [./reference/item-desirability.md](./reference/item-desirability.md) |
+| Matched-posts email | [./reference/matched-posts-email.md](./reference/matched-posts-email.md) |
 | Getting a first reply in | [./reference/first-reply.md](./reference/first-reply.md) |
 | Unsubscribing from email (List-Unsubscribe) | [./reference/unsubscribe.md](./reference/unsubscribe.md) |
+| Mail deferrals and suppression | [./reference/mail-deferrals.md](./reference/mail-deferrals.md) |
 | Donation asks in email (Stripe, wallets) | [./reference/donation-asks-in-email.md](./reference/donation-asks-in-email.md) |
+| Notification chase-up email | [./reference/notification-chaseup-email.md](./reference/notification-chaseup-email.md) |
 | Browser testing with Chrome DevTools | [./reference/browser-testing.md](./reference/browser-testing.md) |
 | Worktrees / parallel instances | [./reference/worktrees.md](./reference/worktrees.md) |
 | TrashNothing / LoveJunk integration | [./reference/trashnothing.md](./reference/trashnothing.md) |
 | SEO: how posts get found | [./reference/seo.md](./reference/seo.md) |
 | ModTools AI Support Helper | [./reference/ai-support-helper.md](./reference/ai-support-helper.md) |
 | Chat prompts (Freegle's tappable questions) | [./reference/chat-prompts.md](./reference/chat-prompts.md) |
+| Google Play technical quality (DEX, memory, zero-tap) | [./reference/play-technical-quality.md](./reference/play-technical-quality.md) |
 
 Each component also has its own README (`iznik-nuxt3/README.md`, `iznik-server-go/README.md`,
 `iznik-batch/README.md`, `iznik-routing-go/README.md`, `iznik-spatial-go/README.md`), and

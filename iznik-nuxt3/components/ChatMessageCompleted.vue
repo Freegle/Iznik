@@ -52,8 +52,8 @@ import { useChatMessageBase } from '~/composables/useChat'
 import { useMessageStore } from '~/stores/message'
 import ChatMessageCard from '~/components/ChatMessageCard'
 
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
 
 const props = defineProps({

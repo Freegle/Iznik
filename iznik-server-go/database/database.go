@@ -33,9 +33,6 @@ func buildDSN(host string) string {
 }
 
 func InitDatabase() {
-	var err error
-	var err2 error
-
 	writeHost := os.Getenv("MYSQL_HOST")
 	readHost := os.Getenv("MYSQL_HOST_READ")
 
@@ -51,7 +48,14 @@ func InitDatabase() {
 		}),
 	)
 
-	DBConn, err = gorm.Open(mysql.Open(mysqlCredentials), &gorm.Config{
+	// Build into locals and publish to the DBConn/Pool globals only once the
+	// handle is fully configured (resolver, clause builders, pool sizing).
+	// DBConn is read concurrently by every request goroutine, and on a
+	// reconnect (pingDB.go) this function runs while requests are in flight:
+	// assigning DBConn at gorm.Open time and then mutating its internals in
+	// place handed those requests a half-built handle, which segfaulted
+	// inside gorm (db1 apiv2, 2026-08-28, after a burst of failed pings).
+	db, err := gorm.Open(mysql.Open(mysqlCredentials), &gorm.Config{
 		Logger: newLogger,
 	})
 
@@ -60,7 +64,7 @@ func InitDatabase() {
 	//
 	// We use this in cases where we want to be able to cancel long-running queries.
 	// It always targets the write host - a write is never safe on a replica.
-	Pool, err2 = sql.Open(mysqlCredentials)
+	pool, err2 := sql.Open(mysqlCredentials)
 
 	// Database-level retry is available via RetryQuery/RetryExec in retry.go.
 	// API-level retry is handled by handler.WithRetry / handler.RetryGroup.
@@ -95,7 +99,7 @@ func InitDatabase() {
 	// writer with .Clauses(dbresolver.Write); see authority.GetStatsByAuthority.
 	if readHost != "" {
 		fmt.Println("Read replica enabled at", readHost)
-		resolverErr := DBConn.Use(
+		resolverErr := db.Use(
 			dbresolver.Register(dbresolver.Config{
 				Replicas: []gorm.Dialector{newFailoverDialector(buildDSN(readHost), buildDSN(writeHost))},
 				Policy:   dbresolver.RandomPolicy{},
@@ -131,18 +135,22 @@ func InitDatabase() {
 	// dialector does not install a builder under that key. Nothing re-runs
 	// dialector.Initialize later - replica failover swaps connectors, never
 	// dialectors (failover.go) - so registering here is stable.
-	RegisterCustomClauseBuilders(DBConn)
+	RegisterCustomClauseBuilders(db)
 
 	// We want lots of connections for parallelisation, but must stay below
 	// MySQL's max_connections (500 in percona-my.cnf).  Leave headroom for
 	// other services (batch, tests) sharing the same MySQL instance.
-	// DBConn.DB() returns the source (write) *sql.DB even when dbresolver is
+	// db.DB() returns the source (write) *sql.DB even when dbresolver is
 	// registered, so this sizes the write pool.
-	dbConfig, err3 := DBConn.DB()
+	dbConfig, err3 := db.DB()
 	if err3 != nil {
 		panic("failed to get database config: " + err3.Error())
 	}
 	dbConfig.SetMaxOpenConns(200)
 	dbConfig.SetMaxIdleConns(200)
 	dbConfig.SetConnMaxLifetime(time.Hour)
+
+	// Publish last - see the comment above gorm.Open.
+	DBConn = db
+	Pool = pool
 }

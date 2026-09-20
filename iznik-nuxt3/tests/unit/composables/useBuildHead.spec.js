@@ -18,8 +18,8 @@ const mockRuntimeConfig = {
 
 const mockRoute = { fullPath: '/mypage', path: '/mypage' }
 
-function getMeta(result, hid) {
-  return result.meta.find((m) => m.hid === hid)
+function getMeta(result, key) {
+  return result.meta.find((m) => m.key === key)
 }
 
 function getCanonical(result) {

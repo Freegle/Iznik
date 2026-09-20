@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Console\BackupDrain;
 use App\Console\FlockEventMutex;
 use App\Console\ResilientCacheEventMutex;
 use App\Console\SchedulerMutex;
@@ -17,6 +18,7 @@ use Illuminate\Console\Scheduling\EventMutex;
 use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\ServiceProvider;
 use Symfony\Component\Process\ExecutableFinder;
 
@@ -55,6 +57,55 @@ class AppServiceProvider extends ServiceProvider
             );
         });
 
+        // How backup:database reaches the database node. The backup runs for about
+        // eighteen minutes, so it cannot share the monitoring probe's 30-second
+        // timeout. Contextual, and the command takes the runner in its CONSTRUCTOR:
+        // contextual bindings only apply while the container is building a class, so
+        // a handle() parameter would silently get the monitoring runner instead.
+        $this->app->when(\App\Console\Commands\Backup\DatabaseBackupCommand::class)
+            ->needs(\App\Monitoring\HostCommandRunner::class)
+            ->give(function () {
+                return new \App\Monitoring\SshHostCommandRunner(
+                    (string) config('freegle.backup.database.ssh_key', '/etc/monitoring-ssh-key'),
+                    (int) config('freegle.backup.database.ssh_timeout_seconds', 7200),
+                );
+            });
+
+        // How mail:deferrals:scan reaches the outbound relay. Deliberately a
+        // separate key and a longer timeout from the monitoring probe above:
+        // that key is a root shell across the whole estate, whereas this one
+        // only ever needs to read a mail queue, and ops restricts it with a
+        // forced command. Contextual so the DeferralProbe gets this runner
+        // while HostHealthCheck keeps the monitoring one.
+        $this->app->when(\App\Services\Mail\Deferrals\DeferralProbe::class)
+            ->needs(\App\Monitoring\HostCommandRunner::class)
+            ->give(function () {
+                return new \App\Monitoring\SshHostCommandRunner(
+                    (string) config('freegle.mail.deferrals.ssh_key', '/etc/mail-deferrals-ssh-key'),
+                    (int) config('freegle.mail.deferrals.ssh_timeout_seconds', 120),
+                );
+            });
+
+        // How mail:relay-logs:ingest reaches the relay. It needs the SAME
+        // restricted key as the deferral probe and for the same reason: it only
+        // ever reads a log file, which the relay account can already do through
+        // group membership. Without this binding it would fall through to the
+        // monitoring runner above - a root shell across the whole estate, and a
+        // 30s timeout that a multi-megabyte log slice cannot finish inside.
+        $this->app->when(\App\Services\Mail\RelayLogIngestService::class)
+            ->needs(\App\Monitoring\HostCommandRunner::class)
+            ->give(function () {
+                return new \App\Monitoring\SshHostCommandRunner(
+                    (string) config('freegle.mail.relay_logs.ssh_key', '/etc/mail-deferrals-ssh-key'),
+                    (int) config('freegle.mail.relay_logs.ssh_timeout_seconds', 120),
+                );
+            });
+
+        // The suppression gate is consulted inside every per-recipient sending
+        // loop, and it caches the active set in-process. A singleton means one
+        // cache per batch job rather than one per call site.
+        $this->app->singleton(\App\Services\Mail\MailSuppressionService::class);
+
         // Scheduler overlap mutex backend. Default (LOCK_STORE=flock) binds
         // FlockEventMutex — OS-level flock that auto-releases on process death.
         // Setting LOCK_STORE=redis (or another cache store) binds a TTL-based cache
@@ -83,6 +134,59 @@ class AppServiceProvider extends ServiceProvider
         $this->checkRequiredBinaries();
         $this->registerSpamCheckListener();
         $this->blockMigrationsInProduction();
+        $this->stampLogsWithCommandLine();
+        $this->pauseQueueDuringBackup();
+    }
+
+    /**
+     * Stop queue workers picking up new jobs while the nightly backup runs.
+     *
+     * App\Console\BackupDrain holds the SCHEDULE off, but the supervisor workers consume
+     * continuously and would keep hitting the database right through the backup window,
+     * which defeats the point of draining.
+     *
+     * A Looping listener returning false makes the worker sleep instead of reserving the
+     * next job. Nothing is lost: jobs stay on the queue and are picked up when the window
+     * closes. A job already in flight when the window opens runs to completion, which is
+     * why the window starts before the backup does.
+     */
+    protected function pauseQueueDuringBackup(): void
+    {
+        Queue::looping(static fn (): bool => ! BackupDrain::active());
+    }
+
+    /**
+     * Stamp every log record (and the Sentry scope) with this process's
+     * command line. A fatal error carries no PHP stack — 21-28 memory-
+     * exhaustion fatals a day appeared in Sentry from 2026-08-12 as bare
+     * "Allowed memory size exhausted at Connection.php:413" with no way to
+     * tell which of the ~90 scheduled commands had died. With argv on the
+     * record, the crash names its process.
+     */
+    protected function stampLogsWithCommandLine(): void
+    {
+        if (! $this->app->runningInConsole()) {
+            return;
+        }
+
+        $argv = implode(' ', array_slice($_SERVER['argv'] ?? [], 0, 6));
+        if ($argv === '') {
+            return;
+        }
+
+        Log::getLogger()->pushProcessor(function ($record) use ($argv) {
+            $record->extra['argv'] = $argv;
+
+            return $record;
+        });
+
+        // Same guard as the other Sentry call sites (EmailHealthCommand):
+        // the helpers aren't loaded in every environment.
+        if (function_exists('\Sentry\configureScope')) {
+            \Sentry\configureScope(function ($scope) use ($argv) {
+                $scope->setTag('argv', mb_substr($argv, 0, 200));
+            });
+        }
     }
 
     /**

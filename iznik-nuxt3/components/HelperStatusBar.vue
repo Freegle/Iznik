@@ -1,10 +1,23 @@
 <template>
-  <div class="helper-status" :class="'helper-status--' + status" data-testid="helper-status">
+  <div
+    class="helper-status"
+    :class="'helper-status--' + status"
+    data-testid="helper-status"
+  >
     <div class="helper-status__left">
       <v-icon icon="robot" class="me-2" />
       <span class="helper-status__title">Freegle Helper</span>
-      <b-badge :variant="statusVariant" class="ms-2" data-testid="helper-status-badge">
-        <b-spinner v-if="pausing" small class="me-1" data-testid="pausing-spinner" />
+      <b-badge
+        :variant="statusVariant"
+        class="ms-2"
+        data-testid="helper-status-badge"
+      >
+        <b-spinner
+          v-if="pausing"
+          small
+          class="me-1"
+          data-testid="pausing-spinner"
+        />
         {{ statusLabel }}
       </b-badge>
       <span v-if="lastrun" class="helper-status__lastrun small text-muted ms-2">
@@ -74,7 +87,9 @@ const pauseConfirmed = computed(() => {
   return new Date(polled).getTime() >= new Date(paused).getTime()
 })
 
-const pausing = computed(() => status.value === 'paused' && !pauseConfirmed.value)
+const pausing = computed(
+  () => status.value === 'paused' && !pauseConfirmed.value
+)
 
 const statusLabel = computed(() => {
   if (pausing.value) return 'Pausing… (Helper is finishing its current task)'
@@ -111,7 +126,15 @@ const lastrun = computed(() => {
   return d.toLocaleString()
 })
 
-defineExpose({ status, statusLabel, statusVariant, lastrun, pausing, pauseConfirmed, driverAlive })
+defineExpose({
+  status,
+  statusLabel,
+  statusVariant,
+  lastrun,
+  pausing,
+  pauseConfirmed,
+  driverAlive,
+})
 </script>
 
 <style scoped lang="scss">

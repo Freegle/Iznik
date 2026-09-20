@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/freegle/iznik-server-go/misc"
 )
 
 type lokiEntry struct {
@@ -203,15 +205,31 @@ func collectLoki(b *Builder, q lokiQuerier, userID uint64, emails []string, star
 		}
 	}
 
-	// A1: user_id is an indexed STREAM LABEL on api, chat_reply and client,
-	// which is the bulk of the volume. As a label selector this is an index
-	// lookup: about a second for a production day.
+	// A1: user_id covers api, chat_reply and client, which is the bulk of the
+	// volume. It is addressed in TWO forms and we must ask for both, because a
+	// 30-day window straddles the change:
+	//
+	//   - entries written before 2026-08-23 carry user_id as a stream label;
+	//   - entries written after carry a coarse user_bucket label plus the exact
+	//     user_id as structured metadata (see misc.UserBucket for why).
+	//
+	// Both are index-narrowed, so both are cheap, and add() dedupes the overlap.
+	// Once nothing older than the change is still inside retention, the first
+	// query can go.
 	uidStr := strconv.FormatUint(userID, 10)
 	entries, err := q.query(fmt.Sprintf(`{app="freegle", user_id="%s"}`, uidStr), startNs, endNs, perQuery)
 	if err != nil {
 		return 0, err
 	}
 	add(entries)
+
+	bucketed, err := q.query(
+		fmt.Sprintf(`{app="freegle", user_bucket="%s"} | user_id="%s"`, misc.UserBucket(userID), uidStr),
+		startNs, endNs, perQuery)
+	if err != nil {
+		return 0, err
+	}
+	add(bucketed)
 
 	// A2: the slim unlabelled sources still need the parse, but the `|=`
 	// prefilter means only lines containing the id get parsed, and the 15d
@@ -296,13 +314,24 @@ func collectLoki(b *Builder, q lokiQuerier, userID uint64, emails []string, star
 			break
 		}
 		sidEsc := escapeLokiString(sid)
+		// Pre-bucket form, for entries still in retention from before the change.
 		if e3, err := q.query(
 			fmt.Sprintf(`{app="freegle", source="client", user_id="%s"} |= "%s" | json | session_id="%s"`, uidStr, sidEsc, sidEsc),
 			startNs, endNs, perQuery); err == nil {
 			add(e3)
 		}
+		// Bucketed form. The user_id filter runs BEFORE | json deliberately: json
+		// would extract a user_id from the line body too, and the parsed one gets
+		// renamed rather than replacing the structured-metadata value.
 		if e3, err := q.query(
-			fmt.Sprintf(`{app="freegle", source="client", user_id=""} |= "%s" | json | session_id="%s"`, sidEsc, sidEsc),
+			fmt.Sprintf(`{app="freegle", source="client", user_bucket="%s"} |= "%s" | user_id="%s" | json | session_id="%s"`, misc.UserBucket(userID), sidEsc, uidStr, sidEsc),
+			startNs, endNs, perQuery); err == nil {
+			add(e3)
+		}
+		// Anonymous sessions carry no user at all, so neither label is set and
+		// this one form covers both eras.
+		if e3, err := q.query(
+			fmt.Sprintf(`{app="freegle", source="client"} | user_id="" |= "%s" | json | session_id="%s"`, sidEsc, sidEsc),
 			anonStart, endNs, perQuery); err == nil {
 			add(e3)
 		}

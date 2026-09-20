@@ -4,184 +4,183 @@
       <b-row class="m-0">
         <b-col cols="12" lg="8" offset-lg="2" class="bg-white">
           <h1 class="mt-3">
-            {{ isEditing ? 'Edit your clearance' : 'Offer lots of items at once' }}
+            {{
+              isEditing ? 'Edit your clearance' : 'Offer lots of items at once'
+            }}
           </h1>
           <template v-if="!isEditing">
             <p class="text-muted mb-2">
               New to Freegle? Each thing you give away is an <em>offer</em>, and
-              people reply to you in the chat to ask for it. A clearance lets you
-              list lots of items in one post instead of posting them one at a
-              time — people tell you which ones they'd like and how many.
+              people reply to you in the chat to ask for it. A clearance lets
+              you list lots of items in one post instead of posting them one at
+              a time — people tell you which ones they'd like and how many.
             </p>
             <p class="text-muted">
               You'll hear from several Freeglers and you'll need to organise who
               gets what and when they collect it. We're building an assisted way
               to make that easy — if you'd like to try it, email
-              <a href="mailto:geeks@ilovefreegle.org">geeks@ilovefreegle.org</a>.
+              <a href="mailto:geeks@ilovefreegle.org">geeks@ilovefreegle.org</a
+              >.
             </p>
           </template>
 
           <template v-if="hasClearance">
-          <!-- Where (postcode) first: it picks the community. Not shown when
+            <!-- Where (postcode) first: it picks the community. Not shown when
                editing — the group is already set on the existing post. -->
-          <template v-if="!isEditing">
-            <h2 class="bulk-section">Where are you?</h2>
-            <PostCode
-              :value="initialPostcode"
-              @selected="postcodeSelect"
-              @cleared="postcodeClear"
+            <template v-if="!isEditing">
+              <h2 class="bulk-section">Where are you?</h2>
+              <PostCode
+                :value="initialPostcode"
+                @selected="postcodeSelect"
+                @cleared="postcodeClear"
+              />
+              <ComposeGroup v-if="postcodeValid" class="mt-2" />
+              <NoticeMessage
+                v-if="postcode && noGroups"
+                variant="warning"
+                class="mt-2"
+              >
+                There's no Freegle community covering that area yet.
+              </NoticeMessage>
+            </template>
+
+            <h2 class="bulk-section">What are you offering?</h2>
+            <b-form-input
+              v-model="title"
+              placeholder="e.g. Office Clearance"
+              maxlength="60"
+              data-testid="clearance-title"
+              aria-label="Offer title"
             />
-            <ComposeGroup v-if="postcodeValid" class="mt-2" />
-            <NoticeMessage
-              v-if="postcode && noGroups"
-              variant="warning"
-              class="mt-2"
+            <p class="bulk-help mt-2 mb-1">
+              A few words about the whole offer — this applies to every item.
+              Don't put anything here that you'd only want to share once you've
+              agreed someone can have an item; use
+              <strong>Access instructions</strong>
+              below for that.
+            </p>
+            <b-form-textarea
+              v-model="description"
+              rows="4"
+              placeholder="e.g. Charity office clearance — everything must go by Friday. Collection from central Brighton."
+              maxlength="2000"
+              aria-label="Description of the whole offer"
+            />
+
+            <h2 class="bulk-section">The items</h2>
+            <BulkItemEditor
+              :key="editorKey"
+              v-model="items"
+              v-model:tray="tray"
+            />
+
+            <h2 class="bulk-section">When can people collect?</h2>
+            <p class="bulk-help">
+              These are shown publicly. People pick one when they reply and we
+              ask them to confirm it, so collections stay in set times.
+            </p>
+            <div
+              v-for="(s, i) in slots"
+              :key="i"
+              class="d-flex gap-2 mb-2 align-items-center"
             >
-              There's no Freegle community covering that area yet.
+              <b-form-input
+                v-model="slots[i]"
+                placeholder="e.g. Tue 7 Apr, 10am–4pm"
+                maxlength="120"
+                :data-testid="'slot-' + i"
+                :aria-label="'Collection time ' + (i + 1)"
+              />
+              <b-button
+                variant="link"
+                class="text-danger p-0"
+                aria-label="Remove collection time"
+                @click="removeSlot(i)"
+              >
+                <v-icon icon="trash" />
+              </b-button>
+            </div>
+            <b-button
+              variant="outline-primary"
+              size="sm"
+              data-testid="add-slot"
+              @click="slots.push('')"
+            >
+              <v-icon icon="plus" /> Add a collection time
+            </b-button>
+
+            <h2 class="bulk-section">Closing date</h2>
+            <p class="bulk-help">
+              Optional. After this date the offer disappears. Leave it blank to
+              keep it open until you take it down.
+            </p>
+            <b-form-input
+              v-model="deadline"
+              type="date"
+              :min="today"
+              class="bulk-deadline"
+              data-testid="clearance-deadline"
+              aria-label="Closing date for replies"
+            />
+
+            <h2 class="bulk-section">Access instructions</h2>
+            <p class="bulk-help">
+              Only shared with someone once you promise them an item — e.g. the
+              exact address, a gate code, or intercom instructions.
+            </p>
+            <b-form-textarea
+              v-model="accessInstructions"
+              rows="2"
+              placeholder="e.g. 12 High St, side door, buzz flat 3. Optional."
+              maxlength="2000"
+              data-testid="clearance-access"
+              aria-label="Access instructions, shared once you promise an item"
+            />
+
+            <div class="my-4 d-flex align-items-center flex-wrap gap-2">
+              <SpinButton
+                variant="primary"
+                size="lg"
+                :icon-name="isEditing ? 'save' : 'gift'"
+                :disabled="!canSubmit"
+                :label="isEditing ? 'Save changes' : 'Post these items'"
+                data-testid="clearance-submit"
+                @handle="submit"
+              />
+              <b-button
+                variant="outline-secondary"
+                data-testid="clearance-clear"
+                @click="onClearForm"
+              >
+                <v-icon icon="eraser" /> Clear form
+              </b-button>
+              <b-button
+                variant="outline-secondary"
+                data-testid="clearance-export"
+                title="Save the whole form (items, photos, slots…) to a file"
+                @click="exportForm"
+              >
+                <v-icon icon="download" /> Export
+              </b-button>
+              <label
+                class="btn btn-outline-secondary mb-0"
+                title="Load a previously exported form"
+              >
+                <v-icon icon="upload" /> Import
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  class="d-none"
+                  data-testid="clearance-import"
+                  @change="importForm"
+                />
+              </label>
+            </div>
+            <NoticeMessage v-if="wentWrong" variant="danger" class="mt-2">
+              Something went wrong posting your items. Please try again.
             </NoticeMessage>
           </template>
-
-          <h2 class="bulk-section">What are you offering?</h2>
-          <b-form-input
-            v-model="title"
-            placeholder="e.g. Office Clearance"
-            maxlength="60"
-            data-testid="clearance-title"
-            aria-label="Offer title"
-          />
-          <p class="bulk-help mt-2 mb-1">
-            A few words about the whole offer — this applies to every item.
-            Don't put anything here that you'd only want to share once you've
-            agreed someone can have an item; use
-            <strong>Access instructions</strong>
-            below for that.
-          </p>
-          <b-form-textarea
-            v-model="description"
-            rows="4"
-            placeholder="e.g. Charity office clearance — everything must go by Friday. Collection from central Brighton."
-            maxlength="2000"
-            aria-label="Description of the whole offer"
-          />
-
-          <h2 class="bulk-section">The items</h2>
-          <BulkItemEditor
-            :key="editorKey"
-            v-model="items"
-            v-model:tray="tray"
-          />
-
-          <h2 class="bulk-section">When can people collect?</h2>
-          <p class="bulk-help">
-            These are shown publicly. People pick one when they reply and we ask
-            them to confirm it, so collections stay in set times.
-          </p>
-          <div
-            v-for="(s, i) in slots"
-            :key="i"
-            class="d-flex gap-2 mb-2 align-items-center"
-          >
-            <b-form-input
-              v-model="slots[i]"
-              placeholder="e.g. Tue 7 Apr, 10am–4pm"
-              maxlength="120"
-              :data-testid="'slot-' + i"
-              :aria-label="'Collection time ' + (i + 1)"
-            />
-            <b-button
-              variant="link"
-              class="text-danger p-0"
-              aria-label="Remove collection time"
-              @click="removeSlot(i)"
-            >
-              <v-icon icon="trash" />
-            </b-button>
-          </div>
-          <b-button
-            variant="outline-primary"
-            size="sm"
-            data-testid="add-slot"
-            @click="slots.push('')"
-          >
-            <v-icon icon="plus" /> Add a collection time
-          </b-button>
-
-          <h2 class="bulk-section">Closing date</h2>
-          <p class="bulk-help">
-            Optional. After this date the offer disappears. Leave it blank to
-            keep it open until you take it down.
-          </p>
-          <b-form-input
-            v-model="deadline"
-            type="date"
-            :min="today"
-            class="bulk-deadline"
-            data-testid="clearance-deadline"
-            aria-label="Closing date for replies"
-          />
-
-          <h2 class="bulk-section">Access instructions</h2>
-          <p class="bulk-help">
-            Only shared with someone once you promise them an item — e.g. the
-            exact address, a gate code, or intercom instructions.
-          </p>
-          <b-form-textarea
-            v-model="accessInstructions"
-            rows="2"
-            placeholder="e.g. 12 High St, side door, buzz flat 3. Optional."
-            maxlength="2000"
-            data-testid="clearance-access"
-            aria-label="Access instructions, shared once you promise an item"
-          />
-
-          <div class="my-4 d-flex align-items-center flex-wrap gap-2">
-            <SpinButton
-              variant="primary"
-              size="lg"
-              :icon-name="isEditing ? 'save' : 'gift'"
-              :disabled="!canSubmit"
-              :label="isEditing ? 'Save changes' : 'Post these items'"
-              data-testid="clearance-submit"
-              @handle="submit"
-            />
-            <b-button
-              variant="outline-secondary"
-              data-testid="clearance-clear"
-              @click="onClearForm"
-            >
-              <v-icon icon="eraser" /> Clear form
-            </b-button>
-            <b-button
-              variant="outline-secondary"
-              data-testid="clearance-export"
-              title="Save the whole form (items, photos, slots…) to a file"
-              @click="exportForm"
-            >
-              <v-icon icon="download" /> Export
-            </b-button>
-            <label
-              class="btn btn-outline-secondary mb-0"
-              title="Load a previously exported form"
-            >
-              <v-icon icon="upload" /> Import
-              <input
-                type="file"
-                accept="application/json,.json"
-                class="d-none"
-                data-testid="clearance-import"
-                @change="importForm"
-              />
-            </label>
-          </div>
-          <NoticeMessage v-if="wentWrong" variant="danger" class="mt-2">
-            Something went wrong posting your items. Please try again.
-          </NoticeMessage>
-          </template>
-          <NoticeMessage
-            v-else-if="loggedIn"
-            variant="warning"
-            class="mt-3"
-          >
+          <NoticeMessage v-else-if="loggedIn" variant="warning" class="mt-3">
             This feature isn't available on your account yet.
           </NoticeMessage>
         </b-col>
@@ -444,7 +443,7 @@ async function importForm(e) {
     editorKey.value++
   } catch (err) {
     console.error('Failed to import clearance form', err)
-    // eslint-disable-next-line no-alert
+
     window.alert('Could not read that file — is it a clearance export?')
   }
 }

@@ -96,7 +96,7 @@ useHead(
 const mapWidth = computed(() => {
   let width = 0
 
-  if (process.client) {
+  if (import.meta.client) {
     width = Math.floor(window.innerHeight / 2)
     width = width < 200 ? 200 : width
   }
@@ -118,7 +118,6 @@ onMounted(async () => {
 })
 
 const setBounds = () => {
-  // eslint-disable-next-line new-cap
   bounds.value = new L.geoJSON(authorityArea).getBounds().pad(0.1)
 }
 

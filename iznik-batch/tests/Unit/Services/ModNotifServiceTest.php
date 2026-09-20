@@ -290,7 +290,7 @@ class ModNotifServiceTest extends TestCase
             'TestGroup' => ['Pending Messages' => 3, 'Members to Review' => 1],
         ];
 
-        $text = $this->service->buildTextSummary($groupWork, 0, 'https://modtools.org/modtools/settings');
+        $text = $this->service->buildTextSummary($groupWork, 0, 'https://modtools.org/settings');
 
         $this->assertStringContainsString('TestGroup', $text);
         $this->assertStringContainsString('Pending Messages: 3', $text);
@@ -299,16 +299,16 @@ class ModNotifServiceTest extends TestCase
 
     public function test_build_text_summary_includes_chat_review(): void
     {
-        $text = $this->service->buildTextSummary([], 5, 'https://modtools.org/modtools/settings');
+        $text = $this->service->buildTextSummary([], 5, 'https://modtools.org/settings');
 
         $this->assertStringContainsString('5 chat messages to review', $text);
     }
 
     public function test_build_text_summary_includes_settings_url(): void
     {
-        $text = $this->service->buildTextSummary([], 0, 'https://modtools.org/modtools/settings');
+        $text = $this->service->buildTextSummary([], 0, 'https://modtools.org/settings');
 
-        $this->assertStringContainsString('https://modtools.org/modtools/settings', $text);
+        $this->assertStringContainsString('https://modtools.org/settings', $text);
     }
 
     // ===================================================================

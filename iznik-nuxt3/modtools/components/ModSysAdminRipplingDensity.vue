@@ -9,10 +9,10 @@
     </p>
     <ul class="text-muted small ms-2">
       <li>
-        <strong>Did the cap bind?</strong> Compare
-        <em>Cap asked</em> with <em>Drive time reached</em>. A band whose reach
-        sits well under its cap was never held back by it, so changing the cap
-        will not move anything else in that row.
+        <strong>Did the cap bind?</strong> Compare <em>Cap asked</em> with
+        <em>Drive time reached</em>. A band whose reach sits well under its cap
+        was never held back by it, so changing the cap will not move anything
+        else in that row.
       </li>
       <li>
         <strong>Demand.</strong> <em>Replied</em> is what a shorter cap risks:
@@ -40,7 +40,12 @@
         style="width: 10rem"
         @change="fetch"
       />
-      <b-button size="sm" variant="secondary" :disabled="loading" @click="fetch">
+      <b-button
+        size="sm"
+        variant="secondary"
+        :disabled="loading"
+        @click="fetch"
+      >
         Fetch
       </b-button>
     </div>
@@ -79,19 +84,29 @@
             </b-td>
             <b-td>{{ miles(b.avgradiusmiles) }}</b-td>
             <b-td>{{ Math.round(b.avgaudience).toLocaleString() }}</b-td>
-            <b-td>{{ b.replied.toLocaleString() }} ({{ rate(b.replied, b.posts) }})</b-td>
+            <b-td
+              >{{ b.replied.toLocaleString() }} ({{
+                rate(b.replied, b.posts)
+              }})</b-td
+            >
             <b-td class="fw-bold">
               {{ b.taken.toLocaleString() }} ({{ rate(b.taken, b.posts) }})
             </b-td>
             <b-td>
               {{ b.held.toLocaleString() }}
-              <span class="text-muted">({{ b.released.toLocaleString() }} since sent)</span>
+              <span class="text-muted"
+                >({{ b.released.toLocaleString() }} since sent)</span
+              >
             </b-td>
           </b-tr>
         </b-tbody>
       </b-table-simple>
 
-      <NoticeMessage v-if="unknownBand" variant="warning" class="mb-3 ms-2 me-2">
+      <NoticeMessage
+        v-if="unknownBand"
+        variant="warning"
+        class="mb-3 ms-2 me-2"
+      >
         {{ unknownBand.posts.toLocaleString() }} posts could not be measured and
         ran on the flat cap. That is the spatial service being unreachable, or
         density sizing being switched off. It is not a fourth kind of place, and
@@ -100,9 +115,9 @@
       </NoticeMessage>
 
       <p class="text-muted small ms-2">
-        A withdrawn or deleted post loses its reach row, so it drops out of every
-        column here. Rehomed is therefore an overestimate in all bands, which is
-        why these rows are only safe to read against each other.
+        A withdrawn or deleted post loses its reach row, so it drops out of
+        every column here. Rehomed is therefore an overestimate in all bands,
+        which is why these rows are only safe to read against each other.
       </p>
     </template>
 

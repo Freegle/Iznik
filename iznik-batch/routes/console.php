@@ -32,6 +32,25 @@ if (!function_exists('cronLog')) {
 \App\Console\SchedulerMutex::apply(app(\Illuminate\Console\Scheduling\Schedule::class));
 
 // =============================================================================
+// DEPLOYMENT SWITCHES (see docs/developers/reference/deployment-switches.md)
+// =============================================================================
+// Another deployment of this codebase adds its own jobs in an overlay file that
+// Freegle does not ship, and can choose to run ONLY those. Both default to how
+// Freegle runs today: no overlay, the full schedule below.
+$scheduleOverlay = (string) config('freegle.schedule.overlay', '');
+if ($scheduleOverlay !== '') {
+    if (! str_starts_with($scheduleOverlay, '/')) {
+        $scheduleOverlay = base_path($scheduleOverlay);
+    }
+    if (is_file($scheduleOverlay)) {
+        require $scheduleOverlay;
+    }
+}
+if (config('freegle.schedule.profile', 'full') === 'overlay-only') {
+    return;
+}
+
+// =============================================================================
 // ACTIVE SCHEDULED COMMANDS
 // =============================================================================
 
@@ -154,6 +173,37 @@ Schedule::command('ripple:release-replies')
     ->sendOutputTo(cronLog('ripple:release-replies'))
     ->runInBackground();
 
+// Keep every member on the travel-time budget their own surroundings justify.
+//
+// settings.browseReachMaxDistance is what holds each member to their own density band. Posts
+// ripple out to the widest budget any band earns ON THE UNDERSTANDING that each recipient is
+// then held back to theirs, so a member without it receives posts from up to 45 minutes away -
+// exactly what the banding exists to prevent. This command is the only thing that writes it.
+//
+// Two passes, because they answer different questions.
+//
+// The full pass: it gives a band default to members who have none, and RECONCILES the ones who
+// already have a value - following a member who moves from a village to a city, and an area
+// that has grown denser since its members were measured. It walks every user (~2.9M rows) and
+// makes a routing call per distinct location, but the memos make that far cheaper than the row
+// count suggests: measured on live 2026-09-01, 132,228 members scanned in 2h33m (02:40 to
+// 05:12). That fits inside a night, so it runs nightly rather than monthly - a member who joins
+// today should not wait weeks for the band that holds them to the distance their own
+// surroundings justify, and a stale band is the difference between a rural member seeing their
+// nearest town's posts and not.
+//
+// This replaces a separate daily --missing-only pass, which existed only because the full one
+// was thought too heavy to run often. The option is still there for a quick manual catch-up;
+// scheduling it alongside a nightly full pass would just do the same work twice.
+Schedule::command('browse:backfill-max-distance')
+    ->dailyAt('02:40')
+    // 12h, not the 24h default: a killed run's lock has to self-heal well inside a day
+    // (SchedulerResilienceTest, incident 2026-07-02), and with a nightly schedule a longer
+    // lock would cost a night's run for nothing.
+    ->withoutOverlapping(720)
+    ->sendOutputTo(cronLog('browse:backfill-max-distance-full'))
+    ->runInBackground();
+
 // First reply: getting one in quickly, and making the wait bearable when there isn't one.
 // All three are gated by freegle.firstreply.* and are no-ops until those are switched on.
 if (config('freegle.firstreply.enabled')) {
@@ -210,6 +260,72 @@ Schedule::command('spatial:update-data')
     ->sendOutputTo(cronLog('spatial:update-data'))
     ->runInBackground();
 
+// Classify newly-approved OFFERs as electrical or not, with Gemini Flash.
+//
+// Feeds the /electricals page. Hourly rather than more often because the page reports
+// rolling twelve-month figures, so freshness inside the day buys nothing.
+//
+// --limit=1000 is comfortably above the real arrival rate: live runs ~1,560 distinct
+// OFFERs a day, i.e. ~65 an hour. (Counting messages_groups suggests 5-6k a day, but that
+// is the rippling fan-out - one row per group a post reaches - not distinct posts.) The
+// limit is a backstop against a backlog after an outage flooding the API in one pass, and
+// the command tracks its own high-water mark, so a capped run simply resumes next hour.
+Schedule::command('eee:classify-new --limit=1000')
+    ->hourly()
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('eee:classify-new'))
+    ->runInBackground();
+
+// Regenerate the public /electricals page payload.
+//
+// Daily, not hourly: every figure is a rolling twelve-month aggregate, so intra-day
+// freshness would cost a heavy pass over messages joined to messages_eee, messages_items
+// and messages_outcomes and change nothing a reader could see. Runs after
+// eee:classify-new has had the night to catch up.
+Schedule::command('electricals:stats')
+    ->dailyAt('05:10')
+    ->withoutOverlapping(240)
+    ->sendOutputTo(cronLog('electricals:stats'))
+    ->runInBackground();
+
+// Score newly-approved OFFERs for item desirability.
+//
+// A quiet no-op (single EXISTS query) until an operator imports an artifact with
+// desirability:import-artifact, so scheduling it is free on hosts without one.
+// Hourly like eee:classify-new and for the same reason: it tracks a high-water
+// mark over the approval clock, and ~65 distinct OFFERs arrive an hour, so
+// --limit=2000 only matters when catching up after an outage. Most posts score
+// with a single indexed lookup; only never-seen titles touch the embedding
+// sidecar (soft dependency - scoring falls back to 'default' without it).
+Schedule::command('desirability:score-new --limit=2000')
+    ->hourly()
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('desirability:score-new'))
+    ->runInBackground();
+
+// Recompute items.popularity from messages_items.
+//
+// ItemService maintains this forwards now, but a weekly reconciliation keeps it honest:
+// the column had drifted to near-zero because the increment was missing altogether, and
+// it feeds the popularity-weighted mean item weight in AuthorityStatsService,
+// StatsGenerationService and the Go item/impact endpoint. Sets rather than adds, so it
+// simply corrects any drift.
+Schedule::command('items:backfill-popularity')
+    ->weeklyOn(0, '03:40')
+    ->withoutOverlapping(240)
+    ->sendOutputTo(cronLog('items:backfill-popularity'))
+    ->runInBackground();
+
+// Link accounts that gave the same mobile number or street address in chat, so they show up
+// in ModTools Related Members. Daily rather than hourly: nothing here is urgent, and a
+// duplicate account that has sat unnoticed for years does not need spotting within the hour.
+// The scan window overlaps the gap between runs so a slow day never drops anything.
+Schedule::command('users:detect-related --days=3')
+    ->dailyAt('04:40')
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('users:detect-related'))
+    ->runInBackground();
+
 // Auto-approve pending messages after 48 hours.
 // V1: cron/autoapprove.php
 Schedule::command('messages:auto-approve')
@@ -228,10 +344,23 @@ Schedule::command('messages:auto-repost')
 
 // Chase up messages with replies but no outcome.
 // V1: cron/chaseup.php
-Schedule::command('messages:chase-up')
+//
+// Without --skip-languishing this also scanned for languishing posts every hour. That
+// scan finds the same ~1,840 posts each time, and notifyLanguishing will only raise one
+// notification per person per day regardless, so 23 of the 24 daily scans could never
+// do anything. It has its own schedule below.
+Schedule::command('messages:chase-up --skip-languishing')
     ->hourly()
     ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('messages:chase-up'))
+    ->runInBackground();
+
+// The languishing-posts scan, once a day. It raises an in-app notification rather than
+// sending mail, so the time only needs to be somewhere sensible in the member's day.
+Schedule::command('messages:chase-up --languishing-only')
+    ->dailyAt('09:00')
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('messages:chase-up-languishing'))
     ->runInBackground();
 
 // Deduplicate searches.
@@ -415,7 +544,7 @@ Schedule::command('purge:logs')
 // Daily syntactic email validation (last 30 days only).
 // V1: cron/email_validate.php
 Schedule::command('emails:validate')
-    ->dailyAt('04:30')
+    ->dailyAt('04:50')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('emails:validate'))
     ->runInBackground();
@@ -447,18 +576,46 @@ Schedule::command('users:update-modmails')
 
 // Hourly fallback users.lastaccess update from chat / membership activity.
 // V1: cron/lastaccess.php
+//
+// Hourly, this only looks at activity since the last run. Unbounded it joined users
+// against the whole history of chat_messages and the 4.96M-row memberships table with
+// a predicate no index can help, costing ~4,145 seconds of database time a day to find
+// about 37 users.
 Schedule::command('users:update-lastaccess')
     ->hourly()
     ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('users:update-lastaccess'))
     ->runInBackground();
 
+// The nightly unbounded pass. Not optional: narrowing the hourly one is only safe
+// because this still covers activity written with a timestamp older than the window.
+// 03:45 is clear of the purge and stats cluster and of db1's 04:00-04:17 backup.
+Schedule::command('users:update-lastaccess --full')
+    ->dailyAt('03:45')
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('users:update-lastaccess-full'))
+    ->runInBackground();
+
 // Update chat reply-expectation tracking and per-user reply-time metrics.
 // V1: cron/chat_expected.php (every 5 minutes)
+//
+// Every five minutes this only looks at chats that have had a new message, or a
+// rippling-held reply released, since the last run - a waiting message cannot stop
+// waiting otherwise. It used to re-ask about all ~1,925 waiting messages each time and
+// rewrite the same answer back, which is where ~550k no-op writes a day came from.
 Schedule::command('chats:update-expected')
     ->everyFiveMinutes()
     ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('chats:update-expected'))
+    ->runInBackground();
+
+// The nightly backstop: re-check every waiting message, catching anything the two
+// triggers above cannot see. 04:50 sits in the quiet gap after the purge/stats cluster
+// and clear of the backup drain window (BackupDrainWindowTest keeps it there).
+Schedule::command('chats:update-expected --full')
+    ->dailyAt('04:50')
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('chats:update-expected-full'))
     ->runInBackground();
 
 // Send calendar invites and chat reminders for arranged handover trysts.
@@ -561,34 +718,109 @@ foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
 }
 
 // "Still lagging" alert — one hour after the 07:00-12:00 daily window closes, check whether the
-// morning run kept up. Counts recently-active daily recipients (sent within the last 7 days, so
-// this excludes the permanently-inactive who never get a digest and the never-sent) who did NOT
-// get today's digest. In steady state the morning window clears them and this is ~0; a large
-// count means we're under capacity and the lag is rotating (see streamDailyOverdueFirst) — the
+// morning run kept up. Counts daily recipients who did NOT get today's digest. In steady state
+// the morning window clears them and this is ~0; a large count means we're under capacity — the
 // signal to add throughput/hardware. Logged at error level so it reaches Sentry; fires daily
 // until capacity catches up, which is the intended KPI, not noise.
+//
+// This used to count only people whose last digest was within seven days, to leave out the
+// permanently-inactive and the never-sent. That also left out anyone who had fallen more than a
+// week behind, which is the group the alert most needs to report: measured on production
+// 2026-08-17, 2,003 members who are still using the site, are not bouncing, and still have a
+// community set to a daily digest had not had one for over a week, and 384 of them had not had
+// one for over a month. None of them appeared in this number. The claim that the lag rotates
+// fairly and nobody is permanently starved was not true, and this was the reason nobody could
+// see that.
+//
+// So the seven-day window is gone, and dormancy is excluded by asking whether the member has
+// used the site rather than by how long ago we last managed to mail them. Never-sent recipients
+// still have no row here, so they are still out of scope.
+//
+// The same slot also asks whether the mail we sent actually arrived, per receiving domain. That
+// is not the same question and the lag figures cannot answer it. On 2026-08-16 every Yahoo-run
+// domain - yahoo.co.uk, yahoo.com, aol.com, sky.com, ymail.com, rocketmail.com - went from a
+// steady 16-36% open rate to zero and stayed there, following a send five times the normal daily
+// volume on 14 August. That is roughly 35,000 emails a day going nowhere. Nothing alerted,
+// because from our side every one of them was handed to the smarthost and accepted. Run against
+// production on 18 August the check below flags those six domains and nothing else. See
+// DeliveryHealthService.
 Schedule::call(function () {
     $londonDayStartUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->setTimezone('UTC')->toDateTimeString();
-    $activeSinceUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->subDays(7)->setTimezone('UTC')->toDateTimeString();
+    $activeSinceUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->subDays(30)->setTimezone('UTC')->toDateTimeString();
 
-    $lagging = \Illuminate\Support\Facades\DB::table('users_digests')
-        ->where('mode', 'daily')
-        ->where('lastsent', '>=', $activeSinceUtc)
-        ->where('lastsent', '<', $londonDayStartUtc)
+    $laggingQuery = \Illuminate\Support\Facades\DB::table('users_digests')
+        ->join('users', 'users.id', '=', 'users_digests.userid')
+        ->where('users_digests.mode', 'daily')
+        ->where('users_digests.lastsent', '<', $londonDayStartUtc)
+        ->whereNull('users.deleted')
+        ->where('users.lastaccess', '>=', $activeSinceUtc);
+
+    $lagging = (clone $laggingQuery)->count();
+
+    // How much of that is more than a week old. The old measure could not see any of this, so
+    // report it separately: a rising figure here means the backlog is not rotating but settling
+    // on the same people.
+    $overAWeek = (clone $laggingQuery)
+        ->where('users_digests.lastsent', '<', \Carbon\Carbon::parse($londonDayStartUtc)->subDays(7)->toDateTimeString())
         ->count();
 
     $threshold = (int) env('FREEGLE_DIGEST_DAILY_LAG_ALERT_THRESHOLD', 5000);
     if ($lagging > $threshold) {
         \Illuminate\Support\Facades\Log::error('Daily digest still lagging after the 07:00-12:00 window', [
             'lagging_active_recipients' => $lagging,
+            'of_which_over_a_week_behind' => $overAWeek,
             'threshold' => $threshold,
             'checked_at' => 'London 13:00',
         ]);
     } else {
         \Illuminate\Support\Facades\Log::info('Daily digest kept up with the morning window', [
             'lagging_active_recipients' => $lagging,
+            'of_which_over_a_week_behind' => $overAWeek,
         ]);
     }
+
+    // Whether the mail we did send actually arrived is a separate question, and the figures
+    // above cannot answer it: they say we sent, not that anybody received. A provider that
+    // starts binning our mail leaves the lag looking perfectly healthy. Reported as its own
+    // log line rather than folded into the one above, so the two problems stay two Sentry
+    // issues - "we are short of capacity" and "a provider has stopped taking our mail" have
+    // nothing to do with each other and want different people.
+    $collapsed = app(\App\Services\Mail\DeliveryHealthService::class)->collapsedDomains();
+
+    if ($collapsed) {
+        \Illuminate\Support\Facades\Log::error('Email delivery has collapsed at one or more domains', [
+            'domains' => $collapsed,
+            'affected_recipients' => array_sum(array_column($collapsed, 'recent_sent')),
+            'checked_at' => 'London 13:00',
+        ]);
+    } else {
+        \Illuminate\Support\Facades\Log::info('Email delivery looks normal across domains');
+    }
+
+    // Carryover health, measured right after the window that writes it.
+    //
+    // users_digests.carryover holds the posts a member's last digest could not fit under
+    // DIGEST_POST_CAP; the next run offers them again, below that run's new posts. Every id
+    // on it is also a DIGEST_LOAD_CAP slot a new post does not get, so the list is bounded
+    // three ways (age, already-seen, size) in UnifiedDigestService::carryoverFrom(). Those
+    // bounds are the thing this line exists to check: if the mean or the max climbs run over
+    // run, they are not holding and members are being fed their backlog instead of today's
+    // posts. A steady mean well under the cap is what healthy looks like. No threshold and
+    // no alert - there is no measured normal to compare against yet, and inventing one from
+    // a single day's figure would be worse than reading the trend.
+    $carryover = \Illuminate\Support\Facades\DB::table('users_digests')
+        ->where('mode', 'daily')
+        ->whereNotNull('carryover')
+        ->selectRaw('COUNT(*) AS members, ROUND(AVG(JSON_LENGTH(carryover)), 1) AS mean_len, MAX(JSON_LENGTH(carryover)) AS max_len')
+        ->first();
+
+    \Illuminate\Support\Facades\Log::info('Daily digest carryover', [
+        'members_carrying' => (int) ($carryover->members ?? 0),
+        'mean_posts_carried' => (float) ($carryover->mean_len ?? 0),
+        'max_posts_carried' => (int) ($carryover->max_len ?? 0),
+        'cap' => \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP,
+        'max_age_days' => \App\Services\UnifiedDigestService::CARRYOVER_MAX_AGE_DAYS,
+    ]);
 })
     ->name('mail:digest:daily-lag-check')
     ->timezone(config('freegle.timezone'))
@@ -661,6 +893,16 @@ foreach (range(0, $reachMailShardCount - 1) as $reachShard) {
         ->sendOutputTo(cronLog("mail:digest:unified.reach.shard{$reachShard}"))
         ->runInBackground();
 }
+
+// The daily backstop for reach mail's member queue: re-queue anyone whose join or postcode
+// change since yesterday was not followed by reach mail, so a hook that is missed or wrong
+// costs a day rather than the mail. Two indexed queries over the last day; the reach pass's
+// drain does the containment work.
+Schedule::command('ripple:reconcile-reach-members')
+    ->dailyAt('05:23')
+    ->withoutOverlapping(360)
+    ->sendOutputTo(cronLog('ripple:reconcile-reach-members'))
+    ->runInBackground();
 
 // Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')
@@ -750,9 +992,47 @@ Schedule::command('queue:background-tasks --max-iterations=60 --spool')
     ->appendOutputTo(cronLog('queue:background-tasks'))
     ->runInBackground();
 
+// Deferral-aware mail suppression.
+//
+// Our relay 250-accepts mail and only afterwards finds out that the receiving
+// provider will not take it, so nothing in the sending path can see a
+// deferral. This reads the relay's own queue, suppresses generation for
+// providers that have stopped accepting us, releases when they recover, and
+// alerts on the way in. Gated on config so it is not even scheduled where the
+// relay is unreachable (dev, CI), matching how ripple/firstreply are gated.
+//
+// Fifteen minutes is chosen against the incident it exists for: the queue was
+// growing by about 1,300 an hour, so this bounds what we can generate into a
+// blocked provider at roughly 300 messages. Deliberately no ->sentryMonitor():
+// it uses withoutOverlapping(), and Sentry derives its expected cadence from
+// the raw cron expression, so a blocked run would page as a missed check-in.
+if (config('freegle.mail.deferrals.enabled')) {
+    Schedule::command('mail:deferrals:scan')
+        ->everyFifteenMinutes()
+        ->withoutOverlapping(30)
+        ->sendOutputTo(cronLog('mail:deferrals:scan'))
+        ->runInBackground();
+}
+
+// Read the relay's maillog into logs_emails, so we can tell a member whether
+// we actually sent them something. Replaces V1's eximlogs.php, which ran from
+// root's crontab on the relay itself. Same ten-minute cadence, because that is
+// what the offset and the slice cap were sized against - about 5MB a run.
+//
+// Gated on config so it is not scheduled where the relay is unreachable (dev,
+// CI). No ->sentryMonitor() for the same reason as the deferral scan: it uses
+// withoutOverlapping(), and a skipped run would page as a missed check-in.
+if (config('freegle.mail.relay_logs.enabled') && config('freegle.mail.relay_logs.host') !== '') {
+    Schedule::command('mail:relay-logs:ingest')
+        ->everyTenMinutes()
+        ->withoutOverlapping(20)
+        ->sendOutputTo(cronLog('mail:relay-logs:ingest'))
+        ->runInBackground();
+}
+
 // Clean up old sent emails - run daily.
 Schedule::command('mail:spool:process --cleanup --cleanup-days=7')
-    ->dailyAt('04:00')
+    ->dailyAt('04:40')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('mail:spool:process'))
     ->runInBackground();
@@ -824,8 +1104,14 @@ Schedule::command('mail:reengage')
 // Record whether a tip drove a real action (login/reply/post within the window)
 // for onboarding sends, so per-tip/arm/segment effectiveness and control-arm
 // lift can be graphed in the sysadmin dashboard. Runs after the day's sends.
+// Moved off 16:30, which stacked it onto the tail of the day's engagement sends at the
+// busiest hour on the read node, for no reason: it sends nothing and only records
+// whether a tip drove an action. Each check queries the full outcome window anchored at
+// the send, so it is complete whenever it runs - an eleven-hour shift can delay a row's
+// first check but cannot lose an outcome, and the row is re-checked daily for 74 days.
+// 02:50 rather than 02:45 leaves the AI image recount that slot to itself.
 Schedule::command('mail:reengage-outcomes')
-    ->dailyAt('16:30')
+    ->dailyAt('02:50')
     ->withoutOverlapping(60)
     ->sendOutputTo(cronLog('mail:reengage-outcomes'))
     ->runInBackground();
@@ -1069,15 +1355,32 @@ Schedule::command('integrations:sync-whatjobs')
 // Early-morning sync ahead of the 07:00 UK daily digest. The every-3h UTC
 // schedule above starts at 09:00 UTC, so the morning digest would otherwise
 // ship jobs last synced ~21:00 the night before (9-10h stale -> closed
-// postings -> clicks don't convert to billable). Run at 05:00 UK so the sync
-// (and the post-swap KNN rebuild it triggers) completes before the digest.
-// Pinned to the local zone so it tracks BST/GMT with the digest; shares the
-// command mutex with the run above via withoutOverlapping.
+// postings -> clicks don't convert to billable). Runs at 04:40 UTC, on the
+// same clock as the backup drain window (03:50-04:35 UTC), so it starts just
+// after batch work resumes in both BST and GMT: 05:40 or 04:40 London, and
+// the run takes about 15 minutes, well before the digest. It used to be pinned
+// to 05:00 London, which is 04:00 UTC in summer, inside the window, and the
+// drain skipped it. Shares the command mutex with the run above via
+// withoutOverlapping.
 Schedule::command('integrations:sync-whatjobs')
-    ->timezone(config('freegle.timezone'))
-    ->dailyAt('05:00')
+    ->dailyAt('04:40')
     ->withoutOverlapping(240)
     ->sendOutputTo(cronLog('integrations:sync-whatjobs'))
+    ->runInBackground();
+
+// Weekly full re-geocode of the jobs feed. Each sync seeds its geocoding from
+// the previous run's jobs table, so a tuple that was ever resolved wrongly
+// stays wrong forever (measured 2026-08-31: 2,341 jobs pinned on Glasgow
+// under a Belfast district name; 7.9% of the table >25km from its own city's
+// best match). The in-sync UK-bbox guard rejects out-of-UK poison at write
+// time; this clears the in-UK kind by re-resolving every tuple from scratch
+// against our own places geocoder (local, ~20ms a lookup). Sunday small
+// hours, clear of the 05:00 digest-prep sync; the command's own lock
+// serialises any overlap.
+Schedule::command('integrations:sync-whatjobs', ['--refresh-geocode'])
+    ->timezone(config('freegle.timezone'))
+    ->weeklyOn(0, '02:30')
+    ->sendOutputTo(cronLog('integrations:sync-whatjobs.refresh'))
     ->runInBackground();
 
 // Sync Freegle offers with LoveJunk - runs every minute.
@@ -1211,10 +1514,25 @@ Schedule::command('donations:update-ads-target')
 // =============================================================================
 
 // Update usage counts for AI images (how many posts use each image).
+//
+// Hourly, this only counts attachments added since the last run - a primary-key range
+// over the last hour's rows. The full JSON_EXTRACT scan of all 31.6M messages_attachments
+// rows (and the ~50k single-row UPDATEs that followed it) runs once overnight instead of
+// 24 times a day, on a counter whose measured net change is ~8 rows an hour.
 Schedule::command('ai:usage-counts:update')
     ->hourly()
     ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('ai:usage-counts:update'))
+    ->runInBackground();
+
+// The nightly ground truth: rebuilds every count, which is also what corrects the
+// decrements the hourly delta cannot see (purged messages, rotated images).
+// 02:45 rather than 02:30 keeps it clear of the purge/stats cluster that occupies
+// 02:00-02:34.
+Schedule::command('ai:usage-counts:update --full')
+    ->dailyAt('02:45')
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('ai:usage-counts:update-full'))
     ->runInBackground();
 
 
@@ -1489,3 +1807,24 @@ Schedule::command('partnerships:reminders')
     ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('partnerships:reminders'))
     ->runInBackground();
+
+// Nightly physical database backup. OFF unless BACKUP_DB_ENABLED is set; until then the
+// shell script on the database node is still what runs. Scheduled inside the drain window
+// on purpose: BackupDrain never holds "backup:" commands off.
+//
+// Nothing ELSE that fires once a day may sit inside that window (03:50-04:35 by default):
+// the drain skips a due job, it does not delay it, so a dailyAt() in the window never
+// runs. BackupDrainWindowTest fails the build if one is added.
+Schedule::command('backup:database')
+    ->dailyAt('04:00')
+    ->when(fn () => config('freegle.backup.database.enabled', false))
+    ->withoutOverlapping(480)
+    ->sendOutputTo(cronLog('backup:database'))
+    ->runInBackground();
+
+// =============================================================================
+// BACKUP DRAIN (see App\Console\BackupDrain)
+// =============================================================================
+// Last, so it covers every command defined above and a new job cannot be forgotten.
+// Off unless BACKUP_DRAIN_ENABLED is set; the window is re-checked on each tick.
+\App\Console\BackupDrain::apply(app(\Illuminate\Console\Scheduling\Schedule::class));

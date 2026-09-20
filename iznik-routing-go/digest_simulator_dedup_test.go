@@ -9,10 +9,10 @@ import "testing"
 
 func TestNormalizeDigestSubject(t *testing.T) {
 	cases := map[string]string{
-		"OFFER: Bird cherry sapling (Trinity, Edinburgh EH5)": "bird cherry sapling",
-		"WANTED: Garden table and chairs (Fulham Palace Rd SW6)": "garden table and chairs",
+		"OFFER: Bird cherry sapling (Trinity, Edinburgh EH5)":       "bird cherry sapling",
+		"WANTED: Garden table and chairs (Fulham Palace Rd SW6)":    "garden table and chairs",
 		"offer:   Swimming Caps / Hats x 6  (South Wimbledon SW19)": "swimming caps / hats x 6",
-		"Plain subject no prefix":                                 "plain subject no prefix",
+		"Plain subject no prefix":                                   "plain subject no prefix",
 	}
 	for in, want := range cases {
 		if got := normalizeDigestSubject(in); got != want {

@@ -1,0 +1,13 @@
+# Install as /etc/sudoers.d/deferrals-postsuper, mode 0440, root:root.
+# Validate before installing: visudo -cf <file>
+#
+# The mail deferral scanner purges a provider backlog that cannot be delivered,
+# so it never expires into one bounce per message. postsuper is root-only and
+# the scanner connects as an unprivileged user, so it needs exactly this and
+# nothing else.
+#
+# Without this grant --purge cannot work. It now says so - canPurge() is asked
+# before any deletion and the run fails with a Sentry alert naming the host and
+# the missing right - but it is still a purge that does not happen, so a rebuilt
+# relay needs this file.
+deferrals ALL=(root) NOPASSWD: /usr/sbin/postsuper

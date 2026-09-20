@@ -625,4 +625,54 @@ func TestEmailTrackingImageCompactScrollDepth(t *testing.T) {
 	var images []emailtracking.EmailTrackingImage
 	db.Where("email_tracking_id = ?", after2.ID).Find(&images)
 	assert.Equal(t, 2, len(images), "expected 2 image load records")
+// Looking a member up by their own address must find them.
+//
+// The lookup carried "AND backwards IS NULL", which made it miss almost every real
+// address: on production only 140,057 of 4,476,456 rows have a null there, and
+// 136,047 of those are Freegle's own proxy addresses. A member looked up by the
+// address they actually use fell through to the users.email fallback instead, which
+// is why it went unnoticed. V1 has no such condition anywhere.
+func TestEmailTrackingFindsUserByTheirOwnAddress(t *testing.T) {
+	prefix := uniquePrefix("emailbyaddr")
+	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	_, token := CreateTestSession(t, supportID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberEmail := prefix + "_member@test.com"
+
+	// A row with canon and backwards filled, which is the ordinary case and exactly
+	// what the old condition excluded.
+	db := database.DBConn
+	db.Exec("UPDATE users_emails SET canon = ?, backwards = ? WHERE userid = ? AND email = ?",
+		memberEmail, reverseForTest(memberEmail), memberID, memberEmail)
+
+	tracking := &emailtracking.EmailTracking{
+		TrackingID:     "byaddr-" + randomString(16),
+		EmailType:      "Test",
+		UserID:         &memberID,
+		RecipientEmail: memberEmail,
+	}
+	db.Create(tracking)
+	defer db.Where("tracking_id = ?", tracking.TrackingID).Delete(&emailtracking.EmailTracking{})
+
+	req := httptest.NewRequest("GET",
+		"/api/modtools/email/user/0?email="+memberEmail+"&jwt="+token, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	emails, _ := result["emails"].([]interface{})
+	assert.NotEmpty(t, emails, "the member's own address must resolve to their tracking rows")
+}
+
+// reverseForTest mirrors the reverse the column stores, so the fixture is a row that
+// HAS a backwards rather than one that happens to lack it.
+func reverseForTest(s string) string {
+	r := []rune(s)
+	for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
+		r[i], r[j] = r[j], r[i]
+	}
+	return string(r)
 }

@@ -26,8 +26,16 @@ describe('RipplingLegend', () => {
       const swatches = wrapper.findAll('.rpl-leg-swatch')
       const styles = swatches.map((s) => s.attributes('style') || '')
 
-      expect(styles.some((s) => s.includes('rgb(255, 0, 0)') || s.includes('#ff0000'))).toBe(true)
-      expect(styles.some((s) => s.includes('rgb(0, 255, 0)') || s.includes('#00ff00'))).toBe(true)
+      expect(
+        styles.some(
+          (s) => s.includes('rgb(255, 0, 0)') || s.includes('#ff0000')
+        )
+      ).toBe(true)
+      expect(
+        styles.some(
+          (s) => s.includes('rgb(0, 255, 0)') || s.includes('#00ff00')
+        )
+      ).toBe(true)
     })
 
     it('renders one entry per band, plus the group-area key', () => {
@@ -54,28 +62,50 @@ describe('RipplingLegend', () => {
       expect(wrapper.text().match(/after posting/g)).toHaveLength(1)
     })
 
-    it('renders no band entries when the map drew no bands', () => {
+    it('asks for a group instead of keying an empty map', () => {
       const wrapper = mountLegend({ mode: 'catchment', bands: [] })
 
-      // Only the group-area key remains.
-      expect(wrapper.findAll('.rpl-leg-item')).toHaveLength(1)
-      expect(wrapper.text()).toContain('Group area')
+      // No bands means no group is picked, so nothing is drawn. This used to keep
+      // the heading and a blue "Group area" swatch, which read as "the group area
+      // is that blue thing" and sent a moderator hunting for an outline that was
+      // never drawn (Discourse 9808/728).
+      expect(wrapper.findAll('.rpl-leg-item')).toHaveLength(0)
+      expect(wrapper.text()).not.toContain('Group area')
+      expect(wrapper.text()).not.toContain('Ripples in within')
+      expect(wrapper.text()).toContain('No group selected')
+      // Says HOW, not just that one is missing: the picker is a text box with a
+      // suggestion list, which is not obvious from an empty field.
+      expect(wrapper.text()).toContain('Type a group name')
     })
   })
 
   describe('inbound mode', () => {
-    it('explains that the number on a pin is its digest position', () => {
+    it('reads the boundary the other way round: posts inside it reach you', () => {
       const wrapper = mountLegend({ mode: 'inbound' })
 
-      expect(wrapper.text()).toContain('number = digest position')
+      expect(wrapper.text()).toContain(
+        'Posts made inside this line can reach you'
+      )
+      // Outbound's wording for the same red ring would be exactly backwards here.
+      expect(wrapper.text()).not.toContain('Travel time boundary')
     })
 
-    it('distinguishes a rippled-in group from the home group', () => {
+    it('keys nothing from the retired digest preview', () => {
+      // The inbound view used to plot ranked digest posts, with colours for
+      // promised/completed and a number per pin. It draws a reach boundary now, so a
+      // key for post lifecycle states would describe marks that are no longer there.
       const wrapper = mountLegend({ mode: 'inbound' })
 
-      expect(wrapper.text()).toContain('Active home-group')
-      expect(wrapper.text()).toContain('Active rippled in')
-      expect(wrapper.text()).toContain('Home-group area')
+      expect(wrapper.text()).not.toContain('digest position')
+      expect(wrapper.text()).not.toContain('Promised')
+      expect(wrapper.text()).not.toContain('Completed')
+      expect(wrapper.text()).not.toContain('Home-group area')
+    })
+
+    it('says which groups the green outlines are', () => {
+      const wrapper = mountLegend({ mode: 'inbound' })
+
+      expect(wrapper.text()).toContain('Freegle group you would see posts from')
     })
 
     it('is not the catchment key', () => {

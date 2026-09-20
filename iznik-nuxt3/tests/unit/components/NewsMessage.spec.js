@@ -175,14 +175,15 @@ describe('NewsMessage', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('shows NuxtPicture when image has externaluid', () => {
+    it('does not render a picture for a bare externaluid', () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       mockNewsfeed.mockReturnValue({
         id: 1,
         userid: 1,
         image: { externaluid: 'ext123' },
       })
       const wrapper = createWrapper()
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
 
     it('shows b-img when image has path only', () => {

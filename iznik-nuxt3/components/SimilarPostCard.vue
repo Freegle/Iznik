@@ -15,19 +15,6 @@
         fit="cover"
         sizes="300px"
       />
-      <NuxtPicture
-        v-else-if="message.attachments?.[0]?.externaluid"
-        format="webp"
-        provider="uploadcare"
-        :src="message.attachments[0].externaluid"
-        :modifiers="message.attachments[0].externalmods"
-        :alt="photoAlt"
-        class="spc__img"
-        :width="400"
-        fit="cover"
-        sizes="300px"
-        loading="lazy"
-      />
       <ProxyImage
         v-else-if="message.attachments?.[0]?.path"
         class-name="spc__img"
@@ -46,7 +33,9 @@
       <!-- Overlaid info, as in the post header. -->
       <div class="spc__toprow">
         <MessageTag :id="id" :inline="true" class="spc__tag" />
-        <span class="spc__time"><v-icon icon="clock" />{{ timeAgo || '...' }}</span>
+        <span class="spc__time"
+          ><v-icon icon="clock" />{{ timeAgo || '...' }}</span
+        >
       </div>
       <div class="spc__caption">
         <div class="spc__subject">{{ subjectItemName }}</div>
@@ -75,8 +64,13 @@ const idRef = toRef(props, 'id')
 const messageStore = useMessageStore()
 const message = computed(() => messageStore.byId(props.id))
 
-const { subjectItemName, subjectLocation, timeAgo, attachmentCount, categoryIcon } =
-  useMessageDisplay(idRef)
+const {
+  subjectItemName,
+  subjectLocation,
+  timeAgo,
+  attachmentCount,
+  categoryIcon,
+} = useMessageDisplay(idRef)
 
 const photoAlt = computed(() => subjectItemName.value || 'Item photo')
 </script>

@@ -51,7 +51,11 @@ const TOPICS = [
 ]
 
 describe('ci_router_decide — a non-pushing fix attempt must not starve triage', () => {
-  it('focuses a red PR and gates triage on the FIRST visit', async () => {
+  // The starvation this suite was written for is now impossible by construction rather
+  // than by recovery: triage is dispatched with the fix on the FIRST visit, so a
+  // non-pushing attempt can no longer cost an iteration's triage. The focus PR still
+  // exists — one PR fix per iteration — it just no longer suppresses everything else.
+  it('focuses a red PR WITHOUT gating triage on the first visit', async () => {
     const result = await ciRouterHandler({}, ctx({
       _action_check_my_open_pr_ci: { redPRs: [{ number: 1266 }], pendingPRs: [] },
       _action_discover_active_topics: { topics: TOPICS },
@@ -59,10 +63,11 @@ describe('ci_router_decide — a non-pushing fix attempt must not starve triage'
 
     expect(result._transition).toBe('PARALLEL_ANALYZE_AND_FIX')
     expect(result.focusPRNumber).toBe(1266)
-    expect(result.onlyFixPR).toBe(true)
+    expect(result.onlyFixPR).toBe(false)
+    expect(result.activeTopicCount).toBe(2)
   })
 
-  it('drops the focus PR and CLEARS onlyFixPR once its attempt pushed nothing', async () => {
+  it('drops the focus PR once its attempt pushed nothing, triage still dispatched', async () => {
     const context = ctx({
       _action_check_my_open_pr_ci: { redPRs: [{ number: 1266 }], pendingPRs: [] },
       _action_discover_active_topics: { topics: TOPICS },

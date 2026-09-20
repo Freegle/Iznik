@@ -456,13 +456,14 @@ describe('NewsReply', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('shows nuxt picture for external image', () => {
+    it('does not render a picture for a bare externaluid', () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       const replyWithImage = {
         ...mockReply,
         image: { id: 1, externaluid: 'ext123', path: '/images/photo.jpg' },
       }
       const wrapper = createWrapper({}, replyWithImage)
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
   })
 

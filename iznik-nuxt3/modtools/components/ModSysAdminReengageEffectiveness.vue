@@ -4,10 +4,10 @@
       How well do reengagement emails bring lapsed members back? Lapsed users
       are sent a reengagement email in stages; this tracks the funnel from
       <strong>send</strong> through <strong>open</strong> and
-      <strong>click</strong> to an actual <strong>reengagement</strong> (a
-      post or reply within the tracked window), and compares the treatment
-      arms against the <strong>control</strong> (holdout) arm to measure the
-      real lift.
+      <strong>click</strong> to an actual <strong>reengagement</strong> (a post
+      or reply within the tracked window), and compares the treatment arms
+      against the <strong>control</strong> (holdout) arm to measure the real
+      lift.
     </p>
 
     <ModEmailDateFilter
@@ -90,7 +90,9 @@
             <b-td>{{ (s.clicked || 0).toLocaleString() }}</b-td>
             <b-td>{{ pct(s.clickRate) }}</b-td>
             <b-td>{{ (s.reengaged || 0).toLocaleString() }}</b-td>
-            <b-td><strong>{{ pct(s.reengageRate) }}</strong></b-td>
+            <b-td
+              ><strong>{{ pct(s.reengageRate) }}</strong></b-td
+            >
           </b-tr>
           <b-tr v-if="!byStage.length">
             <b-td colspan="8" class="text-muted">No stage data.</b-td>
@@ -101,11 +103,11 @@
       <!-- Per-arm comparison -->
       <h3 class="ms-2 mt-2">By experiment arm</h3>
       <p class="text-muted small ms-2">
-        The <strong>control</strong> arm is a holdout that gets no
-        reengagement email, so it never opens or clicks - it's there purely
-        to measure the reengagement rate you'd see anyway. The key number is
-        the <strong>lift</strong>: how much higher each treatment arm's
-        reengagement rate is than control's.
+        The <strong>control</strong> arm is a holdout that gets no reengagement
+        email, so it never opens or clicks - it's there purely to measure the
+        reengagement rate you'd see anyway. The key number is the
+        <strong>lift</strong>: how much higher each treatment arm's reengagement
+        rate is than control's.
       </p>
       <b-table-simple hover responsive small class="mb-4">
         <b-thead>
@@ -181,13 +183,13 @@
       <h3 class="ms-2 mt-2">By sign-off community</h3>
       <p class="text-muted small ms-2">
         Each tip is signed by a local volunteer from the member's
-        <strong>home community</strong> - the one whose catchment contains
-        where they live. <strong>Home</strong> means we found that community;
+        <strong>home community</strong> - the one whose catchment contains where
+        they live. <strong>Home</strong> means we found that community;
         <strong>nearest</strong> means no catchment matched so we fell back to
         the closest group centre; <strong>unknown</strong> means we had no
         location to test; <strong>none</strong> means no eligible volunteer, so
-        the plain Freegle voice was used. A high <em>home</em> share is the
-        goal - and lets us see whether a genuine local sign-off engages better.
+        the plain Freegle voice was used. A high <em>home</em> share is the goal
+        - and lets us see whether a genuine local sign-off engages better.
       </p>
       <b-table-simple hover responsive small class="mb-2">
         <b-thead>

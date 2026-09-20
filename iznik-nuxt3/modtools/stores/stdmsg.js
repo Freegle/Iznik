@@ -2,8 +2,7 @@ import { defineStore } from 'pinia'
 import { useModConfigStore } from '~/stores/modconfig'
 import api from '~/api'
 
-export const useStdmsgStore = defineStore({
-  id: 'stdmsg',
+export const useStdmsgStore = defineStore('stdmsg', {
   state: () => ({
     stdmsgs: [],
   }),

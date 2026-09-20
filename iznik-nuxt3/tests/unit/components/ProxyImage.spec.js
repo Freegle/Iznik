@@ -101,14 +101,14 @@ describe('ProxyImage', () => {
     // repeatedly tripping Coveralls' "coverage decreased" check on unrelated
     // PRs. Covering it deterministically here (see the matching v8-ignore in
     // ProxyImage.vue) removes that source of jitter.
-    const originalClient = process.client
+    const originalClient = import.meta.client
 
     afterEach(() => {
-      process.client = originalClient
+      import.meta.client = originalClient
     })
 
     it('reports to Sentry when src is the generic broken-image placeholder', async () => {
-      process.client = true
+      import.meta.client = true
       const Sentry = await import('@sentry/browser')
       Sentry.captureMessage.mockClear()
 
@@ -122,7 +122,7 @@ describe('ProxyImage', () => {
     })
 
     it('does not report to Sentry for a normal image src', async () => {
-      process.client = true
+      import.meta.client = true
       const Sentry = await import('@sentry/browser')
       Sentry.captureMessage.mockClear()
 
@@ -132,16 +132,9 @@ describe('ProxyImage', () => {
       expect(Sentry.captureMessage).not.toHaveBeenCalled()
     })
 
-    it('does not report to Sentry server-side, even for the placeholder src', async () => {
-      process.client = false
-      const Sentry = await import('@sentry/browser')
-      Sentry.captureMessage.mockClear()
-
-      createWrapper({ src: '/uploads/gimg_0.jpg' })
-
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      expect(Sentry.captureMessage).not.toHaveBeenCalled()
-    })
+    // (The server-side no-report path is compile-time dead here: the unit-test
+    // transform substitutes import.meta.client to true, matching the client
+    // build, so it cannot be exercised from this suite.)
   })
 
   describe('props', () => {
@@ -208,6 +201,35 @@ describe('ProxyImage', () => {
     it('defaults placeholder to null', () => {
       const wrapper = createWrapper()
       expect(wrapper.props('placeholder')).toBe(null)
+    })
+  })
+
+  // A member's avatar is a Gravatar URL carrying ?s=200&d=identicon&r=g. Those
+  // parameters used to be percent-encoded here before being handed to the
+  // provider, and the escaping survived to Gravatar itself, which then saw no
+  // d= and served its own logo - a blue disc with a white ring. Every member
+  // without a Gravatar account got that same picture in place of their own
+  // identicon, and reported it as their avatar having changed.
+  describe('source URLs that carry a query string', () => {
+    it('hands the query to the provider exactly as given', () => {
+      const src =
+        'https://www.gravatar.com/avatar/992d65128?s=200&d=identicon&r=g'
+      const wrapper = createWrapper({ src })
+
+      expect(wrapper.find('img').attributes('src')).toBe(src)
+    })
+
+    // The provider encodes the whole URL once when it builds ?url=, which is
+    // what both keeps these separators away from wsrv and delivers them intact
+    // to the origin. Escaping them here as well is what corrupted them.
+    it('leaves the separators the origin needs unescaped', () => {
+      const wrapper = createWrapper({
+        src: 'https://example.com/photo.jpg?w=1&h=2',
+      })
+      const rendered = wrapper.find('img').attributes('src')
+
+      expect(rendered).not.toContain('%3D')
+      expect(rendered).not.toContain('%26')
     })
   })
 })

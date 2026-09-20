@@ -22,7 +22,15 @@ class RefreshCommand extends Command
      * Supervisor programs to restart.
      */
     protected array $supervisorPrograms = [
-        'mail-spooler',
+        // Group form (":*"), not the bare name. With numprocs>1 the spooler's
+        // process_name carries %(process_num), so supervisorctl resolves
+        // "mail-spooler" as a GROUP and the bare name returns "no such
+        // process" - which restartProgram() only prints as a warning, so the
+        // deploy stays green while the spooler keeps running old bind-mounted
+        // code indefinitely. ":*" also stops every member before starting any,
+        // so a deploy restart never leaves a live peer during another worker's
+        // startup reclaim.
+        'mail-spooler:*',
     ];
 
     public function handle(): int

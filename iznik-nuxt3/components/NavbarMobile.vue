@@ -194,12 +194,12 @@ const {
   backButton,
 } = useNavbar()
 
-const AboutMeModal = defineAsyncComponent(() =>
-  import('~/components/AboutMeModal')
+const AboutMeModal = defineAsyncComponent(
+  () => import('~/components/AboutMeModal')
 )
 
-const NotificationOptions = defineAsyncComponent(() =>
-  import('~/components/NotificationOptions')
+const NotificationOptions = defineAsyncComponent(
+  () => import('~/components/NotificationOptions')
 )
 
 const mobileNav = ref(null)
@@ -284,7 +284,7 @@ const route = useRoute()
 const navBarBottomHidden = computed(() => {
   return (
     route.path.startsWith('/give') ||
-    route.path.startsWith('/find') ||
+    route.path.startsWith('/ask') ||
     route.path.startsWith('/post') ||
     route.path.startsWith('/chat') ||
     navBarHidden.value

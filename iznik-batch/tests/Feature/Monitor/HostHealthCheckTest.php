@@ -42,12 +42,10 @@ class HostHealthCheckTest extends TestCase
      */
     private function probeOutput(
         string $reboot = 'no',
-        string $rebootPkgs = '',
         int $security = 0,
         ?array $monitLines = ['freegle-host                     OK                          System'],
     ): string {
         $out = "REBOOT:{$reboot}\n";
-        $out .= "REBOOT_PKGS:{$rebootPkgs}\n";
         $out .= "SECURITY:{$security}\n";
 
         if ($monitLines === null) {
@@ -88,14 +86,16 @@ class HostHealthCheckTest extends TestCase
         $this->assertTrue($result->isOk(), $result->message);
     }
 
-    public function test_reboot_required_is_a_warning_naming_the_packages(): void
+    public function test_reboot_required_is_a_plain_warning_without_packages(): void
     {
-        $result = $this->evaluate($this->probeOutput(reboot: 'yes', rebootPkgs: 'linux-base libc6'));
+        $result = $this->evaluate($this->probeOutput(reboot: 'yes'));
 
         $this->assertTrue($result->isBreach());
         $this->assertSame('warning', $result->severity);
         $this->assertStringContainsString('reboot required', $result->message);
-        $this->assertStringContainsString('linux-base libc6', $result->message);
+        // No package list: it names nothing a mod acts on, and it made the
+        // modal read like a changelog.
+        $this->assertStringNotContainsString('(', $result->message);
     }
 
     public function test_pending_security_updates_are_a_warning_with_the_count(): void
@@ -144,7 +144,7 @@ class HostHealthCheckTest extends TestCase
 
     public function test_a_dead_monit_daemon_is_an_error(): void
     {
-        $output = "REBOOT:no\nREBOOT_PKGS:\nSECURITY:0\nMONIT_BEGIN\n"
+        $output = "REBOOT:no\nSECURITY:0\nMONIT_BEGIN\n"
             . "Status not available -- the monit daemon is not running\nMONIT_END\n";
 
         $result = $this->evaluate($output);

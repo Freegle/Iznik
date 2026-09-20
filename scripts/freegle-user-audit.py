@@ -101,11 +101,14 @@ echo json_encode($rows);
 
 
 PAGE_NAMES = {
-    "/": "Home", "/browse": "Browse", "/give": "Give/Post", "/find": "Find",
+    # The Ask flow was /find until Aug 2026, so both spellings appear in the logs.
+    "/": "Home", "/browse": "Browse", "/give": "Give/Post",
+    "/ask": "Ask", "/find": "Ask",
     "/chats": "Chats", "/myposts": "My Posts", "/chitchat": "Chitchat",
     "/post": "Post", "/settings": "Settings", "/explore": "Explore Groups",
     "/message": "Message Detail", "/mypost": "My Post Detail",
-    "/give/mobile": "Give (Mobile)", "/find/mobile": "Find (Mobile)",
+    "/give/mobile": "Give (Mobile)",
+    "/ask/mobile": "Ask (Mobile)", "/find/mobile": "Ask (Mobile)",
     "/profile": "Profile", "/stories": "Stories",
     "/communityevent": "Community Event", "/communityevents": "Community Events",
     "/volunteering": "Volunteering", "/volunteerings": "Volunteering List",

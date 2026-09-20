@@ -4,7 +4,7 @@
       v-if="group"
       :group="group"
       show-join
-      :show-give-find="showGiveFind"
+      :show-give-ask="showGiveAsk"
     />
     <OurMessage v-if="msgid" :id="msgid" record-view class="mt-3" />
     <MessageList
@@ -12,7 +12,7 @@
       :selected-group="id"
       :bump="bump"
       :exclude="msgid"
-      :show-give-find="showGiveFind"
+      :show-give-ask="showGiveAsk"
       :show-group-header="false"
     />
   </div>
@@ -34,7 +34,7 @@ const props = defineProps({
     required: false,
     default: null,
   },
-  showGiveFind: {
+  showGiveAsk: {
     type: Boolean,
     required: false,
     default: false,

@@ -75,9 +75,8 @@ describe('useModMessages — pending list auto-refresh while inline-editing', ()
   })
 
   it('defers the refresh while a message is being edited in place and applies it once editing finishes', async () => {
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { workType, collection } = setupModMessages(true)
     collection.value = 'Pending'
     workType.value = ['pending', 'pendingother']

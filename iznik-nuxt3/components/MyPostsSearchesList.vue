@@ -13,8 +13,8 @@
     </div>
     <div v-else class="searches-empty">
       <p>No saved searches yet</p>
-      <nuxt-link to="/find" class="search-link">
-        <v-icon icon="search" class="me-1" />Ask for something
+      <nuxt-link to="/ask" class="search-link">
+        <v-icon icon="shopping-cart" class="me-1" />Ask for something
       </nuxt-link>
     </div>
   </div>

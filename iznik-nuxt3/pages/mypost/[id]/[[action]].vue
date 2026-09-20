@@ -55,11 +55,11 @@ import NoticeMessage from '~/components/NoticeMessage'
 import GlobalMessage from '~/components/GlobalMessage'
 import { useDonationAskModal } from '~/composables/useDonationAskModal'
 
-const MyMessage = defineAsyncComponent(() =>
-  import('~/components/MyMessage.vue')
+const MyMessage = defineAsyncComponent(
+  () => import('~/components/MyMessage.vue')
 )
-const DonationAskModal = defineAsyncComponent(() =>
-  import('~/components/DonationAskModal')
+const DonationAskModal = defineAsyncComponent(
+  () => import('~/components/DonationAskModal')
 )
 
 definePageMeta({

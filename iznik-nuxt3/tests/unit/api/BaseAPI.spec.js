@@ -3,17 +3,22 @@ import { APIError } from '~/api/APIErrors'
 
 const mockSetAuth = vi.fn()
 const mockSetUser = vi.fn()
+const mockWipeAuth = vi.fn()
 const mockApiCounter = vi.fn()
 const mockWaitForOnline = vi.fn().mockResolvedValue()
 const mockCaptureMessage = vi.fn()
 
+// The store LOOKUPS are spies so tests can assert $requestv2 captures each
+// store exactly once, synchronously — calling useXStore() again on a
+// continuation tick (catch/finally) throws server-side during Netlify
+// prerender, where there is no active pinia any more.
+const { mockUseAuthStore, mockUseMiscStore } = vi.hoisted(() => ({
+  mockUseAuthStore: vi.fn(),
+  mockUseMiscStore: vi.fn(),
+}))
+
 vi.mock('~/stores/auth', () => ({
-  useAuthStore: () => ({
-    auth: { jwt: 'test-jwt', persistent: 'test-persistent' },
-    user: { id: 123 },
-    setAuth: mockSetAuth,
-    setUser: mockSetUser,
-  }),
+  useAuthStore: (...args) => mockUseAuthStore(...args),
 }))
 
 const mockMiscStore = {
@@ -24,7 +29,7 @@ const mockMiscStore = {
 }
 
 vi.mock('~/stores/misc', () => ({
-  useMiscStore: () => mockMiscStore,
+  useMiscStore: (...args) => mockUseMiscStore(...args),
 }))
 
 vi.mock('~/stores/loggingContext', () => ({
@@ -58,6 +63,14 @@ describe('BaseAPI', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
     mockMiscStore.online = true
+    mockUseAuthStore.mockImplementation(() => ({
+      auth: { jwt: 'test-jwt', persistent: 'test-persistent' },
+      user: { id: 123 },
+      setAuth: mockSetAuth,
+      setUser: mockSetUser,
+      wipeAuth: mockWipeAuth,
+    }))
+    mockUseMiscStore.mockImplementation(() => mockMiscStore)
 
     // Dynamic import after mocks are set up
     const mod = await import('~/api/BaseAPI.js')
@@ -115,8 +128,10 @@ describe('BaseAPI', () => {
         // expected
       }
 
-      expect(mockSetAuth).toHaveBeenCalledWith(null, null)
-      expect(mockSetUser).toHaveBeenCalledWith(null)
+      // Via wipeAuth, not setAuth/setUser directly: the Block Store copy has to
+      // go too, or an Android device whose localStorage was evicted re-adopts
+      // the same dead token at boot and loops back to the login screen.
+      expect(mockWipeAuth).toHaveBeenCalled()
     })
 
     it('includes status 401 in thrown APIError', async () => {
@@ -211,6 +226,55 @@ describe('BaseAPI', () => {
       }
 
       expect(mockCaptureMessage).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('SSR prerender safety (store refs captured once)', () => {
+    // During Netlify prerender there is no active pinia on continuation
+    // ticks, so a second useXStore() lookup in catch/finally throws — the
+    // finally-block variant 500'd otherwise-successful prerendered pages.
+    // Guard the fix: exactly one lookup per store per request, on success
+    // AND error paths, with the api() counter balanced via the captured ref.
+    it('looks each store up exactly once on a successful request', async () => {
+      mockFetch.mockResolvedValue([200, { ok: true }])
+
+      const api = createApi()
+      await api.$requestv2('GET', '/test', {})
+
+      expect(mockUseAuthStore).toHaveBeenCalledTimes(1)
+      expect(mockUseMiscStore).toHaveBeenCalledTimes(1)
+      expect(mockApiCounter).toHaveBeenCalledWith(1)
+      expect(mockApiCounter).toHaveBeenCalledWith(-1)
+    })
+
+    it('looks each store up exactly once when the fetch rejects', async () => {
+      mockFetch.mockRejectedValue(new Error('network down'))
+
+      const api = createApi()
+      await expect(api.$requestv2('GET', '/test', {})).rejects.toThrow()
+
+      // The catch block's online check and the finally block's api(-1) must
+      // reuse the captured references, not call useMiscStore() again.
+      expect(mockUseAuthStore).toHaveBeenCalledTimes(1)
+      expect(mockUseMiscStore).toHaveBeenCalledTimes(1)
+      expect(mockApiCounter).toHaveBeenCalledWith(1)
+      expect(mockApiCounter).toHaveBeenCalledWith(-1)
+    })
+
+    it('rejects cleanly when the store lookup itself throws (no active pinia)', async () => {
+      mockUseAuthStore.mockImplementation(() => {
+        throw new Error(
+          '[🍍]: "getActivePinia()" was called but there was no active Pinia.'
+        )
+      })
+
+      const api = createApi()
+      // Must reject via normal error handling — not crash in finally (the
+      // pre-fix behaviour re-called useMiscStore() there) and not leave the
+      // api() counter unbalanced: neither api(1) nor api(-1) ran.
+      await expect(api.$requestv2('GET', '/test', {})).rejects.toThrow()
+
+      expect(mockApiCounter).not.toHaveBeenCalled()
     })
   })
 

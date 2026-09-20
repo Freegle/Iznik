@@ -292,11 +292,12 @@ describe('ChatMessageCard', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('uses NuxtPicture for externaluid attachments', () => {
+    it('does not render a picture for a bare externaluid', () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       mockGotAttachments.value = true
       mockMessage.value.attachments = [{ externaluid: 'ext123' }]
       const wrapper = createWrapper()
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
 
     it('uses ProxyImage for path attachments', () => {

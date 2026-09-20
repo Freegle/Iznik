@@ -385,9 +385,15 @@ describe('MyMessage', () => {
       expect(wrapper.find('.photo-area').exists()).toBe(true)
     })
 
-    it('renders title overlay', async () => {
+    it('renders the title bar above the photo, not over it', async () => {
       const wrapper = await createWrapper()
-      expect(wrapper.find('.title-overlay').exists()).toBe(true)
+      const bar = wrapper.find('.title-bar')
+      expect(bar.exists()).toBe(true)
+
+      // The bar must be a sibling of the content row rather than sitting
+      // inside the photo area, or it goes back to overlaying the picture.
+      expect(wrapper.find('.photo-area .title-bar').exists()).toBe(false)
+      expect(wrapper.find('.message-card > .title-bar').exists()).toBe(true)
     })
 
     it('renders MessageTag component', async () => {
@@ -418,12 +424,13 @@ describe('MyMessage', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('renders NuxtPicture when attachment has externaluid', async () => {
+    it('does not render a picture for a bare externaluid', async () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture. Photos render through OurUploadedImage from ouruid, covered above.
       mockData.message.attachments = [
         { externaluid: 'test-externaluid', externalmods: null },
       ]
       const wrapper = await createWrapper()
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
 
     it('renders ProxyImage when attachment has path only', async () => {
@@ -462,6 +469,44 @@ describe('MyMessage', () => {
       mockUserStore.byId.mockReturnValue({ id: 2, displayname: 'Test User' })
       const wrapper = await createWrapper()
       expect(wrapper.find('.unpromise-btn').exists()).toBe(true)
+    })
+
+    // The banner above (.unpromise-btn) lives in the desktop-only panel, hidden
+    // below the lg breakpoint. Phones and tablets see only the mobile action row,
+    // which had no way to unpromise at all: once a post was promised the only
+    // buttons left were Withdraw and Taken (Discourse 10152, 890).
+    it('offers Unpromise in the mobile action row when promised', async () => {
+      mockData.message.promised = true
+      mockData.message.outcomes = []
+      mockData.message.promises = [{ userid: 2 }]
+      mockUserStore.byId.mockReturnValue({ id: 2, displayname: 'Test User' })
+      const wrapper = await createWrapper()
+      const mobile = wrapper.find('.action-buttons .action-btn--unpromise')
+      expect(mobile.exists()).toBe(true)
+      expect(mobile.text()).toContain('Unpromise')
+      expect(wrapper.find('.mobile-promised').text()).toContain('Test User')
+    })
+
+    it('mobile Unpromise opens the renege modal', async () => {
+      mockData.message.promised = true
+      mockData.message.outcomes = []
+      mockData.message.promises = [{ userid: 2 }]
+      mockUserStore.byId.mockReturnValue({ id: 2, displayname: 'Test User' })
+      const wrapper = await createWrapper()
+      await wrapper
+        .find('.action-buttons .action-btn--unpromise')
+        .trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.renege-modal').exists()).toBe(true)
+    })
+
+    it('does not offer Unpromise in the mobile row when nothing is promised', async () => {
+      mockData.message.promised = false
+      mockData.message.outcomes = []
+      const wrapper = await createWrapper()
+      expect(
+        wrapper.find('.action-buttons .action-btn--unpromise').exists()
+      ).toBe(false)
     })
   })
 
@@ -692,6 +737,37 @@ describe('MyMessage', () => {
       await flushPromises()
       expect(wrapper.find('.renege-modal').exists()).toBe(true)
     })
+
+    it('lists an unresolved promisee in the renege modal under the same placeholder name', async () => {
+      // The button shows "Freegler" for a promisee whose profile has not loaded; the
+      // modal's "to:" list must show the same person, not come up empty.
+      mockData.message.promised = true
+      mockData.message.outcomes = []
+      mockData.message.promises = [{ userid: 2 }]
+      const wrapper = await createWrapper()
+      // The banner names the promisee under the placeholder, instead of going blank.
+      expect(wrapper.find('.desktop-promised').text()).toContain('Freegler')
+      await wrapper.find('.unpromise-btn').trigger('click')
+      await flushPromises()
+      const modal = wrapper.findComponent('.renege-modal')
+      expect(modal.exists()).toBe(true)
+      expect(modal.props('users')).toEqual([{ id: 2, displayname: 'Freegler' }])
+      expect(modal.props('selectedUser')).toBe(2)
+    })
+
+    it('clicking Unpromise button shows renege modal when promisee profile is not yet resolved', async () => {
+      mockData.message.promised = true
+      mockData.message.outcomes = []
+      mockData.message.promises = [{ userid: 2 }]
+      // mockUserStore.byId is left at its default (null) from beforeEach - the
+      // promisee's profile hasn't loaded into the store yet.
+      const wrapper = await createWrapper()
+      const unpromiseBtn = wrapper.find('.unpromise-btn')
+      expect(unpromiseBtn.exists()).toBe(true)
+      await unpromiseBtn.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.renege-modal').exists()).toBe(true)
+    })
   })
 
   describe('Replies Section', () => {
@@ -779,9 +855,7 @@ describe('MyMessage', () => {
   describe('No Replies Section', () => {
     it('shows no-replies message when no replies and will auto-repost', async () => {
       mockData.message.replies = []
-      mockData.message.repostat = new Date(
-        Date.now() + 86400000
-      ).toISOString() // Tomorrow
+      mockData.message.repostat = new Date(Date.now() + 86400000).toISOString() // Tomorrow
       const wrapper = await createWrapper()
       expect(wrapper.find('.no-replies').exists()).toBe(true)
       expect(wrapper.text()).toContain('No replies yet')
@@ -790,9 +864,7 @@ describe('MyMessage', () => {
     it('does not show no-replies when message has outcomes', async () => {
       mockData.message.replies = []
       mockData.message.outcomes = [{ outcome: 'Taken' }]
-      mockData.message.repostat = new Date(
-        Date.now() + 86400000
-      ).toISOString()
+      mockData.message.repostat = new Date(Date.now() + 86400000).toISOString()
       const wrapper = await createWrapper({ showOld: true })
       expect(wrapper.find('.no-replies').exists()).toBe(false)
     })

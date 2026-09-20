@@ -402,14 +402,15 @@ describe('VolunteerOpportunityModal', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('shows NuxtPicture when image has imageuid', async () => {
+    it('does not render a picture for a bare imageuid', async () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture; the same applies to imageuid.
       const withImage = {
         ...mockVolunteering,
         image: { imageuid: 'ext123', imagemods: {} },
       }
       const wrapper = createWrapper({ id: 123 }, withImage)
       await flushPromises()
-      expect(wrapper.find('picture').exists()).toBe(true)
+      expect(wrapper.find('picture').exists()).toBe(false)
     })
   })
 

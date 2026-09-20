@@ -147,8 +147,8 @@ describe('volunteering store', () => {
 
     it('deduplicates concurrent fetches', async () => {
       let resolveFirst
-      const firstPromise = new Promise((r) => {
-        resolveFirst = r
+      const firstPromise = new Promise((resolve) => {
+        resolveFirst = resolve
       })
       mockFetchVol.mockReturnValueOnce(firstPromise)
 
@@ -307,9 +307,7 @@ describe('volunteering store', () => {
       await store.setDates({
         id: 1,
         olddates: [{ id: 100 }, { id: 101 }],
-        newdates: [
-          { start: '2026-07-01T10:00', end: '2026-07-01T14:00' },
-        ],
+        newdates: [{ start: '2026-07-01T10:00', end: '2026-07-01T14:00' }],
       })
 
       expect(mockRemoveDate).toHaveBeenCalledTimes(2)

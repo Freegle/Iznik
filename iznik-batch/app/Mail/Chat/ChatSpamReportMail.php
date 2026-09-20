@@ -53,7 +53,7 @@ class ChatSpamReportMail extends Mailable
             $lines[] = "Comment: {$this->comment}";
         }
         $lines[] = "";
-        $lines[] = "Review the chat at {$modSite}/modtools/support/refer/{$this->chatId}";
+        $lines[] = "Review the chat at {$modSite}/support/refer/{$this->chatId}";
 
         return $this->text('emails.plain.refer-to-support', ['body' => implode("\n", $lines)]);
     }

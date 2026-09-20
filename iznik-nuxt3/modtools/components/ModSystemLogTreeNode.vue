@@ -71,8 +71,8 @@
               isLoading
                 ? 'Loading...'
                 : isExpanded
-                ? 'Collapse'
-                : 'Expand ' + childCount + ' related logs'
+                  ? 'Collapse'
+                  : 'Expand ' + childCount + ' related logs'
             "
             @click="toggleExpand"
           >
@@ -356,8 +356,7 @@ const props = defineProps({
   },
 })
 
-// eslint-disable-next-line no-unused-vars
-const emit = defineEmits(['filter-trace', 'filter-session', 'filter-ip'])
+defineEmits(['filter-trace', 'filter-session', 'filter-ip'])
 
 const systemLogsStore = useSystemLogsStore()
 

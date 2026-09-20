@@ -69,3 +69,8 @@ export function twem(text) {
 export function defineNuxtPlugin(plugin) {
   return plugin
 }
+
+// Nuxt compiler macro stub - a no-op in tests, matching the globalThis
+// fallback used by pages that rely on Nuxt's auto-import instead of an
+// explicit `import { definePageMeta } from '#imports'`.
+export function definePageMeta() {}

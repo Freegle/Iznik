@@ -363,6 +363,73 @@ class ContentCheckTest extends TestCase
         $this->assertNull($rippledRow->contentcheck_reasons, 'rippled-into group not flagged');
     }
 
+    /**
+     * A copy held by the receiving group's OWN rule at ripple time (ExpandService::rippleIntoNewGroups)
+     * is inserted with contentcheck_checked_at left NULL, alongside only the narrow
+     * checkGroupOwnRules() reasons - the same as a clean rippled-in copy (see the test above). If it
+     * were stamped instead, that would be what processUnprocessed()'s base query reads to decide a row
+     * has already been checked, permanently excluding it from ever running the FULL checkMessage()
+     * pipeline - silently skipping money-symbol, phone-number and every other check for that post/group
+     * pair forever (Discourse 10063/4). A native post, and a rippled-in post whose copy is clean at
+     * insert, both get the full pipeline via the periodic scan; a rippled-in post held on the receiving
+     * group's own rule must too.
+     */
+    public function test_rippled_post_held_by_group_rule_is_still_fully_checked_by_periodic_scan(): void
+    {
+        $poster = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $rippledInto = $this->createTestGroup();
+
+        // A concern keyword scoped to the rippled-into group ONLY, exactly as in the test above -
+        // this is what makes ExpandService take the "held by group rules" insert branch.
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'testmoneybugkw_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+            'scope'    => 'group',
+            'group_id' => $rippledInto->id,
+        ]);
+
+        // The post also carries a money symbol - checkMoneySymbols would flag it under the full
+        // checkMessage() pipeline, but checkGroupOwnRules() never looks at it.
+        $message = $this->createTestMessage($poster, $origin, [
+            'subject'  => 'OFFER: testmoneybugkw_cc item (TestLocation)',
+            'textbody' => 'Worth £200 but free to a good home',
+        ]);
+
+        $breaches = $this->service->checkGroupOwnRules(
+            $message->subject,
+            $message->textbody,
+            $rippledInto->id
+        );
+        $this->assertNotEmpty($breaches, 'sanity check: the group-own-rule keyword must match at insert time');
+
+        // Reproduces, verbatim, the INSERT ExpandService::rippleIntoNewGroups() runs on its "held by
+        // group rules" branch when $breaches is non-empty: Pending, rippled_in=1,
+        // contentcheck_checked_at left NULL, with only the narrow breach reasons recorded.
+        DB::insert(
+            "INSERT INTO messages_groups
+                (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in,
+                 contentcheck_reasons)
+             VALUES (?, ?, 'Pending', NULL, NOW(), 0, ?, 1, ?)",
+            [$message->id, $rippledInto->id, $message->type, json_encode($breaches)]
+        );
+
+        $this->service->processUnprocessed();
+
+        $rippledRow = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $rippledInto->id)->first();
+
+        $this->assertNotNull($rippledRow->contentcheck_reasons);
+        $reasonChecks = array_column(json_decode($rippledRow->contentcheck_reasons, true), 'check');
+        $this->assertContains(
+            ContentCheckService::CHECK_MONEY,
+            $reasonChecks,
+            'a rippled-in post held by the group\'s own rule must still get the full check pipeline, ' .
+            'including checks (like money symbols) that checkGroupOwnRules() never runs'
+        );
+    }
+
     public function test_offer_with_no_location_is_not_auto_promoted(): void
     {
         // An Offer/Wanted we couldn't locate (NULL lat) must NOT be auto-promoted -

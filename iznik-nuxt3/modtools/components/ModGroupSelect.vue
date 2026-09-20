@@ -215,8 +215,8 @@ const groupOptions = computed(() => {
       text: props.active
         ? '-- My active communities --'
         : props.allMy
-        ? '-- All my communities --'
-        : '-- All communities --',
+          ? '-- All my communities --'
+          : '-- All communities --',
       selected: selectedGroup.value === 0,
     })
   } else {

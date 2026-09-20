@@ -67,8 +67,8 @@
                 <b-button to="/give" variant="primary">
                   <v-icon icon="gift" class="me-1" />Give stuff
                 </b-button>
-                <b-button to="/find" variant="secondary">
-                  <v-icon icon="search" class="me-1" />Find stuff
+                <b-button to="/ask" variant="secondary">
+                  <v-icon icon="shopping-cart" class="me-1" />Ask for stuff
                 </b-button>
               </div>
             </div>
@@ -259,8 +259,8 @@ const gone = computed(() => {
 
   return Boolean(
     m.outcomes?.length > 0 ||
-      m.deleted ||
-      (m.groups?.length && m.groups.every((g) => g.collection === 'Rejected'))
+    m.deleted ||
+    (m.groups?.length && m.groups.every((g) => g.collection === 'Rejected'))
   )
 })
 
@@ -321,7 +321,7 @@ if (message.value) {
 } else if (gone.value) {
   /* Nothing to describe, but still keep it out of the index. */
   useHead({
-    meta: [{ hid: 'robots', name: 'robots', content: 'noindex, follow' }],
+    meta: [{ key: 'robots', name: 'robots', content: 'noindex, follow' }],
   })
 }
 

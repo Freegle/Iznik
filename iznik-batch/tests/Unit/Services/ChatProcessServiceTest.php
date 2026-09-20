@@ -126,6 +126,97 @@ class ChatProcessServiceTest extends TestCase
         $this->assertEquals(ChatMessage::PROCESSFAIL_SPAMMER, $updated->processingfailreason);
     }
 
+    /**
+     * Someone on the spammer list cannot reach the volunteers either. Their mail to the
+     * volunteers address is already dropped on the way in, but the Contact button on a
+     * group page opens a chat with the volunteers and nothing stopped that: the spam
+     * check only covered member-to-member chats. A ban is different and deliberately
+     * still gets through - that is how a banned member appeals (Discourse 10149).
+     */
+    public function test_a_spammer_cannot_message_the_volunteers(): void
+    {
+        $spammer = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $room = $this->createTestChatRoom($spammer, $spammer, [
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user2' => null,
+            'groupid' => $group->id,
+        ]);
+        DB::table('spam_users')->insert([
+            'userid' => $spammer->id, 'collection' => 'Spammer', 'added' => now(),
+        ]);
+
+        $msg = $this->createTestChatMessage($room, $spammer, [
+            'processingrequired' => 1, 'processingsuccessful' => 0, 'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(0, $updated->processingsuccessful,
+            'a spammer message to the volunteers must not be delivered');
+        $this->assertEquals(ChatMessage::PROCESSFAIL_SPAMMER, $updated->processingfailreason);
+    }
+
+    /**
+     * A ban is not the spammer list. Someone banned from the group must still be able to
+     * write to its volunteers, because that is the route for appealing the ban
+     * (Edward's decision on Discourse 10149).
+     */
+    public function test_a_banned_member_can_still_message_the_volunteers(): void
+    {
+        $member = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $room = $this->createTestChatRoom($member, $member, [
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user2' => null,
+            'groupid' => $group->id,
+        ]);
+        DB::table('users_banned')->insert([
+            'userid' => $member->id, 'groupid' => $group->id, 'byuser' => $member->id,
+        ]);
+
+        $msg = $this->createTestChatMessage($room, $member, [
+            'processingrequired' => 1, 'processingsuccessful' => 0, 'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $updated->processingsuccessful,
+            'a banned member must still be able to appeal to the volunteers');
+        $this->assertNull($updated->processingfailreason);
+    }
+
+    /**
+     * Someone only PROPOSED for the spammer list is not on it yet, and writing to the
+     * volunteers is how they would argue they should not be added. Member-to-member is
+     * unchanged: a pending addition is still held back there, as it always was.
+     */
+    public function test_a_pending_spammer_can_still_message_the_volunteers(): void
+    {
+        $proposed = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $room = $this->createTestChatRoom($proposed, $proposed, [
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user2' => null,
+            'groupid' => $group->id,
+        ]);
+        DB::table('spam_users')->insert([
+            'userid' => $proposed->id, 'collection' => 'PendingAdd', 'added' => now(),
+        ]);
+
+        $msg = $this->createTestChatMessage($room, $proposed, [
+            'processingrequired' => 1, 'processingsuccessful' => 0, 'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $updated->processingsuccessful,
+            'a proposed spammer must still be able to put their case to the volunteers');
+    }
+
     // --- Basic processing ---
 
     public function test_message_with_processingrequired_gets_marked_processed(): void

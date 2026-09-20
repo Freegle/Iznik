@@ -1,0 +1,4 @@
+# Adaptive outbound rate shaping - see /usr/local/sbin/adaptive-shaper.sh
+# 10 min: slow enough that hysteresis settles, fast enough to release a
+# provider that has recovered without leaving mail throttled for an hour.
+*/10 * * * * root /usr/local/sbin/adaptive-shaper.sh --apply >> /var/log/postfix-shaper.log 2>&1

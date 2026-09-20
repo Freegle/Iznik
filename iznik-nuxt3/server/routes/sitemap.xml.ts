@@ -10,7 +10,6 @@ import { chunk, renderSitemapIndex, SITEMAP_CHUNK_SIZE } from '../utils/sitemap'
 export default defineEventHandler(async (event) => {
   const runtimeConfig = useRuntimeConfig()
 
-  // eslint-disable-next-line no-undef
   appendResponseHeader(event, 'Content-Type', 'text/xml')
 
   const site = runtimeConfig.public.USER_SITE

@@ -3,6 +3,12 @@
 node_modules
 .nuxt
 .output
+# Rooted patterns above miss the modtools layer's copies; a host-side build
+# leaking modtools/.output into the image makes the prod container skip its
+# env-aware first-start build and serve production API URLs in local tests.
+**/node_modules
+**/.nuxt
+**/.output
 dist
 .env
 .env.*

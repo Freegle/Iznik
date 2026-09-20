@@ -91,16 +91,6 @@
                     alt="Store Photo"
                     width="250"
                   />
-                  <NuxtPicture
-                    v-else-if="story.image"
-                    fit="cover"
-                    format="webp"
-                    provider="uploadcare"
-                    :src="story.image.imageuid"
-                    :modifiers="story.image.imagemods"
-                    alt="Store Photo"
-                    width="250"
-                  />
                   <b-img v-else thumbnail width="250" src="/placeholder.jpg" />
                 </div>
               </div>
@@ -148,8 +138,8 @@ import { useOurModal } from '~/composables/useOurModal'
 import { useImageStore } from '~/stores/image'
 import { useAuthStore } from '~/stores/auth'
 
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 
 const emit = defineEmits(['login-required'])

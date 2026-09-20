@@ -10,7 +10,9 @@
               Feedback <span v-if="members.length">({{ members.length }})</span>
             </h4>
           </template>
-          <div class="d-flex justify-content-between flex-wrap gap-2 align-items-center">
+          <div
+            class="d-flex justify-content-between flex-wrap gap-2 align-items-center"
+          >
             <ModGroupSelect
               v-model="groupid"
               modonly

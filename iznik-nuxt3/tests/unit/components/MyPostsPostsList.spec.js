@@ -251,7 +251,7 @@ describe('MyPostsPostsList', () => {
         posts: [],
         type: 'Wanted',
       })
-      expect(wrapper.text()).toContain('Find stuff')
+      expect(wrapper.text()).toContain('Ask for stuff')
     })
 
     it('shows both links for mixed type', () => {
@@ -260,7 +260,7 @@ describe('MyPostsPostsList', () => {
         posts: [],
       })
       expect(wrapper.text()).toContain('Give stuff')
-      expect(wrapper.text()).toContain('Find stuff')
+      expect(wrapper.text()).toContain('Ask for stuff')
     })
   })
 
@@ -282,6 +282,28 @@ describe('MyPostsPostsList', () => {
       })
       // Trysts display depends on message store returning promise data
       expect(wrapper.exists()).toBe(true)
+    })
+
+    it('still lists a collection whose promisee profile has not loaded', () => {
+      // Same class of bug as the promised-to entry on the post itself: the reminder
+      // used to vanish until the promisee's profile was in the store.
+      mockUserStore.byId.mockReturnValue(null)
+      mockMessageStore.byId.mockReturnValue({
+        id: 1,
+        subject: 'Test Item',
+        promises: [{ userid: 7 }],
+      })
+      mockTrystStore.getByUser.mockReturnValue({
+        arrangedfor: new Date(Date.now() + 86400000).toISOString(),
+      })
+      const wrapper = createWrapper({
+        loading: false,
+        posts: [
+          { id: 1, type: 'Offer', hasoutcome: false, arrival: '2024-01-01' },
+        ],
+      })
+      expect(wrapper.text()).toContain('Your upcoming collections')
+      expect(wrapper.find('.collection-who').text()).toContain('Freegler')
     })
 
     it('shows collection title in card', () => {

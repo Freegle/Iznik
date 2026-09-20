@@ -535,3 +535,118 @@ func TestSearchGiftAid(t *testing.T) {
 	assert.True(t, ok)
 	assert.Greater(t, len(giftaids), 0)
 }
+
+// TestSetGiftAidRefreshesTimestampAndClearsReviewed covers the HMRC-correct behaviour
+// of a repeat declaration. giftaid has UNIQUE KEY (userid), so declaring again reuses
+// the existing row, and `timestamp` is DEFAULT CURRENT_TIMESTAMP with no ON UPDATE.
+// Without an explicit refresh the row keeps the date of the member's first ever
+// declaration, which is what the claim CSV reports to HMRC and what
+// identifyGiftAidedDonations matches donations against. `reviewed` must also be
+// cleared, because the new declaration may carry a new name or address that nobody
+// has checked yet.
+func TestSetGiftAidRefreshesTimestampAndClearsReviewed(t *testing.T) {
+	prefix := uniquePrefix("ga_refresh")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	db.Exec("DELETE FROM giftaid WHERE userid = ?", userID)
+	db.Exec(`INSERT INTO giftaid (userid, timestamp, period, fullname, firstname, lastname, homeaddress, reviewed)
+		VALUES (?, '2021-09-13 18:40:55', 'This', 'Old Name', 'Old', 'Name', '1 Old Street, Edinburgh', '2021-09-14 09:00:00')`,
+		userID)
+	defer db.Exec("DELETE FROM giftaid WHERE userid = ?", userID)
+
+	// Sanity check the seeded state: an old declaration date, already reviewed.
+	var seededAge int64
+	db.Raw("SELECT TIMESTAMPDIFF(YEAR, timestamp, NOW()) FROM giftaid WHERE userid = ?", userID).Scan(&seededAge)
+	assert.GreaterOrEqual(t, seededAge, int64(1))
+
+	body := `{"period":"Future","fullname":"New Name","firstname":"New","lastname":"Name","homeaddress":"2 New Street, Edinburgh"}`
+	req := httptest.NewRequest("POST", "/api/giftaid?jwt="+token, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The row is reused, not duplicated.
+	var rows int64
+	db.Raw("SELECT COUNT(*) FROM giftaid WHERE userid = ?", userID).Scan(&rows)
+	assert.Equal(t, int64(1), rows)
+
+	// The declaration date is now, not 2021. Measured against the database clock so
+	// the assertion does not depend on the test process agreeing with MySQL.
+	var secondsOld int64
+	db.Raw("SELECT TIMESTAMPDIFF(SECOND, timestamp, NOW()) FROM giftaid WHERE userid = ?", userID).Scan(&secondsOld)
+	assert.Less(t, secondsOld, int64(300))
+
+	// The new details go back through review.
+	var reviewed *string
+	var period string
+	db.Raw("SELECT period, reviewed FROM giftaid WHERE userid = ?", userID).Row().Scan(&period, &reviewed)
+	assert.Equal(t, "Future", period)
+	assert.Nil(t, reviewed)
+}
+
+// TestSetGiftAidDeclineThenRedeclareRejoinsQueueWithCurrentDate reproduces the
+// production case that exposed this: giftaid 8588 sat as Declined from 2021, was
+// re-declared five years later, and reappeared in the moderator review queue still
+// dated 2021 because the upsert only touched period/name/address/deleted.
+func TestSetGiftAidDeclineThenRedeclareRejoinsQueueWithCurrentDate(t *testing.T) {
+	prefix := uniquePrefix("ga_redeclare")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	db := database.DBConn
+	db.Exec("DELETE FROM giftaid WHERE userid = ?", userID)
+	db.Exec(`INSERT INTO giftaid (userid, timestamp, period, fullname, homeaddress)
+		VALUES (?, '2021-09-13 18:40:55', 'This', 'Redeclare Test', '1 Old Street, Edinburgh')`, userID)
+	defer db.Exec("DELETE FROM giftaid WHERE userid = ?", userID)
+
+	// Revoke, which parks the row as Declined and out of the review queue.
+	delReq := httptest.NewRequest("DELETE", "/api/giftaid?jwt="+token, nil)
+	delResp, _ := getApp().Test(delReq)
+	assert.Equal(t, 200, delResp.StatusCode)
+	assert.False(t, giftAidListContains(t, adminToken, userID))
+
+	// Declare again years later.
+	body := `{"period":"Past4YearsAndFuture","fullname":"Redeclare Test","homeaddress":"2 New Street, Edinburgh"}`
+	req := httptest.NewRequest("POST", "/api/giftaid?jwt="+token, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// It is back in the queue for review, undeleted, and dated today rather than 2021.
+	assert.True(t, giftAidListContains(t, adminToken, userID))
+
+	var deleted *string
+	var secondsOld int64
+	db.Raw("SELECT deleted, TIMESTAMPDIFF(SECOND, timestamp, NOW()) FROM giftaid WHERE userid = ?", userID).
+		Row().Scan(&deleted, &secondsOld)
+	assert.Nil(t, deleted)
+	assert.Less(t, secondsOld, int64(300))
+}
+
+// giftAidListContains reports whether the admin review list (GET /giftaid?all=true)
+// includes a record for the given user.
+func giftAidListContains(t *testing.T, adminToken string, userID uint64) bool {
+	t.Helper()
+
+	req := httptest.NewRequest("GET", "/api/giftaid?all=true&jwt="+adminToken, nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result struct {
+		Giftaids []donations.GiftAidListItem `json:"giftaids"`
+	}
+	json2.Unmarshal(rsp(resp), &result)
+
+	for _, g := range result.Giftaids {
+		if g.UserID == userID {
+			return true
+		}
+	}
+
+	return false
+}

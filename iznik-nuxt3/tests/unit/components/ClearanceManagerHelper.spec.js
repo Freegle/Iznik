@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
+import ClearanceManager from '~/components/ClearanceManager.vue'
+
 const h = vi.hoisted(() => ({
   fetch: vi.fn().mockResolvedValue({}),
   fetchMultiple: vi.fn().mockResolvedValue([]),
@@ -40,10 +42,19 @@ vi.mock('~/stores/user', () => ({
   useUserStore: () => ({ fetchMultiple: h.fetchMultiple, byId: () => null }),
 }))
 vi.mock('~/composables/useMe', () => ({
-  useMe: () => ({ myid: { get value() { return 99 } } }),
+  useMe: () => ({
+    myid: {
+      get value() {
+        return 99
+      },
+    },
+  }),
 }))
 vi.mock('~/components/NoticeMessage', () => ({
-  default: { name: 'NoticeMessage', template: '<div class="notice-stub"><slot /></div>' },
+  default: {
+    name: 'NoticeMessage',
+    template: '<div class="notice-stub"><slot /></div>',
+  },
 }))
 vi.mock('~/components/ClearanceManageItem', () => ({
   default: {
@@ -53,13 +64,19 @@ vi.mock('~/components/ClearanceManageItem', () => ({
   },
 }))
 vi.mock('~/components/HelperStatusBar', () => ({
-  default: { name: 'HelperStatusBar', template: '<div class="hsb-stub" />', props: ['batch'] },
+  default: {
+    name: 'HelperStatusBar',
+    template: '<div class="hsb-stub" />',
+    props: ['batch'],
+  },
 }))
 vi.mock('~/components/HelperProposalCard', () => ({
-  default: { name: 'HelperProposalCard', template: '<div class="hpc-stub" />', props: ['proposal'] },
+  default: {
+    name: 'HelperProposalCard',
+    template: '<div class="hpc-stub" />',
+    props: ['proposal'],
+  },
 }))
-
-import ClearanceManager from '~/components/ClearanceManager.vue'
 
 const mountOpts = {
   props: { id: 1 },
@@ -103,14 +120,24 @@ describe('ClearanceManager — Helper integration', () => {
   })
 
   it('pause/resume call the store', async () => {
-    h.helperState = { batch: { status: 'active' }, repliers: [], proposals: [], sent: [] }
+    h.helperState = {
+      batch: { status: 'active' },
+      repliers: [],
+      proposals: [],
+      sent: [],
+    }
     const w = mount(ClearanceManager, mountOpts)
     await w.vm.setStatus('paused')
     expect(h.helperSetStatus).toHaveBeenCalledWith(1, 'paused')
   })
 
   it('resolving a proposal calls the store with msgid, id, decision and text', async () => {
-    h.helperState = { batch: { status: 'active' }, repliers: [], proposals: [], sent: [] }
+    h.helperState = {
+      batch: { status: 'active' },
+      repliers: [],
+      proposals: [],
+      sent: [],
+    }
     const w = mount(ClearanceManager, mountOpts)
     await w.vm.onResolve({ id: 7, decision: 'send', text: 'hi' })
     expect(h.helperResolveProposal).toHaveBeenCalledWith(1, 7, 'send', 'hi')

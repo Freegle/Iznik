@@ -37,7 +37,7 @@ class ModNotifMailTest extends TestCase
             'recipientName' => 'Bob Mod',
             'email'         => 'bob@example.com',
             'htmlSummary'   => '<p>Some items await.</p>',
-            'settingsUrl'   => 'https://modtools.org/modtools/settings',
+            'settingsUrl'   => 'https://modtools.org/settings',
             // modNotifSubject absent — triggers the ?? fallback in the template
         ])->render();
 

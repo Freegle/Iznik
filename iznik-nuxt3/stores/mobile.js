@@ -13,12 +13,15 @@
 // - Handle push notifications
 
 import { defineStore } from 'pinia'
+import { watch } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { useAuthStore } from '~/stores/auth'
 import { useChatStore } from '~/stores/chat'
 import { useNotificationStore } from '~/stores/notification'
+import { useMiscStore } from '~/stores/misc'
 import { useDebugStore } from '~/stores/debug'
 import { setAppVersion, useClientLog } from '~/composables/useClientLog'
+import { combinedBadgeCount } from '~/composables/useBadgeCount'
 import api from '~/api'
 
 // Ceiling for the OS-preferred text zoom we'll apply to the WebView - the
@@ -35,8 +38,7 @@ function dbg() {
   }
 }
 
-export const useMobileStore = defineStore({
-  id: 'mobile',
+export const useMobileStore = defineStore('mobile', {
   state: () => ({
     config: null,
     isApp: false,
@@ -96,9 +98,8 @@ export const useMobileStore = defineStore({
       // Import app-specific modules dynamically to avoid issues in web build
       const { Device } = await import('@capacitor/device')
       const { Badge } = await import('@capawesome/capacitor-badge')
-      const { PushNotifications } = await import(
-        '@freegle/capacitor-push-notifications-cap7'
-      )
+      const { PushNotifications } =
+        await import('@freegle/capacitor-push-notifications-cap8')
       const { AppLauncher } = await import('@capacitor/app-launcher')
       const { App } = await import('@capacitor/app')
 
@@ -120,6 +121,7 @@ export const useMobileStore = defineStore({
       // can cost us a version check, but never the back button.
       this.initBackButton(App)
       this.initWakeUpActions(App)
+      this.startBadgeSync()
 
       // Log app and plugin versions for debugging
       const runtimeConfig = useRuntimeConfig()
@@ -310,7 +312,7 @@ export const useMobileStore = defineStore({
     },
 
     initBackButton(App) {
-      if (process.client) {
+      if (import.meta.client) {
         // Once any JS listener is registered, Capacitor's native default (which
         // swallows the back button/gesture once the webview history is empty,
         // trapping the user in the app) no longer runs. Mirror that default's
@@ -327,7 +329,7 @@ export const useMobileStore = defineStore({
     },
 
     initWakeUpActions(App) {
-      if (process.client) {
+      if (import.meta.client) {
         App.addListener('resume', (event) => {
           try {
             const notificationStore = useNotificationStore()
@@ -335,6 +337,13 @@ export const useMobileStore = defineStore({
 
             const chatStore = useChatStore()
             chatStore.fetchChats(null, false)
+
+            // The navbar's 60s count loop slept with the app, so the unread
+            // badge is as stale as the background was long. Fetch every navbar
+            // count now (dynamic import: useNavbar imports this store).
+            import('~/composables/useNavbar')
+              .then((m) => m.refreshNavbarCounts())
+              .catch((e) => console.log('Failed to refresh navbar counts', e))
 
             // Re-trigger push registration on resume so that a missed/failed
             // initial registration or a rotated FCM/APNs token recovers. The
@@ -351,7 +360,7 @@ export const useMobileStore = defineStore({
     // it does NOT re-add listeners, re-create channels or re-request
     // permissions. No-op on web or before push has been initialised.
     async reRegisterPush() {
-      if (!process.client || !this.isApp || !this.pushPlugin) {
+      if (!import.meta.client || !this.isApp || !this.pushPlugin) {
         return
       }
 
@@ -371,7 +380,7 @@ export const useMobileStore = defineStore({
     },
 
     initDeepLinks(App) {
-      if (process.client) {
+      if (import.meta.client) {
         App.addListener('appUrlOpen', async (event) => {
           console.log('appUrlOpen', event.url)
           // "Share an image into Freegle" on iOS: the Share Extension opens
@@ -420,6 +429,21 @@ export const useMobileStore = defineStore({
               router.push(target)
               return
             }
+            if (route.startsWith('/e/')) {
+              // A tracked email link. The universal link hands the app the
+              // tracker's own URL, not where it points, and that is not a page
+              // the app has - pushing it landed on the error page and then the
+              // member's home page, which is how a chat notification's Reply
+              // button once put a reply into ChitChat. Ask the API where the
+              // link goes (that also records the click, which the tap never
+              // reached the server to do) and route there.
+              const resolved = await this.resolveTrackedLink(event.url)
+              setTimeout(() => {
+                console.log('appUrlOpen tracked link push', resolved)
+                router.push(resolved)
+              }, 500)
+              return
+            }
             setTimeout(() => {
               console.log('appUrlOpen route push', route)
               router.push(route)
@@ -429,13 +453,51 @@ export const useMobileStore = defineStore({
       }
     },
 
+    // resolveTrackedLink asks the API where a tracked email link (/e/...) goes
+    // and returns the in-app path to route to, or '/' when it cannot say. The
+    // API serves the tracker at its own origin, so the site URL is re-based
+    // there; format=json turns the 302 into an answer the WebView can read.
+    async resolveTrackedLink(url) {
+      try {
+        const runtimeConfig = useRuntimeConfig()
+        const api = new URL(runtimeConfig.public.APIv2)
+        const link = new URL(url)
+        link.searchParams.set('format', 'json')
+        const target = api.origin + link.pathname + link.search
+        const resp = await fetch(target)
+        if (!resp.ok) {
+          throw new Error('HTTP ' + resp.status)
+        }
+        const data = await resp.json()
+        const dest = data?.url
+        if (typeof dest !== 'string' || !dest) {
+          throw new Error('no destination')
+        }
+        if (dest.startsWith('/')) {
+          return dest
+        }
+        const lookfor = 'ilovefreegle.org'
+        const pos = dest.indexOf(lookfor)
+        if (pos === -1) {
+          throw new Error('destination is off-site: ' + dest)
+        }
+        const path = dest
+          .substring(pos + lookfor.length)
+          .replace('/chat/', '/chats/')
+        return path || '/'
+      } catch (e) {
+        console.log('resolveTrackedLink failed', e?.message)
+        return '/'
+      }
+    },
+
     // "Share an image into Freegle" (Android ACTION_SEND). The native layer
     // (MainActivity) copies the shared image(s) to its cache and exposes them via
     // the window.FreegleShare JS bridge. We pull them at startup (cold share) and
     // on every resume (warm share), then route into the give flow with the photos
     // pre-attached. No-op unless the native bridge is present.
     initShareIntent(App) {
-      if (process.client) {
+      if (import.meta.client) {
         this.checkSharedIntent()
         App.addListener('resume', () => {
           this.checkSharedIntent()
@@ -444,7 +506,7 @@ export const useMobileStore = defineStore({
     },
 
     checkSharedIntent() {
-      if (!process.client || !this.isApp) return
+      if (!import.meta.client || !this.isApp) return
       try {
         const bridge = window.FreegleShare
         if (!bridge || typeof bridge.consume !== 'function') return
@@ -692,6 +754,42 @@ export const useMobileStore = defineStore({
       }
     },
 
+    // Keep the native app-icon badge in sync with the member's own live
+    // unread state (chats + notifications), independent of which component
+    // happens to be on screen. useNavbar()'s chatCount computed also nudges
+    // the badge, but only as a side effect of NavbarMobile's bottom-nav badge
+    // being rendered - and that badge is hidden in favour of ChatMobileNavbar
+    // while viewing a specific chat on a phone (NavbarMobile.vue
+    // isSpecificChatPage), which is exactly when a chat gets marked read.
+    // ChatMobileNavbar calls useNavbar() too but never reads its chatCount,
+    // so that recompute (and its setBadgeCount call) never fires there. If
+    // the member reads the chat and backgrounds the app before visiting a
+    // screen where the bottom-nav badge re-renders, the icon badge is left
+    // showing a stale non-zero count forever (Discourse 9953). This watch
+    // lives in the store instead, so it fires on every count change
+    // regardless of what's mounted. Uses the same combinedBadgeCount() helper
+    // as chatCount's own write, so the two writers can never drift apart.
+    //
+    // ModTools reuses this same store, but its badge is a different concept
+    // entirely (pending/spam/volunteering work, computed by
+    // modtools/composables/useModMe.js's checkWork() and already pushed to
+    // setBadgeCount() there) - chats+notifications would be meaningless for
+    // it and would race with the real work-count writer. Skip there, the
+    // same way chatStore.unreadCount itself switches to currentCountMT.
+    startBadgeSync() {
+      if (!this.isApp || useMiscStore().modtools) return
+      const chatStore = useChatStore()
+      const notificationStore = useNotificationStore()
+      return watch(
+        () =>
+          combinedBadgeCount(chatStore.unreadCount, notificationStore.count),
+        (total) => {
+          this.setBadgeCount(total)
+        },
+        { immediate: true }
+      )
+    },
+
     async handleNotification(notification, PushNotifications, Badge) {
       const router = useRouter()
       console.log('handleNotification A', notification)
@@ -878,9 +976,8 @@ export const useMobileStore = defineStore({
         console.log('handleReplyAction: message sent successfully')
         // Confirm the reply with a success haptic (best-effort; in-app only).
         try {
-          const { Haptics, NotificationType } = await import(
-            '@capacitor/haptics'
-          )
+          const { Haptics, NotificationType } =
+            await import('@capacitor/haptics')
           await Haptics.notification({ type: NotificationType.Success })
         } catch (he) {
           dbg()?.debug('haptic not available', he?.message)

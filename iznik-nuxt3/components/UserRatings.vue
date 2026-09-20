@@ -59,12 +59,12 @@ import { useMe } from '~/composables/useMe'
 // Use console.warn for debugging - console.log is stripped in production builds
 console.warn('UserRatings: Script setup executing')
 
-const UserRatingsDownModal = defineAsyncComponent(() =>
-  import('~/components/UserRatingsDownModal')
+const UserRatingsDownModal = defineAsyncComponent(
+  () => import('~/components/UserRatingsDownModal')
 )
 
-const UserRatingsRemoveModal = defineAsyncComponent(() =>
-  import('~/components/UserRatingsRemoveModal')
+const UserRatingsRemoveModal = defineAsyncComponent(
+  () => import('~/components/UserRatingsRemoveModal')
 )
 
 const props = defineProps({

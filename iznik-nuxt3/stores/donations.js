@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import api from '~/api'
 
-export const useDonationStore = defineStore({
-  id: 'donation',
+export const useDonationStore = defineStore('donation', {
   state: () => ({
     target: 2000,
     raised: 0,

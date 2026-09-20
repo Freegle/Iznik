@@ -26,7 +26,12 @@
           <div v-if="loggedIn" class="mobile-body">
             <div v-if="groupCount" class="mobile-section">
               <p class="mobile-section__label">Leave a specific community:</p>
-              <GroupSelect v-model="groupid" size="lg" class="mb-2" />
+              <GroupSelect
+                v-model="groupid"
+                size="lg"
+                class="mb-2"
+                memberonly
+              />
               <SpinButton
                 v-if="groupid"
                 variant="primary"
@@ -152,7 +157,7 @@
               <div v-if="groupCount" class="mt-2">
                 <p>You can leave individual communities:</p>
                 <div class="mb-2">
-                  <GroupSelect v-model="groupid" size="lg" />
+                  <GroupSelect v-model="groupid" size="lg" memberonly />
                   <SpinButton
                     v-if="groupid"
                     variant="primary"
@@ -298,26 +303,26 @@ import EmailValidator from '~/components/EmailValidator.vue'
 import SupportLink from '~/components/SupportLink.vue'
 import { useMe } from '~/composables/useMe'
 
-const ForgetFailModal = defineAsyncComponent(() =>
-  import('~/components/ForgetFailModal.vue')
+const ForgetFailModal = defineAsyncComponent(
+  () => import('~/components/ForgetFailModal.vue')
 )
-const GroupSelect = defineAsyncComponent(() =>
-  import('~/components/GroupSelect.vue')
+const GroupSelect = defineAsyncComponent(
+  () => import('~/components/GroupSelect.vue')
 )
-const ConfirmModal = defineAsyncComponent(() =>
-  import('~/components/ConfirmModal.vue')
+const ConfirmModal = defineAsyncComponent(
+  () => import('~/components/ConfirmModal.vue')
 )
-const ContactSupportModal = defineAsyncComponent(() =>
-  import('~/components/ContactSupportModal.vue')
+const ContactSupportModal = defineAsyncComponent(
+  () => import('~/components/ContactSupportModal.vue')
 )
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage.vue')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage.vue')
 )
-const ExternalLink = defineAsyncComponent(() =>
-  import('~/components/ExternalLink.vue')
+const ExternalLink = defineAsyncComponent(
+  () => import('~/components/ExternalLink.vue')
 )
-const DeletedRestore = defineAsyncComponent(() =>
-  import('~/components/DeletedRestore.vue')
+const DeletedRestore = defineAsyncComponent(
+  () => import('~/components/DeletedRestore.vue')
 )
 
 const route = useRoute()
@@ -525,7 +530,9 @@ onMounted(() => {
   border: none;
   text-decoration: none;
   cursor: pointer;
-  transition: transform 0.1s, background var(--transition-fast);
+  transition:
+    transform 0.1s,
+    background var(--transition-fast);
 
   &:active {
     transform: scale(0.98);

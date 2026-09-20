@@ -32,7 +32,10 @@ describe('HelperItemSummary', () => {
   })
 
   it('renders nothing when there are no item states', () => {
-    const w = mount(HelperItemSummary, { ...mountOpts, props: { itemStates: [] } })
+    const w = mount(HelperItemSummary, {
+      ...mountOpts,
+      props: { itemStates: [] },
+    })
     expect(w.find('[data-testid="helper-itemsummary"]').exists()).toBe(false)
   })
 })

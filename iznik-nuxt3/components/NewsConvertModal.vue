@@ -55,6 +55,18 @@
           Their area and postcode get added to the subject when it posts, the
           same as any other post.
         </div>
+        <!-- A moderated member's post waits in the Pending queue where the
+             converting moderator may not be able to see it, which looks
+             exactly like the convert failing. Say so before they post. -->
+        <NoticeMessage
+          v-if="posting && posting.canpost && posting.moderated"
+          variant="info"
+          class="mt-2"
+        >
+          This post will need approval: {{ posterName }}'s posts are moderated,
+          so it will wait in {{ posting.groupname }}'s Pending queue for a
+          moderator rather than appear straight away.
+        </NoticeMessage>
         <div v-if="newsfeed.image" class="text-muted small mt-1">
           We'll include their photo on the post.
         </div>

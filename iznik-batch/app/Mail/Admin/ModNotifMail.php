@@ -43,7 +43,7 @@ class ModNotifMail extends MjmlMailable
         $this->htmlSummary = $htmlSummary;
         $this->textSummary = $textSummary;
         $this->modNotifSubject = $subject;
-        $this->settingsUrl = config('freegle.sites.mod', 'https://modtools.org') . '/modtools/settings';
+        $this->settingsUrl = config('freegle.sites.mod', 'https://modtools.org') . '/settings';
     }
 
     protected function getSubject(): string

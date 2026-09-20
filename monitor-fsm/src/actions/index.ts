@@ -1,10 +1,10 @@
 import type { ActionDefinition } from 'ai-flower'
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { promisify } from 'node:util'
 import { readFile, writeFile } from 'node:fs/promises'
 import { existsSync, readdirSync, readlinkSync } from 'node:fs'
 import { out, outWarn, dbg, startGroup, endGroup, truncate } from '../log.js'
-import { DISCOURSE_BASE, formatReplyRaw, hasNonEmptyQuote } from '../discourse.js'
+import { DISCOURSE_BASE, PROFILE_PATH, formatReplyRaw, hasNonEmptyQuote } from '../discourse.js'
 import { partitionFailedChecks } from '../coverage-checks.js'
 import {
   getDb,
@@ -19,6 +19,8 @@ import {
   insertReviewerFeedback,
   listUnprocessedFeedback,
   upsertDiscourseBug,
+  getDiscourseBug,
+  listUnansweredQuestions,
   reopenBugAfterRejection,
   upsertPr,
   findTagDuplicate,
@@ -28,6 +30,8 @@ import { renderAllViews } from '../db/views.js'
 import { getPhaseInfo } from '../phase.js'
 import { modelForAdversarialReview } from '../policy.js'
 import { groundingActions } from '../grounding.js'
+import { proseProblems } from '../prose.js'
+import { assessReportSpecifics, detailRequestBody } from '../specifics.js'
 
 const exec = promisify(execFile)
 
@@ -87,6 +91,52 @@ async function sh(cmd: string, args: string[], cwd?: string): Promise<{ stdout: 
   }
 }
 
+/**
+ * The most recently taken picture of open-PR CI in this context.
+ *
+ * Two actions read CI. `check_my_open_pr_ci` writes `_action_check_my_open_pr_ci`;
+ * `coverage_gate_decide` calls the same handler and nests the answer under its own
+ * `_action_coverage_gate_decide.red`, leaving the other key untouched. Which of the
+ * two is current depends on the path taken into the router: CHECK_TESTS refreshes
+ * the first, COVERAGE_GATE the second. A router that always preferred one of them
+ * would read a 40-minute-old list on the other path.
+ *
+ * That is not hypothetical. On 2026-08-12 iteration 1, CI_ROUTER read the fixed key
+ * and picked #658 as its focus PR at 17:53:45 — a PR that had gone green, and which
+ * the gate had just correctly excluded from a red list containing only #1201. The
+ * counter that limits attempts per PR was reset each lap precisely because #658 was
+ * green, so nothing stopped the re-pick, and the iteration burned 25 of its 40 steps
+ * going round WORK_ROUTER → COVERAGE_GATE → CI_ROUTER → analyse → collate.
+ *
+ * So compare `checkedAt` and take the newer. A result with no stamp is treated as
+ * older than any stamped one: the only unstamped returns are the error paths, whose
+ * empty PR lists must never win over a real reading.
+ */
+// Bases to try, in order, when cutting a delegate worktree. The local `master` ref is only as
+// fresh as the last pull in the main checkout - it was 209 commits behind on 2026-09-07 - so a
+// best-effort fetch puts origin/master first. The delegates fetch again before they push, so
+// this only decides which tree they read while diagnosing.
+function worktreeBases(repoCwd: string): string[] {
+  try {
+    execFileSync('git', ['fetch', '--quiet', 'origin', 'master'], { cwd: repoCwd, stdio: 'pipe', timeout: 60_000 })
+  } catch { /* offline or slow: fall through to whatever is local */ }
+  return ['origin/master', 'master', 'HEAD']
+}
+
+export function freshestCICheck(ctx: any): any {
+  const direct = ctx?._action_check_my_open_pr_ci ?? {}
+  const viaGate = ctx?._action_coverage_gate_decide?.red ?? {}
+
+  const stamp = (c: any): number => {
+    const t = c?.checkedAt ? Date.parse(c.checkedAt) : NaN
+    return Number.isNaN(t) ? -Infinity : t
+  }
+
+  // Ties (equal or both unstamped) keep the direct key, which is what every caller
+  // read before this helper existed.
+  return stamp(viaGate) > stamp(direct) ? viaGate : direct
+}
+
 const PROD_REPO = 'Freegle/Iznik'
 // Netlify site for the Freegle app (frontend). Site ID and slug both work with the public API.
 const NETLIFY_SITE = 'golden-caramel-d2c3a7.netlify.app'
@@ -114,6 +164,200 @@ export function parseRetryAfter(header: string | null, body: string): number {
   } catch { /* body not JSON */ }
   return 5
 }
+
+/**
+ * Python source for a Discourse GET with rate-limit backoff, shared by the three
+ * actions that shell out to python3. This is parseRetryAfter's rule in Python.
+ *
+ * Discourse carries the wait in the 429 body (`extras.wait_seconds`, routinely 40s
+ * or more) and often sends no Retry-After header, so the header alone does not say
+ * how long to wait, and a short fixed backoff exhausts its retries inside a window
+ * Discourse is still refusing.
+ *
+ * Expects `json`, `urllib.request`, `sys` and `time` imported and `headers` defined
+ * above it. `onExhausted` chooses what an unrecoverable fetch does: 'raise' where a
+ * partial answer is worse than a loud failure (the topic listings), 'skip' where one
+ * rate-limited topic must not discard the results already gathered for all the
+ * others (the per-bug scan). Either way the URL lands in FETCH_FAILURES, so the
+ * caller can tell a partial scan from a clean one.
+ */
+export function discourseFetchPy(retries: number, onExhausted: 'raise' | 'skip'): string {
+  return `
+FETCH_FAILURES = []
+
+def _retry_after_seconds(err, default_s):
+    """Seconds to wait before retrying a 429: the Retry-After header, else the
+    rate-limit body's extras.wait_seconds, else the caller's growing default."""
+    hdr = err.headers.get('Retry-After')
+    try:
+        if hdr is not None and float(hdr) > 0:
+            return min(float(hdr), 60.0)
+    except (TypeError, ValueError):
+        pass
+    try:
+        body = json.loads(err.read().decode('utf-8', 'replace'))
+        wait = float(body.get('extras', {}).get('wait_seconds', 0))
+        if wait > 0:
+            return min(wait, 60.0)
+    except Exception:
+        pass
+    return min(default_s, 60.0)
+
+def fetch(url, retries=${retries}):
+    """GET a Discourse URL, backing off for as long as a 429 asks."""
+    delay = 2.0
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            return json.load(urllib.request.urlopen(req, timeout=20))
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            if e.code == 429 and attempt < retries - 1:
+                sleep_s = _retry_after_seconds(e, delay)
+                sys.stderr.write(f'429 on {url}, backing off {sleep_s}s (attempt {attempt+1}/{retries})\\n')
+                time.sleep(sleep_s)
+                delay = min(delay * 2, 60.0)
+                continue
+            FETCH_FAILURES.append(f'{e.code} {url}')
+            ${onExhausted === 'raise' ? 'raise' : 'return None'}
+        except Exception:
+            FETCH_FAILURES.append(f'error {url}')
+            return None
+    FETCH_FAILURES.append(f'retries {url}')
+    return None
+`
+}
+
+/**
+ * Python source for check_bug_feedback's decision: given a bug and the posts made
+ * after it was reported, what do those posts mean?
+ *
+ * The answer closes bugs and changes their state, so the phrase rules matter more
+ * than most code here. They are kept behind `posts_for(topic, post)` rather than
+ * inlined against the network, which is what lets the suite drive them with
+ * fixtures. See actions.bug_feedback_classify.test.ts.
+ *
+ * classify_feedback returns (confirmations, edward_updates).
+ */
+export const BUG_FEEDBACK_CLASSIFY_PY = `
+CONFIRM_RE = re.compile(
+    r'\\b(fixed|works? now|working now|confirmed?|thanks?|thankyou|all good|resolved?'
+    r'|seems? (?:to be )?(?:fixed|working|ok|good)|unlimited now|no (?:longer|more)'
+    r'|great[,!.]?\\s*(?:thanks?)?|perfect|sorted|much better|no issues?'
+    r'|fix worked|that worked|worked (?:a treat|fine|now|perfectly)|no problem)\\b',
+    re.IGNORECASE
+)
+
+# Negation guard (sweep 2026-05-31 rule #1): a reporter can say "thanks but it's
+# still broken" / "spoke too soon" / "back again". CONFIRM_RE matches "thanks"
+# but the bug is NOT fixed. If a post matches STILL_BROKEN_RE, it must NOT be
+# treated as a fix confirmation, even if CONFIRM_RE also matches.
+#
+# "still" takes a general verb (still omits, still shows, still failing) as well as
+# the listed phrases: an enumeration misses the complaint it was written for, and
+# 9655/5 ("still omits pending") is that case. The two ways to be wrong are not
+# equal. Blocking a real confirmation leaves the bug open for the next lap to
+# re-check; accepting a false one closes a live bug and stops the replies.
+STILL_BROKEN_RE = re.compile(
+    r'(?:still (?:\\w+s\\b|\\w+ing\\b|broken|not working|there|the same|an issue|a problem)'
+    r'|spoke too soon|came back|back again|is back|happening again|not fixed|doesn.?t work'
+    r'|did(?:n.?t| not) (?:work|fix)|same (?:problem|issue|thing|error)|no (?:change|difference)'
+    r'|(?:never|hasn.?t|has not|not) worked'
+    r'|worse|reappear|reoccur|again today|once more)',
+    re.IGNORECASE
+)
+
+# Edward's posts indicating he is actively working on a fix
+EDWARD_IN_PROGRESS_RE = re.compile(
+    r'(?:fix|looking|working|will).*(?:on the way|in progress|coming|soon|catch up|next week|look.*into|look.*at this|looking into|working on)'
+    r'|(?:possible fix|fix is on the way|fix on the way|fix coming|on the way)'
+    r'|(?:i can see the (?:problem|bug|issue))'
+    r'|(?:will (?:fix|sort|look at|investigate))',
+    re.IGNORECASE
+)
+
+# Edward's posts indicating he has applied a fix
+EDWARD_FIXED_RE = re.compile(
+    r'(?:should be fixed|please retest|let me know how it is|i.ve fixed|fixed this|fixed now'
+    r'|this should now work|fix applied|should now work|have fixed|has been fixed)',
+    re.IGNORECASE
+)
+
+# Edward's posts indicating this is expected/by-design (not a bug)
+EDWARD_EXPECTED_RE = re.compile(
+    r'(?:this is expected|to be expected|that.s expected|by design|working as (?:intended|designed|expected)'
+    r'|not a bug|expected (?:behavior|behaviour)|this is correct|working correctly)',
+    re.IGNORECASE
+)
+
+EDWARD = 'Edward_Hibbert'
+
+def post_text(post):
+    t = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
+    return re.sub(r'\\s+', ' ', t).strip()
+
+def classify_feedback(bugs, all_bugs, posts_for):
+    results = []
+    edward_updates = []
+
+    # Pass A: reporter confirmations (open/investigating only)
+    for bug in bugs:
+        topic_id = bug['topic']
+        orig_post = bug['post']
+        reporter = bug.get('reporter') or ''
+
+        new_posts = posts_for(topic_id, orig_post)
+        # Sweep rule #1 (2026-05-31): if ANY non-Edward post in the thread reports the
+        # bug is still broken, do NOT confirm a fix, even if an earlier post said
+        # "thanks, fixed". (9655/4: post 4 "fix worked", post 5 "still omits pending".)
+        any_still_broken = False
+        for post in new_posts:
+            if post.get('username', '') == EDWARD:
+                continue
+            if STILL_BROKEN_RE.search(post_text(post)):
+                any_still_broken = True
+                break
+
+        if not any_still_broken:
+            for post in new_posts:
+                username = post.get('username', '')
+                if username == EDWARD:
+                    continue
+                text = post_text(post)
+                if CONFIRM_RE.search(text) and not STILL_BROKEN_RE.search(text):
+                    results.append({
+                        'topic': topic_id,
+                        'post': orig_post,
+                        'reporter': reporter,
+                        'confirmedBy': username,
+                        'confirmPostNumber': post.get('post_number'),
+                        'confirmText': text[:200],
+                    })
+                    break
+
+    # Pass B: Edward's posts (open/investigating/deferred)
+    for bug in all_bugs:
+        topic_id = bug['topic']
+        orig_post = bug['post']
+
+        for post in posts_for(topic_id, orig_post):
+            if post.get('username') != EDWARD:
+                continue
+            text = post_text(post)
+            post_num = post.get('post_number')
+            if EDWARD_EXPECTED_RE.search(text):
+                edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'off_topic', 'postNumber': post_num, 'text': text[:200]})
+                break
+            elif EDWARD_FIXED_RE.search(text):
+                edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'investigating', 'postNumber': post_num, 'text': text[:200]})
+                break
+            elif EDWARD_IN_PROGRESS_RE.search(text):
+                edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'investigating', 'postNumber': post_num, 'text': text[:200]})
+                break
+
+    return results, edward_updates
+`
 
 // Bot accounts whose PR comments are never a human review signal.
 const BOT_COMMENT_LOGINS = new Set([
@@ -217,6 +461,43 @@ export function classifyReviewBlockers(
 }
 
 /**
+ * Promote "the same bug is still here" findings to blockers when the twin sits in a file
+ * this PR already edits.
+ *
+ * The review rubric files these as warnings, and the same rubric calls a partial
+ * implementation a blocker. An identical defect left live in a file the author had open is
+ * a partial implementation, so the two rules disagreed and the weaker one won: PR #1559
+ * shipped with its review saying, in as many words, that `List()` in the file it edits has
+ * the same missing condition. Deciding this in code rather than in the prompt means the
+ * model cannot classify its way past it, which is the point of the gate.
+ *
+ * A twin somewhere the PR never went stays a warning. Widening one fix into a sweep of the
+ * whole codebase is how a bug fix turns into a refactor nobody asked for.
+ */
+export function promoteUnfixedCallSites(
+  issues: Array<{ category?: string; description?: string; severity?: string }>,
+  changedFiles: string[],
+): { promoted: Array<{ category?: string; description?: string; severity: string }>; remaining: Array<{ category?: string; description?: string; severity?: string }> } {
+  // "call site", "same bug", "same pattern", "identical", "not updated", "still" + unfixed.
+  const SAME_DEFECT = /call.?sites?|same (?:bug|pattern|defect|issue)|identical|not updated|unfixed|left unfixed/i
+  const basenames = changedFiles.map((f) => f.split('/').pop() ?? f).filter(Boolean)
+
+  const promoted: Array<{ category?: string; description?: string; severity: string }> = []
+  const remaining: Array<{ category?: string; description?: string; severity?: string }> = []
+
+  for (const issue of issues) {
+    const text = `${issue.category ?? ''} ${issue.description ?? ''}`
+    const namesAChangedFile = basenames.some((b) => text.includes(b))
+    if (issue.severity === 'warning' && SAME_DEFECT.test(text) && namesAChangedFile) {
+      promoted.push({ ...issue, severity: 'error' })
+    } else {
+      remaining.push(issue)
+    }
+  }
+  return { promoted, remaining }
+}
+
+/**
  * Decide what a failed adversarial review should DO, encoding the "expand fixes, don't
  * close them" policy. A review that passed → 'pass'. A review that failed only on
  * completable blockers, and hasn't already been expanded too many times → 'expand'
@@ -302,7 +583,7 @@ export async function runFixExpansion(
 
   const worktreeDir = `/tmp/monitor-fsm-expand-${process.pid}-${Date.now()}`
   let worktreeCreated = false
-  for (const base of ['master', 'HEAD']) {
+  for (const base of worktreeBases(repoCwd)) {
     try {
       execFileSync('git', ['worktree', 'add', '--detach', worktreeDir, base], { cwd: repoCwd, stdio: 'pipe' })
       worktreeCreated = true
@@ -423,6 +704,13 @@ export async function postDiscourseReply(
   replyToPostNumber?: number,
   opts: { maxRetries?: number; sleepFn?: (ms: number) => Promise<void> } = {},
 ): Promise<{ ok: boolean; error?: string }> {
+  // Operator kill-switch: SKIP_DISCOURSE_POSTS=1 makes every reply post fail
+  // closed. Both callers treat a failed post as "retry next iteration", so
+  // nothing is lost - the replies go out on the first run without the switch.
+  if (process.env.SKIP_DISCOURSE_POSTS) {
+    return { ok: false, error: 'Discourse posting disabled by SKIP_DISCOURSE_POSTS' }
+  }
+
   // HARD INVARIANT: never post a reply without quoted text. This is the single
   // chokepoint for the auto-post path, so the check here makes a context-less
   // post impossible regardless of any upstream bug in how `raw` was built.
@@ -435,7 +723,7 @@ export async function postDiscourseReply(
 
   let apiKey: string | null = null
   try {
-    const profile = JSON.parse(await readFile('/home/edward/profile.json', 'utf8')) as {
+    const profile = JSON.parse(await readFile(PROFILE_PATH, 'utf8')) as {
       auth_pairs?: Array<{ user_api_key?: string }>
     }
     apiKey = profile.auth_pairs?.[0]?.user_api_key ?? null
@@ -490,7 +778,7 @@ export async function postDiscourseReply(
 export async function fetchReporterQuote(topicId: number, postNumber: number, maxLen = 300): Promise<string> {
   let apiKey: string | null = null
   try {
-    const profile = JSON.parse(await readFile('/home/edward/profile.json', 'utf8')) as {
+    const profile = JSON.parse(await readFile(PROFILE_PATH, 'utf8')) as {
       auth_pairs?: Array<{ user_api_key?: string }>
     }
     apiKey = profile.auth_pairs?.[0]?.user_api_key ?? null
@@ -788,7 +1076,10 @@ export function matchDirectMasterFixCommits(
   for (const c of commits) {
     if (!c.sha || !c.subj || NON_FIX.test(c.subj)) continue
     const msg = `${c.subj} ${c.body || ''}`
-    for (const m of msg.matchAll(/\b(9\d{3})\s*[/#]\s*(\d{1,4})\b/g)) {
+    // Topic ids are 9000-9999 or 10000-19999: Discourse passed 10000 in September 2026, and
+    // a "9\d{3}" match silently stopped crediting every fix on a newer topic. Keeping the
+    // leading digit fixed still rules out dates such as 2026/09 reading as topic/post.
+    for (const m of msg.matchAll(/\b(9\d{3}|1\d{4})\s*[/#]\s*(\d{1,4})\b/g)) {
       const key = `${m[1]}/${m[2]}`
       if (!tpRefs.has(key)) tpRefs.set(key, { sha: c.sha, subj: c.subj })
     }
@@ -799,7 +1090,7 @@ export function matchDirectMasterFixCommits(
     // get matched to an unrelated open bug (9808/633) via the fallback, marking
     // it fixed and posting a bogus retest (Neville, 2026-07-22). The negative
     // lookahead keeps scoped references out of topicRefs.
-    for (const m of msg.matchAll(/(?:\(|discourse\s+|#)(9\d{3})\b(?!\s*[/#]\s*\d)/gi)) {
+    for (const m of msg.matchAll(/(?:\(|discourse\s+|#)(9\d{3}|1\d{4})\b(?!\s*[/#]\s*\d)/gi)) {
       const t = Number(m[1])
       if (!topicRefs.has(t)) topicRefs.set(t, { sha: c.sha, subj: c.subj })
     }
@@ -948,11 +1239,128 @@ export function extractJsonArrayMarker(combined: string, marker: string): unknow
 // dependencies through this object so tests can substitute fakes (the functions
 // themselves shell out to gh/curl or POST to Discourse). Production behaviour
 // is unchanged — these are the real implementations.
+// The body of a reporter-facing "please retest" reply. `link` is the change behind the
+// fix — the PR, or for a fix pushed straight to master the commit. Edward's rule
+// (2026-09-14): every such reply carries one, so a moderator reading the thread can go
+// and see what was actually done rather than taking "fix applied" on trust.
+export function retestReplyBody(opts: { affectsApp: boolean; link?: string | null }): string {
+  let body = 'AI Edward: possible fix applied, please retest and report back'
+  if (opts.affectsApp) body += ' (but app releases may take up to one week)'
+  if (opts.link) body += `\n\nTechnical details: ${opts.link}`
+  return body
+}
+
+// Seam for unit tests: the question paths reach Discourse to fetch the text they
+// quote and to post. Tests substitute both.
+export const questionAnswerDeps = {
+  fetchReporterQuote,
+  postDiscourseReply,
+}
+
+/**
+ * Ask the reporter for what a report leaves out, and record that we asked.
+ *
+ * Posted rather than queued. A reply that asks which group a report means is the
+ * same kind of thing as the "fix applied, please retest" reply: it is how the
+ * monitor talks to the person who reported something, and a question nobody sends
+ * is a question nobody answers. Edward, 2026-09-19: "we are allowed to post once a
+ * fix has been put live, we should also be allowed to post in order to clarify what
+ * fixes are needed."
+ *
+ * Returns true when it went out. A failure leaves nothing recorded, so the next
+ * iteration finds the report still short of detail and tries again.
+ */
+async function askReporterOnDiscourse(
+  db: ReturnType<typeof getDb>,
+  args: { topic: number; post: number; username: string; quote: string; body: string },
+): Promise<boolean> {
+  // One question per reporting post. The queue used to prevent a second ask by
+  // holding an unsent draft; now that the question goes straight out, the record of
+  // having sent it is what stops us asking the same person the same thing every lap.
+  const alreadyAsked = db.prepare(
+    'SELECT 1 FROM discourse_draft WHERE topic = ? AND post = ? AND posted_at IS NOT NULL LIMIT 1',
+  ).get(args.topic, args.post)
+  if (alreadyAsked) {
+    dbg(`askReporterOnDiscourse: ${args.topic}/${args.post} has already been asked`)
+    return true
+  }
+
+  const raw = formatReplyRaw({
+    username: args.username,
+    post: args.post,
+    topic: args.topic,
+    quote: args.quote,
+    body: args.body,
+  })
+  const res = await questionAnswerDeps.postDiscourseReply(args.topic, raw, args.post)
+  if (!res.ok) {
+    outWarn(`askReporterOnDiscourse: could not ask ${args.topic}/${args.post}: ${res.error}`)
+    return false
+  }
+  recordPostedReply(db, {
+    topic: args.topic, post: args.post,
+    username: args.username, quote: args.quote, body: args.body,
+  })
+  return true
+}
+
 export const deployedReplyDeps = {
   checkPrDeployed,
   postDiscourseReply,
   fetchReporterQuote,
   renderAllViews,
+}
+
+/**
+ * check_bug_feedback's one call out to Discourse, behind a name a test can replace.
+ * What the scan finds then drives bug state, and that half is worth testing without
+ * a network.
+ */
+export const bugFeedbackDeps = {
+  runScan: async (script: string): Promise<string> => {
+    const { stdout } = await exec('python3', ['-c', script])
+    return stdout
+  },
+}
+
+/**
+ * discover_active_topics' call out to Discourse, behind a name a test can replace.
+ * Which topics it reports as having new posts is what decides whether a report is
+ * triaged at all.
+ */
+export const discoverTopicsDeps = {
+  runScan: (script: string) => sh('python3', ['-c', script]),
+}
+
+// What a triage entry gives us to work from. `has_screenshot` and `identifiers`
+// come from the triage delegate, which sees the post itself: an image never
+// survives into the stripped text, and no pattern can recognise a group name.
+//
+// Judged on what the REPORTER wrote, not on the summary. The summary is the
+// delegate's paraphrase, and a paraphrase tidies the vagueness away: "a couple of
+// posts duplicated, one person asking for cash" became "duplicate posts and posts
+// offering items in exchange for cash", which names nothing but no longer reads as
+// though it does. Assessed on that, the report looked specific enough to fix, and a
+// moderator's aside in a policy discussion became PR #1574 (closed). The summary is
+// still searched for anchors, because an id the delegate pulled out is still an id.
+function specificsOf(c: Record<string, any>) {
+  const identifiers = (c.identifiers ?? {}) as { userRef?: string; groupName?: string }
+  const verbatim = String(c.originalPostText ?? '').trim()
+  return assessReportSpecifics({
+    text: verbatim || String(c.summary ?? ''),
+    anchorText: `${c.summary ?? ''} ${verbatim}`,
+    hasScreenshot: c.has_screenshot === true || c.hasScreenshot === true,
+    groupName: identifiers.groupName ?? null,
+    userRef: identifiers.userRef ?? null,
+  })
+}
+
+// A bug with no verbatim text cannot be judged for specifics at all, and "cannot
+// judge" must not read as "fine". Triage is asked for originalPostText on every bug;
+// when it is missing the report is held rather than sent to a diagnosis that would be
+// working from a paraphrase.
+function hasReporterWords(c: Record<string, any>): boolean {
+  return String(c.originalPostText ?? '').trim().length > 0
 }
 
 export const actions: ActionDefinition[] = [
@@ -994,7 +1402,7 @@ export const actions: ActionDefinition[] = [
 
   {
     name: 'check_bug_feedback',
-    description: 'For each open/investigating/deferred bug in discourse_bug, fetch posts after the original report on that Discourse topic. (A) Detects reporter confirmation of a fix — marks confirmed bugs as fixed. (B) Detects Edward_Hibbert posts indicating fix-in-progress, off-topic/expected-behaviour, or applied fix — updates state accordingly. Returns {checked, markedFixed, markedInvestigating, markedOffTopic}.',
+    description: 'For each open/investigating/deferred bug in discourse_bug, fetch posts after the original report on that Discourse topic. (A) Detects reporter confirmation of a fix — marks confirmed bugs as fixed. (B) Detects Edward_Hibbert posts indicating fix-in-progress, off-topic/expected-behaviour, or applied fix — updates state accordingly. Returns {checked, markedFixed, markedInvestigating, markedOffTopic, fetchFailures}. A non-empty fetchFailures means the scan was partial (Discourse rate-limited some topics), so an empty markedFixed does not mean nobody confirmed anything.',
     handler: async () => {
       const db = getDb()
       // Reporter-confirmation scan: open/investigating only
@@ -1004,7 +1412,7 @@ export const actions: ActionDefinition[] = [
 
       // Edward-post scan: also include deferred (Edward may post "fix on the way" on a deferred bug)
       const allActiveBugs = db.prepare(
-        "SELECT topic, post, reporter FROM discourse_bug WHERE state IN ('open','investigating','deferred')"
+        "SELECT topic, post, reporter FROM discourse_bug WHERE state IN ('open','investigating','deferred','needs-detail')"
       ).all() as Array<{ topic: number; post: number; reporter: string | null }>
 
       if (allActiveBugs.length === 0) return { checked: 0, markedFixed: [], markedInvestigating: [], markedOffTopic: [] }
@@ -1015,70 +1423,12 @@ export const actions: ActionDefinition[] = [
       const script = `
 import json, urllib.request, re, sys, time
 
-p = json.load(open('/home/edward/profile.json'))
+p = json.load(open('${PROFILE_PATH}'))
 api_key = p['auth_pairs'][0]['user_api_key']
 headers = {'Api-Key': api_key}
 
-CONFIRM_RE = re.compile(
-    r'\\b(fixed|works? now|working now|confirmed?|thanks?|thankyou|all good|resolved?'
-    r'|seems? (?:to be )?(?:fixed|working|ok|good)|unlimited now|no (?:longer|more)'
-    r'|great[,!.]?\\s*(?:thanks?)?|perfect|sorted|much better|no issues?'
-    r'|fix worked|that worked|worked (?:a treat|fine|now|perfectly)|no problem)\\b',
-    re.IGNORECASE
-)
 
-# Negation guard (sweep 2026-05-31 rule #1): a reporter can say "thanks but it's
-# still broken" / "spoke too soon" / "back again" — CONFIRM_RE matches "thanks"
-# but the bug is NOT fixed. If a post matches STILL_BROKEN_RE, it must NOT be
-# treated as a fix confirmation, even if CONFIRM_RE also matches.
-STILL_BROKEN_RE = re.compile(
-    r'(?:still (?:broken|not working|happening|there|occurring|stuck|the same|an issue|a problem|doing)'
-    r'|spoke too soon|came back|back again|is back|happening again|not fixed|doesn.?t work'
-    r'|did(?:n.?t| not) (?:work|fix)|same (?:problem|issue|thing|error)|no (?:change|difference)'
-    r'|(?:never|hasn.?t|has not|not) worked'
-    r'|worse|reappear|reoccur|again today|once more)',
-    re.IGNORECASE
-)
-
-# Edward's posts indicating he is actively working on a fix
-EDWARD_IN_PROGRESS_RE = re.compile(
-    r'(?:fix|looking|working|will).*(?:on the way|in progress|coming|soon|catch up|next week|look.*into|look.*at this|looking into|working on)'
-    r'|(?:possible fix|fix is on the way|fix on the way|fix coming|on the way)'
-    r'|(?:i can see the (?:problem|bug|issue))'
-    r'|(?:will (?:fix|sort|look at|investigate))',
-    re.IGNORECASE
-)
-
-# Edward's posts indicating he has applied a fix
-EDWARD_FIXED_RE = re.compile(
-    r'(?:should be fixed|please retest|let me know how it is|i.ve fixed|fixed this|fixed now'
-    r'|this should now work|fix applied|should now work|have fixed|has been fixed)',
-    re.IGNORECASE
-)
-
-# Edward's posts indicating this is expected/by-design (not a bug)
-EDWARD_EXPECTED_RE = re.compile(
-    r'(?:this is expected|to be expected|that.s expected|by design|working as (?:intended|designed|expected)'
-    r'|not a bug|expected (?:behavior|behaviour)|this is correct|working correctly)',
-    re.IGNORECASE
-)
-
-def fetch(url, retries=3):
-    delay = 2.0
-    for attempt in range(retries):
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            return json.load(urllib.request.urlopen(req, timeout=20))
-        except urllib.error.HTTPError as e:
-            if e.code == 429 and attempt < retries - 1:
-                time.sleep(float(e.headers.get('Retry-After', delay)))
-                delay *= 2
-                continue
-            if e.code == 404:
-                return None
-            raise
-        except Exception:
-            return None
+${discourseFetchPy(4, 'skip')}
 
 bugs = json.loads('''${bugsJson.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}''')
 all_bugs = json.loads('''${allBugsJson.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}''')
@@ -1107,77 +1457,24 @@ def get_posts_after(topic_id, orig_post):
             new_posts.extend(pd.get('post_stream', {}).get('posts', []))
     return new_posts
 
-results = []
-edward_updates = []
+${BUG_FEEDBACK_CLASSIFY_PY}
 
-# Pass A: reporter confirmations (open/investigating only)
-for bug in bugs:
-    topic_id = bug['topic']
-    orig_post = bug['post']
-    reporter = bug.get('reporter') or ''
-
-    new_posts = get_posts_after(topic_id, orig_post)
-    # Sweep rule #1 (2026-05-31): if ANY non-Edward post in the thread reports the
-    # bug is still broken, do NOT confirm a fix — even if an earlier post said
-    # "thanks, fixed". (9655/4: post 4 "fix worked", post 5 "still omits pending".)
-    any_still_broken = False
-    for post in new_posts:
-        if post.get('username', '') == 'Edward_Hibbert':
-            continue
-        t = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
-        t = re.sub(r'\\s+', ' ', t).strip()
-        if STILL_BROKEN_RE.search(t):
-            any_still_broken = True
-            break
-
-    if not any_still_broken:
-        for post in new_posts:
-            username = post.get('username', '')
-            if username == 'Edward_Hibbert':
-                continue
-            text = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
-            text = re.sub(r'\\s+', ' ', text).strip()
-            if CONFIRM_RE.search(text) and not STILL_BROKEN_RE.search(text):
-                results.append({
-                    'topic': topic_id,
-                    'post': orig_post,
-                    'reporter': reporter,
-                    'confirmedBy': username,
-                    'confirmPostNumber': post.get('post_number'),
-                    'confirmText': text[:200],
-                })
-                break
-
-# Pass B: Edward's posts (open/investigating/deferred)
-for bug in all_bugs:
-    topic_id = bug['topic']
-    orig_post = bug['post']
-
-    new_posts = get_posts_after(topic_id, orig_post)
-    for post in new_posts:
-        if post.get('username') != 'Edward_Hibbert':
-            continue
-        text = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
-        text = re.sub(r'\\s+', ' ', text).strip()
-        post_num = post.get('post_number')
-        if EDWARD_EXPECTED_RE.search(text):
-            edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'off_topic', 'postNumber': post_num, 'text': text[:200]})
-            break
-        elif EDWARD_FIXED_RE.search(text):
-            edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'investigating', 'postNumber': post_num, 'text': text[:200]})
-            break
-        elif EDWARD_IN_PROGRESS_RE.search(text):
-            edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'investigating', 'postNumber': post_num, 'text': text[:200]})
-            break
-
-print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
+results, edward_updates = classify_feedback(bugs, all_bugs, get_posts_after)
+print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates, 'fetchFailures': FETCH_FAILURES}))
 `
 
-      const { stdout } = await exec('python3', ['-c', script])
-      let parsed: { confirmations: Array<any>; edwardUpdates: Array<any> }
+      const stdout = await bugFeedbackDeps.runScan(script)
+      let parsed: { confirmations: Array<any>; edwardUpdates: Array<any>; fetchFailures?: string[] }
       try { parsed = JSON.parse(stdout.trim() || '{}') } catch { parsed = { confirmations: [], edwardUpdates: [] } }
       const confirmations = parsed.confirmations ?? []
       const edwardUpdates = parsed.edwardUpdates ?? []
+      const fetchFailures = parsed.fetchFailures ?? []
+
+      // A rate-limited scan returns an empty confirmations list, which is
+      // indistinguishable from "nobody confirmed anything" unless we say so.
+      if (fetchFailures.length > 0) {
+        out(`check_bug_feedback: PARTIAL SCAN: ${fetchFailures.length} fetch(es) failed, so some bugs were not checked: ${fetchFailures.slice(0, 5).join(', ')}`)
+      }
 
       for (const c of confirmations) {
         db.prepare(
@@ -1217,7 +1514,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         }
       }
 
-      return { checked: allActiveBugs.length, markedFixed: confirmations, markedInvestigating, markedOffTopic }
+      return { checked: allActiveBugs.length, markedFixed: confirmations, markedInvestigating, markedOffTopic, fetchFailures }
     },
   },
 
@@ -1410,9 +1707,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         // it immediately). checkPrDeployed already determined the touched areas
         // from the PR file list, so reuse that rather than re-querying GitHub.
         const affectsApp = deployCheck.touched.frontend || (bug.frontend_only ?? 0) === 1
-        const APP_CAVEAT = ' (but app releases may take up to one week)'
-        const body = 'AI Edward: possible fix applied, please retest and report back'
-          + (affectsApp ? APP_CAVEAT : '')
+        const body = retestReplyBody({ affectsApp, link: prUrl })
         // Quote the reporter's ACTUAL words (fetched verbatim) so the reply quotes
         // what they wrote, not our paraphrased summary. Fall back to the stored
         // excerpt/title only if the live fetch yields nothing; the posting guard
@@ -1532,8 +1827,11 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
 
         const quote = (await fetchReporterQuote(bug.topic, bug.post)) || (bug.excerpt || bug.topic_title || '').trim()
         if (!quote) { markFixed(); skipped.push(`${tag} (no quote text — marked fixed, no reply)`); continue }
-        const body = 'AI Edward: possible fix applied, please retest and report back'
-          + (live.touchesFrontend ? ' (but app releases may take up to one week)' : '')
+        // No PR on this path by definition, so the commit is the technical reference.
+        const body = retestReplyBody({
+          affectsApp: live.touchesFrontend,
+          link: `https://github.com/${PROD_REPO}/commit/${match.sha}`,
+        })
         const username = bug.reporter ?? 'there'
         const raw = formatReplyRaw({ username, post: bug.post, topic: bug.topic, quote, body })
         const postRes = await postDiscourseReply(bug.topic, raw, bug.post)
@@ -1580,28 +1878,13 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
       const cursorsJson = JSON.stringify(trackedCursors)
       const script = `
 import json, urllib.request, re, html, sys, time
-p = json.load(open('/home/edward/profile.json'))
+p = json.load(open('${PROFILE_PATH}'))
 api_key = p['auth_pairs'][0]['user_api_key']
 headers = {'Api-Key': api_key}
 
 tracked_cursors = json.loads('''${cursorsJson.replace(/'/g, "\\'")}''')
 
-def fetch(url, retries=4):
-    """GET a Discourse URL with rate-limit backoff for 429."""
-    delay = 2.0
-    for attempt in range(retries):
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            return json.load(urllib.request.urlopen(req, timeout=20))
-        except urllib.error.HTTPError as e:
-            if e.code == 429 and attempt < retries - 1:
-                retry_after = e.headers.get('Retry-After')
-                sleep_s = float(retry_after) if retry_after else delay
-                sys.stderr.write(f'429 on {url} — backing off {sleep_s}s (attempt {attempt+1}/{retries})\\n')
-                time.sleep(sleep_s)
-                delay *= 2
-                continue
-            raise
+${discourseFetchPy(4, 'raise')}
 
 # 1. Get latest-${recentLimit} to find recently-active topics (may include new untracked ones)
 d = fetch('${DISCOURSE_BASE}/latest.json?order=activity&per_page=${recentLimit}')
@@ -1797,26 +2080,11 @@ print(json.dumps({'posts': posts_out, 'topicsSeen': topics_seen}))
       // ridden out (respecting Retry-After) instead of dropping the pre-check.
       const script = `
 import json, urllib.request, sys, time
-p = json.load(open('/home/edward/profile.json'))
+p = json.load(open('${PROFILE_PATH}'))
 api_key = p['auth_pairs'][0]['user_api_key']
 headers = {'Api-Key': api_key}
 
-def fetch(url, retries=4):
-    """GET a Discourse URL with rate-limit backoff for 429."""
-    delay = 2.0
-    for attempt in range(retries):
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            return json.load(urllib.request.urlopen(req, timeout=20))
-        except urllib.error.HTTPError as e:
-            if e.code == 429 and attempt < retries - 1:
-                retry_after = e.headers.get('Retry-After')
-                sleep_s = float(retry_after) if retry_after else delay
-                sys.stderr.write(f'429 on {url} — backing off {sleep_s}s (attempt {attempt+1}/{retries})\\n')
-                time.sleep(sleep_s)
-                delay *= 2
-                continue
-            raise
+${discourseFetchPy(4, 'raise')}
 
 # Paginate the activity-ordered latest list. A single page (~30) misses slow-but-
 # recurring catch-all threads (e.g. "Testing please") that dropped below the first
@@ -1835,7 +2103,7 @@ for page in range(${latestPages}):
 topics = list(seen.values())
 print(json.dumps(topics))
 `
-      const { stdout, stderr, code } = await sh('python3', ['-c', script])
+      const { stdout, stderr, code } = await discoverTopicsDeps.runScan(script)
       if (code !== 0) return { topics: [], error: `discover_active_topics fetch failed: ${stderr.slice(-200)}` }
 
       let rawTopics: Array<{ id: number; title: string; postsCount: number }> = []
@@ -2324,7 +2592,19 @@ print(urllib.request.urlopen(req).read().decode())
         }
       }
 
-      return { redPRs, pendingPRs, behindPRs, coverageJitterPRs, allGreen: redPRs.length === 0 && pendingPRs.length === 0 }
+      // checkedAt stamps WHEN this picture of CI was taken. Two actions read CI —
+      // this one, and coverage_gate_decide, which calls this handler and nests the
+      // answer under `red` without writing this action's own context key. Routers
+      // that pick a PR to work on must therefore choose the NEWER of the two rather
+      // than a fixed one of them; see freshestCICheck().
+      return {
+        redPRs,
+        pendingPRs,
+        behindPRs,
+        coverageJitterPRs,
+        allGreen: redPRs.length === 0 && pendingPRs.length === 0,
+        checkedAt: new Date().toISOString(),
+      }
     },
   },
 
@@ -2433,7 +2713,7 @@ print(urllib.request.urlopen(req).read().decode())
       const worktreeDir = `/tmp/monitor-fsm-delegate-${process.pid}-${Date.now()}`
       let worktreeCreated = false
       let worktreeError: string | null = null
-      for (const base of ['master', 'HEAD']) {
+      for (const base of worktreeBases(repoCwd)) {
         try {
           execFileSync('git', ['worktree', 'add', '--detach', worktreeDir, base], {
             cwd: repoCwd, stdio: 'pipe',
@@ -2687,6 +2967,7 @@ If you omit the marker, your work is considered failed regardless of what actual
       // See extractJsonArrayMarker: parse from the full stream, not stdoutTail.
       const classifications = extractJsonArrayMarker(combined, 'CLASSIFICATIONS') ?? undefined
       const sentryIssues = extractJsonArrayMarker(combined, 'SENTRY_ISSUES') ?? undefined
+      const answers = extractJsonArrayMarker(combined, 'ANSWERS') ?? undefined
       const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
       // Summarise for the human watcher: what did the delegate actually do?
       let summary: string
@@ -2721,6 +3002,7 @@ If you omit the marker, your work is considered failed regardless of what actual
           stderrTail: redactSecrets(stderr.slice(-2000)),
           classifications,
           sentryIssues,
+          answers,
           prNumber,
           directPushSha,
           commitPushedSha,
@@ -2782,7 +3064,7 @@ If you omit the marker, your work is considered failed regardless of what actual
         const HARD_CAP_MS = Math.max(timeoutSec * 1000, 3_600_000)
         const worktreeDir = `/tmp/monitor-fsm-parallel-${process.pid}-${Date.now()}-${idx}`
         let worktreeCreated = false
-        for (const base of ['master', 'HEAD']) {
+        for (const base of worktreeBases(repoCwd)) {
           try {
             execFileSync('git', ['worktree', 'add', '--detach', worktreeDir, base], {
               cwd: repoCwd, stdio: 'pipe',
@@ -2895,6 +3177,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         // result.sentryIssues instead of scraping stdoutTail.
         const classifications = extractJsonArrayMarker(combined, 'CLASSIFICATIONS') ?? undefined
         const sentryIssues = extractJsonArrayMarker(combined, 'SENTRY_ISSUES') ?? undefined
+        const answers = extractJsonArrayMarker(combined, 'ANSWERS') ?? undefined
         const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
 
         let summary: string
@@ -2948,6 +3231,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           analysisComplete,
           classifications,
           sentryIssues,
+          answers,
           failedReason: failedMatch ? failedMatch[1].trim() : undefined,
           stdoutTail: redactSecrets(result.textStream.slice(-1500)),
           stderrTail: redactSecrets(result.stderr.slice(-500)),
@@ -3033,14 +3317,26 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         '--state', 'open', '--limit', '30', '--json', 'number,title,headRefName',
       ])
       const openPRs = listRes.code === 0 ? JSON.parse(listRes.stdout) as Array<{ number: number; title: string; headRefName: string }> : []
+      // One `gh pr view` per PR, but concurrently: these are independent network round
+      // trips and there can be 30 of them. Serially this state cost 13-21s every visit,
+      // and it is visited many times per iteration (8 times on 2026-08-12), all of it
+      // wall-clock the iteration's step budget pays for. Order is preserved because the
+      // dirty list is built by index from the settled results rather than by push order.
+      const mergeStates = await Promise.all(openPRs.map(pr =>
+        sh('gh', ['pr', 'view', String(pr.number), '--repo', 'Freegle/Iznik', '--json', 'mergeStateStatus'])
+      ))
       const dirtyPRs: Array<{ number: number; title: string; branch: string }> = []
-      for (const pr of openPRs) {
-        const viewRes = await sh('gh', ['pr', 'view', String(pr.number), '--repo', 'Freegle/Iznik', '--json', 'mergeStateStatus'])
-        if (viewRes.code === 0) {
+      openPRs.forEach((pr, i) => {
+        const viewRes = mergeStates[i]
+        if (viewRes.code !== 0) return
+        try {
           const { mergeStateStatus } = JSON.parse(viewRes.stdout)
           if (mergeStateStatus === 'DIRTY') dirtyPRs.push({ number: pr.number, title: pr.title, branch: pr.headRefName })
+        } catch {
+          // A truncated/garbled response is not evidence of a dirty branch; skip it
+          // rather than letting one bad parse abort the whole gate.
         }
-      }
+      })
 
       const pendingCount = Array.isArray(r.pendingPRs) ? r.pendingPRs.length : 0
       const coverageJitterPRs = Array.isArray(r.coverageJitterPRs) ? r.coverageJitterPRs : []
@@ -3141,7 +3437,9 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const ctx = context as any
       const master = ctx?._action_check_master_ci ?? {}
       const production = ctx?._action_check_production_ci ?? {}
-      const prCheck = ctx?._action_check_my_open_pr_ci ?? {}
+      // Whichever CI reading is newer — see freshestCICheck. Reading the fixed key
+      // here is what let a green PR stay the focus for five laps.
+      const prCheck = freshestCICheck(ctx)
       const masterFailing = master.failing === true
       const productionFailing = production.failing === true
       const masterFixAttempted = ctx?.masterFixAttempted === true
@@ -3254,15 +3552,28 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         }
       }
 
-      // onlyFixPR: when there IS a focus PR to fix, the iteration should ONLY
-      // run the PR fix agent — no Discourse triage, no bug dispatch, no Sentry.
-      // This prevents newly-created bug PRs from flooding the CI queue and
-      // wasting tokens analysing work we couldn't act on anyway.
-      const onlyFixPR = focusPR != null
+      // onlyFixPR used to mean "run the PR fix agent and NOTHING else — no Discourse
+      // triage, no Sentry". It is now narrower: at most one PR is fixed per iteration
+      // (section A of the dispatch prompt), but the analysis-only work runs ALONGSIDE it.
+      //
+      // The old gate cost whole iterations. A red PR exists on most iterations, so the
+      // fan-out repeatedly launched exactly one agent — five of the ten dispatches on
+      // 2026-08-12 — and the machine is a serial spine: one step at a time, each paying
+      // its full latency. Triage therefore waited for a 15-27 minute PR fix instead of
+      // running next to it, for no gain, because the stated reasons do not apply to it:
+      // triage and Sentry are analysis-only ("no code changes" in both prompts), so they
+      // create no PRs and put nothing on the single CI runner. The only real cost is
+      // tokens, and paying them concurrently is what buys the wall-clock back.
+      //
+      // It also starved triage outright — the failure this file's sibling regression
+      // suite was written for (2026-08-06: topic 10010 never read for a whole iteration).
+      // Gating is now limited to drain mode, decided above, where CI capacity is the
+      // genuine constraint.
+      const onlyFixPR = false
 
       return {
         _transition: 'PARALLEL_ANALYZE_AND_FIX',
-        reason: `master green, CI queue empty — focus PR: ${focusPR ? `#${focusPR.number}` : 'none'} (${pickableRedPRs.length} red, ${exhaustedPRs.size} exhausted) + ${topicsWithNew} active topics (${phase} phase)${onlyFixPR ? ' [onlyFixPR: triage skipped]' : ''}`,
+        reason: `master green, CI queue empty — focus PR: ${focusPR ? `#${focusPR.number}` : 'none'} (${pickableRedPRs.length} red, ${exhaustedPRs.size} exhausted) + ${topicsWithNew} active topics dispatched alongside it (${phase} phase)`,
         focusPRNumber: focusPR?.number ?? null,
         onlyFixPR,
         exhaustedPRNumbers: [...exhaustedPRs],
@@ -3273,8 +3584,180 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
   },
 
   {
+    name: 'list_unanswered_questions',
+    description: "Moderators' questions on Discourse that still have no reply, so they can be answered this iteration. A question is one that TRIAGE classified as type=question (state 'question' in discourse_bug) and that has no reply waiting for approval and none already sent. A reply the human turned down puts the question back in the list, with their reason in previousRejection so the next attempt can address it. Read-only. Returns {questions: [{topic, post, topicTitle, reporter, excerpt, featureArea, previousRejection}], count}.",
+    paramsSchema: {
+      type: 'object',
+      properties: { limit: { type: 'number', description: 'How many to return (1-5, default 3)' } },
+    },
+    handler: async (params) => {
+      const db = getDb()
+      const raw = Number((params as { limit?: unknown })?.limit ?? 3)
+      const limit = Number.isFinite(raw) ? Math.max(1, Math.min(5, Math.trunc(raw))) : 3
+      const questions = listUnansweredQuestions(db, limit)
+      if (questions.length > 0) {
+        out(`list_unanswered_questions: ${questions.length} unanswered - ${questions.map(q => `${q.topic}/${q.post}`).join(', ')}`)
+      }
+      return { questions, count: questions.length }
+    },
+  },
+
+  {
+    name: 'persist_question_answers',
+    description: "Turn the answers the question delegates wrote into replies waiting for approval. Reads context.questionAnswers: [{topic, post, answer, confidence: high|medium|low, needsHuman?, reason?, link?}]. Each answer is queued as a discourse_draft that a human approves and sends from the dashboard - NOTHING is posted to Discourse here. An answer the delegate is not confident about, or that asks for a human, defers the question instead. An answer that reads like documentation rather than plain English is refused and the question is left for another attempt; the second such attempt defers it to a human. Returns {queued, deferred, rejected, skipped}.",
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const ctx = context as { questionAnswers?: unknown }
+      const answers: Array<Record<string, unknown>> = Array.isArray(ctx?.questionAnswers)
+        ? (ctx.questionAnswers as Array<Record<string, unknown>>)
+        : []
+      const db = getDb()
+      let queued = 0, deferred = 0, rejected = 0, skipped = 0
+
+      const deferToHuman = (topic: number, post: number, why: string) => {
+        upsertDiscourseBug(db, { topic, post, state: 'deferred', reason: `needs a human answer: ${why}` })
+        out(`persist_question_answers: ${topic}/${post} left for a human - ${why}`)
+      }
+
+      for (const a of answers) {
+        const topic = Number(a?.topic)
+        const post = Number(a?.post ?? (a as { post_number?: unknown })?.post_number)
+        if (!topic || !post) { skipped++; continue }
+
+        // Only answer what is actually an open question. Anything else - a bug, a
+        // question already answered, a post we have never seen - is not ours to reply to.
+        const bug = getDiscourseBug(db, topic, post)
+        if (!bug || bug.state !== 'question') {
+          skipped++
+          continue
+        }
+
+        const answer = typeof a.answer === 'string' ? a.answer.trim() : ''
+        const confidence = String(a.confidence ?? '').toLowerCase()
+        const why = typeof a.reason === 'string' && a.reason.trim() ? a.reason.trim() : ''
+        if (a.needsHuman === true || !answer || confidence === 'low') {
+          deferToHuman(topic, post, why || (answer ? 'not confident enough in the answer' : 'no answer was produced'))
+          deferred++
+          continue
+        }
+
+        // The hook that scores anything Claude posts to Discourse cannot see a draft
+        // the monitor writes, so the same check runs here instead.
+        const problems = await proseProblems(answer)
+        if (problems.length > 0) {
+          const attemptsKey = `question_answer_rejects_${topic}_${post}`
+          const attempts = Number(kvGet(db, attemptsKey) ?? '0') + 1
+          kvSet(db, attemptsKey, String(attempts))
+          outWarn(`persist_question_answers: ${topic}/${post} answer is too hard to read (attempt ${attempts}): ${problems[0]}`)
+          if (attempts >= 2) {
+            deferToHuman(topic, post, 'two answers in a row were too hard to read')
+            deferred++
+          } else {
+            rejected++
+          }
+          continue
+        }
+
+        // Every reply quotes what it answers, so a reader of a long thread can see
+        // which question it belongs to. Discourse is the better source for the quote;
+        // the excerpt kept at triage is the fallback when it cannot be reached.
+        let quote = ''
+        try {
+          quote = (await questionAnswerDeps.fetchReporterQuote(topic, post)) ?? ''
+        } catch { quote = '' }
+        if (!quote.trim()) quote = (bug.excerpt ?? '').trim()
+        if (!quote) {
+          outWarn(`persist_question_answers: ${topic}/${post} has nothing to quote - not queueing a reply`)
+          skipped++
+          continue
+        }
+
+        const link = typeof a.link === 'string' && a.link.trim() ? a.link.trim() : ''
+        const body = link ? `${answer}\n\nTechnical details: ${link}` : answer
+        queueDiscourseDraft(db, {
+          topic, post,
+          username: bug.reporter ?? 'there',
+          quote,
+          body,
+        })
+        out(`persist_question_answers: queued an answer to ${topic}/${post} for approval`)
+        queued++
+      }
+
+      if (answers.length > 0) {
+        out(`persist_question_answers: ${queued} queued, ${deferred} left for a human, ${rejected} sent back for a rewrite, ${skipped} ignored`)
+      }
+      return { queued, deferred, rejected, skipped }
+    },
+  },
+
+  {
+    name: 'ask_reporter_for_detail',
+    description: "Ask the person who reported a bug for something only they can tell you, when the report cannot be worked on without it: which member, which group, which post, what they saw, when it happened, what they were using. The question is queued for a human to approve and send, like every other reply; nothing is posted here. The bug is held as 'needs-detail' so it leaves the fix queue until they answer, and it returns to the queue on its own when a later post in the thread names something. Use this instead of deferring a report in silence. Params: {topic, post, questions: [1-3 short plain-English things to ask for, e.g. 'which group this was on']}. Returns {queued, reason?, problems?}.",
+    paramsSchema: {
+      type: 'object',
+      properties: {
+        topic: { type: 'number' },
+        post: { type: 'number' },
+        questions: {
+          type: 'array',
+          items: { type: 'string' },
+          description: "What to ask for, one short phrase each, at most three. Written to follow 'Please can you tell me ...', e.g. 'which member this was, with their email address'.",
+        },
+      },
+      required: ['topic', 'post', 'questions'],
+    },
+    handler: async (params) => {
+      const p = params as { topic?: unknown; post?: unknown; questions?: unknown }
+      const topic = Number(p.topic)
+      const post = Number(p.post)
+      const questions = (Array.isArray(p.questions) ? p.questions : [])
+        .map(q => String(q).trim())
+        .filter(Boolean)
+        .slice(0, 3)
+      if (!topic || !post) return { queued: false, reason: 'topic and post are both needed' }
+      if (questions.length === 0) return { queued: false, reason: 'no questions given' }
+
+      const db = getDb()
+      const bug = getDiscourseBug(db, topic, post)
+      if (!bug) return { queued: false, reason: `no bug recorded at ${topic}/${post}` }
+      if (['fixed', 'confirmed', 'off-topic', 'duplicate'].includes(bug.state)) {
+        return { queued: false, reason: `bug ${topic}/${post} is ${bug.state}` }
+      }
+
+      const body = detailRequestBody(questions)
+      // The questions are written by a model, so they go through the same readability
+      // check as everything else the monitor puts in front of a volunteer.
+      const problems = await proseProblems(body)
+      if (problems.length > 0) {
+        outWarn(`ask_reporter_for_detail: ${topic}/${post} question is too hard to read: ${problems[0]}`)
+        return { queued: false, reason: 'the question is too hard to read - ask again in plainer words', problems }
+      }
+
+      let quote = ''
+      try {
+        quote = (await questionAnswerDeps.fetchReporterQuote(topic, post)) ?? ''
+      } catch { quote = '' }
+      if (!quote.trim()) quote = (bug.excerpt ?? '').trim()
+      if (!quote) return { queued: false, reason: 'nothing to quote, so the reply would not show what it asks about' }
+
+      const asked = await askReporterOnDiscourse(db, {
+        topic, post, username: bug.reporter ?? 'there', quote, body,
+      })
+      if (!asked) return { queued: false, reason: 'could not post the question to Discourse' }
+      upsertDiscourseBug(db, {
+        topic, post,
+        state: 'needs-detail',
+        reason: `asked the reporter for: ${questions.join('; ')}`,
+      })
+      out(`ask_reporter_for_detail: asked ${topic}/${post} and held it until there is an answer`)
+      return { queued: true }
+    },
+  },
+
+  {
     name: 'persist_classifications',
-    description: 'Persist TRIAGE classifications to the discourse_bug table so the status post reflects all identified bugs, not just ones with PRs. Upserts each bug/retest classification as "open" (or "deferred" if type is deferred, "feature-request" if type is feature_request). Already-fixed bugs are not downgraded. Returns {upserted: number, skipped: number}.',
+    description: 'Persist TRIAGE classifications to the discourse_bug table so the status post reflects all identified bugs, not just ones with PRs. A report that names nothing anyone could look up - "a member", "a group", "her post" - is held as "needs-detail" with a question to the reporter queued for approval, and released to "open" when a later post in the thread supplies an id, an email, a link or a screenshot. Upserts each other bug/retest classification as "open" (or "deferred" if type is deferred, "feature-request" if type is feature_request). Already-fixed bugs are not downgraded. Returns {upserted: number, skipped: number}.',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const ctx = context as any
@@ -3306,10 +3789,37 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           continue
         }
 
-        const state = type === 'deferred' ? 'deferred' : type === 'question' ? 'deferred' : 'open'
+        // A question is kept as 'question', not filed under 'deferred': the answering
+        // pass looks for exactly that state. Before this it was indistinguishable from
+        // everything else parked for later, so no question was ever answered.
+        const state = type === 'deferred' ? 'deferred' : type === 'question' ? 'question' : 'open'
         // Don't downgrade a bug already in fix-queued or fixed state
         const existing = db.prepare('SELECT state FROM discourse_bug WHERE topic = ? AND post = ?').get(c.topic, c.post) as { state: string } | undefined
         if (existing && ['fix-queued', 'fixed', 'confirmed', 'investigating'].includes(existing.state)) { skipped++; continue }
+
+        // A report held for want of detail is released as soon as a later post in the
+        // same thread names something that can be looked up. Without this it would sit
+        // there for ever, because the reply the reporter sent is a new post, not an
+        // edit of the one that was short on detail.
+        if (type === 'bug' || type === 'retest') {
+          const parked = db.prepare(
+            `SELECT topic, post, reporter FROM discourse_bug WHERE topic = ? AND state = 'needs-detail' ORDER BY first_seen_at LIMIT 1`
+          ).get(Number(c.topic)) as { topic: number; post: number; reporter: string | null } | undefined
+          // Only the person we asked. Somebody else posting in the same thread with a
+          // screenshot is more likely reporting their own problem, and treating that as the
+          // answer would swallow their report as well as releasing ours on the wrong evidence.
+          const sameReporter =
+            !!parked?.reporter && !!c.user &&
+            String(parked.reporter).toLowerCase() === String(c.user).toLowerCase()
+          if (parked && sameReporter && specificsOf(c).anchors.length > 0) {
+            db.prepare(
+              `UPDATE discourse_bug SET state = 'open', reason = 'reporter supplied the missing detail', last_seen_at = datetime('now') WHERE topic = ? AND post = ?`
+            ).run(parked.topic, parked.post)
+            out(`persist_classifications: ${c.topic}/${post} supplies the detail asked for - reopening ${parked.topic}/${parked.post}`)
+            skipped++
+            continue
+          }
+        }
 
         // Retest: a follow-up confirmation of an existing bug in the same topic.
         // Update the existing bug's last_seen_at; do NOT create a second entry for the same problem.
@@ -3452,6 +3962,35 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
             db.prepare(`UPDATE discourse_bug SET fixed_at = datetime('now'), deployed_at = datetime('now') WHERE topic = ? AND post = ?`).run(Number(c.topic), Number(c.post))
             upserted++
             continue
+          }
+        }
+
+        // Nothing to look up: hold the report and ask for what is missing, rather than
+        // sending it to a diagnosis that has to guess which member, group or post it
+        // means. Wrong guesses are where plausible-but-wrong fixes come from.
+        if ((type === 'bug' || type === 'retest') && finalState === 'open') {
+          const specifics = specificsOf(c)
+          if (!hasReporterWords(c)) {
+            finalState = 'needs-detail'
+            finalReason = 'triage returned no verbatim post text, so the report could not be judged for specifics'
+            out(`persist_classifications: ${c.topic}/${c.post} has no verbatim text to judge - held`)
+          } else if (specifics.isVague) {
+            finalState = 'needs-detail'
+            finalReason = `asked the reporter for: ${specifics.missing.join('; ')}`
+            const quote = String(c.originalPostText ?? c.summary ?? '').trim().slice(0, 300)
+            if (quote) {
+              const asked = await askReporterOnDiscourse(db, {
+                topic: Number(c.topic), post: Number(c.post),
+                username: c.user ?? 'there',
+                quote,
+                body: detailRequestBody(specifics.missing),
+              })
+              out(asked
+                ? `persist_classifications: ${c.topic}/${c.post} names nothing that can be looked up - asked the reporter`
+                : `persist_classifications: ${c.topic}/${c.post} names nothing that can be looked up - could not ask, will retry`)
+            } else {
+              out(`persist_classifications: ${c.topic}/${c.post} names nothing that can be looked up, and has nothing to quote - held without asking`)
+            }
           }
         }
 
@@ -3826,6 +4365,34 @@ ${diff.length > 20000 ? '\n(diff truncated — only the first 20 000 chars shown
         } // end reviewOnce
 
         let r = await reviewOnce()
+
+        // A defect the PR leaves live in a file it has already edited is a partial fix, not
+        // a note for later. Promoting it here rather than in the rubric means the review
+        // cannot pass it by calling it a warning, and the existing expansion path then
+        // sends the fix back to be finished on the same branch.
+        if (r && r.issues.length > 0) {
+          const { stdout: filesOut } = await exec(
+            'gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'files', '-q', '.files[].path'],
+            { timeout: 20 * 1000 },
+          ).catch(() => ({ stdout: '' }))
+          const changedFiles = (filesOut || '').split('\n').map((f) => f.trim()).filter(Boolean)
+          const { promoted } = promoteUnfixedCallSites(r.issues, changedFiles)
+          if (promoted.length > 0) {
+            for (const p of promoted) {
+              out(`adversarial_review_pr: PR #${prNumber} leaves the same defect in a file it edits - treating as a blocker: ${(p.description ?? '').slice(0, 120)}`)
+            }
+            const promotedSet = new Set(promoted.map((p) => `${p.category}|${p.description}`))
+            r = {
+              passed: false,
+              blockers: [...r.blockers, ...promoted],
+              issues: r.issues.map((i) =>
+                promotedSet.has(`${i.category}|${i.description}`) ? { ...i, severity: 'error' } : i,
+              ),
+              summary: r.summary,
+            }
+          }
+        }
+
         if (!r) {
           return {
             passed: false,

@@ -484,6 +484,58 @@ func TestGetDashboardHappiness(t *testing.T) {
 	assert.Greater(t, len(happy), 0, "Should have at least one happiness entry")
 }
 
+// A rating is one member's view of how their post went, so it counts ONCE however many
+// groups the post is on. The query this replaced counted join rows against
+// messages_groups, so a post that had rippled outwards had its rating counted again for
+// every group it reached - measured at more than four times the real total on
+// production.
+func TestGetDashboardHappinessCountsOneVotePerRating(t *testing.T) {
+	prefix := uniquePrefix("DashHappyOneVote")
+	db := database.DBConn
+	groupID, userID, token := createModDashboardFixtures(t, prefix)
+
+	var msgID uint64
+	db.Raw("SELECT msgid FROM messages_groups WHERE groupid = ? LIMIT 1", groupID).Scan(&msgID)
+
+	// The same post also sits on a second group the moderator runs, and has rippled
+	// into a third. Neither may make the one rating count again.
+	groupB := CreateTestGroup(t, prefix+"B")
+	CreateTestMembership(t, userID, groupB, "Moderator")
+	groupC := CreateTestGroup(t, prefix+"C")
+	CreateTestMembership(t, userID, groupC, "Moderator")
+
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 0)", msgID, groupB)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, groupC)
+
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, happiness, timestamp) VALUES (?, 'Taken', 'Happy', NOW())", msgID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid IN (?, ?)", msgID, groupB, groupC)
+	})
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=Happiness&allgroups=true&jwt=%s", token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	comps := result["components"].(map[string]interface{})
+	rows, ok := comps["Happiness"].([]interface{})
+	assert.True(t, ok, "Happiness should be an array")
+
+	counts := map[string]float64{}
+	for _, r := range rows {
+		row := r.(map[string]interface{})
+		counts[row["happiness"].(string)] = row["count"].(float64)
+	}
+
+	assert.Equal(t, float64(1), counts["Happy"],
+		"one rating on a post spanning three groups is still one vote")
+}
+
 func TestGetDashboardPopularPostsWithGroup(t *testing.T) {
 	prefix := uniquePrefix("DashPP")
 	groupID, _, token := createModDashboardFixtures(t, prefix)

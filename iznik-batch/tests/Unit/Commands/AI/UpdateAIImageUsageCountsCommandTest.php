@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Commands\AI;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -25,6 +26,50 @@ class UpdateAIImageUsageCountsCommandTest extends TestCase
         DB::table('ai_images')->where('name', 'LIKE', 'test-usage-%')->delete();
 
         parent::tearDown();
+    }
+
+    public function test_the_cursor_is_never_moved_backwards(): void
+    {
+        // The counts are added to, not set, so a cursor that slipped backwards would make
+        // the next pass count the same attachments again and the error would stick until
+        // the next full recompute. Two things can push a smaller number at it: the nightly
+        // full run finishing after an hourly one has already moved the cursor on, and
+        // MAX(id) coming back from a cluster node that is behind.
+        $key = 'ai.usage_counts_cursor';
+        $ahead = (int) DB::table('messages_attachments')->max('id') + 100000;
+
+        DB::table('config')->upsert(
+            [['key' => $key, 'value' => (string) $ahead]],
+            ['key'],
+            ['value'],
+        );
+
+        $this->artisan('ai:usage-counts:update')->assertSuccessful();
+
+        $this->assertEquals(
+            $ahead,
+            (int) DB::table('config')->where('key', $key)->value('value'),
+            'the cursor was moved backwards, so the next run would double-count'
+        );
+
+        DB::table('config')->where('key', $key)->delete();
+    }
+
+    public function test_a_second_run_exits_while_another_holds_the_lock(): void
+    {
+        // The hourly and nightly jobs are separate schedule entries, so Laravel's own
+        // overlap guard keys them separately and does not hold one off against the other.
+        // They take a shared lock instead.
+        $lock = Cache::lock('ai:usage-counts:run', 60);
+        $this->assertTrue($lock->get(), 'could not take the lock to set the test up');
+
+        try {
+            $this->artisan('ai:usage-counts:update')
+                ->expectsOutputToContain('Another ai:usage-counts:update run is in progress')
+                ->assertSuccessful();
+        } finally {
+            $lock->release();
+        }
     }
 
     public function test_updates_usage_counts_in_batches(): void

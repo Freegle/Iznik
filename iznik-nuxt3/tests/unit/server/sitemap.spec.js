@@ -17,7 +17,7 @@ describe('sitemap', () => {
       const urls = staticLinks().map((l) => l.url)
       expect(urls).toContain('/')
       expect(urls).toContain('/give')
-      expect(urls).toContain('/find')
+      expect(urls).toContain('/ask')
       expect(urls).toContain('/explore')
     })
 

@@ -28,8 +28,8 @@ import {
 import { useMe } from '~/composables/useMe'
 import NoticeMessage from '~/components/NoticeMessage'
 
-const ExploreGroup = defineAsyncComponent(() =>
-  import('~/components/ExploreGroup.vue')
+const ExploreGroup = defineAsyncComponent(
+  () => import('~/components/ExploreGroup.vue')
 )
 
 definePageMeta({

@@ -15,9 +15,18 @@ use Illuminate\Support\Facades\Log;
  * job tries to send to it. Transient failures (connect-refused, timed-out
  * to mail-host:25 at container startup) should NOT be marked as permanent.
  *
- * Extracted from EmailSpoolerService so direct-send paths (mail:mod-notifs,
- * mail:engage, mail:donations:*, etc.) can use the same classification
- * without duplicating the regex list.
+ * Extracted from EmailSpoolerService so any direct-send path can use the
+ * same classification without duplicating the regex list. (The paths this
+ * once named - mail:mod-notifs, mail:engage, mail:donations:* - all went
+ * through EmailSpoolerService::spool() in commit 3c8b5c6de and no longer
+ * bypass the spooler.)
+ *
+ * Note what this class CANNOT see. These patterns match failures our own SMTP
+ * client is handed when it passes a message to the relay. A provider
+ * deferring the relay's onward delivery happens a hop further out, long after
+ * we have been told 250 and moved on: SmtpFailureClassifier will never see a
+ * Yahoo 421. That blind spot is what App\Services\Mail\Deferrals exists
+ * for - it reads the relay's queue directly.
  */
 class SmtpFailureClassifier
 {

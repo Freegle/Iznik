@@ -73,21 +73,15 @@ describe('per-chat Hide/Unhide button visibility (ChatPane + ChatMobileNavbar)',
      * After the fix (v-if="chat.chattype !== 'User2Mod' || chat.status === 'Closed'")
      * this returns false → PASSES.
      */
-    it(
-      'does NOT show the Hide button for an active User2Mod chat (status Online)',
-      () => {
-        const chat = { chattype: 'User2Mod', status: 'Online' }
-        expect(shouldShowHideButton(chat)).toBe(false)
-      }
-    )
+    it('does NOT show the Hide button for an active User2Mod chat (status Online)', () => {
+      const chat = { chattype: 'User2Mod', status: 'Online' }
+      expect(shouldShowHideButton(chat)).toBe(false)
+    })
 
-    it(
-      'does NOT show the Hide button for a User2Mod chat with status Active',
-      () => {
-        const chat = { chattype: 'User2Mod', status: 'Active' }
-        expect(shouldShowHideButton(chat)).toBe(false)
-      }
-    )
+    it('does NOT show the Hide button for a User2Mod chat with status Active', () => {
+      const chat = { chattype: 'User2Mod', status: 'Active' }
+      expect(shouldShowHideButton(chat)).toBe(false)
+    })
 
     /**
      * STEP 2 — INVERTED assertion for the recovery path.
@@ -95,25 +89,19 @@ describe('per-chat Hide/Unhide button visibility (ChatPane + ChatMobileNavbar)',
      * On BUGGY code that always hides the button for User2Mod, this FAILS.
      * After the fix (show Unhide when status === 'Closed') → PASSES.
      */
-    it(
-      'shows Unhide button for a User2Mod chat that is already hidden (status Closed)',
-      () => {
-        const chat = { chattype: 'User2Mod', status: 'Closed' }
-        expect(shouldShowHideButton(chat)).toBe(true)
-        expect(hideButtonLabel(chat)).toBe('Unhide')
-      }
-    )
+    it('shows Unhide button for a User2Mod chat that is already hidden (status Closed)', () => {
+      const chat = { chattype: 'User2Mod', status: 'Closed' }
+      expect(shouldShowHideButton(chat)).toBe(true)
+      expect(hideButtonLabel(chat)).toBe('Unhide')
+    })
 
-    it(
-      'never shows Hide (only Unhide) for User2Mod: when status is Closed it is Unhide',
-      () => {
-        const chat = { chattype: 'User2Mod', status: 'Closed' }
-        // Button appears, but only as Unhide — never as Hide
-        expect(shouldShowHideButton(chat)).toBe(true)
-        expect(hideButtonLabel(chat)).toBe('Unhide')
-        expect(hideButtonLabel(chat)).not.toBe('Hide')
-      }
-    )
+    it('never shows Hide (only Unhide) for User2Mod: when status is Closed it is Unhide', () => {
+      const chat = { chattype: 'User2Mod', status: 'Closed' }
+      // Button appears, but only as Unhide — never as Hide
+      expect(shouldShowHideButton(chat)).toBe(true)
+      expect(hideButtonLabel(chat)).toBe('Unhide')
+      expect(hideButtonLabel(chat)).not.toBe('Hide')
+    })
   })
 
   describe('deleted-member User2User chats', () => {
@@ -122,22 +110,16 @@ describe('per-chat Hide/Unhide button visibility (ChatPane + ChatMobileNavbar)',
      * buttons (including Hide/Unhide) MUST be shown. This is already true
      * because the condition only excludes User2Mod chats, not deleted users.
      */
-    it(
-      'shows Hide button for a User2User chat with a deleted member (status Online)',
-      () => {
-        const chat = { chattype: 'User2User', status: 'Online', otheruid: 42 }
-        // deleted user info is on otheruser, not chat — the v-if only checks chattype
-        expect(shouldShowHideButton(chat)).toBe(true)
-      }
-    )
+    it('shows Hide button for a User2User chat with a deleted member (status Online)', () => {
+      const chat = { chattype: 'User2User', status: 'Online', otheruid: 42 }
+      // deleted user info is on otheruser, not chat — the v-if only checks chattype
+      expect(shouldShowHideButton(chat)).toBe(true)
+    })
 
-    it(
-      'shows Unhide button for a hidden User2User chat with a deleted member',
-      () => {
-        const chat = { chattype: 'User2User', status: 'Closed', otheruid: 42 }
-        expect(shouldShowHideButton(chat)).toBe(true)
-        expect(hideButtonLabel(chat)).toBe('Unhide')
-      }
-    )
+    it('shows Unhide button for a hidden User2User chat with a deleted member', () => {
+      const chat = { chattype: 'User2User', status: 'Closed', otheruid: 42 }
+      expect(shouldShowHideButton(chat)).toBe(true)
+      expect(hideButtonLabel(chat)).toBe('Unhide')
+    })
   })
 })

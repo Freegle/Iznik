@@ -52,7 +52,7 @@ class ChatPreheaderTest extends TestCase
         $html = view('emails.mjml.chat.review-pending', [
             'groupName'   => 'Freegle Manchester',
             'count'       => 3,
-            'reviewUrl'   => 'https://modtools.org/modtools/chats/review',
+            'reviewUrl'   => 'https://modtools.org/chats/review',
             'mentorsAddr' => 'mentors@ilovefreegle.org',
             'email'       => 'mods@example.com',
         ])->render();
@@ -71,7 +71,7 @@ class ChatPreheaderTest extends TestCase
         $html = view('emails.mjml.chat.review-pending', [
             'groupName'   => 'Freegle Bristol',
             'count'       => 1,
-            'reviewUrl'   => 'https://modtools.org/modtools/chats/review',
+            'reviewUrl'   => 'https://modtools.org/chats/review',
             'mentorsAddr' => 'mentors@ilovefreegle.org',
             'email'       => 'mods@example.com',
         ])->render();

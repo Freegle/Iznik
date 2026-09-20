@@ -71,8 +71,8 @@ import { buildHead } from '~/composables/useBuildHead'
 import { useNoticeboardStore } from '~/stores/noticeboard'
 import { MAX_MAP_ZOOM } from '~/constants'
 
-const PosterModal = defineAsyncComponent(() =>
-  import('~/components/PosterModal')
+const PosterModal = defineAsyncComponent(
+  () => import('~/components/PosterModal')
 )
 
 const runtimeConfig = useRuntimeConfig()
@@ -93,7 +93,7 @@ const maxZoom = MAX_MAP_ZOOM
 const mapWidth = computed(() => {
   let width = 0
 
-  if (process.client) {
+  if (import.meta.client) {
     width = Math.floor(window.innerHeight / 2)
     width = width < 200 ? 200 : width
   }

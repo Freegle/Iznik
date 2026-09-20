@@ -74,8 +74,8 @@ import { buildHead } from '~/composables/useBuildHead'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 
-const ExternalLink = defineAsyncComponent(() =>
-  import('~/components/ExternalLink')
+const ExternalLink = defineAsyncComponent(
+  () => import('~/components/ExternalLink')
 )
 
 const runtimeConfig = useRuntimeConfig()

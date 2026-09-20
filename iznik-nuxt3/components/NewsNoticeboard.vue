@@ -26,18 +26,6 @@
         class="clickme replyphoto mt-2 mb-2"
         @click="moreInfo"
       />
-      <NuxtPicture
-        v-else-if="info.photofull?.externaluid"
-        format="webp"
-        fit="cover"
-        provider="uploadcare"
-        :src="info.photofull.externaluid"
-        :modifiers="JSON.parse(info.photofull.externalmods)"
-        alt="Noticeboard Photo"
-        width="100"
-        class="clickme replyphoto mt-2 mb-2"
-        @click="moreInfo"
-      />
       <b-img
         v-else-if="info.photo"
         rounded
@@ -91,8 +79,8 @@ import OurUploadedImage from '~/components/OurUploadedImage'
 import { attribution, osmtile } from '~/composables/useMap'
 import { MAX_MAP_ZOOM } from '~/constants'
 
-const NewsShareModal = defineAsyncComponent(() =>
-  import('~/components/NewsShareModal')
+const NewsShareModal = defineAsyncComponent(
+  () => import('~/components/NewsShareModal')
 )
 
 const props = defineProps({
@@ -112,7 +100,7 @@ const showNewsShareModal = ref(false)
 const map = ref(null)
 
 // Leaflet instance
-if (process.client) {
+if (import.meta.client) {
   await import('leaflet/dist/leaflet-src.esm')
 }
 

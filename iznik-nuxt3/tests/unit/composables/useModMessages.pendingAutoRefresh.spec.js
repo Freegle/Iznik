@@ -71,9 +71,8 @@ describe('useModMessages — pending list auto-refresh', () => {
   })
 
   it('calls getMessages when pending count increases with no modal open', async () => {
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { workType, collection } = setupModMessages(true)
     collection.value = 'Pending'
     workType.value = ['pending', 'pendingother']
@@ -99,9 +98,8 @@ describe('useModMessages — pending list auto-refresh', () => {
   // appears without a manual reload (reconciles Discourse #9737 with draft
   // preservation).
   it('defers the refresh while a modal is open and applies it on close', async () => {
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { workType, collection } = setupModMessages(true)
     collection.value = 'Pending'
     workType.value = ['pending', 'pendingother']
@@ -138,9 +136,8 @@ describe('useModMessages — pending list auto-refresh', () => {
   // compares equal. The second moderator never saw the "Held" banner and
   // moderated the post anyway (Discourse #9946).
   it('defers a same-total hold change while a modal is open and applies it on close', async () => {
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { workType, collection } = setupModMessages(true)
     collection.value = 'Pending'
     workType.value = ['pending', 'pendingother']
@@ -172,9 +169,8 @@ describe('useModMessages — pending list auto-refresh', () => {
   })
 
   it('does not call getMessages when pending count is unchanged', async () => {
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { workType, collection } = setupModMessages(true)
     collection.value = 'Pending'
     workType.value = ['pending', 'pendingother']

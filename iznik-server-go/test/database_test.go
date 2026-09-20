@@ -28,6 +28,30 @@ func TestInitDatabase_Fail(t *testing.T) {
 	database.InitDatabase()
 }
 
+func TestInitDatabase_FailLeavesExistingConnection(t *testing.T) {
+	user := os.Getenv("MYSQL_USER")
+	savedConn := database.DBConn
+	savedPool := database.Pool
+
+	defer func() {
+		os.Setenv("MYSQL_USER", user)
+		database.DBConn = savedConn
+		database.Pool = savedPool
+	}()
+
+	os.Setenv("MYSQL_USER", "nonexistent_user_that_does_not_exist")
+	func() {
+		defer func() { recover() }()
+		database.InitDatabase()
+	}()
+
+	// InitDatabase publishes DBConn/Pool only after the new handle is fully
+	// built, so a failed re-init (the pingDB.go reconnect path) must leave
+	// the handle that concurrent requests are already using untouched.
+	require.Same(t, savedConn, database.DBConn)
+	require.Same(t, savedPool, database.Pool)
+}
+
 // --- IsDeadlockOrLockTimeout ---
 
 func TestIsDeadlockOrLockTimeout_Deadlock(t *testing.T) {

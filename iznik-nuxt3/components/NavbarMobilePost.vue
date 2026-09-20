@@ -55,7 +55,8 @@
   border: 3px solid white;
   box-shadow: var(--shadow-lg);
   box-sizing: border-box;
-  transition: transform var(--transition-normal),
+  transition:
+    transform var(--transition-normal),
     box-shadow var(--transition-normal);
   animation: fab-entrance 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.3s both;
 

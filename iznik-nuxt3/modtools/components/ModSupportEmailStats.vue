@@ -248,10 +248,10 @@
         <!-- Show note when filtering by a type that doesn't use AMP -->
         <div v-if="!isAmpCapableType" class="alert alert-info">
           AMP comparison is not available for "{{ emailTypeLabel }}" emails
-          because they are not sent using AMP. Only Chat Notification and
-          Digest (Immediate / Daily) emails currently use AMP. Select "All
-          Types", "Chat Notification", "Digest (Immediate)", or "Digest
-          (Daily)" to see AMP statistics.
+          because they are not sent using AMP. Only Chat Notification and Digest
+          (Immediate / Daily) emails currently use AMP. Select "All Types",
+          "Chat Notification", "Digest (Immediate)", or "Digest (Daily)" to see
+          AMP statistics.
         </div>
 
         <!-- Show note when AMP type selected but no data in period -->

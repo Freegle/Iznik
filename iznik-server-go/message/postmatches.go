@@ -6,6 +6,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
@@ -155,8 +156,10 @@ func PostMatches(c *fiber.Ctx) error {
 
 	// Reach-filter against the post's location (the owner is the recipient): drop
 	// opposite posts that haven't rippled out to where the post is, so we never
-	// email a match the owner couldn't reply to. Fail-open (no reach row → kept).
-	blocked := ReachBlockedSet(candidateMsgids(candidates), srcLat, srcLng)
+	// email a match the owner couldn't reply to. No reach row at all still means
+	// kept, but a row the routing server cannot decide means dropped: mail is the
+	// surface where sending wrongly costs more than sending nothing.
+	blocked := ReachBlockedSetForMail(candidateMsgids(candidates), srcLat, srcLng)
 
 	out := make([]SimilarResult, 0, limit)
 	for _, cnd := range candidates {
@@ -169,7 +172,7 @@ func PostMatches(c *fiber.Ctx) error {
 		if blocked[cnd.Msgid] {
 			continue
 		}
-		lat, lng := utils.Blur(cnd.Lat, cnd.Lng, utils.BLUR_USER)
+		lat, lng := roadblur.RoadBlur(cnd.Lat, cnd.Lng, utils.BLUR_USER)
 		out = append(out, SimilarResult{
 			Msgid:   cnd.Msgid,
 			Groupid: cnd.Groupid,

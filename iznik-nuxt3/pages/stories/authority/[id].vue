@@ -43,8 +43,8 @@ import { buildHead } from '~/composables/useBuildHead'
 import { useAuthorityStore } from '~/stores/authority'
 import StoryOne from '~/components/StoryOne'
 import { useStoryAdd } from '~/composables/useStoryAdd'
-const StoryAddModal = defineAsyncComponent(() =>
-  import('~/components/StoryAddModal')
+const StoryAddModal = defineAsyncComponent(
+  () => import('~/components/StoryAddModal')
 )
 
 const LIMIT = 20

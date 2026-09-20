@@ -243,12 +243,12 @@ func ClickCompact(c *fiber.Ctx) error {
 
 	id, ok := DecodeID(idEnc)
 	if !ok {
-		return c.Redirect("/")
+		return sendDestination(c, "/")
 	}
 
 	destinationURL := reconstructCompactLink(linkType, id)
 	if destinationURL == "" {
-		return c.Redirect("/")
+		return sendDestination(c, "/")
 	}
 
 	db := database.DBConn
@@ -256,7 +256,7 @@ func ClickCompact(c *fiber.Ctx) error {
 	tracking, found := findTrackingByRef(ref)
 	if !found {
 		// Unknown ref — still send the user to the right place, just untracked.
-		return c.Redirect(destinationURL)
+		return sendDestination(c, destinationURL)
 	}
 
 	ipAddress := c.IP()
@@ -293,7 +293,7 @@ func ClickCompact(c *fiber.Ctx) error {
 	}
 	db.Create(&click)
 
-	return c.Redirect(destinationURL)
+	return sendDestination(c, destinationURL)
 }
 
 // ImageCompact records an image load on a compact image link and 302s to the

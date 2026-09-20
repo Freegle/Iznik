@@ -87,6 +87,201 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertNotNull($stats['oldest_pending_at']);
     }
 
+    public function test_spool_refuses_to_promote_a_write_that_did_not_land(): void
+    {
+        // A 0-byte file in pending/ decodes to nothing and is dropped to failed/
+        // with the mail gone - seven were lost that way on 2026-06-11. The UTF-8
+        // guard closed the json_encode door; this covers the other one, a write
+        // that fails or falls short, which an unchecked rename would promote
+        // into a spool entry that looks real and is empty.
+        //
+        // Points pendingDir at a path that cannot exist rather than chmod'ing a
+        // real one: THE SUITE RUNS AS ROOT, and root ignores permission bits, so
+        // a chmod 0500 write simply succeeds and the test asserts nothing. (It
+        // did exactly that on CI 2026-08-18 - the code was right and the test
+        // was wrong.) A missing parent directory fails the write for every user.
+        $email = $this->uniqueEmail('shortwrite');
+
+        $ref = new \ReflectionClass($this->spooler);
+        $prop = $ref->getProperty('pendingDir');
+        $prop->setAccessible(true);
+        $original = $prop->getValue($this->spooler);
+        $prop->setValue($this->spooler, $this->testSpoolDir . '/no/such/parent/pending');
+
+        try {
+            $threw = false;
+            try {
+                $this->spooler->spool(new WelcomeMail($email), $email);
+            } catch (\Throwable $e) {
+                $threw = true;
+            }
+            $this->assertTrue($threw, 'a write that cannot land must throw, not silently spool nothing');
+
+            $this->assertCount(0, glob($original . '/*.json') ?: [], 'must leave no empty spool file behind');
+            $this->assertCount(0, glob($original . '/*.tmp') ?: [], 'must not leave a temp file behind either');
+        } finally {
+            $prop->setValue($this->spooler, $original);
+        }
+    }
+
+    public function test_worker_id_gives_each_daemon_a_private_claim_area(): void
+    {
+        $email = $this->uniqueEmail('worker');
+        $id = $this->spooler->spool(new WelcomeMail($email), $email);
+
+        $this->spooler->setWorkerId('07');
+        $this->spooler->processSpool(limit: 1);
+
+        // The claim must land in the worker's own area, not the shared dir -
+        // that separation is what stops a restarting peer reclaiming live mail.
+        $this->assertFileDoesNotExist($this->testSpoolDir . '/pending/' . $id . '.json');
+        $this->assertDirectoryExists($this->testSpoolDir . '/sending/w07');
+    }
+
+    public function test_reclaim_does_not_steal_a_live_peers_in_flight_file(): void
+    {
+        // THE duplicate-send hazard: worker A restarts while worker B is mid-send.
+        // A must not move B's in-flight file back to pending, or it gets sent twice.
+        $peer = $this->testSpoolDir . '/sending/w99';
+        mkdir($peer, 0755, true);
+        $inFlight = $peer . '/mail_p1_peer_inflight.json';
+        file_put_contents($inFlight, json_encode(['id' => 'peer', 'to' => []]));
+        touch($inFlight); // freshly claimed, as processSpool() stamps it
+
+        $this->spooler->setWorkerId('00');
+        $reclaimed = $this->spooler->reclaimOrphanedSending();
+
+        $this->assertEquals(0, $reclaimed, 'a live peer\'s fresh claim must never be reclaimed');
+        $this->assertFileExists($inFlight, 'the peer still owns its in-flight file');
+    }
+
+    public function test_reclaim_takes_its_own_area_unconditionally(): void
+    {
+        // Our own predecessor died: no live owner is possible, so recover at once
+        // rather than waiting out the sibling age gate.
+        $mine = $this->testSpoolDir . '/sending/w00';
+        mkdir($mine, 0755, true);
+        $orphan = $mine . '/mail_p1_mine_orphan.json';
+        file_put_contents($orphan, json_encode(['id' => 'mine', 'to' => []]));
+
+        $this->spooler->setWorkerId('00');
+        $reclaimed = $this->spooler->reclaimOrphanedSending();
+
+        $this->assertEquals(1, $reclaimed);
+        $this->assertFileExists($this->testSpoolDir . '/pending/mail_p1_mine_orphan.json');
+    }
+
+    public function test_reclaim_rescues_a_stale_file_from_a_dead_peer(): void
+    {
+        // The other half: a worker that died and never came back, or a strand
+        // left when numprocs is reduced, must not hold mail forever.
+        $dead = $this->testSpoolDir . '/sending/w99';
+        mkdir($dead, 0755, true);
+        $stranded = $dead . '/mail_p1_dead_peer.json';
+        file_put_contents($stranded, json_encode(['id' => 'dead', 'to' => []]));
+        touch($stranded, time() - 3600); // idle an hour, past the 30-minute gate
+
+        $this->spooler->setWorkerId('00');
+        $reclaimed = $this->spooler->reclaimOrphanedSending();
+
+        $this->assertEquals(1, $reclaimed);
+        $this->assertFileExists($this->testSpoolDir . '/pending/mail_p1_dead_peer.json');
+    }
+
+    public function test_backlog_stats_counts_in_flight_across_all_worker_areas(): void
+    {
+        // getBacklogStats is the only in-flight signal there is; reporting 0
+        // during an SMTP stall is how a stall gets misdiagnosed.
+        mkdir($this->testSpoolDir . '/sending/w00', 0755, true);
+        mkdir($this->testSpoolDir . '/sending/w01', 0755, true);
+        file_put_contents($this->testSpoolDir . '/sending/w00/a.json', '{}');
+        file_put_contents($this->testSpoolDir . '/sending/w01/b.json', '{}');
+        file_put_contents($this->testSpoolDir . '/sending/c.json', '{}');
+
+        $stats = $this->spooler->getBacklogStats();
+
+        $this->assertEquals(3, $stats['sending_count'], 'must union flat and per-worker areas');
+    }
+
+    public function test_unmapped_mailables_and_filenames_fall_back_to_the_default_band(): void
+    {
+        // The maps are an optimisation, not a contract: a mailable added later
+        // with no entry must keep flowing at normal priority rather than being
+        // dropped, starved at the bottom, or promoted above chat.
+        $d = EmailSpoolerService::BAND_DEFAULT;
+
+        $this->assertSame($d, $this->spooler->resolvePriorityBand('App\\Mail\\Brand\\NotMappedYet', null));
+        $this->assertSame($d, $this->spooler->resolvePriorityBand(null, null));
+        $this->assertSame($d, $this->spooler->resolvePriorityBand('', 'a_type_nobody_mapped'));
+        $this->assertSame($d, $this->spooler->resolvePriorityBand('NoNamespace', null));
+
+        // Files written before banding existed, and malformed/unknown bands.
+        $this->assertSame($d, EmailSpoolerService::bandFromFilename('mail_6a843187f00658.52055901_e10de506.json'));
+        $this->assertSame($d, EmailSpoolerService::bandFromFilename('garbage.json'));
+        $this->assertSame($d, EmailSpoolerService::bandFromFilename('mail_p7_x.json'));
+
+        // And the ones we do map land where intended.
+        $this->assertSame(EmailSpoolerService::BAND_URGENT, $this->spooler->resolvePriorityBand('App\\Mail\\Chat\\ChatNotification', null));
+        $this->assertSame(EmailSpoolerService::BAND_HIGH, $this->spooler->resolvePriorityBand('App\\Mail\\Digest\\UnifiedDigest', 'digest_immediate'));
+        $this->assertSame($d, $this->spooler->resolvePriorityBand('App\\Mail\\Digest\\UnifiedDigest', 'digest_daily'));
+        $this->assertSame(EmailSpoolerService::BAND_LOW, $this->spooler->resolvePriorityBand('App\\Mail\\Event\\EventMail', null));
+    }
+
+    public function test_process_spool_drains_a_higher_band_before_a_lower_one(): void
+    {
+        $email = $this->uniqueEmail('bands');
+        $lowId = $this->spooler->spool(new WelcomeMail($email), $email);
+        $highId = $this->spooler->spool(new WelcomeMail($email), $email);
+
+        // Re-band by filename: the processor buckets on the prefix alone.
+        $low = $this->testSpoolDir . '/pending/mail_p9_zzz_low.json';
+        $high = $this->testSpoolDir . '/pending/mail_p1_aaa_high.json';
+        rename($this->testSpoolDir . '/pending/' . $lowId . '.json', $low);
+        rename($this->testSpoolDir . '/pending/' . $highId . '.json', $high);
+
+        // Only one slot: strict priority must spend it on the urgent band, even
+        // though the low-band file was spooled first and sorts later by name.
+        $stats = $this->spooler->processSpool(limit: 1);
+
+        $this->assertEquals(1, $stats['processed']);
+        $this->assertFileDoesNotExist($high, 'urgent band must be taken first');
+        $this->assertFileExists($low, 'low band must wait its turn');
+    }
+
+    public function test_process_spool_fails_a_message_with_no_recipient_instead_of_retrying_forever(): void
+    {
+        // Regression: four MatchedPosts mails spooled 2026-08-06/08 with an
+        // empty `to` reached 449k-559k attempts each by 2026-08-18. Symfony
+        // throws "An email must have a To, Cc, or Bcc header" before any SMTP
+        // conversation, so SmtpFailureClassifier (which only knows SMTP wording)
+        // never matched it and every pass put the file straight back in pending.
+        // processSpool() takes array_slice(glob(...)), so those files sorted
+        // first and burned a slot in EVERY batch until moved out by hand.
+        $email = $this->uniqueEmail('norecipient');
+        $id = $this->spooler->spool(new WelcomeMail($email), $email);
+
+        // Strip the recipient the way the bad MatchedPosts records had it.
+        $pending = $this->testSpoolDir . '/pending/' . $id . '.json';
+        $data = json_decode(file_get_contents($pending), true);
+        $data['to'] = [];
+        $data['cc'] = [];
+        $data['bcc'] = [];
+        file_put_contents($pending, json_encode($data));
+
+        $stats = $this->spooler->processSpool();
+
+        $this->assertEquals(1, $stats['invalid'], 'a recipient-less message counts as invalid');
+        $this->assertEquals(0, $stats['retried'], 'it must NOT be queued for another attempt');
+        $this->assertEquals(0, $stats['sent']);
+
+        $this->assertFileDoesNotExist($pending, 'must not return to pending - that is the infinite loop');
+        $this->assertFileExists($this->testSpoolDir . '/failed/' . $id . '.json');
+
+        // A second pass must not pick it up again.
+        $again = $this->spooler->processSpool();
+        $this->assertEquals(0, $again['processed'], 'failed/ is not reprocessed');
+    }
+
     public function test_process_spool_sends_email(): void
     {
         // Don't use Mail::fake() - it interferes with processSpool()'s Mail::html() call.

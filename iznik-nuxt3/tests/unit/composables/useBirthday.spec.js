@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import dayjs from 'dayjs'
 
+import { useBirthday } from '~/composables/useBirthday'
+import { buildHead } from '~/composables/useBuildHead'
+
 // ============================================================
 // Store mocks — must be declared before any vi.mock() calls
 // ============================================================
@@ -34,9 +37,6 @@ vi.mock('~/stores/stats', () => ({
 vi.mock('~/composables/useBuildHead', () => ({
   buildHead: vi.fn(() => ({ title: 'mocked-title', meta: [] })),
 }))
-
-import { useBirthday } from '~/composables/useBirthday'
-import { buildHead } from '~/composables/useBuildHead'
 
 // ============================================================
 // Helpers
@@ -113,7 +113,7 @@ describe('useBirthday', () => {
       useBirthday()
       // trigger the computed
       const { group } = useBirthday()
-      group.value // access to trigger
+      expect(group.value).toBeNull() // access to trigger
       expect(mockGroupStoreGet).toHaveBeenCalledWith('test-group')
     })
 
@@ -155,7 +155,9 @@ describe('useBirthday', () => {
   // ----------------------------------------------------------
   describe('groupName computed', () => {
     it('returns namefull from the group', () => {
-      mockGroupStoreGet.mockReturnValue(makeGroup({ namefull: 'Brighton Freegle' }))
+      mockGroupStoreGet.mockReturnValue(
+        makeGroup({ namefull: 'Brighton Freegle' })
+      )
       const { groupName } = useBirthday()
       expect(groupName.value).toBe('Brighton Freegle')
     })
@@ -402,7 +404,9 @@ describe('useBirthday', () => {
       const expectedAge = Math.floor(
         (Date.now() - new Date('2010-01-01')) / (365.25 * 24 * 60 * 60 * 1000)
       )
-      expect(pageTitle.value).toBe(`Brighton Freegle is ${expectedAge} years old!`)
+      expect(pageTitle.value).toBe(
+        `Brighton Freegle is ${expectedAge} years old!`
+      )
     })
 
     it('uses "Community" and age 0 when group is null', () => {
@@ -459,7 +463,10 @@ describe('useBirthday', () => {
     })
 
     it('passes systemwide=true when group has no id (null groupId)', async () => {
-      mockGroupStoreGet.mockReturnValue({ namefull: 'No ID', founded: '2010-01-01' })
+      mockGroupStoreGet.mockReturnValue({
+        namefull: 'No ID',
+        founded: '2010-01-01',
+      })
       const { loadBirthdayData } = useBirthday()
 
       await loadBirthdayData()
@@ -476,7 +483,10 @@ describe('useBirthday', () => {
       await loadBirthdayData()
 
       const callArgs = mockStatsStoreFetch.mock.calls[0][0]
-      const expectedStart = dayjs().subtract(1, 'year').startOf('month').format('YYYY-MM-DD')
+      const expectedStart = dayjs()
+        .subtract(1, 'year')
+        .startOf('month')
+        .format('YYYY-MM-DD')
       const expectedEnd = dayjs().endOf('month').format('YYYY-MM-DD')
 
       expect(callArgs.start).toBe(expectedStart)
@@ -535,7 +545,9 @@ describe('useBirthday', () => {
     })
 
     it('calls buildHead with the page title', async () => {
-      mockGroupStoreGet.mockReturnValue(makeGroup({ namefull: 'Test Community', founded: '2010-01-01' }))
+      mockGroupStoreGet.mockReturnValue(
+        makeGroup({ namefull: 'Test Community', founded: '2010-01-01' })
+      )
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
       const { setupPageHead } = useBirthday()
 
@@ -570,7 +582,9 @@ describe('useBirthday', () => {
     })
 
     it('generates a default description mentioning the group name', async () => {
-      mockGroupStoreGet.mockReturnValue(makeGroup({ namefull: 'West London Freegle' }))
+      mockGroupStoreGet.mockReturnValue(
+        makeGroup({ namefull: 'West London Freegle' })
+      )
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
       const { setupPageHead } = useBirthday()
 

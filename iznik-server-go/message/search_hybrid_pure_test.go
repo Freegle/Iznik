@@ -3,6 +3,7 @@ package message
 import (
 	"testing"
 
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -101,7 +102,10 @@ func TestMergeHybrid_KeywordResultsAreBlurred(t *testing.T) {
 	result := mergeHybrid(vector, keyword)
 	require.Len(t, result, 2)
 
-	expectedLat, expectedLng := utils.Blur(rawLat, rawLng, utils.BLUR_USER)
+	// Same road-aware blur as every other surface (falls back to the circular
+	// utils.Blur when no routing server answers). RoadBlur is deterministic,
+	// so asking it again yields the exact expected point either way.
+	expectedLat, expectedLng := roadblur.RoadBlur(rawLat, rawLng, utils.BLUR_USER)
 
 	// Keyword result (index 1) must have blurred coords.
 	assert.Equal(t, expectedLat, result[1].Lat, "keyword lat must be blurred")

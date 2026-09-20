@@ -5,6 +5,7 @@ namespace App\Mail\Matched;
 use App\Mail\Digest\DigestStyle;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\AvatarResolver;
+use App\Mail\Traits\RoadDistances;
 use App\Mail\Traits\TrackableEmail;
 use App\Models\Message;
 use App\Models\User;
@@ -26,7 +27,7 @@ use App\Services\UnsubscribeService;
  */
 class MatchedPosts extends MjmlMailable
 {
-    use AvatarResolver, TrackableEmail;
+    use AvatarResolver, RoadDistances, TrackableEmail;
 
     /**
      * @param  array<int, array{message: Message, reason: Message, score: float}>  $items
@@ -121,6 +122,7 @@ class MatchedPosts extends MjmlMailable
         $userSite = config('freegle.sites.user', 'https://www.ilovefreegle.org');
 
         [$userLat, $userLng] = $this->recipientLatLng();
+        $this->fillRoadMiles($userLat, $userLng, array_map(fn ($i) => $i['message'], array_values($this->items)));
 
         $posts = [];
         foreach (array_values($this->items) as $i => $item) {
@@ -169,8 +171,8 @@ class MatchedPosts extends MjmlMailable
         $subject = html_entity_decode($message->subject ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
         [, , $locationName] = SubjectParser::parse($subject);
 
-        $distanceText = null;
-        if ($userLat !== null && $userLng !== null && $message->lat && $message->lng) {
+        $distanceText = $this->roadDistanceText((int) $message->id);
+        if ($distanceText === null && $userLat !== null && $userLng !== null && $message->lat && $message->lng) {
             $miles = $this->haversineMiles($userLat, $userLng, (float) $message->lat, (float) $message->lng);
             $distanceText = $miles < 1 ? '< 1 mile' : round($miles) . ' miles';
         }

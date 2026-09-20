@@ -11,6 +11,27 @@
         {{ currentIndex + 1 }} / {{ attachmentCount }}
       </div>
 
+      <!-- Moderators (not members) can take a photo off the post from here. -->
+      <button
+        v-if="canRemove"
+        class="remove-button"
+        title="Remove this photo from the post"
+        @click.stop="askToRemove"
+      >
+        <v-icon icon="trash-alt" />
+      </button>
+      <ConfirmModal
+        v-if="confirmRemove"
+        :title="'Delete this photo?'"
+        @confirm="doRemove(false)"
+        @hidden="confirmRemove = false"
+      />
+      <AiImageRemoveModal
+        ref="aiRemoveModal"
+        @choose="doRemove"
+        @cancel="pendingRemoveId = null"
+      />
+
       <!-- Navigation arrows (desktop) -->
       <button
         v-if="attachmentCount > 1 && currentIndex > 0"
@@ -108,8 +129,13 @@ import {
 } from 'vue'
 import { useElementSize } from '@vueuse/core'
 import { useMessageStore } from '~/stores/message'
+import { useAuthStore } from '~/stores/auth'
+import { useMe } from '~/composables/useMe'
 import { useModalHistory } from '~/composables/useModalHistory'
+import { isAIAttachment, removePhotoPatch } from '~/composables/usePhotoRemoval'
 import PinchMe from '~/components/PinchMe.vue'
+import ConfirmModal from '~/components/ConfirmModal.vue'
+import AiImageRemoveModal from '~/components/AiImageRemoveModal.vue'
 import 'zoompinch/style.css'
 
 const props = defineProps({
@@ -135,6 +161,8 @@ const props = defineProps({
 const emit = defineEmits(['hidden'])
 
 const messageStore = useMessageStore()
+const authStore = useAuthStore()
+const { supportOrAdmin } = useMe()
 
 // Handle browser back button/swipe to close modal
 useModalHistory(`photos-${props.id ?? 'compose'}`, () => emit('hidden'))
@@ -146,6 +174,50 @@ const photos = computed(
 )
 
 const attachmentCount = computed(() => photos.value.length)
+
+// Moderators of a group the post is on, and Support/Admin, can take a photo off the
+// post from here, with the same "why are you removing it?" question ModTools asks for
+// an AI image (Discourse 9630, post 92). Members cannot, and photos that are not yet a
+// post (the compose flow) have nothing to remove from. The server checks the same
+// standing on the PATCH, so this only decides whether to offer the control.
+const canRemove = computed(() => {
+  if (!props.id || props.attachments || !message.value) return false
+  if (supportOrAdmin.value) return true
+  return (message.value.groups || []).some((g) =>
+    ['Moderator', 'Owner'].includes(authStore.member(g.groupid))
+  )
+})
+
+const confirmRemove = ref(false)
+const pendingRemoveId = ref(null)
+const aiRemoveModal = ref(null)
+
+function askToRemove() {
+  const attachment = photos.value[currentIndex.value]
+  if (!attachment) return
+  pendingRemoveId.value = attachment.id
+  if (isAIAttachment(attachment)) {
+    aiRemoveModal.value?.show()
+  } else {
+    confirmRemove.value = true
+  }
+}
+
+async function doRemove(badForAnyPost) {
+  const id = pendingRemoveId.value
+  pendingRemoveId.value = null
+  confirmRemove.value = false
+  if (!id) return
+
+  const wasLast = attachmentCount.value <= 1
+  await messageStore.patch(removePhotoPatch(message.value, id, badForAnyPost))
+
+  if (wasLast) {
+    emit('hidden')
+  } else if (currentIndex.value > 0) {
+    currentIndex.value--
+  }
+}
 
 // Current image index - start at initialIndex prop
 const currentIndex = ref(props.initialIndex)
@@ -481,6 +553,11 @@ onUnmounted(() => {
 <style scoped lang="scss">
 @import 'assets/css/_color-vars.scss';
 
+/* z-index 10000 puts us above bootstrap's modals (about 1050), which matters because we
+   are usually opened from one - the post modal in Browse, or the edit-post form. Never
+   lift modals as a class above this: that buries the viewer behind the very modal that
+   opened it. The confirmation popups we open carry modal-class="confirm-modal", which
+   global.scss puts at 200000, above us. */
 .fullscreen-viewer {
   position: fixed;
   top: 0;
@@ -532,6 +609,32 @@ onUnmounted(() => {
   z-index: 10001;
 }
 
+/* Moderator-only, under the counter on the right so it never sits over the back button. */
+.remove-button {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 3.25rem);
+  right: 0;
+  margin: 1rem;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: $color-white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10001;
+  font-size: 1.1rem;
+
+  &:active {
+    background: rgba(0, 0, 0, 0.6);
+  }
+}
+
 .image-container {
   flex: 1;
   overflow: hidden;
@@ -575,7 +678,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   opacity: 0;
-  transition: opacity var(--transition-normal),
+  transition:
+    opacity var(--transition-normal),
     background var(--transition-normal);
   font-size: 1.25rem;
 
@@ -630,7 +734,8 @@ onUnmounted(() => {
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.4);
   cursor: pointer;
-  transition: background var(--transition-normal),
+  transition:
+    background var(--transition-normal),
     transform var(--transition-normal);
 
   &.active {

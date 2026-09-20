@@ -9,7 +9,8 @@
     -
     <em>{{ message.subject }}</em>
     {{ timeago(message.arrival)
-    }}<span v-if="latestOutcome" class="text-black">, now {{ latestOutcome }}</span
+    }}<span v-if="latestOutcome" class="text-black"
+      >, now {{ latestOutcome }}</span
     ><span v-else class="text-black">, still open</span>
     <span v-if="isPending" class="text-muted"> (pending)</span>
   </div>

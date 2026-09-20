@@ -24,8 +24,8 @@ import { useMobileStore } from '@/stores/mobile' // APP
 import { useMiscStore } from '~/stores/misc'
 import { bootSession } from '~/composables/useBootSession'
 import { ref, computed, watch } from '#imports'
-const GoogleOneTap = defineAsyncComponent(() =>
-  import('~/components/GoogleOneTap')
+const GoogleOneTap = defineAsyncComponent(
+  () => import('~/components/GoogleOneTap')
 )
 const LoginModal = defineAsyncComponent(() => import('~/components/LoginModal'))
 
@@ -41,7 +41,7 @@ const miscStore = useMiscStore()
 const loggedIn = computed(() => authStore.user !== null)
 const me = computed(() => authStore.user)
 
-if (process.client) {
+if (import.meta.client) {
   // Ensure we don't wrongly think we have some outstanding requests if the server happened to start some.
   miscStore.apiCount = 0
 }

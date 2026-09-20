@@ -305,20 +305,28 @@ describe('ci_router_decide — onlyFixPR gate', () => {
     vi.clearAllMocks()
   })
 
-  it('sets onlyFixPR=true when there is a red focus PR', async () => {
+  // A red focus PR no longer suppresses the rest of the batch. onlyFixPR once meant
+  // "dispatch the PR fix agent and nothing else", which serialised triage behind a
+  // 15-27 minute fix for no benefit — triage and Sentry are analysis-only, so they
+  // create no PRs and add nothing to the CI runner — and on 2026-08-06 it lost topic
+  // 10010 for a whole iteration. It stays in the payload as a false constant so an
+  // older prompt cannot resurrect the gate by reading a missing field as truthy.
+  it('keeps onlyFixPR false even with a red focus PR, so triage runs alongside it', async () => {
     const result = await ciRouterDecideHandler({}, {
       _action_check_master_ci: { failing: false },
       _action_check_my_open_pr_ci: {
         redPRs: [{ number: 42 }],
         pendingPRs: [],
       },
-      _action_discover_active_topics: { topics: [] },
+      _action_discover_active_topics: { topics: [{ id: 10010, hasNew: true }] },
       phase: 'analysis',
     })
 
     expect(result._transition).toBe('PARALLEL_ANALYZE_AND_FIX')
-    expect(result.onlyFixPR).toBe(true)
+    expect(result.onlyFixPR).toBe(false)
     expect(result.focusPRNumber).toBe(42)
+    // The topic is still reported, so the dispatch prompt has something to fan out.
+    expect(result.activeTopicCount).toBe(1)
   })
 
   it('sets onlyFixPR=false when there are no red PRs', async () => {
@@ -398,7 +406,7 @@ describe('ci_router_decide — onlyFixPR gate', () => {
     })
 
     expect(result._transition).toBe('PARALLEL_ANALYZE_AND_FIX')
-    expect(result.onlyFixPR).toBe(true)
+    expect(result.onlyFixPR).toBe(false)
   })
 
   it('keeps focus on stored PR number when it is still red', async () => {
@@ -435,6 +443,6 @@ describe('ci_router_decide — onlyFixPR gate', () => {
     })
 
     expect(result.focusPRNumber).toBe(99)
-    expect(result.onlyFixPR).toBe(true)
+    expect(result.onlyFixPR).toBe(false)
   })
 })

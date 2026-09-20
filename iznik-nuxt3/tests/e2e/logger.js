@@ -108,7 +108,13 @@ function formatArgs(args) {
 
       if (typeof arg === 'object') {
         // Handle locators specially
-        if (arg && arg.constructor && arg.constructor.name === 'Locator') {
+        if (
+          arg &&
+          arg.constructor &&
+          // Playwright 1.62+ ships a bundled playwright-core where classes are
+          // renamed with an underscore prefix (_Locator, _Page).
+          arg.constructor.name.replace(/^_/, '') === 'Locator'
+        ) {
           return `Locator(${arg.toString()})`
         }
 
@@ -150,7 +156,9 @@ function createLoggingProxy(target, targetName, visited = new Set()) {
   // Skip Playwright Page objects so that expect(page).toHaveURL() / toHaveTitle()
   // continue to work. Those matchers use instanceof Page internally — wrapping in
   // a Proxy breaks the check and throws "can be only used with Page object".
-  if (target.constructor.name === 'Page') {
+  // (Playwright 1.62+ bundles playwright-core with classes renamed to _Page,
+  // _Locator etc., so tolerate a leading underscore in all these checks.)
+  if (target.constructor.name.replace(/^_/, '') === 'Page') {
     return target
   }
 
@@ -158,7 +166,11 @@ function createLoggingProxy(target, targetName, visited = new Set()) {
   // to be able to use matchers like toHaveText(), toHaveValue(), etc.
   // This is because these methods check the receiver object's constructor.name:
   // https://github.com/microsoft/playwright/blob/e7bff526433b6dcb02801763ab5b1c6407902d47/packages/playwright/src/util.ts#L191
-  if (target.constructor.name === 'Locator') {
+  if (
+    ['Locator', 'FrameLocator'].includes(
+      target.constructor.name.replace(/^_/, '')
+    )
+  ) {
     return target
   }
 
