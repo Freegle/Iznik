@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
 import ModSysAdminCronJobs from '~/modtools/components/ModSysAdminCronJobs.vue'
@@ -71,12 +71,21 @@ const sampleCronJobs = [
 ]
 
 describe('ModSysAdminCronJobs', () => {
+  let wrapper = null
+
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
+  // The component keeps a clock interval running while mounted; unmounting
+  // clears it so no timer outlives the test that started it.
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = null
+  })
+
   function mountComponent() {
-    return mount(ModSysAdminCronJobs, {
+    wrapper = mount(ModSysAdminCronJobs, {
       global: {
         stubs: {
           'b-table-simple': {
@@ -95,6 +104,7 @@ describe('ModSysAdminCronJobs', () => {
         },
       },
     })
+    return wrapper
   }
 
   it('shows spinner while loading', () => {

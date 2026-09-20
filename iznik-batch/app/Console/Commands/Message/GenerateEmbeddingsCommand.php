@@ -4,6 +4,7 @@ namespace App\Console\Commands\Message;
 
 use App\Services\EmbeddingService;
 use App\Traits\GracefulShutdown;
+use App\Traits\SingleInstanceLock;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\Log;
 class GenerateEmbeddingsCommand extends Command
 {
     use GracefulShutdown;
+    use SingleInstanceLock;
 
     protected $signature = 'embeddings:generate
                             {--backfill : Process all messages without embeddings}
@@ -25,6 +27,15 @@ class GenerateEmbeddingsCommand extends Command
     protected $description = 'Generate vector embeddings for live messages missing from messages_embeddings';
 
     public function handle(EmbeddingService $service): int
+    {
+        // Each run spawns its own node embedder (~0.4-1GB); on 2026-08-27
+        // eleven of these stacked once a run outlived the 5-minute schedule
+        // (withoutOverlapping() cannot stop it - see SingleInstanceLock) and
+        // 5.5GB of embedders swapped the host to a standstill.
+        return $this->runSingleInstance('embeddings:generate:run', 1800, fn (): int => $this->runGuarded($service));
+    }
+
+    private function runGuarded(EmbeddingService $service): int
     {
         $this->registerShutdownHandlers();
 

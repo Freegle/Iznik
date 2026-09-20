@@ -199,10 +199,15 @@ func Near(c *fiber.Ctx) error {
 			lat-latDeg, lat+latDeg, lng-lngDeg, lng+lngDeg).
 		Order("id").
 		Scan(&rows)
-	if len(rows) == 0 {
-		return c.JSON(empty)
-	}
 
+	// An empty box is not a reason to stop. The town names are display material for the
+	// "Near: ..." hint, while reach_radius_miles comes from the isochrone frontier and
+	// reach_polygon from its shape - neither depends on a town falling inside the box. A member
+	// whose nearest curated town is 27 miles away (Hastings; the table holds only ~234 major
+	// places) still needs a radius at the narrow end of the slider, and a missing one reads to
+	// the client as a failed derivation, which stores "no limit" and switches every distance
+	// filter off. One routing call produces all three answers, so it runs whether or not there
+	// are candidates and SelectNear simply returns nothing.
 	points := make([][2]float64, len(rows))
 	for i, r := range rows {
 		points[i] = [2]float64{r.Lng, r.Lat} // [lng, lat] GeoJSON order

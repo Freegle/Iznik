@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -283,6 +284,63 @@ func TestDeleteMembershipsLeaveGroup(t *testing.T) {
 	if leftLog != nil {
 		assert.Equal(t, groupID, *leftLog.Groupid)
 	}
+}
+
+// An Owner or Moderator cannot drop their own role by leaving: the membership is one
+// they hold by choice, and a self-leave threw it away with no warning (Discourse 10148,
+// an owner "de-rippling" herself out of the groups she ran came back as a plain member).
+func TestDeleteMembershipsSelfLeaveRefusedForModeratorRoles(t *testing.T) {
+	db := database.DBConn
+
+	for _, role := range []string{"Owner", "Moderator"} {
+		prefix := uniquePrefix("mem_selfleave_" + role)
+		userID := CreateTestUser(t, prefix+"_user", "User")
+		_, token := CreateTestSession(t, userID)
+		groupID := CreateTestGroup(t, prefix)
+		CreateTestMembership(t, userID, groupID, role)
+
+		body := map[string]interface{}{"userid": userID, "groupid": groupID}
+		bodyBytes, _ := json.Marshal(body)
+		req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/memberships?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 403, resp.StatusCode, role+" self-leave must be refused")
+
+		var stillRole string
+		db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
+			userID, groupID).Scan(&stillRole)
+		assert.Equal(t, role, stillRole, role+" membership must survive a refused self-leave")
+
+		assert.Nil(t, findLog(db, "Group", "Left", userID), "a refused self-leave must not log Group/Left")
+	}
+}
+
+// A membership that rippling created (rippled = 1) is the member's to drop whatever it
+// says: that is how a poster stops a rippled post reaching a group. Only chosen
+// moderator roles are protected.
+func TestDeleteMembershipsSelfLeaveAllowedForRippledRow(t *testing.T) {
+	prefix := uniquePrefix("mem_selfleave_rippled")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	membershipID := CreateTestMembership(t, userID, groupID, "Moderator")
+	db.Exec("UPDATE memberships SET rippled = 1 WHERE id = ?", membershipID)
+
+	body := map[string]interface{}{"userid": userID, "groupid": groupID}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/memberships?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
+		userID, groupID).Scan(&count)
+	assert.Equal(t, int64(0), count, "a rippling-created membership can always be left")
 }
 
 func TestDeleteMembershipsNotMember(t *testing.T) {
@@ -2018,6 +2076,76 @@ func TestGetMembershipsSearchNullFullname(t *testing.T) {
 	assert.True(t, found, "member with NULL fullname should be found by lastname search")
 }
 
+// A LoveJunk member's full displayed name ("firstname lastname", the string ModTools
+// actually shows a mod and the one they will type/paste back into search) matches no
+// single column, so even after 9518/371 (firstname/lastname LIKE) a mod searching by
+// the full name still gets nothing, while searching by numeric ID works. Reproduces
+// the Hackney Freegle reports for users 43506372/43428022 (Discourse 9518/379).
+func TestGetMembershipsSearchFullNameLoveJunk(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("lj_fullname")
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Simulate a LoveJunk member: fullname NULL, name split across firstname/lastname.
+	firstname := prefix + "_First"
+	lastname := prefix + "_Last"
+	settings := `{"mylocation": {"lat": 55.9533, "lng": -3.1883}}`
+	res := db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
+		"VALUES (?, ?, NULL, 'User', NULL, ?)", firstname, lastname, settings)
+	assert.NoError(t, res.Error)
+	var targetID uint64
+	db.Raw("SELECT id FROM users WHERE firstname = ? AND lastname = ? AND fullname IS NULL ORDER BY id DESC LIMIT 1", firstname, lastname).Scan(&targetID)
+	assert.NotZero(t, targetID, "LoveJunk-style user should have been created")
+	CreateTestMembership(t, targetID, groupID, "Member")
+
+	// Numeric-ID search works today - confirms the reported asymmetry.
+	idURL := fmt.Sprintf("/api/memberships?groupid=%d&search=%d&jwt=%s", groupID, targetID, token)
+	idReq := httptest.NewRequest("GET", idURL, nil)
+	idResp, err := getApp().Test(idReq, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, idResp.StatusCode)
+	var idResponse map[string]interface{}
+	json.NewDecoder(idResp.Body).Decode(&idResponse)
+	idMembersRaw, _ := idResponse["members"].([]interface{})
+	foundByID := false
+	for _, raw := range idMembersRaw {
+		m := raw.(map[string]interface{})
+		if uint64(m["userid"].(float64)) == targetID {
+			foundByID = true
+			break
+		}
+	}
+	assert.True(t, foundByID, "member should be found by numeric ID search")
+
+	// Search using the full displayed name, exactly as ModTools shows it and as a
+	// mod would type/paste it back in - "firstname lastname".
+	fullName := firstname + " " + lastname
+	reqURL := fmt.Sprintf("/api/memberships?groupid=%d&search=%s&jwt=%s", groupID, url.QueryEscape(fullName), token)
+	req := httptest.NewRequest("GET", reqURL, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
+
+	found := false
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
+		uid := uint64(m["userid"].(float64))
+		if uid == targetID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "member with NULL fullname should be found by full 'firstname lastname' search")
+}
+
 func TestGetMembershipsPendingCollection(t *testing.T) {
 	prefix := uniquePrefix("mod_getpend")
 	groupID := CreateTestGroup(t, prefix)
@@ -3429,7 +3557,7 @@ func TestGetRelatedMembers(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.GreaterOrEqual(t, len(result), 1, "Should return at least one related pair")
 
-	// Find our specific pair — API returns {id, user1, user2} only.
+	// Find our specific pair — API returns {id, user1, user2, reason}.
 	var found bool
 	for _, entry := range result {
 		entryU1 := uint64(entry["user1"].(float64))
@@ -3442,6 +3570,57 @@ func TestGetRelatedMembers(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "Should find our specific related pair")
+}
+
+// The moderator card shows why a pair was flagged, so the detector's note has to survive
+// the trip through the API. Rows written by the browser-session detector have no note and
+// must come back as null rather than breaking the response.
+func TestGetRelatedMembersReturnsReason(t *testing.T) {
+	prefix := uniquePrefix("mem_related_reason")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user1ID, prefix+"_u1_login")
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user2ID, prefix+"_u2_login")
+	defer db.Exec("DELETE FROM users_logins WHERE uid IN (?, ?)", prefix+"_u1_login", prefix+"_u2_login")
+
+	u1, u2 := user1ID, user2ID
+	if u1 > u2 {
+		u1, u2 = u2, u1
+	}
+
+	reason := "Both accounts gave the same mobile number (ending 0373) in chat. " +
+		"#1: 2 messages, 14 May 2026 to 25 Jul 2026. #2: 1 message on 29 Aug 2026."
+	db.Exec("INSERT INTO users_related (user1, user2, notified, reason) VALUES (?, ?, 0, ?)", u1, u2, reason)
+	defer db.Exec("DELETE FROM users_related WHERE user1 = ? AND user2 = ?", u1, u2)
+
+	url := fmt.Sprintf("/api/memberships?collection=Related&jwt=%s", modToken)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	var found bool
+	for _, entry := range result {
+		if uint64(entry["user1"].(float64)) == u1 && uint64(entry["user2"].(float64)) == u2 {
+			found = true
+			assert.Equal(t, reason, entry["reason"], "The detector's note should reach the mod")
+			break
+		}
+	}
+	assert.True(t, found, "Should find the pair we inserted")
 }
 
 func TestGetRelatedMembersFiltersByGroup(t *testing.T) {
@@ -4443,9 +4622,15 @@ func TestDeleteMembershipsDemotesStaleModeratorSystemRole(t *testing.T) {
 	userID := CreateTestUser(t, prefix, "Moderator")
 	groupID := CreateTestGroup(t, prefix)
 	CreateTestMembership(t, userID, groupID, "Moderator") // their only mod role
-	token := getToken(t, userID)
 
-	body, _ := json.Marshal(map[string]interface{}{"groupid": groupID})
+	// A moderator cannot leave a group they run themselves (see
+	// TestDeleteMembershipsSelfLeaveRefusedForModeratorRoles), so the removal that
+	// drops their last mod role comes from an owner of the group.
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Owner")
+	token := getToken(t, ownerID)
+
+	body, _ := json.Marshal(map[string]interface{}{"groupid": groupID, "userid": userID})
 	req := httptest.NewRequest("DELETE", "/api/memberships?jwt="+token, bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
@@ -4453,7 +4638,7 @@ func TestDeleteMembershipsDemotesStaleModeratorSystemRole(t *testing.T) {
 
 	var systemrole string
 	database.DBConn.Raw("SELECT systemrole FROM users WHERE id = ?", userID).Scan(&systemrole)
-	assert.Equal(t, "User", systemrole, "leaving the only mod group must demote systemrole to User")
+	assert.Equal(t, "User", systemrole, "losing the only mod role must demote systemrole to User")
 }
 
 // TestGetMembershipsMailDelayed covers the deferral-aware suppression fields.

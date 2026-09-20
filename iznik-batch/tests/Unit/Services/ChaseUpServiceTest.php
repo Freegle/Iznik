@@ -484,6 +484,41 @@ class ChaseUpServiceTest extends TestCase
         ]);
     }
 
+    /**
+     * The membership row a post is created with has no msgtype of its own: only the
+     * ripple, move and email paths fill that denormalised copy in. Reading the type
+     * from the message keeps those posts eligible; reading it from the membership
+     * dropped every one of them silently.
+     */
+    public function test_notify_languishing_counts_a_post_whose_membership_has_no_msgtype(): void
+    {
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['added' => now()->subDays(60)]);
+
+        $message = $this->createTestMessage($user, $group, [
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $group->id)
+            ->update([
+                'arrival' => now()->subDays(5),
+                'autoreposts' => 6,
+                'msgtype' => null,
+            ]);
+
+        $count = $this->service->notifyLanguishing();
+
+        $this->assertEquals(1, $count, 'the post is an Offer and must be chased even with no msgtype on the membership');
+        $this->assertDatabaseHas('users_notifications', [
+            'touser' => $user->id,
+            'type' => 'OpenPosts',
+        ]);
+    }
+
     public function test_constants(): void
     {
         $this->assertEquals(90, ChaseUpService::LOOKBACK_DAYS);

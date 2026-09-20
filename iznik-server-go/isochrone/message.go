@@ -7,8 +7,10 @@ import (
 
 	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/driving"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -88,16 +90,17 @@ type reachCandidateRow struct {
 	ReachCells []byte `gorm:"column:reach_cells"`
 }
 
-// blurredDistanceMiles blurs this post's real coordinates (utils.Blur, deterministic — the
-// same post always yields the same blurred point) and returns the great-circle distance from
-// the viewer to that BLURRED point, in miles, alongside the blurred point itself. This is the
-// SINGLE place that computes "how far away is this post": both the feed (toSummary, for the
-// exposed `distance` field and the score's `close` term) and the count's distance filter
-// (nearbyCount) call it, so the badge and the list can never disagree about which posts are
-// within a given limit — a real bug class this replaces (two independently-written distance
-// calcs drifting at the boundary).
+// blurredDistanceMiles blurs this post's real coordinates (roadblur.RoadBlur, deterministic —
+// the same post always yields the same blurred point, and the SAME point the full message
+// record exposes, so the feed summary and the card badge can never disagree) and returns the
+// great-circle distance from the viewer to that BLURRED point, in miles, alongside the blurred
+// point itself. This is the SINGLE place that computes "how far away is this post": both the
+// feed (toSummary, for the exposed `distance` field and the score's `close` term) and the
+// count's distance filter (nearbyCount) call it, so the badge and the list can never disagree
+// about which posts are within a given limit — a real bug class this replaces (two
+// independently-written distance calcs drifting at the boundary).
 func (r reachCandidateRow) blurredDistanceMiles(viewerLat, viewerLng float64) (blurLat, blurLng, distanceMiles float64) {
-	blurLat, blurLng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
+	blurLat, blurLng = roadblur.RoadBlur(r.Lat, r.Lng, utils.BLUR_USER)
 	distanceMiles = utils.Haversine(viewerLat, viewerLng, blurLat, blurLng)
 	return
 }
@@ -110,7 +113,7 @@ func (r reachCandidateRow) blurredDistanceMiles(viewerLat, viewerLng float64) (b
 // blurred lat/lng already allow. distanceMiles (Distance) and the metres
 // figure fed into Score are the same underlying measurement, just converted,
 // so the client's distance slider and the server's ordering agree.
-func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeights, env ScoreEnv, myid uint64) message.MessageSummary {
+func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeights, env ScoreEnv, myid uint64, roadmins, roadmiles *float64) message.MessageSummary {
 	blurLat, blurLng, distanceMiles := r.blurredDistanceMiles(viewerLat, viewerLng)
 	distanceMetres := distanceMiles * milesToMetres
 
@@ -124,7 +127,13 @@ func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeight
 	// Home-group anchoring is not yet implemented (mirrors the digest and
 	// the /rippling preview, both of which pass homeGroup=false today; its
 	// weight defaults to 0 so it has no effect either way).
-	comps := Score(distanceMetres, reachMetres, ageHours, int(r.Views), int(r.Replies), false, w, env)
+	//
+	// The close term uses the member's actual drive time when the routing
+	// engine answered (the reference formula), the crow proxy otherwise -
+	// see ScoreT. The same roadmins/roadmiles are stamped on the summary,
+	// so the number the ranking used is the number the client filters and
+	// sorts by.
+	comps := ScoreT(roadmins, distanceMetres, reachMetres, ageHours, int(r.Views), int(r.Replies), false, w, env)
 
 	return message.MessageSummary{
 		ID:           r.ID,
@@ -141,7 +150,34 @@ func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeight
 		Distance:     distanceMiles,
 		Score:        comps.Total,
 		Mine:         r.Fromuser != 0 && r.Fromuser == myid,
+		Roadmins:     roadmins,
+		Roadmiles:    roadmiles,
 	}
+}
+
+// candDriveMetrics resolves each candidate's drive time/miles from the viewer
+// in ONE batched routing call, to the same blurred points the summaries will
+// expose. Index-aligned with cands; nil where the engine had no answer (the
+// caller's crow fallbacks then apply). Fetched BEFORE summarising because the
+// close term of the relevance score now uses it - the ranking, the filter and
+// the badges all read one number.
+func candDriveMetrics(viewerLat, viewerLng float64, cands []reachCandidateRow) ([]*float64, []*float64) {
+	mins := make([]*float64, len(cands))
+	miles := make([]*float64, len(cands))
+	targets := make([]driving.Target, 0, len(cands))
+	for ix, cand := range cands {
+		blurLat, blurLng, _ := cand.blurredDistanceMiles(viewerLat, viewerLng)
+		if blurLat != 0 || blurLng != 0 {
+			targets = append(targets, driving.Target{ID: int64(ix), Lat: blurLat, Lng: blurLng})
+		}
+	}
+	for _, r := range driving.FetchDriveMetrics(roadblur.RoutingURL(), viewerLat, viewerLng, targets) {
+		if r.Mins != nil && r.ID >= 0 && int(r.ID) < len(cands) {
+			mins[r.ID] = r.Mins
+			miles[r.ID] = r.Miles
+		}
+	}
+	return mins, miles
 }
 
 // fetchReachCandidates runs the reach-arm query — open posts whose rippling-out reach
@@ -152,21 +188,16 @@ func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeight
 // badge's existing "unseen only" semantics) both call it, so feed and count cannot drift on
 // membership OR on the columns each candidate's score/distance is derived from.
 func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenOnly bool) []reachCandidateRow {
-	// reach_wkt is the BOUNDING-BOX envelope of the reach polygon (ST_Envelope), not the
-	// polygon itself. The reach-gate's exact display polygons are huge - up to ~1.25MB of WKT
-	// each - so ST_AsText(rr.polygon) for every in-reach post shipped tens of MB per browse
-	// load (one heavy user measured 64MB / 264 rows) and the query ran 30-50s, so clients
-	// timed out and saw NO posts. The WKT is only consumed by ReachRadiusMetres (the score's
-	// 'close' term), which takes the farthest vertex from the origin; the envelope's 5 points
-	// give that extent (a small, uniform over-estimate) for ~100 bytes instead of megabytes.
-	// Visibility is unaffected: the WHERE still tests containment on the FULL polygon
-	// (via the sandwich-bounds prefilter — see reachContainmentSQL).
-	// The reach geometry may live in rippling_reach_geom (content-addressed dedup,
-	// plans/2026-08-23-rippling-reach-polygon-dedup.md): COALESCE reads the shared
-	// row when rr.polygon_hash points at one, the local blob otherwise. The join is
-	// added by reachCandidateQuery's own JOIN chain, shared with reachCandidatePoints
-	// (which does not select reach_wkt, so the extra LEFT JOIN there costs a
-	// primary-key lookup and nothing more).
+	// reach_wkt is the BOUNDING-BOX envelope of the reach's outer bound
+	// (ST_Envelope), never an exact geometry. (The old exact display polygons
+	// were up to ~1.25MB of WKT each, which shipped tens of MB per browse
+	// load and timed clients out.) The WKT is only consumed by
+	// ReachRadiusMetres (the score's 'close' term), which takes the farthest
+	// vertex from the origin; the envelope's 5 points give that extent (a
+	// small, uniform over-estimate) for ~100 bytes.
+	// Visibility is unaffected: the WHERE still tests containment exactly
+	// (spatial-index id list, or the outer-bound + cells-probe degraded
+	// path - see reachContainmentSQL).
 	var candidates []reachCandidateRow
 	query, probe := reachCandidateQuery(db, myid, latlng, unseenOnly)
 	query.
@@ -196,32 +227,50 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 func reachExtentSelect(db *gorm.DB, probe *reachProbe) string {
 	sel := reachEnvelopeExpr(db) + " AS reach_wkt"
 	if probe != nil {
-		sel += ", rr.polygon_cells AS reach_cells"
+		sel += ", " + rippling.ReachCellsExpr(db) + " AS reach_cells"
 	}
 	return sel
 }
 
-// reachEnvelopeExpr is the reach-extent envelope for whichever schema era is
-// live: the legacy polygon's envelope while it exists (through the dedup
-// COALESCE when that does), the outer bound's afterwards.
+// reachEnvelopeExpr is the reach-extent envelope: the outer bound's
+// envelope (a stored superset of the reach, as designed).
 func reachEnvelopeExpr(db *gorm.DB) string {
-	if rippling.LegacyPolygonReady(db) {
-		return "ST_AsText(ST_Envelope(" + rippling.GeomExpr(rippling.GeomShareReady(db), "rr", "polygon", "g") + "))"
-	}
 	return "ST_AsText(ST_Envelope(rr.outer_bound))"
 }
 
 // filterProbed applies the degraded-path cells probe to fetched candidates;
-// a nil probe returns them untouched.
+// a nil probe returns them untouched. Rows the probe cannot decide (a
+// RETIRED grid: the row's label + union threshold replaced its cells) get
+// one batched label evaluation - so a spatial-server outage alone does not
+// hide drained posts; only spatial AND routing down together does, and that
+// double failure fails closed.
 func filterProbed(cands []reachCandidateRow, probe *reachProbe) []reachCandidateRow {
 	if probe == nil {
 		return cands
 	}
 	kept := cands[:0]
+	var undecided []reachCandidateRow
 	for _, c := range cands {
 		if probe.keep(c.ID, c.ReachCells) {
 			c.ReachCells = nil // not needed downstream; drop the blob early
 			kept = append(kept, c)
+		} else if len(c.ReachCells) == 0 {
+			undecided = append(undecided, c)
+		}
+	}
+	if len(undecided) > 0 {
+		ids := make([]uint64, len(undecided))
+		for i, c := range undecided {
+			ids[i] = c.ID
+		}
+		in := map[uint64]bool{}
+		for _, id := range rippling.RescueUndecided(probe.lat, probe.lng, ids) {
+			in[id] = true
+		}
+		for _, c := range undecided {
+			if in[c.ID] {
+				kept = append(kept, c)
+			}
 		}
 	}
 	return kept
@@ -239,7 +288,7 @@ func reachCandidatePoints(db *gorm.DB, myid uint64, latlng utils.LatLng) []reach
 	query, probe := reachCandidateQuery(db, myid, latlng, true)
 	sel := "ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id"
 	if probe != nil {
-		sel += ", rr.polygon_cells AS reach_cells"
+		sel += ", " + rippling.ReachCellsExpr(db) + " AS reach_cells"
 	}
 	query.Select(sel).Scan(&candidates)
 	return filterProbed(candidates, probe)
@@ -291,27 +340,17 @@ func ClearCount(c *fiber.Ctx) error {
 	})
 }
 
-// browseClearedWatermark is the messages_spatial.id this member has cleared their browse
-// count up to, or 0 if they never have - an absent row is the right state for everyone who
-// has not pressed the button.
+// browseClearedWatermark delegates to message.BrowseClearedWatermark - the definition moved
+// there so the mygroups feed (message.Groups) can apply the same watermark to its unseen
+// flags without an import cycle; this thin wrapper keeps the several existing call sites in
+// this package unchanged.
 //
-// Clearing moves this rather than writing a messages_likes View row per post: a View row is
-// an impression, feeding the view count posters see and the recommendation funnels, and the
-// ordinary member is sitting on ~1,000 unseen posts they have plainly not looked at.
-//
-// The axis is messages_spatial.id, not arrival and not msgid, because both of those are
-// stamped when the post was WRITTEN: a post Pending when the member cleared and approved
-// afterwards carries a backdated value, would fall under the watermark, and would never be
-// counted again. The spatial row is created when the post enters the feed.
+// Clearing moves the watermark rather than writing a messages_likes View row per post: a
+// View row is an impression, feeding the view count posters see and the recommendation
+// funnels, and the ordinary member is sitting on ~1,000 unseen posts they have plainly not
+// looked at.
 func browseClearedWatermark(db *gorm.DB, myid uint64) uint64 {
-	var cleared uint64
-
-	if myid > 0 {
-		// No row leaves cleared at its zero value, which is what "cleared nothing" means.
-		db.Table("browse_cleared").Select("spatialid").Where("userid = ?", myid).Row().Scan(&cleared)
-	}
-
-	return cleared
+	return message.BrowseClearedWatermark(db, myid)
 }
 
 // reachCandidateQuery composes the reach arm's FROM/JOINs/WHERE - the single definition of
@@ -331,10 +370,8 @@ func reachCandidateQuery(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenOn
 
 	reachWhere, pointArgs, probe := reachOrOverflowSQL(db, myid, latlng.Lng, latlng.Lat)
 
-	// Two independent shape axes -
-	// unseenFilter (a plain bool toggle) and reachWhere (a live-DB-gated
-	// choice between the legacy exact-polygon test and the sandwich-bounds
-	// form, see reachContainmentSQL/rippling.ReachBoundsReady) - are composed
+	// Two independent shape axes - unseenFilter (a plain bool toggle) and
+	// reachWhere (see reachOrOverflowSQL) - are composed
 	// exactly as the original raw SQL was: one concatenated WHERE string,
 	// passed to a SINGLE Where() call. Splitting this into multiple Where()
 	// calls would trip GORM's own clause.Where wrapping (clause/where.go
@@ -365,14 +402,6 @@ func reachCandidateQuery(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenOn
 		Joins("INNER JOIN users au ON au.id = m.fromuser").
 		Joins("INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid").
 		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW)
-
-	// The reach geometry may live in rippling_reach_geom (content-addressed dedup);
-	// see fetchReachCandidates. A primary-key LEFT JOIN, harmless for the callers
-	// that never select reach_wkt (reachCandidatePoints, nearbyCount). Guarded on
-	// the legacy columns surviving: post-drop neither the hash nor the table exists.
-	if rippling.LegacyPolygonReady(db) && rippling.GeomShareReady(db) {
-		query = query.Joins("LEFT JOIN rippling_reach_geom g ON g.hash = rr.polygon_hash")
-	}
 
 	return query.Where(whereSQL, whereArgs...), probe
 }
@@ -472,8 +501,21 @@ func Messages(c *fiber.Ctx) error {
 		// `unseen`), so unseenOnly is false; nearbyCount uses the same helper with
 		// unseenOnly=true so the two can never disagree on what "in reach" means.
 		reachCands := fetchReachCandidates(db, myid, latlng, false)
+		// One batched routing call resolves every candidate's road-aware blur;
+		// the per-row calls inside toSummary are then cache hits.
+		blurCoords := make([][2]float64, 0, len(reachCands))
 		for _, cand := range reachCands {
-			res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env, myid))
+			blurCoords = append(blurCoords, [2]float64{float64(cand.Lat), float64(cand.Lng)})
+		}
+		roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
+		// Road drive metrics for the whole feed in ONE routing call, BEFORE
+		// summarising: the relevance score's close term uses the drive time
+		// (the reference formula), and the same values are stamped on each
+		// summary so "Closest" is road-ordered from the first paint with no
+		// client round trips and no later re-sort.
+		candMins, candMiles := candDriveMetrics(viewerLat, viewerLng, reachCands)
+		for ix, cand := range reachCands {
+			res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env, myid, candMins[ix], candMiles[ix]))
 		}
 
 		// Pre-warm the browse-search reach cache with the membership we just computed:
@@ -501,9 +543,6 @@ func Messages(c *fiber.Ctx) error {
 		// (myid, MESSAGE_LIKES_VIEW), then Where (myid, start,
 		// COLLECTION_PENDING) - the same order the original literal string
 		// passed its args in.
-		// The reach geometry may live in rippling_reach_geom (content-addressed
-		// dedup, plans/2026-08-23-rippling-reach-polygon-dedup.md).
-		ownShare := rippling.LegacyPolygonReady(db) && rippling.GeomShareReady(db)
 		ownQuery := db.Table("messages m").
 			Select("m.lat, m.lng, m.id, "+
 				"ANY_VALUE(CASE WHEN mo.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
@@ -525,9 +564,6 @@ func Messages(c *fiber.Ctx) error {
 			Joins("LEFT JOIN messages_promises mp ON mp.msgid = m.id").
 			Joins("LEFT JOIN messages_likes ml ON ml.msgid = m.id AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
 			Joins("LEFT JOIN rippling_reach rr ON rr.msgid = m.id")
-		if ownShare {
-			ownQuery = ownQuery.Joins("LEFT JOIN rippling_reach_geom g ON g.hash = rr.polygon_hash")
-		}
 		ownQuery.
 			// Match My Posts' active-set exactly (message.go's HAVING clause): an
 			// Approved own post only counts as live while it is still in
@@ -553,7 +589,10 @@ func Messages(c *fiber.Ctx) error {
 		// own candidates to summaries, then drop the expired ones.
 		ownSummaries := make([]message.MessageSummary, 0, len(ownCandidates))
 		for _, cand := range ownCandidates {
-			ownSummaries = append(ownSummaries, cand.toSummary(viewerLat, viewerLng, weights, env, myid))
+			// Own posts pin client-side regardless of score and carried no
+			// road metrics before this refactor either; nil keeps them on
+			// the crow term exactly as they were.
+			ownSummaries = append(ownSummaries, cand.toSummary(viewerLat, viewerLng, weights, env, myid, nil, nil))
 		}
 		activeOwn := message.FilterExpiredSummaries(db, ownSummaries)
 
@@ -671,13 +710,14 @@ func effectiveBrowseView(c *fiber.Ctx, db *gorm.DB, myid uint64) string {
 // never clear.
 func myGroupsMsgIDs(db *gorm.DB, myid uint64) []uint64 {
 	var ids []uint64
+	memberFilter, memberArgs := message.ApprovedInMyGroups(db, "ms.msgid", myid)
+	// No DISTINCT: messages_spatial.msgid carries a UNIQUE index, and membership is tested by a
+	// subquery rather than a join, so nothing here can repeat a msgid. The keyword only bought a
+	// temporary table and a sort.
 	db.Table("messages_spatial ms").
-		Select("DISTINCT ms.msgid").
-		Where("ms.successful = 0 "+
-			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
-			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
-			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
-			"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid).
+		Select("ms.msgid").
+		Where("ms.successful = 0 AND "+memberFilter+
+			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), memberArgs...).
 		Scan(&ids)
 	return ids
 }
@@ -705,9 +745,6 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 		// itself), so this needed only the native GORM IN-list form, not a
 		// behaviour change.
 		var candidates []reachCandidateRow
-		// The reach geometry may live in rippling_reach_geom (content-addressed
-		// dedup, plans/2026-08-23-rippling-reach-polygon-dedup.md).
-		mgShare := rippling.LegacyPolygonReady(db) && rippling.GeomShareReady(db)
 		mgQuery := db.Table("messages_spatial ms").
 			Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
 				"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
@@ -725,9 +762,6 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 			Joins("INNER JOIN messages m ON m.id = ms.msgid").
 			Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
 			Joins("LEFT JOIN rippling_reach rr ON rr.msgid = ms.msgid")
-		if mgShare {
-			mgQuery = mgQuery.Joins("LEFT JOIN rippling_reach_geom g ON g.hash = rr.polygon_hash")
-		}
 		mgQuery.
 			Where("ms.msgid IN ?", msgIDs).
 			Scan(&candidates)
@@ -737,8 +771,17 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 			viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
 			weights := LoadScoreWeights()
 			env := LoadScoreEnv()
+			blurCoords := make([][2]float64, 0, len(candidates))
 			for _, cand := range candidates {
-				res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env, myid))
+				blurCoords = append(blurCoords, [2]float64{float64(cand.Lat), float64(cand.Lng)})
+			}
+			roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
+			// Metrics BEFORE summarising, exactly as the nearby arm: the close
+			// term scores by drive time when known, and the summaries carry the
+			// same numbers the client filters and sorts by.
+			candMins, candMiles := candDriveMetrics(viewerLat, viewerLng, candidates)
+			for ix, cand := range candidates {
+				res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env, myid, candMins[ix], candMiles[ix]))
 			}
 			// Rippling relevance order (score desc, arrival tie-break), mirroring the nearby
 			// arm, so the client's "New to you" sort has a meaningful score to rank on.
@@ -752,8 +795,9 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 			// No known location: distance/score can't be measured, so keep the prior behaviour
 			// (blurred coords, Distance/Score left at zero). The distance slider is hidden
 			// client-side without a location, so nothing here depends on Distance.
+			prewarmCandidateBlur(candidates)
 			for _, cand := range candidates {
-				blurLat, blurLng := utils.Blur(cand.Lat, cand.Lng, utils.BLUR_USER)
+				blurLat, blurLng := roadblur.RoadBlur(cand.Lat, cand.Lng, utils.BLUR_USER)
 				res = append(res, message.MessageSummary{
 					ID:           cand.ID,
 					Successful:   cand.Successful,
@@ -791,22 +835,35 @@ func Count(c *fiber.Ctx) error {
 	browseView := effectiveBrowseView(c, db, myid)
 	maxDistance := resolveMaxDistance(c, db, myid)
 
+	// The drive-minutes budget only ever applies WITHIN an active distance limit, because
+	// that is when the client applies it too (filterMessagesByDistance returns everything
+	// unfiltered when the slider is unlimited).
+	var maxMinutes float64
+	if maxDistance < BrowseDistanceUnlimited {
+		maxMinutes = resolveMaxMinutes(c, db, myid)
+	}
+
 	// Reuse a recent answer where there is one. Marking posts seen clears it, so the badge
 	// still drops to zero the moment the viewer does that - see the browsecount package for
 	// why this is cached at all and what it deliberately does not delay.
-	if cached, ok := browsecount.Get(myid, browseView, maxDistance); ok {
+	if cached, ok := browsecount.Get(myid, browseView, maxDistance, maxMinutes); ok {
 		return c.JSON(fiber.Map{
 			"count": cached,
 		})
 	}
 
 	if browseView == "mygroups" {
-		count = myGroupsCount(db, myid, maxDistance)
+		count = myGroupsCount(db, myid, maxDistance, maxMinutes)
 	} else {
-		count = nearbyCount(myid, maxDistance)
+		var err error
+		if count, err = nearbyCount(myid, maxDistance, maxMinutes); err != nil {
+			// Unanswered, not zero: nothing is cached, so the next poll asks
+			// again, and the client keeps the number it already shows.
+			return err
+		}
 	}
 
-	browsecount.Put(myid, browseView, maxDistance, count)
+	browsecount.Put(myid, browseView, maxDistance, maxMinutes, count)
 
 	return c.JSON(fiber.Map{
 		"count": count,
@@ -821,15 +878,20 @@ func Count(c *fiber.Ctx) error {
 // instead of sticking on rows the feed never renders.
 func myGroupsCountUnfiltered(db *gorm.DB, myid uint64) uint64 {
 	var count uint64 = 0
+	memberFilter, memberArgs := message.ApprovedInMyGroups(db, "ms.msgid", myid)
 	db.Table("messages_spatial ms").
-		Select("COUNT(DISTINCT ms.msgid)").
+		// COUNT(*), not COUNT(DISTINCT ms.msgid): messages_spatial.msgid is UNIQUE and the
+		// messages_likes join matches at most one row (UNIQUE on msgid, userid, type), so no
+		// msgid can appear twice. COUNT(DISTINCT) over ~27,000 candidate rows is dedup work for
+		// an answer that cannot differ - and this runs 14,283 times a day for the nav badge.
+		// NB this is NOT the messages_groups case in .claude/rules/go-api-traps.md, where a join
+		// genuinely fans out and COUNT(DISTINCT messages.id) is required; nor the reach-arm
+		// COUNTs below, which go through reachCandidateQuery and were left alone.
+		Select("COUNT(*)").
 		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
 		Where("ms.successful = 0 AND ml.msgid IS NULL AND ms.id > "+
-			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" "+
-			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
-			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
-			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
-			"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid).
+			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" AND "+memberFilter+
+			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), memberArgs...).
 		Scan(&count)
 	return count
 }
@@ -839,7 +901,7 @@ func myGroupsCountUnfiltered(db *gorm.DB, myid uint64) uint64 {
 // feed exposes as `distance` (reachCandidateRow.blurredDistanceMiles), so the nav badge tracks the
 // distance-filtered list exactly. BrowseDistanceUnlimited (the common case — most members leave the
 // slider at "no limit") skips the per-post distance work and uses the fast unfiltered COUNT.
-func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64) uint64 {
+func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64, maxMinutes float64) uint64 {
 	if maxDistanceMiles >= BrowseDistanceUnlimited {
 		return myGroupsCountUnfiltered(db, myid)
 	}
@@ -856,25 +918,16 @@ func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64) uint64 {
 	// Haversine — the same measure the feed uses — so badge and list agree at the boundary.
 	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
 	var candidates []reachCandidateRow
+	memberFilter, memberArgs := message.ApprovedInMyGroups(db, "ms.msgid", myid)
 	db.Table("messages_spatial ms").
 		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
 		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
 		Where("ms.successful = 0 AND ml.msgid IS NULL AND ms.id > "+
-			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" "+
-			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
-			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
-			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
-			"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid).
+			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" AND "+memberFilter+
+			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), memberArgs...).
 		Scan(&candidates)
 
-	var count uint64 = 0
-	for _, cand := range candidates {
-		_, _, distanceMiles := cand.blurredDistanceMiles(viewerLat, viewerLng)
-		if distanceMiles <= maxDistanceMiles {
-			count++
-		}
-	}
-	return count
+	return countWithinBudget(candidates, viewerLat, viewerLng, maxDistanceMiles, maxMinutes)
 }
 
 // resolveMaxDistance returns the viewer's effective nearby-feed distance limit in miles: an
@@ -927,10 +980,99 @@ func resolveMaxDistance(c *fiber.Ctx, db *gorm.DB, myid uint64) float64 {
 	return BrowseDistanceUnlimited
 }
 
+// resolveMaxMinutes returns the viewer's drive-time budget in minutes, or 0 when they have
+// none: an explicit ?maxMinutes= query param wins (so the browse page can force a fresh
+// value right after a slider change), otherwise settings.browseMaxMinutes — written by the
+// road-aware slider alongside browseMaxDistance. Count applies it exactly as the client's
+// filterMessagesByDistance (useDistance.js) does: only while a distance limit is active,
+// and minutes-first with crow miles as the fallback for posts the routing engine cannot
+// answer for. Without this the badge counted by crow miles alone while the page filtered
+// by drive time, so a rural member could stare at "You're up to date" under a badge that
+// never cleared (posts 8-11 crow miles away but 30+ minutes by road).
+func resolveMaxMinutes(c *fiber.Ctx, db *gorm.DB, myid uint64) float64 {
+	if q := c.Query("maxMinutes", ""); q != "" {
+		if v, err := strconv.ParseFloat(q, 64); err == nil {
+			return v
+		}
+	}
+
+	var raw string
+	// COALESCE to '' for the same reason as effectiveBrowseView: users who have never set
+	// the key scan cleanly instead of erroring on NULL.
+	db.Table("users").
+		Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxMinutes')), '')").
+		Where("id = ?", myid).
+		Scan(&raw)
+
+	if v, err := strconv.ParseFloat(raw, 64); err == nil && v > 0 {
+		return v
+	}
+
+	return 0
+}
+
+// countWithinBudget applies the client's slider rule to a candidate set — the same rule
+// filterMessagesByDistance + browseSliderMinuteCheck (useDistance.js) apply to the list —
+// so the badge and the page can never disagree about which posts are in range:
+//
+//   - with a drive-minutes budget (maxMinutes > 0), a post counts when the routing engine
+//     says it is within that many minutes of the viewer; the crow-miles limit is only the
+//     fallback for posts the engine has no answer for
+//   - with no budget, plain blurred-Haversine crow miles against maxDistanceMiles, as before.
+//
+// Distances are measured to each post's BLURRED point (the same coordinates the feed
+// exposes), and the drive times come in ONE batched /v1/drive-metrics call reusing the
+// feed's routing client and circuit breaker — a routing outage degrades every post to the
+// crow rule, never an error.
+func countWithinBudget(cands []reachCandidateRow, viewerLat, viewerLng, maxDistanceMiles, maxMinutes float64) uint64 {
+	prewarmCandidateBlur(cands)
+
+	type blurredPoint struct {
+		lat, lng, crow float64
+	}
+	pts := make([]blurredPoint, len(cands))
+	for ix, cand := range cands {
+		lat, lng, crow := cand.blurredDistanceMiles(viewerLat, viewerLng)
+		pts[ix] = blurredPoint{lat, lng, crow}
+	}
+
+	mins := map[int64]*float64{}
+	if maxMinutes > 0 {
+		targets := make([]driving.Target, 0, len(pts))
+		for ix, p := range pts {
+			targets = append(targets, driving.Target{ID: int64(ix), Lat: p.lat, Lng: p.lng})
+		}
+		for _, r := range driving.FetchDriveMetrics(roadblur.RoutingURL(), viewerLat, viewerLng, targets) {
+			mins[r.ID] = r.Mins
+		}
+	}
+
+	var count uint64
+	for ix := range pts {
+		if m := mins[int64(ix)]; m != nil {
+			if *m <= maxMinutes {
+				count++
+			}
+		} else if pts[ix].crow <= maxDistanceMiles {
+			count++
+		}
+	}
+	return count
+}
+
+// errReachEvalUnavailable is Count's answer when the reach evaluation went
+// unanswered. Since the cell grids retired, discovery is the only source of
+// nearby posts, so an unanswered evaluation leaves nothing to count - which is
+// not the same as nothing to see. Answering 0 here was cached for 30 seconds
+// and repainted "You're up to date" on a badge that had read 2 a minute
+// earlier; a 503 leaves the client's number alone and caches nothing.
+var errReachEvalUnavailable = fiber.NewError(fiber.StatusServiceUnavailable, "reach evaluation unavailable")
+
 // nearbyCount is the unseen-post count for the 'nearby' browse view. It mirrors the
 // reach-based feed in Messages — open posts whose rippling reach covers the viewer and
 // which they have not yet viewed — so the nav badge stays in lock-step with the list and
-// "Mark seen" can drain it to zero.
+// "Mark seen" can drain it to zero. It returns errReachEvalUnavailable when the question
+// could not be answered at all - see there.
 //
 // maxDistanceMiles narrows the count to posts within that many miles of the viewer, using the
 // SAME blurred-coordinate Haversine distance the feed exposes as `distance`
@@ -944,22 +1086,32 @@ func resolveMaxDistance(c *fiber.Ctx, db *gorm.DB, myid uint64) float64 {
 // two thirds of members now take the distance-limited path below. That path deliberately stays
 // in Go rather than SQL: the filter must use the BLURRED coordinates the feed exposes, or the
 // badge and the list would disagree at the boundary, which is the bug class this replaced.
-func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
+func nearbyCount(myid uint64, maxDistanceMiles float64, maxMinutes float64) (uint64, error) {
 	db := database.DBConn
 
 	var count uint64 = 0
 	latlng := user.GetLatLng(myid)
 
 	if latlng.Lat == 0 && latlng.Lng == 0 {
-		return count
+		return count, nil
 	}
 
-	// Reach containment via the spatial server when enabled (SPATIAL_REACH_MODE=on):
-	// the geometry test that was 95-98% of this query's cost is answered from the
-	// spatial index's rasters, and SQL only runs keyed lookups over the returned ids
-	// (plus the exact polygon test for the few boundary-band ids). Any failure falls
-	// through to the SQL containment path below, unchanged.
+	// Reach containment via the spatial server: the geometry test that was
+	// 95-98% of this query's cost is answered from the spatial index's
+	// rasters, and SQL only runs keyed lookups over the returned ids. Any
+	// failure falls through to the degraded path below.
 	spatialIn, spatialPartial, useSpatial := spatialReachIDs(db, latlng)
+	if useSpatial {
+		// The same labels-truth transform the feed applies
+		// (labelNarrowAndDiscover): without it the badge counts posts whose
+		// label verdicts the member out, and misses discovered posts the
+		// feed shows - the exact badge/feed disagreement this path exists
+		// to prevent.
+		var answered bool
+		if spatialIn, answered = labelNarrowAndDiscover(latlng.Lat, latlng.Lng, spatialIn); !answered {
+			return 0, errReachEvalUnavailable
+		}
+	}
 
 	// The rasters answer only the committed reach. The feed additionally admits
 	// via the viewer's overflow ring (reachOrOverflowSQL), so the badge must ask
@@ -985,12 +1137,14 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 			// Zero raster ids does not mean zero for a ring viewer: their ring
 			// can admit posts the committed reach does not cover.
 			if len(spatialIn)+len(spatialPartial) == 0 && len(ringAdmitted) == 0 {
-				return 0
+				return 0, nil
 			}
 			reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial, ringAdmitted).
-				Select("COUNT(DISTINCT ms.msgid)").
+				// COUNT(*): every join in that builder is 1:1 - see the note on the
+				// countQuery COUNT below.
+				Select("COUNT(*)").
 				Scan(&count)
-			return count
+			return count, nil
 		}
 		countQuery, probe := reachCandidateQuery(db, myid, latlng, true)
 		if probe != nil {
@@ -999,14 +1153,21 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 			// the cells probe instead - same rows the feed would render.
 			var cands []reachCandidateRow
 			countQuery.
-				Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, rr.polygon_cells AS reach_cells").
+				Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, " + rippling.ReachCellsExpr(db) + " AS reach_cells").
 				Scan(&cands)
-			return uint64(len(filterProbed(cands, probe)))
+			return uint64(len(filterProbed(cands, probe))), nil
 		}
 		countQuery.
-			Select("COUNT(DISTINCT ms.msgid)").
+			// COUNT(*), not COUNT(DISTINCT ms.msgid). Nothing in the reach arm can repeat a
+			// msgid: messages_spatial.msgid is UNIQUE, messages and users join on their primary
+			// keys, rippling_reach.msgid IS the primary key of that table, and messages_likes
+			// has a UNIQUE (msgid, userid, type). The same builders are already used without
+			// DISTINCT to enumerate candidates on the degraded and distance-limited paths just
+			// below, where a duplicate would show up as a double-counted post - so the 1:1
+			// property is relied on either way, and the dedup was only ever paid for here.
+			Select("COUNT(*)").
 			Scan(&count)
-		return count
+		return count, nil
 	}
 
 	// Distance-limited path: same membership again, but only the coordinates come back -
@@ -1018,7 +1179,7 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 		// Same ring caveat as the fast COUNT above: empty raster buckets do not
 		// mean an empty candidate set for a ring viewer.
 		if len(spatialIn)+len(spatialPartial) == 0 && len(ringAdmitted) == 0 {
-			return 0
+			return 0, nil
 		}
 		reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial, ringAdmitted).
 			Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
@@ -1028,12 +1189,23 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	}
 
 	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
-	for _, cand := range cands {
-		_, _, distanceMiles := cand.blurredDistanceMiles(viewerLat, viewerLng)
-		if distanceMiles <= maxDistanceMiles {
-			count++
-		}
-	}
+	return countWithinBudget(cands, viewerLat, viewerLng, maxDistanceMiles, maxMinutes), nil
+}
 
-	return count
+// prewarmCandidateBlur resolves every candidate's road-aware blur in one
+// batched routing call, so per-row blurredDistanceMiles calls are cache hits
+// instead of one network round trip each.
+func prewarmCandidateBlur(cands []reachCandidateRow) {
+	coords := make([][2]float64, 0, len(cands))
+	for _, c := range cands {
+		coords = append(coords, [2]float64{float64(c.Lat), float64(c.Lng)})
+	}
+	roadblur.RoadBlurPrewarm(coords, utils.BLUR_USER)
+}
+
+// addSummaryRoadMetrics delegates to message.AddSummaryRoadMetrics — the definition moved
+// there so the mygroups feed (message.Groups) can stamp the same road metrics without an
+// import cycle; this wrapper keeps this package's call sites unchanged.
+func addSummaryRoadMetrics(viewerLat, viewerLng float64, res []message.MessageSummary) {
+	message.AddSummaryRoadMetrics(viewerLat, viewerLng, res)
 }

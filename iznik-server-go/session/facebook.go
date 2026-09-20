@@ -222,7 +222,7 @@ func completeFacebookLogin(c *fiber.Ctx, fbID, email, firstName, lastName, fullN
 		saveProfileImage(userID, pictureURL)
 	}
 
-	persistent, jwtString, err := auth.CreateSessionAndJWT(userID)
+	persistent, jwtString, err := auth.CreateSessionAndJWT(c, userID, auth.SocialLoginMethod("Facebook", fbID))
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
 	}

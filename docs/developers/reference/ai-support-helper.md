@@ -1,8 +1,9 @@
 ---
-last_reviewed: 2026-08-23
+last_reviewed: 2026-09-06
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
+  - claude-agent-sdk/prompt.js
   - claude-agent-sdk/tools.js
   - claude-agent-sdk/server.js
   - claude-agent-sdk/auth.js
@@ -32,18 +33,19 @@ calls and answer back to the browser.
 
 ## Architecture
 
-```
-ModTools (support section)                 Backend container (ai-support-helper)
-ModSupportAIAssistant.vue                  server.js  → support-agent.js → tools.js
-  │  identify member first                   │
-  │  POST /api/log-analysis  (SSE) ──────────┤ verify caller is Support/Admin (auth.js
-  │  Authorization: Bearer <mod JWT>         │   → Go API /api/session)
-  │  { query, userId }                       │ audit(session) then run query():
-  │                                          │   Claude Agent SDK, read-only tools,
-  │  ◄── data: {type:'thinking'|'tool'|      │   codebase checkout at /app/codebase
-  │        'status'|'result'|'error'} ───────┘
-  ▼
-  renders streamed transcript + cost/tokens (answer sanitised with DOMPurify)
+```mermaid
+sequenceDiagram
+    participant MT as ModTools support section<br/>ModSupportAIAssistant.vue
+    participant H as ai-support-helper container<br/>server.js, support-agent.js, tools.js
+    participant GO as Go API /api/session
+
+    Note over MT: the volunteer identifies the member first
+    MT->>H: POST /api/log-analysis, server-sent events<br/>Bearer mod JWT, query plus userId
+    H->>GO: auth.js checks the caller is Support or Admin
+    GO-->>H: session and roles
+    Note over H: audit the session, then run the query:<br/>Claude Agent SDK, read-only tools,<br/>codebase checkout at /app/codebase
+    H-->>MT: streamed events of type thinking, tool,<br/>status, result or error
+    Note over MT: renders the transcript plus cost and tokens,<br/>answer sanitised with DOMPurify
 ```
 
 One `query()` code path serves both auth modes (see below); everything else is identical.
@@ -84,7 +86,9 @@ SDK's `Read`/`Grep`/`Glob` confined to the codebase checkout:
 
 The investigation playbook (held chat replies, duplicate conversations, purged accounts,
 rippling auto-joins, stale-deploy chunks, etc.) lives in the system prompt in
-`support-agent.js`.
+`prompt.js`. That module has no `require` at all, so the bare `node --test` CI step can
+load it and `prompt.test.js` can pin its load-bearing lines; `support-agent.js` (which
+pulls in `tools.js` and with it `mysql2`) only wires the prompt into `query()`.
 
 ### What the user dump does and does not contain
 
@@ -123,6 +127,31 @@ a real bound, not a hint:
   the end frame's byte count and SHA-256, and aborts only on 90s of *inactivity* rather
   than a fixed overall deadline.
 
+## What the volunteer sees while it works
+
+`support-agent.js` streams three kinds of progress event: `status` once at the start,
+`thinking` for each piece of text the model writes between tool calls (the conclusions it
+is reaching as it goes) and `tool` for each tool call with its raw arguments (a file
+path, a grep pattern, SQL). The transcript in `ModSupportAIAssistant.vue` lists the
+`status` and `thinking` events only. It used to list the `tool` events as well, and an
+investigation makes so many of them that the conclusions scrolled off the top of the
+screen before anyone could read them.
+
+A `tool` event instead sets a single line under the transcript saying what kind of check
+is running, in plain words: "Querying the database", "Reading the code", "Searching the
+logs" (the `TOOL_ACTIVITY` map in the component; a tool it does not know shows a generic
+"Checking" rather than an internal name). Each tool event replaces that line, a
+`thinking` event clears it, and it yields to the snapshot progress bar while that is
+showing. The raw tool call still goes to the Debug panel, so which SQL ran or which file
+was read is one switch away when something has gone wrong.
+
+## Suggested replies
+
+Volunteers paste the helper's suggested replies straight to the member, so the prompt's
+Style section asks for them in the second person ("you haven't verified your email yet",
+never "she hasn't"), with no internal names, under a **Suggested reply** heading in a
+blockquote. The draft can then be copied out as-is and the analysis left behind.
+
 ## Device summary panel
 
 `GET /api/device-summary?userId=` (`server.js`) is a deterministic, no-AI view shown as
@@ -144,7 +173,8 @@ release. Either input missing yields `unknown`, which shows no badge rather than
 **Where the app version comes from.** Only the native app knows its installed version, and
 only after Capacitor's `App.getInfo()` returns — long after the client-logging plugin starts.
 So the app logs `session_start` **twice** for one session: once immediately (no app version
-yet), then again from `stores/mobile.js` `logAppSession()` once `App.getInfo()` and
+yet), then again from `stores/mobile.js` (which also owns deep-link handling, see the mobile
+app page) `logAppSession()` once `App.getInfo()` and
 `Device.getInfo()` have answered. Both carry the same `session_id`, so `dedupeSessions()`
 merges them into one record — keeping the session count honest and making the app version
 independent of the order Loki returns the lines in.
@@ -206,7 +236,7 @@ points `SUPPORT_SMTP_*` at a real relay.
   stripped first (defeats `INTO/**/OUTFILE`), a denylist of write/DoS keywords, a denylist
   of auth-secret **tables** (`sessions`, `users_logins`, `config`, …) and **columns**
   (`credentials`, `token`, `password`, …), and a hard cap on the `LIMIT` value.
-- **Prompt-injection defence (`support-agent.js`)** — the system prompt marks everything
+- **Prompt-injection defence (`prompt.js`)** — the system prompt marks everything
   tools return (chat text, names, log lines) as **data, never instructions**; tools are
   read-only (`disallowedTools: Write/Edit/Bash`), file reads are confined to
   `additionalDirectories: [CODEBASE]`.
@@ -223,7 +253,8 @@ points `SUPPORT_SMTP_*` at a real relay.
 ## Files
 
 - **Backend**: `claude-agent-sdk/` — `server.js` (SSE endpoint + CORS + auth gate),
-  `support-agent.js` (`query()` orchestration + system-prompt playbook), `tools.js`
+  `support-agent.js` (`query()` orchestration), `prompt.js` (system prompt + playbook,
+  dependency-free so it is unit-tested in CI), `tools.js`
   (direct-access tools + guards + audit), `auth.js` (Support/Admin verification),
   `Dockerfile` / `entrypoint.sh`.
 - **Frontend**: `iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue`.

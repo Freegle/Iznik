@@ -462,6 +462,32 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
         expect(mockListingIdOrder.value).toEqual([101, 102])
       })
 
+      // 9808/798: the "Only this group's own posts (hide rippled-in)" box must survive a
+      // message-term search, which takes the searchMT path rather than the listing one
+      // and used to return before the filter was added to the request.
+      it('passes the own-posts filter through a message-term search', async () => {
+        mockRouteParams.value = { id: '123', term: 'armchair' }
+        mockMessages.value = []
+        mockShow.value = 0
+        mockListingIds.value = new Set()
+        mockMessageStore.searchMT.mockResolvedValue([101])
+        const wrapper = mountComponent()
+        await wrapper.vm.$nextTick()
+        wrapper.vm.originOnly = true
+        await wrapper.vm.$nextTick()
+        mockMessageStore.searchMT.mockClear()
+        mockMessageStore.searchMT.mockResolvedValue([101])
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockMessageStore.searchMT).toHaveBeenCalledWith(
+          expect.objectContaining({
+            term: 'armchair',
+            groupid: 123,
+            originonly: true,
+          })
+        )
+      })
+
       it('clears the loading state after a vector search so "Please wait..." disappears', async () => {
         // Regression (#9: semantic search completes but banner stays): the
         // vector branch of loadMore() returned early, before the

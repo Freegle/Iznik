@@ -9,7 +9,7 @@
     <mj-section mj-class="bg-green-light" padding="24px 0 20px">
       <mj-column>
         <mj-text font-size="22px" font-weight="bold" mj-class="text-header" line-height="1.3" padding="0 25px 12px">
-          What&rsquo;s on around {{ $areaName }}
+          What&rsquo;s on near you
         </mj-text>
         <mj-text font-size="15px" color="#333333" line-height="1.7" padding="0 25px 0">
           {!! nl2br(e($intro)) !!}

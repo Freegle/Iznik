@@ -140,6 +140,7 @@ import { useMobileStore } from '~/stores/mobile'
 import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
+import { resolveBrowseGroup } from '~/composables/browseGroupChoice'
 import { useNearbyStore } from '~/stores/nearby'
 import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 import PostFilters from '~/components/PostFilters'
@@ -258,6 +259,18 @@ watch(
   () => me.value?.settings?.browseType,
   (newVal) => {
     selectedType.value = newVal || 'All'
+  },
+  { immediate: true }
+)
+
+// And for "Show posts from" when it names a single community. It has to be restored here
+// rather than in PostFilters for the same reason as sort and type: PostFilters is lazily
+// mounted inside the collapsed Map & Filters panel, so a member who never opens the panel
+// would get the default feed back on every visit.
+watch(
+  [() => me.value?.settings?.browseGroup, myGroups],
+  ([saved, groups]) => {
+    selectedGroup.value = resolveBrowseGroup(saved, groups)
   },
   { immediate: true }
 )

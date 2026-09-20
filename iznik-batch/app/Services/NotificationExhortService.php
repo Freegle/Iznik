@@ -41,7 +41,18 @@ class NotificationExhortService
         $joinedBeforeTime = date('Y-m-d H:i:s', strtotime($joinedBefore));
         $cooldownAgo = now()->subDays(self::COOLDOWN_DAYS)->format('Y-m-d H:i:s');
 
-        $users = DB::table('users')
+        // IGNORE INDEX (deleted): `deleted IS NULL` matches 2,732,883 of 2,872,858 users on
+        // production - 95% - so the optimiser used that index to select nearly the whole table
+        // and then did 1,488,055 random primary-key lookups off it. A plain scan of all 2.9M
+        // rows beats that by 4.3x (6.59s -> 1.55s, measured on db2 2026-09-18). The predicate
+        // that would really pay is `lastaccess >= ?` (3,850 rows, 0.13%), but there is no index
+        // on lastaccess and the (added, lastaccess) composite cannot help, because
+        // `added <= <a week ago>` matches nearly every account. An index on users.lastaccess
+        // would be better still - that is a Galera DDL decision for an operator, not a PR.
+        //
+        // A hint is only as good as the index name it quotes; ExhortUsersCommandTest asserts
+        // that `users.deleted` still exists, so renaming it fails there rather than here.
+        $users = DB::table(DB::raw('users IGNORE INDEX (deleted)'))
             ->whereNull('deleted')
             ->where('lastaccess', '>=', $activeSinceTime)
             ->where('added', '<=', $joinedBeforeTime)

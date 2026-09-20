@@ -14,8 +14,9 @@ import { parseRetryAfter, postDiscourseReply } from '../actions/index'
  * out to a Python helper that mirrors the same retry-with-backoff loop; that one
  * is covered by the FSM integration run.)
  *
- * postDiscourseReply reads the real /home/edward/profile.json for the API key,
- * but every network call is mocked, so no request leaves the machine.
+ * postDiscourseReply reads its API key from the fixture profile that
+ * src/__tests__/setup.ts writes, and every network call is mocked, so no request
+ * leaves the machine and the tests do not depend on which machine they run on.
  */
 
 type FakeResponse = {
@@ -169,5 +170,23 @@ describe('postDiscourseReply quote invariant', () => {
     const result = await postDiscourseReply(9692, QUOTED_RAW, 8)
     expect(result.ok).toBe(true)
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('SKIP_DISCOURSE_POSTS kill-switch', () => {
+  const originalFetch = globalThis.fetch
+  afterEach(() => {
+    delete process.env.SKIP_DISCOURSE_POSTS
+    globalThis.fetch = originalFetch
+  })
+
+  it('fails closed without touching the network when set', async () => {
+    process.env.SKIP_DISCOURSE_POSTS = '1'
+    const fetchMock = vi.fn()
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    const r = await postDiscourseReply(9692, QUOTED_RAW, 8)
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/SKIP_DISCOURSE_POSTS/)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

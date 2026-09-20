@@ -37,6 +37,14 @@ fi
 if echo "$PWD" | grep -qE 'monitor-fsm'; then
   IS_DATA_COMMAND=true
 fi
+# Allow claude-sub-broker — a standalone Nuxt repo with its own vitest and
+# playwright setup, outside the Docker stack the status API serves.
+if echo "$COMMAND" | grep -qE 'claude-sub-broker'; then
+  IS_DATA_COMMAND=true
+fi
+if echo "$PWD" | grep -qE 'claude-sub-broker'; then
+  IS_DATA_COMMAND=true
+fi
 # Allow iznik-spatial-go and iznik-routing-go — separate Go modules not covered by the status API.
 if echo "$COMMAND" | grep -qE 'iznik-spatial-go|spatial-server|iznik-routing-go|routing-server'; then
   IS_DATA_COMMAND=true

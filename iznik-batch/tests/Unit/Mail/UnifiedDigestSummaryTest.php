@@ -204,13 +204,6 @@ class UnifiedDigestSummaryTest extends TestCase
             'unsubscribeUrl' => 'https://example.com/unsubscribe',
             'userSite' => 'https://example.com',
             'siteName' => 'Freegle',
-            // AMP-only state the unified blade references (production builds
-            // these in UnifiedDigest::buildAmp* / prepareAmpPosts).
-            'ampPostMeta' => $posts->mapWithKeys(fn ($p) => [
-                (int) $p['message']->id => ['t' => $p['itemName'], 'k' => '', 'e' => 0],
-            ])->toArray(),
-            'ampApiUrl' => 'https://api.example.com/amp',
-            'ampUserId' => 42,
         ];
     }
 

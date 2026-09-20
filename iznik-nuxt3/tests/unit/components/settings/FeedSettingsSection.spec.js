@@ -12,6 +12,20 @@ vi.mock('~/constants', () => ({
   BROWSE_MINUTES_FALLBACK_MAX: 30,
   BROWSE_MINUTES_MAX: 45,
   BROWSE_MINUTES_STEP: 5,
+  // The mock replaces the whole module, so the two distance axes have to be spelled out here too -
+  // DistanceSliders reads them to tell "linked" from "split".
+  DISTANCE_AXES: {
+    browse: {
+      minutesKey: 'browseMaxMinutes',
+      milesKey: 'browseMaxDistance',
+      bandCapped: true,
+    },
+    myPosts: {
+      minutesKey: 'myPostsMaxMinutes',
+      milesKey: 'myPostsMaxDistance',
+      bandCapped: false,
+    },
+  },
 }))
 
 const saveAndGet = vi.fn().mockResolvedValue({})
@@ -68,13 +82,20 @@ describe('FeedSettingsSection', () => {
     expect(wrapper.find('.range-slider').exists()).toBe(true)
   })
 
-  it('explains the distance preference applies to browse, notifications and who sees your posts', () => {
+  it('explains that geography, not crow flies, decides which posts you see', () => {
     const wrapper = mountWith()
     const text = wrapper.text().toLowerCase()
-    expect(text).toContain('browse')
-    expect(text).toContain('notifications')
-    // The outbound half: the setting also caps who sees the member's own posts.
-    expect(text).toContain('who sees your posts')
+    expect(text).toContain('road distance and travel time')
+    expect(text).toContain('geography')
+  })
+
+  it('says the one slider still limits who sees your posts, and offers to split it', () => {
+    // The outbound half is real but linked by default, so the linked state has to say so - and
+    // has to offer the way out, or the second slider is undiscoverable.
+    const wrapper = mountWith()
+    const text = wrapper.text().toLowerCase()
+    expect(text).toContain('also limits who sees your posts')
+    expect(text).toContain('set separately')
   })
 
   it('has no numeric readout (matches the browse slider; avoids janky drag)', () => {

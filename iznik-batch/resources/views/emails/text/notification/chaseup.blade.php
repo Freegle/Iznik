@@ -1,9 +1,11 @@
 You have {!! $count !!} notification{!! $count === 1 ? '' : 's' !!} on Freegle.
 
+Here's what happened while you were away.
+
 @foreach ($notifications as $notif)
 ---
 @if ($notif['type'] === 'CommentOnCommented')
-{!! $notif['fromname'] !!} commented on "{!! $notif['newsfeed']['replyto']['message'] ?? '' !!}":
+{!! $notif['fromname'] !!} replied on "{!! $notif['newsfeed']['replyto']['message'] ?? 'your thread' !!}":
 
 {!! $notif['newsfeed']['message'] ?? '' !!}
 @elseif ($notif['type'] === 'CommentOnYourPost')
@@ -27,15 +29,22 @@ You have {!! $count !!} notification{!! $count === 1 ? '' : 's' !!} on Freegle.
 
 {!! $notif['text'] ?? '' !!}
 @elseif ($notif['type'] === 'MembershipPending')
-Your application to {!! $notif['url'] ?? '' !!} requires approval. We'll let you know soon.
+Your application to {!! $notif['url'] ?? '' !!} needs approval. We'll let you know as soon as we hear.
 @elseif ($notif['type'] === 'MembershipApproved')
-Your application to {!! $notif['url'] ?? '' !!} has been approved!
+You're in! Your application to {!! $notif['url'] ?? '' !!} has been approved.
 @elseif ($notif['type'] === 'MembershipRejected')
-Sorry, your application to {!! $notif['url'] ?? '' !!} was rejected.
+Sorry, your application to {!! $notif['url'] ?? '' !!} wasn't approved.
+@else
+You have a notification from {!! $notif['fromname'] ?? 'Freegle' !!}
 @endif
 
+{!! $notif['timestamp'] ?? '' !!}
 View on Freegle: {!! $notif['trackedUrl'] !!}
 @endforeach
+
+---
+Replies, loves and nudges all live on Freegle. Pop in to catch up on the lot:
+{!! $chitchatUrl !!}
 
 ---
 This email was sent to {!! $email !!}

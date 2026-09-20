@@ -391,3 +391,16 @@ func TestBuildImagePrompt_LeavesRealWordsBeginningWithPlease(t *testing.T) {
 	prompt := buildImagePrompt("Pleaser platform boots")
 	assert.Contains(t, prompt, "Pleaser platform boots")
 }
+
+func TestBuildImagePrompt_StripsAdultBiasWord(t *testing.T) {
+	// Regression test for Discourse topic 9630/60: "Adult bike" got an AI image of a
+	// medicine/supplement bottle, because "adult" biases the image generator toward pharmacy
+	// imagery. Moderator regeneration goes through buildImagePrompt() with the stored
+	// (uncleaned) ai_images.name, so the strip has to happen here too - and via the same
+	// misc.StripCourtesy() call as the compose-time cache lookup, so mobile and desktop keep
+	// resolving to the same cached image instead of each generating their own.
+	prompt := buildImagePrompt("Adult bike")
+	assert.Contains(t, prompt, "single isolated bike centered")
+	assert.NotContains(t, prompt, "Adult")
+	assert.NotContains(t, prompt, "adult")
+}

@@ -12,6 +12,7 @@ use App\Services\TrashNothing\Sync\UserChangesSyncer;
 use App\Traits\GracefulShutdown;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -29,7 +30,8 @@ class TNSyncCommand extends Command
                             {--run-id= : Queue run identifier used to update background_tasks JSON completion state}
                             {--dry-run : Trace DB writes without executing them}
                             {--local-testing : Load API responses from local fixture files instead of hitting the live TN API}
-                            {--full-duplicate-scan : Re-scan every Trash Nothing address rather than only those added since the last run}';
+                            {--full-duplicate-scan : Re-scan every Trash Nothing address rather than only those added since the last run}
+                            {--report-duplicates : List duplicate Trash Nothing account candidates and exit, merging nothing}';
 
     protected $description = 'Sync data from TrashNothing, including user data updates, user ratings, posts/messages, and chat messages.';
 
@@ -42,6 +44,9 @@ class TNSyncCommand extends Command
     private const SYNC_OVERLAP_SECONDS = 10;
 
     private bool $dryRun;
+
+    /** Report duplicate candidates and merge nothing. Read-only; never moves the cursor. */
+    private bool $reportOnly = false;
 
     private bool $localTesting;
 
@@ -61,6 +66,16 @@ class TNSyncCommand extends Command
         $this->registerShutdownHandlers();
         $this->dryRun = (bool) $this->option('dry-run');
         $this->localTesting = (bool) $this->option('local-testing');
+        $this->reportOnly = (bool) $this->option('report-duplicates');
+
+        // Read-only, so it wants neither the lock nor the API sync. Widening the
+        // address filter exposes a backlog of real member accounts, and User::merge
+        // deletes one of each pair, so the list gets read before anything acts on it.
+        if ($this->reportOnly) {
+            $this->mergeDuplicateTNUsers(true);
+
+            return Command::SUCCESS;
+        }
         $exitCode = Command::FAILURE;
         $errorMessage = null;
 
@@ -361,6 +376,9 @@ class TNSyncCommand extends Command
     }
 
     /** Where the per-tick duplicate check remembers how far it has read. */
+    /** The domain every Trash Nothing per-group address ends with. */
+    private const TN_ADDRESS_SUFFIX = '@user.trashnothing.com';
+
     private const DUP_CURSOR_KEY = 'tn.dupscan_cursor';
 
     /** When the last whole-table duplicate re-scan finished. */
@@ -376,6 +394,16 @@ class TNSyncCommand extends Command
      * per-minute run's overlap mutex and the two could run at once.
      */
     private const DUP_FULL_SCAN_HOURS = 24;
+
+    /**
+     * The Trash Nothing username inside a per-group address: `bibiana-g288@...` is
+     * `bibiana`. The whole duplicate check turns on this being the member's identity,
+     * so both passes have to derive it the same way.
+     */
+    private function tnUsernameFromAddress(string $email): string
+    {
+        return preg_replace('/-g\d+@user\.trashnothing\.com$/i', '', $email);
+    }
 
     /**
      * Merge Trash Nothing accounts that are really the same person.
@@ -399,10 +427,8 @@ class TNSyncCommand extends Command
      */
     private function mergeDuplicateTNUsers(bool $full = false): int
     {
-        // Use the `backwards` index (REVERSE(email)) to avoid a full table scan.
-        // LIKE '%@user.trashnothing.com' can't use the email index (leading wildcard),
-        // but the reversed suffix is a prefix match — O(log n) range scan instead of O(n).
-        $reversedSuffix = strrev('@user.trashnothing.com');
+        // See whereTNAddress() for what the address filter matches on and why it is
+        // not the backwards column.
 
         // Stream rows with a query-builder cursor and group as we go. Hydrating the
         // full ~400k-row result set as Eloquent models exhausts the 512M memory_limit;
@@ -419,30 +445,59 @@ class TNSyncCommand extends Command
         if ($cursor === null) {
             // Full pass: the nightly reconciliation, and whatever runs first after a
             // deploy so there is a watermark to work from.
+            //
+            // Hold ONE integer per username, not a list. Matching on the address takes
+            // this scan from 451k rows to 2.22M across ~1.03M accounts, and
+            // an array per username at that size does not fit the 512M memory_limit -
+            // the same limit the Eloquent hydration note below was written about. A
+            // username only earns a list once a SECOND distinct account appears on it,
+            // which on production is 96 of them.
+            $firstSeen = [];
+
             foreach (
-                DB::table('users_emails')
+                $this->whereTNAddress(DB::table('users_emails'))
                     ->select('userid', 'email')
-                    ->where('backwards', 'LIKE', $reversedSuffix . '%')
                     ->orderBy('id')
                     ->cursor() as $row
             ) {
-                $username = preg_replace('/-g\d+@user\.trashnothing\.com$/i', '', $row->email);
-                $groups[$username][] = (int) $row->userid;
+                $username = $this->tnUsernameFromAddress($row->email);
+                $userid = (int) $row->userid;
+
+                if (!isset($firstSeen[$username])) {
+                    $firstSeen[$username] = $userid;
+
+                    continue;
+                }
+
+                if ($firstSeen[$username] === $userid) {
+                    continue;
+                }
+
+                // Ordered by id, so the first account seen is the lowest
+                // users_emails.id and stays at the head of the list: the one kept.
+                if (!isset($groups[$username])) {
+                    $groups[$username] = [$firstSeen[$username]];
+                }
+                if (!in_array($userid, $groups[$username], true)) {
+                    $groups[$username][] = $userid;
+                }
             }
+
+            unset($firstSeen);
         } else {
             // Only addresses added since last time. For each, collect everyone sharing
-            // its Trash Nothing username - an indexed prefix match on the address, since
-            // email is uniquely indexed and 'username-g' anchors the left of it.
+            // its Trash Nothing username. The address is indexed, so a prefix LIKE finds
+            // the candidates cheaply - but it only narrows, it does not decide: see the
+            // exact-username test below.
             $newUsernames = [];
             foreach (
-                DB::table('users_emails')
+                $this->whereTNAddress(DB::table('users_emails'))
                     ->select('email')
-                    ->where('backwards', 'LIKE', $reversedSuffix . '%')
                     ->where('id', '>', $cursor)
                     ->where('id', '<=', $highWater)
                     ->cursor() as $row
             ) {
-                $newUsernames[preg_replace('/-g\d+@user\.trashnothing\.com$/i', '', $row->email)] = true;
+                $newUsernames[$this->tnUsernameFromAddress($row->email)] = true;
             }
 
             foreach (array_keys($newUsernames) as $username) {
@@ -460,13 +515,28 @@ class TNSyncCommand extends Command
                         ->orderBy('id')
                         ->cursor() as $row
                 ) {
+                    // '-g%' runs on past the end of the username, so 'bibiana-g%' also
+                    // matches 'bibiana-gomes-g4840@...' - a different member with a
+                    // longer name. Group on an exact username, the same test the full
+                    // pass applies. Without this two unrelated members are merged into
+                    // one account and one of them is deleted: on 2026-09-13 TN user
+                    // 8893880 went into TN user 8996910's account, and 8893880's reply
+                    // to an OFFER was then answered to 8996910.
+                    if ($this->tnUsernameFromAddress($row->email) !== $username) {
+                        continue;
+                    }
+
                     $groups[$username][] = (int) $row->userid;
                 }
             }
         }
 
         if (empty($groups)) {
-            $this->writeDupCursor($highWater, $didFullScan);
+            if ($this->reportOnly) {
+                $this->line('Trash Nothing duplicate-account candidates: 0');
+            } else {
+                $this->writeDupCursor($highWater, $didFullScan);
+            }
 
             return 0;
         }
@@ -474,13 +544,26 @@ class TNSyncCommand extends Command
         $duplicateGroups = array_filter($groups, fn($ids) => count(array_unique($ids)) > 1);
 
         if (empty($duplicateGroups)) {
-            $this->writeDupCursor($highWater, $didFullScan);
+            if ($this->reportOnly) {
+                $this->line('Trash Nothing duplicate-account candidates: 0');
+            } else {
+                $this->writeDupCursor($highWater, $didFullScan);
+            }
 
             return 0;
         }
 
         Log::info('Found ' . count($duplicateGroups) . ' duplicate TN users');
         Log::info("TN-SYNC-TRACE [DUP-SCAN] count=" . count($duplicateGroups));
+
+        if ($this->reportOnly) {
+            $this->reportDuplicateGroups($duplicateGroups);
+
+            // No cursor write: reporting leaves the next real run seeing exactly what
+            // it would have seen.
+            return 0;
+        }
+
         $merged = 0;
 
         foreach ($duplicateGroups as $username => $userIds) {
@@ -507,6 +590,86 @@ class TNSyncCommand extends Command
         $this->writeDupCursor($highWater, $didFullScan);
 
         return $merged;
+    }
+
+    /**
+     * Whether to look at the addresses the old filter could not see.
+     *
+     * Default off. What it exposes is ~96 pairs of live member accounts, and merging
+     * a pair deletes one of them and re-points their mail, which cannot be undone.
+     * Reporting always sees them; merging waits until someone has read the report and
+     * set FREEGLE_TN_MERGE_LEGACY_DUPLICATES. Duplicates created from now on are
+     * unaffected either way - those arrive as new rows and the per-tick check has
+     * always seen them.
+     */
+    private function widenDuplicateScan(): bool
+    {
+        return $this->reportOnly
+            || (bool) config('freegle.trashnothing.merge_legacy_duplicates', false);
+    }
+
+    /**
+     * Narrow a users_emails query to Trash Nothing addresses.
+     *
+     * Once widened this tests the ADDRESS, because no test on backwards can be
+     * complete. That column holds three different things for a TN address:
+     * REVERSE(email) (450,846 rows), REVERSE(canon) - canon strips the -gNNNN suffix
+     * AND the dots in the domain, giving 'mocgnihtonhsartresu@...' (1,752,575 rows),
+     * and NULL (13,772 rows). 5e2a90450 filtered on the first form alone, which is
+     * how the check came to read 20% of the table while reporting "roughly zero
+     * duplicates a day"; no set of prefixes reaches the NULLs at all.
+     *
+     * It was swapped onto backwards for speed, but EXPLAIN on production shows the
+     * optimiser never picks that index - every form matches far too much of the table
+     * - so both filters are the same full scan and the swap bought nothing. Measured
+     * on production 2026-09-19: backwards 3.3s finding 94 of the 96 split usernames,
+     * address 5.1s finding all 96. The real speedup in 5e2a90450 came from moving
+     * REGEXP_REPLACE and GROUP BY out of MySQL, which stays.
+     *
+     * The per-tick pass pays none of this: its id range is on the primary key and
+     * does the narrowing before the address test is reached.
+     *
+     * See .claude/rules/mail-and-data.md.
+     */
+    private function whereTNAddress(Builder $query): Builder
+    {
+        if (!$this->widenDuplicateScan()) {
+            // Gate closed: exactly the filter that ships today, incompleteness included.
+            return $query->where('backwards', 'LIKE', strrev(self::TN_ADDRESS_SUFFIX) . '%');
+        }
+
+        return $query->where('email', 'LIKE', '%' . self::TN_ADDRESS_SUFFIX);
+    }
+
+    /**
+     * Print the duplicate candidates for review and merge nothing.
+     *
+     * Pairs whose accounts carry two DIFFERENT tnuserids are called out: that is a
+     * member who re-registered on Trash Nothing, or a username released and retaken
+     * by somebody else, and only a person can tell which.
+     *
+     * @param  array<string, list<int>>  $duplicateGroups
+     */
+    private function reportDuplicateGroups(array $duplicateGroups): void
+    {
+        $this->line('Trash Nothing duplicate-account candidates: ' . count($duplicateGroups));
+
+        foreach ($duplicateGroups as $username => $userIds) {
+            $tnuserids = [];
+            $parts = [];
+
+            foreach (array_values(array_unique($userIds)) as $id) {
+                $tnuserid = DB::table('users')->where('id', $id)->value('tnuserid');
+                $messages = DB::table('messages')->where('fromuser', $id)->count();
+                if ($tnuserid) {
+                    $tnuserids[] = $tnuserid;
+                }
+                $parts[] = $id . ' (tnuserid=' . ($tnuserid ?: '-') . ', messages=' . $messages . ')';
+            }
+
+            $review = count(array_unique($tnuserids)) > 1 ? '  <== REVIEW: two tnuserids' : '';
+            $this->line('  ' . $username . ': ' . implode('  ', $parts) . $review);
+        }
     }
 
     /** Is it time for one tick to re-scan the whole table? */

@@ -2,9 +2,6 @@
 
 namespace App\Services\FirstReply;
 
-use App\Services\Ripple\CellSetService;
-use App\Services\Ripple\GeomShareService;
-use App\Services\Ripple\LegacyGeometry;
 use App\Services\Ripple\RingIndex;
 use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
@@ -92,7 +89,6 @@ class MatchMailService
         private UnifiedDigestService $digest,
         private Metrics $metrics,
         private \App\Services\FreegleApiClient $api,
-        private CellSetService $cellSets = new CellSetService(),
     ) {
     }
 
@@ -317,14 +313,6 @@ class MatchMailService
     public function mailMatchesFor(object $post, array $cfg, bool $dryRun = false): int
     {
         $msgid = (int) $post->msgid;
-
-        // This fires as soon as a post is seen, which can be a beat before the
-        // background pass has worked out the post's eventual reach - and without
-        // that nobody is eligible. Ask for it directly rather than making the post
-        // wait a minute for a different cron. Schedule-only, so it costs a JSON
-        // decode and an UPDATE; posts that need a routing call are left to the
-        // background pass and simply get no match mail this time round.
-        $this->maxReach->populateForPost($msgid);
 
         $candidates = $this->candidates($post, $cfg);
         if (empty($candidates)) {
@@ -658,9 +646,7 @@ class MatchMailService
      */
     private function filterEligible(int $msgid, array $userIds, array $cfg): array
     {
-        if (empty($userIds) || !$this->maxReach->available()) {
-            // No max_polygon yet means no basis for reaching beyond today's reach,
-            // and mailing inside today's reach only is the reach mailer's job.
+        if (empty($userIds)) {
             return [];
         }
 
@@ -724,63 +710,33 @@ class MatchMailService
         // this file is exactly how the mail came to invite people the site refused.
 
         // The band test - outside the reach the post has NOW, inside the reach
-        // it will eventually have - is the only geometry in this query, and it
-        // moves era by era. While the legacy columns exist it stays exactly the
-        // SQL it always was (both geometries may live in rippling_reach_geom
-        // after the content-addressed dedup; COALESCE reads the shared row when
-        // the hash points at one, and "IS NOT NULL" keeps meaning "a max reach
-        // is known" across the drain, which NULLs the blob but not the hash).
-        //
-        // Post-drop the same three questions are answered from the post's two
-        // stored grids, fetched ONCE for the post rather than tested per
-        // candidate: a run-stream probe for each containment and
-        // distanceToNearestCellMetres for the nearest-edge ordering. That is
-        // strictly less work than the SQL form, which measured ST_Distance
-        // against a megabyte polygon once per candidate.
-        $legacyPolygon = LegacyGeometry::polygonReady();
-
-        if ($legacyPolygon) {
-            $pJoin = GeomShareService::joinSql('rr', 'polygon', 'gp');
-            $mJoin = GeomShareService::joinSql('rr', 'max_polygon', 'gm');
-            $poly = GeomShareService::sourceExpr('rr', 'polygon', 'gp');
-            $maxPoly = GeomShareService::sourceExpr('rr', 'max_polygon', 'gm');
-            $bandSelect = "ST_Distance($poly, $pointExpr) AS dist,";
-            $bandWhere = "AND ($maxPoly) IS NOT NULL
-               AND NOT ST_Contains($poly, $pointExpr)
-               AND ST_Contains($maxPoly, $pointExpr) = 1";
-            $bandSelectParams = [self::SRID];
-            $bandWhereParams = [self::SRID, self::SRID];
-        } else {
-            $pJoin = '';
-            $mJoin = '';
-            // NULL placeholder so the scan shape and the row property are the
-            // same in both eras; filled in below from the grids.
-            $bandSelect = 'NULL AS dist,';
-            $bandWhere = 'AND rr.max_polygon_cells IS NOT NULL';
-            $bandSelectParams = [];
-            $bandWhereParams = [];
-        }
-
-        // keep-raw: spatial ST_Contains/ST_Distance band tests over a JSON-vs-locations CASE point expression - the builder cannot render this shape
+        // it will eventually have - is answered from the post's two stored
+        // grids, fetched ONCE for the post rather than tested per candidate
+        // (applyCellBand below): a run-stream probe for each containment and
+        // distanceToNearestCellMetres for the nearest-edge ordering. dist is a
+        // NULL placeholder here; applyCellBand fills it in from the grids.
+        // keep-raw: JSON-vs-locations CASE point expression and a dynamic IN list - the builder cannot render this shape
         $rows = DB::select(
             "SELECT u.id AS id,
-                    $bandSelect
+                    NULL AS dist,
                     ST_Y($pointExpr) AS cand_lat,
                     ST_X($pointExpr) AS cand_lng,
                     JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band
              FROM users u
              LEFT JOIN locations l ON l.id = u.lastlocation
-             JOIN rippling_reach rr ON rr.msgid = ?$pJoin$mJoin
+             JOIN rippling_reach rr ON rr.msgid = ?
              WHERE u.id IN (" . implode(',', array_fill(0, count($userIds), '?')) . ")
                AND u.deleted IS NULL
                AND (u.lastaccess IS NULL OR u.lastaccess > DATE_SUB(NOW(), INTERVAL 90 DAY))
                AND EXISTS (SELECT 1 FROM users_emails ue WHERE ue.userid = u.id{$mailableSql})
                -- OUTSIDE the reach the post has right now, INSIDE the reach it
                -- will eventually have. Someone already inside the current
-               -- polygon is going to be told anyway, by the ordinary ripple, so
+               -- reach is going to be told anyway, by the ordinary ripple, so
                -- mailing them spends a slot and a mail to change nothing.
-               -- The whole point of this mail is to reach past the current edge.
-               $bandWhere
+               -- The whole point of this mail is to reach past the current
+               -- edge. The stored label is the eventual-reach record; the
+               -- band itself is applied by applyCellBand.
+               AND rr.reach_labels IS NOT NULL
                AND NOT EXISTS (
                      SELECT 1 FROM firstreply_scouts fs
                      WHERE fs.userid = u.id AND fs.sent_at > DATE_SUB(NOW(), INTERVAL ? HOUR)
@@ -797,18 +753,14 @@ class MatchMailService
                -- engagement and non-essential admin mails honour.
                AND u.relevantallowed = 1",
             array_merge(
-                $bandSelectParams,
                 [self::SRID, self::SRID, $msgid],
                 $userIds,
                 $unmailableParams,
-                $bandWhereParams,
                 [$cooldown, $weekCap, $msgid]
             )
         );
 
-        if (!$legacyPolygon) {
-            $rows = $this->applyCellBand($msgid, $rows);
-        }
+        $rows = $this->applyCellBand($msgid, $rows);
 
         // Someone an overflow lane has already admitted is NOT a candidate for this
         // mail: they can see the post on browse, find it in search and reply to it,
@@ -865,36 +817,49 @@ class MatchMailService
             return [];
         }
 
+        // Staged-next label when its stamp is the live partition, else the
+        // live one - the routing server can only decode its own.
         $reach = DB::table('rippling_reach')
             ->where('msgid', $msgid)
-            ->first(['polygon_cells', 'max_polygon_cells']);
-        if ($reach === null || $reach->max_polygon_cells === null) {
+            ->first([DB::raw(\App\Services\Ripple\ReachService::liveLabelsSql().' AS reach_labels'), 'tick', 'max_drive_min', 'schedule']);
+        if ($reach === null || $reach->reach_labels === null) {
             return [];
         }
 
+        // ONE routing call evaluates the stored label at every candidate
+        // point - arrival within the label's full budget means inside the
+        // EVENTUAL reach; the in-flag at the current tick budget means
+        // inside the CURRENT one. The band is exactly "arrived eventually
+        // AND not yet current", ordered by how soon past the edge they are.
+        // Routing unreachable means no extra mail this round - this is an
+        // EXTRA mail, and the ordinary reach mail still covers the member
+        // when the ripple arrives. There is no grid fallback.
+        $svc = app(\App\Services\Ripple\ReachService::class);
+        $currentSecs = $svc->currentBudgetSecs(
+            (int) $reach->tick, (float) $reach->max_drive_min, $reach->schedule
+        );
+        $points = [];
+        foreach ($rows as $i => $r) {
+            if ($r->cand_lat !== null && $r->cand_lng !== null) {
+                $points[$i] = [(float) $r->cand_lat, (float) $r->cand_lng];
+            }
+        }
+        $evals = $points !== [] ? $svc->reachArrivalBatch((string) $reach->reach_labels, $currentSecs, $points) : [];
+        if ($evals === null) {
+            return [];
+        }
         $kept = [];
-        foreach ($rows as $r) {
-            if ($r->cand_lat === null || $r->cand_lng === null) {
-                continue;
+        foreach ($points as $i => $p) {
+            $ev = $evals[$i] ?? null;
+            if ($ev === null || $ev['arrival'] === null) {
+                continue; // never reached, even eventually
             }
-            $lng = (float) $r->cand_lng;
-            $lat = (float) $r->cand_lat;
-
-            // Inside the reach it will eventually have - required.
-            if ($this->cellSets->containsEncoded((string) $reach->max_polygon_cells, $lng, $lat) !== true) {
-                continue;
+            if ($ev['in']) {
+                continue; // already inside the current reach
             }
-            // Outside the reach it has now - required. A grid that cannot say
-            // is treated as covering them, which excludes them: the same
-            // direction as the NOT ST_Contains it replaces failing closed.
-            if ($reach->polygon_cells !== null
-                && $this->cellSets->containsEncoded((string) $reach->polygon_cells, $lng, $lat) !== false) {
-                continue;
-            }
-
-            $r->dist = $reach->polygon_cells === null
-                ? null
-                : $this->cellSets->distanceToNearestCellMetres((string) $reach->polygon_cells, $lng, $lat);
+            $r = $rows[$i];
+            // Ordering key: seconds past the current edge.
+            $r->dist = max(0.0, $ev['arrival'] - $currentSecs);
             $kept[] = $r;
         }
 

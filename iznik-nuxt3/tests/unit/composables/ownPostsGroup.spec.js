@@ -51,6 +51,19 @@ describe('partitionOwnPosts', () => {
     expect(others.map((m) => m.id)).toEqual([1])
   })
 
+  it('leaves the viewer’s completed posts with everyone else’s freegled cards', () => {
+    // The mygroups feed carries freegled posts (the spaced social-proof cards); lifting the
+    // viewer's own completed posts into "posts by you" resurrected them at the top of browse.
+    const { own, others } = partitionOwnPosts([
+      mine(1),
+      mine(2, { successful: true }),
+      theirs(3),
+    ])
+
+    expect(own.map((m) => m.id)).toEqual([1])
+    expect(others.map((m) => m.id)).toEqual([2, 3])
+  })
+
   it('copes with an empty or absent list', () => {
     expect(partitionOwnPosts([])).toEqual({ own: [], others: [] })
     expect(partitionOwnPosts(null)).toEqual({ own: [], others: [] })

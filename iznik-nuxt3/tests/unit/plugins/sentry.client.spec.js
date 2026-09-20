@@ -94,4 +94,44 @@ describe('plugins/sentry.client', () => {
     const options = mockInit.mock.calls[0][0]
     expect(options.integrations).toHaveLength(3)
   })
+
+  describe('beforeSend drops errors thrown inside Google ad scripts', () => {
+    function errorWithStack(stack) {
+      const err = new Error('int64')
+      err.stack = stack
+      return err
+    }
+
+    // Sentry NUXT3-DQ9: "Error: int64", every frame inside Google's own
+    // ad-rendering telemetry (pagead2.googlesyndication.com/pagead/js/rum.js),
+    // caught only because Sentry wraps every addEventListener callback on the page.
+    it('returns null for a stack entirely inside pagead2.googlesyndication.com', async () => {
+      await runPlugin()
+      const options = mockInit.mock.calls[0][0]
+      const stack = [
+        'Error: int64',
+        '    at Ot (https://pagead2.googlesyndication.com/pagead/js/rum.js:12:345)',
+        '    at HTMLDocument.<anonymous> (https://pagead2.googlesyndication.com/pagead/js/rum.js:99:1)',
+      ].join('\n')
+      const result = options.beforeSend(
+        { extra: {} },
+        { originalException: errorWithStack(stack) }
+      )
+      expect(result).toBeNull()
+    })
+
+    it('still reports an error raised from our own bundle', async () => {
+      await runPlugin()
+      const options = mockInit.mock.calls[0][0]
+      const stack = [
+        'Error: boom',
+        '    at setup (https://www.ilovefreegle.org/_nuxt/PostMap.abc123.js:1:2)',
+      ].join('\n')
+      const event = { extra: {} }
+      const result = options.beforeSend(event, {
+        originalException: errorWithStack(stack),
+      })
+      expect(result).toBe(event)
+    })
+  })
 })

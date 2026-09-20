@@ -11,6 +11,8 @@ use Tests\TestCase;
 
 class MessageSpatialServiceTest extends TestCase
 {
+    use \Tests\Support\SeedsReachCells;
+
     protected MessageSpatialService $service;
     protected SpatialAdminService $spatialAdmin;
 
@@ -585,13 +587,13 @@ class MessageSpatialServiceTest extends TestCase
             [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(2)]
         );
         DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks,
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
              VALUES (?, 51.5, -0.1,
-                     ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857),
+                     ?,
                      ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)),
                      ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, now()->subDays(2)]
+            [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'), now()->subDays(2)]
         );
         DB::statement(
             "UPDATE rippling_reach
@@ -604,11 +606,11 @@ class MessageSpatialServiceTest extends TestCase
         return (int) $message->id;
     }
 
-    public function test_completed_post_degrades_reach_bounds_but_not_polygon(): void
+    public function test_completed_post_degrades_reach_bounds_but_not_the_grid(): void
     {
         // A Taken/Received post leaves the browsable candidate set. Its sandwich bounds
         // are degraded (degenerate outer, no inner) so reach queries stop matching it
-        // cheaply — but the exact polygon must stay untouched: the digest's "came and
+        // cheaply — but the stored reach grid must stay untouched: the digest's "came and
         // went" section, held replies to taken posts and un-completion all still read it
         // (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md: pruning rippling_reach itself
         // was verified UNSAFE).
@@ -630,21 +632,21 @@ class MessageSpatialServiceTest extends TestCase
                FROM rippling_reach WHERE msgid = ?',
             [$msgid]
         );
-        $this->assertNotNull($row, 'the reach row survives completion (bounds degraded, polygon intact)');
+        $this->assertNotNull($row, 'the reach row survives completion (bounds degraded, grid intact)');
         $this->assertSame('POINT', $row->outer_type, 'outer bound degrades to a degenerate point');
         $this->assertSame(1, (int) $row->inner_null, 'inner bound is cleared');
-        $this->assertSame(
-            'POLYGON',
-            DB::selectOne('SELECT ST_GeometryType(polygon) AS t FROM rippling_reach WHERE msgid = ?', [$msgid])->t,
-            'the exact reach polygon is untouched'
+        $this->assertNotNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells'),
+            'the stored reach grid is untouched'
         );
     }
 
-    public function test_reopened_post_restores_reach_bounds_from_stored_polygon(): void
+    public function test_reopened_post_restores_reach_bounds_from_stored_grid(): void
     {
         // Un-completion is a real automated flow (outcome removed → successful flips back
-        // to 0). The bounds must be re-derived from the stored polygon — pure SQL, no
-        // routing call — or the reopened post would stay invisible to the cheap path.
+        // to 0). The bounds must be re-derived from the stored grid (traced back to a
+        // scratch geometry by the spatial server) — no routing call — or the reopened
+        // post would stay invisible to the cheap path.
         $msgid = $this->seedSpatialWithReachAndBounds();
 
         // Completed first…
@@ -666,15 +668,62 @@ class MessageSpatialServiceTest extends TestCase
         );
         $check = DB::selectOne(
             'SELECT ST_GeometryType(outer_bound) AS outer_type,
-                    ST_Contains(outer_bound, polygon) AS o,
-                    (inner_bound IS NULL OR ST_Contains(polygon, inner_bound)) AS i
+                    ST_Contains(outer_bound, ST_GeomFromText(?, 3857)) AS o,
+                    (inner_bound IS NULL OR ST_Contains(ST_GeomFromText(?, 3857), inner_bound)) AS i
                FROM rippling_reach WHERE msgid = ?',
-            [$msgid]
+            ['POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', $msgid]
         );
         $this->assertNotNull($check);
         $this->assertNotSame('POINT', $check->outer_type, 'real bounds are restored on reopen');
-        $this->assertSame(1, (int) $check->o, 'restored outer bound contains the polygon');
-        $this->assertSame(1, (int) $check->i, 'restored inner bound is NULL or inside the polygon');
+        $this->assertSame(1, (int) $check->o, 'restored outer bound contains the reach');
+        $this->assertSame(1, (int) $check->i, 'restored inner bound is NULL or inside the reach');
+    }
+
+    /**
+     * The origin membership a post is created with carries no msgtype: only the
+     * ripple, move and email paths fill that denormalised copy in. The spatial
+     * row must still record the type, because browse's type filter, the sitemap
+     * and vector search all read messages_spatial.msgtype and treat NULL as
+     * neither an Offer nor a Wanted.
+     */
+    public function test_upsert_takes_msgtype_from_the_message_not_the_membership(): void
+    {
+        $msgid = $this->eligiblePost();
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->value('msgtype'),
+            'the origin membership is expected to have no type of its own'
+        );
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertSame(
+            Message::TYPE_OFFER,
+            DB::table('messages_spatial')->where('msgid', $msgid)->value('msgtype')
+        );
+    }
+
+    /**
+     * A row that is already correct in every other respect but has lost its type
+     * must still be picked up. Comparing types needs a null-safe test: "msgtype
+     * != messages.type" is never true when the stored side is NULL, so such a row
+     * was never a candidate and stayed broken for as long as it was indexed.
+     */
+    public function test_upsert_heals_a_spatial_row_left_with_no_msgtype(): void
+    {
+        $msgid = $this->eligiblePost();
+        $mg = DB::table('messages_groups')->where('msgid', $msgid)->first(['groupid', 'arrival']);
+        DB::statement(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, NULL, ?)",
+            [$msgid, $mg->groupid, $mg->arrival]
+        );
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertSame(
+            Message::TYPE_OFFER,
+            DB::table('messages_spatial')->where('msgid', $msgid)->value('msgtype')
+        );
     }
 
     /** Seed a live, approved, located post that fully qualifies for the index. Returns msgid. */
@@ -1106,5 +1155,170 @@ class MessageSpatialServiceTest extends TestCase
         DB::table('messages_groups')->where('msgid', $msgid)
             ->update(['arrival' => now()->subDays(MessageSpatialService::RECENT_DAYS + 9)]);
         $this->assertSame([], MessageSpatialService::stillQualifyForIndex([$msgid]));
+    }
+
+    /**
+     * The reconciler picks each post's representative membership with a ranked derived table,
+     * not a correlated anti-join.
+     *
+     * upsertRecentMessages runs every five minutes and was the largest single batch consumer on
+     * db2: 28.8s mean, 58s max, 288 runs a day. Two things were wrong, and both had to be fixed
+     * before it moved (measured on production 2026-09-18):
+     *
+     *   current                      37.10s
+     *   FORCE INDEX (arrival) only   14.95s
+     *   ROW_NUMBER only              32.43s
+     *   both                          4.69s
+     *
+     * The optimiser drove from messages_groups on the `collection` index, which has 21 distinct
+     * values across the table - 5,524,838 rows examined at filtered: 6.13 - when the selective
+     * predicate is `arrival >= cutoff`, a 626,197-row window with an index on it. On top of that
+     * it ran the three-armed REPRESENTATIVE_ORDER anti-join once per driving row.
+     *
+     * Asserted on the query text because the rewrite is required to change nothing observable:
+     * the representative it picks is pinned by the behaviour tests above
+     * (test_representative_prefers_fresher_arrival_within_same_class,
+     * test_representative_breaks_exact_ties_by_lower_groupid,
+     * test_upsert_keeps_spatial_row_on_the_origin_membership).
+     */
+    public function test_reconciler_ranks_memberships_instead_of_running_a_correlated_antijoin(): void
+    {
+        $sql = $this->captureUpsertQuery();
+
+        $this->assertMatchesRegularExpression(
+            '/row_number\(\)\s*over\s*\(\s*partition\s+by\s+msgid/i',
+            $sql,
+            'the reconciler must rank memberships per msgid with ROW_NUMBER'
+        );
+        $this->assertMatchesRegularExpression(
+            '/force\s+index\s*\(\s*`?arrival`?\s*\)/i',
+            $sql,
+            'the ranked derived table must drive from the arrival index; ROW_NUMBER alone barely '
+                . 'moves the query (32.43s against 37.10s)'
+        );
+        $this->assertDoesNotMatchRegularExpression(
+            '/not\s+exists\s*\(\s*select\s+`?better`?/i',
+            $sql,
+            'the correlated representative anti-join must be gone, not merely supplemented'
+        );
+    }
+
+    /**
+     * The ROW_NUMBER ordering is generated from REPRESENTATIVE_ORDER, so it cannot drift from
+     * the ORDER BY in addApprovedMessage. That shared constant is the whole reason the immediate
+     * add path and the reconciler agree about which membership represents a post; a hand-written
+     * ORDER BY in the derived table would quietly reintroduce the ping-pong it was built to stop.
+     */
+    public function test_representative_ranking_follows_the_shared_order_constant(): void
+    {
+        $sql = $this->captureUpsertQuery();
+
+        $this->assertMatchesRegularExpression(
+            '/order\s+by\s+rippled_in\s+asc\s*,\s*arrival\s+desc\s*,\s*groupid\s+asc/i',
+            $sql,
+            'the ranking must follow REPRESENTATIVE_ORDER: rippled_in asc, arrival desc, groupid asc'
+        );
+    }
+
+    /**
+     * stillQualifyForIndex must NOT carry the reconciler's index hint.
+     *
+     * It answers "are these specific posts supposed to be indexed right now?" for a handful of
+     * msgids at a time - ripple:expand calls it before reading an absence from messages_spatial
+     * as a removal. Its selective predicate is `messages.id IN (...)`, so it wants the msgid
+     * index on messages_groups. Forcing the arrival index there would make every call walk the
+     * whole RECENT_DAYS window instead, turning a keyed lookup into a scan - the exact opposite
+     * of what the hint does for the reconciler, which has no msgid restriction at all.
+     *
+     * The two share qualifyingMemberships() deliberately, so the hint has to live on the
+     * reconciler's own membership source and nowhere else.
+     */
+    public function test_still_qualify_for_index_does_not_force_the_arrival_index(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: hint leak check (London)',
+            'textbody' => 'A thing.',
+            'source' => 'Platform',
+            'date' => now()->subDays(2),
+            'arrival' => now()->subDays(2),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(2),
+        ]);
+
+        $seen = [];
+        DB::listen(function ($query) use (&$seen) {
+            if (stripos($query->sql, 'messages_groups') !== false) {
+                $seen[] = $query->sql;
+            }
+        });
+
+        MessageSpatialService::stillQualifyForIndex([$message->id]);
+
+        $this->assertNotEmpty($seen, 'stillQualifyForIndex did not query messages_groups');
+        foreach ($seen as $sql) {
+            $this->assertDoesNotMatchRegularExpression(
+                '/force\s+index/i',
+                $sql,
+                'stillQualifyForIndex looks posts up by msgid and must not be forced onto the '
+                    . 'arrival index; that hint belongs to the reconciler alone'
+            );
+        }
+    }
+
+    /**
+     * Runs one reconcile pass and returns the SQL of the membership scan it drives from.
+     * Filtered on messages_spatial because the pass issues several statements and only the
+     * driving SELECT left-joins the index it is reconciling against.
+     */
+    private function captureUpsertQuery(): string
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: reconcile shape probe (London)',
+            'textbody' => 'A thing.',
+            'source' => 'Platform',
+            'date' => now()->subDays(2),
+            'arrival' => now()->subDays(2),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(2),
+        ]);
+
+        $seen = [];
+        DB::listen(function ($query) use (&$seen) {
+            if (
+                stripos($query->sql, 'messages_groups') !== false
+                && stripos($query->sql, 'messages_spatial') !== false
+                && stripos($query->sql, 'select') === 0
+            ) {
+                $seen[] = $query->sql;
+            }
+        });
+
+        $this->service->updateSpatialIndex(dryRun: true);
+
+        $this->assertNotEmpty($seen, 'the reconciler did not run its membership scan');
+
+        return $seen[0];
     }
 }

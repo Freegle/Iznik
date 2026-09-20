@@ -8,17 +8,29 @@ use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
- * Sandwich bounds for rippling_reach.polygon (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md).
+ * Sandwich bounds for the stored reach grid (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md;
+ * derived from polygon_cells via the spatial server's trace since the raster storage change).
  *
  * The invariants under test are the ones that make the bounds safe to consult
- * before (or instead of) the exact polygon:
- *   - outer_bound ⊇ polygon (a viewer outside outer_bound is definitely out of reach)
- *   - inner_bound ⊆ polygon, or NULL (a viewer inside inner_bound is definitely in reach)
+ * before the reach itself:
+ *   - outer_bound ⊇ reach (a viewer outside outer_bound is definitely out of reach)
+ *   - inner_bound ⊆ reach, or NULL (a viewer inside inner_bound is definitely in reach)
  * Anything the deriver cannot verify must fall back (envelope / NULL), never ship
  * an unverified bound, and never throw into the calling tick.
+ *
+ * The invariant checks below compare against the seed WKT the grid was built
+ * from. The grid's cell boundaries can jut up to half a lattice cell
+ * (~0.00015 degrees) past that WKT, which is an order of magnitude inside the
+ * +/-0.002-degree buffer the derivation applies, so the WKT stands in for the
+ * reach exactly for these assertions.
  */
 class ReachBoundsServiceTest extends TestCase
 {
+    use \Tests\Support\SeedsReachCells;
+
+    /** @var array<int,string> seed WKT per msgid, for the invariant checks. */
+    private array $seededWkt = [];
+
     // A ~0.1° square around central London: comfortably larger than the ±0.002°
     // simplify/buffer tolerance, so both derived bounds are non-degenerate.
     private const WKT = 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))';
@@ -34,7 +46,7 @@ class ReachBoundsServiceTest extends TestCase
         return new ReachBoundsService();
     }
 
-    /** Seed a message + rippling_reach row with the given polygon; returns the msgid. */
+    /** Seed a message + rippling_reach row whose reach is the given WKT; returns the msgid. */
     private function seedReach(string $wkt): int
     {
         $user = $this->createTestUser();
@@ -50,11 +62,12 @@ class ReachBoundsServiceTest extends TestCase
             'lng' => -0.1,
         ]);
         DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks,
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, $wkt, $wkt]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $this->reachCellsFor($wkt), $wkt]
         );
+        $this->seededWkt[(int) $message->id] = $wkt;
 
         return (int) $message->id;
     }
@@ -82,13 +95,13 @@ class ReachBoundsServiceTest extends TestCase
         // The safety invariants: outer contains the exact polygon; inner (when present)
         // is contained by it.
         $check = DB::selectOne(
-            'SELECT ST_Contains(outer_bound, polygon) AS o,
-                    (inner_bound IS NULL OR ST_Contains(polygon, inner_bound)) AS i
+            'SELECT ST_Contains(outer_bound, ST_GeomFromText(?, 3857)) AS o,
+                    (inner_bound IS NULL OR ST_Contains(ST_GeomFromText(?, 3857), inner_bound)) AS i
                FROM rippling_reach WHERE msgid = ?',
-            [$msgid]
+            [$this->seededWkt[$msgid], $this->seededWkt[$msgid], $msgid]
         );
-        $this->assertSame(1, (int) $check->o, 'outer_bound must contain the exact polygon');
-        $this->assertSame(1, (int) $check->i, 'inner_bound must be NULL or inside the exact polygon');
+        $this->assertSame(1, (int) $check->o, 'outer_bound must contain the reach');
+        $this->assertSame(1, (int) $check->i, 'inner_bound must be NULL or inside the reach');
 
         // For a clean simple polygon the full derivation should succeed, giving a
         // real (non-NULL) inner bound — not just the envelope fallback.
@@ -127,11 +140,11 @@ class ReachBoundsServiceTest extends TestCase
             // MBR containment is well-defined even for invalid geometry: the stored
             // outer bound must at least cover the polygon's extent.
             $check = DB::selectOne(
-                'SELECT MBRContains(outer_bound, polygon) AS o
+                'SELECT MBRContains(outer_bound, ST_GeomFromText(?, 3857)) AS o
                    FROM rippling_reach WHERE msgid = ?',
-                [$msgid]
+                [$this->seededWkt[$msgid], $msgid]
             );
-            $this->assertSame(1, (int) $check->o, 'fallback outer bound covers the polygon extent');
+            $this->assertSame(1, (int) $check->o, 'fallback outer bound covers the reach extent');
         } else {
             // No row at all is also acceptable — readers fall back to the exact test.
             $this->assertNull($row);
@@ -160,12 +173,9 @@ class ReachBoundsServiceTest extends TestCase
         $this->assertSame('POINT', $row->outer_type, 'degraded outer bound is a degenerate point');
         $this->assertSame(1, (int) $row->inner_null, 'degraded bounds carry no inner accept');
 
-        // The exact polygon is untouched.
-        $poly = DB::selectOne(
-            'SELECT ST_GeometryType(polygon) AS t FROM rippling_reach WHERE msgid = ?',
-            [$msgid]
-        );
-        $this->assertSame('POLYGON', $poly->t);
+        // The reach grid itself is untouched.
+        $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
+        $this->assertNotNull($cells, 'degrading the bounds must not touch the stored reach');
     }
 
     public function test_sync_with_provided_bounds_stores_them_after_verification(): void
@@ -201,12 +211,12 @@ class ReachBoundsServiceTest extends TestCase
         $this->service()->sync($msgid, $badOuter, null);
 
         $ok = DB::selectOne(
-            'SELECT ST_Contains(outer_bound, polygon) AS o
+            'SELECT ST_Contains(outer_bound, ST_GeomFromText(?, 3857)) AS o
                FROM rippling_reach WHERE msgid = ?',
-            [$msgid]
+            [$this->seededWkt[$msgid], $msgid]
         );
         $this->assertNotNull($ok, 'a bounds row is still written');
-        $this->assertSame(1, (int) $ok->o, 'fallback outer contains the stored polygon');
+        $this->assertSame(1, (int) $ok->o, 'fallback outer contains the stored reach');
     }
 
     public function test_sync_without_provided_bounds_derives_in_sql(): void
@@ -237,13 +247,13 @@ class ReachBoundsServiceTest extends TestCase
         $this->assertNotSame('POINT', $row->outer_type, 'reopened post gets real bounds back');
     }
 
-    /** The area the stored inner bound covers, as a share of the polygon's area. */
+    /** The area the stored inner bound covers, as a share of the reach's area. */
     private function innerRatio(int $msgid): float
     {
         return (float) DB::selectOne(
-            'SELECT COALESCE(ST_Area(inner_bound) / NULLIF(ST_Area(polygon), 0), 0) AS r
+            'SELECT COALESCE(ST_Area(inner_bound) / NULLIF(ST_Area(ST_GeomFromText(?, 3857)), 0), 0) AS r
                FROM rippling_reach WHERE msgid = ?',
-            [$msgid]
+            [$this->seededWkt[$msgid], $msgid]
         )->r;
     }
 
@@ -267,12 +277,12 @@ class ReachBoundsServiceTest extends TestCase
             'a verified-but-tiny provided inner is replaced by a polygon-derived one'
         );
         $check = DB::selectOne(
-            'SELECT ST_Contains(polygon, inner_bound) AS i,
-                    ST_Contains(outer_bound, polygon) AS o
+            'SELECT ST_Contains(ST_GeomFromText(?, 3857), inner_bound) AS i,
+                    ST_Contains(outer_bound, ST_GeomFromText(?, 3857)) AS o
                FROM rippling_reach WHERE msgid = ?',
-            [$msgid]
+            [$this->seededWkt[$msgid], $this->seededWkt[$msgid], $msgid]
         );
-        $this->assertSame(1, (int) $check->i, 'the replacement inner still satisfies inner ⊆ polygon');
+        $this->assertSame(1, (int) $check->i, 'the replacement inner still satisfies inner inside the reach');
         $this->assertSame(1, (int) $check->o, 'the verified provided outer is kept');
     }
 
@@ -307,14 +317,14 @@ class ReachBoundsServiceTest extends TestCase
 
         $check = DB::selectOne(
             'SELECT inner_bound IS NULL AS inner_null,
-                    (inner_bound IS NULL OR ST_Contains(polygon, inner_bound)) AS i,
+                    (inner_bound IS NULL OR ST_Contains(ST_GeomFromText(?, 3857), inner_bound)) AS i,
                     ST_Equals(inner_bound, ST_GeomFromText(?, 3857)) AS still_bad,
-                    ST_Contains(outer_bound, polygon) AS o
+                    ST_Contains(outer_bound, ST_GeomFromText(?, 3857)) AS o
                FROM rippling_reach WHERE msgid = ?',
-            [$badInner, $msgid]
+            [$this->seededWkt[$msgid], $badInner, $this->seededWkt[$msgid], $msgid]
         );
         $this->assertSame(0, (int) $check->inner_null, 'a safe inner is derived to replace the rejected one');
-        $this->assertSame(1, (int) $check->i, 'the derived inner satisfies inner ⊆ polygon');
+        $this->assertSame(1, (int) $check->i, 'the derived inner satisfies inner inside the reach');
         $this->assertSame(0, (int) $check->still_bad, 'the rejected provided inner is not what is stored');
         $this->assertSame(1, (int) $check->o, 'the good provided outer is kept');
     }

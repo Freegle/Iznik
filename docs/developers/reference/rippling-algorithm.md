@@ -1,10 +1,11 @@
 ---
-last_reviewed: 2026-08-25
+last_reviewed: 2026-09-14
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
   - iznik-batch/app/Console/Commands/Browse/**
   - iznik-server-go/rippling/**
+  - iznik-nuxt3/composables/rippleStatus.js
   - iznik-server-go/density/**
   - iznik-spatial-go/cellset/**
   - iznik-spatial-go/dataset_reachoverflow.go
@@ -86,6 +87,23 @@ design:
    excluded toll.
 2. **Each reached point has an exact travel time**, so "who is reachable within X minutes" is
    a lookup, not a new computation.
+
+### The map has edges, and a post outside them gets no reach
+
+The road network is built from Geofabrik extracts by
+`iznik-routing-go/scripts/build-osm-pbf.sh`. Great Britain and Ireland are separate
+downloads, and so are the Crown Dependencies (Isle of Man, Jersey, Guernsey), which are
+constitutionally not part of the UK and so appear in neither. The script probes every
+region it merges for a road network before installing the file, because a missing region
+does not look like an error at run time.
+
+An origin with no road within snapping range (about 11km) used to produce an empty reach
+with nothing logged, which reads exactly like "nowhere is reachable from here". Isle of
+Man Freegle, a live group with 825 members, got no reach on any post for a year that way.
+`IsochroneResult` now carries `OriginFound`, `/v1/isochrone` and `/v1/catchment` return
+`onGraph`, both handlers log the miss, and `ReachService` logs "origin is outside the
+routing map" from both its single and pooled catchment paths instead of the general
+empty-reach warning.
 
 ### 2a. Drawing the reach: reached points into a polygon
 
@@ -329,6 +347,164 @@ The read side decides which paths apply in one place, `rippling/overflowviewer.g
 post reached another POST's location (`message/postmatches.go`, which feeds the matched-posts
 email), and a ring cannot admit somebody who is not standing anywhere.
 
+### Stored labels decide membership (labels-truth)
+
+Where a post has stored reach-engine labels (`rippling_reach.reach_labels`, written at
+ripple-in and by `ripple:backfill-reach-labels`), the label's exact road-network verdict at
+the post's current tick budget is the DECIDING membership record; the cell grid is the
+prefilter and the verdict only for unlabelled posts (and for everything when routing is
+unavailable - fail-soft, so the cutover self-activates per post as the backfill progresses).
+
+The one authority is routing `POST /v1/reach-eval` (`iznik-routing-go/reach_eval.go`):
+member point + candidate msgids in, `in`/`out`/`nolabels` per candidate out. It also honours
+`rejected_groups` (a member inside a rejected group's area is `out` whatever the label says -
+the durable record of a per-group mod retraction; POLYGON and MULTIPOLYGON areas alike),
+evaluates at `budget:"max"` for eventual-reach questions, and with `discover:true` returns
+label-admitted posts the caller's candidate list MISSED (from `rippling_reach_leaves` - the
+band where grids under-cover the true road reach; the candidate list may be empty, and held
+posts are never discovered). Since the grids retired (2026-08-28) discovery is the ONLY way a
+post reaches the nearby feed and badge, so it must never trim the wrong end: a region inside
+a city's 45-minute maximum reach holds thousands of live posts (682 regions exceed 1,000,
+the densest ~5,100), and when discovery shared the caller-chunk cap of 1,000 it kept the
+oldest thousand in id order - members in those regions saw no post from the last week
+(Bath, ChitChat 2026-08-31). Candidates are now evaluated newest-first under a separate
+valve (`discoverMaxItems`, 10,000, logged when reached), so any trim drops the oldest posts.
+An `out` for a member standing in the post's ORIGIN group's
+area carries `origin_area: true`: the stored reach deliberately unions that area in once the
+isochrone covers most of it (`ExpandService::unionWithOriginGroupArea`), so both clients
+treat out+origin_area as NO verdict and let the cell grid - which holds the union - decide.
+A member point that does not snap to the road network answers all-`nolabels` (200), and the
+Go client trips the shared routing breaker only on 5xx faults (404/503 are expected states);
+the PHP client carries the same 5-minute breaker the drive-metrics path uses, because the
+digest asks once per recipient.
+
+**No verdict is not a refusal.** A gate only refuses somebody the labels have actually
+ruled `out`. `nolabels`, a routing server that cannot be reached, a 503, a 4xx or an
+unreadable body all leave the row UNDECIDED, and every gate lets an undecided row through:
+the reply is sent rather than held, and no "hasn't reached your area yet" notice is shown.
+`rippling.ReachRowInfo.Decided` carries that distinction in Go, `ReachQueryService::reachVerdict`
+in PHP. Mail is the one exception (see below).
+
+**A finished reach is not "on its way".** An `out` on a row whose `status` is `done` (the
+schedule ran out, or the extent governor stopped it) is permanent, so the message page says
+so (`reachfinished`, `message/reach.go` `ReachOrigin.Finished`) instead of dating an
+arrival: the only date `CoverageAt` could give is the final tick's, already in the past,
+which the client rendered as "any moment now" about a reach that had ended weeks earlier
+(Discourse 9808/797). The reply is still held and `ripple:release-replies` releases it on
+its next pass through the `done` branch, so "straight away" is what the member is told.
+
+That direction was chosen after 2026-09-02, when the reach engine was down for sixteen hours
+and the gates failed the other way. A member 13 minutes' drive from a post, in the post's own
+community since 2009, was told it had not reached her - beside an ETA, computed on a lane
+that still worked, saying she had been in reach from the first tick. Nothing else showed the
+outage, so it ran overnight.
+
+Failing open means an outage is now invisible from the outside, so it has to be visible from
+the inside instead: `reportEvalUnavailable` (Go `rippling/labelverdicts.go`, PHP
+`ReachService`) raises a Sentry event, at most one a minute per process, carrying the reason.
+That alert is the only sign of a reach outage while it is happening. Treat it as one.
+
+The unread badge is the one surface that must NOT fail open, because for it "open" is a
+number. Since the grids retired, discovery is the badge's only source of posts, so an
+unanswered evaluation leaves it nothing to count - and nothing to count is not nothing to
+see. On 2026-09-05 the routing server's two label-store reads (`reach_eval.go`
+`leafRowLoader` and `evalRowLoader`) swallowed a dropped MySQL connection and answered 200
+with `discovered: null` or a truncated region; apiv2 counted that as zero, cached it for 30
+seconds, and members watched their badge flick 2, 0, 2 at every poll (153 members in three
+hours). Now: the routing server's discover fails CLOSED with a 503 and logs the error text;
+apiv2 retries one 503 (`labelEvalAttempts`) before reporting; `LabelVerdictsWithDiscover`
+returns an `ok` flag; and `nearbyCount` answers 503 on `!ok` and caches nothing, so the
+client keeps the number it has. A routing server with no reach engine at all (no `REACH_DIR`:
+dev, CI) answers every reach endpoint 501, which apiv2 treats as answered-with-nothing and fails
+open on - only a configured engine's 503 is retried and then refused. The shared routing breaker
+(`roadblur.MarkRoutingFailureFor`) opens only on a server fault (5xx other than 501/503): blur,
+drive-metrics, leaves and labels all apply that one rule, because a 503 from drive-metrics in an
+engine-less environment used to open it and the badge then refused for 30 seconds after every feed load. The feed keeps its degraded empty page on the same failure
+(the client's in-flight guard cannot recover from a rejected fetch until reload).
+
+The badge's spatial arm (`isochrone/reachspatial.go` `fromIDsWhere`) also carries the
+member's mark-all-seen watermark (`browse_cleared`), as every other unseen count and the
+feed's own `unseen` column do. It was written without it, so a member who had cleared their
+feed kept a badge counting posts below the clear - posts the feed already rendered as seen -
+which nothing they viewed could drain.
+
+Client wiring: apiv2 `rippling/labelverdicts.go` (`LabelVerdicts`,
+`LabelVerdictsWithDiscover`, `DropLabelOut`) feeds `rippling.ReachMembership` (reply gate)
+and `isochrone/reachbounds.go`'s `labelNarrowAndDiscover` - the ONE transform (narrow grid
+admissions, union discoveries) both the feed's containment list and the badge count go
+through, so they cannot disagree - plus `message/search.go` (same narrowing and union) and
+`firstreply/passthrough.go` (labels at max budget first). Batch
+`Ripple/ReachService::labelVerdicts` / `labelVerdictsWithDiscover` / `reachArrivalBatch`
+feed the daily digest's containment universe (same narrowing + union),
+`MaxReachService::isWithinMaxReach` and `MatchMailService::applyCellBand` (one
+reach-arrival call bands every candidate by seconds past the current edge).
+
+### A post is not live until its reach exists
+
+A post reaches the browse feeds the moment it is approved, but its `rippling_reach` row is
+written a beat later. In that gap the feeds have no reach to consult, so the post shows to
+everybody within the raw distance search - the wide audience the ripple exists to avoid.
+On live the gap is short: of 1,347 posts in a day, 788 had their row inside a minute and
+1,204 inside two, but 41 took longer than ten minutes.
+
+So the feeds hide a post that has no `rippling_reach` row for the first
+`rippling.ReachPendingGraceMinutes` (10) after `messages.arrival`, and show it regardless
+afterwards. The grace period is not a requirement because 132 browsable posts have no row
+and never will - their origin cannot snap to the road graph, the Isle of Man being the
+clearest case - and those posts must still be seen.
+
+- One shared SQL fragment, `rippling.ReachPendingFilter`, so no surface can drift: the
+  my-communities feed and its two counts (`isochrone/message.go`), the map-bounds feed
+  (`message/bounds.go`) and the groups feed (`message/groups.go`). Nearby and both search
+  arms already INNER JOIN `rippling_reach`, so they were never affected.
+- The clock is `messages.arrival`, NOT `messages_spatial.arrival`, which the reach engine
+  bumps on every tick - a post gated on that would keep restarting its own grace period.
+- A member always sees their own post, whatever its reach says.
+- `RIPPLE_HIDE_PENDING=0` turns the whole thing off without a deploy.
+
+Read-side, not write-side: `messages_spatial` has four writers, and a gate in each of them
+is four chances to disagree.
+
+### The grid-removal endgame
+
+Once a post has BOTH its stored label and its road-native union threshold, the label
+evaluator answers everything the current-reach grid did, and the grid retires per row:
+
+- **Road-native origin-group union**: the geometric rule ("include the origin group's whole
+  area once the isochrone covers >=90% of it", `ExpandService::unionWithOriginGroupArea`)
+  becomes ONE number per post - `rippling_reach.origin_union_secs`, the smallest budget at
+  which the stored label reaches 90% of the group area's road nodes (`reach_union.go`;
+  computed at label store via `/v1/reach-labels?msgid=`, backfilled via `POST
+  /v1/reach-union` in `ripple:backfill-reach-labels`'s second pass). Eval then gives the
+  DEFINITIVE verdict: below the threshold the area is not union-admitted, at or above it a
+  member standing there is in. NULL (not yet computed) keeps the transitional
+  `origin_area`-flag behaviour where the cells decide; -1 = never activates. The group
+  area's partition regions are merged into `rippling_reach_leaves` so union-admitted
+  members DISCOVER the post.
+- **Per-row grid retirement**: the `ripple:expand` writers stop materialising
+  `polygon_cells` (and skip the rasterise round trip) for union-ready rows;
+  `ripple:drop-cell-grids` drains the max grid for any labelled row and the current grid
+  for union-ready ones (covering done/stopped rows no writer touches). The spatial reach
+  containment index treats a labelled row with drained cells as REMOVE - containment for
+  it is served by the routing server's discover arm - never as skip, which would have left
+  the previous tick's smaller reach serving stale answers.
+- **Dual-build engine**: labels embed their partition build's fingerprint, and a routing
+  server started with `REACH_DIR_PREV` alongside `REACH_DIR` holds both builds, routing
+  each blob to the build that can read it (`decodeLabelsAnyBuild`; `rippling_reach_leaves.fp`
+  scopes leaf candidates per build, NULL matching loosely). A map refresh thus becomes a
+  rolling label migration instead of a site-wide nolabels window.
+- **Routing is a dependency**: reach verdicts come from the stored labels and nowhere
+  else - the cell fallbacks were removed (2026-08-28, "assume availability is fine...
+  remove any fallback code"). Routing down therefore decides nothing, and since 2026-09-03
+  deciding nothing lets members through: replies send, no not-reached notice appears, and
+  browse keeps serving whatever the prefilter found. Reach MAIL still skips, because a held
+  reply arrives late while a wrong email cannot be recalled (`ReachBlockedSetForMail`,
+  and PHP's `isWithinReach`, both stay strict). Breakers stop the callers paying timeouts
+  meanwhile, and Sentry carries the outage.
+ The grids' one remaining role is the candidate prefilter (the
+  spatial containment index) until each post's discover arm replaces it. The moderator
+  reach-map overlay draws the engine's drive isochrone for drained rows.
+
 A surface that consults a lane the others do not is the defect this structure exists to
 prevent, in either direction: mailing someone a post the site then hides from them, or showing
 someone a post they are never told about.
@@ -367,11 +543,10 @@ reading, so it is inside the noise the data already carries. It cannot merge two
 neighbours either - lattice points are three whole units apart at 0.0001 resolution
 and rounding moves each by at most half a unit (checked over 632,152 consecutive
 pairs; none collapsed). Measured **1.70x** on its own. Rows written before that
-are rewritten by `ripple:shrink-overflow-bounds`, which is bounded, resumable, refuses once
-`overflow_bounds` has been dropped (§9c),
-holds `updated_at` still so the reach mailer does not reconsider the row, and
-checks every coordinate before writing. Dry-run over production rows: **1.70x**,
-nothing refused.
+were rewritten by `ripple:shrink-overflow-bounds` (removed with `overflow_bounds`
+itself in §9c's follow-up), which was bounded, resumable, held `updated_at` still
+so the reach mailer did not reconsider the row, and checked every coordinate
+before writing. Dry-run over production rows: **1.70x**, nothing refused.
 
 **Precision is the small lever; compression is the big one.** Measured on real rows:
 
@@ -459,8 +634,9 @@ colour per lane family. Without them the map under-reports where a post went, fo
 exactly the rural posts a moderator is most likely to be checking: a Hawes post's
 outline stops in the dale while two wedges carry it to Penrith and Lancaster.
 
-**Backfilling rings** (`ripple:backfill-rings`, paced by `scripts/ring-backfill-drain.sh`)
-visits posts with no rings yet. It skips sub-cap posts ONLY when rural is the sole lane
+**Backfilling rings** was `ripple:backfill-rings` (paced by
+`scripts/ring-backfill-drain.sh`; removed with `overflow_bounds` in §9c's follow-up),
+visiting posts with no rings yet. It skipped sub-cap posts ONLY when rural is the sole lane
 running - with cluster on, sub-cap posts are precisely what earns a wedge, and filtering
 them out would let a drain report "nothing left" without asking about a single
 semi-rural post.
@@ -615,7 +791,13 @@ For each due post, `ripple:expand`:
 - **`initialiseNew`** (tick 0) fetches the post's schedule in slim form (per-tick drive-time,
   audience count and reached-group ids - no polygons, which kept a dense-city schedule call
   to a few KB instead of ~24MB), fetches the first tick's polygon as a single catchment
-  call, creates the `rippling_reach` row and does the first ripple-in.
+  call, creates the `rippling_reach` row and does the first ripple-in. It also stores the
+  post's reach-engine labels (`ReachService::storeReachLabels`): one `/v1/reach-labels`
+  fetch at the post's maximum budget, written transactionally to
+  `rippling_reach.reach_labels` plus the reached region ids in `rippling_reach_leaves`.
+  Best-effort - a routing server without the engine is a quiet no-op, every reader still
+  answers from the stored cells, and `ripple:backfill-reach-labels` retries later (with
+  `--all` after a partition rebuild, which renumbers the region ids the labels refer to).
 - **`advanceDue`** advances to the next hazard tick: one catchment call materialises that
   tick's polygon, and the stored per-tick reached-group ids drive the ripple-in - no
   schedule recomputation. The target is normally elapsed time alone, but
@@ -633,6 +815,14 @@ For each due post, `ripple:expand`:
 **Rejoin suppression.** If a freegler's most recent Group/Joined log for a group is a
 ripple-join (`logs.text = 'Rippled'`) and they then left, rippling does not re-add them: they
 opted out of a rippled membership. A later ordinary join-then-leave does not block rippling.
+
+**Email settings for a ripple-join.** The new membership copies the poster's settings from
+their home group on the post, except immediate (-1) becomes daily (24) so an unrequested
+membership never starts a flood. If they have left every group the post is on, the settings
+come from any membership they still hold, preferring ones they joined themselves so an
+earlier ripple's guess cannot propagate itself forward. A poster holding no membership at
+all is in no community, and defaults to no email rather than to the daily digest: that
+member has done the one thing that most clearly says they want none.
 
 ## 5a. Frozen reaches (`status = 'held'`)
 
@@ -691,17 +881,17 @@ rows, its latest row states its outcome.
   the wider ripple would reach a city member with everything inside 45 minutes of a post.
 
   The same pass records the band NAME in `settings.browseDensityBand`, because the budget it
-  derives cannot be read backwards to recover it: an explicit choice is rescaled *within* the
-  band, so 20 minutes means either a dense member on their cap or a sparse member who asked
-  for less, and afterwards the two are the same number. Anything that has to admit a member
+  derives cannot be read backwards to recover it: 20 minutes means either a dense member on
+  their cap or a sparse member who asked for less, and the two are the same number. Anything
+  that has to admit a member
   against something chosen per band - the rural overflow lane, when enabled, picks one ring
   per band - needs the band itself. It is stamped for members whose budget needs no correction as well,
   which is most of them: a value written only alongside a correction would be missing for the
   bulk of the membership, which is the same shape of silent near-inertness as the two failure
   modes below.
 
-  **That pass is the single writer of `browseReachMaxDistance`, and it has two failure modes
-  worth knowing, because both were live for weeks and neither was visible.**
+  **That pass is the single writer of `browseReachMaxDistance`, and it has three failure modes
+  worth knowing, because each was live for weeks and none was visible.**
 
   *It can be pointed nowhere.* The radius comes from a `/town/near` call, and a member whose
   lookup fails is deliberately left alone rather than given a wrong cap - which means left with
@@ -715,36 +905,101 @@ rows, its latest row states its outcome.
   is loud. `batch-prod` must set `BROWSE_TOWN_NEAR_URL`; the compose default is unreachable
   from its network.
 
+  *It can be silenced by the towns table.* `/town/near` sizes a candidate box off the travel
+  time asked for - about 12 miles at the narrow end of the slider - and the towns table holds
+  only ~234 major places, so for much of the country that box is empty. The town names are
+  display material for the "Near: ..." hint, but the same response carries
+  `reach_radius_miles` (the isochrone road frontier) and `reach_polygon` (its shape), and the
+  handler used to return before its routing call when the box came back empty. A member whose
+  nearest curated town lay outside the box therefore got no radius at all, and both readers
+  treat a missing radius as a failed derivation: the backfill leaves them with no band limit,
+  and the slider stores the "no limit" sentinel - so dragging to "Nearer" switched every
+  distance filter off, on browse, on the unread-count badge, in search and in post emails.
+  Measured 2026-09-02: 91 members held the sentinel beside a budget below their own cap, 16%
+  of everyone sitting on the 5-minute stop; the reporter (Hastings, nearest curated town Lewes
+  at 27 miles) was being mailed Eastbourne posts 16 miles away. The routing call now runs
+  whether or not there are candidate towns, and `useReachDistance.loadCap` repairs the stored
+  pair on sight - the sentinel below a member's own cap cannot be a choice, because only the
+  top stop means "no limit" and only at the ceiling does it store the sentinel.
+
   *It decays.* Nothing else writes the key, so a member who joins after a run has no band
-  limit, ever. Two scheduled passes close that: `--missing-only` daily (members with nothing
-  recorded, which after a full pass is just new joiners) and the full pass monthly, which also
-  RECONCILES existing values - the narrow one never revisits anyone, so it cannot follow a
-  member who moves from a village to a city, nor an area that has grown denser since its
-  members were measured.
+  limit, ever - and a member who moves, or an area that grows denser, drifts away from the band
+  they are held to. The full pass runs NIGHTLY (02:40) and closes both: it gives new joiners a
+  default and reconciles everyone else. Measured on live 2026-09-01 it scanned 132,228 members
+  in 2h33m, which is what makes a nightly schedule affordable; a separate cheap `--missing-only`
+  pass is no longer scheduled, because a nightly full pass already covers what it covered.
 
   **`browseReachMaxDistance` is a separate key from `browseMaxDistance`, and the split is
   load-bearing.** `browseMaxDistance` is the member's own choice and applies in BOTH
-  directions, so writing a band default into it would silently cap how far away other people
-  see that member's posts: a city member's band radius is ~4.8 miles, so their giveaways would
-  stop travelling almost immediately - the exact opposite of growing the ripple to the ceiling.
-  How far someone will travel to collect is not the same question as how far their own post
-  should travel to find a taker. So:
+  directions unless they have separated them, so writing a band default into it would silently
+  cap how far away other people see that member's posts: a city member's band radius is ~4.8
+  miles, so their giveaways would stop travelling almost immediately - the exact opposite of
+  growing the ripple to the ceiling. How far someone will travel to collect is not the same
+  question as how far their own post should travel to find a taker.
+
+  Because those really are two questions, the member can answer them separately: the "How far
+  away" control is one slider by default, with a "Set separately" action that reveals a second
+  one ("Who sees my posts") on the same scale. That writes `myPostsMaxMinutes` /
+  `myPostsMaxDistance`, and **their absence is what "linked" means** - every outbound reader
+  falls back to `browseMaxDistance`, which is the pre-split behaviour exactly. Merely revealing
+  the second slider writes nothing; only dragging it does, so a member who never touches it is
+  unaffected. "Link them again" patches both keys to `null`, and they are **stored as JSON null**:
+  `PATCH /session` replaces the settings blob wholesale (`JSON_MERGE_PATCH`, which would delete
+  them, is `PatchUser`). So "JSON null means unset" is a contract every outbound reader honours,
+  not a transient state.
 
   | Key | Set by | Inbound | Outbound |
   |---|---|---|---|
-  | `browseMaxDistance` | the member, via the slider | yes | yes |
+  | `browseMaxDistance` | the member, via the slider | yes | yes, unless `myPostsMaxDistance` is set |
+  | `myPostsMaxDistance` | the member, via the second slider (absent until they use it) | **never** | yes, wins over `browseMaxDistance` |
   | `browseReachMaxDistance` | the backfill, from their band | yes (only when the member has not chosen) | **never** |
 
-  Readers: `DistancePreferenceFilter::maxDistanceMiles` (inbound, falls back to the default)
-  and `authorMaxDistanceMiles` (outbound, own choice only); Go `isochrone.resolveMaxDistance`
-  (inbound, same fallback) and `utils.AuthorReachCapWhere` (outbound, own choice only).
+  The two sliders do NOT share a maximum. The inbound one tops out at the member's own band cap
+  (`town/near cap_minutes`), because that is as far as the reach engine will admit them; the
+  outbound one tops out at `DensityService::ceiling()` for everyone, because a post's reach grows
+  to the ceiling whatever band its origin is in. Band-capping the outbound slider would tell a
+  city member their posts reach 20 minutes when they already reach 45. On the shared scale the
+  inbound track is greyed past its cap rather than being drawn short.
 
-  The command also RESCALES an explicit choice rather than carrying it across. The old slider
-  was a fixed 5-30, so a stored value said what FRACTION of the range the member wanted, not an
-  absolute travel time: 15 was two fifths of the way up, and two fifths of a rural member's 5-45
-  is 20. It rescales proportionally and snaps to the slider's 5-minute step, and at or above the
-  old top stop the member lands on their new cap. No location, or a failed density or routing
-  lookup, means the member is skipped and left untouched.
+  Readers: `DistancePreferenceFilter::maxDistanceMiles` (inbound, falls back to the band default)
+  and `authorMaxDistanceMiles` (outbound, `myPostsMaxDistance` then `browseMaxDistance`, never the
+  band default); Go `isochrone.resolveMaxDistance` (inbound, same fallback) and
+  `utils.AuthorReachCapWhere` (outbound, the same two keys in SQL). The Go and PHP outbound
+  resolvers must agree exactly: absent, JSON null and `<= 0` all fall through to
+  `browseMaxDistance`, while the sentinel stops there and means "no limit". Note
+  `JSON_EXTRACT(...) IS NULL` is **false** for a JSON null, so "unset" is tested through the
+  `NULLIF`/`COALESCE` chain, and the cast is `DECIMAL(30,6)` because the 16-digit sentinel does
+  not fit in `DECIMAL(20,6)`.
+
+  An explicit choice is carried across as the travel time it says, clamped to the member's band
+  cap; only the derived radius is recomputed. A member who never chose is put ON their band cap
+  every run: their stored `browseMaxMinutes` is the pass's own output rather than a preference,
+  so it is re-derived rather than read back. Holding `browseMaxDistance` is what "chose" means
+  here, because the slider has always written both keys in the same save. No location, or a
+  failed density or routing lookup, means the member is skipped and left untouched.
+
+  **Everything the pass does has to be idempotent, because it runs over the whole membership
+  on a schedule.** It used to read a stored budget as a FRACTION of the old fixed 5-30 slider
+  and stretch it onto the member's 5-45 band range. That is the right thing to do exactly once,
+  on the day the slider changes. Re-applied on every run it is a ratchet: the pass reads its own
+  output as if it were still an old-scale value, so each run walks the member's chosen travel
+  time further in whichever direction their band points - a sparse member goes 15 → 20 → 30 →
+  45, and 45 for a band that earns the ceiling is the "no limit" sentinel, while a dense member
+  goes 20 → 15 → 10 down onto the narrowest stop. The 2026-09-01 run put 1,185 members on the
+  sentinel in one night, and the standing shape of the data is the same story: 31,916 sparse
+  members piled on 45 and 7,747 dense members on 10. A future scale change belongs in a one-off
+  command, not in the reconciler.
+
+  Dropping the rescale stopped the ratchet but did not undo it. The budget rule kept whatever it
+  read, so every member the ratchet had already moved stayed where it left them and nothing ever
+  widened them again. The narrowest went silent: a dense member on 10 minutes has a ~1.5 mile
+  radius, which empties their digest candidate set every morning, and the digest then stamps
+  `lastsent` and sends nothing, so the once-a-day guard blocks every later tick. No bounce, no
+  suppression, no `email_tracking` row - the member simply stops hearing from us (SR-8BWZ3). The
+  2026-09-01 run left 17,584 dense members below their 20-minute cap, and 11.8% of them had had
+  no daily digest since, against a 2.19% baseline. That is why a member who never chose is
+  re-derived rather than preserved: it puts about 21,300 of them back on their band cap through
+  the ordinary nightly pass, and it cannot freeze a future drift the same way.
 
   **The unlimited sentinel is no longer safe below the ceiling.** It means "defer to the
   server's own reach", and the server's own reach is now the ceiling - so it only says "as far
@@ -824,7 +1079,24 @@ rows, its latest row states its outcome.
   `updated_at` delta catch-up, then an atomic RENAME swap. Dev/CI just run the Laravel
   migration (small tables).
 - **Unified digest distance scoring:** the reach polygon feeds each post's closeness score.
-- **Reach mail:** the join notification when a post ripples to within reach.
+- **Reach mail:** the join notification when a post ripples to within reach. Two change feeds
+  drive it, one per direction, and neither uses a time window:
+  - *The post's reach moved.* `UnifiedDigestService::sendReachDigests` resumes from a per-shard
+    mark on `rippling_reach.updated_at` (`config` key `reach_mail_mark_shard{N}`), stored as the
+    time the pass started so a row written in the same second is caught next tick. A dry run,
+    a pass stopped early, or a pass with a failed post leaves the mark alone. A cold start reads
+    the last hour. A repost of a Taken or Received post bumps `updated_at` (`JoinAndPostAs` in
+    iznik-server-go), since its reach row survives with its old stamp.
+  - *The member changed.* Joining a group, changing postcode, returning after 90 days away, or
+    switching to immediate mail queues the member in `rippling_reach_member_pending` (written
+    through iznik-server-go's `reachqueue` package by `authMiddleware`, `ProcessSettingsUpdate`, `addMemberToGroup`,
+    `putMembershipsPartner`, `PutUser`, `PatchMemberships`; and by `ExpandService`'s ripple
+    auto-join and `user:add-membership` in PHP - see `ReachMemberQueueService`). The same pass
+    drains the queue, partitioned by `MOD(userid, shards)`, asking `mailNewlyReachedForPost`
+    about each candidate post scoped to that one member. `ripple:reconcile-reach-members` runs
+    daily and re-queues anyone whose join or postcode change since yesterday has no ledger row
+    after it, so a missed hook costs a day, not the mail.
+  The `rippling_reach_notified` ledger dedupes both feeds, so their overlap is harmless.
 - **Held replies:** a reply from outside the post's current reach is parked in
   `rippling_held_replies` rather than delivered, so local people keep first chance. Every hold
   is a **delay with a due time** rather than an open-ended wait - see §7a. One exception: a
@@ -844,6 +1116,10 @@ ended when the ripple covered the replier, when the post's reach reached `done`,
 post went. Measured on live, **three in four held repliers live somewhere the ripple will never
 reach**, so for them the only exit was the backstop - days later, by which time a quarter to a
 third of items have already gone. In practice their reply was not delayed, it was discarded.
+
+Only a decided `out` holds anything. If the routing server cannot answer, the reply is sent,
+and the pass-through is counted as `reply_undecided_passthrough` in `rippling_event_metrics`
+so the cost of an outage can be read afterwards.
 
 So every hold now carries a due time, computed at hold time from how far the replier is from
 the item:
@@ -950,6 +1226,21 @@ unit-tested against the Go reference values).
 **then arrival (newest)** as the tiebreak. The score is exposed as `MessageSummary.Score` and the
 `nearby` store preserves that server order.
 
+**One clock on every browse feed.** The client re-sorts the list it is given
+(`composables/useMessageSort.js`: "New to you" = unseen by score then seen newest-first,
+"Newest posted", "Closest"), and every summary it sorts carries two dates: `posted` (when the
+post was written, `messages.arrival`) and `visibleSince` (the oldest live `messages_groups.arrival`,
+which a repost or an onward ripple moves forward). "Newest posted" orders by `visibleSince` and
+each card's age badge reads the same field (adding "first posted N days" from `posted`), so the
+order can never contradict the ages printed on it. The list locks its order at first paint, so a
+feed that omits the field is not repaired when the full records load: all three feeds the list
+is built from must carry it - the reach feed and `browseView=mygroups` (`isochrone/message.go`),
+`/message/mygroups` behind "All my communities" and a single community (`message/groups.go`),
+and `/message/inbounds` after a map move (`message/bounds.go`). The last two shipped a zero
+until 2026-09-07, and "All my communities" on Newest posted read 27, 7, 3, 28 days
+(Discourse 9808/801). Search results (`message/search.go` `SearchResult`) carry the same two
+dates, stamped by the Search handler, and its server-side "Newest" order uses `visibleSince` too.
+
 **Weights are per-consumer and env-tunable without a deploy** (defaults `close=1, fresh=0,
 budget=1, anchor=0` for both today - closeness × engagement-decay):
 - Browse: `RIPPLE_BROWSE_W_{CLOSE,FRESH,BUDGET,ANCHOR}`, `RIPPLE_BROWSE_WINDOW_HOURS`
@@ -1003,6 +1294,8 @@ about travel time, so the reach wins wherever we have it.
   `max_minutes`) - how long an out-of-reach reply waits (§7a). Off reverts to release on
   coverage or backstop alone.
 - `reply_saturation_stop` (5), `hazard_hours`, `rippled_in_pending_hours` (0).
+- `RIPPLE_HIDE_PENDING` (apiv2 env, on by default) - hide a post that has no
+  `rippling_reach` row yet for its first ten minutes. Set to `0` to show every post at once.
 
 Per-community rather than config: `groups.settings.rippling.{out,in}` switches rippling off for
 one community in either direction (§4a), set only via `php artisan ripple:opt-out`.
@@ -1022,15 +1315,34 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   (§7a) and `releasedat`. Two similar names, one letter apart: `dueat` is when it becomes
   due, `releasedat` is when it actually went.
 - `messages_groups.rippled_in = 1` - marks a rippled-in copy (vs the origin membership).
+  It is also how the post's **home groups** are identified, and they are a SET: `HomeGroups`
+  (`iznik-server-go/message/message.go`) is every `rippled_in = 0` row, and
+  `NotifyPosterFlag` relays a moderation action to the poster only from one of them. The
+  client's `isHomeGroupRow` (`composables/rippleStatus.js`) reads the same column per row;
+  `homeGroupId` still picks the earliest of them where ONE anchor is needed (which chat a
+  Blank Reply joins). A TrashNothing cross-post is one post sent directly to several
+  communities, whose mails arrive a second apart, and every one of those copies is home -
+  modelling home as the single earliest row told the others they were rejecting a
+  rippled-in copy and dropped their mail to the member (Discourse 10115).
+  Identify home from this column and nothing else. In particular an arrival window
+  (`messages_groups.arrival` close to `messages.arrival`) does not work: approving
+  re-stamps `messages_groups.arrival` to the approval time while `messages.arrival` keeps
+  the time the post was received, so any post moderated slowly has no row inside the
+  window and reads as having no origin at all - which silently opens everything gated on
+  "is this the home group?".
 - `rippling_proximity` - cached "quicker to get to" P/Q points per (msgid, groupid).
 - `logs` `text='Rippled'` - the ripple-join marker used for rejoin suppression.
 - `memberships.rippled = 1` - marks a membership rippling created, when the member's own post
   rippled into that group and we auto-joined them (§5). Every statistic that asks "were they
   already a member?" must exclude these - see §10a.
 
-### 9a. Shared geometry (`rippling_reach_geom`)
+### 9a. Shared geometry (`rippling_reach_geom`) - RETIRED
 
-`polygon` is byte-for-byte a function of (origin, tick), so posts from the same origin store
+**This layer is GONE**: the drop (§9c) removed the shared table, the hash columns and, once
+production had dropped them, the `GeomShareService` / `rippling/geomshare.go` code itself.
+This section stays as the design record for the interim it served.
+
+`polygon` was byte-for-byte a function of (origin, tick), so posts from the same origin stored
 identical multi-hundred-KB blobs - measured 42% redundant across the table, which is the
 estate's binding disk constraint (design: `plans/2026-08-23-rippling-reach-polygon-dedup.md`).
 Each distinct geometry is therefore stored once in `rippling_reach_geom`, keyed by the MD5 of
@@ -1055,17 +1367,14 @@ The contract, defined once per language in `GeomShareService` (PHP) and
   instead PROVES a geometry unreferenced: age grace, two passes agreeing across at least the
   grace interval, an anti-join re-checked inside the DELETE itself, and the FK as backstop.
 
-**This layer is being RETIRED, not maintained (§9c).** It existed to shrink the polygons,
-and the polygons are going entirely - so deduplicating them is wasted work and the shared
-table becomes pure overhead. Its four operator commands (`ripple:dedup-geometry`,
-`ripple:verify-geometry-dedup`, `ripple:drain-deduped-blobs`, `ripple:gc-reach-geometry`)
-have been deleted, and the scheduling PR that would have kept them running (#1403) was
-closed as obsolete. What remains of `GeomShareService` / `rippling/geomshare.go` is the
-READ path only: those `COALESCE`s are how a legacy row is read during the window between
-this code deploying and the operator dropping the columns, so they survive until the drop
-and then become dead code, removed in the follow-up. `overflow_bounds` was never
-deduplicated here anyway: it is JSON-of-WKT rather than a GEOMETRY, and `has_overflow` is
-generated from it.
+It existed to shrink the polygons, and the polygons went entirely (§9c) - so deduplicating
+them became wasted work and the shared table pure overhead. Its four operator commands
+(`ripple:dedup-geometry`, `ripple:verify-geometry-dedup`, `ripple:drain-deduped-blobs`,
+`ripple:gc-reach-geometry`) were deleted first, and the scheduling PR that would have kept
+them running (#1403) was closed as obsolete. The read path (`COALESCE` over the shared row)
+survived only until production dropped the columns, and was then removed with the other
+legacy branches. `overflow_bounds` was never deduplicated here anyway: it was JSON-of-WKT
+rather than a GEOMETRY.
 
 ### 9b. Cell-set (raster) storage (stacked on §9a)
 
@@ -1149,8 +1458,9 @@ silent:
 nothing ever queries the bytes in SQL; they are opaque to MySQL and decoded in application
 code. They began as purely additive mirrors, so that a deploy ahead of a backfill was a
 no-op with every reader falling back to the geometry or its §9a hash. **They are now the
-only stored form (§9c)**; the fallbacks remain solely for the window before the operator
-drops the columns.
+only stored GRID form (§9c)** - and under labels-truth the stored LABEL supersedes the grid
+per row (the grid-removal endgame section above), so for a retired row `reach_labels` is
+the only stored reach at all.
 
 | Column | Mirrors | Written by | Read by | Backfill |
 |---|---|---|---|---|
@@ -1235,13 +1545,15 @@ along with the whole §9a dedup layer (hash columns, their indexes and FKs, and
 `rippling_reach_geom`). Measured against the whole-table sizes in §9b: **40.6GB a node
 today, ~3.5GB immediately after the drop and ~11GB at the steady state** - about 12x.
 
-**Every reader is two-era, and the schema decides which era it is in.**
-`App\Services\Ripple\LegacyGeometry::polygonReady()` / `::overflowReady()` (PHP),
-`rippling.LegacyPolygonReady` / `LegacyOverflowReady` (Go) and `reachLegacyForm()` (the
-spatial server) each ask `information_schema` once per process. With the columns present
-every legacy branch behaves exactly as it did; with them absent those branches are
-unreachable. Nothing is feature-flagged, because a flag can disagree with the schema and
-this cannot.
+**During the transition every reader was two-era, and the schema decided which era it was
+in**: `LegacyGeometry` (PHP), `rippling.LegacyPolygonReady`/`LegacyOverflowReady` (Go) and
+`reachLegacyForm()` (the spatial server) each asked `information_schema` once per process.
+Nothing was feature-flagged, because a flag can disagree with the schema and that cannot.
+Once production dropped the columns, the guards and every legacy branch were deleted (the
+follow-up PR to #1406), the transition-era commands with them, and the drop migration was
+turned on by default so dev/CI schemas match production. A straggler database that still
+carries legacy rows needs a checkout from before the removal (or
+`RIPPLE_DROP_LEGACY_GEOMETRY=0` to hold the drop while it backfills there).
 
 Where each question is answered once the columns are gone:
 
@@ -1270,11 +1582,12 @@ byte-identical, and must not be asserted to be - the stored grid's header record
 source polygon's envelope, which is legitimately wider than the covered extent a trace
 reproduces.
 
-**Writes now fail rather than degrade.** While the polygon existed, a failed rasterise left
-`polygon_cells` NULL and readers fell back. With the grid as the only stored form, a failed
-rasterise fails the tick: the post keeps its previous reach and is retried next sweep.
-Reach growth pausing while the spatial server is down is acceptable at a half-hourly
-cadence; a reach silently vanishing is not.
+**Writes fail rather than degrade - for rows the grid still serves.** While the polygon
+existed, a failed rasterise left `polygon_cells` NULL and readers fell back. With the grid
+as the only stored form for an UNLABELLED row, a failed rasterise fails the tick: the post
+keeps its previous reach and is retried next sweep. A RETIRED row (label + union threshold
+stored) is the deliberate exception: its writers bind NULL by design and skip the rasterise
+entirely - the label is its reach record.
 
 **Verification.** `ripple:verify-cells-parity` asks the OLD question and the NEW question
 of the same row at the same points, per read case, and reports where they differ and by how
@@ -1292,8 +1605,14 @@ inclusion-exclusion - `|A| + |B| - ST_Area(ST_Union(A, B))` - rather than by
 `ST_Area` rejects those outright with `ERROR 3516 ... unexpected type GEOMCOLLECTION`;
 real group boundaries follow shared edges, so on production data that is the common case,
 not a corner. `ST_Union` of two areal geometries is always areal, so the arithmetic is
-always defined - see
-[`VerifyCellsParityCommand`](../../../iznik-batch/app/Console/Commands/Ripple/VerifyCellsParityCommand.php).
+always defined.
+
+That one-off parity command has since been removed. The same `ERROR 3516` hazard is
+guarded in the live code by a different route: `unionWithOriginGroupArea()` in
+[`ExpandService.php`](../../../iznik-batch/app/Services/Ripple/ExpandService.php) wraps
+the coverage fraction in a `CASE WHEN ST_GeometryType(inter) IN ('POLYGON',
+'MULTIPOLYGON')` guard, so `ST_Area` only ever sees polygonal input and a
+`GEOMETRYCOLLECTION` yields a NULL fraction instead of an exception.
 
 Measured on eight real isochrones (2026-08-25): 640 containment probes, 88 differences -
 87 boundary probes at *exactly* 0.000m from the edge and one interior probe at 7.98m, none
@@ -1306,32 +1625,29 @@ radius worst 0.63%. Traced coverage identical on all eight. Group intersects/wit
 came out with **zero** cells of symmetric difference, so the two implementations of the
 shrink agree exactly rather than approximately.
 
-**Operator order.** Deploy, then run the three backfills to completion
-(`ripple:backfill-reach-cells`, `-max-reach-cells`, `-ring-cells`), then
-`ripple:verify-cells-parity` and read it, then the drop DDL - **with the table's writers
-silenced estate-wide first**; see the rollout procedure in §9c below, learned the hard way.
+**Operator order (as run, completed on production 2026-08-26).** Deploy, then the three
+backfills to completion (`ripple:backfill-reach-cells`, `-max-reach-cells`, `-ring-cells`),
+then `ripple:verify-cells-parity` read by a human, then the drop DDL - **with the table's
+writers silenced estate-wide first**; see the rollout procedure in §9c below, learned the
+hard way. The backfill and parity commands (and their scheduled mop-up sweeps) were removed
+with the legacy branches once the transition completed - run them from a checkout predating
+the removal if a straggler database needs them.
 
-**"Completion" regrows until the drop, which is why the backfills are also scheduled.**
-`ripple:backfill-reach-cells` deliberately skips `status='expanding'` rows - ExpandService
-rewrites their cells on every tick - but a post's *final* tick flips it to `done` without
-writing a polygon, since there is nothing left to expand to. So a pre-cells expander whose
-only remaining step was "finish" lands in `done` with `polygon_cells` still NULL, invisible
-to ticks (nothing revisits a done row) and already behind the sweep's resume mark. Measured
-on production 2026-08-26: 155 such rows three hours after the one-off backfill finished,
-growing steadily as the ~6,400 pre-cells expanders drained. The nightly scheduled sweeps in
-`console.php` (02:35/03:35/04:35, each with `--reset-mark` because the stored mark would
-otherwise resume from the bottom of a finished sweep and find nothing forever) converge this
-population. The guards themselves are full-table scans - the ring guard alone took 42 s on
-production - so several quiet minutes before the first DDL statement is the guards working,
-not a hang.
+**Two production lessons from the run, kept for the next migration of this shape:**
 
-**To run the drop sooner, finish with `ripple:backfill-reach-cells --include-expanding`.**
-The flag lifts the expanding-rows skip so the sweep converts them directly: the guard then
-converges at sweep speed instead of tick speed, and the finisher leak above stops at its
-source, since a finisher already carries cells when it flips to `done`. Safe because the
-write is the same compare-and-swap - a tick landing mid-flight wins, and both wrote a grid
-for a reach the row really had. Run on production 2026-08-26: 5,721 rows converted in ten
-minutes, 70 harmless CAS losses to live ticks, and all three drop guards read zero.
+- **"Completion" regrows until the drop.** `ripple:backfill-reach-cells` deliberately
+  skipped `status='expanding'` rows - ExpandService rewrites their cells on every tick -
+  but a post's *final* tick flips it to `done` without writing cells (nothing left to
+  expand to), so a pre-cells expander whose only remaining step was "finish" landed in
+  `done` with `polygon_cells` still NULL, invisible to ticks and already behind the sweep's
+  resume mark. Measured: 155 such rows three hours after the one-off backfill finished.
+  Nightly `--reset-mark` sweeps converged the population. The drop guards themselves are
+  full-table scans (the ring guard alone took 42s on production), so quiet minutes before
+  the first DDL statement are the guards working, not a hang.
+- **`--include-expanding` finished it at sweep speed**: lifting the expanding-rows skip
+  converted the stragglers directly (safe: the write was the same compare-and-swap, a tick
+  landing mid-flight won). Run on production 2026-08-26: 5,721 rows in ten minutes, 70
+  harmless CAS losses to live ticks, and all three drop guards read zero.
 
 **Run `ripple:verify-ring-cells-parity` as well - the other one does not cover the rings.**
 `ripple:verify-cells-parity` has eight read cases, seven over `polygon_cells` and one over
@@ -1502,7 +1818,12 @@ timeout:
   which is cached per process because its query ORs three unindexed nullable columns and so
   full-scans `rippling_reply_attribution`.
 - `/rippling/analytics/drivetime[/score|/aggregate]` - the sampled routing pass, driven from the
-  client one chunk at a time.
+  client one chunk at a time. `/score` asks `/v1/ripple-eval` for `points_only` (it reads each
+  reply's `drive_min` and nothing else), and a points-only eval is answered from the reach engine
+  (`rippleEvalPointsFromEngine` in `iznik-routing-go/ripple.go`: one label query for the post, one
+  exact arrival per reply) rather than a full-graph 45-minute sweep. Measured on production from
+  a city centre: 2.6s per post with the sweep and its rank enumeration, ~10ms cold / ~1ms warm
+  from the engine, with identical answers to within the engine's quantisation (~0.3 min).
 
 **A gateway timeout here does not look like a timeout.** The 504 carries no
 `Access-Control-Allow-Origin` header, so the browser reports a CORS policy error and the real

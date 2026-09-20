@@ -431,3 +431,111 @@ func TestNewsfeedConvertInfo_RefusesWhenMemberHasNoChosenLocation(t *testing.T) 
 	assert.Equal(t, false, result["canpost"], "cannot post for a member with no chosen location")
 	assert.Contains(t, result["reason"], "location")
 }
+
+// --- Moderation preview, and what the convert must NOT hand back ---
+//
+// Discourse #6999: a convert "didn't seem to have worked" - the post was
+// created fine but sat in the group's Pending queue because the member was
+// new, and nothing had told the converting moderator that would happen. The
+// same convert also minted a native password for the MEMBER's account and
+// returned it to the MODERATOR's client (where it also lands in the API
+// response logs). These pin both fixes.
+
+func TestNewsfeedConvertInfo_SaysWhenThePostWillAwaitApproval(t *testing.T) {
+	prefix := uniquePrefix("cvtinfopend")
+	posterID, _ := CreateFullTestUser(t, prefix+"_poster")
+	modID, modToken := CreateFullTestUser(t, prefix+"_mod")
+	makeChitChatMod(t, modID)
+
+	db := database.DBConn
+
+	var locID uint64
+	var locName string
+	db.Raw("SELECT id, name FROM locations WHERE type = ? AND name IS NOT NULL AND name != '' LIMIT 1",
+		"Postcode").Row().Scan(&locID, &locName)
+	if locID == 0 {
+		t.Skip("no postcode locations seeded")
+	}
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(NULLIF(settings, ''), '{}'), "+
+		"'$.mylocation', JSON_OBJECT('id', ?, 'name', ?, 'lat', 55.9533, 'lng', -3.1883)) WHERE id = ?",
+		locID, locName, posterID)
+
+	nfID := CreateTestNewsfeed(t, posterID, 55.9533, -3.1883, "Bookcase going spare "+prefix)
+	id := strconv.FormatUint(nfID, 10)
+
+	// A new member has no ourPostingStatus, so the content check will keep
+	// their post Pending for a human moderator - the modal must know.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/newsfeed/"+id+"/convertinfo?jwt="+modToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	if result["canpost"] != true {
+		t.Fatalf("expected canpost true, got reason %v", result["reason"])
+	}
+	assert.Equal(t, true, result["moderated"],
+		"a member with no posting status is moderated; the modal must be told the post will wait")
+
+	// An established member posts straight through, so no warning.
+	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ?", posterID)
+
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/newsfeed/"+id+"/convertinfo?jwt="+modToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, true, result["canpost"])
+	assert.Equal(t, false, result["moderated"],
+		"an unmoderated member's post is auto-promoted, so the modal must not warn")
+}
+
+func TestJoinAndPostOnBehalf_LeavesTheMembersLoginsAlone(t *testing.T) {
+	prefix := uniquePrefix("cvtjapnopw")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	modID, modToken := CreateFullTestUser(t, prefix+"_mod")
+	makeChitChatMod(t, modID)
+
+	// The member signed up some other way - no native password. That must
+	// still be true afterwards: the self-post path mints one so the poster
+	// can log in, but on the convert path the "new user" is the MEMBER and
+	// the response goes to the MODERATOR, so minting one here hands the
+	// member's credentials to someone else's client and the API logs.
+	db.Exec("DELETE FROM users_logins WHERE userid = ? AND type = 'Native'", memberID)
+
+	// The draft the convert modal creates for them.
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) "+
+		"VALUES (?, 'Wanted', 'WANTED: bookcase', 'A bookcase please', 'A bookcase please', NOW(), NOW(), 'Platform')",
+		memberID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
+	if msgID == 0 {
+		t.Fatal("could not create draft message")
+	}
+	db.Exec("INSERT INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)", msgID, groupID, memberID)
+
+	body := map[string]interface{}{"id": msgID, "action": "JoinAndPost"}
+	bodyBytes, _ := json2.Marshal(body)
+	req := httptest.NewRequest("POST",
+		fmt.Sprintf("/api/message?jwt=%s&onbehalfof=%d", modToken, memberID),
+		bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	_, hasPassword := result["newpassword"]
+	assert.False(t, hasPassword, "the member's credentials must never be returned to the moderator's client")
+	_, hasNewuser := result["newuser"]
+	assert.False(t, hasNewuser, "nor should the response call the member a new user")
+
+	var nativeLogins int64
+	db.Raw("SELECT COUNT(*) FROM users_logins WHERE userid = ? AND type = 'Native'", memberID).Scan(&nativeLogins)
+	assert.Equal(t, int64(0), nativeLogins, "converting on behalf must not mint a login for the member")
+
+	// The convert itself still worked: the post is in the group, Pending.
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ?", msgID).Scan(&collection)
+	assert.Equal(t, "Pending", collection)
+}

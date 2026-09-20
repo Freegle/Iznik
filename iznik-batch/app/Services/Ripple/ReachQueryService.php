@@ -4,180 +4,85 @@ namespace App\Services\Ripple;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Schema;
 
 /**
  * Read-side reach test: "is this location inside a post's current rippled-out
  * reach?" — the single gate shared by browse "Nearby" (#1), reply-eligibility
  * (#2) and held-reply release (#3).
  *
- * Uses the SRID-3857 convention of rippling_reach.polygon / messages_spatial.point
- * (lng/lat degrees under an SRID-3857 label), so points are built the same way the
- * Go API builds them: ST_SRID(POINT(lng, lat), 3857).
+ * Uses the SRID-3857 convention of messages_spatial.point (lng/lat degrees
+ * under an SRID-3857 label), so points are built the same way the Go API
+ * builds them: ST_SRID(POINT(lng, lat), 3857).
  */
 class ReachQueryService
 {
     private const SRID = 3857;
 
-    /** Memoized: whether the sandwich-bounds columns exist (pre-migration deploys fall back). */
-    private static ?bool $boundsColumnsExist = null;
+    /** The routing server put this location inside the post's reach. */
+    public const VERDICT_IN = 'in';
 
-    private function boundsAvailable(): bool
-    {
-        if (self::$boundsColumnsExist === null) {
-            try {
-                self::$boundsColumnsExist = Schema::hasColumn('rippling_reach', 'outer_bound');
-            } catch (\Throwable) {
-                self::$boundsColumnsExist = false;
-            }
-        }
-
-        return self::$boundsColumnsExist;
-    }
-
-    /** Memoized: has the polygon_cells (raster-storage) migration run? */
-    private static ?bool $cellsColumnExists = null;
-
-    /** Decodes the compact reach cell set; injected so tests can supply one. */
-    private CellSetService $cellSets;
-
-    public function __construct(?CellSetService $cellSets = null)
-    {
-        $this->cellSets = $cellSets ?? new CellSetService();
-    }
-
-    /** Test-only: forget the memoized polygon_cells column check. */
-    public static function forgetCellsAvailability(): void
-    {
-        self::$cellsColumnExists = null;
-    }
-
-    private function cellsAvailable(): bool
-    {
-        if (self::$cellsColumnExists === null) {
-            try {
-                self::$cellsColumnExists = Schema::hasColumn('rippling_reach', 'polygon_cells');
-            } catch (\Throwable) {
-                self::$cellsColumnExists = false;
-            }
-        }
-
-        return self::$cellsColumnExists;
-    }
+    /** The routing server put this location outside it. A real refusal. */
+    public const VERDICT_OUT = 'out';
 
     /**
-     * Is (lat,lng) inside this post's reach according to its stored cell set?
-     * Null when the cell set cannot answer - no column yet, no row, not
-     * backfilled, or bytes that will not parse. Every one of those means
-     * "fall back to the polygon", which is what the caller does, so a
-     * malformed blob can never decide a reply's fate by itself.
-     *
-     * Uses containsEncoded rather than decode: decoding materialises one
-     * array entry per covered cell, which on a production-sized reach is
-     * 317ms and 128MB - more than the SQL this is meant to replace. Walking
-     * the run stream for one point allocates nothing.
+     * Nothing could be decided: the post has no stored label yet, or the
+     * routing server did not answer. NOT a refusal - see reachVerdict().
      */
-    private function reachCellsSay(int $msgid, float $lat, float $lng): ?bool
-    {
-        if (!$this->cellsAvailable()) {
-            return null;
-        }
-
-        $bytes = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
-        if ($bytes === null || $bytes === '') {
-            return null;
-        }
-
-        return $this->cellSets->containsEncoded($bytes, $lng, $lat);
-    }
+    public const VERDICT_UNDECIDED = 'undecided';
 
     /**
-     * Is (lat,lng) inside the post's current reach polygon? False if the post has
-     * no reach row yet (not rippling / not in messages_spatial).
+     * Is (lat,lng) inside the post's current reach? Only a decided "in" counts,
+     * so this stays the strict test: no verdict reads as not-inside.
      *
-     * Consults the sandwich bounds first (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md):
-     * outside outer_bound is an authoritative reject, inside inner_bound an authoritative
-     * accept, and only the band between them touches the ~178KB exact polygon — always via
-     * a correlated EXISTS (lazy BLOB fetch does not cross OR items). Degraded (POINT)
-     * bounds are treated as absent: held-reply release serves completed posts, which must
-     * resolve against the exact polygon.
+     * Right for a question about coverage - "has the ripple got here yet", which
+     * the release cron asks on every run. Wrong for a gate on a member's own
+     * action: use reachVerdict() there and let an undecided through.
      */
     public function isWithinReach(int $msgid, float $lat, float $lng, ?string $band = null): bool
     {
+        return $this->reachVerdict($msgid, $lat, $lng, $band) === self::VERDICT_IN;
+    }
+
+    /**
+     * In, out, or nothing could be decided - the same three answers the Go read
+     * side gets (rippling.ReachRowInfo.Decided).
+     *
+     * The third one matters. Only "out" is a refusal. No verdict means the post
+     * has no stored label yet, or the routing server could not be asked, and a
+     * caller that reads that as "outside the reach" refuses people on the
+     * strength of our own outage. On 2026-09-02 the reach engine was down for
+     * 16 hours and that is exactly what happened: a member 13 minutes' drive
+     * from a post, in the post's own group since 2009, had her reply held and
+     * was shown a notice saying it had not reached her yet - carrying an
+     * arrival time already in the past, because the drive-time estimate behind
+     * that text kept working throughout.
+     *
+     * Callers on a member's path must let an undecided through. The release
+     * cron is the exception and stays as it is: it re-asks, so an undecided
+     * costs one run rather than the reply.
+     */
+    public function reachVerdict(int $msgid, float $lat, float $lng, ?string $band = null): string
+    {
         try {
-            // The compact cell set (plans/2026-08-24-rippling-reach-raster-
-            // storage.md) answers this from ONE keyed read of ~20KB and a walk
-            // of its run stream - no sandwich dance, no ~178KB polygon
-            // fetched, no spatial function. NULL means the cell set cannot
-            // say (no column, not backfilled, unparseable), and the
-            // sandwich/exact path below is then the exact behaviour this
-            // method had before the column existed.
-            $cellsSay = $this->reachCellsSay($msgid, $lat, $lng);
-            if ($cellsSay !== null) {
-                if ($cellsSay) {
-                    return true;
-                }
-
-                // The reach proper says no; the rings are still the caller's
-                // second chance, exactly as below.
-                return $this->isWithinOverflow($msgid, $lat, $lng, $band);
+            // The stored label IS the reach record - the same authority the
+            // browse feed and the in-app reply gate ask - so the held-reply
+            // hold/release gate can never disagree with what the site shows.
+            // There is no grid fallback; routing is a dependency, by design.
+            $verdicts = app(ReachService::class)->labelVerdicts($lat, $lng, [$msgid]);
+            $verdict = $verdicts[$msgid] ?? '';
+            if ($verdict === self::VERDICT_IN) {
+                return self::VERDICT_IN;
             }
 
-            if (!LegacyGeometry::polygonReady()) {
-                // Post-drop there is no polygon to fall back to: a row whose
-                // cells cannot answer gates on the rings alone, exactly as a
-                // definite "outside" would - the fail-closed direction for a
-                // reply gate (the release cron re-asks as the reach grows).
-                return $this->isWithinOverflow($msgid, $lat, $lng, $band);
+            // Rings re-admit on top of the committed reach everywhere.
+            if ($this->isWithinOverflow($msgid, $lat, $lng, $band)) {
+                return self::VERDICT_IN;
             }
 
-            if ($this->boundsAvailable()) {
-                $point = 'ST_SRID(POINT(?, ?), ' . self::SRID . ')';
-                // The exact geometry may live in rippling_reach_geom (content-addressed
-                // dedup): primary-key join + COALESCE keeps this the same lazy-BLOB
-                // correlated EXISTS whether the row is deduped, drained or untouched.
-                $join = GeomShareService::joinSql('r2', 'polygon', 'g2');
-                $poly = GeomShareService::sourceExpr('r2', 'polygon', 'g2');
-                $row = DB::selectOne(
-                    "SELECT EXISTS(
-                        SELECT 1 FROM rippling_reach rr
-                        WHERE rr.msgid = ?
-                          AND ((ST_GeometryType(rr.outer_bound) <> 'POINT'
-                                AND ST_Contains(rr.outer_bound, $point)
-                                AND (COALESCE(ST_Contains(rr.inner_bound, $point), 0) = 1
-                                     OR EXISTS (SELECT 1 FROM rippling_reach r2$join
-                                         WHERE r2.msgid = rr.msgid AND ST_Contains($poly, $point))))
-                               OR (ST_GeometryType(rr.outer_bound) = 'POINT'
-                                   AND EXISTS (SELECT 1 FROM rippling_reach r2$join
-                                       WHERE r2.msgid = rr.msgid AND ST_Contains($poly, $point))))
-                     ) AS within",
-                    [$msgid, $lng, $lat, $lng, $lat, $lng, $lat, $lng, $lat]
-                );
-            } else {
-                $join = GeomShareService::joinSql('rippling_reach', 'polygon', 'g');
-                $poly = GeomShareService::sourceExpr('rippling_reach', 'polygon', 'g');
-                $row = DB::selectOne(
-                    'SELECT EXISTS(
-                        SELECT 1 FROM rippling_reach' . $join . '
-                        WHERE msgid = ?
-                          AND ST_Contains(' . $poly . ', ST_SRID(POINT(?, ?), ' . self::SRID . ')) = 1
-                     ) AS within',
-                    [$msgid, $lng, $lat]
-                );
-            }
-
-            if ((bool) ($row->within ?? 0)) {
-                return true;
-            }
-
-            // Only now, when the reach proper has said no: a post that already covers this
-            // viewer never pays for the ring test.
-            return $this->isWithinOverflow($msgid, $lat, $lng, $band);
+            return $verdict === self::VERDICT_OUT ? self::VERDICT_OUT : self::VERDICT_UNDECIDED;
         } catch (\Throwable $e) {
-            // rippling_reach is created by the reach engine (PR A). Until that is
-            // deployed the table may be absent — fail open ("not within reach") so
-            // callers degrade safely instead of throwing.
-            return false;
+            // Nothing could be asked, so nothing has been refused.
+            return self::VERDICT_UNDECIDED;
         }
     }
 
@@ -383,10 +288,10 @@ class ReachQueryService
         }
 
         try {
-            // The authoritative lane list is overflow_bounds while it exists,
-            // overflow_cells afterwards - the cells mirror its JSON paths by
-            // design, so the question and its answers are identical.
-            $laneColumn = LegacyGeometry::overflowReady() ? 'overflow_bounds' : 'overflow_cells';
+            // The authoritative lane list is overflow_cells, which mirrors the
+            // retired overflow_bounds JSON paths by design - the question and
+            // its answers are identical.
+            $laneColumn = 'overflow_cells';
             $selects = [];
             $params = [];
             foreach ($paths as $i => $path) {

@@ -27,52 +27,37 @@ func reachContainmentSQL(db *gorm.DB, lng, lat float32) (where string, args []in
 	// Spatial-index id-list first (the badge's proven shape, now the feed's
 	// too): the geometry test that was 95-98% of this query's cost is
 	// answered from the spatial index — exactly, from the stored cell grids —
-	// and SQL runs a keyed IN-list lookup. `partial` ids are legacy
-	// coarse-raster rows (no cells yet); they keep the exact-geometry arm,
-	// which exists only while the legacy columns do. Any spatial failure
-	// falls through to the SQL forms below, unchanged.
+	// and SQL runs a keyed IN-list lookup. Any spatial failure falls through
+	// to the degraded form below.
 	if in, partial, ok := spatialReachIDs(db, utils.LatLng{Lat: lat, Lng: lng}); ok {
-		legacy := rippling.LegacyPolygonReady(db)
-		if len(partial) > 0 && !legacy {
-			// Impossible for healthy rows post-drop (partial requires a row
-			// without cells, and post-drop cells are the only stored form) —
-			// surface it rather than silently dropping posts.
-			log.Printf("reach containment: %d partial ids with no legacy geometry to resolve them", len(partial))
-			partial = nil
-		}
 		if len(partial) > 0 {
-			share := rippling.GeomShareReady(db)
-			return "AND (ms.msgid IN (?) OR (ms.msgid IN (?) AND " +
-					"ST_Contains(" + rippling.GeomExpr(share, "rr", "polygon", "g") + ", ST_SRID(POINT(?, ?), ?)))) ",
-				[]interface{}{in, partial, lng, lat, utils.SRID}, false
+			// A partial id meant a legacy coarse-raster row whose boundary
+			// band needed the exact geometry; healthy rows no longer produce
+			// them. Surface it rather than silently dropping posts.
+			log.Printf("reach containment: %d partial ids with no legacy geometry to resolve them", len(partial))
 		}
+		// Stored labels are the deciding record wherever they exist: drop any
+		// grid-admitted post whose label says the member is NOT reachable by
+		// road at the post's current budget - the estuary's far bank - and
+		// union in the posts the grid prefilter missed. Posts without labels,
+		// and everything when routing is unavailable, keep the grid verdict;
+		// overflow rings re-admit on top of this list exactly as they always
+		// have (composeReachOverflow).
+		// The FEED keeps the grid list when the evaluation is unanswered: an
+		// empty page is the degraded shape it has always had, and the client's
+		// in-flight guard cannot recover from a rejected fetch until the page
+		// is reloaded. The BADGE refuses instead (nearbyCount) - see there.
+		in, _ = labelNarrowAndDiscover(lat, lng, in)
 		// GORM renders an empty slice as IN (NULL) — matches nothing — which
 		// is right for a viewer no reach covers (the ring arm may still admit).
 		return "AND ms.msgid IN (?) ", []interface{}{in}, false
 	}
 
-	share := rippling.GeomShareReady(db)
-	if rippling.LegacyPolygonReady(db) {
-		if rippling.ReachBoundsReady(db) {
-			w, a := rippling.ReachBrowseWhere(share, float64(lng), float64(lat), utils.SRID)
-			return w, a, false
-		}
-
-		// Pre-sandwich fallback: no join here (the enclosing query owns the FROM), so
-		// test via a correlated PK-pair lookup when the geometry may be deduped.
-		if share {
-			return "AND ST_Contains(COALESCE((SELECT g2.geom FROM rippling_reach_geom g2 WHERE g2.hash = rr.polygon_hash), rr.polygon), ST_SRID(POINT(?, ?), ?)) ",
-				[]interface{}{lng, lat, utils.SRID}, false
-		}
-
-		return "AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) ", []interface{}{lng, lat, utils.SRID}, false
-	}
-
-	// Degraded: no spatial index AND no legacy geometry (post-drop with the
-	// spatial server unreachable). The outer bound — a stored SUPERSET of the
-	// reach — narrows in SQL, and the caller probes each candidate's stored
-	// cells in Go (reachCandidateQuery threads this flag up). Correct and
-	// bounded, just slower: the emergency path, not a second authority.
+	// Degraded: the spatial server is unreachable. The outer bound — a
+	// stored SUPERSET of the reach — narrows in SQL, and the caller probes
+	// each candidate's stored cells in Go (reachCandidateQuery threads this
+	// flag up). Correct and bounded, just slower: the emergency path, not a
+	// second authority.
 	w, a := rippling.ReachOuterOnlyWhere(float64(lng), float64(lat), utils.SRID)
 	return w, a, true
 }
@@ -103,15 +88,46 @@ type reachProbe struct {
 	admitted map[uint64]struct{}
 }
 
-// keep answers the probe for one candidate row. Undecidable cells fail
-// closed: post-drop a healthy row always has cells, so an unreadable blob is
-// a row that must not decide anything.
+// keep answers the probe for one candidate row. Undecidable cells do not
+// admit here - but a RETIRED grid (labels-truth drained it) is a healthy,
+// designed state, and filterProbed (isochrone/message.go) routes exactly
+// those undecided rows through one batched label evaluation before giving
+// up, so an empty blob is never treated as corruption.
 func (p *reachProbe) keep(msgid uint64, cells []byte) bool {
 	if _, ok := p.admitted[msgid]; ok {
 		return true
 	}
 	in, ok := rippling.CellSetContains(cells, p.lng, p.lat)
 	return ok && in
+}
+
+// labelNarrowAndDiscover applies the labels-truth transform to a
+// grid-admitted id list: drop ids whose stored label verdicts the member
+// OUT at the post's current budget, and append the labelled posts the grid
+// prefilter missed (discover). The feed and the badge count both go through
+// here, so they can never disagree about which posts the labels admit. The
+// SQL's own visibility conjuncts (held status, spatial joins) still apply
+// to every id, discovered ones included.
+//
+// ok=false means the question went unanswered (routing unreachable, breaker
+// open, a 503 that survived the retry) and the list comes back untouched.
+// Since the grids retired that list is empty, so an unanswered question
+// looks exactly like "nothing is in reach" - which is why the flag exists:
+// each caller decides what unanswered means for its surface.
+func labelNarrowAndDiscover(lat, lng float32, in []int64) ([]int64, bool) {
+	ids := make([]uint64, len(in))
+	for i, id := range in {
+		ids[i] = uint64(id)
+	}
+	verdicts, discovered, ok := rippling.LabelVerdictsWithDiscover(float64(lat), float64(lng), ids)
+	if !ok {
+		return in, false
+	}
+	in = rippling.DropLabelOut(in, verdicts)
+	for _, id := range discovered {
+		in = append(in, int64(id))
+	}
+	return in, true
 }
 
 // reachOrOverflowSQL is reachContainmentSQL plus, when any overflow ring applies to this

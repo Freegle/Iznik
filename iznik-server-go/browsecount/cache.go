@@ -32,11 +32,13 @@ const TTL = 30 * time.Second
 // is generous for the live population.
 const maxEntries = 20000
 
-// An entry is only reused for the same question. A viewer who moves the distance slider or
-// switches between "nearby" and "my communities" is asking a different one.
+// An entry is only reused for the same question. A viewer who moves the distance slider
+// (miles or its drive-minutes budget) or switches between "nearby" and "my communities"
+// is asking a different one.
 type entry struct {
 	browseView  string
 	maxDistance float64
+	maxMinutes  float64
 	count       uint64
 	expires     time.Time
 }
@@ -47,7 +49,7 @@ var (
 )
 
 // Get returns a remembered count for this viewer and question, if there is a live one.
-func Get(myid uint64, browseView string, maxDistance float64) (uint64, bool) {
+func Get(myid uint64, browseView string, maxDistance float64, maxMinutes float64) (uint64, bool) {
 	if myid == 0 {
 		return 0, false
 	}
@@ -56,7 +58,7 @@ func Get(myid uint64, browseView string, maxDistance float64) (uint64, bool) {
 	defer mu.Unlock()
 
 	e, ok := cache[myid]
-	if !ok || e.browseView != browseView || e.maxDistance != maxDistance {
+	if !ok || e.browseView != browseView || e.maxDistance != maxDistance || e.maxMinutes != maxMinutes {
 		return 0, false
 	}
 	if !time.Now().Before(e.expires) {
@@ -68,7 +70,7 @@ func Get(myid uint64, browseView string, maxDistance float64) (uint64, bool) {
 }
 
 // Put remembers a count for this viewer.
-func Put(myid uint64, browseView string, maxDistance float64, count uint64) {
+func Put(myid uint64, browseView string, maxDistance float64, maxMinutes float64, count uint64) {
 	if myid == 0 {
 		return
 	}
@@ -90,6 +92,7 @@ func Put(myid uint64, browseView string, maxDistance float64, count uint64) {
 	cache[myid] = entry{
 		browseView:  browseView,
 		maxDistance: maxDistance,
+		maxMinutes:  maxMinutes,
 		count:       count,
 		expires:     time.Now().Add(TTL),
 	}

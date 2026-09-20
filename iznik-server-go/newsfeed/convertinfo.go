@@ -22,6 +22,11 @@ type ConvertInfoResult struct {
 	Locationname string `json:"locationname,omitempty"`
 	Groupid      uint64 `json:"groupid,omitempty"`
 	Groupname    string `json:"groupname,omitempty"`
+	// Moderated: the post will wait in the group's Pending queue for a human
+	// moderator rather than appear straight away. The modal warns the
+	// converting moderator - a converted post they then cannot find looks
+	// like the convert failed (Discourse #6999).
+	Moderated bool `json:"moderated"`
 }
 
 // ConvertInfo tells a ChitChat moderator which postcode and community a
@@ -62,5 +67,6 @@ func ConvertInfo(c *fiber.Ctx) error {
 		Locationname: posting.Locationname,
 		Groupid:      posting.Groupid,
 		Groupname:    posting.Groupname,
+		Moderated:    posting.Moderated,
 	})
 }

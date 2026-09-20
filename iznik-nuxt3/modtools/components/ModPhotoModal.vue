@@ -22,12 +22,24 @@
       <b-button variant="white" @click="hide"> Close </b-button>
     </template>
   </b-modal>
+
+  <AiImageRemoveModal
+    ref="aiRemoveModal"
+    @choose="confirmRemove"
+    @cancel="pendingRemoveId = null"
+  />
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useOurModal } from '~/composables/useOurModal'
+import {
+  attachmentMods,
+  isAIAttachment,
+  removePhotoPatch,
+} from '~/composables/usePhotoRemoval'
+import AiImageRemoveModal from '~/components/AiImageRemoveModal.vue'
 
 const props = defineProps({
   messageid: {
@@ -42,6 +54,8 @@ const props = defineProps({
 
 const { modal, show, hide } = useOurModal()
 const messageStore = useMessageStore()
+const aiRemoveModal = ref(null)
+const pendingRemoveId = ref(null)
 
 const message = computed(() => messageStore.byId(props.messageid))
 
@@ -49,41 +63,52 @@ const attachment = computed(() => {
   return message.value?.attachments?.find((a) => a.id === props.attachmentid)
 })
 
-const externalmods = computed(() => {
-  const raw = attachment.value?.externalmods || attachment.value?.mods
-  if (raw) {
-    try {
-      const jsonmods = typeof raw === 'string' ? JSON.parse(raw) : raw
-      if (!jsonmods) return {}
-      return jsonmods
-    } catch (e) {
-      return {}
-    }
-  }
-  return {}
-})
+const externalmods = computed(() => attachmentMods(attachment.value))
 
 async function updatedPhoto() {
   await messageStore.patch({ id: props.messageid })
 }
 
-// Removing an AI-generated image is recorded server-side: the V2 message PATCH handler
-// records a review vote and protects this message from the illustrations cron re-adding
-// an image. To stop AI images for an item entirely, use the "Don't use AI for this item"
-// control on the ModTools AI Images page.
+// An AI-generated image gets the "why are you removing it?" question first, because one
+// of the answers ("bad for any post of this item") stops AI images for the item. Every
+// moderator gets that question, not only Support (Discourse 9630, post 92). Anything
+// else comes straight off.
 async function removePhoto(id) {
-  const attachments = []
+  if (isAIAttachment(attachment.value)) {
+    pendingRemoveId.value = id
+    aiRemoveModal.value?.show()
+    return
+  }
 
-  message.value?.attachments?.forEach((a) => {
-    if (a.id !== id) {
-      attachments.push(a.id)
-    }
-  })
-
-  await messageStore.patch({ id: props.messageid, attachments })
+  await doRemove(id, false)
 }
 
-defineExpose({ show, hide })
+async function confirmRemove(isBadForAnyPost) {
+  const id = pendingRemoveId.value
+  pendingRemoveId.value = null
+  if (id) {
+    await doRemove(id, isBadForAnyPost)
+  }
+}
+
+async function doRemove(id, isBadForAnyPost) {
+  await messageStore.patch(
+    removePhotoPatch(
+      { id: props.messageid, attachments: message.value?.attachments },
+      id,
+      isBadForAnyPost
+    )
+  )
+}
+
+defineExpose({
+  show,
+  hide,
+  removePhoto,
+  doRemove,
+  confirmRemove,
+  pendingRemoveId,
+})
 </script>
 
 <style scoped>

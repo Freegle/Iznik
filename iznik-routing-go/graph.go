@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math"
 	"os"
@@ -28,14 +29,77 @@ type NodeID = uint32
 // noNode is the zero value meaning "no node found".
 const noNode NodeID = 0
 
-// Node is a graph vertex with geographic coordinates and deprivation quintile.
+// Node is a graph vertex's geographic coordinates.
+//
+// The deprivation quintile used to live here, which cost 3 bytes of padding on
+// every node: 4+4+1 rounds up to 12 under the float32 alignment. Measured on
+// the production graph that was 170,623,356 bytes of confirmed-zero padding in
+// resident heap, to carry a field that one function reads (fairness.go) and
+// two build-time loops write. It is a parallel Graph.Quintile slice now, and
+// Node is exactly 8 bytes with no padding.
 type Node struct {
 	Lat, Lng float32
-	Quintile Quintile
 }
 
-// Edge is a directed graph edge.
+// Edge is a directed drive edge in the served graph.
+//
+// It used to be {To uint32; Seconds [3]float32} = 16 bytes, carrying walk and
+// cycle times alongside drive. Nothing asks for walk or cycle any more (the
+// rippling model is drive-time, the ModTools explorer hardcodes drive, and
+// apiv2 decodes only the drive member of an isochrone), so the served graph
+// keeps drive alone, quantised, and drops the 47,744,084 edges of the UK graph
+// that no car can use. 117,157,737 x 16B becomes 69,413,653 x 8B.
+//
+// Secs is drive seconds x10. The measured maximum over the whole UK graph is
+// 638.06s, so deciseconds have 45x headroom in a uint16, and the 0.05s worst-
+// case rounding is far below the drive-time model's own error. Quantising the
+// INPUTS does not make the arithmetic approximate: Dijkstra still accumulates
+// in float32.
 type Edge struct {
+	To   NodeID
+	Secs uint16
+}
+
+// edgeUnusable marks an edge no car can use. The served graph prunes those, so
+// this only appears transiently while quantising.
+const edgeUnusable uint16 = 65535
+
+// maxEdgeDeciseconds is the largest drive time a single edge can carry. The
+// build refuses to quantise anything above it rather than wrapping silently.
+const maxEdgeDeciseconds = float64(edgeUnusable - 1)
+
+// Sec returns the edge's drive seconds.
+func (e Edge) Sec() float32 { return float32(e.Secs) / 10 }
+
+// quantDrive rounds a drive time to the deciseconds the served edge will carry,
+// returning -1 for a mode-unusable edge.
+//
+// Everything derived from the graph must accumulate THESE values rather than
+// the raw ones. The overlay contracts a chain into one number and the flat base
+// Dijkstra adds the chain up edge by edge, and the reach engine is checked
+// against that flat search for EXACT equality. Summing raw times and rounding
+// once at the end drifts against a search that rounds every edge, by up to
+// 0.05s per edge - which is exactly the mismatch the exactness tests caught.
+func quantDrive(secs float32) float32 {
+	if secs < 0 {
+		return -1
+	}
+	return float32(math.Round(float64(secs)*10)) / 10
+}
+
+// DriveQuant is the drive time this build-time edge will carry once quantised.
+func (m ModalEdge) DriveQuant() float32 { return quantDrive(m.Seconds[Drive]) }
+
+// ModalEdge is a build-time edge carrying all three modes.
+//
+// Walk and cycle times are not served, but they still decide the overlay's
+// SHAPE: usableBits (which modes can traverse an edge) is what makes a node a
+// junction rather than a chain interior. Contracting on drive alone would give
+// a different, smaller overlay, a different partition, and therefore a
+// different partition fingerprint - which would invalidate every stored reach
+// label in production. So the build keeps all three modes, contracts exactly as
+// before, and only the ARTIFACTS become drive-only.
+type ModalEdge struct {
 	To      NodeID
 	Seconds [3]float32 // walk, cycle, drive travel time in seconds; -1 = not usable
 }
@@ -43,41 +107,201 @@ type Edge struct {
 // gridRes is the grid cell size in degrees (~1km per cell at UK latitudes).
 const gridRes = 0.01
 
-// Grid is a 2D spatial index for fast nearest-node lookup.
+// Grid is a 2D spatial index for fast nearest-node lookup, in CSR form.
+//
+// It was a map[[2]int16][]NodeID, which cost three things at UK scale
+// (measured on the production graph: 56,874,451 placed nodes in 397,091 cells):
+// 81.7MB of append-growth slack over the 227.5MB of node ids, a 24-byte slice
+// header per cell, and - the expensive one - a pointer-valued map, so the GC
+// had to scan 397,091 slice headers every cycle for a structure that never
+// changes after boot. CSR gives one flat pointer-free array plus a
+// pointer-free index map, so the whole grid is invisible to the pointer
+// scanner and costs ~229MB instead of ~336MB.
+//
+// int16 cell keys are safe at UK extents: the production graph spans lat cells
+// 4988..6085 and lng cells -1066..176, both comfortably inside int16.
 type Grid struct {
-	cells map[[2]int16][]NodeID
+	// index maps a cell key to its ordinal in offs. Both key and value are
+	// pointer-free, which is what keeps the bucket array off the GC's scan.
+	index map[[2]int16]uint32
+	// offs[o]..offs[o+1] is cell o's slice of flat. len(offs) == len(index)+1.
+	offs []uint32
+	flat []NodeID
 }
 
-func newGrid() *Grid {
-	return &Grid{cells: make(map[[2]int16][]NodeID, 200_000)}
+// cellKey returns the grid cell containing a coordinate.
+func cellKey(lat, lng float64) [2]int16 {
+	return [2]int16{int16(lat / gridRes), int16(lng / gridRes)}
 }
 
-func (gr *Grid) add(lat, lng float64, id NodeID) {
-	key := [2]int16{int16(lat / gridRes), int16(lng / gridRes)}
-	gr.cells[key] = append(gr.cells[key], id)
+// at returns the node ids in one cell, nil when the cell is empty.
+func (gr *Grid) at(row, col int16) []NodeID {
+	if gr == nil {
+		return nil
+	}
+	o, ok := gr.index[[2]int16{row, col}]
+	if !ok {
+		return nil
+	}
+	return gr.flat[gr.offs[o]:gr.offs[o+1]]
+}
+
+// cellCount reports how many cells hold at least one node.
+func (gr *Grid) cellCount() int {
+	if gr == nil {
+		return 0
+	}
+	return len(gr.index)
+}
+
+// buildGrid indexes every node with a real coordinate, counting first so every
+// allocation is exact. This is the single grid builder: the from-PBF paths and
+// the snapshot load path all use it, so they cannot drift apart (the snapshot
+// path used to carry its own naive append version, which is the one production
+// actually ran).
+func buildGrid(nodes []Node) *Grid {
+	counts := make(map[[2]int16]uint32, 600_000)
+	placed := 0
+	for i := 1; i < len(nodes); i++ {
+		nd := nodes[i]
+		if nd.Lat == 0 && nd.Lng == 0 {
+			continue
+		}
+		counts[cellKey(float64(nd.Lat), float64(nd.Lng))]++
+		placed++
+	}
+
+	gr := &Grid{
+		index: make(map[[2]int16]uint32, len(counts)),
+		offs:  make([]uint32, len(counts)+1),
+		flat:  make([]NodeID, placed),
+	}
+	// Assign ordinals and turn the counts into start offsets in one pass.
+	var running uint32
+	var ord uint32
+	for key, n := range counts {
+		gr.index[key] = ord
+		gr.offs[ord] = running
+		running += n
+		ord++
+	}
+	gr.offs[ord] = running
+
+	// fill[o] is the next free slot in cell o.
+	fill := make([]uint32, len(counts))
+	for i := 1; i < len(nodes); i++ {
+		nd := nodes[i]
+		if nd.Lat == 0 && nd.Lng == 0 {
+			continue
+		}
+		o := gr.index[cellKey(float64(nd.Lat), float64(nd.Lng))]
+		gr.flat[gr.offs[o]+fill[o]] = NodeID(i)
+		fill[o]++
+	}
+	return gr
 }
 
 // Graph is an in-memory road network in CSR format.
 // Nodes are 1-indexed; index 0 is an unused sentinel.
 type Graph struct {
-	Nodes       []Node  // Nodes[id] = node at sequential ID (1-indexed)
+	Nodes []Node // Nodes[id] = node at sequential ID (1-indexed)
+	// Quintile[id] is the node's IMD deprivation quintile, parallel to Nodes.
+	// Split out of Node so Node stays padding-free; nil when no deprivation
+	// index was loaded, which QuintileOf treats as "no data" everywhere.
+	Quintile    []Quintile
 	EdgeStart   []int32 // EdgeStart[id] = start index in Edges for node id
-	Edges       []Edge  // flat edge list in CSR order
+	Edges       []Edge  // flat drive-edge list in CSR order
 	Grid        *Grid
 	Deprivation *DeprivationIndex
-	// DriveSnappable[id] is false for nodes in tiny disconnected drive
+	// ModalEdgeStart/ModalEdges are the unpruned three-mode edges. They exist
+	// only between a from-PBF build and the overlay contraction, which needs
+	// walk/cycle usability to decide junctions. Nothing serves from them, the
+	// snapshot never stores them, and reachGraphCmd releases them as soon as
+	// the overlay is built.
+	ModalEdgeStart []int32
+	ModalEdges     []ModalEdge
+	// DriveSnappable bit id is clear for nodes in tiny disconnected drive
 	// fragments (marina loops, private estates): drive-mode snapping skips
 	// them so a postcode beside one doesn't become unroutable.  Genuine
 	// islands are big components and stay snappable.  nil = no filtering.
-	DriveSnappable []bool
+	DriveSnappable *Bitset
 }
 
 // NodeCount returns the number of valid nodes (excluding sentinel at index 0).
 func (g *Graph) NodeCount() int { return len(g.Nodes) - 1 }
 
-// EdgesFrom returns the edges outgoing from node id.
+// QuintileOf returns a node's deprivation quintile, 0 when there is no data or
+// no deprivation index was loaded.
+func (g *Graph) QuintileOf(id NodeID) Quintile {
+	if int(id) >= len(g.Quintile) {
+		return 0
+	}
+	return g.Quintile[id]
+}
+
+// EdgesFrom returns the drive edges outgoing from node id.
 func (g *Graph) EdgesFrom(id NodeID) []Edge {
 	return g.Edges[g.EdgeStart[id]:g.EdgeStart[id+1]]
+}
+
+// ModalEdgesFrom returns the build-time three-mode edges outgoing from node id.
+// Only the overlay contraction uses this, and only during a from-PBF build.
+func (g *Graph) ModalEdgesFrom(id NodeID) []ModalEdge {
+	if g.ModalEdgeStart == nil {
+		return nil
+	}
+	return g.ModalEdges[g.ModalEdgeStart[id]:g.ModalEdgeStart[id+1]]
+}
+
+// deriveDriveEdges fills Edges/EdgeStart from the three-mode build edges,
+// keeping only what a car can traverse and quantising to deciseconds. It is the
+// single point where the served graph stops being modal, so the rounding rule
+// and the range guard live in one place.
+func (g *Graph) deriveDriveEdges() error {
+	n := len(g.Nodes) - 1
+	if n < 0 {
+		return nil
+	}
+	kept := 0
+	for id := NodeID(1); id <= NodeID(n); id++ {
+		for _, me := range g.ModalEdgesFrom(id) {
+			if me.Seconds[Drive] >= 0 {
+				kept++
+			}
+		}
+	}
+
+	g.EdgeStart = make([]int32, n+2)
+	g.Edges = make([]Edge, kept)
+	pos := 0
+	for id := NodeID(1); id <= NodeID(n); id++ {
+		g.EdgeStart[id] = int32(pos)
+		for _, me := range g.ModalEdgesFrom(id) {
+			s := me.Seconds[Drive]
+			if s < 0 {
+				continue
+			}
+			d := math.Round(float64(s) * 10)
+			if d > maxEdgeDeciseconds {
+				// Refuse rather than wrap. A single edge over 6,553.4s would
+				// mean the graph or the speed table has changed shape, and
+				// silently truncating it would corrupt every route through it.
+				return fmt.Errorf("edge %d->%d drive time %.1fs exceeds the %.1fs quantisation ceiling",
+					id, me.To, s, maxEdgeDeciseconds/10)
+			}
+			g.Edges[pos] = Edge{To: me.To, Secs: uint16(d)}
+			pos++
+		}
+	}
+	g.EdgeStart[n+1] = int32(pos)
+	return nil
+}
+
+// releaseModalEdges drops the build-time three-mode edges once the overlay has
+// been contracted from them.
+func (g *Graph) releaseModalEdges() {
+	g.ModalEdgeStart = nil
+	g.ModalEdges = nil
 }
 
 // speed in m/s for each highway type × mode; -1 = mode cannot use this type.
@@ -439,12 +663,14 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 		return nil, err
 	}
 
-	// Assign deprivation quintiles.
+	// Assign deprivation quintiles into the parallel slice.
+	var quintiles []Quintile
 	if dep != nil {
+		quintiles = make([]Quintile, N+1)
 		for i := NodeID(1); i <= NodeID(N); i++ {
 			nd := &nodes[i]
 			if nd.Lat != 0 || nd.Lng != 0 {
-				nd.Quintile = dep.Lookup(float64(nd.Lat), float64(nd.Lng))
+				quintiles[i] = dep.Lookup(float64(nd.Lat), float64(nd.Lng))
 			}
 		}
 	}
@@ -528,13 +754,13 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 
 	// Build CSR: EdgeStart[id] is the index in Edges of the first edge from node id.
 	edgeStart := make([]int32, N+2)
-	edges := make([]Edge, len(tempEdges))
+	modalEdges := make([]ModalEdge, len(tempEdges))
 	{
 		pos := 0
 		for id := NodeID(1); id <= NodeID(N); id++ {
 			edgeStart[id] = int32(pos)
 			for pos < len(tempEdges) && tempEdges[pos].from == id {
-				edges[pos] = Edge{To: tempEdges[pos].to, Seconds: tempEdges[pos].secs}
+				modalEdges[pos] = ModalEdge{To: tempEdges[pos].to, Seconds: tempEdges[pos].secs}
 				pos++
 			}
 		}
@@ -544,39 +770,19 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 	runtime.GC()
 
 	g := &Graph{
-		Nodes:       nodes,
-		EdgeStart:   edgeStart,
-		Edges:       edges,
-		Deprivation: dep,
+		Nodes:          nodes,
+		Quintile:       quintiles,
+		ModalEdgeStart: edgeStart,
+		ModalEdges:     modalEdges,
+		Deprivation:    dep,
+	}
+	if err := g.deriveDriveEdges(); err != nil {
+		log.Fatalf("spatial-server: %v", err)
 	}
 
-	// Build spatial grid using two-pass construction to avoid GC pressure
-	// from millions of small append-induced slice reallocations.
 	log.Printf("spatial-server: building spatial grid")
-	g.Grid = &Grid{cells: make(map[[2]int16][]NodeID, 600_000)}
-	// Pass A: count nodes per cell.
-	cellCount := make(map[[2]int16]int32, 600_000)
-	for i := NodeID(1); i <= NodeID(N); i++ {
-		nd := nodes[i]
-		if nd.Lat != 0 || nd.Lng != 0 {
-			key := [2]int16{int16(nd.Lat / gridRes), int16(nd.Lng / gridRes)}
-			cellCount[key]++
-		}
-	}
-	// Pre-allocate each cell slice to its exact size.
-	for key, cnt := range cellCount {
-		g.Grid.cells[key] = make([]NodeID, 0, cnt)
-	}
-	cellCount = nil
-	// Pass B: fill node IDs.
-	for i := NodeID(1); i <= NodeID(N); i++ {
-		nd := nodes[i]
-		if nd.Lat != 0 || nd.Lng != 0 {
-			key := [2]int16{int16(nd.Lat / gridRes), int16(nd.Lng / gridRes)}
-			g.Grid.cells[key] = append(g.Grid.cells[key], i)
-		}
-	}
-	log.Printf("spatial-server: grid built (%d cells)", len(g.Grid.cells))
+	g.Grid = buildGrid(nodes)
+	log.Printf("spatial-server: grid built (%d cells)", g.Grid.cellCount())
 
 	g.DriveSnappable = computeDriveSnappable(g)
 
@@ -593,7 +799,7 @@ const minDriveComponentNodes = 1000
 // computeDriveSnappable unions nodes over drive-usable edges (undirected) and
 // marks nodes in components of at least min(minDriveComponentNodes, largest)
 // nodes as snappable for drive routing.
-func computeDriveSnappable(g *Graph) []bool {
+func computeDriveSnappable(g *Graph) *Bitset {
 	n := len(g.Nodes) - 1
 	if n <= 0 {
 		return nil
@@ -611,9 +817,6 @@ func computeDriveSnappable(g *Graph) []bool {
 	}
 	for from := NodeID(1); from <= NodeID(n); from++ {
 		for _, e := range g.EdgesFrom(from) {
-			if e.Seconds[Drive] < 0 {
-				continue
-			}
 			ra, rb := find(from), find(e.To)
 			if ra != rb {
 				parent[ra] = rb
@@ -633,12 +836,12 @@ func computeDriveSnappable(g *Graph) []bool {
 	if largest < threshold {
 		threshold = largest
 	}
-	ok := make([]bool, n+1)
+	ok := NewBitset(n + 1)
 	nFrag := 0
 	for id := NodeID(1); id <= NodeID(n); id++ {
 		if size[find(id)] >= threshold {
-			ok[id] = true
-		} else if hasEdgeForMode(g, id, Drive) {
+			ok.Set(int(id))
+		} else if hasDriveEdge(g, id) {
 			// Only count real drive nodes in the log: walk-only nodes are
 			// singleton "components" here and were never drive-snappable.
 			nFrag++
@@ -692,10 +895,12 @@ func BuildGraphFromRaw(rawNodes []RawNodeSpec, rawWays []RawWaySpec, dep *Depriv
 		}
 	}
 
+	var quintiles []Quintile
 	if dep != nil {
+		quintiles = make([]Quintile, N+1)
 		for i := NodeID(1); i <= NodeID(N); i++ {
 			nd := &nodes[i]
-			nd.Quintile = dep.Lookup(float64(nd.Lat), float64(nd.Lng))
+			quintiles[i] = dep.Lookup(float64(nd.Lat), float64(nd.Lng))
 		}
 	}
 
@@ -806,13 +1011,13 @@ func BuildGraphFromRaw(rawNodes []RawNodeSpec, rawWays []RawWaySpec, dep *Depriv
 	sort.Slice(tempEdges, func(i, j int) bool { return tempEdges[i].from < tempEdges[j].from })
 
 	edgeStart := make([]int32, N+2)
-	edges := make([]Edge, len(tempEdges))
+	modalEdges := make([]ModalEdge, len(tempEdges))
 	{
 		pos := 0
 		for id := NodeID(1); id <= NodeID(N); id++ {
 			edgeStart[id] = int32(pos)
 			for pos < len(tempEdges) && tempEdges[pos].from == id {
-				edges[pos] = Edge{To: tempEdges[pos].to, Seconds: tempEdges[pos].secs}
+				modalEdges[pos] = ModalEdge{To: tempEdges[pos].to, Seconds: tempEdges[pos].secs}
 				pos++
 			}
 		}
@@ -820,19 +1025,17 @@ func BuildGraphFromRaw(rawNodes []RawNodeSpec, rawWays []RawWaySpec, dep *Depriv
 	}
 
 	g := &Graph{
-		Nodes:       nodes,
-		EdgeStart:   edgeStart,
-		Edges:       edges,
-		Deprivation: dep,
+		Nodes:          nodes,
+		Quintile:       quintiles,
+		ModalEdgeStart: edgeStart,
+		ModalEdges:     modalEdges,
+		Deprivation:    dep,
+	}
+	if err := g.deriveDriveEdges(); err != nil {
+		log.Fatalf("spatial-server: %v", err)
 	}
 
-	g.Grid = newGrid()
-	for i := NodeID(1); i <= NodeID(N); i++ {
-		nd := nodes[i]
-		if nd.Lat != 0 || nd.Lng != 0 {
-			g.Grid.add(float64(nd.Lat), float64(nd.Lng), i)
-		}
-	}
+	g.Grid = buildGrid(nodes)
 
 	g.DriveSnappable = computeDriveSnappable(g)
 
