@@ -133,6 +133,23 @@ timeout, and would have reported the node unreachable every night.
 
 Inject through the constructor, and assert in a test which runner the built command holds.
 
+## Joining `messages_spatial` quietly means "approved only"
+
+`messages_spatial` holds one row per post for an **approved** membership: the index job's
+`removeNonApprovedMessages` pass drops anything else. So an `INNER JOIN messages_spatial`
+filters to approved posts whatever the query says elsewhere.
+
+The illustration candidate query in `MessageIllustrationsService::processBatches` reads
+`mg.collection IN ('Approved', 'Pending')` and joins the index in the same breath. The join
+wins: a pending post is never a candidate, and nothing in the query or the logs says so. That
+is Discourse 9630/97 - three test posts held for a moderator, none of which got a picture,
+while the filter above them claims to include exactly that case.
+
+A post held for a moderator does get its picture once approved, because its
+`messages_groups.arrival` moves to approval time and so lands above the job's watermark. The
+gap is only while it waits. If you want a query to cover pending posts, do not reach the
+spatial index for them.
+
 ## See also
 
 - `.claude/rules/go-api-traps.md` - the same class of silent wrong answer on the Go side.
