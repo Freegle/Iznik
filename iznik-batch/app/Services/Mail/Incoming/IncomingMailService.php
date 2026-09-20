@@ -1176,11 +1176,32 @@ class IncomingMailService
             return $this->dropped("Subscribe to unknown group");
         }
 
-        // Find or create the user
+        // Find or create the user.
+        //
+        // findUserByEmail falls back to a canon lookup, which is the thing that stops a
+        // Trash Nothing member's second per-group address creating a second Freegle
+        // account: canon strips the -gNNNN suffix, so every alias of one member reduces
+        // to the same value. Matching the address alone, as this did, is how the member
+        // in Discourse's 403 report came to hold two accounts - TN sends a Subscribe
+        // mail per group, each from a different alias.
         $envFrom = $email->envelopeFrom;
-        $userEmail = UserEmail::where('email', $envFrom)->first();
+        $user = $this->findUserByEmail($envFrom);
 
-        if ($userEmail === null) {
+        if ($user === null) {
+            // A row for this address with no user behind it is a broken state, not a new
+            // member. users_emails.email is UNIQUE, so creating here would collide on it
+            // and throw where this drops cleanly. A foreign key on users_emails.userid
+            // means it cannot arise on its own; the guard is for the case where that key
+            // is not there, and costs one indexed check on a path that only runs for an
+            // address nobody has seen before.
+            if (UserEmail::where('email', $envFrom)->exists()) {
+                Log::warning('User email exists but user not found', [
+                    'email' => $envFrom,
+                ]);
+
+                return $this->dropped("User email exists but user not found for subscribe");
+            }
+
             // Create a new user
             $user = User::create([
                 'fullname' => $email->fromName,
@@ -1189,12 +1210,14 @@ class IncomingMailService
                 'lastaccess' => now(),
             ]);
 
-            // Add their email
+            // Add their email. canon is what the lookup above reads, so leaving it null
+            // here would mean the member's NEXT alias created yet another account.
             UserEmail::create([
                 'userid' => $user->id,
                 'email' => $envFrom,
                 'preferred' => 1,
                 'added' => now(),
+                'canon' => $this->canonicalizeEmail($envFrom),
             ]);
 
             Log::info('Created new user for subscribe', [
@@ -1203,14 +1226,10 @@ class IncomingMailService
                 'created_new' => true,
             ]);
         } else {
-            $user = User::find($userEmail->userid);
-            if ($user === null) {
-                Log::warning('User email exists but user not found', [
-                    'email' => $envFrom,
-                ]);
-
-                return $this->dropped("User email exists but user not found for subscribe");
-            }
+            // It may have matched on canon rather than on the address itself - another
+            // per-group alias of the same member. Attach this one so later mail from it
+            // matches outright.
+            $this->addEmailToUser($user->id, $envFrom);
 
             // Update last access
             $user->lastaccess = now();
@@ -4284,6 +4303,10 @@ class IncomingMailService
                 'email' => $email,
                 'preferred' => 0,
                 'canon' => $this->canonicalizeEmail($email),
+                // backwards is REVERSE(canon), the definition V1's User::addEmail uses at
+                // both its insert sites. Leaving it null, as this did, is one source of the
+                // rows no domain prefix can find - see .claude/rules/mail-and-data.md.
+                'backwards' => strrev($this->canonicalizeEmail($email)),
             ]);
 
             Log::info('Added forwarding email to user', [

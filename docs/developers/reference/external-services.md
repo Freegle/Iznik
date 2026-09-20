@@ -100,7 +100,11 @@ something or that a route works.
 ## Partner organisations
 
 Feeds and syndication with other reuse and volunteering organisations are a separate
-subject: [partner-integrations.md](partner-integrations.md).
+subject: [partner-integrations.md](partner-integrations.md). Trash Nothing is much the
+largest of them and has its own page, [trashnothing.md](trashnothing.md); its settings sit
+under `trashnothing` in `iznik-batch/config/freegle.php`, and the ones that change
+behaviour rather than name an endpoint are listed in
+[deployment-switches.md](deployment-switches.md).
 
 ## Configuration, in one place
 
