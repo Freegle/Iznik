@@ -32,7 +32,7 @@ describe('persist_classifications action', () => {
   it('inserts a new bug as open', async () => {
     const result = await persistClassificationsHandler({}, {
       classifications: [
-        { topic: 123, post: 1, type: 'bug', topicTitle: 'Chat broken', user: 'alice', summary: 'Messages not loading', featureArea: 'messaging' },
+        { topic: 123, post: 1, type: 'bug', topicTitle: 'Chat broken', user: 'alice', summary: 'Messages not loading', featureArea: 'messaging', originalPostText: 'Chat messages stopped loading for me this morning on the website.' },
       ],
     })
     expect(result.upserted).toBe(1)
@@ -93,7 +93,7 @@ describe('persist_classifications action', () => {
 
   it('accepts post_number as alias for post', async () => {
     const result = await persistClassificationsHandler({}, {
-      classifications: [{ topic: 124, post_number: 2, type: 'bug', user: 'bob' }],
+      classifications: [{ topic: 124, post_number: 2, type: 'bug', user: 'bob', originalPostText: 'Chat messages stopped loading for me this morning on the website.' }],
     })
     expect(result.upserted).toBe(1)
     expect(getDiscourseBug(db, 124, 2)).not.toBeNull()
@@ -113,7 +113,7 @@ describe('persist_classifications action', () => {
   it('does not downgrade fix-queued bugs to open', async () => {
     upsertDiscourseBug(db, { topic: 127, post: 5, state: 'fix-queued', prNumber: 42 })
     const result = await persistClassificationsHandler({}, {
-      classifications: [{ topic: 127, post: 5, type: 'bug', user: 'eve' }],
+      classifications: [{ topic: 127, post: 5, type: 'bug', user: 'eve', originalPostText: 'Chat messages stopped loading for me this morning on the website.' }],
     })
     expect(result.skipped).toBe(1)
     expect(getDiscourseBug(db, 127, 5)?.state).toBe('fix-queued')
@@ -122,7 +122,7 @@ describe('persist_classifications action', () => {
   it('does not downgrade fixed bugs', async () => {
     upsertDiscourseBug(db, { topic: 128, post: 6, state: 'fixed', prNumber: 43 })
     await persistClassificationsHandler({}, {
-      classifications: [{ topic: 128, post: 6, type: 'bug', user: 'frank' }],
+      classifications: [{ topic: 128, post: 6, type: 'bug', user: 'frank', originalPostText: 'Chat messages stopped loading for me this morning on the website.' }],
     })
     expect(getDiscourseBug(db, 128, 6)?.state).toBe('fixed')
   })
@@ -130,7 +130,7 @@ describe('persist_classifications action', () => {
   it('does not downgrade investigating bugs', async () => {
     upsertDiscourseBug(db, { topic: 129, post: 7, state: 'investigating', prNumber: 44 })
     const result = await persistClassificationsHandler({}, {
-      classifications: [{ topic: 129, post: 7, type: 'bug', user: 'grace' }],
+      classifications: [{ topic: 129, post: 7, type: 'bug', user: 'grace', originalPostText: 'Chat messages stopped loading for me this morning on the website.' }],
     })
     expect(result.skipped).toBe(1)
   })
@@ -154,8 +154,8 @@ describe('persist_classifications action', () => {
   it('skips classifications without topic or post', async () => {
     const result = await persistClassificationsHandler({}, {
       classifications: [
-        { topic: 132, type: 'bug' },  // missing post
-        { post: 10, type: 'bug' },    // missing topic
+        { topic: 132, type: 'bug', originalPostText: 'Chat messages stopped loading for me this morning on the website.' },  // missing post
+        { post: 10, type: 'bug', originalPostText: 'Chat messages stopped loading for me this morning on the website.' },    // missing topic
       ],
     })
     expect(result.skipped).toBe(2)
@@ -165,7 +165,7 @@ describe('persist_classifications action', () => {
   it('links follow-up post in same topic to existing active PR instead of opening a new bug', async () => {
     upsertDiscourseBug(db, { topic: 133, post: 11, state: 'open', prNumber: 100 })
     const result = await persistClassificationsHandler({}, {
-      classifications: [{ topic: 133, post: 12, type: 'bug', user: 'jack', summary: 'Same problem' }],
+      classifications: [{ topic: 133, post: 12, type: 'bug', user: 'jack', summary: 'Same problem', originalPostText: 'Chat messages stopped loading for me this morning on the website.' }],
     })
     expect(result.upserted).toBe(1)
     const newBug = getDiscourseBug(db, 133, 12)
@@ -178,7 +178,7 @@ describe('persist_classifications action', () => {
     // not auto-dispatch. It should NOT be linked to the old PR (fix-queued) either.
     upsertDiscourseBug(db, { topic: 134, post: 13, state: 'fixed', prNumber: 101 })
     await persistClassificationsHandler({}, {
-      classifications: [{ topic: 134, post: 14, type: 'bug', user: 'kate' }],
+      classifications: [{ topic: 134, post: 14, type: 'bug', user: 'kate', originalPostText: 'Chat messages stopped loading for me this morning on the website.' }],
     })
     const newBug = getDiscourseBug(db, 134, 14)
     expect(newBug?.state).toBe('deferred')
@@ -188,7 +188,7 @@ describe('persist_classifications action', () => {
 
   it('inserts retest classification as open', async () => {
     const result = await persistClassificationsHandler({}, {
-      classifications: [{ topic: 135, post: 15, type: 'retest', user: 'liam' }],
+      classifications: [{ topic: 135, post: 15, type: 'retest', user: 'liam', originalPostText: 'Chat messages stopped loading for me this morning on the website.' }],
     })
     expect(result.upserted).toBe(1)
     expect(getDiscourseBug(db, 135, 15)?.state).toBe('open')
@@ -218,9 +218,9 @@ describe('persist_classifications action', () => {
   it('processes multiple classifications in order', async () => {
     const result = await persistClassificationsHandler({}, {
       classifications: [
-        { topic: 137, post: 17, type: 'bug', user: 'nancy' },
-        { topic: 138, post: 18, type: 'bug', user: 'oscar' },
-        { topic: 139, post: 19, type: 'bug', user: 'patricia' },
+        { topic: 137, post: 17, type: 'bug', user: 'nancy', originalPostText: 'Chat messages stopped loading for me this morning on the website.' },
+        { topic: 138, post: 18, type: 'bug', user: 'oscar', originalPostText: 'Chat messages stopped loading for me this morning on the website.' },
+        { topic: 139, post: 19, type: 'bug', user: 'patricia', originalPostText: 'Chat messages stopped loading for me this morning on the website.' },
       ],
     })
     expect(result.upserted).toBe(3)
@@ -232,7 +232,7 @@ describe('persist_classifications action', () => {
   it('links to fix-queued PR in same topic', async () => {
     upsertDiscourseBug(db, { topic: 140, post: 20, state: 'fix-queued', prNumber: 200 })
     await persistClassificationsHandler({}, {
-      classifications: [{ topic: 140, post: 21, type: 'bug', user: 'quinn' }],
+      classifications: [{ topic: 140, post: 21, type: 'bug', user: 'quinn', originalPostText: 'Chat messages stopped loading for me this morning on the website.' }],
     })
     const newBug = getDiscourseBug(db, 140, 21)
     expect(newBug?.state).toBe('fix-queued')
@@ -254,6 +254,7 @@ describe('persist_classifications action', () => {
         topic: 998, post: 12, type: 'bug', user: 'Neville_Reid',
         symptom_tags: ['photo', 'upload', 'fail'],
         summary: 'Photo upload fails with a spinner that never completes',
+        originalPostText: 'Chat messages stopped loading for me this morning on the website.',
       }],
     })
     expect(result.upserted).toBe(1)
@@ -267,7 +268,7 @@ describe('regression detection in persist_classifications', () => {
   it('flags new bug as regression when prior fixed bug exists in same topic', async () => {
     upsertDiscourseBug(db, { topic: 300, post: 1, state: 'fixed', prNumber: 42 })
     const result = await persistClassificationsHandler({}, {
-      classifications: [{ topic: 300, post: 5, type: 'bug', user: 'neville', summary: 'Still broken after fix' }],
+      classifications: [{ topic: 300, post: 5, type: 'bug', user: 'neville', summary: 'Still broken after fix', originalPostText: 'Chat messages stopped loading for me this morning on the website.' }],
     })
     expect(result.upserted).toBe(1)
     const newBug = getDiscourseBug(db, 300, 5)
@@ -279,7 +280,7 @@ describe('regression detection in persist_classifications', () => {
   it('flags retest as regression when prior fixed bug exists', async () => {
     upsertDiscourseBug(db, { topic: 301, post: 1, state: 'fixed', prNumber: 99 })
     await persistClassificationsHandler({}, {
-      classifications: [{ topic: 301, post: 2, type: 'retest', user: 'alice' }],
+      classifications: [{ topic: 301, post: 2, type: 'retest', user: 'alice', originalPostText: 'Chat messages stopped loading for me this morning on the website.' }],
     })
     const bug = getDiscourseBug(db, 301, 2)
     expect(bug?.state).toBe('deferred')
@@ -289,7 +290,7 @@ describe('regression detection in persist_classifications', () => {
   it('does NOT flag regression when prior fixed bug has no PR (unverified fix)', async () => {
     upsertDiscourseBug(db, { topic: 302, post: 1, state: 'fixed' })  // no prNumber
     await persistClassificationsHandler({}, {
-      classifications: [{ topic: 302, post: 2, type: 'bug', user: 'bob' }],
+      classifications: [{ topic: 302, post: 2, type: 'bug', user: 'bob', originalPostText: 'Chat messages stopped loading for me this morning on the website.' }],
     })
     const bug = getDiscourseBug(db, 302, 2)
     expect(bug?.state).toBe('open')  // no PR to reference, treat as normal new bug
@@ -319,6 +320,7 @@ describe('regression detection in persist_classifications', () => {
         topic: 304, post: 5, type: 'bug', user: 'reporter',
         symptom_tags: ['zythian-quorblax', 'frambulated', 'xyloquartz-defrobler'],
         summary: 'Zythian quorblax frambulated xyloquartz defrobler',
+        originalPostText: 'Chat messages stopped loading for me this morning on the website.',
       }],
     })
     const bug = getDiscourseBug(db, 304, 5)
@@ -337,6 +339,7 @@ describe('regression detection in persist_classifications', () => {
         topic: 305, post: 3, type: 'bug', user: 'reporter2',
         symptom_tags: ['counter-stuck', 'related-members', 'regression'],
         summary: 'Counter still stuck after fix',
+        originalPostText: 'Chat messages stopped loading for me this morning on the website.',
       }],
     })
     const bug = getDiscourseBug(db, 305, 3)
@@ -354,6 +357,7 @@ describe('regression detection in persist_classifications', () => {
         topic: 306, post: 2, type: 'bug', user: 'reporter3',
         symptom_tags: ['login', 'auth', 'session'],
         summary: 'Cannot log in',
+        originalPostText: 'Chat messages stopped loading for me this morning on the website.',
       }],
     })
     const bug = getDiscourseBug(db, 306, 2)
@@ -402,6 +406,7 @@ describe('cross-topic tag dedup in persist_classifications', () => {
         symptom_tags: ['delete', 'stdmsg', '404'],
         code_area: 'go-api:DeleteStdMsg',
         summary: 'Cannot delete standard message, API returns 404',
+        originalPostText: 'Chat messages stopped loading for me this morning on the website.',
       }],
     })
     expect(result.upserted).toBe(1)
@@ -416,6 +421,7 @@ describe('cross-topic tag dedup in persist_classifications', () => {
         topic: 202, post: 1, type: 'bug', user: 'bob',
         symptom_tags: ['scroll', 'jump', 'feedback'],
         code_area: 'nuxt:ModFeedback',
+        originalPostText: 'Chat messages stopped loading for me this morning on the website.',
       }],
     })
     const bug = getDiscourseBug(db, 202, 1)
@@ -433,6 +439,7 @@ describe('cross-topic tag dedup in persist_classifications', () => {
       classifications: [{
         topic: 204, post: 1, type: 'bug', user: 'carol',
         symptom_tags: ['login', 'member', 'deleted', 'status'],
+        originalPostText: 'Chat messages stopped loading for me this morning on the website.',
       }],
     })
     expect(result.upserted).toBe(1)
@@ -450,6 +457,7 @@ describe('cross-topic tag dedup in persist_classifications', () => {
       classifications: [{
         topic: 206, post: 1, type: 'bug', user: 'dave',
         symptom_tags: ['delete', 'stdmsg', '404'],
+        originalPostText: 'Chat messages stopped loading for me this morning on the website.',
       }],
     })
     const bug = getDiscourseBug(db, 206, 1)
@@ -463,6 +471,7 @@ describe('cross-topic tag dedup in persist_classifications', () => {
       classifications: [{
         topic: 207, post: 2, type: 'bug', user: 'eve',
         symptom_tags: ['delete', 'stdmsg'],
+        originalPostText: 'Chat messages stopped loading for me this morning on the website.',
       }],
     })
     const bug = getDiscourseBug(db, 207, 2)

@@ -1335,14 +1335,32 @@ export const discoverTopicsDeps = {
 // What a triage entry gives us to work from. `has_screenshot` and `identifiers`
 // come from the triage delegate, which sees the post itself: an image never
 // survives into the stripped text, and no pattern can recognise a group name.
+//
+// Judged on what the REPORTER wrote, not on the summary. The summary is the
+// delegate's paraphrase, and a paraphrase tidies the vagueness away: "a couple of
+// posts duplicated, one person asking for cash" became "duplicate posts and posts
+// offering items in exchange for cash", which names nothing but no longer reads as
+// though it does. Assessed on that, the report looked specific enough to fix, and a
+// moderator's aside in a policy discussion became PR #1574 (closed). The summary is
+// still searched for anchors, because an id the delegate pulled out is still an id.
 function specificsOf(c: Record<string, any>) {
   const identifiers = (c.identifiers ?? {}) as { userRef?: string; groupName?: string }
+  const verbatim = String(c.originalPostText ?? '').trim()
   return assessReportSpecifics({
-    text: `${c.summary ?? ''} ${c.originalPostText ?? ''}`,
+    text: verbatim || String(c.summary ?? ''),
+    anchorText: `${c.summary ?? ''} ${verbatim}`,
     hasScreenshot: c.has_screenshot === true || c.hasScreenshot === true,
     groupName: identifiers.groupName ?? null,
     userRef: identifiers.userRef ?? null,
   })
+}
+
+// A bug with no verbatim text cannot be judged for specifics at all, and "cannot
+// judge" must not read as "fine". Triage is asked for originalPostText on every bug;
+// when it is missing the report is held rather than sent to a diagnosis that would be
+// working from a paraphrase.
+function hasReporterWords(c: Record<string, any>): boolean {
+  return String(c.originalPostText ?? '').trim().length > 0
 }
 
 export const actions: ActionDefinition[] = [
@@ -3952,7 +3970,11 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         // means. Wrong guesses are where plausible-but-wrong fixes come from.
         if ((type === 'bug' || type === 'retest') && finalState === 'open') {
           const specifics = specificsOf(c)
-          if (specifics.isVague) {
+          if (!hasReporterWords(c)) {
+            finalState = 'needs-detail'
+            finalReason = 'triage returned no verbatim post text, so the report could not be judged for specifics'
+            out(`persist_classifications: ${c.topic}/${c.post} has no verbatim text to judge - held`)
+          } else if (specifics.isVague) {
             finalState = 'needs-detail'
             finalReason = `asked the reporter for: ${specifics.missing.join('; ')}`
             const quote = String(c.originalPostText ?? c.summary ?? '').trim().slice(0, 300)
