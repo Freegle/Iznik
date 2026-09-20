@@ -133,6 +133,25 @@ timeout, and would have reported the node unreachable every night.
 
 Inject through the constructor, and assert in a test which runner the built command holds.
 
+## Joining `messages_spatial` quietly means "approved only"
+
+`messages_spatial` holds one row per post for an **approved** membership: the index job's
+`removeNonApprovedMessages` pass drops everything else. So an `INNER JOIN messages_spatial`
+filters to approved posts whatever the query says elsewhere.
+
+The illustration candidate query read `mg.collection IN ('Approved', 'Pending')` and joined the
+index in the same breath. The join won, so a post waiting for a moderator was never a candidate,
+and nothing in the query or the logs said so. Both halves arrived together in the May migration,
+so the mention of Pending never did anything until PR #1582 split the query in two.
+
+Beware the opposite overstatement as well. A post held for a moderator mostly DID still get its
+picture once approved, because its `messages_groups.arrival` moves to approval time and lands
+ahead of the job's saved position. Measured on live data, held-then-approved posts ran 8.8 points
+behind never-held ones before PR #1556 and 5.3 points behind after it - not the "never
+illustrated" that #1556's title claims. Quote a rate here, not an absolute.
+
+If you want a query to cover pending posts, do not reach the spatial index for them.
+
 ## See also
 
 - `.claude/rules/go-api-traps.md` - the same class of silent wrong answer on the Go side.
