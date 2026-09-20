@@ -1,5 +1,6 @@
 ---
 last_reviewed: 2026-09-20
+owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -100,10 +101,12 @@ does not look like an error at run time.
 An origin with no road within snapping range (about 11km) used to produce an empty reach
 with nothing logged, which reads exactly like "nowhere is reachable from here". Isle of
 Man Freegle, a live group with 825 members, got no reach on any post for a year that way.
-`IsochroneResult` now carries `OriginFound`, `/v1/isochrone` and `/v1/catchment` return
-`onGraph`, both handlers log the miss, and `ReachService` logs "origin is outside the
-routing map" from both its single and pooled catchment paths instead of the general
-empty-reach warning.
+`IsochroneResult` now carries `OriginFound`, `/v1/isochrone` returns `onGraph`, the
+handler logs the miss, and `ReachService` logs "origin is outside the routing map"
+instead of the general empty-reach warning. The routing service's group-scoped
+catchment endpoint (`/v1/catchment`) is gone along with the group model it served;
+`/v1/isochrone` and the reach evaluator (`POST /v1/reach-eval`) are the only surfaces
+now, and neither is scoped to anything but one member's own reach.
 
 ### 2a. Drawing the reach: reached points into a polygon
 
@@ -845,8 +848,9 @@ were never any copies: retraction is now just "the post is no longer live".
   (`iznik-routing-go/bounds.go`): derived on the same rasterisation grid the exact
   polygon is traced from (morphological dilate/erode + simplification budgeted inside
   that margin, so superset/subset hold by construction), shipped as
-  `catchment_outer`/`catchment_inner` on point-form `/v1/catchment`, and verified against
-  the stored polygon on write (`Ripple\ReachBoundsService`); otherwise derived in SQL
+  `catchment_outer`/`catchment_inner` from the routing service's reach evaluator
+  (`POST /v1/reach-eval`), and verified against the stored polygon on write
+  (`Ripple\ReachBoundsService`); otherwise derived in SQL
   (`ST_Buffer(ST_Simplify(polygon, tol), ±tol)`, tol 0.002°). A provided inner is held to
   a **usefulness** bar as well as a correctness one
   (`ReachBoundsService::ensureUsefulInner`, `INNER_MIN_AREA_RATIO`): the routing grid's
