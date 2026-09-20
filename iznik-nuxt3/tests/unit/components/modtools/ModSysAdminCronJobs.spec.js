@@ -105,7 +105,7 @@ describe('ModSysAdminCronJobs', () => {
       },
     })
     return wrapper
-  })
+  }
 
   it('shows spinner while loading', () => {
     mockFetchCronJobs.mockReturnValue(new Promise(() => {}))
