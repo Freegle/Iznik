@@ -28,7 +28,7 @@
           <UserRatings v-if="user.userid > 0" :id="user.userid" size="md" />
         </div>
       </div>
-      <div :class="'ms-1 took ' + (availablenow <= 1 ? 'd-none' : '')">
+      <div :class="'took ' + (availablenow <= 1 ? 'd-none' : '')">
         <NumberIncrementDecrement
           v-model="user.count"
           label="Number taken"
@@ -323,57 +323,46 @@ select {
 }
 
 .layout {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 0.5rem;
+  row-gap: 0.75rem;
   border: 1px solid $color-gray--faded;
   border-radius: var(--radius-sm, 0.375rem);
   padding: 10px;
 
-  grid-template-rows: auto auto auto;
-  grid-template-columns: 2fr 2fr;
-  grid-column-gap: 5px;
-
-  @include media-breakpoint-up(md) {
-    padding: 10px;
-
-    grid-template-rows: auto;
-    grid-template-columns: 1fr 165px 160px;
-  }
-
   .select {
-    grid-column: 1 / 3;
-    grid-row: 1 / 2;
-
-    @include media-breakpoint-up(md) {
-      grid-column: 1 / 2;
-      grid-row: 1;
-    }
+    // Own line on a phone, so the name never squeezes the controls. From md up
+    // it takes whatever width the controls leave. min-width lets a long display
+    // name shrink rather than push the stepper out of the card.
+    flex: 1 1 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .ratings {
-    justify-self: start;
-    margin-top: 1rem;
-
-    grid-column: 1 / 2;
-    grid-row: 2 / 3;
-
-    @include media-breakpoint-up(md) {
-      margin-top: 0;
-      grid-column: 2 / 3;
-      grid-row: 1;
-    }
+    // The thumb buttons are inline-block, so this is what keeps them side by
+    // side. The layout used to pin them into a fixed 165px column, which is
+    // narrower than two large buttons, so thumbs-down wrapped underneath.
+    white-space: nowrap;
+    flex: 0 0 auto;
   }
 
   .took {
-    justify-self: end;
-    margin-top: 1rem;
+    flex: 0 0 auto;
+    // Holds the stepper against the right edge whether or not it shares a line
+    // with the ratings. Do not put Bootstrap's .ms-1 (or any m*-* utility) on
+    // this element: those are !important and silently beat the auto margin.
+    margin-left: auto;
+  }
 
-    grid-column: 3 / 4;
-    grid-row: 2 / 3;
+  @include media-breakpoint-up(md) {
+    // Name, ratings and stepper all fit on one line from md up.
+    flex-wrap: nowrap;
 
-    @include media-breakpoint-up(md) {
-      margin-top: 0;
-      grid-column: 4 / 5;
-      grid-row: 1;
+    .select {
+      flex: 1 1 auto;
     }
   }
 }
