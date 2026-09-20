@@ -55,8 +55,21 @@ class ExpandCommand extends Command
         // and auto-expires, so at most one bulk run executes at a time and a crashed run can't
         // wedge the lock forever. Controlled one-offs (--msgid / --dry-run) are exempt: they do
         // no bulk expansion and an operator must be able to run them alongside the cron.
+        // The TTL must exceed the WORST honest run, or the guard defeats
+        // itself: a backlogged run is 500 rows x one catchment each, and a
+        // late-tick (39-45 minute budget) catchment costs ~4.3s materialised
+        // (measured on an idle node, 2026-08-30), so a full run is ~36 minutes
+        // plus DB work. At 1800s the lock expired mid-run, the every-minute
+        // schedule admitted a fresh run each expiry, and the stack grew to
+        // EIGHT concurrent expands - exactly the routing server's 8
+        // compute-gate slots - so every catchment hit the 60s client timeout,
+        // goodput went to zero and 7,300 rows fell overdue. 3600s covers the
+        // worst run; a completed run still releases immediately, and the cost
+        // of a crashed run's wedge (next run waits out the remainder, the
+        // documented recreate gotcha) rises to at most an hour - far cheaper
+        // than the stacking collapse.
         $exemptFromLock = $this->option('msgid') !== null || (bool) $this->option('dry-run');
-        $lock = $exemptFromLock ? null : Cache::lock('ripple:expand:run', 1800);
+        $lock = $exemptFromLock ? null : Cache::lock('ripple:expand:run', 3600);
         if ($lock !== null && !$lock->get()) {
             Log::info('ripple:expand skipped: another run already holds the lock');
             $this->info('Another ripple:expand run is in progress; exiting.');

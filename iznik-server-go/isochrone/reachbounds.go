@@ -36,6 +36,18 @@ func reachContainmentSQL(db *gorm.DB, lng, lat float32) (where string, args []in
 			// them. Surface it rather than silently dropping posts.
 			log.Printf("reach containment: %d partial ids with no legacy geometry to resolve them", len(partial))
 		}
+		// Stored labels are the deciding record wherever they exist: drop any
+		// grid-admitted post whose label says the member is NOT reachable by
+		// road at the post's current budget - the estuary's far bank - and
+		// union in the posts the grid prefilter missed. Posts without labels,
+		// and everything when routing is unavailable, keep the grid verdict;
+		// overflow rings re-admit on top of this list exactly as they always
+		// have (composeReachOverflow).
+		// The FEED keeps the grid list when the evaluation is unanswered: an
+		// empty page is the degraded shape it has always had, and the client's
+		// in-flight guard cannot recover from a rejected fetch until the page
+		// is reloaded. The BADGE refuses instead (nearbyCount) - see there.
+		in, _ = labelNarrowAndDiscover(lat, lng, in)
 		// GORM renders an empty slice as IN (NULL) — matches nothing — which
 		// is right for a viewer no reach covers (the ring arm may still admit).
 		return "AND ms.msgid IN (?) ", []interface{}{in}, false
@@ -76,15 +88,46 @@ type reachProbe struct {
 	admitted map[uint64]struct{}
 }
 
-// keep answers the probe for one candidate row. Undecidable cells fail
-// closed: post-drop a healthy row always has cells, so an unreadable blob is
-// a row that must not decide anything.
+// keep answers the probe for one candidate row. Undecidable cells do not
+// admit here - but a RETIRED grid (labels-truth drained it) is a healthy,
+// designed state, and filterProbed (isochrone/message.go) routes exactly
+// those undecided rows through one batched label evaluation before giving
+// up, so an empty blob is never treated as corruption.
 func (p *reachProbe) keep(msgid uint64, cells []byte) bool {
 	if _, ok := p.admitted[msgid]; ok {
 		return true
 	}
 	in, ok := rippling.CellSetContains(cells, p.lng, p.lat)
 	return ok && in
+}
+
+// labelNarrowAndDiscover applies the labels-truth transform to a
+// grid-admitted id list: drop ids whose stored label verdicts the member
+// OUT at the post's current budget, and append the labelled posts the grid
+// prefilter missed (discover). The feed and the badge count both go through
+// here, so they can never disagree about which posts the labels admit. The
+// SQL's own visibility conjuncts (held status, spatial joins) still apply
+// to every id, discovered ones included.
+//
+// ok=false means the question went unanswered (routing unreachable, breaker
+// open, a 503 that survived the retry) and the list comes back untouched.
+// Since the grids retired that list is empty, so an unanswered question
+// looks exactly like "nothing is in reach" - which is why the flag exists:
+// each caller decides what unanswered means for its surface.
+func labelNarrowAndDiscover(lat, lng float32, in []int64) ([]int64, bool) {
+	ids := make([]uint64, len(in))
+	for i, id := range in {
+		ids[i] = uint64(id)
+	}
+	verdicts, discovered, ok := rippling.LabelVerdictsWithDiscover(float64(lat), float64(lng), ids)
+	if !ok {
+		return in, false
+	}
+	in = rippling.DropLabelOut(in, verdicts)
+	for _, id := range discovered {
+		in = append(in, int64(id))
+	}
+	return in, true
 }
 
 // reachOrOverflowSQL is reachContainmentSQL plus, when any overflow ring applies to this

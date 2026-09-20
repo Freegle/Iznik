@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	flog "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -660,7 +661,7 @@ func PostResponse(c *fiber.Ctx) error {
 					// groups it is live on (home + rippled-out copies), so every
 					// affected community's moderators review it, not only the group
 					// where this vote happened, then freeze the ripple.
-					SendForReviewAllGroups(db, req.Msgid, "Members think there is something wrong with this message.")
+					SendForReviewAllGroups(db, req.Msgid, "Members think there is something wrong with this message.", nil, nil)
 					FreezeReachIfOriginPending(db, req.Msgid)
 				}
 			}
@@ -858,12 +859,53 @@ func ModFeedback(c *fiber.Ctx) error {
 // the aggregate review quorum is reached (from in-app CheckMessage checks or website
 // reports) or on a moderator Back to Pending, so every affected community's moderators
 // see the post. Only Approved rows are touched. Exported so the moderation path reuses it.
-func SendForReviewAllGroups(db *gorm.DB, msgid uint64, reason string) {
+//
+// Every group whose copy is pulled back gets a Message/Hold log row carrying the reason,
+// so its moderators can see why a post they may never have looked at is in their queue
+// (Discourse 10102). byuser is the acting moderator, or nil when a review quorum did it.
+// A caller that writes its own, fuller log for some groups lists them in alreadyLogged.
+// Returns the groups whose copy was flipped.
+func SendForReviewAllGroups(db *gorm.DB, msgid uint64, reason string, byuser *uint64, alreadyLogged []uint64) []uint64 {
 	if msgid == 0 {
-		return
+		return nil
 	}
+
+	var flipped []uint64
+	db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND collection = ?", msgid, utils.COLLECTION_APPROVED).
+		Scan(&flipped)
+	if len(flipped) == 0 {
+		return nil
+	}
+
 	db.Table("messages_groups").Where("msgid = ? AND collection = ?", msgid, utils.COLLECTION_APPROVED).
 		Updates(map[string]interface{}{"collection": utils.COLLECTION_PENDING, "spamreason": reason})
+
+	var fromuser uint64
+	db.Table("messages").Select("fromuser").Where("id = ?", msgid).Scan(&fromuser)
+
+	skip := map[uint64]bool{}
+	for _, gid := range alreadyLogged {
+		skip[gid] = true
+	}
+	for _, gid := range flipped {
+		if skip[gid] {
+			continue
+		}
+		g := gid
+		text := reason
+		flog.Log(flog.LogEntry{
+			Byuser:  byuser,
+			Type:    flog.LOG_TYPE_MESSAGE,
+			Subtype: flog.LOG_SUBTYPE_HOLD,
+			Groupid: &g,
+			User:    &fromuser,
+			Msgid:   &msgid,
+			Text:    &text,
+		})
+	}
+
+	return flipped
 }
 
 // FreezeReachIfOriginPending freezes a post's ripple once its ORIGIN copy is no longer
@@ -954,7 +996,7 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 
 	// A moderator's report is quorum on its own: pull the post to Pending everywhere.
 	if reporterIsModOf(db, reporterID, groupid) {
-		SendForReviewAllGroups(db, msgid, reason)
+		SendForReviewAllGroups(db, msgid, reason, nil, nil)
 	} else {
 		// Aggregate quorum (all distinct Reject verdicts, reports or in-app checks)
 		// pulls the post to Pending on every community it is on.
@@ -963,7 +1005,7 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 			Where("msgid = ? AND result = 'Reject' AND comments IS NOT NULL AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')", msgid).
 			Count(&rejectCount)
 		if rejectCount >= int64(ApprovalQuorum) {
-			SendForReviewAllGroups(db, msgid, reason)
+			SendForReviewAllGroups(db, msgid, reason, nil, nil)
 		}
 	}
 

@@ -68,6 +68,18 @@ func TestReportVerdictMemberQuorumPendsAllGroupsAndFreezes(t *testing.T) {
 	if reachStatusOf(msgid) != "held" {
 		t.Errorf("reach must be frozen 'held' once the origin is Pending, got %s", reachStatusOf(msgid))
 	}
+
+	// Each group whose copy was pulled back gets a log row saying so, so its moderators
+	// can see why a post they may never have looked at is in their queue (Discourse
+	// 10102). Nobody in particular did it, so byuser is empty.
+	for _, gid := range []uint64{origin, rippled} {
+		var n int64
+		db.Raw("SELECT COUNT(*) FROM logs WHERE msgid = ? AND groupid = ? AND type = 'Message' AND subtype = 'Hold' AND byuser IS NULL AND text LIKE 'Members or moderators think%'",
+			msgid, gid).Scan(&n)
+		if n != 1 {
+			t.Errorf("group %d must have one Hold log for the quorum pull, got %d", gid, n)
+		}
+	}
 }
 
 // A moderator's report counts as quorum on its own: EVERY community's copy (origin and

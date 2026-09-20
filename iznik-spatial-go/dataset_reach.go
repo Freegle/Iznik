@@ -43,23 +43,84 @@ func (d *ReachDataset) Name() string { return "reach" }
 func (d *ReachDataset) RebuildInterval() time.Duration { return 24 * time.Hour }
 func (d *ReachDataset) DeltaInterval() time.Duration   { return 2 * time.Minute }
 
-// reachSelect builds the row query.
+// reachSelect builds the row query. `retired` = labels-truth answers
+// everything for this row, so it leaves this index entirely - containment for
+// it is served by the routing server's label evaluation (the discover arm).
+//
+// A row retires when it is union-ready (stored label + origin_union_secs,
+// including -1 = never), NOT only once its grid blob has been NULLed:
+// retirement must not depend on the doomed grid columns, or on the paced
+// row-by-row drain that NULLs them (each NULL is a full Galera row-image
+// writeset - pure cost for columns whose end state is an operator DROP).
+// The drained-grid arm stays so rows drained before this change, or in a
+// schema where origin_union_secs has not landed yet, retire exactly as
+// before.
 func reachSelect(where string) string {
-	return "SELECT rr.msgid, rr.status, rr.polygon_cells FROM rippling_reach rr " + where
+	return "SELECT rr.msgid, rr.status, rr.polygon_cells, " +
+		retiredExpr(unionColPresent) + " AS retired " +
+		"FROM rippling_reach rr " + where
+}
+
+// retiredExpr is reachSelect's retirement predicate; split out so the
+// with/without-origin_union_secs schemas are both testable. unionCol is
+// probed once per process alongside gridColumnsPresent.
+func retiredExpr(unionCol bool) string {
+	if unionCol {
+		return "(rr.reach_labels IS NOT NULL AND (rr.polygon_cells IS NULL OR rr.origin_union_secs IS NOT NULL))"
+	}
+	return "(rr.reach_labels IS NOT NULL AND rr.polygon_cells IS NULL)"
 }
 
 type reachRawRow struct {
-	msgid  int64
-	status string
-	cells  []byte
+	msgid   int64
+	status  string
+	cells   []byte
+	retired bool
 }
 
 func scanReachRaw(rows *sql.Rows) (reachRawRow, error) {
 	var r reachRawRow
-	return r, rows.Scan(&r.msgid, &r.status, &r.cells)
+	return r, rows.Scan(&r.msgid, &r.status, &r.cells, &r.retired)
+}
+
+// gridColumnsPresent reports whether the retired grid columns still exist.
+// After the operator's final drop this dataset has nothing to index - every
+// row is served by the routing server's label evaluation - so it loads empty
+// and the deltas no-op, quietly. Checked once per process.
+var (
+	gridColsOnce    sync.Once
+	gridColsPresent bool
+	unionColPresent bool
+)
+
+func gridColumnsPresent(mysqlDB *sql.DB) bool {
+	gridColsOnce.Do(func() {
+		var n int
+		if err := mysqlDB.QueryRow(
+			`SELECT COUNT(*) FROM information_schema.columns
+			  WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'polygon_cells'`,
+		).Scan(&n); err == nil {
+			gridColsPresent = n > 0
+		}
+		if !gridColsPresent {
+			log.Printf("reach: polygon_cells dropped - dataset retired, serving empty")
+		}
+		// Same once: does the union-readiness column exist? Decides which
+		// retirement predicate reachSelect compiles (see retiredExpr).
+		if err := mysqlDB.QueryRow(
+			`SELECT COUNT(*) FROM information_schema.columns
+			  WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'origin_union_secs'`,
+		).Scan(&n); err == nil {
+			unionColPresent = n > 0
+		}
+	})
+	return gridColsPresent
 }
 
 func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
+	if !gridColumnsPresent(mysqlDB) {
+		return InsertItems(idx, nil, nil)
+	}
 	// Load ALL non-held statuses; held rows are simply absent (the delta
 	// re-adds them if released).
 	rows, err := mysqlDB.Query(reachSelect(`WHERE rr.status != 'held'`))
@@ -84,6 +145,10 @@ func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 		go func() {
 			defer wg.Done()
 			for r := range in {
+				if r.retired {
+					// Drained under labels-truth: not this index's row.
+					continue
+				}
 				item, ok := buildReachItem(r.msgid, r.status, r.cells)
 				if !ok {
 					atomic.AddInt64(&skipped, 1)
@@ -132,6 +197,9 @@ func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 // ones. Clips and expansions both arrive as plain updates: the item is
 // rebuilt from the row's current cells, so there is no drift to reconcile.
 func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
+	if !gridColumnsPresent(mysqlDB) {
+		return nil
+	}
 	rows, err := mysqlDB.Query(reachSelect(`WHERE rr.updated_at > ?`), since.UTC())
 	if err != nil {
 		return fmt.Errorf("reach delta query: %w", err)
@@ -144,6 +212,16 @@ func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) 
 		if err != nil {
 			log.Printf("reach scan: %v", err)
 			skipped++
+			continue
+		}
+		if r.retired {
+			// A writer drained this row's grid (labels-truth): remove it -
+			// a skipped upsert would leave the PREVIOUS tick's smaller
+			// reach serving stale answers forever.
+			if err := idx.DeleteByExtID(r.msgid); err != nil {
+				log.Printf("reach delta: remove retired msgid=%d: %v", r.msgid, err)
+			}
+			removed++
 			continue
 		}
 		item, ok := buildReachItem(r.msgid, r.status, r.cells)
@@ -185,7 +263,10 @@ func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) 
 // reconcile diffs the index's extids against rippling_reach's live msgids:
 // index-only entries are deleted, source-only msgids are fetched and built.
 func (d *ReachDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
-	rows, err := mysqlDB.Query(`SELECT msgid FROM rippling_reach WHERE status != 'held'`)
+	// Retired rows (grid drained under labels-truth) are OUT of the source
+	// set, so their stale index entries are deleted like any other.
+	rows, err := mysqlDB.Query(`SELECT msgid FROM rippling_reach WHERE status != 'held'
+		AND NOT (reach_labels IS NOT NULL AND polygon_cells IS NULL)`)
 	if err != nil {
 		return fmt.Errorf("reach reconcile ids: %w", err)
 	}
@@ -230,12 +311,12 @@ func (d *ReachDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
 		}
 		row := mysqlDB.QueryRow(reachSelect(`WHERE rr.msgid = ?`), id)
 		var r reachRawRow
-		if scanErr := row.Scan(&r.msgid, &r.status, &r.cells); scanErr != nil {
+		if scanErr := row.Scan(&r.msgid, &r.status, &r.cells, &r.retired); scanErr != nil {
 			// Row vanished between the id list and this fetch: fine, next tick.
 			continue
 		}
 		item, ok := buildReachItem(r.msgid, r.status, r.cells)
-		if !ok || r.status == "held" {
+		if !ok || r.status == "held" || r.retired {
 			continue
 		}
 		if err := InsertItems(idx, []Item{item}, nil); err != nil {
@@ -331,41 +412,6 @@ func (d *ReachDataset) Containing(idx *Index, lng, lat float64) (in []int64, par
 		}
 	}
 	return in, partial, nil
-}
-
-// ReachPoint is one candidate location for AdmitsPoints.
-type ReachPoint struct {
-	Lng float64 `json:"lng"`
-	Lat float64 `json:"lat"`
-}
-
-// AdmitsPoints is the committed-reach question from the MAIL's end: one post,
-// many candidate members, which of them does its current reach cover? The
-// twin of ReachOverflowDataset.AdmitsPoints, so the digest asks both halves
-// of "would the site show this member the post" of the same authority.
-//
-// known=false means the post has no live entry here (no reach row, held, or
-// the index simply has not caught up) — the caller decides what that means;
-// the mail fails closed on it. `uncertain` carries the points a legacy
-// coarse-raster row cannot decide (boundary band): pre-drop callers may
-// exact-test those, post-drop they cannot occur.
-func (d *ReachDataset) AdmitsPoints(idx *Index, msgid int64, points []ReachPoint) (admitted []int, uncertain []int, known bool, err error) {
-	item, err := idx.GetByExtID(msgid)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	if item == nil || item.WKB == nil {
-		return nil, nil, false, nil
-	}
-	for i, p := range points {
-		switch classifyReachBlob(item.WKB, p.Lng, p.Lat) {
-		case cellIn:
-			admitted = append(admitted, i)
-		case cellPartial:
-			uncertain = append(uncertain, i)
-		}
-	}
-	return admitted, uncertain, true, nil
 }
 
 // No DriftChecker: the per-tick reconcile above is strictly stronger — it

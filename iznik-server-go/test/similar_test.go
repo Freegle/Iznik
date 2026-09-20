@@ -270,6 +270,10 @@ func TestSimilarOverfetchSurvivesReachRejection(t *testing.T) {
 		}
 	})
 
+	// A decided OUT for all eight: they are refused because the labels refuse
+	// them, not because the routing server could not answer.
+	stubReachEvalMax(t, "out")
+
 	// One lower-scoring, reachable candidate (no reach row → fail-open). It ranks below
 	// all eight blocked ones, so at limit=2 (old pool = 6) it never entered the set.
 	const reachableID = 870999
@@ -356,6 +360,11 @@ func TestSimilarReachFiltered(t *testing.T) {
 		"ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding')", outReachID,
 		mustRasterize(t, "POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))"))
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?, ?)", srcID, inReachID, outReachID)
+
+	// A decided OUT, so the drop below is the labels refusing this viewer. An
+	// undecided verdict keeps the candidate now, so without this the assertion
+	// would pass only while the routing server stayed silent.
+	stubReachEvalMax(t, "out")
 
 	// Authenticated viewer: reach filter applies.
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/840001/similar?jwt="+token, nil), 60000)

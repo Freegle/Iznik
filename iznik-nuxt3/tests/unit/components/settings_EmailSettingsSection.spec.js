@@ -120,7 +120,7 @@ describe('EmailSettingsSection', () => {
           },
           SettingsGroup: {
             template:
-              '<div class="settings-group" :data-groupid="groupid" @leave="$emit(\'leave\')" />',
+              '<div class="settings-group" :data-groupid="groupid" :data-leave="leave" @leave="$emit(\'leave\')" />',
             props: [
               'groupid',
               'leave',
@@ -323,6 +323,27 @@ describe('EmailSettingsSection', () => {
       wrapper.vm.showAdvanced = true
       await wrapper.vm.$nextTick()
       expect(wrapper.find('.mod-icon').exists()).toBe(false)
+    })
+
+    // Leaving would drop the role, and the server now refuses that, so a moderator or
+    // owner is not offered Leave here at all (Discourse 10148).
+    it('does not offer Leave to a moderator', async () => {
+      mockMyGroups.value = [{ ...mockMyGroups.value[0], role: 'Moderator' }]
+      const wrapper = createWrapper()
+      wrapper.vm.showAdvanced = true
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.settings-group').attributes('data-leave')).toBe(
+        'false'
+      )
+    })
+
+    it('offers Leave to a plain member', async () => {
+      const wrapper = createWrapper()
+      wrapper.vm.showAdvanced = true
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.settings-group').attributes('data-leave')).toBe(
+        'true'
+      )
     })
   })
 

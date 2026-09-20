@@ -44,17 +44,14 @@ use Illuminate\Support\Facades\Log;
  * member who has set browseMaxDistance keeps having that key reconciled; nobody has one
  * created for them.
  *
- * An explicit narrower choice is kept, not overwritten - but it is RESCALED onto
- * the member's new range, because the old slider's positions meant a fixed 5-30. A
- * stored value said what FRACTION of the range the member wanted, not an absolute
- * travel time they would recognise: 15 was two fifths of the way up the old scale, and
- * two fifths of a rural member's 5-45 is 20. The rescale is proportional and snapped to
- * the slider's 5-minute step:
+ * An explicit narrower choice is kept, not overwritten: it is carried across as the travel
+ * time it says, clamped to the member's band cap. A member who never chose sits ON their band
+ * cap, and is put back on it if anything has moved them off it.
  *
- *   f = (old - 5) / (30 - 5), clamped to [0,1]
- *   new = round_to_5(5 + f * (cap - 5)), clamped to [5, cap]
- *
- * At or above the old top stop, f = 1 and the member lands on their new cap.
+ * The pass is a RECONCILER, so everything it does has to be idempotent - it runs nightly over
+ * the whole membership, and any rule that reads its own output differently from the value a
+ * member set becomes a ratchet that walks their chosen travel time away from them (see
+ * budgetFor).
  *
  * The unlimited sentinel means "defer to the server's own reach", and that reach is
  * now the ceiling - so it only says "as far as my band goes" for a member whose band
@@ -80,9 +77,10 @@ use Illuminate\Support\Facades\Log;
  *
  * The selection is a full walk of users (~2.9M rows on live): neither the JSON_EXTRACT
  * predicates nor lastaccess is indexed, so chunkById pages by primary key and evaluates
- * the filter per row. That is acceptable for a manual, occasional pass and is why this is
- * not scheduled - run it off-peak, --dry-run first, and use --since-days to bound how many
- * members it will actually touch.
+ * the filter per row. Even so the memos keep it affordable - measured on live 2026-09-01,
+ * 132,228 members scanned in 2h33m - which is why it is scheduled nightly at 02:40 rather
+ * than left as an occasional manual pass. Run by hand with --dry-run first, and --since-days
+ * to bound how many members it will actually touch.
  *
  * Chunked by id and re-runnable: it only ever moves a member towards the
  * invariant, so stopping and re-running is safe.
@@ -130,16 +128,10 @@ class BackfillBrowseMaxDistanceCommand extends Command
     private const OUTBOUND_MILES_KEY = 'myPostsMaxDistance';
 
     /**
-     * The bounds the time-based slider had before it became band-aware. The old top
-     * stop is what a stored value has to be read against to know what fraction of
-     * their range the member was asking for. Must stay in step with
-     * iznik-nuxt3/constants.js BROWSE_MINUTES_MIN / BROWSE_MINUTES_STEP.
+     * The bottom of the time-based slider. Must stay in step with
+     * iznik-nuxt3/constants.js BROWSE_MINUTES_MIN.
      */
     private const MINUTES_MIN = 5;
-
-    private const MINUTES_OLD_MAX = 30;
-
-    private const MINUTES_STEP = 5;
 
     /** ~11m of latitude: far finer than density or a travel-time radius can resolve. */
     private const DENSITY_MEMO_DP = 4;
@@ -169,7 +161,7 @@ class BackfillBrowseMaxDistanceCommand extends Command
                             {--limit=0 : Stop after this many corrections (0 = no limit)}
                             {--since-days=90 : Also give a default to members active within this many days (0 = only those who already have a setting)}
                             {--epsilon-miles=0.5 : Leave pairs alone when the recomputed radius is within this of the stored one}
-                            {--missing-only : Only members with no band limit at all, the cheap pass that keeps new members covered}
+                            {--missing-only : Only members with no band limit at all - a manual catch-up; the nightly full pass already covers them}
                             {--dry-run : Report what would change without writing}';
 
     protected $description = 'Put each member on their own density band travel-time budget, and reconcile the derived browseMaxDistance';
@@ -307,12 +299,12 @@ class BackfillBrowseMaxDistanceCommand extends Command
         // default nor a choice of their own. Everyone else is already consistent or is a
         // reconciliation this pass does not need to do.
         //
-        // This exists because the invariant decays. The full pass is a walk of every user
-        // (~2.9M rows on live) and is deliberately not scheduled, but a member who joins
-        // after it runs gets no band default, ever - and since posts ripple out to the widest
-        // budget and rely on each member being held back to their own band, that member is
-        // permanently on "no limit" inbound. Narrowed this way the pass is small enough to
-        // run regularly and close that gap.
+        // A manual catch-up, not a scheduled job: the full pass runs nightly and already
+        // covers new joiners. Worth keeping for the case where the nightly pass has been down
+        // and someone wants the members with NOTHING holding them to a band covered first,
+        // since posts ripple out to the widest budget and rely on each member being held back
+        // to their own - a member with no band default is on "no limit" inbound until a pass
+        // reaches them.
         if ($missingOnly) {
             $query->whereRaw("JSON_EXTRACT(settings, '$.".self::DEFAULT_KEY."') IS NULL")
                 ->whereRaw("JSON_EXTRACT(settings, '$.browseMaxDistance') IS NULL");
@@ -384,15 +376,24 @@ class BackfillBrowseMaxDistanceCommand extends Command
         }
 
         // The band NAME, not just its consequences. browseMaxMinutes cannot stand in for it:
-        // a member who narrowed the slider is rescaled within their band, so 20 minutes means
-        // "dense member" or "rural member who wants less" and the two are indistinguishable
-        // afterwards. Anything reading a member's band back - the rural overflow lane picks
-        // one ring per band - needs the band itself, and this command is the only place that
-        // measures it.
+        // 20 minutes means "dense member on their cap" or "rural member who asked for less",
+        // and the two are the same number. Anything reading a member's band back - the rural
+        // overflow lane picks one ring per band - needs the band itself, and this command is
+        // the only place that measures it.
         $bandStale = ($settings[self::BAND_KEY] ?? null) !== $cap['band'];
 
         $capMinutes = (int) round($cap['max_minutes']);
-        $desiredMinutes = $this->rescale($minutes, $capMinutes);
+
+        // A member who never chose is put on their band cap every time. Their stored minutes
+        // is this command's OWN output, not a preference, so reading it back as one is what
+        // let the old rescale ratchet stick: once a run had walked a dense member down to 10,
+        // the idempotent rule below preserved that 10 for ever and nothing ever widened them
+        // again. The 2026-09-01 pass left 17,584 dense members below their 20-minute cap that
+        // way, and the narrowest of them stopped being mailed anything at all, because a
+        // 1.5-mile radius empties their candidate list every morning. Only an explicit
+        // browseMaxDistance means the member has said what they want; anything else is ours
+        // to re-derive, so this also self-heals a band that has since moved.
+        $desiredMinutes = $chose ? $this->budgetFor($minutes, $capMinutes) : $capMinutes;
         $desired = $this->desiredDistance($loc, $desiredMinutes, $capMinutes, $apiBase);
         if ($desired === null) {
             $stats['lookup_failed']++;
@@ -457,9 +458,8 @@ class BackfillBrowseMaxDistanceCommand extends Command
      * member's two axes apart without them asking, which is the one thing the split was designed
      * not to do.
      *
-     * No rescale and no band. The old fixed 5-30 slider predates this axis, so a stored value was
-     * always chosen against the current 5-45 scale; and the outbound range is the ripple ceiling
-     * for everyone, because a post's reach grows to the ceiling whatever band its origin is in.
+     * No band here. The outbound range is the ripple ceiling for everyone, because a post's
+     * reach grows to the ceiling whatever band its origin is in.
      * Passing the ceiling as the cap is also what makes desiredDistance() return the "no limit"
      * sentinel at the top stop, which is what the top stop means on this axis.
      */
@@ -533,28 +533,30 @@ class BackfillBrowseMaxDistanceCommand extends Command
     /**
      * Where the member's stored position lands on their own range.
      *
-     * The stored minutes were chosen against a fixed 5-30 slider, so they say what
-     * FRACTION of the available range the member wanted, not an absolute travel time
-     * they would recognise. Carrying the number across unchanged would silently narrow
-     * a rural member (25 of 30 was near their maximum; 25 of 45 is barely past the
-     * middle) and would leave a city member above a cap the reach engine no longer
-     * honours.
+     * Only ever asked about a member who HAS chosen, which is what makes a stored budget their
+     * own choice: it is carried across as the travel time it says, clamped to the band cap
+     * their surroundings earn - a position above that is one the reach engine will not honour.
+     * No stored minutes means the top stop; see the class docblock. Members who never chose do
+     * not come through here at all; they are put on their band cap, see reconcile().
      *
-     * No stored minutes means the top stop - see the class docblock.
+     * IDEMPOTENT, deliberately, because this is a reconciling pass that runs monthly and not a
+     * migration. Reading a stored value as a FRACTION of the old fixed 5-30 slider is the right
+     * thing to do exactly once, when that slider becomes the band-aware 5-45 one. Run every
+     * month it is a ratchet: it re-reads its own output as if it were still an old-scale value,
+     * so a member's chosen travel time walks away from them in whichever direction their band
+     * points. Live evidence from the 2026-09-01 pass - a sparse member goes 15 -> 20 -> 30 ->
+     * 45, ending on the "no limit" sentinel, while a dense member goes 20 -> 15 -> 10 down onto
+     * the narrowest stop. That single run put 1,185 members on the sentinel, which is what has
+     * rural members asking why they are suddenly mailed posts from towns 16 miles away
+     * (Discourse 10096). Any future scale change is a one-off command of its own.
      */
-    public function rescale(?int $minutes, int $capMinutes): int
+    public function budgetFor(?int $minutes, int $capMinutes): int
     {
-        if ($minutes === null || $minutes >= self::MINUTES_OLD_MAX) {
+        if ($minutes === null) {
             return $capMinutes;
         }
 
-        $fraction = ($minutes - self::MINUTES_MIN) / (self::MINUTES_OLD_MAX - self::MINUTES_MIN);
-        $fraction = max(0.0, min(1.0, $fraction));
-
-        $scaled = self::MINUTES_MIN + $fraction * ($capMinutes - self::MINUTES_MIN);
-        $snapped = (int) (round($scaled / self::MINUTES_STEP) * self::MINUTES_STEP);
-
-        return max(self::MINUTES_MIN, min($capMinutes, $snapped));
+        return max(self::MINUTES_MIN, min($capMinutes, $minutes));
     }
 
     /** The member's location, or null when there isn't one to work from. */

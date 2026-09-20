@@ -106,6 +106,20 @@ type SearchResult struct {
 	// reflect the member's "How far away" slider and "Closest" sort. 0 when the member has no
 	// known location (logged out).
 	Distance float64 `json:"distance" gorm:"-"`
+	// Roadmins/Roadmiles mirror the feed summaries' fields: drive time and road miles from
+	// the member, stamped in one batched routing call when their drive-minutes budget is in
+	// play, so the client's payload-only verdict and Closest sort see the same numbers the
+	// server filtered and ordered by. Nil when not fetched or the engine had no answer.
+	Roadmins  *float64 `json:"roadmins,omitempty" gorm:"-"`
+	Roadmiles *float64 `json:"roadmiles,omitempty" gorm:"-"`
+	// Posted and VisibleSince are the two dates every browse summary carries
+	// (MessageSummary): when the post was written, and the oldest live group arrival - the
+	// ONE clock the client's "Newest posted" sort and each card's age badge read. Search
+	// results are sorted by the same client code as the feed, and without these they sorted
+	// by Arrival (the ripple-bumped spatial arrival) against cards dated from the full
+	// record. Stamped by the Search handler on every result (message.whenVisible).
+	Posted       time.Time `json:"posted,omitempty" gorm:"-"`
+	VisibleSince time.Time `json:"visibleSince,omitempty" gorm:"-"`
 }
 
 // GetWords tokenises a search string into lower-cased, stopword-filtered words.
@@ -364,6 +378,20 @@ func searchReachArmIDs(db *gorm.DB, lng, lat float64) []uint64 {
 			// coarse-raster row); do not silently hide posts.
 			fmt.Printf("search: %d partial reach ids with no legacy geometry to resolve them\n", len(partial))
 		}
+		// Labels-truth: the same narrowing AND discovery union the feed
+		// applies, so search can never surface a post browse hides - nor
+		// hide a discovered post browse shows (the file's own invariant:
+		// never scrollable but unsearchable). The SQL below still applies
+		// every visibility conjunct to the discovered ids.
+		ids := make([]uint64, len(in))
+		for i, id := range in {
+			ids[i] = uint64(id)
+		}
+		verdicts, discovered, _ := rippling.LabelVerdictsWithDiscover(lat, lng, ids)
+		in = rippling.DropLabelOut(in, verdicts)
+		for _, id := range discovered {
+			in = append(in, int64(id))
+		}
 		db.Table("rippling_reach rr").
 			Select("ms.msgid").
 			Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
@@ -376,14 +404,19 @@ func searchReachArmIDs(db *gorm.DB, lng, lat float64) []uint64 {
 		return reachIDs
 	}
 
-	// Degraded: outer-bound superset + Go-side cells probe.
+	// Degraded: outer-bound superset + Go-side cells probe. Rows the probe
+	// cannot decide (a RETIRED grid: the label + union threshold replaced
+	// its cells) get one batched label evaluation - the same rescue the
+	// feed's degraded path applies (filterProbed) - so a spatial-index
+	// outage alone does not desynchronise search from browse; only spatial
+	// AND routing down together fails closed.
 	var cands []struct {
 		Msgid uint64 `gorm:"column:msgid"`
 		Cells []byte `gorm:"column:cells"`
 	}
 	args := []interface{}{lng, lat, utils.SRID}
 	db.Table("rippling_reach rr").
-		Select("ms.msgid, rr.polygon_cells AS cells").
+		Select("ms.msgid, "+rippling.ReachCellsExpr(db)+" AS cells").
 		Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
 		Joins("INNER JOIN messages m ON m.id = ms.msgid").
 		Joins("INNER JOIN users au ON au.id = m.fromuser").
@@ -392,10 +425,50 @@ func searchReachArmIDs(db *gorm.DB, lng, lat float64) []uint64 {
 			utils.AuthorReachCapWhere,
 			append(args, authorCapArgs...)...).
 		Scan(&cands)
+	var undecided []uint64
 	for _, c := range cands {
 		if in, ok := rippling.CellSetContains(c.Cells, lng, lat); ok && in {
 			reachIDs = append(reachIDs, c.Msgid)
+		} else if len(c.Cells) == 0 {
+			undecided = append(undecided, c.Msgid)
 		}
 	}
+	reachIDs = append(reachIDs, rippling.RescueUndecided(lat, lng, undecided)...)
 	return reachIDs
+}
+
+// dropRippledIn keeps only the results one of the given groups holds as its OWN post:
+// a messages_groups row with rippled_in = 0 on that group. It is the search arm of the
+// Approved Messages "Only this group's own posts (hide rippled-in)" filter
+// (?originonly=true), whose listing arm is the mg.rippled_in = 0 clause in
+// message_list.go. No groups means nothing to scope to, so nothing is dropped.
+func dropRippledIn(db *gorm.DB, results []SearchResult, groupids []uint64) []SearchResult {
+	if len(results) == 0 || len(groupids) == 0 {
+		return results
+	}
+
+	ids := make([]uint64, 0, len(results))
+	for _, r := range results {
+		ids = append(ids, r.Msgid)
+	}
+
+	var own []uint64
+	db.Table("messages_groups").
+		Select("DISTINCT msgid").
+		Where("msgid IN ? AND groupid IN ? AND rippled_in = 0 AND deleted = 0", ids, groupids).
+		Scan(&own)
+
+	keep := make(map[uint64]bool, len(own))
+	for _, id := range own {
+		keep[id] = true
+	}
+
+	kept := results[:0]
+	for _, r := range results {
+		if keep[r.Msgid] {
+			kept = append(kept, r)
+		}
+	}
+
+	return kept
 }

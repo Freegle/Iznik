@@ -3,12 +3,16 @@ package message
 import (
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -23,9 +27,11 @@ import (
 // endpoint so the SQL lives in exactly one place.
 //
 // Fail-open semantics (matching the existing guards): a msgid is blocked only
-// when a reach row exists AND its reach does not contain the point. Any error
-// (e.g. rippling_reach not yet deployed) yields an empty set, and a viewer with
-// no location (0,0) is never blocked.
+// when a reach row exists AND its reach is DECIDED not to contain the point. Any
+// error (e.g. rippling_reach not yet deployed) yields an empty set, a viewer with
+// no location (0,0) is never blocked, and a post the routing server could not
+// decide is not blocked either - see reachBlockedOrigins. ReachBlockedSetForMail
+// is the one strict caller.
 //
 // myid is the VIEWER, when there is one: a viewer an overflow ring admits (see
 // rippling.ViewerOverflowPaths) is not blocked, matching the feed, the badge
@@ -49,7 +55,22 @@ import (
 // The query itself is ReachBlockedOrigins; this is the membership-only view of
 // it for the callers that do not need the origins.
 func ReachBlockedSet(myid uint64, msgids []uint64, lat, lng float64) map[uint64]bool {
-	origins := ReachBlockedOrigins(myid, msgids, lat, lng)
+	return blockedSet(ReachBlockedOrigins(myid, msgids, lat, lng))
+}
+
+// ReachBlockedSetForMail is ReachBlockedSet for the match mailers, which check
+// reach from a POST's location rather than a viewer's and must stay strict: a
+// post whose reach cannot be decided is treated as NOT reaching the point, so an
+// outage suppresses mail rather than sending it to members the post has not
+// reached. Mail is the one surface where failing open is the worse failure - a
+// held reply arrives late, a wrong email cannot be recalled.
+//
+// Viewer-less by construction, so the rings never apply (see ViewerOverflowPaths).
+func ReachBlockedSetForMail(msgids []uint64, lat, lng float64) map[uint64]bool {
+	return blockedSet(reachBlockedOrigins(0, msgids, lat, lng, true))
+}
+
+func blockedSet(origins map[uint64]ReachOrigin) map[uint64]bool {
 	blocked := make(map[uint64]bool, len(origins))
 	for msgid := range origins {
 		blocked[msgid] = true
@@ -71,6 +92,10 @@ type ReachOrigin struct {
 	// Schedule is nil when the column is empty or unusable.
 	Schedule []rippling.ScheduleTick
 	Arrival  *time.Time
+	// Finished: the reach has stopped expanding (status 'done'), so a member it does
+	// not cover is never going to be covered. Callers say so rather than dating an
+	// arrival off a schedule that has already run out.
+	Finished bool
 }
 
 // ReachBlockedOrigins is ReachBlockedSet with the reach origin of each blocked
@@ -83,6 +108,13 @@ type ReachOrigin struct {
 // that needed its own query (or worse, a routing call) per post would not be
 // worth showing.
 func ReachBlockedOrigins(myid uint64, msgids []uint64, lat, lng float64) map[uint64]ReachOrigin {
+	return reachBlockedOrigins(myid, msgids, lat, lng, false)
+}
+
+// strict says what an undecided verdict means: false (every member-facing
+// caller) treats it as no refusal, true (ReachBlockedSetForMail) treats it as
+// out of reach.
+func reachBlockedOrigins(myid uint64, msgids []uint64, lat, lng float64, strict bool) map[uint64]ReachOrigin {
 	blocked := make(map[uint64]ReachOrigin)
 	if len(msgids) == 0 || (lat == 0 && lng == 0) {
 		return blocked
@@ -115,13 +147,25 @@ func ReachBlockedOrigins(myid uint64, msgids []uint64, lat, lng float64) map[uin
 			if info.InReach {
 				continue
 			}
+			// The routing server did not answer for this row - no stored label
+			// yet, or it is down. That is not a refusal, and the member is not
+			// told a post near them has not reached them on the strength of it.
+			// The notice is worst exactly when it is wrong: it carries an
+			// arrival time from the drive-time estimate, which keeps working
+			// through a reach outage, so it can contradict itself.
+			//
+			// The mailers are strict instead: they would rather send nothing
+			// than send to someone the post has not reached.
+			if !info.Decided && !strict {
+				continue
+			}
 			// A ring admits them: the post is not blocked, whatever the
 			// committed reach said. Applied after the lookup so the ring
 			// answer comes from one place for every surface.
 			if _, ok := admitted[id]; ok {
 				continue
 			}
-			origin := ReachOrigin{Arrival: info.Arrival}
+			origin := ReachOrigin{Arrival: info.Arrival, Finished: info.Status == "done"}
 			if info.Lat != nil && info.Lng != nil {
 				origin.Lat, origin.Lng, origin.Ok = *info.Lat, *info.Lng, true
 			}
@@ -254,8 +298,56 @@ type reachRow struct {
 	Arrival         *string
 	NextExpansionAt *string
 	Polygon         *string
-	// Cells is the stored cell grid, vectorized for display when present.
-	Cells []byte `gorm:"column:cells"`
+	// Cells is the stored cell grid, vectorized for display when present. A
+	// retired grid (HasLabels, no cells) draws the engine isochrone instead.
+	Cells       []byte  `gorm:"column:cells"`
+	HasLabels   bool    `gorm:"column:has_labels"`
+	Lat         float64 `gorm:"column:lat"`
+	Lng         float64 `gorm:"column:lng"`
+	MaxDriveMin float64 `gorm:"column:max_drive_min"`
+	Schedule    *string `gorm:"column:schedule"`
+}
+
+// currentBudgetMins mirrors the schedule arithmetic every evaluator uses:
+// the schedule entry for the current tick, the row's maximum as fallback.
+// One decoder for the schedule wire shape - rippling.ParseSchedule - so this
+// cannot drift from the other readers of the same JSON.
+func currentBudgetMins(tick int, maxDriveMin float64, schedule *string) float64 {
+	if schedule != nil {
+		for _, en := range rippling.ParseSchedule(*schedule) {
+			if en.Tick == tick && en.DriveMin > 0 {
+				return en.DriveMin
+			}
+		}
+	}
+	return maxDriveMin
+}
+
+var reachIsoClient = &http.Client{Timeout: 5 * time.Second}
+
+// engineIsochroneGeoJSON fetches the drive isochrone polygon for a retired
+// row's display boundary. Empty string on any failure - the overlay simply
+// has no polygon, exactly as a missing grid behaved.
+func engineIsochroneGeoJSON(lat, lng, minutes float64) string {
+	if minutes <= 0 || !roadblur.RoutingHealthy() {
+		return ""
+	}
+	resp, err := reachIsoClient.Get(fmt.Sprintf("%s/v1/isochrone?lat=%f&lng=%f&minutes=%d",
+		roadblur.RoutingURL(), lat, lng, int(minutes+0.5)))
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var parsed struct {
+		Drive json.RawMessage `json:"drive"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil || len(parsed.Drive) == 0 {
+		return ""
+	}
+	return string(parsed.Drive)
 }
 
 // reachDisplayToleranceDegrees is the simplify tolerance for the reach
@@ -310,15 +402,23 @@ func Reach(c *fiber.Ctx) error {
 	// The map overlay's boundary comes from the stored cell grid, traced back
 	// to a vector by the spatial server (spatial.VectorizeCells - the one
 	// place that judgement lives) at a display tolerance comparable to the
-	// old geometry's density.
+	// old geometry's density. A RETIRED grid (labels-truth drained it) draws
+	// the engine's own drive isochrone at the current budget instead - the
+	// road-exact boundary, minus the origin-group union sliver, which is an
+	// acceptable display nuance on a moderation overlay.
 	var row reachRow
 	found := db.Table("rippling_reach rr").
-		Select("rr.tick, rr.total_ticks, rr.status, rr.arrival, rr.next_expansion_at, rr.polygon_cells AS cells").
+		Select("rr.tick, rr.total_ticks, rr.status, rr.arrival, rr.next_expansion_at, "+rippling.ReachCellsExpr(db)+" AS cells, "+
+			"rr.reach_labels IS NOT NULL AS has_labels, rr.lat, rr.lng, rr.max_drive_min, rr.schedule").
 		Where("rr.msgid = ?", id).
 		Scan(&row)
 	if found.RowsAffected > 0 {
 		if len(row.Cells) > 0 {
 			if _, geojson, err := spatial.VectorizeCells(row.Cells, reachDisplayToleranceDegrees); err == nil {
+				row.Polygon = &geojson
+			}
+		} else if row.HasLabels && row.Lat != 0 && row.Lng != 0 {
+			if geojson := engineIsochroneGeoJSON(row.Lat, row.Lng, currentBudgetMins(row.Tick, row.MaxDriveMin, row.Schedule)); geojson != "" {
 				row.Polygon = &geojson
 			}
 		}

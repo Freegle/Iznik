@@ -516,38 +516,54 @@ func ListCronJobs(c *fiber.Ctx) error {
 		log.Printf("[Housekeeper] ListCronJobs cron_job_status query error: %v", statusResult.Error)
 	}
 
-	// Build a map keyed by command for fast lookup.
-	statusMap := make(map[string]*cronJobStatus, len(statuses))
-	for i := range statuses {
-		statusMap[statuses[i].Command] = &statuses[i]
-	}
-
 	// Build result by merging static metadata with DB status.
-	// Match DB rows where the stored command starts with the static command name.
 	result := make([]CronJob, len(cronJobs))
 	for i, job := range cronJobs {
 		result[i] = job
-
-		// Exact match first.
-		if s, ok := statusMap[job.Command]; ok {
+		if s := pickCronJobStatus(job.Command, statuses); s != nil {
 			result[i].LastRunAt = s.LastRunAt
 			result[i].LastFinishedAt = s.LastFinishedAt
 			result[i].LastExitCode = s.LastExitCode
 			result[i].LastOutput = s.LastOutput
-			continue
-		}
-
-		// Prefix match: DB command may include flags (e.g. "mail:chat:user2user --max-iterations=60 --spool").
-		for cmd, s := range statusMap {
-			if strings.HasPrefix(cmd, job.Command+" ") || strings.HasPrefix(cmd, job.Command+"\t") {
-				result[i].LastRunAt = s.LastRunAt
-				result[i].LastFinishedAt = s.LastFinishedAt
-				result[i].LastExitCode = s.LastExitCode
-				result[i].LastOutput = s.LastOutput
-				break
-			}
 		}
 	}
 
 	return c.JSON(result)
+}
+
+// pickCronJobStatus chooses the status row for a registry entry: the row whose
+// stored command is the registry command exactly, or the registry command
+// followed by arguments (the scheduler records "mail:chat:user2user
+// --max-iterations=60 --spool"). Several rows can match one entry - the digest
+// has twenty sharded invocations, and a schedule change leaves the old
+// argument-less row behind - so the most recently started one wins. The
+// previous exact-first, then first-prefix-hit-in-map-order rule let a row
+// last written months ago stand for a job that runs every minute, and made
+// the answer differ from one request to the next.
+func pickCronJobStatus(command string, statuses []cronJobStatus) *cronJobStatus {
+	var best *cronJobStatus
+	for i := range statuses {
+		s := &statuses[i]
+		if s.Command != command &&
+			!strings.HasPrefix(s.Command, command+" ") &&
+			!strings.HasPrefix(s.Command, command+"\t") {
+			continue
+		}
+		if best == nil || startedAfter(s.LastRunAt, best.LastRunAt) {
+			best = s
+		}
+	}
+	return best
+}
+
+// startedAfter reports whether a is a later start than b; a row that never
+// started never beats one that did.
+func startedAfter(a, b *time.Time) bool {
+	if a == nil {
+		return false
+	}
+	if b == nil {
+		return true
+	}
+	return a.After(*b)
 }

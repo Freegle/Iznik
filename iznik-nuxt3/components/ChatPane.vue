@@ -114,7 +114,9 @@
                 </span>
                 <span
                   v-if="milesaway"
-                  v-b-tooltip.bottom="DISTANCE_TOOLTIP"
+                  v-b-tooltip.bottom="
+                    milesIsRoad ? DISTANCE_TOOLTIP_ROAD : DISTANCE_TOOLTIP
+                  "
                   class="stat-chip"
                 >
                   <v-icon icon="map-marker-alt" class="stat-icon" />
@@ -270,6 +272,7 @@ import {
   LAST_SEEN_TOOLTIP,
   REPLY_TIME_TOOLTIP,
   DISTANCE_TOOLTIP,
+  DISTANCE_TOOLTIP_ROAD,
 } from '~/constants'
 
 // Don't use dynamic imports because it stops us being able to scroll to the bottom after render.
@@ -310,7 +313,9 @@ const ChatNotVisible = defineAsyncComponent(
   () => import('~/components/ChatNotVisible.vue')
 )
 
-const { chat, otheruser, milesaway, unseen } = await setupChat(props.id)
+const { chat, otheruser, milesaway, milesIsRoad, unseen } = await setupChat(
+  props.id
+)
 
 // Watch for changes in unseen messages count - when a new message comes in via background poll,
 // the chat's unseen count changes and we need to fetch the new messages to display them.

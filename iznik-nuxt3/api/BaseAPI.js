@@ -224,8 +224,7 @@ export default class BaseAPI {
 
         if (isSessionCheck) {
           console.log('Not authorised on /session - force logged out')
-          authStore.setAuth(null, null)
-          authStore.setUser(null)
+          authStore.wipeAuth()
         } else {
           console.log('Not authorised for this request - session left intact')
         }

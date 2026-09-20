@@ -26,7 +26,42 @@ class ReachQueryServiceTest extends TestCase
         // at once. The fake answers from the rows each test seeds, so a test still
         // says what it said - only the route to the answer changed.
         $this->fakeRingIndex();
+
+        // The routing server, faked by POINT: the label admits inside the
+        // seeded reach box and refuses everywhere else. Http::fake merges
+        // first-stub-wins, so tests needing a different answer set
+        // $this->verdictOverride instead of re-faking.
+        $this->verdictOverride = null;
+        $this->reachEvalDown = false;
+        Http::fake(function ($request) {
+            if (!str_contains($request->url(), 'reach-eval')) {
+                return null;
+            }
+            if ($this->reachEvalDown) {
+                return Http::response('', 503);
+            }
+            $lat = (float) ($request['lat'] ?? 0);
+            $lng = (float) ($request['lng'] ?? 0);
+            $in = $lat >= 51.4 && $lat <= 51.6 && $lng >= -0.3 && $lng <= 0.1;
+            $verdict = $this->verdictOverride ?? ($in ? 'in' : 'out');
+            // Like the real server: a msgid with no reach row answers
+            // nolabels, and the client records no verdict for it.
+            $known = DB::table('rippling_reach')->whereIn('msgid', array_map('intval', $request['msgids'] ?? []))
+                ->whereNotNull('reach_labels')->pluck('msgid')->all();
+            $results = array_map(
+                fn ($id) => ['msgid' => (int) $id, 'verdict' => $verdict],
+                $known
+            );
+
+            return Http::response(['results' => $results]);
+        });
     }
+
+    /** When set, every reach-eval answer uses this verdict. */
+    private ?string $verdictOverride = null;
+
+    /** When set, every reach-eval answer is a 503: the outage case. */
+    private bool $reachEvalDown = false;
 
     private function seedReach(): int
     {
@@ -49,6 +84,7 @@ class ReachQueryServiceTest extends TestCase
              VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, $this->reachCellsFor(self::POLY), self::POLY]
         );
+        DB::table('rippling_reach')->where('msgid', $message->id)->update(['reach_labels' => 'label-bytes']);
 
         return (int) $message->id;
     }
@@ -325,7 +361,7 @@ class ReachQueryServiceTest extends TestCase
 
         $svc = new ReachQueryService();
         $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0));
-        Http::assertNothingSent();
+        Http::assertNotSent(fn ($req) => str_contains($req->url(), 'quintile'));
     }
 
     public function test_a_covered_person_never_costs_a_deprivation_lookup(): void
@@ -339,7 +375,108 @@ class ReachQueryServiceTest extends TestCase
 
         $svc = new ReachQueryService();
         $this->assertTrue($svc->isWithinReach($msgid, 51.5, -0.1));
-        Http::assertNothingSent();
+        // The label admitted, so neither the rings nor the deprivation
+        // service were consulted. (The one reach-eval call is the gate
+        // itself and is expected.)
+        Http::assertNotSent(fn ($req) => str_contains($req->url(), 'quintile'));
+        Http::assertNotSent(fn ($req) => str_contains($req->url(), 'reachoverflow'));
     }
 
+
+    public function test_stored_label_verdict_releases_a_held_reply_with_no_grid_left(): void
+    {
+        // A retired grid: the label is the only reach record. The held-reply
+        // hold/release gate must ask it, or external replies to retired posts
+        // would hold forever.
+        $msgid = $this->seedReach();
+        DB::table('rippling_reach')->where('msgid', $msgid)
+            ->update(['polygon_cells' => null]);
+        $this->verdictOverride = 'in';
+
+        $this->assertTrue((new ReachQueryService())->isWithinReach($msgid, 52.0, 1.0));
+    }
+
+
+    public function test_reach_verdict_is_in_for_a_location_the_labels_admit(): void
+    {
+        $this->assertSame(
+            ReachQueryService::VERDICT_IN,
+            (new ReachQueryService())->reachVerdict($this->seedReach(), 51.5, -0.1)
+        );
+    }
+
+    public function test_reach_verdict_is_out_for_a_location_the_labels_refuse(): void
+    {
+        $this->assertSame(
+            ReachQueryService::VERDICT_OUT,
+            (new ReachQueryService())->reachVerdict($this->seedReach(), 52.0, 1.0)
+        );
+    }
+
+    /**
+     * An outage is undecided, not refused - the distinction the whole change
+     * rests on. A caller gating somebody's own action passes them through on
+     * this; only VERDICT_OUT is a refusal.
+     */
+    public function test_reach_verdict_is_undecided_when_the_routing_server_cannot_answer(): void
+    {
+        $msgid = $this->seedReach();
+        $this->reachEvalDown = true;
+
+        $this->assertSame(
+            ReachQueryService::VERDICT_UNDECIDED,
+            (new ReachQueryService())->reachVerdict($msgid, 52.0, 1.0)
+        );
+    }
+
+    /** A post whose reach is not labelled yet decides nothing either. */
+    public function test_reach_verdict_is_undecided_for_a_post_with_no_stored_label(): void
+    {
+        $msgid = $this->seedReach();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => null]);
+
+        $this->assertSame(
+            ReachQueryService::VERDICT_UNDECIDED,
+            (new ReachQueryService())->reachVerdict($msgid, 52.0, 1.0)
+        );
+    }
+
+    /** A ring admission is an admission, whichever lane made it. */
+    public function test_reach_verdict_is_in_when_a_ring_admits(): void
+    {
+        config(['freegle.ripple.rural_access.enabled' => true]);
+        $msgid = $this->seedReach();
+        $this->seedRing($msgid);
+        $this->verdictOverride = 'out';
+
+        $this->assertSame(
+            ReachQueryService::VERDICT_IN,
+            (new ReachQueryService())->reachVerdict($msgid, 52.0, 1.0, 'sparse')
+        );
+    }
+
+    /**
+     * isWithinReach keeps answering false through an outage. Its remaining
+     * caller is the release cron, which asks "has the ripple got here yet":
+     * false there means the held reply waits for the next run, and a run
+     * during an outage must not release replies the reach may still refuse.
+     */
+    public function test_is_within_reach_still_answers_no_during_an_outage(): void
+    {
+        $msgid = $this->seedReach();
+        $this->reachEvalDown = true;
+
+        $this->assertFalse((new ReachQueryService())->isWithinReach($msgid, 51.5, -0.1));
+    }
+
+    public function test_label_out_gates_on_the_rings_alone(): void
+    {
+        // The label verdict overrides in-reach squares in BOTH directions,
+        // exactly as the in-app reply gate does; an out verdict still gets
+        // the ring test (rings re-admit on top everywhere).
+        $msgid = $this->seedReach();
+        $this->verdictOverride = 'out';
+
+        $this->assertFalse((new ReachQueryService())->isWithinReach($msgid, 51.5, -0.1));
+    }
 }

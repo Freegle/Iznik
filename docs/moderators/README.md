@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 ---
 
@@ -11,13 +11,13 @@ configure your community.
 
 This guide is organised around what you actually do:
 
-1. **[Getting started](01-getting-started.md)** - getting into ModTools, roles and
+1. **[Getting started](getting-started.md)** - getting into ModTools, roles and
    permissions, the dashboard, and switching between communities.
-2. **[Moderating posts](02-moderating-posts.md)** - the pending queue, approving and
+2. **[Moderating posts](moderating-posts.md)** - the pending queue, approving and
    rejecting, editing, why posts get held, standard messages, and reports.
-3. **[Managing members](03-managing-members.md)** - the members list, reviews, spammers,
+3. **[Managing members](managing-members.md)** - the members list, reviews, spammers,
    chat review, notes, and banning or removing members.
-4. **[Running your community](04-running-your-community.md)** - group settings, standard
+4. **[Running your community](running-your-community.md)** - group settings, standard
    message sets, stories and newsletters, events, volunteering, broadcasts, logs and
    maps.
 
@@ -33,7 +33,7 @@ A few things worth holding onto, whichever guide you are in:
 - **Be personal, not corporate.** Members appreciate a friendly human reply, not a memo.
   Standard messages are a starting point, not a script.
 - **Do not reject a post just for being "out of area".** With rippling out, posts travel
-  between communities on purpose. See [moderating posts](02-moderating-posts.md).
+  between communities on purpose. See [moderating posts](moderating-posts.md).
 - **Every community needs at least two owners.** If you are ever stuck, email the mentors
   at `mentors@ilovefreegle.org`, or use the volunteers' Discourse forum (the "Us" link in
   ModTools).

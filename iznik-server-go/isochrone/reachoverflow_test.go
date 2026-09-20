@@ -143,7 +143,7 @@ func TestViewerFairnessPath_EmptyWhenDeprivationCannotBeAnswered(t *testing.T) {
 func TestFromIDsWhere_RingArmOnlyForRingViewers(t *testing.T) {
 	latlng := utils.LatLng{Lat: 51.5, Lng: -0.1}
 
-	plain, plainArgs := fromIDsWhere([]int64{1}, latlng, nil)
+	plain, plainArgs := fromIDsWhere([]int64{1}, latlng, nil, 0)
 	if strings.Contains(plain, "ms.msgid IN (?) AND EXISTS") == false {
 		t.Fatalf("the raster arm must stay keyed on the id list, got %q", plain)
 	}
@@ -154,7 +154,7 @@ func TestFromIDsWhere_RingArmOnlyForRingViewers(t *testing.T) {
 		t.Fatalf("plain arg count = %d, want 5 (in + 4 author-cap)", len(plainArgs))
 	}
 
-	ringed, ringedArgs := fromIDsWhere([]int64{1}, latlng, []uint64{101, 102})
+	ringed, ringedArgs := fromIDsWhere([]int64{1}, latlng, []uint64{101, 102}, 0)
 	if strings.Count(ringed, "ms.msgid IN (?)") != 2 {
 		t.Fatalf("admitted posts must add a second id-list arm, got %q", ringed)
 	}
@@ -181,7 +181,7 @@ func TestFromIDsWhere_RingArmOnlyForRingViewers(t *testing.T) {
 func TestFromIDsWhere_NeverCarriesTheJSONRingTest(t *testing.T) {
 	latlng := utils.LatLng{Lat: 51.5, Lng: -0.1}
 
-	ringed, _ := fromIDsWhere([]int64{1}, latlng, []uint64{101})
+	ringed, _ := fromIDsWhere([]int64{1}, latlng, []uint64{101}, 0)
 	for _, banned := range []string{"overflow_bounds", "ST_GeomFromText"} {
 		if strings.Contains(ringed, banned) {
 			t.Errorf("the JSON ring test must not reach the badge query (%s): %q", banned, ringed)
@@ -201,7 +201,7 @@ func TestFromIDsWhere_NeverCarriesTheJSONRingTest(t *testing.T) {
 // and the shape keeps its keyed IN-list form.
 func TestFromIDsWhere_NamesNoDroppedColumn(t *testing.T) {
 	latlng := utils.LatLng{Lat: 51.5, Lng: -0.1}
-	where, args := fromIDsWhere([]int64{1}, latlng, nil)
+	where, args := fromIDsWhere([]int64{1}, latlng, nil, 0)
 	for _, banned := range []string{"polygon", "rippling_reach_geom", "ST_Contains"} {
 		if strings.Contains(where, banned) {
 			t.Fatalf("WHERE must not reference %q: %s", banned, where)
@@ -212,5 +212,35 @@ func TestFromIDsWhere_NamesNoDroppedColumn(t *testing.T) {
 	}
 	if len(args) != 1+4 {
 		t.Fatalf("args should be idlist + 4 author-cap binds, got %d: %v", len(args), args)
+	}
+}
+
+// The badge's spatial arm must honour the member's mark-all-seen watermark the
+// way every other unseen count does (reachCandidateQuery's unseenFilter, both
+// mygroups counts, the feed's own `unseen` column). Without it the badge counted
+// posts below the clear - posts the feed already showed as seen - so a member who
+// had cleared their feed stared at a number nothing they viewed could drain.
+func TestFromIDsWhere_AppliesTheClearedWatermark(t *testing.T) {
+	latlng := utils.LatLng{Lat: 51.5, Lng: -0.1}
+
+	where, args := fromIDsWhere([]int64{1}, latlng, []uint64{101}, 9067553624)
+	if !strings.Contains(where, "AND ms.id > 9067553624 ") {
+		t.Fatalf("WHERE must exclude rows at or below the cleared watermark: %s", where)
+	}
+	// The clause sits in the conjunct chain BEFORE the containment arms, so it
+	// binds every arm: a ring-admitted post below the watermark is exactly as
+	// seen as a raster-admitted one.
+	if strings.Index(where, "ms.id > 9067553624") > strings.Index(where, "ms.msgid IN (?)") {
+		t.Fatalf("the watermark must precede the containment arms so it applies to both: %s", where)
+	}
+	if len(args) != 6 {
+		t.Fatalf("the watermark is inlined, not bound: arg count = %d, want 6", len(args))
+	}
+
+	// A member who has never cleared has the zero watermark, which must still
+	// render as a valid, harmless comparison (every spatial id is above 0).
+	where, _ = fromIDsWhere([]int64{1}, latlng, nil, 0)
+	if !strings.Contains(where, "AND ms.id > 0 ") {
+		t.Fatalf("a zero watermark must still render: %s", where)
 	}
 }

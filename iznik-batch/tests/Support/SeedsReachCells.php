@@ -14,6 +14,19 @@ trait SeedsReachCells
 {
     private ?CellSetService $seedsReachCellSets = null;
 
+    /**
+     * Stubs accumulated across every fakeSpatialHttp() call in a test.
+     *
+     * Laravel's Http::fake() appends stubs and the FIRST match wins, so a test that
+     * calls this twice - which several do, once to fake density and once to fake
+     * routing - had its second set of patterns shadowed by the first closure. The
+     * first closure answers rasterise, vectorise and groups/intersecting and returns
+     * null for anything else, and a null from a stub callback means "not faked", so
+     * the second call's patterns never got a chance and those requests went to the
+     * real network. Accumulating means the last call sees every pattern.
+     */
+    private array $seedsReachExtraStubs = [];
+
     private function reachCellService(): CellSetService
     {
         return $this->seedsReachCellSets ??= new CellSetService();
@@ -101,7 +114,10 @@ trait SeedsReachCells
      */
     protected function fakeSpatialHttp(array $extraStubs = []): void
     {
-        \Illuminate\Support\Facades\Http::fake(function ($request) use ($extraStubs) {
+        $this->seedsReachExtraStubs = array_merge($this->seedsReachExtraStubs, $extraStubs);
+        $stubs = &$this->seedsReachExtraStubs;
+
+        \Illuminate\Support\Facades\Http::fake(function ($request) use (&$stubs) {
             $url = (string) $request->url();
             if (str_contains($url, '/v1/reach/rasterize') || str_contains($url, '/v1/reach/vectorize')) {
                 return null;
@@ -129,7 +145,7 @@ trait SeedsReachCells
 
                 return \Illuminate\Support\Facades\Http::response(['groups' => $groups], 200);
             }
-            foreach ($extraStubs as $pattern => $stub) {
+            foreach ($stubs as $pattern => $stub) {
                 if (\Illuminate\Support\Str::is($pattern, $url)) {
                     return is_callable($stub) ? $stub($request) : $stub;
                 }

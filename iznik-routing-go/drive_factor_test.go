@@ -101,12 +101,12 @@ func TestDriveSpeedFactorAppliedToGraphEdges(t *testing.T) {
 	var mwSec, resSec float32
 	for _, e := range motorwayG.EdgesFrom(1) {
 		if e.To == 2 {
-			mwSec = e.Seconds[Drive]
+			mwSec = e.Sec()
 		}
 	}
 	for _, e := range residentialG.EdgesFrom(1) {
 		if e.To == 2 {
-			resSec = e.Seconds[Drive]
+			resSec = e.Sec()
 		}
 	}
 	if mwSec <= 0 || resSec <= 0 {

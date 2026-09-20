@@ -610,3 +610,86 @@ describe('useReachDistance axis myPosts', () => {
     expect(useReachOverlay('browse').reachGeoJSON.value).toBeNull()
   })
 })
+
+// The stored pair is a budget in minutes plus the radius derived from it, and the "no limit"
+// sentinel is only ever the top stop's answer. The sentinel sitting beside a budget BELOW the
+// member's cap is therefore not a choice - it is what a failed radius derivation leaves behind,
+// and it switches off every distance filter (browse, the unread-count badge, search, post
+// emails) while the slider still shows the narrow position the member set. Discourse 10096: a
+// Hastings member on the 5-minute stop was mailed Eastbourne posts 16 miles away.
+describe('useReachDistance heals a sentinel below the cap', () => {
+  let useReachDistance
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockMe.value = {
+      lat: 50.87,
+      lng: 0.6,
+      settings: {
+        browseMaxMinutes: 5,
+        browseMaxDistance: BROWSE_DISTANCE_UNLIMITED,
+      },
+    }
+    const mod = await import('~/composables/useReachDistance')
+    useReachDistance = mod.useReachDistance
+  })
+
+  it('derives the radius the saved budget asks for', async () => {
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: 45,
+      density_band: 'sparse',
+      reach_radius_miles: 3.2,
+    })
+    const { loadCap } = useReachDistance()
+
+    await loadCap()
+
+    const saved =
+      mockSaveAndGet.mock.calls[mockSaveAndGet.mock.calls.length - 1][0]
+        .settings
+    // The budget is the member's choice and stays put; only the derived radius changes.
+    expect(saved.browseMaxMinutes).toBe(5)
+    expect(saved.browseMaxDistance).toBe(3.2)
+  })
+
+  it('tells the feed to re-filter once the radius lands', async () => {
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: 45,
+      density_band: 'sparse',
+      reach_radius_miles: 3.2,
+    })
+    const onPersisted = vi.fn()
+    const { loadCap } = useReachDistance(onPersisted)
+
+    await loadCap()
+
+    expect(onPersisted).toHaveBeenCalledWith(3.2)
+  })
+
+  it('leaves the sentinel alone at the top stop, where it is the right answer', async () => {
+    mockMe.value.settings.browseMaxMinutes = BROWSE_MINUTES_MAX
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: BROWSE_MINUTES_MAX,
+      density_band: 'sparse',
+      reach_radius_miles: 24.3,
+    })
+    const { loadCap } = useReachDistance()
+
+    await loadCap()
+
+    expect(mockSaveAndGet).not.toHaveBeenCalled()
+  })
+
+  it('writes nothing when the derivation is still failing', async () => {
+    // Routing down: one wrong answer must not be swapped for another. The next visit retries.
+    mockFetchNear.mockResolvedValue({ cap_minutes: 45, density_band: 'sparse' })
+    const { loadCap } = useReachDistance()
+
+    await loadCap()
+
+    expect(mockSaveAndGet).not.toHaveBeenCalled()
+    expect(mockMe.value.settings.browseMaxDistance).toBe(
+      BROWSE_DISTANCE_UNLIMITED
+    )
+  })
+})

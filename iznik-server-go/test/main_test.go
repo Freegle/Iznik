@@ -234,6 +234,8 @@ func verifyRequiredTables() {
 }
 
 func TestMain(m *testing.M) {
+	dropLegacyReachGeometry()
+
 	code := m.Run()
 
 	// Clean up test groups after all tests complete (pass or fail).
@@ -242,6 +244,31 @@ func TestMain(m *testing.M) {
 	cleanupTestGroups()
 
 	os.Exit(code)
+}
+
+// Every reach fixture in this package inserts the cell grids and nothing else, which is
+// the shape rippling_reach has once 2026_08_25_000001_drop_rippling_reach_legacy_geometry
+// has run. A test database cloned from a dev database that still carries the pre-drop
+// column gets polygon GEOMETRY NOT NULL with no default, so all of those inserts die with
+// "Field 'polygon' doesn't have a default value" - taking the first-reply, reach, browse
+// and nearby tests with them, for a schema reason none of those tests are about.
+//
+// Dropping it here rather than teaching every fixture about a column the code no longer
+// reads. Safe: this runs against the disposable test database, which is rebuilt from a
+// schema clone on every run, and the column's SPATIAL index goes with it.
+func dropLegacyReachGeometry() {
+	db := database.DBConn
+
+	var present int
+	db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() " +
+		"AND table_name = 'rippling_reach' AND column_name = 'polygon'").Scan(&present)
+	if present == 0 {
+		return
+	}
+
+	if err := db.Exec("ALTER TABLE rippling_reach DROP COLUMN polygon").Error; err != nil {
+		fmt.Printf("WARNING: could not drop legacy rippling_reach.polygon: %v\n", err)
+	}
 }
 
 func cleanupTestGroups() {

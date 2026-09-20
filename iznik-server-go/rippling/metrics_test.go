@@ -7,16 +7,15 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// ReplySourceSplitSQL builds the per-day attribution query. The `wide` flag
-// switches whether the bucket expression reads the captured attribution
-// column (falling back to the live derivation per row) or always derives it
-// live (the legacy/unmigrated-DB path). srcGroup is spliced in verbatim as an
-// optional origin-group scoping JOIN.
-func TestReplySourceSplitSQL_LegacyNarrow(t *testing.T) {
-	sql := ReplySourceSplitSQL(false, "")
+// ReplySourceSplitSQL builds the per-day attribution query: the bucket reads the captured
+// attribution column, falling back per row to the live derivation for rows the backfill has
+// not reached. srcGroup is spliced in verbatim as an optional origin-group scoping JOIN.
+func TestReplySourceSplitSQL_Shape(t *testing.T) {
+	sql := ReplySourceSplitSQL("")
 
-	// Legacy path derives the bucket live - no COALESCE(rra.attribution, ...) wrapper.
-	assert.NotContains(t, sql, "COALESCE(rra.attribution")
+	// The captured column is preferred, with the live derivation as the per-row fallback.
+	assert.Contains(t, sql, "COALESCE(rra.attribution, CASE")
+	assert.Contains(t, sql, "END) AS bucket")
 	assert.Contains(t, sql, "THEN 'home'")
 	assert.Contains(t, sql, "WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn")
 	assert.Contains(t, sql, "THEN 'ripple_notified'")
@@ -50,23 +49,13 @@ func TestReplySourceSplitSQL_LegacyNarrow(t *testing.T) {
 	}
 }
 
-func TestReplySourceSplitSQL_WideWrapsWithCoalesce(t *testing.T) {
-	sql := ReplySourceSplitSQL(true, "")
-
-	// Wide path prefers the captured column, falling back to the same live
-	// derivation used by the legacy path for rows the backfill hasn't reached.
-	assert.Contains(t, sql, "COALESCE(rra.attribution, CASE")
-	assert.Contains(t, sql, "THEN 'home'")
-	assert.Contains(t, sql, "END) AS bucket")
-}
-
 // The live derivation reads the frozen was_home_member bit, which on rows captured before this
 // fix was set for ripple-created auto-joins too. Such a row must not read as home: the member is
 // only in the group because an earlier ripple put them there. The derivation therefore qualifies
 // the home rung by the surviving membership's PROVENANCE, and keeps the rungs in ladder order -
 // ripple_join sits below notified and group, exactly as in DeriveAttribution.
 func TestReplySourceSplitSQL_RippleJoinRefinesTheFrozenHomeBit(t *testing.T) {
-	sql := ReplySourceSplitSQL(false, "")
+	sql := ReplySourceSplitSQL("")
 
 	homeIdx := strings.Index(sql, "THEN 'home'")
 	notifiedIdx := strings.Index(sql, "THEN 'ripple_notified'")
@@ -95,7 +84,7 @@ func TestReplySourceSplitSQL_RippleJoinRefinesTheFrozenHomeBit(t *testing.T) {
 
 func TestReplySourceSplitSQL_SrcGroupSplicedIntoFROM(t *testing.T) {
 	srcGroup := " JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
-	sql := ReplySourceSplitSQL(false, srcGroup)
+	sql := ReplySourceSplitSQL(srcGroup)
 
 	assert.Contains(t, sql, "FROM rippling_reply_attribution rra"+srcGroup)
 	// The join must land before the WHERE window, not after.
@@ -107,7 +96,7 @@ func TestReplySourceSplitSQL_SrcGroupSplicedIntoFROM(t *testing.T) {
 }
 
 func TestReplySourceSplitSQL_SrcGroupEmptyStringLeavesNoJoin(t *testing.T) {
-	sql := ReplySourceSplitSQL(true, "")
+	sql := ReplySourceSplitSQL("")
 	assert.NotContains(t, sql, "JOIN messages_groups mg")
 }
 
@@ -116,14 +105,8 @@ func TestReplySourceSplitSQL_SrcGroupEmptyStringLeavesNoJoin(t *testing.T) {
 // trusts its caller and performs no quoting/escaping of srcGroup itself.
 func TestReplySourceSplitSQL_SrcGroupEdgeCaseSplicedVerbatim(t *testing.T) {
 	weird := ` JOIN "quoted" q ON q.msgid = rra.msgid`
-	sql := ReplySourceSplitSQL(false, weird)
+	sql := ReplySourceSplitSQL(weird)
 	assert.Contains(t, sql, "FROM rippling_reply_attribution rra"+weird)
-}
-
-func TestReplySourceSplitSQL_BothWideValuesProduceDifferentSQL(t *testing.T) {
-	narrow := ReplySourceSplitSQL(false, "")
-	wide := ReplySourceSplitSQL(true, "")
-	assert.NotEqual(t, narrow, wide)
 }
 
 // The live-capture boundary is cached for the life of the process because the query behind it

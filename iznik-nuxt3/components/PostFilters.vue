@@ -240,7 +240,17 @@ watch(search, (newVal, oldVal) => {
 
 // Selected group.  We have a special case for the 'nearby' group, which is -1.
 const browseView = computed(() => me.value?.settings?.browseView || 'nearby')
-const group = ref(browseView.value === 'nearby' ? -1 : 0)
+
+// The panel is lazily mounted inside the collapsed Map & Filters section, so by the time it
+// appears the page may already have restored a saved community into selectedGroup. Start from
+// that, or the dropdown would say "-- Nearby --" over a feed filtered to one community.
+const group = ref(
+  props.selectedGroup > 0
+    ? props.selectedGroup
+    : browseView.value === 'nearby'
+      ? -1
+      : 0
+)
 
 watch(
   () => props.selectedGroup,
@@ -252,32 +262,37 @@ watch(
 watch(group, async (newVal) => {
   const settings = me.value?.settings
 
-  if (newVal === -1) {
-    // Special case for nearby.
-    settings.browseView = 'nearby'
+  if (!settings) {
+    return
+  }
 
+  // "Show posts from" is sticky, like sort and post type. browseView records only the two
+  // whole-feed views ('nearby' / 'mygroups'), so a single community needs a key of its own;
+  // choosing either whole-feed view clears it. Restoring a saved choice on load arrives here
+  // through the selectedGroup prop as well, so only write when something actually changed -
+  // otherwise every visit to Browse spends a save putting back what is already stored.
+  const savedId = parseInt(settings.browseGroup) > 0 ? parseInt(settings.browseGroup) : null
+  const wantId = newVal > 0 ? newVal : null
+  const wantView =
+    newVal === -1 ? 'nearby' : newVal === 0 ? 'mygroups' : settings.browseView
+  const changed = wantId !== savedId || wantView !== settings.browseView
+
+  settings.browseGroup = wantId
+  settings.browseView = wantView
+
+  if (changed) {
     await authStore.saveAndGet({
       settings,
     })
+  }
 
-    emit('update:selectedGroup', 0)
-
-    // We do this so that UpToDate doesn't show an old count.
-    refetchCount()
-  } else if (newVal === 0) {
-    // Special case for all my groups.
-    settings.browseView = 'mygroups'
-
-    await authStore.saveAndGet({
-      settings,
-    })
-
-    // We do this so that UpToDate doesn't show an old count.
-    refetchCount()
-
-    emit('update:selectedGroup', 0)
-  } else {
+  if (newVal > 0) {
     emit('update:selectedGroup', newVal)
+  } else {
+    emit('update:selectedGroup', 0)
+
+    // We do this so that UpToDate doesn't show an old count.
+    refetchCount()
   }
 })
 

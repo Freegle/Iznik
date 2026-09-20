@@ -257,7 +257,14 @@ describe('PostMap', () => {
               'maxZoom',
               'style',
             ],
-            emits: ['ready', 'update:bounds', 'zoomend', 'moveend', 'dragend'],
+            emits: [
+              'ready',
+              'update:bounds',
+              'update:zoom',
+              'zoomend',
+              'moveend',
+              'dragend',
+            ],
             setup(props, { expose }) {
               const leafletObject = {
                 getBounds: vi.fn().mockReturnValue({
@@ -906,6 +913,55 @@ describe('PostMap', () => {
       await flushPromises()
       expect(mockNearbyFetchMessages).not.toHaveBeenCalled()
       expect(mockMessageStore.fetchInBounds).toHaveBeenCalled()
+    })
+
+    it('asks for the posts in the map bounds once when the map settles, not once per listener', async () => {
+      // LMap is wired with both v-model:bounds and @update:bounds="idle". One settled map
+      // therefore runs getMessages() twice with identical bounds, and the two fetches
+      // raced to replace the marker layer. Leaflet then removed a layer whose renderer
+      // had never attached and the browse page fell over (Sentry NUXT3-DC6 and DS0).
+      const wrapper = await createWrapper()
+      const map = wrapper.findComponent({ name: 'LMap' })
+      await map.vm.$emit('ready')
+      await flushPromises()
+      // Zoomed in far enough to show posts rather than groups.
+      await map.vm.$emit('update:zoom', 12)
+      await flushPromises()
+      mockMessageStore.fetchInBounds.mockClear()
+
+      await map.vm.$emit('update:bounds', {
+        getSouthWest: () => ({ lat: 51, lng: -2 }),
+        getNorthEast: () => ({ lat: 54, lng: 0 }),
+      })
+      await flushPromises()
+
+      expect(mockMessageStore.fetchInBounds).toHaveBeenCalledTimes(1)
+    })
+
+    it('asks again for the same bounds once the earlier fetch has settled', async () => {
+      // The guard is only against an identical fetch that is still in flight. A later
+      // ask for the same box, such as the feed reloading when the unseen count rises,
+      // must still reach the server so new posts appear.
+      const wrapper = await createWrapper()
+      const map = wrapper.findComponent({ name: 'LMap' })
+      await map.vm.$emit('ready')
+      await flushPromises()
+      // Zoomed in far enough to show posts rather than groups.
+      await map.vm.$emit('update:zoom', 12)
+      await flushPromises()
+      mockMessageStore.fetchInBounds.mockClear()
+
+      const settled = {
+        getSouthWest: () => ({ lat: 51, lng: -2 }),
+        getNorthEast: () => ({ lat: 54, lng: 0 }),
+      }
+      await map.vm.$emit('update:bounds', settled)
+      await flushPromises()
+      expect(mockMessageStore.fetchInBounds).toHaveBeenCalledTimes(1)
+
+      await map.vm.$emit('update:bounds', { ...settled })
+      await flushPromises()
+      expect(mockMessageStore.fetchInBounds).toHaveBeenCalledTimes(2)
     })
   })
 

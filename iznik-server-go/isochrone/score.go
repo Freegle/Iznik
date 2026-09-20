@@ -46,6 +46,15 @@ type ScoreEnv struct {
 	WindowHours   float64
 	BudgetDecay   float64
 	DefaultReachM float64
+	// MaxMinutes is the closeness horizon for the REFERENCE close term
+	// (1 - driveMin/MaxMinutes, the formula the /rippling digest preview has
+	// always used). The crow-flies term below was only ever its documented
+	// performance approximation, from when a drive time per member was
+	// infeasible; with the routing engine's precomputed leaf tables it costs
+	// microseconds, so feeds score with the reference whenever the engine
+	// answers. Default matches the simulator's max_minutes default and
+	// RIPPLE_MAX_MINUTES.
+	MaxMinutes float64
 }
 
 // ScoreComponents is the per-post score breakdown returned by Score: each
@@ -83,6 +92,7 @@ func LoadScoreEnv() ScoreEnv {
 		WindowHours:   envFloat("RIPPLE_BROWSE_WINDOW_HOURS", 24),
 		BudgetDecay:   envFloat("RIPPLE_BROWSE_BUDGET_DECAY", 25),
 		DefaultReachM: envFloat("RIPPLE_BROWSE_DEFAULT_REACH_M", 30000),
+		MaxMinutes:    envFloat("RIPPLE_BROWSE_MAX_MINUTES", 30),
 	}
 }
 
@@ -96,9 +106,25 @@ func LoadScoreEnv() ScoreEnv {
 //	anchor: 1 if homeGroup else 0
 //	total:  weighted sum of the four signals above
 func Score(distanceMetres, reachRadiusMetres, ageHours float64, views, replies int, homeGroup bool, w ScoreWeights, env ScoreEnv) ScoreComponents {
+	return ScoreT(nil, distanceMetres, reachRadiusMetres, ageHours, views, replies, homeGroup, w, env)
+}
+
+// ScoreT is Score with the REFERENCE close term when a drive time is known:
+// close = 1 - driveMin/env.MaxMinutes, exactly the formula the /rippling
+// digest preview (digest_simulator.go scoreDigestPost) has always used. The
+// crow term remains as the documented approximation for posts the routing
+// engine has no answer for (nil driveMin) - unknown means "fall back to the
+// proxy", never "score zero", because nil says nothing about how far the
+// post is.
+func ScoreT(driveMin *float64, distanceMetres, reachRadiusMetres, ageHours float64, views, replies int, homeGroup bool, w ScoreWeights, env ScoreEnv) ScoreComponents {
 	var s ScoreComponents
 
-	if reachRadiusMetres > 0 {
+	if driveMin != nil && env.MaxMinutes > 0 {
+		s.Close = 1.0 - *driveMin/env.MaxMinutes
+		if s.Close < 0 {
+			s.Close = 0
+		}
+	} else if reachRadiusMetres > 0 {
 		s.Close = 1.0 - distanceMetres/reachRadiusMetres
 		if s.Close < 0 {
 			s.Close = 0

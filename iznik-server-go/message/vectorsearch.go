@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/utils"
 )
 
@@ -89,6 +90,16 @@ func VectorSearch(term string, limit int, groupids []uint64, allowedIDs map[uint
 
 	queryWords := GetWords(term)
 
+	// One batched routing call resolves every candidate's road-aware blur -
+	// the per-row RoadBlur below is then a cache hit. Search must expose the
+	// SAME blurred point as the feed and the message record for a given post,
+	// or its distance (and pin) disagrees with the badge members just saw.
+	blurCoords := make([][2]float64, 0, len(vecResults))
+	for _, vr := range vecResults {
+		blurCoords = append(blurCoords, [2]float64{vr.Lat, vr.Lng})
+	}
+	roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
+
 	var subjectTier []scoredResult
 	var bodyTier []scoredResult
 
@@ -118,7 +129,7 @@ func VectorSearch(term string, limit int, groupids []uint64, allowedIDs map[uint
 			keywordScore = float32(matched) / float32(len(queryWords))
 		}
 
-		lat, lng := utils.Blur(vr.Lat, vr.Lng, utils.BLUR_USER)
+		lat, lng := roadblur.RoadBlur(vr.Lat, vr.Lng, utils.BLUR_USER)
 		sr := SearchResult{
 			Msgid:   vr.Msgid,
 			Arrival: vr.Arrival,

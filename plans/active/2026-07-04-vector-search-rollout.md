@@ -459,7 +459,7 @@ Outcome (per Edward 2026-07-04): similarity-to-previous-items becomes part of th
 
 ### Task 4.5: Retire the V1 Relevant email
 
-- [ ] Delete `iznik-server/scripts/cron/relevant.php`; add a header comment to `iznik-server/include/mail/Relevant.php`: "RETIRED 2026-07 — replaced by digest relevance ranking (iznik-batch DigestRelevanceService); do not resurrect" (class deletion happens with the rest of V1; the cron file is what runs). Update `iznik-batch/MIGRATION-STATUS.md` (~line 318): "Relevant message matching" → Retired, folded into digest relevance ranking, with date. **PR body must flag: the LIVE crontab entry for relevant.php (not tracked in-repo) needs removing at deploy time — action for Edward.**
+- [ ] Delete `iznik-server/scripts/cron/relevant.php`; add a header comment to `iznik-server/include/mail/Relevant.php`: "RETIRED 2026-07 — replaced by digest relevance ranking (iznik-batch DigestRelevanceService); do not resurrect" (class deletion happens with the rest of V1; the cron file is what runs). **PR body must flag: the LIVE crontab entry for relevant.php (not tracked in-repo) needs removing at deploy time — action for Edward.**
 - [ ] Full Laravel + Go + vitest suites green. Code review. Push. PR `feat: digest relevance ranking (flagged) + retire V1 relevant email`.
 
 ---

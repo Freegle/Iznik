@@ -13,9 +13,11 @@ use Tests\Support\SeedsReachCells;
 use Tests\TestCase;
 
 /**
- * What every reach read answers from the stored cell grids - the only stored
- * form of a reach (plans/2026-08-24-rippling-reach-raster-storage.md Stage 3;
- * the legacy geometry columns are dropped by migration).
+ * What every reach read answers from the STORED LABEL - the reach record
+ * (labels-truth). No verdict, for any reason, means not in reach: there is
+ * no grid fallback anywhere. The two bounds tests at the end cover the one
+ * grid-era piece still alive - the sandwich-bounds writer support for rows
+ * the backfill has not labelled yet.
  */
 class PostDropEraTest extends TestCase
 {
@@ -83,58 +85,87 @@ class PostDropEraTest extends TestCase
 
     // ---- the reply gate ----
 
-    public function test_reply_gate_admits_a_point_inside_from_cells_alone(): void
+    /** Http::fake merges first-stub-wins, so ONE callback reads this. */
+    private string $verdict = 'nolabels';
+
+    private bool $verdictFakeInstalled = false;
+
+    private function fakeVerdict(string $verdict): void
+    {
+        $this->verdict = $verdict;
+        if ($this->verdictFakeInstalled) {
+            return;
+        }
+        $this->verdictFakeInstalled = true;
+        \Illuminate\Support\Facades\Http::fake(function ($request) {
+            if (!str_contains($request->url(), 'reach-eval')) {
+                return null;
+            }
+            $results = array_map(
+                fn ($id) => ['msgid' => (int) $id, 'verdict' => $this->verdict],
+                $request['msgids'] ?? []
+            );
+
+            return \Illuminate\Support\Facades\Http::response(['results' => $results]);
+        });
+    }
+
+    public function test_reply_gate_admits_on_the_label_verdict_alone(): void
     {
         $msgid = $this->seedReach();
+        $this->fakeVerdict('in');
         $this->assertTrue((new ReachQueryService())->isWithinReach($msgid, 51.5, -0.1));
     }
 
-    public function test_reply_gate_refuses_a_point_outside_from_cells_alone(): void
+    public function test_reply_gate_refuses_on_the_label_verdict_alone(): void
     {
         $msgid = $this->seedReach();
-        $this->assertFalse((new ReachQueryService())->isWithinReach($msgid, 52.0, 1.0));
-    }
-
-    /**
-     * Corrupt bytes must HOLD the reply (fail closed), not admit it: there is
-     * nothing to fall back to, and admitting on unreadable bytes would be the
-     * unsafe direction.
-     */
-    public function test_reply_gate_fails_closed_on_unreadable_cells(): void
-    {
-        $msgid = $this->seedReach();
-        DB::statement('UPDATE rippling_reach SET polygon_cells = ? WHERE msgid = ?', ['not a cell set', $msgid]);
-
+        $this->fakeVerdict('out');
         $this->assertFalse((new ReachQueryService())->isWithinReach($msgid, 51.5, -0.1));
     }
 
-    public function test_reply_gate_refuses_when_the_row_has_no_cells(): void
+    /**
+     * Routing unreachable must HOLD the reply (fail closed), not admit it:
+     * there is nothing to fall back to, and admitting blind would be the
+     * unsafe direction. The release cron re-asks when routing returns.
+     */
+    public function test_reply_gate_fails_closed_when_routing_cannot_answer(): void
     {
         $msgid = $this->seedReach();
-        DB::statement('UPDATE rippling_reach SET polygon_cells = NULL WHERE msgid = ?', [$msgid]);
+        \App\Services\Ripple\ReachService::resetLabelEvalBreaker();
+        \Illuminate\Support\Facades\Http::fake(['*reach-eval*' => \Illuminate\Support\Facades\Http::response(null, 500)]);
 
+        $this->assertFalse((new ReachQueryService())->isWithinReach($msgid, 51.5, -0.1));
+        \App\Services\Ripple\ReachService::resetLabelEvalBreaker();
+    }
+
+    public function test_reply_gate_refuses_when_the_post_has_no_label(): void
+    {
+        $msgid = $this->seedReach();
+        $this->fakeVerdict('nolabels');
         $this->assertFalse((new ReachQueryService())->isWithinReach($msgid, 51.5, -0.1));
     }
 
     // ---- the first-reply passthrough gate ----
 
-    public function test_max_reach_gate_reads_both_grids(): void
+    public function test_max_reach_gate_asks_the_label_at_its_full_budget(): void
     {
         $msgid = $this->seedReach(withMax: true);
         $svc = app(\App\Services\FirstReply\MaxReachService::class);
 
-        // Inside the CURRENT reach (the inner box).
-        $this->assertTrue($svc->isWithinMaxReach($msgid, 51.5, -0.1));
-        // Outside the current reach but inside the EVENTUAL one - the whole
-        // point of this gate.
+        $this->fakeVerdict('in');
         $this->assertTrue($svc->isWithinMaxReach($msgid, 51.42, -0.18));
-        // Outside both.
+        \Illuminate\Support\Facades\Http::assertSent(
+            fn ($req) => str_contains($req->url(), 'reach-eval') && ($req['budget'] ?? '') === 'max'
+        );
+
+        $this->fakeVerdict('out');
         $this->assertFalse($svc->isWithinMaxReach($msgid, 52.0, 1.0));
     }
 
     // ---- how far outside the reach a held replier is ----
 
-    public function test_miles_outside_reach_comes_from_the_grid(): void
+    public function test_miles_outside_reach_comes_from_the_label(): void
     {
         $msgid = $this->seedReach();
         $svc = new RippleReplyService(new ReachQueryService());
@@ -142,15 +173,14 @@ class PostDropEraTest extends TestCase
         $method = new \ReflectionMethod($svc, 'milesOutsideReach');
         $method->setAccessible(true);
 
-        // A point inside is zero miles outside.
+        // The label admits: zero miles outside.
+        $this->fakeVerdict('in');
         $this->assertSame(0.0, $method->invoke($svc, $msgid, 51.5, -0.1));
 
-        // A point well east of the box is a positive, sane distance. The box
-        // ends at lng 0.0; lng 0.5 at this latitude is ~35km away.
-        $miles = $method->invoke($svc, $msgid, 51.5, 0.5);
-        $this->assertNotNull($miles);
-        $this->assertGreaterThan(15, $miles);
-        $this->assertLessThan(30, $miles);
+        // The label refuses: the label carries no miles, so the caller's
+        // documented origin-distance measure takes over (null here).
+        $this->fakeVerdict('out');
+        $this->assertNull($method->invoke($svc, $msgid, 51.5, 0.5));
     }
 
     // ---- the sandwich bounds, re-derived from the grid ----

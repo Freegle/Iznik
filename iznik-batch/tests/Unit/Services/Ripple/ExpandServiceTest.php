@@ -49,6 +49,55 @@ class ExpandServiceTest extends TestCase
         return new ExpandService(new ReachService());
     }
 
+    /** Invoke coarseTickGeometryOk, which decides whether a tick can take the cheap catchment. */
+    private function coarseOk(array $entry): bool
+    {
+        $m = new \ReflectionMethod($this->service(), 'coarseTickGeometryOk');
+        $m->setAccessible(true);
+
+        return (bool) $m->invoke($this->service(), $entry);
+    }
+
+    public function test_coarse_tick_geometry_only_when_the_reachable_gate_makes_groups_exact(): void
+    {
+        // The cheap catchment is drawn on bigger cells, so its outline can sit a cell
+        // outside the exact one. That is harmless for the sandwich bounds and the
+        // origin-group union, but on its own it could hand ST_Intersects a group the
+        // exact outline would have missed. The reachable gate is what makes it safe: it
+        // ANDs the exact road-reachable set on top, and a superset prefilter intersected
+        // with an exact set is exact. No gate, or no per-tick set to gate on, and the
+        // outline IS the group answer - so we pay for the exact one.
+        config(['freegle.ripple.coarse_tick_geometry' => true]);
+
+        config(['freegle.ripple.reachable_gate' => true]);
+        $this->assertTrue(
+            $this->coarseOk(['drive_min' => 30, 'reachable_group_ids' => [1, 2]]),
+            'gate on and a per-tick set: the group answer is exact whatever the outline'
+        );
+        $this->assertFalse(
+            $this->coarseOk(['drive_min' => 30]),
+            'no per-tick set: rippleIntoNewGroups falls back to polygon-only, so the outline must be exact'
+        );
+        $this->assertFalse(
+            $this->coarseOk(['drive_min' => 30, 'reachable_group_ids' => []]),
+            'an empty set gates nothing, which is the same fallback'
+        );
+
+        config(['freegle.ripple.reachable_gate' => false]);
+        $this->assertFalse(
+            $this->coarseOk(['drive_min' => 30, 'reachable_group_ids' => [1, 2]]),
+            'gate off: the polygon alone decides the groups again'
+        );
+    }
+
+    public function test_coarse_tick_geometry_killswitch_forces_the_exact_catchment(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        config(['freegle.ripple.coarse_tick_geometry' => false]);
+
+        $this->assertFalse($this->coarseOk(['drive_min' => 30, 'reachable_group_ids' => [1, 2]]));
+    }
+
     /** Seed an approved OFFER present in messages_spatial; returns the message id. */
     private function seedSpatialPost(Carbon $arrival, float $lat = 51.5, float $lng = -0.1): int
     {
@@ -1173,11 +1222,25 @@ class ExpandServiceTest extends TestCase
         // could not compute" and never id-retracts (see test_empty_reachable_set_never_id_retracts).
         [$msgid, $rippledId] = $this->seedRippledCopyWithReach([999999999]);
 
+        // Same stub as the "keeps" case below, and required for this test to mean
+        // what its name says. Without it groupsIntersecting() makes a REAL call to
+        // the spatial server, which knows nothing of the fixture groups: it answers
+        // null, retractOutOfReachCopies bails with retract_check_unavailable and
+        // retracts nothing. Stubbed, the polygon reports the group as still covered
+        // (its area intersects the reach), so the node-set gate is the only thing
+        // that can retract it - which is the behaviour under test.
+        $this->fakeSpatialHttp();
+
         $stats = [];
         $this->service()->retractOutOfReachCopies($msgid, false, $stats);
 
         $copy = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $rippledId)->first();
         $this->assertSame(1, (int) $copy->deleted, 'a rippled group outside the reachable set is retracted');
+        $this->assertArrayNotHasKey(
+            'retract_check_unavailable',
+            $stats,
+            'the spatial question must actually have been answered, not skipped'
+        );
     }
 
     public function test_reachable_gate_keeps_a_rippled_group_inside_the_reachable_set(): void
@@ -1237,6 +1300,103 @@ class ExpandServiceTest extends TestCase
         $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
         $this->assertNotNull($b, 'post rippled into group B');
         $this->assertSame('Pending', $b->collection, 'a positive window leaves the rippled-in row Pending for the mod-veto');
+    }
+
+    /** Give every group in the reach box the same publishable area. */
+    private function seedGroupInReach(): object
+    {
+        $g = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $g->id]
+        );
+
+        return $g;
+    }
+
+    /**
+     * A stored MODERATED posting status on the receiving group does NOT hold the copy. It
+     * looks like the group's moderators have taken a view of this member, but the column
+     * cannot say so: the v1 join path wrote MODERATED as its default, and 1.95M of the 1.96M
+     * live rows carrying it were added 2004-2018 with no moderator action behind them. A
+     * hold keyed on it (briefly live, 2026-09-04) would have held every long-standing member
+     * of a neighbouring group.
+     */
+    public function test_a_stored_moderated_status_does_not_hold_the_rippled_in_copy(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $legacyModerated = $this->seedGroupInReach();
+        $noView = $this->seedGroupInReach();
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $legacyModerated->id, 'role' => 'Member',
+            'collection' => 'Approved', 'ourPostingStatus' => 'MODERATED', 'added' => now(),
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $copy = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $legacyModerated->id)->first();
+        $this->assertNotNull($copy, 'the post ripples in');
+        $this->assertSame('Approved', $copy->collection, 'MODERATED is not a moderation decision on this column');
+        $this->assertNotNull($copy->approvedat);
+
+        $free = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $noView->id)->first();
+        $this->assertNotNull($free);
+        $this->assertSame('Approved', $free->collection);
+    }
+
+    /**
+     * PROHIBITED means the receiving group's moderators have stopped this person posting
+     * there. Both direct paths already refuse - the API tells them they are not allowed to
+     * post here, and incoming mail drops the post - so no copy is rippled in either.
+     */
+    public function test_post_is_not_rippled_into_a_group_that_prohibits_the_poster(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $prohibits = $this->seedGroupInReach();
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $prohibits->id, 'role' => 'Member',
+            'collection' => 'Approved', 'ourPostingStatus' => 'PROHIBITED', 'added' => now(),
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $prohibits->id)->first(),
+            'no copy is rippled into a group the poster is prohibited from posting to'
+        );
+    }
+
+    /**
+     * Rippling creates memberships itself, with no posting status set. A membership with no
+     * status is not a moderation decision, so those copies still go in Approved. Reading a
+     * blank status as moderated would hold every rippled-in post from everyone rippling has
+     * ever joined to a group.
+     */
+    public function test_a_membership_with_no_posting_status_does_not_hold_the_rippled_in_copy(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->seedGroupInReach();
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Member',
+            'collection' => 'Approved', 'ourPostingStatus' => null, 'added' => now(),
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $b = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first();
+        $this->assertNull($b->ourPostingStatus, 'the membership still carries no posting status');
+        $copy = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($copy, 'post rippled in');
+        $this->assertSame('Approved', $copy->collection, 'a blank posting status is not a moderation decision');
     }
 
     /**
@@ -1985,6 +2145,36 @@ class ExpandServiceTest extends TestCase
         $this->assertSame('Banned', $m->collection, 'existing banned membership left untouched');
     }
 
+    public function test_rippling_does_not_touch_an_existing_owner_membership(): void
+    {
+        // A poster who already OWNS a group the post ripples into keeps that row exactly as it
+        // is: the ripple-join only ever inserts where no membership exists, so it can never
+        // downgrade a chosen moderator role to Member or mark it as ripple-created
+        // (Discourse 10148: the rejoin after a self-leave is what turned an owner into a
+        // member; the self-leave is refused server-side now, and this pins the other half).
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Owner',
+            'collection' => 'Approved', 'added' => now()->subYears(2), 'rippled' => 0,
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $rows = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->get();
+        $this->assertCount(1, $rows, 'still exactly one membership row');
+        $this->assertSame('Owner', $rows[0]->role, 'owner role untouched by rippling');
+        $this->assertSame(0, (int) $rows[0]->rippled, 'a chosen membership is never marked ripple-created');
+    }
+
     /**
      * A poster banned from a group (users_banned row) must NOT have their post rippled into it,
      * nor be re-joined to it. A ban is an explicit mod ejection; rippling must not silently undo it.
@@ -2153,6 +2343,71 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
+     * A poster who has left EVERY community has no home membership to copy settings from.
+     * Rippling must not read that as "no preference, sign them up for the daily digest": they
+     * are the member least likely to want mail. Reproduces the live case where a member turned
+     * digests off, left all their communities, and was auto-joined back into 7 of them with
+     * emailfrequency 24 by their own still-live post.
+     */
+    public function test_poster_who_left_every_group_is_not_signed_up_for_daily_email(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        // No memberships at all: they have left everything.
+        DB::table('memberships')->where('userid', $posterId)->delete();
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $m = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($m, 'poster added as member of rippled-into group');
+        $this->assertSame(
+            0,
+            (int) $m->emailfrequency,
+            'a poster with no memberships left is not silently subscribed to the daily digest'
+        );
+    }
+
+    /**
+     * Left the group the post is on, but still a member elsewhere: the rippled membership takes
+     * their own surviving setting rather than the hardcoded daily default.
+     */
+    public function test_email_frequency_falls_back_to_a_surviving_membership(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        // Not a member of any group this post is on, but still a member somewhere on 4-hourly.
+        DB::table('memberships')->where('userid', $posterId)->delete();
+        $elsewhere = $this->createTestGroup();
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $elsewhere->id, 'role' => 'Member',
+            'collection' => 'Approved', 'emailfrequency' => 4, 'eventsallowed' => 1,
+            'volunteeringallowed' => 1, 'added' => now()->subDay(),
+        ]);
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $m = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($m, 'poster added as member of rippled-into group');
+        $this->assertSame(4, (int) $m->emailfrequency, 'surviving membership setting used, not the daily default');
+    }
+
+    /**
      * A poster who was RIPPLED into a group (Group/Joined, text='Rippled') and then LEFT it is
      * never re-joined AND their post is never (re-)rippled in: leaving a group you were rippled
      * into is the opt-out signal rippling must respect.
@@ -2189,6 +2444,58 @@ class ExpandServiceTest extends TestCase
         $this->assertNull(
             DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
             'post is not (re-)rippled into a group the poster was rippled into then left'
+        );
+    }
+
+    /**
+     * The opt-out verdict is now worked out for ALL of a poster's groups in one pass over their
+     * logs, instead of being asked per candidate group in SQL. So the thing that can newly go
+     * wrong is one group's history leaking into another's verdict. Two groups, identical areas,
+     * opposite histories, one run.
+     */
+    public function test_one_groups_ripple_opt_out_does_not_block_another_group(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $area = 'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))';
+        $blocked = $this->createTestGroup();
+        $allowed = $this->createTestGroup();
+        foreach ([$blocked, $allowed] as $g) {
+            DB::statement(
+                "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+                [$area, 3857, $g->id]
+            );
+        }
+
+        // Interleaved on purpose, so a per-group bucket that shared state between groups would
+        // get at least one of them wrong. Insertion order is ascending log id.
+        //   blocked: rippled in -> left            => opted out, no post
+        //   allowed: rippled in -> left -> MANUAL  => most recent join is manual, post goes in
+        $history = [
+            [$blocked, 'Joined', 'Rippled'],
+            [$allowed, 'Joined', 'Rippled'],
+            [$allowed, 'Left', null],
+            [$blocked, 'Left', null],
+            [$allowed, 'Joined', 'Manual'],
+        ];
+        foreach ($history as [$g, $subtype, $text]) {
+            DB::table('logs')->insert([
+                'timestamp' => now()->subDay(), 'type' => 'Group', 'subtype' => $subtype,
+                'user' => $posterId, 'groupid' => $g->id, 'text' => $text,
+            ]);
+        }
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $blocked->id)->first(),
+            'the group the poster left after a ripple-join is still blocked'
+        );
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $allowed->id)->first(),
+            'the group whose most recent join was manual is NOT blocked by the other group\'s opt-out'
         );
     }
 
@@ -4005,6 +4312,515 @@ class ExpandServiceTest extends TestCase
         $this->assertFalse(
             $this->cellSets()->contains($this->cellSets()->decode($cellsB), -0.12, 51.55),
             'the group-cells cache must retry after a transient failure, not stay poisoned for the rest of the run'
+        );
+    }
+
+
+    public function test_a_retired_grid_stays_drained_through_a_tick_advance(): void
+    {
+        // Once a post has its stored label and its home-area number, the
+        // per-tick writers stop materialising the square grid: the advance
+        // still moves the tick, but polygon_cells stays NULL - and the
+        // geometric home-area union is decided from the stored number, not
+        // recomputed.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $this->service()->process(false, 500);
+        $this->assertNotNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells'),
+            'premise: an unretired post materialises its grid at initialise'
+        );
+
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'reach_labels' => 'label-bytes',
+            'origin_union_secs' => -1,
+            'polygon_cells' => null,
+            'arrival' => now()->subHours(4),
+            'next_expansion_at' => now()->subMinute(),
+            'status' => 'expanding',
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertGreaterThan(1, (int) $row->tick, 'the tick still advances');
+        $this->assertNull($row->polygon_cells, 'a retired row never gets its grid re-materialised');
+    }
+
+    public function test_an_expired_time_box_stops_the_run_at_the_row_boundary(): void
+    {
+        // The single-instance lock's TTL cannot be tuned above an open-ended run
+        // length (2026-08-30: a backlogged run outlived the lock, the every-minute
+        // schedule stacked runs to the routing server's 8 gate slots, goodput hit
+        // zero). The run therefore bounds ITSELF: with the box already expired,
+        // it must take no rows and report that it stopped - the rows stay due for
+        // the next tick, nothing is half-processed.
+        config(['freegle.ripple.expand_time_box_seconds' => -1]);
+        $this->fakeDensity(400, 1.0);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertGreaterThanOrEqual(1, $stats['timeboxed'], 'the run must say it was time-boxed');
+        $this->assertSame(0, $stats['initialized']);
+        $this->assertNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->first(),
+            'a boxed run must leave unprocessed posts untouched for the next tick'
+        );
+    }
+
+    public function test_a_zero_time_box_disables_the_bound(): void
+    {
+        config(['freegle.ripple.expand_time_box_seconds' => 0]);
+        $this->fakeDensity(400, 1.0);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['timeboxed']);
+        $this->assertSame(1, $stats['initialized']);
+        $this->assertNotNull(DB::table('rippling_reach')->where('msgid', $msgid)->first());
+    }
+
+    /**
+     * A post is vetted against the rules of the community it was posted on. Rippling then
+     * carried it, already approved, onto communities whose own rules it might break - so a
+     * group that bans live animals got a rabbit on its board with no chance to say no
+     * (Discourse 10102/3, and 9829 before it, where moderators were told their per-group
+     * worry words would catch this).
+     *
+     * A group's OWN rules are now checked as the copy is created: a match makes that
+     * group's copy Pending instead of Approved, so its moderators decide before members
+     * see it.
+     */
+    public function test_group_own_worry_word_ripples_in_as_pending_not_approved(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        DB::table('messages')->where('id', $msgid)->update([
+            'subject' => 'OFFER: brown rabbit (London)',
+            'textbody' => 'A friendly rabbit.',
+        ]);
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($b, 'the post still ripples in - it is held for review, not dropped');
+        $this->assertSame('Pending', $b->collection, 'a group whose own rules it breaks reviews it first');
+        $this->assertNull($b->approvedat, 'and it is not marked approved');
+    }
+
+    /**
+     * The reason is recorded, so the moderator can see what their rule caught. But
+     * checkGroupOwnRules() only ever re-checks THIS group's own keywords - it never runs
+     * the full checkMessage() pipeline (money symbols, phone numbers, PII, etc). If the
+     * insert stamped contentcheck_checked_at here, processUnprocessed()'s periodic scan
+     * would treat this row as already checked and permanently skip that full pipeline for
+     * it - silently letting through money-for-item offers, phone numbers and addresses on
+     * every rippled-in post held this way (Discourse 10063/4). Leaving it NULL keeps the
+     * row eligible for that scan, exactly like a clean rippled-in copy already is.
+     */
+    public function test_group_own_rule_hold_records_why(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        DB::table('messages')->where('id', $msgid)->update([
+            'subject' => 'OFFER: brown rabbit (London)',
+            'textbody' => 'A friendly rabbit.',
+        ]);
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($b->contentcheck_reasons, 'the moderator is told what matched');
+        $this->assertStringContainsString('rabbit', $b->contentcheck_reasons);
+        $this->assertNull(
+            $b->contentcheck_checked_at,
+            'must stay NULL so the periodic full check pipeline still runs on this row (Discourse 10063/4)'
+        );
+    }
+
+    /** One group's rule is one group's business: the others still get the post as normal. */
+    public function test_group_own_rule_hold_is_scoped_to_that_group(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        DB::table('messages')->where('id', $msgid)->update([
+            'subject' => 'OFFER: brown rabbit (London)',
+            'textbody' => 'A friendly rabbit.',
+        ]);
+
+        $fussy = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $fussy->id]
+        );
+
+        $relaxed = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.17 51.53,-0.13 51.53,-0.13 51.57,-0.17 51.57,-0.17 51.53))', 3857, $relaxed->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame('Pending', DB::table('messages_groups')
+            ->where('msgid', $msgid)->where('groupid', $fussy->id)->value('collection'));
+        $this->assertSame('Approved', DB::table('messages_groups')
+            ->where('msgid', $msgid)->where('groupid', $relaxed->id)->value('collection'));
+    }
+
+    /**
+     * Only the group's OWN rules hold it. Freegle-wide keywords were already weighed on the
+     * community it was posted to, where a moderator may have approved it in full knowledge -
+     * re-running them here would hold the post everywhere it ripples over a decision that has
+     * already been made.
+     */
+    public function test_a_freegle_wide_keyword_does_not_hold_a_rippled_in_copy(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        DB::table('messages')->where('id', $msgid)->update([
+            'subject' => 'OFFER: brown rabbit (London)',
+            'textbody' => 'A friendly rabbit.',
+        ]);
+
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'rabbit',
+            'scope' => 'global',
+            'category' => 'review',
+            'match_mode' => 'literal',
+        ]);
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame('Approved', DB::table('messages_groups')
+            ->where('msgid', $msgid)->where('groupid', $groupB->id)->value('collection'),
+            'a Freegle-wide keyword was already adjudicated on the origin community');
+    }
+
+    /** A group with a keyword row of its own holds the copy, exactly as a worry word does. */
+    public function test_group_scoped_concern_keyword_ripples_in_as_pending(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        DB::table('messages')->where('id', $msgid)->update([
+            'subject' => 'OFFER: brown rabbit (London)',
+            'textbody' => 'A friendly rabbit.',
+        ]);
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'rabbit',
+            'scope' => 'group',
+            'group_id' => $groupB->id,
+            'category' => 'review',
+            'match_mode' => 'literal',
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame('Pending', DB::table('messages_groups')
+            ->where('msgid', $msgid)->where('groupid', $groupB->id)->value('collection'));
+    }
+
+    /** Nothing matching means nothing changes: the ordinary path still approves at ripple-in. */
+    public function test_a_post_breaking_no_group_rule_still_ripples_in_approved(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertSame('Approved', $b->collection, 'a sofa is not a rabbit');
+        $this->assertNotNull($b->approvedat);
+    }
+
+
+    /**
+     * Taking a rippled-in copy off a community must stick. Deleting it HARD-deletes that
+     * group's messages_groups row, so the "already on this group" guard that stops a post
+     * being added twice stops holding - and the next expansion tick, whose reach still
+     * covers the area, puts it straight back (Discourse 10102, where the copies were
+     * removed with a delete standard message).
+     */
+    public function test_a_deleted_rippled_in_copy_does_not_ripple_back_in(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'it rippled in to start with'
+        );
+
+        // A moderator removes it from their community: the row is hard-deleted and the
+        // group recorded as having rejected it (what the API does on a secondary removal).
+        DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->delete();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'rejected_groups' => json_encode([(int) $groupB->id]),
+        ]);
+
+        // Age the reach so the next hazard tick is due (hazard_hours [1,3,6]): the tick a
+        // reach advances to comes from elapsed time since its arrival, not from
+        // next_expansion_at alone, so without this nothing expands and the test proves
+        // nothing.
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'arrival' => now()->subHours(4),
+            'next_expansion_at' => now()->subHour(),
+        ]);
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'a community that has removed the post does not get it again'
+        );
+    }
+
+    /**
+     * The exclusion must discriminate on the record and nothing else. Both copies are
+     * removed; only one group is recorded as having turned the post away. The unrecorded
+     * one coming back is also what proves the re-ripple really happens, so the test above
+     * is not passing merely because nothing expanded.
+     */
+    public function test_only_the_community_that_turned_it_away_is_kept_out(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $removed = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.16 51.52,-0.16 51.58,-0.18 51.58,-0.18 51.52))', 3857, $removed->id]
+        );
+
+        $other = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.14 51.52,-0.12 51.52,-0.12 51.58,-0.14 51.58,-0.14 51.52))', 3857, $other->id]
+        );
+
+        $this->service()->process(false, 500);
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $removed->id)->first(),
+            'both communities got it to start with'
+        );
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $other->id)->first()
+        );
+
+        // Both copies go, but only one community is recorded as having turned it away.
+        DB::table('messages_groups')->where('msgid', $msgid)
+            ->whereIn('groupid', [$removed->id, $other->id])->delete();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'rejected_groups' => json_encode([(int) $removed->id]),
+            // See the note above: age the reach so a hazard tick is actually due.
+            'arrival' => now()->subHours(4),
+            'next_expansion_at' => now()->subHour(),
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $removed->id)->first(),
+            'the community that turned it away does not get it again'
+        );
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $other->id)->first(),
+            'a community that did not is reached again as normal'
+        );
+    }
+
+    /**
+     * Record the leave-check's driving query.
+     *
+     * @return array<int, array{sql: string, bindings: array}>
+     */
+    private function captureLeaveCheckQueries(callable $fn): array
+    {
+        $seen = [];
+        DB::listen(function ($query) use (&$seen) {
+            if (stripos($query->sql, "ll.type = 'Group'") !== false) {
+                $seen[] = ['sql' => $query->sql, 'bindings' => $query->bindings];
+            }
+        });
+
+        $fn();
+
+        return $seen;
+    }
+
+    private function insertLeftLog(int $userId, int $groupId, ?string $timestamp = null): int
+    {
+        return DB::table('logs')->insertGetId([
+            'timestamp' => $timestamp ?? now(),
+            'type' => 'Group',
+            'subtype' => 'Left',
+            'user' => $userId,
+            'groupid' => $groupId,
+        ]);
+    }
+
+    /**
+     * The leave-check runs every tick and re-examines the whole two-day window each time -
+     * ~1,200 log rows, each driving two nested EXISTS against a 42.6M-row table, to act on
+     * roughly one. A log-id watermark makes the work proportional to new leaves.
+     */
+    public function test_leave_check_is_bounded_by_a_log_id_watermark(): void
+    {
+        [, $posterId, $groupB] = $this->rippleIntoOneGroup();
+        DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB)->delete();
+        $this->insertLeftLog($posterId, $groupB);
+
+        $queries = $this->captureLeaveCheckQueries(fn () => $this->service()->process(false, 500));
+
+        $this->assertNotEmpty($queries, 'expected the leave-check query to run');
+        $this->assertMatchesRegularExpression(
+            '/ll\.id\s*>\s*\?/i',
+            $queries[0]['sql'],
+            'the leave-check must resume from the last log it examined'
+        );
+    }
+
+    /**
+     * The two-day window is a backstop against the job stalling, not a scan bound. It must
+     * survive the watermark - shortening it would make a stall lose leaves outright, because
+     * nothing else ever revisits a rippled copy whose poster has left.
+     */
+    public function test_leave_check_keeps_its_stall_backstop(): void
+    {
+        [, $posterId, $groupB] = $this->rippleIntoOneGroup();
+        DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB)->delete();
+        $this->insertLeftLog($posterId, $groupB);
+
+        $queries = $this->captureLeaveCheckQueries(fn () => $this->service()->process(false, 500));
+
+        $this->assertMatchesRegularExpression(
+            '/ll\.timestamp\s*>=\s*\?/i',
+            $queries[0]['sql'],
+            'the timestamp backstop must remain alongside the watermark'
+        );
+
+        $cutoffs = array_filter($queries[0]['bindings'], fn ($b) => is_string($b) && strtotime($b) !== false);
+        $this->assertNotEmpty($cutoffs, 'expected a timestamp cutoff binding');
+        $this->assertLessThanOrEqual(
+            now()->subHours(47)->timestamp,
+            strtotime((string) reset($cutoffs)),
+            'the backstop must still reach back about two days'
+        );
+    }
+
+    /**
+     * Successive ticks must start after the leaves the previous tick examined.
+     */
+    public function test_leave_check_watermark_advances_between_ticks(): void
+    {
+        [, $posterId, $groupB] = $this->rippleIntoOneGroup();
+        DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB)->delete();
+        $this->insertLeftLog($posterId, $groupB);
+
+        $first = $this->captureLeaveCheckQueries(fn () => $this->service()->process(false, 500));
+        $second = $this->captureLeaveCheckQueries(fn () => $this->service()->process(false, 500));
+
+        $firstInts = array_values(array_filter($first[0]['bindings'], 'is_int'));
+        $secondInts = array_values(array_filter($second[0]['bindings'], 'is_int'));
+        $this->assertNotEmpty($firstInts, 'expected a watermark binding on the first tick');
+        $this->assertNotEmpty($secondInts, 'expected a watermark binding on the second tick');
+        $firstMark = end($firstInts);
+        $secondMark = end($secondInts);
+
+        $this->assertGreaterThan(
+            $firstMark,
+            $secondMark,
+            'the second tick must resume after the logs the first tick examined'
+        );
+    }
+
+    /**
+     * A scoped run looks at one post only, so it must leave the shared watermark alone.
+     * Advancing it would make the next global tick skip every leave the scoped run ignored -
+     * a targeted debugging run would silently strand real posts.
+     */
+    public function test_scoped_run_does_not_advance_the_leave_check_watermark(): void
+    {
+        [$msgidA, $posterA, $groupA] = $this->rippleIntoOneGroup();
+        [$msgidB, $posterB, $groupB] = $this->rippleIntoOneGroup();
+
+        DB::table('memberships')->where('userid', $posterA)->where('groupid', $groupA)->delete();
+        DB::table('memberships')->where('userid', $posterB)->where('groupid', $groupB)->delete();
+        $this->insertLeftLog($posterA, $groupA);
+        $this->insertLeftLog($posterB, $groupB);
+
+        // Scoped to A only.
+        $this->service()->process(false, 500, $msgidA);
+
+        $this->assertSame(
+            1,
+            (int) DB::table('messages_groups')->where('msgid', $msgidA)->where('groupid', $groupA)->value('deleted'),
+            'precondition: the scoped run pulled its own post'
+        );
+
+        // The global tick must still see B's leave.
+        $this->service()->process(false, 500);
+
+        $this->assertSame(
+            1,
+            (int) DB::table('messages_groups')->where('msgid', $msgidB)->where('groupid', $groupB)->value('deleted'),
+            'the scoped run must not have advanced the watermark past the other leave'
+        );
+    }
+
+    /**
+     * The ripple auto-join makes the poster a member of each group their post rippled into,
+     * which can make them newly eligible for reach mail about OTHER posts on those groups.
+     * Like every other join path, it queues them for the member side of reach mail.
+     */
+    public function test_ripple_auto_join_queues_the_poster_for_reach_mail(): void
+    {
+        [, $posterId] = $this->rippleIntoOneGroup();
+
+        $this->assertSame(
+            'joined',
+            DB::table('rippling_reach_member_pending')->where('userid', $posterId)->value('reason'),
+            'a rippled-in membership queues the poster like any other join'
         );
     }
 }

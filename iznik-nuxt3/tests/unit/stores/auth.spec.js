@@ -1,4 +1,13 @@
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest'
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  beforeAll,
+  afterAll,
+} from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
 // Import with .js extension to bypass vitest.config alias that maps
@@ -27,6 +36,10 @@ const mockMerge = vi.fn()
 const mockUpdateMembership = vi.fn()
 const mockLeaveGroup = vi.fn()
 const mockJoinGroup = vi.fn()
+
+vi.mock('~/composables/useClientLog', () => ({
+  action: vi.fn(),
+}))
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -59,6 +72,15 @@ vi.mock('~/api', () => ({
 
 vi.mock('~/composables/useTrackConversion', () => ({
   trackConversion: (...args) => mockTrackConversion(...args),
+}))
+
+const mockSaveSessionForRestore = vi.fn()
+const mockRestoreSessionFromDevice = vi.fn()
+const mockClearRestoredSession = vi.fn()
+vi.mock('~/composables/useSessionRestore', () => ({
+  saveSessionForRestore: (...args) => mockSaveSessionForRestore(...args),
+  restoreSessionFromDevice: (...args) => mockRestoreSessionFromDevice(...args),
+  clearRestoredSession: (...args) => mockClearRestoredSession(...args),
 }))
 
 vi.mock('~/api/BaseAPI', () => ({
@@ -174,6 +196,63 @@ describe('auth store', () => {
       store.setAuth('test-jwt', 'test-persistent')
       expect(store.auth.jwt).toBe('test-jwt')
       expect(store.auth.persistent).toBe('test-persistent')
+    })
+
+    it('hands the persistent token to Block Store for the next device', () => {
+      store.setAuth('test-jwt', 'test-persistent')
+      expect(mockSaveSessionForRestore).toHaveBeenCalledWith('test-persistent')
+    })
+  })
+
+  describe('wipeAuth', () => {
+    it('clears credentials, the user, and the Block Store copy', () => {
+      store.setAuth('dead-jwt', 'dead-persistent')
+      store.setUser({ id: 123 })
+      mockClearRestoredSession.mockClear()
+
+      store.wipeAuth()
+
+      expect(store.auth.jwt).toBeNull()
+      expect(store.auth.persistent).toBeNull()
+      expect(store.user).toBeNull()
+      // Without this, an Android device whose localStorage was evicted keeps
+      // re-adopting the same dead token from Block Store and loops back to
+      // the login screen.
+      expect(mockClearRestoredSession).toHaveBeenCalled()
+    })
+  })
+
+  describe('adoptRestoredSession', () => {
+    it('adopts the session a previous device left in Block Store', async () => {
+      mockRestoreSessionFromDevice.mockResolvedValue('transferred-persistent')
+
+      expect(await store.adoptRestoredSession()).toBe(true)
+      expect(store.auth.persistent).toBe('transferred-persistent')
+      // No JWT: the persistent token alone authenticates, and GET /session mints one.
+      expect(store.auth.jwt).toBeNull()
+    })
+
+    it('returns false when Block Store holds nothing', async () => {
+      mockRestoreSessionFromDevice.mockResolvedValue(null)
+
+      expect(await store.adoptRestoredSession()).toBe(false)
+      expect(store.auth.persistent).toBeNull()
+    })
+
+    it('leaves an existing jwt alone', async () => {
+      store.setAuth('live-jwt', null)
+
+      expect(await store.adoptRestoredSession()).toBe(false)
+      expect(mockRestoreSessionFromDevice).not.toHaveBeenCalled()
+      expect(store.auth.jwt).toBe('live-jwt')
+    })
+
+    it('leaves an existing persistent token alone', async () => {
+      store.setAuth(null, 'live-persistent')
+
+      expect(await store.adoptRestoredSession()).toBe(false)
+      expect(mockRestoreSessionFromDevice).not.toHaveBeenCalled()
+      expect(store.auth.persistent).toBe('live-persistent')
     })
   })
 
@@ -378,7 +457,29 @@ describe('auth store', () => {
     })
   })
 
+  // logout() on the web (isApp false) starts disableGoogleAutoselect's retry
+  // loop: a real setTimeout every 100ms for up to five seconds, each tick
+  // writing a console line, because window.google never arrives here. Left on
+  // real timers those ticks outlive this file and race the worker's shutdown,
+  // which fails the whole run with "Closing rpc while onUserConsoleLog was
+  // pending" while every test passes (CI 35052, 2026-09-04). Any describe that
+  // reaches logout() owns the clock, so the retry never fires for real, and
+  // drops the pending timers with it. Not file-wide: the fetchUser tests below
+  // wait on real timers on purpose.
+  const ownTheClock = () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    })
+  }
+
   describe('logout', () => {
+    ownTheClock()
+
     it('resets user but preserves loginCount and loggedInEver', async () => {
       mockLogin.mockResolvedValue({ jwt: 'jwt', persistent: 'p' })
       mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
@@ -393,6 +494,16 @@ describe('auth store', () => {
       expect(store.auth.jwt).toBeNull()
       expect(store.loginCount).toBe(1)
       expect(store.loggedInEver).toBe(true)
+    })
+
+    it('clears the transferable session, so a device restore does not sign us back in', async () => {
+      mockLogin.mockResolvedValue({ jwt: 'jwt', persistent: 'p' })
+      mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
+      await store.login({ email: 'a@b.com', password: 'x' })
+
+      await store.logout()
+
+      expect(mockClearRestoredSession).toHaveBeenCalled()
     })
   })
 
@@ -409,6 +520,30 @@ describe('auth store', () => {
         expect(() => store.disableGoogleAutoselect()).not.toThrow()
       } finally {
         globalThis.window = originalWindow
+      }
+    })
+
+    it('stops retrying once Google has clearly not loaded', () => {
+      // Privacy extensions block the Google script outright, and the retry used
+      // to reschedule itself for ever: a timer plus a console line every 100ms
+      // for the life of the page. In the unit tests those logs outlive the test
+      // file and race the worker shutdown, which fails the whole run with
+      // "Closing rpc while onUserConsoleLog was pending" while every test
+      // passes. Drive the retries with fake timers and check they stop.
+      const originalGoogle = globalThis.window.google
+      delete globalThis.window.google
+
+      vi.useFakeTimers()
+      try {
+        store.disableGoogleAutoselect()
+
+        // Well past the five-second budget.
+        vi.advanceTimersByTime(30000)
+
+        expect(vi.getTimerCount()).toBe(0)
+      } finally {
+        vi.useRealTimers()
+        globalThis.window.google = originalGoogle
       }
     })
 
@@ -675,6 +810,8 @@ describe('auth store', () => {
   })
 
   describe('forget', () => {
+    ownTheClock() // forget() ends in logout(), and with it the retry loop
+
     it('calls session.forget then logs out', async () => {
       mockLogin.mockResolvedValue({ jwt: 'jwt', persistent: 'p' })
       mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })

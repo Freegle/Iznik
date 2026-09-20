@@ -49,10 +49,11 @@ LOAD_STATE → CHECK_CI → CI_ROUTER
 
 `PARALLEL_ANALYZE_AND_FIX` launches (simultaneously via `delegate_parallel_tasks`):
 - One sub-agent per Discourse topic with new posts (triage only — classify each post as bug/question/feature-request/off-topic/etc.)
+- One sub-agent per unanswered question (research only - read the code and the docs, then write a short answer)
 - One Sentry scan sub-agent
 - At most one PR-fix sub-agent (the "focus PR" — one at a time to avoid flooding the single self-hosted CI runner)
 
-`COLLATE_RESULTS` merges classifications and Sentry data from all parallel agents, then routes to `WORK_ROUTER`.
+`COLLATE_RESULTS` merges classifications, answers and Sentry data from all parallel agents, then routes to `WORK_ROUTER`.
 
 **Phase C — Bug fixing:**
 
@@ -69,6 +70,67 @@ LOAD_STATE → CHECK_CI → CI_ROUTER
 - Dirty PRs (need rebase) → `REBASE_DIRTY_PRS`
 - No PR created this iteration → `WRITE_COVERAGE` (mandatory coverage PR, rotating Go → Vitest → Laravel)
 - Gate passed → `WRAP_UP → SCHEDULE_NEXT → END`
+
+### Answering questions
+
+Not every post is a bug. Triage has always been able to tell a question from a bug report, but a
+question was then filed under `deferred` and nobody ever went back to it. Questions are now kept as
+`question` and answered.
+
+`list_unanswered_questions` (run in `CHECK_CI`, alongside the topic scan) picks up questions with no
+reply waiting and none already sent, and `PARALLEL_ANALYZE_AND_FIX` gives each one a research
+sub-agent that runs beside the triage and Sentry agents. The sub-agent reads the thread, then looks
+for the answer in `docs/` and in the code that actually runs - Go, Nuxt and Laravel, never the dead
+V1 PHP - and writes two to four sentences for somebody reading them once, on a phone. It emits
+`ANSWERS=[{topic, post, answer, confidence, link?}]`, or says a human should take it.
+
+`persist_question_answers` (in `COLLATE_RESULTS`) turns each answer into a reply **waiting for
+approval**, in the same `discourse_draft` table the fix replies use. Three things can stop an answer
+getting that far:
+
+- the sub-agent says it is not confident, or asks for a human - the question is deferred, with the reason
+- the answer reads like documentation rather than English - it is thrown away and the question is asked
+  again next time round. `.claude/pr-complexity.mjs`, the same scorer the Discourse posting hook uses,
+  decides this (reading grade 11, sentences of 30 words). Two failures in a row defer it to a human.
+- there is nothing to quote, so the reply could not show what it answers
+
+Answers are sent from the **Replies to send** panel on the dashboard, not posted by the run. An
+answer is new prose asserting how Freegle works, so a person reads it before a moderator does.
+Rejecting one puts the question back in the queue, and the reason given is handed to the next
+attempt. Asking for missing detail is different and goes straight out: see below.
+
+### Reports that are too vague to act on
+
+The reports that cost the most time are the ones that point at one particular thing without saying
+which: "a member says a group deleted her post". Nobody can look that up. Such a report used to go
+into the fix pipeline anyway, where the diagnosis had nothing to hold on to and guessed, or it was
+parked as deferred and the person who wrote it never heard back.
+
+`assessReportSpecifics` (`src/specifics.ts`) decides this when the report is recorded, not by asking
+a model. A report is held when it names **nothing** that can be looked up:
+
+| Counts as something to work from | Comes from |
+|---|---|
+| a number of five digits or more (member, message or group id) | the text; four digits would match a year |
+| an email address | the text |
+| a link to ilovefreegle.org | the text |
+| a screenshot or attachment | triage, which sees the post before the HTML is stripped |
+| the name of a group | triage, which is told never to guess one |
+
+The ask is only ever about what the report itself points at vaguely, so a general report ("chat
+notification emails are going out twice") is not held and not asked about. At most three things are
+asked for, in one short reply that quotes the report.
+
+A held report is `needs-detail`: out of the fix queue, visible on the dashboard, and waiting. The
+question to the reporter is **posted**, like the "fix applied, please retest" reply and for the same
+reason - a question nobody sends is a question nobody answers. One per reporting post, recorded so
+the same person is not asked the same thing every lap. When a later post in the same thread finally
+names something, the held report goes back to `open` and the follow-up does not become a second
+report. Edward saying "this is expected" still closes it, as it does for any other state.
+
+`ask_reporter_for_detail` is the same thing from the diagnosis side: when a fix cannot proceed
+without something only the reporter knows - which browser, what time, what they saw - it asks, in at
+most three short questions, and holds the report until there is an answer.
 
 ### TDD pipeline (single-bug path)
 
@@ -90,11 +152,11 @@ LOAD_STATE → CHECK_CI → CI_ROUTER
 open → investigating → fix-queued → fixed → (deployed reply auto-posted)
 ```
 
-Also: `deferred`, `off-topic`, `duplicate`, `feature-request`, `confirmed`.
+Also: `deferred`, `off-topic`, `duplicate`, `feature-request`, `question`, `needs-detail`, `confirmed`.
 
 `check_bug_feedback` (run each `LOAD_STATE`) scans follow-up Discourse posts for reporter confirmations and Edward's "working on it" / "fix applied" / "expected behaviour" replies, updating states automatically.
 
-Once a PR is merged and its fix is confirmed live (by comparing the merge SHA against `/api/version` for Go/Laravel and the Netlify published-deploy commit for the frontend), `queue_deployed_reply_drafts` auto-posts the verbatim "AI Edward: possible fix applied, please retest and report back" reply threaded under the specific reporting post. Two exceptions: a **tooling-only** fix (no frontend/Go/PHP files — e.g. monitor-fsm, docs, CI) is marked deployed *without* a reply, because there is nothing the reporter could retest; and a **failed post** (e.g. Discourse rate limit) resets the PR's deploy state so the reply is retried next iteration. `reconcile_direct_master_fixes` applies the same two rules to direct-to-master fixes.
+Once a PR is merged and its fix is confirmed live (by comparing the merge SHA against `/api/version` for Go/Laravel and the Netlify published-deploy commit for the frontend), `queue_deployed_reply_drafts` auto-posts the verbatim "AI Edward: possible fix applied, please retest and report back" reply threaded under the specific reporting post. Every such reply ends with a `Technical details:` line linking the change — the PR here, the commit in `reconcile_direct_master_fixes` — so a moderator reading the thread can see what was actually done. Two exceptions: a **tooling-only** fix (no frontend/Go/PHP files — e.g. monitor-fsm, docs, CI) is marked deployed *without* a reply, because there is nothing the reporter could retest; and a **failed post** (e.g. Discourse rate limit) resets the PR's deploy state so the reply is retried next iteration. `reconcile_direct_master_fixes` applies the same two rules to direct-to-master fixes.
 
 ### Model assignment
 
@@ -170,6 +232,8 @@ Every PR the monitor opens must be human-reviewed before merging. The monitor ca
 
 The `VERIFY_DISCOURSE_BATCH` state does an adversarial review, but it is itself an LLM call. It adds a bar, but it is not a substitute for human judgment.
 
+One part of it is not a judgement call: if the review says the same defect is still live in a file the PR already edits, that is a partial fix and it blocks, whatever severity the review gave it. The fix is then expanded on the same branch. PR #1559 is why: its own review said `List()` in the file it changed had the identical missing condition, and it passed anyway.
+
 ### Rejected PRs — keep them open and push a corrected fix
 
 When you reject a PR (close it without merging), `sync_pr_states` detects the closed state on the next iteration, reopens the bug with a `pr_rejections` counter, and records reviewer feedback. The convention is: **keep the PR open or push a corrected fix to the same branch** rather than closing and starting fresh. If you do close a PR, leave a comment explaining why — the monitor reads `reviewer_feedback` to guide the re-diagnosis.
@@ -188,7 +252,7 @@ The driver lock at `/tmp/freegle-monitor-driver.lock` means only one driver can 
 
 ### Discourse replies are not auto-posted during fixing
 
-Post-fix Discourse replies are auto-posted (verbatim "AI Edward: possible fix applied, please retest and report back") only **after the fix is confirmed live in production** — verified by comparing the PR's merge commit against `/api/version` (Go/Laravel) and the Netlify published-deploy SHA (frontend). During the fix pipeline the monitor does not post to Discourse.
+Post-fix Discourse replies are auto-posted (verbatim "AI Edward: possible fix applied, please retest and report back", plus a `Technical details:` link to the PR or commit) only **after the fix is confirmed live in production** — verified by comparing the PR's merge commit against `/api/version` (Go/Laravel) and the Netlify published-deploy SHA (frontend). During the fix pipeline the monitor does not post to Discourse.
 
 Discourse replies are posted as Edward_Hibbert (using the API key from `profile.json`). There is no per-reply human approval — the auto-post behaviour is enabled by design. If you want to suppress it in local/dev runs, set `SKIP_DISCOURSE_STATUS=1`.
 

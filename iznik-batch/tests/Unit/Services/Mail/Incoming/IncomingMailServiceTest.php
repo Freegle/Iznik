@@ -130,6 +130,119 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals(RoutingResult::DROPPED, $result);
     }
 
+    /**
+     * Trash Nothing sends one Subscribe mail per group, each from a different
+     * per-group alias. Matching on the address alone meant the second alias found
+     * nothing and created a second Freegle account for the same member; 96 such pairs
+     * are live on production, and the first symptom was a partner API 403 on a post
+     * owned by the account TN's own identifiers did not resolve to.
+     *
+     * The canon fallback is what closes it: every -gNNNN alias of one member
+     * canonicalises to the same value.
+     */
+    public function test_subscribe_from_a_second_tn_alias_joins_the_existing_account(): void
+    {
+        $group = $this->createTestGroup();
+        $tnBase = 'tnsub'.str_replace('.', '', uniqid('', true));
+
+        $existing = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tnmember')]);
+        DB::table('users_emails')->insert([
+            'userid' => $existing->id,
+            'email' => "{$tnBase}-g101@user.trashnothing.com",
+            'canon' => "{$tnBase}@usertrashnothingcom",
+            'backwards' => strrev("{$tnBase}-g101@user.trashnothing.com"),
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+
+        $usersBefore = DB::table('users')->count();
+
+        // A different TN group, so a different alias, never seen here before.
+        $secondAlias = "{$tnBase}-g202@user.trashnothing.com";
+        $email = $this->createMinimalEmail([
+            'From' => $secondAlias,
+            'To' => $group->nameshort.'-subscribe@groups.ilovefreegle.org',
+            'Subject' => 'Subscribe',
+        ]);
+
+        $result = $this->service->route($this->parser->parse(
+            $email,
+            $secondAlias,
+            $group->nameshort.'-subscribe@groups.ilovefreegle.org'
+        ));
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+
+        $this->assertSame(
+            $usersBefore,
+            DB::table('users')->count(),
+            'a second alias of a known member must not mint a second account'
+        );
+        $this->assertTrue(
+            DB::table('memberships')->where('userid', $existing->id)->where('groupid', $group->id)->exists(),
+            'the join must land on the account the member already has'
+        );
+        $attached = DB::table('users_emails')->where('email', $secondAlias)->first();
+        $this->assertSame(
+            $existing->id,
+            (int) $attached->userid,
+            'the new alias must be attached so later mail from it matches outright'
+        );
+        $this->assertSame(
+            "{$tnBase}@usertrashnothingcom",
+            $attached->canon,
+            'without a canon the member next alias would create another account'
+        );
+        $this->assertSame(
+            strrev("{$tnBase}@usertrashnothingcom"),
+            $attached->backwards,
+            'backwards is REVERSE(canon), the definition V1 writes at both its insert sites'
+        );
+    }
+
+    /**
+     * A users_emails row whose user is gone is a broken state, not a new member.
+     * users_emails.email is UNIQUE, so taking the create branch would collide on it
+     * and throw where this drops cleanly.
+     *
+     * A foreign key on users_emails.userid means the state cannot arise on its own,
+     * on production or here, so the row has to be forced in with the constraint off.
+     * The guard is kept for the case where that key is not there - a restore, or a
+     * migration part way through - because the cost of it is one indexed existence
+     * check on a path that only runs for an address nobody has seen before.
+     */
+    public function test_subscribe_drops_when_the_address_has_no_user_behind_it(): void
+    {
+        $group = $this->createTestGroup();
+        $orphan = $this->uniqueEmail('orphan');
+
+        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        DB::table('users_emails')->insert([
+            'userid' => 0,
+            'email' => $orphan,
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+
+        $usersBefore = DB::table('users')->count();
+
+        $email = $this->createMinimalEmail([
+            'From' => $orphan,
+            'To' => $group->nameshort.'-subscribe@groups.ilovefreegle.org',
+            'Subject' => 'Subscribe',
+        ]);
+
+        $result = $this->service->route($this->parser->parse(
+            $email,
+            $orphan,
+            $group->nameshort.'-subscribe@groups.ilovefreegle.org'
+        ));
+
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+        $this->assertSame($usersBefore, DB::table('users')->count());
+    }
+
     public function test_routes_subscribe_to_system(): void
     {
         $group = $this->createTestGroup();
@@ -149,6 +262,107 @@ class IncomingMailServiceTest extends TestCase
         $result = $this->service->route($parsed);
 
         $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+    }
+
+    public function test_subscribe_records_the_join_in_the_modlog(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('joiner')]);
+        $userEmail = $user->emails->first()->email;
+
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $group->nameshort.'-subscribe@groups.ilovefreegle.org',
+            'Subject' => 'Subscribe',
+        ]);
+
+        $parsed = $this->parser->parse(
+            $email,
+            $userEmail,
+            $group->nameshort.'-subscribe@groups.ilovefreegle.org'
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+        $this->assertTrue(
+            DB::table('memberships')->where('userid', $user->id)->where('groupid', $group->id)->exists()
+        );
+        $this->assertTrue(
+            DB::table('logs')
+                ->where('type', 'Group')
+                ->where('subtype', 'Joined')
+                ->where('user', $user->id)
+                ->where('groupid', $group->id)
+                ->exists(),
+            'Subscribing by email should leave a Group/Joined log entry'
+        );
+    }
+
+    public function test_subscribe_from_banned_member_is_dropped(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('banned')]);
+        $userEmail = $user->emails->first()->email;
+
+        DB::table('users_banned')->insert([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'date' => now(),
+        ]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $group->nameshort.'-subscribe@groups.ilovefreegle.org',
+            'Subject' => 'Subscribe',
+        ]);
+
+        $parsed = $this->parser->parse(
+            $email,
+            $userEmail,
+            $group->nameshort.'-subscribe@groups.ilovefreegle.org'
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+        $this->assertFalse(
+            DB::table('memberships')->where('userid', $user->id)->where('groupid', $group->id)->exists(),
+            'A banned member must not be re-added to the group by a subscribe email'
+        );
+    }
+
+    public function test_subscribe_still_works_on_a_group_the_member_is_not_banned_from(): void
+    {
+        $bannedGroup = $this->createTestGroup();
+        $otherGroup = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('partban')]);
+        $userEmail = $user->emails->first()->email;
+
+        DB::table('users_banned')->insert([
+            'userid' => $user->id,
+            'groupid' => $bannedGroup->id,
+            'date' => now(),
+        ]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $otherGroup->nameshort.'-subscribe@groups.ilovefreegle.org',
+            'Subject' => 'Subscribe',
+        ]);
+
+        $parsed = $this->parser->parse(
+            $email,
+            $userEmail,
+            $otherGroup->nameshort.'-subscribe@groups.ilovefreegle.org'
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+        $this->assertTrue(
+            DB::table('memberships')->where('userid', $user->id)->where('groupid', $otherGroup->id)->exists()
+        );
     }
 
     public function test_routes_unsubscribe_to_system(): void
@@ -1206,6 +1420,23 @@ class IncomingMailServiceTest extends TestCase
              VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))'), 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))']
         );
+
+        // The routing server refuses this replier. Being out of reach has to be
+        // a decided refusal here: an unanswerable question is no longer read as
+        // one, so without this the reply would pass through and the test would
+        // be proving the outage behaviour instead of the gate.
+        \Illuminate\Support\Facades\Http::fake(function ($request) {
+            if (!str_contains($request->url(), 'reach-eval')) {
+                return null;
+            }
+
+            return \Illuminate\Support\Facades\Http::response([
+                'results' => array_map(
+                    fn ($id) => ['msgid' => (int) $id, 'verdict' => 'out'],
+                    $request['msgids'] ?? []
+                ),
+            ]);
+        });
 
         $replierEmail = $replier->emails->first()->email;
         $posterSlugAddr = "someslug-{$poster->id}@users.ilovefreegle.org";

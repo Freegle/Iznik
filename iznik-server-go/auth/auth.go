@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
@@ -293,8 +294,79 @@ func VerifyPassword(userID uint64, password string) bool {
 	return false
 }
 
+// Login method descriptions written to the User/Login audit log. The wording is
+// V1's (include/user/User.php, include/session/{Google,Facebook,Apple}.php) so
+// that ModTools' log view, which renders "Logged in <text>", reads the same
+// either side of the migration to this API.
+const (
+	LoginMethodPassword = "Using email/password"
+	LoginMethodLink     = "Using link"
+)
+
+// SocialLoginMethod describes a social sign-in for the audit log, in V1's
+// wording: "Using Google 1234567890".
+func SocialLoginMethod(provider, uid string) string {
+	if uid == "" {
+		return "Using " + provider
+	}
+
+	return "Using " + provider + " " + uid
+}
+
+// RequestSite returns the FD/MT site tag the client sends on every request
+// (stores/loggingContext.js), or "" when there is none. Sanitised because it
+// ends up in a log row: a client-supplied header is never trusted verbatim.
+func RequestSite(c *fiber.Ctx) string {
+	if c == nil {
+		return ""
+	}
+
+	site := c.Get("X-Freegle-Site")
+	if len(site) > 8 {
+		site = site[:8]
+	}
+
+	var b strings.Builder
+	for _, r := range site {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+
+	return b.String()
+}
+
+// LogLogin writes the User/Login audit row. V1 wrote one on every successful
+// login; apiv2 wrote none, so a moderator's own logs showed nothing when they
+// reported being logged out several times a day (Discourse #10072) and the only
+// evidence left was raw sessions rows.
+//
+// The site and series are ours, not V1's. Freegle and ModTools are separate
+// logins from the same account, each with its own series, so the site says which
+// app signed in and the series pairs the row with the Logout that eventually
+// closes it (DeleteSession logs the same series).
+func LogLogin(c *fiber.Ctx, userID uint64, series uint64, method string) {
+	detail := "series " + strconv.FormatUint(series, 10)
+	if site := RequestSite(c); site != "" {
+		detail = site + ", " + detail
+	}
+
+	text := method + " (" + detail + ")"
+
+	log2.Log(log2.LogEntry{
+		Type:    log2.LOG_TYPE_USER,
+		Subtype: log2.LOG_SUBTYPE_LOGIN,
+		User:    &userID,
+		Byuser:  &userID,
+		Text:    &text,
+	})
+}
+
 // CreateSessionAndJWT creates a sessions row and returns the persistent token data and a JWT.
-func CreateSessionAndJWT(userID uint64) (map[string]interface{}, string, error) {
+// method describes how the user authenticated (LoginMethodPassword,
+// SocialLoginMethod(...)); it goes in the User/Login audit row written here, so
+// that no login path can be added without one.
+func CreateSessionAndJWT(c *fiber.Ctx, userID uint64, method string) (map[string]interface{}, string, error) {
 	db := database.DBConn
 
 	// series is a bigint unsigned column — must be numeric. A previous
@@ -348,6 +420,8 @@ func CreateSessionAndJWT(userID uint64) (map[string]interface{}, string, error) 
 	if err != nil {
 		return nil, "", err
 	}
+
+	LogLogin(c, userID, series, method)
 
 	return persistent, jwtString, nil
 }

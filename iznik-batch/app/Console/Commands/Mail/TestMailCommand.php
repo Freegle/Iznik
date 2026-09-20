@@ -11,6 +11,8 @@ use App\Mail\Message\AutoRepostWarning;
 use App\Mail\Message\ChaseUp;
 use App\Mail\Message\ChaseUpPromised;
 use App\Mail\Message\DeadlineReached;
+use App\Mail\Notification\ChaseUpMail;
+use App\Mail\Traits\AvatarResolver;
 use App\Mail\Session\UnsubscribedNotice;
 use App\Mail\Stories\StoriesNewsletterMail;
 use App\Mail\Welcome\WelcomeMail;
@@ -20,6 +22,7 @@ use App\Models\Membership;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
+use App\Services\NotificationChaseUpService;
 use App\Services\StoriesNewsletterService;
 use App\Services\UnifiedDigestService;
 use App\Services\UnsubscribeService;
@@ -29,6 +32,8 @@ use Illuminate\Support\Facades\DB;
 
 class TestMailCommand extends Command
 {
+    use AvatarResolver;
+
     /**
      * The name and signature of the console command.
      */
@@ -75,6 +80,7 @@ class TestMailCommand extends Command
         'chaseup' => 'Chase-up email (What happened to: subject)',
         'chaseup-promised' => 'Chase-up promised email (promised variant)',
         'deadline-reached' => 'Deadline reached notification',
+        'notifications' => 'On-site notification chase-up (unseen comments, loves and nudges). Real notifications if the member has any, otherwise one of every type',
         'stories-newsletter' => 'Monthly stories newsletter (real stories from DB, or sample data if none found)',
         'ripple-intro' => 'Rippling Out intro email (one-off "your post is reaching more people" notice)',
         'matched' => 'Matched-posts email (opposite-type posts near you that match your open offers/wanteds)',
@@ -367,12 +373,215 @@ class TestMailCommand extends Command
             'chaseup' => $this->buildChaseUp(false),
             'chaseup-promised' => $this->buildChaseUp(true),
             'deadline-reached' => $this->buildDeadlineReached(),
+            'notifications' => $this->buildNotificationChaseUp(),
             'stories-newsletter' => $this->buildStoriesNewsletter(),
             'ripple-intro' => $this->buildRippleIntro(),
             'matched' => $this->buildMatched(),
             'unsubscribed' => $this->buildUnsubscribedNotice(),
             default => null,
         };
+    }
+
+    /**
+     * Build the on-site notification chase-up for preview.
+     *
+     * Uses the member's own unseen notifications when they have some, so what you
+     * review is what they would really get. Most accounts have none, so fall back to
+     * one row of every type the email can carry, which is the only practical way to
+     * see the rarer layouts (nudges, membership outcomes, a love with no message).
+     * mail:test notifications --user=ID --send-to=you@...
+     */
+    protected function buildNotificationChaseUp(): ?ChaseUpMail
+    {
+        $user = $this->findUserWithEmail($this->option('user'));
+        if (! $user) {
+            return null;
+        }
+
+        if (empty($user->email_preferred)) {
+            $this->error("User {$user->id} has no email address - pick one who has, or use --to=");
+
+            return null;
+        }
+
+        $service       = app(NotificationChaseUpService::class);
+        $notifications = $service->prepareForUser($user);
+
+        if (empty($notifications)) {
+            $this->warn("User {$user->id} has no unseen notifications - using sample data covering every type.");
+            $notifications = $this->getSampleNotifications();
+        } else {
+            $this->info(count($notifications) . ' unseen notification(s) for this user.');
+        }
+
+        // A real run skips anyone whose notifications produce no subject (membership
+        // outcomes on their own do that), but a preview still has to be sendable.
+        $subject = $service->getNotifTitle($notifications) ?: 'You have notifications on Freegle';
+
+        return new ChaseUpMail($user, $notifications, $subject);
+    }
+
+    /**
+     * One notification of every type the chase-up email can carry.
+     *
+     * Row shape matches NotificationChaseUpService::prepareNotifications().
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    protected function getSampleNotifications(): array
+    {
+        $logo = config('freegle.logo_url', 'https://www.ilovefreegle.org/icon.png');
+
+        $when = fn (int $minutes): string => now()
+            ->subMinutes($minutes)
+            ->setTimezone('Europe/London')
+            ->format('D, jS F g:ia');
+
+        $avatar = function (string $name): string {
+            $sample           = new User();
+            $sample->fullname = $name;
+
+            return $this->resolveAvatarUrl($sample);
+        };
+
+        return [
+            [
+                'id' => 90001,
+                'type' => 'CommentOnYourPost',
+                'fromname' => 'Alice Bracken',
+                'fromimage' => $avatar('Alice Bracken'),
+                'title' => null,
+                'text' => null,
+                'url' => null,
+                'timestamp' => $when(12),
+                'seen' => 0,
+                'newsfeed' => [
+                    'id' => 1001,
+                    'type' => 'Message',
+                    'message' => 'Is the bookcase still going? I could collect this evening if that suits you.',
+                    'replyto' => null,
+                ],
+            ],
+            [
+                'id' => 90002,
+                'type' => 'CommentOnCommented',
+                'fromname' => 'Bob Feldon',
+                'fromimage' => $avatar('Bob Feldon'),
+                'title' => null,
+                'text' => null,
+                'url' => null,
+                'timestamp' => $when(55),
+                'seen' => 0,
+                'newsfeed' => [
+                    'id' => 1002,
+                    'type' => 'Message',
+                    'message' => 'It moved to the library, second Saturday of the month.',
+                    'replyto' => [
+                        'id' => 999,
+                        'message' => 'Does anyone know where the repair cafe has moved to?',
+                    ],
+                ],
+            ],
+            [
+                'id' => 90003,
+                'type' => 'LovedPost',
+                'fromname' => 'Carol Innes',
+                'fromimage' => $avatar('Carol Innes'),
+                'title' => null,
+                'text' => null,
+                'url' => null,
+                'timestamp' => $when(140),
+                'seen' => 0,
+                'newsfeed' => [
+                    'id' => 1003,
+                    'type' => 'Message',
+                    'message' => 'OFFER: Set of terracotta garden pots (Bristol BS5)',
+                    'replyto' => null,
+                ],
+            ],
+            [
+                'id' => 90004,
+                'type' => 'LovedComment',
+                'fromname' => 'Dave Oyelaran',
+                'fromimage' => $avatar('Dave Oyelaran'),
+                'title' => null,
+                'text' => null,
+                'url' => null,
+                'timestamp' => $when(200),
+                'seen' => 0,
+                'newsfeed' => [
+                    'id' => 1004,
+                    'type' => 'Message',
+                    'message' => 'Try the tip on Days Road, they take the small electrical stuff.',
+                    'replyto' => null,
+                ],
+            ],
+            [
+                'id' => 90005,
+                'type' => 'LovedPost',
+                'fromname' => 'Erin Vance',
+                'fromimage' => $avatar('Erin Vance'),
+                'title' => null,
+                'text' => null,
+                'url' => null,
+                'timestamp' => $when(260),
+                'seen' => 0,
+                'newsfeed' => [
+                    'id' => 1005,
+                    'type' => 'Noticeboard',
+                    'message' => null,
+                    'replyto' => null,
+                ],
+            ],
+            [
+                'id' => 90006,
+                'type' => 'Exhort',
+                'fromname' => 'Freegle',
+                'fromimage' => $logo,
+                'title' => 'Tell us your Freegle story',
+                'text' => 'It takes a minute, and it shows other freeglers what is possible.',
+                'url' => '/stories',
+                'timestamp' => $when(320),
+                'seen' => 0,
+                'newsfeed' => null,
+            ],
+            [
+                'id' => 90007,
+                'type' => 'MembershipApproved',
+                'fromname' => 'Freegle',
+                'fromimage' => $logo,
+                'title' => null,
+                'text' => null,
+                'url' => 'Freegle Bristol',
+                'timestamp' => $when(400),
+                'seen' => 0,
+                'newsfeed' => null,
+            ],
+            [
+                'id' => 90008,
+                'type' => 'MembershipPending',
+                'fromname' => 'Freegle',
+                'fromimage' => $logo,
+                'title' => null,
+                'text' => null,
+                'url' => 'Freegle Bath',
+                'timestamp' => $when(430),
+                'seen' => 0,
+                'newsfeed' => null,
+            ],
+            [
+                'id' => 90009,
+                'type' => 'MembershipRejected',
+                'fromname' => 'Freegle',
+                'fromimage' => $logo,
+                'title' => null,
+                'text' => null,
+                'url' => 'Freegle Keynsham',
+                'timestamp' => $when(470),
+                'seen' => 0,
+                'newsfeed' => null,
+            ],
+        ];
     }
 
     /**

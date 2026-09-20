@@ -18,27 +18,21 @@ request that produced it.
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         Application Servers                                  │
-│   Go API (apiv2)  │  Laravel Batch  │  Browser (via apiv2)  │  Containers   │
-└────────┬────────┴───────┬───────┴────────┬────────┴───────────┬─────────────┘
-         │                │                │                     │
-         ▼                ▼                ▼                     ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Docker: Direct to Loki    │    Live: JSON files → Alloy → Loki            │
-└─────────────────────────────────────────────────────────────────────────────┘
-         │                                          │
-         ▼                                          ▼
-┌─────────────────────────┐            ┌─────────────────────────┐
-│        MySQL            │            │         Loki            │
-│   (Source of Truth)     │            │   (Primary for API)     │
-│   - logs table          │            │   - 7-day API retention │
-│                         │            │   - Grafana dashboards  │
-└─────────────────────────┘            └─────────────────────────┘
+```mermaid
+flowchart TD
+    GO["Go API (apiv2)"] --> SHIP
+    LAR["Laravel batch"] --> SHIP
+    BR["Browser, relayed via apiv2"] --> SHIP
+    CON["Container stdout and stderr"] --> SHIP
+    SHIP["In Docker: straight to Loki<br/>On live servers: JSON files, shipped by Alloy"]
+    SHIP --> LOKI[("Loki<br/>what the log viewer reads<br/>7 days for api and client, Grafana dashboards")]
+    GO --> SQL[("MySQL logs table<br/>source of truth")]
+    LAR --> SQL
 ```
 
-**Current Status:** MySQL and Loki run in parallel. MySQL remains source of truth until all read dependencies are migrated.
+MySQL and Loki run in parallel, and MySQL stays the source of truth until the remaining
+reads against it are migrated. What is left to do is in
+[Implementation status](#implementation-status).
 
 ## What we log
 
@@ -51,7 +45,7 @@ will have.
 | `api` | apiv2 | One line per request: endpoint, method, status, duration, `user_id`, `session_id` |
 | `api_headers` | apiv2 | Request/response headers for the same request, split out because they are bulky |
 | `client` | Browser, relayed via `POST /clientlog` | Browser-side events and errors. **Carries `session_id` but no `user_id`** |
-| `logs_table` | apiv2 | Rows mirrored from the MySQL `logs` table - carries `type` and `subtype` |
+| `logs_table` | nothing, currently | Was meant to mirror the MySQL `logs` table. `misc.LokiClient.LogFromLogsTable` exists but **has no caller**, so this source is empty - read the `logs` table itself (see below) |
 | `email` | Laravel | Outbound mail: recipient, type, spool outcome |
 | `incoming_mail` | Laravel | Inbound mail routing decisions |
 | `bounce` | Laravel | Bounce processing |
@@ -93,6 +87,32 @@ Set per stream in `conf/loki-config.yaml`, and deliberately mirrors the retentio
 **Old data is simply not there.** A support case about something three weeks ago will find
 nothing in `api` or `client`, and that is expected rather than a fault. `reject_old_samples`
 is off so historical backfill is accepted.
+
+The `{subtype=...}` rows above are aspirational: nothing writes the `logs_table` source, so
+those streams are empty and the retention never bites.
+
+## Login and logout
+
+Sign-in and sign-out are audited in the MySQL `logs` table, not in Loki: `type='User'` with
+`subtype='Login'` or `'Logout'`, `user` and `byuser` both set to the member. `PurgeService`
+keeps them for a year.
+
+apiv2 writes them from one place each - `auth.CreateSessionAndJWT` (every login path funnels
+through it) and `session.DeleteSession`. `text` carries V1's wording for how they signed in
+("Using email/password", "Using link", "Using Google <uid>", ...) plus two things V1 did not
+record: the `X-Freegle-Site` tag, so a Freegle login is distinguishable from a ModTools one,
+and the session series, which pairs a login with the logout that eventually closes it. A logout
+that could not work out which session to close says so rather than writing nothing.
+
+```sql
+SELECT timestamp, subtype, text FROM logs
+WHERE user = <userid> AND type = 'User' AND subtype IN ('Login', 'Logout')
+ORDER BY id DESC LIMIT 50;
+```
+
+Between the V1 retirement and 2026-08-28 apiv2 wrote neither, so there is a hole in this data
+for that period; a member reporting repeated logouts in it can only be traced through raw
+`sessions` rows.
 
 ## How it gets there
 
@@ -263,10 +283,8 @@ In Docker, `LOKI_ENABLED=true` is set in docker-compose.yml. Apps write directly
 
 Loki config: `conf/loki-config.yaml`
 
-Key settings:
-- Default retention: 31 days
-- Stream-specific retention per log category
-- Compaction runs every 10 minutes
+Compaction runs every 10 minutes. Retention is per stream; the table is under
+[Retention](#retention) rather than repeated here.
 
 </details>
 
@@ -469,7 +487,9 @@ sudo journalctl -u alloy -f
 # API errors in the last hour
 {source="api", status_code=~"5.."}
 
-# Login events for a specific user
+# Login events for a specific user - NOTE: logs_table has no writer, so this
+# returns nothing today. Query the MySQL logs table instead (see "Login and
+# logout" above).
 {source="logs_table", subtype="Login"} |= "user_id\":12345"
 
 # API headers for debugging a specific endpoint
@@ -724,3 +744,29 @@ and do not necessarily make the same queries.
 Rather than leave a table that reads as current, the honest statement is: work out what still
 reads `logs`, `logs_emails`, `logs_events` and `logs_jobs` by grepping `iznik-batch` and
 `iznik-server-go`, and record the answer here. `logs_api` is already unreferenced in code.
+
+### Where `logs_emails` comes from
+
+`logs_emails` is how we answer "did you actually email me?".
+
+It is written by `mail:relay-logs:ingest` (`RelayLogIngestService`), which reads the outbound
+relay's maillog over ssh every ten minutes and groups the lines by postfix queue id. It keeps a
+byte offset and fetches only what was appended, about 5MB a run.
+
+Three things read the table, and all three treat it as evidence about a real member:
+
+- the moderator-only "recent emails to this user" endpoint in `iznik-server-go`
+- the GDPR user dump (up to 20,000 rows per user)
+- the AI support helper, which reads an **absent** row as "we never sent it" and a `250` as
+  "the recipient's mail server accepted it"
+
+Two things to know when reading a row:
+
+- **The relay runs two postfix instances.** Paced providers are handed to the second one over
+  a loopback hop, and that hop logs exactly like a delivery while having reached nothing but
+  the second instance. It is not recorded, so a paced message appears once, under the second
+  instance's queue id, with the real outcome. See the
+  [outbound relay runbook](../runbooks/outbound-relay-ip-warmup.md).
+- **A row with no status is not a failure.** A message still in flight when the slice ended
+  gets its row now and is filled in on a later run. The support helper reads a missing row as
+  "never sent", so an early incomplete row is better than none.

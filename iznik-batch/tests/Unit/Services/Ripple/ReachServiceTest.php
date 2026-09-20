@@ -5,6 +5,7 @@ namespace Tests\Unit\Services\Ripple;
 use App\Services\Ripple\ReachService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
 class ReachServiceTest extends TestCase
@@ -319,6 +320,31 @@ class ReachServiceTest extends TestCase
         $this->assertStringContainsString('-0.19 51.41', $geom['inner']);
     }
 
+    public function test_catchment_geometry_asks_for_the_coarse_form_only_when_told(): void
+    {
+        // The region-scale form is what stops a late tick costing seconds and megabytes
+        // on a shared compute slot, but it is opt-in per call: the ModTools reach map and
+        // the explorer's catchment tab want the real outline.
+        Http::fake(['*catchment*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+        ], 200)]);
+
+        $this->service()->catchmentGeometry(51.5, -0.1, 12.5, true);
+        Http::assertSent(fn ($request) => ($request->data()['coarse'] ?? null) === '1');
+    }
+
+    public function test_catchment_geometry_omits_the_coarse_parameter_by_default(): void
+    {
+        // Omitted rather than sent as 0, so the request an old routing server sees is
+        // byte-for-byte the one it saw before this existed.
+        Http::fake(['*catchment*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+        ], 200)]);
+
+        $this->service()->catchmentGeometry(51.5, -0.1, 12.5);
+        Http::assertSent(fn ($request) => !array_key_exists('coarse', $request->data()));
+    }
+
     public function test_catchment_geometry_tolerates_absent_bounds(): void
     {
         // Old routing servers (or an eroded-to-nothing inner) simply omit the bounds:
@@ -333,6 +359,58 @@ class ReachServiceTest extends TestCase
         $this->assertStringStartsWith('POLYGON((', $geom['wkt']);
         $this->assertNull($geom['outer']);
         $this->assertNull($geom['inner']);
+    }
+
+    public function test_catchment_geometry_says_so_when_the_origin_is_off_the_map(): void
+    {
+        Log::spy();
+        Http::fake(['*catchment*' => Http::response(['catchment' => null, 'onGraph' => false], 200)]);
+
+        $this->assertNull($this->service()->catchmentGeometry(54.1509, -4.4814, 30));
+
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message, $context = []) => str_contains((string) $message, 'outside the routing map'));
+    }
+
+    public function test_catchment_geometry_reports_an_empty_reach_on_the_map_differently(): void
+    {
+        Log::spy();
+        Http::fake(['*catchment*' => Http::response(['catchment' => null, 'onGraph' => true], 200)]);
+
+        $this->assertNull($this->service()->catchmentGeometry(51.5, -0.1, 30));
+
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message, $context = []) => str_contains((string) $message, 'came back empty'));
+    }
+
+    public function test_catchment_batch_says_so_when_an_origin_is_off_the_map(): void
+    {
+        Log::spy();
+        Http::fake(['*catchment*' => Http::response(['catchment' => null, 'onGraph' => false], 200)]);
+
+        $out = $this->service()->catchmentGeometriesBatch([['lat' => 54.1509, 'lng' => -4.4814, 'minutes' => 30]]);
+
+        $this->assertSame([null], $out);
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message, $context = []) => str_contains((string) $message, 'outside the routing map'));
+    }
+
+    public function test_catchment_batch_stays_quiet_for_an_empty_reach_on_the_map(): void
+    {
+        Log::spy();
+        Http::fake(['*catchment*' => Http::response(['catchment' => null, 'onGraph' => true], 200)]);
+
+        $out = $this->service()->catchmentGeometriesBatch([['lat' => 51.5, 'lng' => -0.1, 'minutes' => 30]]);
+
+        $this->assertSame([null], $out);
+        Log::shouldNotHaveReceived('warning');
+    }
+
+    public function test_catchment_geometry_does_not_guess_when_the_server_omits_ongraph(): void
+    {
+        Log::spy();
+        Http::fake(['*catchment*' => Http::response(['catchment' => null], 200)]);
+
+        $this->assertNull($this->service()->catchmentGeometry(51.5, -0.1, 30));
+
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message, $context = []) => str_contains((string) $message, 'came back empty'));
     }
 
     public function test_schedule_omits_both_overflow_lanes_by_default(): void
@@ -607,5 +685,147 @@ class ReachServiceTest extends TestCase
         $this->service()->computeSchedule(51.5, -0.1);
 
         Http::assertSent(fn ($request) => str_contains($request->url(), 'cluster_max_wedges=3'));
+    }
+
+
+    public function test_label_verdicts_with_discover_returns_both_lists(): void
+    {
+        Http::fake(['*reach-eval*' => Http::response([
+            'results' => [['msgid' => 1, 'verdict' => 'out'], ['msgid' => 2, 'verdict' => 'nolabels']],
+            'discovered' => [['msgid' => 7, 'verdict' => 'in'], ['msgid' => 8, 'verdict' => 'in']],
+        ])]);
+
+        $eval = app(ReachService::class)->labelVerdictsWithDiscover(51.5, -0.1, [1, 2]);
+
+        // 'nolabels' is absence (the caller keeps its grid verdict), 'out' is a verdict.
+        $this->assertSame([1 => 'out'], $eval['verdicts']);
+        $this->assertSame([7, 8], $eval['discovered']);
+        Http::assertSent(fn ($req) => ($req['discover'] ?? false) === true);
+    }
+
+    public function test_label_verdicts_with_discover_calls_even_with_no_candidates(): void
+    {
+        // A member covered by NO grid can still be admitted by a stored label,
+        // so an empty candidate list must still ask the routing server.
+        Http::fake(['*reach-eval*' => Http::response([
+            'results' => [],
+            'discovered' => [['msgid' => 7, 'verdict' => 'in']],
+        ])]);
+
+        $eval = app(ReachService::class)->labelVerdictsWithDiscover(51.5, -0.1, []);
+
+        $this->assertSame([7], $eval['discovered']);
+    }
+
+
+
+    /**
+     * An outage has to be visible from outside the site.
+     *
+     * Every gate in front of these verdicts now fails open on purpose - a
+     * reply goes through, no "hasn't reached you yet" notice is shown - so
+     * nothing a member sees says anything is wrong. On 2026-09-02 the engine
+     * was down sixteen hours and the way we found out was a member asking why
+     * a post three miles away had not reached her.
+     */
+    public function test_an_unanswerable_reach_call_is_reported(): void
+    {
+        Log::spy();
+        Http::fake(['*reach-eval*' => Http::response(null, 503)]);
+
+        app(ReachService::class)->labelVerdicts(51.5, -0.1, [1]);
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($msg) => str_contains((string) $msg, 'reach evaluation unavailable'))
+            ->once();
+    }
+
+    /**
+     * One report a minute per process, no matter how many calls fail. These
+     * calls sit on the feed's hot path, so an outage would otherwise post
+     * thousands of identical alerts a minute and bury everything else.
+     */
+    public function test_repeated_failures_report_once_a_minute(): void
+    {
+        Log::spy();
+        Http::fake(['*reach-eval*' => Http::response(null, 503)]);
+
+        $svc = app(ReachService::class);
+        $svc->labelVerdicts(51.5, -0.1, [1]);
+        $svc->labelVerdicts(51.5, -0.1, [2]);
+        $svc->labelVerdicts(51.5, -0.1, [3]);
+
+        Http::assertSentCount(3);
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($msg) => str_contains((string) $msg, 'reach evaluation unavailable'))
+            ->once();
+    }
+
+    /** A working routing server reports nothing. */
+    public function test_a_successful_reach_call_reports_nothing(): void
+    {
+        Log::spy();
+        Http::fake(['*reach-eval*' => Http::response(['results' => [['msgid' => 1, 'verdict' => 'in']]])]);
+
+        app(ReachService::class)->labelVerdicts(51.5, -0.1, [1]);
+
+        Log::shouldNotHaveReceived('warning');
+    }
+
+    public function test_label_eval_breaker_stops_calls_after_a_server_fault(): void
+    {
+        Http::fake(['*reach-eval*' => Http::response(null, 500)]);
+
+        $svc = app(ReachService::class);
+        $this->assertSame([], $svc->labelVerdicts(51.5, -0.1, [1]));
+        // The 500 opened the breaker: the next call must not touch HTTP at
+        // all - a digest run asks once per RECIPIENT, and thousands of 3s
+        // timeouts against a browning-out routing server would stall mail.
+        $this->assertSame([], $svc->labelVerdicts(51.5, -0.1, [2]));
+        Http::assertSentCount(1);
+
+        ReachService::resetLabelEvalBreaker();
+    }
+
+    public function test_label_eval_404_and_503_do_not_trip_the_breaker(): void
+    {
+        Http::fake(['*reach-eval*' => Http::response(null, 404)]);
+
+        $svc = app(ReachService::class);
+        $this->assertSame([], $svc->labelVerdicts(51.5, -0.1, [1]));
+        $this->assertSame([], $svc->labelVerdicts(51.5, -0.1, [2]));
+        // Expected states (endpoint not deployed yet) answer instantly, so
+        // every call still goes out.
+        Http::assertSentCount(2);
+    }
+
+    public function test_label_verdicts_skips_out_in_origin_group_area(): void
+    {
+        // out+origin_area = the member stands in the post's origin group's
+        // area, which the stored reach deliberately unions in: no verdict,
+        // the cell grid decides.
+        Http::fake(['*reach-eval*' => Http::response([
+            'results' => [
+                ['msgid' => 1, 'verdict' => 'out'],
+                ['msgid' => 2, 'verdict' => 'out', 'origin_area' => true],
+            ],
+        ])]);
+
+        $this->assertSame([1 => 'out'], app(ReachService::class)->labelVerdicts(51.5, -0.1, [1, 2]));
+    }
+
+    public function test_discovered_ids_narrowed_by_a_later_chunk_are_dropped(): void
+    {
+        // 1001 candidates = two chunks. Chunk 0 discovers id 1001 (it was
+        // not in chunk 0's asked set); chunk 1 then verdicts 1001 'out'.
+        // The verdict wins: never re-admit what the labels narrowed away.
+        Http::fake(['*reach-eval*' => Http::sequence()
+            ->push(['results' => [], 'discovered' => [['msgid' => 1001, 'verdict' => 'in']]])
+            ->push(['results' => [['msgid' => 1001, 'verdict' => 'out']], 'discovered' => []]),
+        ]);
+
+        $eval = app(ReachService::class)->labelVerdictsWithDiscover(51.5, -0.1, range(1, 1001));
+
+        $this->assertSame(['verdicts' => [1001 => 'out'], 'discovered' => []], $eval);
     }
 }

@@ -883,7 +883,10 @@ class WhatJobsService
         $cutoff = now()->subDays(self::MAX_AGE_DAYS)->timestamp;
 
         $reader = new \XMLReader();
-        if (!$reader->open($filePath)) {
+        // open() raises a warning for a missing file, which Laravel turns into an
+        // ErrorException before this check can run. Suppress it so the warning
+        // logged below is what callers actually see.
+        if (!@$reader->open($filePath)) {
             Log::warning('WhatJobs: failed to open feed file', ['path' => $filePath]);
             return;
         }
@@ -963,6 +966,14 @@ class WhatJobsService
             if ($this->isSpamJob($title, $description)) {
                 $this->dropStats['spam_content'] = ($this->dropStats['spam_content'] ?? 0) + 1;
                 continue;
+            }
+
+            // When the feed gives no postcode, the advert often prints one in its
+            // own text - exact where city/state guessing is not (measured
+            // 2026-08-31: 1.6% of jobs carry one; the same postcode-first path
+            // then pins them to the right district deterministically).
+            if ($zip === '' && preg_match('/\b[A-Za-z]{1,2}[0-9][0-9A-Za-z]?\s*[0-9][A-Za-z]{2}\b/', $description, $pcInText)) {
+                $zip = $pcInText[0];
             }
 
             $geom = $this->geocodeCityState($city, $state, $country, $geocodeCache, $zip);
@@ -1047,6 +1058,13 @@ class WhatJobsService
         array &$cache,
         string $zip = ''
     ): ?array {
+        // The feed decorates some city names with a qualifier suffix -
+        // "bloomsbury (neighbourhood)", "smithfield (area)". Photon's fuzzy
+        // matching tolerated those; the places geocoder is exact-then-prefix,
+        // so they surfaced as city_no_match after the 2026-08-31 cutover.
+        // Strip the qualifier before anything keys or queries on the city.
+        $city = trim(preg_replace('/\s*\([^)]*\)\s*$/', '', $city));
+
         if ($country === 'Guernsey') {
             $this->recordGeocodeFail('country_guernsey', $city, $state, $country);
             return null;
@@ -1103,7 +1121,13 @@ class WhatJobsService
 
             if (count($geo) && $geo[0]->geom) {
                 $bbox = $this->bboxFromWkt($geo[0]->geom);
-                if ($bbox) {
+                // Trust the cache only inside the UK envelope: each sync seeds
+                // itself from the previous run's jobs table, so one bad geocode
+                // (a Belfast cluster was stored in the Gulf of Guinea) otherwise
+                // survives every subsequent sync forever. An out-of-UK cached
+                // value falls through to a fresh geocode, which self-corrects
+                // the tuple in the table this run builds.
+                if ($bbox && $this->bboxWithinUK($bbox)) {
                     $cache[$cacheKey] = $bbox;
                     return $bbox;
                 }
@@ -1383,6 +1407,11 @@ class WhatJobsService
                 // e.g. East-of-England jobs landed at ~lat 51.5 (London). Map the
                 // extent to the right corners.
                 [$swlng, $nelat, $nelng, $swlat] = array_map('floatval', $props['extent']);
+                if (!$this->bboxWithinUK([$swlat, $swlng, $nelat, $nelng])) {
+                    // The geocoder ignored the bbox param - never accept (or
+                    // let the jobs-table cache memorise) an out-of-UK answer.
+                    continue;
+                }
                 return [$swlat, $swlng, $nelat, $nelng, $this->boxPoly($swlat, $swlng, $nelat, $nelng)];
             }
 
@@ -1394,6 +1423,9 @@ class WhatJobsService
                     if ($coords) {
                         $lat   = (float) $coords[1];
                         $lng   = (float) $coords[0];
+                        if (!$this->bboxWithinUK([$lat, $lng, $lat, $lng])) {
+                            continue; // same out-of-UK guard as the extent branch
+                        }
                         $swlng = $lng - 0.0005;
                         $swlat = $lat - 0.0005;
                         $nelat = $lat + 0.0005;
@@ -1406,6 +1438,22 @@ class WhatJobsService
         }
 
         return null;
+    }
+
+    /**
+     * True when a [swlat, swlng, nelat, nelng, ...] bbox centres inside the UK
+     * envelope (0.1 degree coastal margin). Both the geocoder (bbox param
+     * unenforced by Photon historically) and the jobs-table cache (self-
+     * seeding) have produced out-of-UK answers; Freegle only serves UK jobs,
+     * so nothing downstream can ever use one.
+     */
+    private function bboxWithinUK(array $b): bool
+    {
+        $lat = ($b[0] + $b[2]) / 2;
+        $lng = ($b[1] + $b[3]) / 2;
+
+        return $lat >= self::UK_SWLAT - 0.1 && $lat <= self::UK_NELAT + 0.1
+            && $lng >= self::UK_SWLNG - 0.1 && $lng <= self::UK_NELNG + 0.1;
     }
 
     private function bboxFromWkt(string $wkt): ?array
@@ -1679,8 +1727,14 @@ class WhatJobsService
         return $rows ? (float) $rows[0]->count : 1.0;
     }
 
-    private function getKeywords(string $str): array
+    private function getKeywords(?string $str): array
     {
+        // Feed jobs can arrive with no title (parseFeed yields title=null and
+        // jobs.title is nullable) — no title means no keyword signal.
+        if ($str === null) {
+            return [];
+        }
+
         $words = array_values(array_filter(
             array_map(fn ($w) => preg_replace('/[^A-Za-z]/', '', $w), explode(' ', $str)),
             fn ($w) => strlen($w) > 2

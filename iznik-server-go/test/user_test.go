@@ -609,6 +609,45 @@ func TestPostUserAddEmail(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 }
 
+func TestPostUserAddEmailLinksDonations(t *testing.T) {
+	// V1 linked unmatched donations to the user on every addEmail
+	// (User::assignUserToToDonation): a donation made under an email before that
+	// email was on any account sits with userid NULL, and adding the email
+	// claims it. Donations already linked to another account must not move.
+	db := database.DBConn
+	prefix := uniquePrefix("addemaildon")
+	userID := CreateTestUser(t, prefix, "User")
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	_, token := CreateTestSession(t, userID)
+
+	newEmail := prefix + "_payer@test.com"
+	db.Exec("INSERT INTO users_donations (userid, Payer, PayerDisplayName, GrossAmount, timestamp, TransactionID) VALUES (NULL, ?, ?, 5.00, NOW(), ?)",
+		newEmail, prefix, prefix+"_txn1")
+	db.Exec("INSERT INTO users_donations (userid, Payer, PayerDisplayName, GrossAmount, timestamp, TransactionID) VALUES (?, ?, ?, 10.00, NOW(), ?)",
+		otherID, newEmail, prefix, prefix+"_txn2")
+
+	payload := map[string]interface{}{
+		"action": "AddEmail",
+		"id":     userID,
+		"email":  newEmail,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// The unmatched donation is now linked to the user.
+	var linked int64
+	db.Raw("SELECT COUNT(*) FROM users_donations WHERE userid = ? AND TransactionID = ?", userID, prefix+"_txn1").Scan(&linked)
+	assert.Equal(t, int64(1), linked)
+
+	// The donation on the other account stays put.
+	var kept int64
+	db.Raw("SELECT COUNT(*) FROM users_donations WHERE userid = ? AND TransactionID = ?", otherID, prefix+"_txn2").Scan(&kept)
+	assert.Equal(t, int64(1), kept)
+}
+
 func TestPostUserAddEmailAlreadyUsed(t *testing.T) {
 	prefix := uniquePrefix("addemaildup")
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
@@ -1469,6 +1508,131 @@ func TestPatchUserMuteChitchat(t *testing.T) {
 	var modstatus string
 	db.Raw("SELECT COALESCE(newsfeedmodstatus, '') FROM users WHERE id = ?", targetID).Scan(&modstatus)
 	assert.Equal(t, "Suppressed", modstatus)
+}
+
+// TestPatchUserChatmodstatusFully is the regression test for the field being
+// absent from UserPatchRequest: BodyParser dropped it, so PATCH returned 200
+// and left the column untouched. Asserting the DB value, not the status code,
+// is the point - the old code passed any status-only assertion.
+func TestPatchUserChatmodstatusFully(t *testing.T) {
+	prefix := uniquePrefix("patchchatmod")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	payload := map[string]interface{}{
+		"id":            targetID,
+		"chatmodstatus": "Fully",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var chatmodstatus string
+	db.Raw("SELECT COALESCE(chatmodstatus, '') FROM users WHERE id = ?", targetID).Scan(&chatmodstatus)
+	assert.Equal(t, "Fully", chatmodstatus)
+
+	// The change is invisible to the member, so it has to be auditable.
+	var logs int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = 'User' AND subtype = 'Edit' AND user = ? AND byuser = ? AND text LIKE '%Fully%'",
+		targetID, modID).Scan(&logs)
+	assert.Equal(t, int64(1), logs, "setting chatmodstatus should be logged")
+}
+
+func TestPatchUserChatmodstatusBackToModerated(t *testing.T) {
+	prefix := uniquePrefix("patchchatmodback")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	db.Exec("UPDATE users SET chatmodstatus = 'Fully' WHERE id = ?", targetID)
+
+	payload := map[string]interface{}{
+		"id":            targetID,
+		"chatmodstatus": "Moderated",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var chatmodstatus string
+	db.Raw("SELECT COALESCE(chatmodstatus, '') FROM users WHERE id = ?", targetID).Scan(&chatmodstatus)
+	assert.Equal(t, "Moderated", chatmodstatus)
+}
+
+// An unrecognised value must be refused rather than reaching the ENUM column,
+// where non-strict MySQL coerces it to the empty string - which is neither
+// Moderated nor Fully, so the member silently stops being spam-checked at all.
+func TestPatchUserChatmodstatusInvalidRejected(t *testing.T) {
+	prefix := uniquePrefix("patchchatmodbad")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	payload := map[string]interface{}{
+		"id":            targetID,
+		"chatmodstatus": "Bogus",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+
+	var chatmodstatus string
+	db.Raw("SELECT COALESCE(chatmodstatus, '') FROM users WHERE id = ?", targetID).Scan(&chatmodstatus)
+	assert.Equal(t, "Moderated", chatmodstatus, "rejected value must not reach the column")
+}
+
+// A member of a shared group who is NOT a mod there must not be able to
+// shadow-ban another member.
+func TestPatchUserChatmodstatusNonModForbidden(t *testing.T) {
+	prefix := uniquePrefix("patchchatmodnonmod")
+	db := database.DBConn
+
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, otherID, groupID, "Member")
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, otherToken := CreateTestSession(t, otherID)
+
+	payload := map[string]interface{}{
+		"id":            targetID,
+		"chatmodstatus": "Fully",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+otherToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+
+	var chatmodstatus string
+	db.Raw("SELECT COALESCE(chatmodstatus, '') FROM users WHERE id = ?", targetID).Scan(&chatmodstatus)
+	assert.Equal(t, "Moderated", chatmodstatus)
 }
 
 func TestPatchUserPasswordBySupportUser(t *testing.T) {
@@ -3101,16 +3265,23 @@ func TestGetUserMembershipsPostingStatus(t *testing.T) {
 	CreateTestMembership(t, prohibitedUser, groupID, "Member")
 	db.Exec("UPDATE memberships SET ourPostingStatus = 'PROHIBITED' WHERE userid = ? AND groupid = ?", prohibitedUser, groupID)
 
+	// A membership rippling created for the poster (rippled = 1) carries no posting
+	// status because no moderator ever set one. It must not read as MODERATED.
+	rippledUser := CreateTestUser(t, prefix+"_rip", "User")
+	CreateTestMembership(t, rippledUser, groupID, "Member")
+	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", rippledUser, groupID)
+
 	// Fetch each user with modtools=true and check posting status.
 	for _, tc := range []struct {
 		name     string
 		uid      uint64
-		expected string
+		expected interface{}
 	}{
 		{"NULL→MODERATED", nullUser, "MODERATED"},
 		{"DEFAULT stays DEFAULT", defaultUser, "DEFAULT"},
 		{"MODERATED stays MODERATED", moderatedUser, "MODERATED"},
 		{"PROHIBITED stays PROHIBITED", prohibitedUser, "PROHIBITED"},
+		{"NULL on a rippled membership stays unset", rippledUser, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", tc.uid, modToken)

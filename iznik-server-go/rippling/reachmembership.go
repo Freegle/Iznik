@@ -8,23 +8,31 @@ import (
 	"gorm.io/gorm"
 )
 
-// Point-in-reach for specific posts, answered from the stored cell grid
-// (plans/2026-08-24-rippling-reach-raster-storage.md): a PK fetch of the
-// row's polygon_cells plus a run-stream probe replaces the ST_Contains
-// against a megabyte polygon that these gates used to pay per row. An
-// undecidable row answers NOT in reach, which for every caller here is the
-// fail-closed direction (a gate holds a reply; a "not reached yet" notice
-// shows).
+// Point-in-reach for specific posts, answered by the routing server from the
+// stored labels (plans/2026-08-24-rippling-reach-raster-storage.md): one
+// batched call replaces the ST_Contains against a megabyte polygon that these
+// gates used to pay per row.
+//
+// The answer has two halves, and callers must read both. InReach is whether
+// the point is covered; Decided is whether the routing server said anything at
+// all. A row it could not answer for - no stored label yet, or the routing
+// server down - is NOT the same as a refusal, and callers fail OPEN on it: the
+// reply goes through and no "hasn't reached you yet" notice shows. A refusal
+// still holds. An outage of the routing server must not silently turn into
+// every member being told a post three miles away has not reached them.
 
-// ReachRowInfo is one reach row's origin bookkeeping plus the decided answer
-// for the query point.
+// ReachRowInfo is one reach row's origin bookkeeping plus the answer for the
+// query point: InReach is the verdict, Decided says whether there was one.
 type ReachRowInfo struct {
 	Msgid    uint64
 	Lat      *float64
 	Lng      *float64
 	Schedule *string
 	Arrival  *time.Time
-	InReach  bool
+	// Status is rippling_reach.status verbatim: expanding | stopped | done | held.
+	Status  string
+	InReach bool
+	Decided bool
 }
 
 // ReachMembership fetches the listed reach rows (no status filter - callers
@@ -44,32 +52,29 @@ func ReachMembership(db *gorm.DB, msgids []uint64, lng, lat float64) (map[uint64
 		Lng      *float64   `gorm:"column:lng"`
 		Schedule *string    `gorm:"column:schedule"`
 		Arrival  *time.Time `gorm:"column:arrival"`
-		Cells    []byte     `gorm:"column:cells"`
+		Status   string     `gorm:"column:status"`
 	}
 	if err := db.Table("rippling_reach rr").
-		Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival, rr.polygon_cells AS cells").
+		Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival, rr.status").
 		Where("rr.msgid IN ?", msgids).
 		Scan(&rows).Error; err != nil {
 		log.Printf("reach membership fetch failed: %v", err)
 		return out, err
 	}
 
-	var undecided []uint64
-	for _, r := range rows {
-		info := ReachRowInfo{Msgid: r.Msgid, Lat: r.Lat, Lng: r.Lng, Schedule: r.Schedule, Arrival: r.Arrival}
-		if in, ok := CellSetContains(r.Cells, lng, lat); ok {
-			info.InReach = in
-			out[r.Msgid] = info
-			continue
-		}
-		// No usable cells - cannot happen for healthy rows (every writer
-		// stores cells); fail closed, and say so rather than silently.
-		out[r.Msgid] = info
-		undecided = append(undecided, r.Msgid)
-	}
+	// The stored label IS the reach record: the exact road-network answer at
+	// the post's current budget, from ONE batched routing call. There is no
+	// grid fallback; routing is a dependency here. A missing verdict - the
+	// label not stored yet, or the routing server unreachable - is recorded
+	// as undecided rather than as a refusal, so callers can fail open on it.
+	verdicts := LabelVerdicts(lat, lng, msgids)
 
-	if len(undecided) > 0 {
-		log.Printf("reach membership: %d rows undecidable with no legacy fallback (msgids %v)", len(undecided), undecided)
+	for _, r := range rows {
+		info := ReachRowInfo{Msgid: r.Msgid, Lat: r.Lat, Lng: r.Lng, Schedule: r.Schedule, Arrival: r.Arrival, Status: r.Status}
+		verdict := verdicts[r.Msgid]
+		info.InReach = verdict == LabelVerdictIn
+		info.Decided = verdict == LabelVerdictIn || verdict == LabelVerdictOut
+		out[r.Msgid] = info
 	}
 
 	return out, nil

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-17
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/partnerships.vue
@@ -22,7 +22,7 @@ It also generates the quarterly statistics spreadsheets councils receive.
 ## Who can see it
 
 Members of the **Partnerships** team, plus Support and Admin. Add someone on the
-[Teams](01-getting-started.md) page and the Partnerships entry appears in their left-hand
+[Teams](getting-started.md) page and the Partnerships entry appears in their left-hand
 menu the next time their session refreshes.
 
 The team's email address (set on the Teams page) is where the renewal reminders go.

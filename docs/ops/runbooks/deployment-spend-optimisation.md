@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-12
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 ---
 
@@ -145,7 +145,7 @@ still flows before moving on:
 
 ## Related
 
-- [Monitoring and logging](../03-monitoring-and-logging.md) - where logs go (Loki), which
+- [Monitoring and logging](../monitoring-and-logging.md) - where logs go (Loki), which
   is why local access-log retention can be shortened.
-- [Domains, services and runbooks](../04-domains-services-and-runbooks.md) - the service
+- [Domains, services and runbooks](../domains-services-and-runbooks.md) - the service
   map, including the mail and spatial stacks.
