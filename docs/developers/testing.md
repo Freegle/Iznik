@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-17
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 covers:
   - docs/developers/reference/coding-standards.md
