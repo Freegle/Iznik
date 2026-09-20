@@ -46,7 +46,8 @@ const avatar = computed(() => {
 })
 
 const snippet = computed(() => {
-  const src = props.topic.raw || props.topic.cooked?.replace(/<[^>]+>/g, '') || ''
+  const src =
+    props.topic.raw || props.topic.cooked?.replace(/<[^>]+>/g, '') || ''
   let ret = src
     .replace('\n', ' ')
     .replace(/!\[image.*?\]/g, '')

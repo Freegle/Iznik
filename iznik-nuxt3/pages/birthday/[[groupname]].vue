@@ -776,7 +776,8 @@ onMounted(async () => {
   border-radius: 50%;
   z-index: 2;
   top: -45px;
-  box-shadow: inset -5px -1px $color-white,
+  box-shadow:
+    inset -5px -1px $color-white,
     inset -70px 2px rgba(255, 255, 255, 0.1);
   display: flex;
   align-items: center;
@@ -982,7 +983,8 @@ onMounted(async () => {
   padding: 2rem;
   background: linear-gradient(135deg, #f8f9ff, #e3f2fd);
   border-radius: 15px;
-  transition: transform var(--transition-slow),
+  transition:
+    transform var(--transition-slow),
     box-shadow var(--transition-slow);
 }
 

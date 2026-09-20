@@ -69,6 +69,15 @@
               :geojson="coverageGeoJSON"
               :options="isochroneOptions"
             />
+            <!-- How far away people can be and still see THIS member's posts, when they have set
+                 that separately from what they see. Drawn as an outline with no fill, under no
+                 circumstances filled: it is usually the WIDER of the two, so a second fill would
+                 wash out the shape that answers "what will I see". -->
+            <l-geo-json
+              v-if="myPostsReachGeoJSON"
+              :geojson="myPostsReachGeoJSON"
+              :options="myPostsReachOptions"
+            />
             <!-- Explicit WKT overrides (e.g. the fixed Essex boundary) are a nearby/override-only
                  concept, so they stay gated. -->
             <div v-if="showIsochrones">
@@ -115,9 +124,11 @@ import {
   smoothGeoJSON,
   buildCoverageGeoJSON,
 } from '~/composables/useReachPolygon'
+import { useReachOverlay } from '~/composables/useReachOverlay'
 import {
   isWithinDistance,
   filterMessagesByDistance,
+  browseSliderMinuteCheck,
 } from '~/composables/useDistance'
 import { distinctGroupIds } from '~/composables/useMessageDedup'
 import { BROWSE_DISTANCE_UNLIMITED, ISOCHRONE_COLOR } from '~/constants'
@@ -252,6 +263,26 @@ const manyToShow = ref(20)
 const shownMany = ref(false)
 const lastBounds = ref(null)
 const lastBoundsFetch = ref(null)
+
+// The last search we actually asked the server for, and what it gave back.
+//
+// getMessages() is driven by several watchers, and one of them fires on a timer the
+// member never sees: the navbar polls the unseen count every 60s, MessageList reloads
+// the feed whenever that count rises, and nearbyBounds returns a fresh array each time,
+// so the bounds watcher runs on every reload whether or not the bounds moved. While a
+// search is showing, that re-asked the same question about once a minute - measured on a
+// live search, 36 identical queries over 35 minutes, every one returning the same 14
+// results (Discourse 10001/10). messageStore.search() empties the store before the new
+// answer arrives, so each repeat tore down the list the member was reading.
+//
+// A search still runs whenever anything about it changes - the term, the filters, the
+// area, the sort - because all of that is in the key. What it will not do is ask the
+// same question twice in a row.
+const lastSearchKey = ref(null)
+const lastSearchResult = ref(null)
+
+// The map-bounds fetch currently in flight, keyed on its arguments. See fetchInBoundsOnce.
+const inflightBoundsFetch = { key: null, promise: null }
 const zoom = ref(5)
 const destroyed = ref(false)
 const mapIdle = ref(0)
@@ -271,7 +302,7 @@ const mapHeight = computed(() => {
 const mapOptions = computed(() => {
   return {
     zoomControl: true,
-    dragging: process.client && window?.L?.Browser?.mobile,
+    dragging: import.meta.client && window?.L?.Browser?.mobile,
     touchZoom: true,
     scrollWheelZoom: false,
     bounceAtZoomLimits: true,
@@ -320,7 +351,7 @@ const groupsInBounds = computed(() => {
     const groups = mapIdle.value ? allGroups.value : []
     const boundsObj = mapObject.value ? mapObject.value.getBounds() : null
 
-    if (!process.client && boundsObj) {
+    if (!import.meta.client && boundsObj) {
       // SSR - return all for SEO.
       for (const ix in groups) {
         const group = groups[ix]
@@ -373,7 +404,11 @@ const groupsInBounds = computed(() => {
 // what the map markers and the coverage hull are drawn from, so the map tracks
 // the slider the same way the list does.
 const distanceFilteredMessages = computed(() => {
-  return filterMessagesByDistance(messageList.value, props.selectedMaxDistance)
+  return filterMessagesByDistance(
+    messageList.value,
+    props.selectedMaxDistance,
+    browseSliderMinuteCheck()
+  )
 })
 
 const messagesForMap = computed(() => {
@@ -382,12 +417,22 @@ const messagesForMap = computed(() => {
     : []
 })
 
+// The member's real drive-time reach, traced over the road network by the routing server and
+// published by the distance slider (see useReachOverlay). Null on pages with no slider, when
+// there's no known location, or if routing was unavailable.
+const { reachGeoJSON } = useReachOverlay()
+
+// The outbound half of the same control: how far away someone can be and still see this member's
+// posts. Only ever non-null once they have set it separately from what they see - while the two are
+// linked there is one shape and one slider, and drawing the same outline twice would just thicken it.
+const { reachGeoJSON: myPostsReachRaw } = useReachOverlay('myPosts')
+
 // A smoothed convex hull enclosing the posts currently shown, as an indication
 // of the area covered. The true reach is travel-time-based (not a simple
 // radius), so this is only an approximation - but it shrinks as the slider is
 // pulled in, giving a visual sense of coverage. See buildCoverageGeoJSON for why
 // this is an outward-rounded hull rather than Chaikin smoothing.
-const coverageGeoJSON = computed(() => {
+const hullGeoJSON = computed(() => {
   // Drawn for BOTH the nearby and "all my communities" views (not gated on showIsochrones,
   // which is nearby-only). It is just a hull of the posts currently shown, so it adapts to the
   // distance slider the same way on either view. Falls back to null (no polygon) when there
@@ -397,6 +442,42 @@ const coverageGeoJSON = computed(() => {
     .map((m) => [m.lng, m.lat])
   return buildCoverageGeoJSON(points)
 })
+
+// Prefer the real reach; fall back to the hull. The hull only ever answered "where did the
+// posts we happen to have land", which drifts with whatever is currently for offer and says
+// nothing about travel time. The reach answers the question the slider actually asks, so it
+// wins whenever we have it.
+const coverageGeoJSON = computed(() => {
+  // Stop feeding the layer once we are going away. vue-leaflet reacts to a new
+  // geojson by removing the old layers, and a removal that lands after the map's
+  // renderer has gone throws inside leaflet (_renderer._removePath of undefined).
+  // Nobody's session broke - it fires during teardown - but it is our update
+  // driving it, so hold still while unmounting. Matches the destroyed guard used
+  // by the async paths that can also outlive the component.
+  if (destroyed.value) {
+    return null
+  }
+
+  return reachGeoJSON.value || hullGeoJSON.value
+})
+
+// Same teardown guard as coverageGeoJSON: vue-leaflet removes the old layers when the geojson
+// changes, and a removal landing after the renderer has gone throws inside leaflet. There is no
+// hull fallback here - an outbound reach we have not been given is simply not drawn.
+const myPostsReachGeoJSON = computed(() =>
+  destroyed.value ? null : myPostsReachRaw.value
+)
+
+// Outline only, dashed, no fill - see the template. Same colour as the inbound reach so the two
+// read as two extents of one thing rather than two unrelated areas, and dashed so which is which
+// is unambiguous where they nearly coincide.
+const myPostsReachOptions = computed(() => ({
+  fill: false,
+  color: ISOCHRONE_COLOR,
+  weight: 2,
+  opacity: 0.9,
+  dashArray: '6 5',
+}))
 
 const isochrones = computed(() => {
   // There's no longer a per-user isochrone polygon to fall back on - reach is worked
@@ -429,13 +510,20 @@ const isochroneGEOJSONs = computed(() => {
 const isochroneOptions = computed(() => {
   // Faded fill so post pins remain clearly visible; soft border echoes the
   // rippling explorer's reach polygon style.
+  //
+  // The BORDER carries the shape, so it is nearly opaque. These settings were tuned for the
+  // old post hull, which was a small compact ring sitting right among the pins - there, a
+  // 0.5-opacity line read fine. The real travel-time reach is far bigger and more ragged,
+  // its boundary sits out among busy OSM tiles rather than next to the posts, and at 0.5 it
+  // disappeared into them entirely (checked in a browser: the overlay was drawing correctly
+  // and was simply not visible). The fill stays low for the same reason it always was.
   return {
     fillColor: ISOCHRONE_COLOR,
     fill: true,
     fillOpacity: 0.12,
     color: ISOCHRONE_COLOR,
     weight: 2,
-    opacity: 0.5,
+    opacity: 0.9,
   }
 })
 
@@ -444,8 +532,16 @@ const messageIds = computed(() => {
 })
 
 const secondaryMessagesForMap = computed(() => {
-  const withinDistance = (m) =>
-    isWithinDistance(m.distance, props.selectedMaxDistance)
+  const minuteCheck = browseSliderMinuteCheck()
+  const withinDistance = (m) => {
+    // Unlimited first: with no distance limit chosen, nothing may be
+    // filtered, whatever the road-minutes budget would say (the primary
+    // list's filterMessagesByDistance short-circuits the same way).
+    if (props.selectedMaxDistance === BROWSE_DISTANCE_UNLIMITED) return true
+    const road = minuteCheck ? minuteCheck(m) : null
+    if (road !== null) return road
+    return isWithinDistance(m.distance, props.selectedMaxDistance)
+  }
 
   if (secondaryMessageList.value?.length > 200) {
     // So many posts that the precise numbers no longer matter that much.  So return all the ones we have fetched
@@ -556,6 +652,7 @@ watch(
   () => props.type,
   () => {
     lastBounds.value = null
+    lastSearchKey.value = null
 
     if (zoom.value >= props.postZoom || props.search) {
       getMessages()
@@ -567,6 +664,7 @@ watch(
   () => props.search,
   () => {
     lastBounds.value = null
+    lastSearchKey.value = null
     getMessages()
   }
 )
@@ -575,6 +673,7 @@ watch(
   () => props.groupid,
   (groupid) => {
     lastBounds.value = null
+    lastSearchKey.value = null
 
     if (groupid) {
       // Use the bounding box for the group.
@@ -689,7 +788,7 @@ async function ready() {
   emit('update:ready', true)
   mapObject.value = map.value.leafletObject
 
-  if (process.client && mapObject.value) {
+  if (import.meta.client && mapObject.value) {
     try {
       mapObject.value.fitBounds(props.initialBounds)
 
@@ -698,15 +797,12 @@ async function ready() {
 
       const runtimeConfig = useRuntimeConfig()
 
-      const { Geocoder } = await import('leaflet-control-geocoder/src/control')
-      const { Photon } = await import(
-        'leaflet-control-geocoder/src/geocoders/photon'
-      )
+      const { Geocoder, geocoders } = await import('leaflet-control-geocoder')
 
       new Geocoder({
         placeholder: 'Search for a place...',
         defaultMarkGeocode: false,
-        geocoder: new Photon({
+        geocoder: new geocoders.Photon({
           geocodingQueryParams: {
             bbox: '-7.57216793459, 49.959999905, 1.68153079591, 58.6350001085',
           },
@@ -735,15 +831,27 @@ async function ready() {
 
             // For some reason we need to take a copy of the latlng bounds in the event before passing it to
             // flyToBounds.
-            const flyTo = e.geocode.bbox
+            const flyTo = e.geocode?.bbox
             const L = await import('leaflet/dist/leaflet-src.esm')
-            const newBounds = new L.LatLngBounds(
-              new L.LatLng(flyTo.getSouthWest().lat, flyTo.getSouthWest().lng),
-              new L.LatLng(flyTo.getNorthEast().lat, flyTo.getNorthEast().lng)
-            )
-            // Move the map to the location we've found.
-            map.value.leafletObject.flyToBounds(newBounds)
-            emit('searched')
+
+            // Not every geocoder result carries a usable bounding box, and
+            // reading .lat off the missing corner threw for 9 members. Fall
+            // back to the point itself, which every result has.
+            const sw = flyTo?.getSouthWest?.()
+            const ne = flyTo?.getNorthEast?.()
+
+            if (sw && ne) {
+              const newBounds = new L.LatLngBounds(
+                new L.LatLng(sw.lat, sw.lng),
+                new L.LatLng(ne.lat, ne.lng)
+              )
+              // Move the map to the location we've found.
+              map.value.leafletObject.flyToBounds(newBounds)
+              emit('searched')
+            } else if (e.geocode?.center) {
+              map.value.leafletObject.flyTo(e.geocode.center)
+              emit('searched')
+            }
           }
         })
         .addTo(mapObject.value)
@@ -782,6 +890,63 @@ function idle() {
   } catch (e) {
     console.error('Error in map idle', e)
   }
+}
+
+// Ask the server for a search, unless it is the same question we just asked. See
+// lastSearchKey above for why this is worth guarding.
+async function searchOnce(params) {
+  // A ref reaching here used to throw "Converting circular structure to JSON"
+  // and take the whole page with it - JSON.stringify walks the ref's own `dep`
+  // and finds the cycle. The unwrapping below is the real fix; this is so that
+  // the next time somebody passes a reactive value the worst outcome is a
+  // missed cache hit rather than a broken browse page.
+  let key = null
+  try {
+    key = JSON.stringify(params)
+  } catch (e) {
+    console.warn('Search params are not serialisable; skipping the cache', e)
+  }
+
+  if (key !== null && key === lastSearchKey.value && lastSearchResult.value) {
+    return lastSearchResult.value
+  }
+
+  const results = await messageStore.search(params)
+  lastSearchKey.value = key
+  lastSearchResult.value = results
+
+  return results
+}
+
+// Ask the server for the posts in a bounding box, unless an identical ask is still in
+// flight - then share that one. The l-map above is wired with both v-model:bounds and
+// @update:bounds="idle", so one settled map runs getMessages() twice with the same
+// bounds: idle() synchronously, the bounds watcher on the next flush. The two fetches
+// then raced to replace the markers and the coverage hull, and Leaflet removed a layer
+// whose renderer had never attached ("_removePath of undefined", Sentry NUXT3-DC6 and
+// DS0 - the breadcrumbs show the paired "GetMessages - moved" logs right before it).
+// Only an in-flight ask is shared: a later ask for the same box, such as the feed
+// reloading when the unseen count rises, still goes to the server.
+function fetchInBoundsOnce(swlat, swlng, nelat, nelng, groupid) {
+  const key = JSON.stringify([swlat, swlng, nelat, nelng, groupid ?? null])
+
+  if (inflightBoundsFetch.key === key && inflightBoundsFetch.promise) {
+    return inflightBoundsFetch.promise
+  }
+
+  const promise = messageStore
+    .fetchInBounds(swlat, swlng, nelat, nelng, groupid)
+    .finally(() => {
+      if (inflightBoundsFetch.promise === promise) {
+        inflightBoundsFetch.key = null
+        inflightBoundsFetch.promise = null
+      }
+    })
+
+  inflightBoundsFetch.key = key
+  inflightBoundsFetch.promise = promise
+
+  return promise
 }
 
 async function getMessages() {
@@ -832,7 +997,7 @@ async function getMessages() {
     if (props.search) {
       // Search within the bounds of the map.
       console.log('GetMessages - moved, search within map bounds')
-      ret = await messageStore.search({
+      ret = await searchOnce({
         messagetype: props.type,
         search: props.search,
         swlat,
@@ -843,7 +1008,7 @@ async function getMessages() {
     } else {
       // Just fetch the bounds of the map.
       console.log('GetMessages - moved, fetch within map bounds')
-      ret = await messageStore.fetchInBounds(swlat, swlng, nelat, nelng)
+      ret = await fetchInBoundsOnce(swlat, swlng, nelat, nelng)
     }
   } else if (props.groupid) {
     // We have been asked to show a specific group.
@@ -851,7 +1016,7 @@ async function getMessages() {
       // So search within that group. On the Browse page, browse=1 additionally applies
       // the member's distance slider and sort so results match their filtered feed.
       console.log('GetMessages - search on specific group')
-      ret = await messageStore.search({
+      ret = await searchOnce({
         messagetype: props.type,
         search: props.search,
         groupids: [props.groupid],
@@ -865,7 +1030,7 @@ async function getMessages() {
       if (!mapHidden.value) {
         // Fetch all the messages in the map bounds too, so that we can show others as secondary.
         // No need to bother if the map isn't showing - they don't appear in the post list.
-        secondaryMessageList.value = await messageStore.fetchInBounds(
+        secondaryMessageList.value = await fetchInBoundsOnce(
           swlat,
           swlng,
           nelat,
@@ -893,7 +1058,7 @@ async function getMessages() {
         // whenever the capped viewport search filled up with out-of-feed posts
         // (Discourse 9933).
         console.log('GetMessages - search in nearby feed')
-        ret = await messageStore.search({
+        ret = await searchOnce({
           messagetype: props.type,
           search: props.search,
           browse: 1,
@@ -907,7 +1072,7 @@ async function getMessages() {
 
       if (props.search) {
         console.log('GetMessages - search within group bounds')
-        ret = await messageStore.search({
+        ret = await searchOnce({
           messagetype: props.type,
           search: props.search,
           swlat: groupbounds[0][0],
@@ -943,7 +1108,7 @@ async function getMessages() {
       console.log(
         'GetMessages - no location, no groups, search within map bounds'
       )
-      ret = await messageStore.search({
+      ret = await searchOnce({
         messagetype: props.type,
         search: props.search,
         swlat,
@@ -956,7 +1121,7 @@ async function getMessages() {
       console.log(
         'GetMessages - no location, no groups, fetch within map bounds'
       )
-      ret = await messageStore.fetchInBounds(swlat, swlng, nelat, nelng)
+      ret = await fetchInBoundsOnce(swlat, swlng, nelat, nelng)
     }
   } else if (myGroups.value?.length) {
     if (props.search) {
@@ -968,10 +1133,10 @@ async function getMessages() {
           'GetMessages - browse search across my communities',
           myGroupIds
         )
-        ret = await messageStore.search({
+        ret = await searchOnce({
           messagetype: props.type,
           search: props.search,
-          groupids: myGroupIds,
+          groupids: myGroupIds.value,
           browse: 1,
         })
       } else {
@@ -982,14 +1147,14 @@ async function getMessages() {
           groupbounds,
           myGroupIds
         )
-        ret = await messageStore.search({
+        ret = await searchOnce({
           messagetype: props.type,
           search: props.search,
           swlat: groupbounds[0][0],
           swlng: groupbounds[0][1],
           nelat: groupbounds[1][0],
           nelng: groupbounds[1][1],
-          groupids: myGroupIds,
+          groupids: myGroupIds.value,
         })
       }
     } else {
@@ -998,7 +1163,7 @@ async function getMessages() {
       ret = await messageStore.fetchMyGroups()
 
       // Get the messages in the map bounds too, so that we can show others as secondary.
-      secondaryMessageList.value = await messageStore.fetchInBounds(
+      secondaryMessageList.value = await fetchInBoundsOnce(
         swlat,
         swlng,
         nelat,
@@ -1008,7 +1173,7 @@ async function getMessages() {
   } else {
     // We have no groups, so fetch the messages in the map bounds.
     console.log('GetMessages - no groups, fetch in map bounds')
-    ret = await messageStore.fetchInBounds(swlat, swlng, nelat, nelng)
+    ret = await fetchInBoundsOnce(swlat, swlng, nelat, nelng)
   }
 
   if (ret && !destroyed.value) {

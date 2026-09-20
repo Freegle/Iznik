@@ -142,14 +142,17 @@ want() { [ -z "$ONLY" ] || [[ ",$ONLY," == *",$1,"* ]]; }  # component selected?
 cd "$LOCAL_REPO" || die "cannot cd $LOCAL_REPO"
 log "fetching origin/$BRANCH ..."
 $DRY_RUN || git fetch origin "$BRANCH" >/dev/null 2>&1 || die "git fetch failed"
-TARGET_COMMIT="$(git rev-parse --short "origin/$BRANCH")" || die "no origin/$BRANCH"
-log "target commit: $TARGET_COMMIT  nodes: $DEPLOY_NODES  only: ${ONLY:-<auto>}  dry-run: $DRY_RUN"
+# Full SHAs for every comparison: `git rev-parse --short` picks its length per repo, so a
+# node whose clone needs 9 characters never string-equals this host's 10 (false abort).
+TARGET_COMMIT="$(git rev-parse "origin/$BRANCH")" || die "no origin/$BRANCH"
+TARGET_SHORT="$(git rev-parse --short "origin/$BRANCH")"
+log "target commit: $TARGET_SHORT  nodes: $DEPLOY_NODES  only: ${ONLY:-<auto>}  dry-run: $DRY_RUN"
 
 # changed_between <deployed> <target> <pathspec...> -> returns 0 if any changed
 changed_between() { local a="$1" b="$2"; shift 2; [ -n "$(git diff --name-only "$a".."$b" -- "$@" 2>/dev/null)" ]; }
 
 if ! $ASSUME_YES && ! $DRY_RUN; then
-  printf '%sDeploy %s to: %s ? [y/N] %s' "$c_yel" "$TARGET_COMMIT" "$DEPLOY_NODES" "$c_off"
+  printf '%sDeploy %s to: %s ? [y/N] %s' "$c_yel" "$TARGET_SHORT" "$DEPLOY_NODES" "$c_off"
   read -r reply; [[ "$reply" =~ ^[Yy]$ ]] || die "aborted"
 fi
 
@@ -229,7 +232,7 @@ deploy_apiv2() {
     exit 2
   ' || die "[$node] apiv2 verify failed"
   monit_ensure_ok "$node" "$MONIT_APIV2_SVC"
-  ok "[$node] apiv2 live on $TARGET_COMMIT"
+  ok "[$node] apiv2 live on $TARGET_SHORT"
 }
 
 # ---------------------------------------------------------------------------
@@ -259,15 +262,44 @@ deploy_routing() {
       OOM=$(dmesg 2>/dev/null | tail -3 | grep -ci "out of memory\|killed process")
       if [ "$H" = "200" ]; then
         GP=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:'"$ROUTING_INTERNAL_PORT$gp_path"'" 2>/dev/null)
-        [ "$GP" = "200" ] && { echo "OK health=200 group-proximity=200"; exit 0; }
-        echo "routing healthy but group-proximity=$GP (route missing?)"; exit 3
+        [ "$GP" != "200" ] && { echo "routing healthy but group-proximity=$GP (route missing?)"; exit 3; }
+        # Reach-engine probe. health and group-proximity BOTH pass on the PBF
+        # fallback, so they cannot tell "engine loaded" from "engine silently
+        # absent" — on 2026-09-02 a graphSnapVersion bump met version-1
+        # artifacts, every node reported clean, and /v1/reach-* 503d for ~16h.
+        # 503 means the engine did not load; 400 is this empty body being
+        # rejected by a live engine, which is the pass we want.
+        if [ "${DEPLOY_SKIP_REACH_PROBE:-0}" = "1" ]; then
+          echo "OK health=200 group-proximity=200 reach-probe=skipped"; exit 0
+        fi
+        RU=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "{}" \
+             "http://localhost:'"$ROUTING_INTERNAL_PORT"'/v1/reach-union" 2>/dev/null)
+        if [ "$RU" = "503" ]; then
+          # Two different faults answer 503, and they need opposite responses.
+          # A REFUSING line means the engine loaded fine but its partition is
+          # not the one the stored labels were built against (the config
+          # pairing record) - the artifacts are wrong for this database, and
+          # serving them would empty every nearby feed (2026-09-03). Anything
+          # else is the engine not loading at all.
+          REFUSED=$(grep "reach: REFUSING" /tmp/iznik-routing-go.out 2>/dev/null | tail -1)
+          if [ -n "$REFUSED" ]; then
+            echo "routing up but REACH ENGINE REFUSED: partition does not match config.reach_partition_fp"
+            echo "  $REFUSED"
+            exit 6
+          fi
+          echo "routing up but REACH ENGINE NOT LOADED (reach-union=503) - stale artifacts?"; exit 5
+        fi
+        # Which partition this node is now serving; the operator should see
+        # the same value on every node, and on the stored labels.
+        FP=$(curl -s http://localhost:'"$ROUTING_PUBLIC_PORT"'/health 2>/dev/null | sed -n "s/.*\"reach_partition_fp\":\"\([0-9]*\)\".*/\1/p")
+        echo "OK health=200 group-proximity=200 reach-union=$RU reach-partition=${FP:-unknown}"; exit 0
       fi
       [ "${OOM:-0}" != "0" ] && { echo "OOM during graph load"; exit 4; }
     done
     echo "routing did not come healthy within '"$GRAPH_LOAD_TIMEOUT"'s"; exit 2
   ' || die "[$node] routing verify failed"
   monit_ensure_ok "$node" "$MONIT_ROUTING_SVC"   # re-enable monitoring + assert OK (leaves it monitored)
-  ok "[$node] routing live on $TARGET_COMMIT"
+  ok "[$node] routing live on $TARGET_SHORT"
 }
 
 # ---------------------------------------------------------------------------
@@ -287,7 +319,7 @@ deploy_knn() {
     done; echo "knn not healthy"; exit 2
   ' || die "[$node] knn verify failed"
   monit_ensure_ok "$node" "$MONIT_KNN_SVC"
-  ok "[$node] knn live on $TARGET_COMMIT"
+  ok "[$node] knn live on $TARGET_SHORT"
 }
 
 # ---------------------------------------------------------------------------
@@ -308,8 +340,8 @@ deploy_node() {
     [ -n "$st" ] && [ "$st" != "Synced" ] && die "[$node] galera not Synced (state=$st)"
     log "[$node] pre-flight ok (tree clean, wsrep=${st:-n/a})"
   fi
-  local deployed; deployed="$(rsh "$node" "cd $REMOTE_APIV2_DIR && git rev-parse --short HEAD")"
-  log "[$node] deployed=$deployed target=$TARGET_COMMIT"
+  local deployed; deployed="$(rsh "$node" "cd $REMOTE_APIV2_DIR && git rev-parse HEAD")"
+  log "[$node] deployed=${deployed:0:10} target=$TARGET_SHORT"
 
   # Decide components: explicit --only wins; otherwise change-detect deployed..target.
   local do_apiv2=false do_routing=false do_knn=false
@@ -327,8 +359,8 @@ deploy_node() {
 
   if $do_apiv2 || $do_routing || $do_knn; then
     run "rsh '$node' 'cd $REMOTE_APIV2_DIR && git pull --ff-only'" || die "[$node] git pull failed"
-    local now; now="$(rsh "$node" "cd $REMOTE_APIV2_DIR && git rev-parse --short HEAD")"
-    [ "$now" = "$TARGET_COMMIT" ] || $DRY_RUN || die "[$node] pulled $now != target $TARGET_COMMIT"
+    local now; now="$(rsh "$node" "cd $REMOTE_APIV2_DIR && git rev-parse HEAD")"
+    [ "$now" = "$TARGET_COMMIT" ] || $DRY_RUN || die "[$node] pulled ${now:0:10} != target $TARGET_SHORT"
     $do_apiv2   && deploy_apiv2   "$node"
     $do_knn     && deploy_knn     "$node"
     $do_routing && deploy_routing "$node"
@@ -351,7 +383,7 @@ deploy_node() {
 deploy_local() {
   $SKIP_LOCAL && { log "skip-local set"; return; }
   ( ! want local && [ -n "$ONLY" ] && ! want batch ) && return
-  local base; base="$(git rev-parse --short HEAD)"   # what the local tree was on
+  local base; base="$(git rev-parse HEAD)"   # what the local tree was on
   local routing_changed=false knn_changed=false
   if [ -n "$ONLY" ]; then
     want local && { routing_changed=true; knn_changed=true; }
@@ -362,7 +394,7 @@ deploy_local() {
   fi
   # Bring the local tree to target so the rebuilt containers carry the new code.
   if [ "$base" != "$TARGET_COMMIT" ] && ! $DRY_RUN; then
-    warn "local tree at $base, target $TARGET_COMMIT — pull master into $LOCAL_REPO before rebuilding containers"
+    warn "local tree at ${base:0:10}, target $TARGET_SHORT — pull master into $LOCAL_REPO before rebuilding containers"
   fi
   if $routing_changed; then
     log "local: rebuild $LOCAL_SPATIAL_SERVICE (routing-go) container [batch group-proximity path]"
@@ -400,4 +432,4 @@ deploy_local
 for node in $DEPLOY_NODES; do
   deploy_node "$node"
 done
-ok "deploy complete → $TARGET_COMMIT"
+ok "deploy complete → $TARGET_SHORT"

@@ -140,9 +140,9 @@ const locked = computed(() => {
   // buttons. Guard createdby truthy first, matching ModSettingsModConfig.vue.
   return Boolean(
     config.value &&
-      config.value.protected &&
-      config.value.createdby &&
-      parseInt(config.value.createdby) !== myid.value
+    config.value.protected &&
+    config.value.createdby &&
+    parseInt(config.value.createdby) !== myid.value
   )
 })
 

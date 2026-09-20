@@ -2,8 +2,7 @@ import { defineStore } from 'pinia'
 import { nextTick } from 'vue'
 import api from '~/api'
 
-export const useStoryStore = defineStore({
-  id: 'story',
+export const useStoryStore = defineStore('story', {
   state: () => ({
     list: {},
     recent: [],

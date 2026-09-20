@@ -53,10 +53,10 @@
   </div>
 </template>
 <script setup>
+import { onMounted } from 'vue'
 import SupportLink from '~/components/SupportLink'
 import ExternalLink from '~/components/ExternalLink'
 import { useError } from '#imports'
-import { onMounted } from 'vue'
 
 const error = useError()
 const maintenance = error?.value?.message === 'Maintenance error'

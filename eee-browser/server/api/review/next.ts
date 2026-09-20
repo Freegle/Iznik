@@ -21,11 +21,12 @@ const FIELDS: FieldDef[] = [
 const FIELD_MAP = Object.fromEntries(FIELDS.map(f => [f.field, f]))
 
 function buildImageUrl(externaluid: string): string {
-  if (externaluid.startsWith('freegletusd-')) {
-    const fileId = externaluid.slice('freegletusd-'.length)
-    return `https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/${fileId}&w=768&h=768&fit=inside&output=jpg`
-  }
-  return `https://ucarecdn.com/${externaluid}/-/preview/768x768/-/format/jpeg/`
+  // Everything is TUS-uploaded now, so route via the delivery proxy. The freegletusd- prefix is
+  // not part of the stored object name, so strip it when present.
+  const fileId = externaluid.startsWith('freegletusd-')
+    ? externaluid.slice('freegletusd-'.length)
+    : externaluid
+  return `https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/${fileId}&w=768&h=768&fit=inside&output=jpg`
 }
 
 // Opus excluded from main comparison — one-off research run, not a production candidate

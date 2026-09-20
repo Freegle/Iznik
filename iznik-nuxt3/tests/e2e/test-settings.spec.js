@@ -76,7 +76,11 @@ async function testEmailLevelSetting(page, testEmail, level, takeScreenshot) {
       'text=Choose OFFER/WANTED frequency:'
     )
 
-    if (await emailFrequencySection.isVisible({ timeout: 5000 }).catch(() => false)) {
+    if (
+      await emailFrequencySection
+        .isVisible({ timeout: 5000 })
+        .catch(() => false)
+    ) {
       // Get the current email frequency setting
       const frequencySelect = page
         .locator('select')
@@ -85,7 +89,9 @@ async function testEmailLevelSetting(page, testEmail, level, takeScreenshot) {
         })
         .first()
 
-      if (await frequencySelect.isVisible({ timeout: 5000 }).catch(() => false)) {
+      if (
+        await frequencySelect.isVisible({ timeout: 5000 }).catch(() => false)
+      ) {
         const currentFrequency = await frequencySelect.inputValue()
         console.log(
           `Current email frequency in advanced settings: ${currentFrequency}`
@@ -274,5 +280,78 @@ test.describe('Settings Page - Email Level Settings', () => {
     await takeScreenshot('Validation Full Setting No Warning')
 
     console.log('✓ Warning message correctly hidden for "Full" setting')
+  })
+  /**
+   * The "How far away" control, which answers two questions that used to share one setting:
+   * how far away a post may be for me to see it, and how far away someone may be and still see
+   * my posts. Linked by default; "Set separately" reveals the second slider.
+   *
+   * The behaviour worth an end-to-end test is the promise the whole design rests on: revealing
+   * the second slider must not save anything. A unit test can assert that no save function was
+   * called, but only this can assert that no PATCH left the browser.
+   */
+  test('splitting the distance sliders reveals a second one without saving anything', async ({
+    page,
+    takeScreenshot,
+    testEmail,
+  }) => {
+    await page.gotoAndVerify('/')
+    expect(
+      await signUpViaHomepage(page, testEmail, 'Distance Split User')
+    ).toBeTruthy()
+    await page.gotoAndVerify('/settings')
+
+    const feed = page.locator('.settings-section', { hasText: 'How far away' })
+    await feed.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+
+    // Linked: one slider, and the copy says the single setting also governs who sees your posts.
+    await expect(feed.locator('input[type="range"]')).toHaveCount(1)
+    await expect(feed).toContainText('Also limits who sees your posts')
+    await expect(feed).toContainText('road distance and travel time')
+    await takeScreenshot('Distance sliders linked')
+
+    // Watch for a save that writes the OUTBOUND keys specifically, rather than any PATCH at all:
+    // the settings page has other things that can save, and an unrelated one landing in this
+    // window would fail the test for the wrong reason. The claim being tested is narrow - that
+    // revealing the second slider persists no outbound choice - so the check should be too.
+    const outboundSaves = []
+    page.on('request', (r) => {
+      if (r.url().includes('/api/session') && r.method() === 'PATCH') {
+        const body = r.postData() || ''
+        if (body.includes('myPostsMax')) outboundSaves.push(body.slice(0, 200))
+      }
+    })
+
+    await feed.getByRole('button', { name: 'Set separately' }).click()
+
+    // Two sliders now, labelled for the two directions.
+    await expect(feed.locator('input[type="range"]')).toHaveCount(2)
+    await expect(feed).toContainText('Posts I see')
+    await expect(feed).toContainText('Who sees my posts')
+    await takeScreenshot('Distance sliders split')
+
+    // The outbound slider reaches further than the inbound one: a post's reach grows to the
+    // ripple ceiling whatever band its origin is in, while what this member SEES is held to
+    // the distance their own surroundings justify.
+    const maxima = await feed
+      .locator('input[type="range"]')
+      .evaluateAll((els) => els.map((el) => Number(el.max)))
+    expect(maxima[1]).toBeGreaterThanOrEqual(maxima[0])
+
+    // The promise: revealing it wrote no outbound choice.
+    await page.waitForTimeout(timeouts.ui.settleTime)
+    expect(
+      outboundSaves,
+      'revealing the second slider must not persist an outbound choice'
+    ).toEqual([])
+
+    // And it is not sticky, precisely because nothing was saved.
+    await page.reload()
+    await feed.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await expect(feed.locator('input[type="range"]')).toHaveCount(1)
+
+    console.log(
+      '✓ Split reveals a second slider and persists nothing until it is used'
+    )
   })
 })

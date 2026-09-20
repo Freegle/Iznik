@@ -103,17 +103,26 @@ describe('ModMessageDuplicate', () => {
 
   describe('pending indicator', () => {
     it('shows "(pending)" for Pending collection', () => {
-      const wrapper = mountComponent({}, { groups: [{ groupid: 456, collection: 'Pending' }] })
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'Pending' }] }
+      )
       expect(wrapper.text()).toContain('(pending)')
     })
 
     it('shows "(pending)" for PendingOther collection', () => {
-      const wrapper = mountComponent({}, { groups: [{ groupid: 456, collection: 'PendingOther' }] })
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'PendingOther' }] }
+      )
       expect(wrapper.text()).toContain('(pending)')
     })
 
     it('does not show "(pending)" for Approved collection', () => {
-      const wrapper = mountComponent({}, { groups: [{ groupid: 456, collection: 'Approved' }] })
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'Approved' }] }
+      )
       expect(wrapper.text()).not.toContain('(pending)')
     })
   })
@@ -166,22 +175,34 @@ describe('ModMessageDuplicate', () => {
 
     describe('isPending', () => {
       it('returns true for Pending collection', () => {
-        const wrapper = mountComponent({}, { groups: [{ groupid: 456, collection: 'Pending' }] })
+        const wrapper = mountComponent(
+          {},
+          { groups: [{ groupid: 456, collection: 'Pending' }] }
+        )
         expect(wrapper.vm.isPending).toBe(true)
       })
 
       it('returns true for PendingOther collection', () => {
-        const wrapper = mountComponent({}, { groups: [{ groupid: 456, collection: 'PendingOther' }] })
+        const wrapper = mountComponent(
+          {},
+          { groups: [{ groupid: 456, collection: 'PendingOther' }] }
+        )
         expect(wrapper.vm.isPending).toBe(true)
       })
 
       it('returns false for Approved collection', () => {
-        const wrapper = mountComponent({}, { groups: [{ groupid: 456, collection: 'Approved' }] })
+        const wrapper = mountComponent(
+          {},
+          { groups: [{ groupid: 456, collection: 'Approved' }] }
+        )
         expect(wrapper.vm.isPending).toBe(false)
       })
 
       it('returns false for other collections', () => {
-        const wrapper = mountComponent({}, { groups: [{ groupid: 456, collection: 'Spam' }] })
+        const wrapper = mountComponent(
+          {},
+          { groups: [{ groupid: 456, collection: 'Spam' }] }
+        )
         expect(wrapper.vm.isPending).toBe(false)
       })
     })
@@ -194,9 +215,7 @@ describe('ModMessageDuplicate', () => {
             groups: [{ groupid: 456, collection: 'Pending' }],
           }
         )
-        expect(wrapper.vm.duplicateLink).toBe(
-          '/messages/pending/456/123'
-        )
+        expect(wrapper.vm.duplicateLink).toBe('/messages/pending/456/123')
       })
 
       it('returns approved messages link for approved message', () => {
@@ -206,9 +225,7 @@ describe('ModMessageDuplicate', () => {
             groups: [{ groupid: 456, collection: 'Approved' }],
           }
         )
-        expect(wrapper.vm.duplicateLink).toBe(
-          '/messages/approved/456/123'
-        )
+        expect(wrapper.vm.duplicateLink).toBe('/messages/approved/456/123')
       })
 
       it('builds correct link with different groupid and msgid', () => {
@@ -219,9 +236,7 @@ describe('ModMessageDuplicate', () => {
             groups: [{ groupid: 111, collection: 'Pending' }],
           }
         )
-        expect(wrapper.vm.duplicateLink).toBe(
-          '/messages/pending/111/999'
-        )
+        expect(wrapper.vm.duplicateLink).toBe('/messages/pending/111/999')
       })
     })
   })
@@ -235,9 +250,7 @@ describe('ModMessageDuplicate', () => {
         }
       )
       const link = wrapper.find('a')
-      expect(link.attributes('href')).toBe(
-        '/messages/pending/456/123'
-      )
+      expect(link.attributes('href')).toBe('/messages/pending/456/123')
     })
 
     it('links to correct approved URL', () => {
@@ -248,9 +261,7 @@ describe('ModMessageDuplicate', () => {
         }
       )
       const link = wrapper.find('a')
-      expect(link.attributes('href')).toBe(
-        '/messages/approved/456/123'
-      )
+      expect(link.attributes('href')).toBe('/messages/approved/456/123')
     })
   })
 
@@ -273,7 +284,10 @@ describe('ModMessageDuplicate', () => {
     })
 
     it('has text-muted class on pending indicator', () => {
-      const wrapper = mountComponent({}, { groups: [{ groupid: 456, collection: 'Pending' }] })
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'Pending' }] }
+      )
       expect(wrapper.find('span.text-muted').exists()).toBe(true)
     })
   })

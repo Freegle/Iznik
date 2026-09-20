@@ -66,8 +66,7 @@ export function dedupeRetriedChatMessages(messages) {
   return out
 }
 
-export const useChatStore = defineStore({
-  id: 'chat',
+export const useChatStore = defineStore('chat', {
   state: () => ({
     list: [],
     listByChatId: {},
@@ -259,7 +258,7 @@ export const useChatStore = defineStore({
         since = dayjs(this.searchSince).toISOString()
       }
 
-      let chats = []
+      let chats
       const miscStore = useMiscStore() // MT
       if (miscStore.modtools) {
         const { chatrooms } = await api(this.config).chat.listChatsMT({

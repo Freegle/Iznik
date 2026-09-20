@@ -325,11 +325,12 @@ describe('PosterModal', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('shows NuxtPicture when image has imageuid', async () => {
+    it('does not render a picture for a bare imageuid', async () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture; the same applies to imageuid.
       const wrapper = createWrapper()
       wrapper.vm.image = { id: 1, imageuid: 'abc123', imagemods: {} }
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
 
     it('shows placeholder when no image uid', async () => {

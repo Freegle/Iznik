@@ -34,7 +34,11 @@
         <!-- What is it? -->
         <div class="form-card">
           <label class="form-label">
-            {{ type === 'Offer' ? 'What is it?' : 'What are you looking for?' }}
+            {{
+              type === 'Offer'
+                ? 'What is it?'
+                : "Tell other freeglers what you'd like"
+            }}
           </label>
           <PostItem
             :id="id"
@@ -175,12 +179,12 @@ import {
   invalidBodyMessage,
 } from '~/composables/useItemValidation'
 
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 const PostItem = defineAsyncComponent(() => import('./PostItem'))
-const MessagePhotosModal = defineAsyncComponent(() =>
-  import('./MessagePhotosModal')
+const MessagePhotosModal = defineAsyncComponent(
+  () => import('./MessagePhotosModal')
 )
 
 const props = defineProps({

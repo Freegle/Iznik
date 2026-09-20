@@ -13,6 +13,14 @@ export default class EmailTrackingAPI extends BaseAPI {
   }
 
   /**
+   * Providers currently refusing our mail, and the members whose mail we are
+   * holding as a result.
+   */
+  async fetchDeferrals() {
+    return await this.$getv2('/modtools/email/deferrals')
+  }
+
+  /**
    * Fetch email tracking records for a specific user.
    * @param {number|string} userIdOrEmail - The user ID or email address
    * @param {Object} params - Query parameters

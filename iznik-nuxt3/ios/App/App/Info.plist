@@ -153,13 +153,13 @@
 		</dict>
 		<dict>
 			<key>UIApplicationShortcutItemType</key>
-			<string>org.ilovefreegle.shortcut.find</string>
+			<string>org.ilovefreegle.shortcut.ask</string>
 			<key>UIApplicationShortcutItemTitle</key>
 			<string>Ask</string>
 			<key>UIApplicationShortcutItemSubtitle</key>
 			<string>Ask for something</string>
-			<key>UIApplicationShortcutItemIconType</key>
-			<string>UIApplicationShortcutIconTypeSearch</string>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>cart</string>
 		</dict>
 		<dict>
 			<key>UIApplicationShortcutItemType</key>

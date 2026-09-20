@@ -33,7 +33,10 @@ describe('AutoComplete', () => {
         { id: 2, name: 'Apricot' },
       ]),
     }
-    global.XMLHttpRequest = vi.fn(() => mockXHR)
+    // vitest 4 requires constructor mocks to be constructible (no arrows).
+    global.XMLHttpRequest = vi.fn(function () {
+      return mockXHR
+    })
   })
 
   afterEach(() => {

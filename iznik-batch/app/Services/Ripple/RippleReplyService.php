@@ -10,7 +10,6 @@ use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 
 /**
  * Held external (email / TrashNothing) replies (#3 / PR C).
@@ -34,9 +33,6 @@ use Illuminate\Support\Facades\Schema;
  */
 class RippleReplyService
 {
-    /** Memoized rippling_held_replies.dueat column check, so a pre-migration deploy is safe. */
-    private static ?bool $dueAtColumn = null;
-
     private ?MaxReachService $maxReach;
 
     /**
@@ -77,9 +73,11 @@ class RippleReplyService
 
     /**
      * Should an external reply to post $msgid from (lat,lng) be held? Only when the
-     * post is actively rippling (has a reach row) AND the replier is outside the
-     * current reach. No reach row → not rippling → deliver normally. Unknown
-     * location → cannot test → deliver normally.
+     * post is actively rippling (has a reach row) AND the replier is decidedly
+     * outside the current reach. No reach row → not rippling → deliver normally.
+     * Unknown location → cannot test → deliver normally. Reach undecided → nothing
+     * has refused this reply → deliver normally, and count it, so the size of a
+     * reach outage can be read off afterwards as well as alerted at the time.
      *
      * One exception, the first-reply passthrough: a post that has no replies at all
      * yet does not hold its first one, provided the replier is inside the reach the
@@ -90,7 +88,7 @@ class RippleReplyService
      * is charged against the posts that can least afford it, because a poster
      * cannot tell a delayed first reply from no interest at all.
      */
-    public function shouldHold(int $msgid, ?float $lat, ?float $lng): bool
+    public function shouldHold(int $msgid, ?float $lat, ?float $lng, ?string $band = null): bool
     {
         if ($lat === null || $lng === null) {
             return false;
@@ -98,7 +96,13 @@ class RippleReplyService
         if (!$this->hasReach($msgid)) {
             return false;
         }
-        if ($this->reach->isWithinReach($msgid, $lat, $lng)) {
+        $verdict = $this->reach->reachVerdict($msgid, $lat, $lng, $band);
+        if ($verdict === ReachQueryService::VERDICT_IN) {
+            return false;
+        }
+        if ($verdict !== ReachQueryService::VERDICT_OUT) {
+            $this->recordEvent('reply_undecided_passthrough');
+
             return false;
         }
 
@@ -201,11 +205,9 @@ class RippleReplyService
             'created_at' => $now,
         ];
 
-        // A hold is a delay, so it is stamped with when it comes off. Best-effort: an
-        // older schema (pre-migration) has no column to stamp, and that must not stop
-        // the hold - the sweep computes the due time from created_at either way.
+        // A hold is a delay, so it is stamped with when it comes off.
         $due = $this->dueAt($msgid, $now, $lat, $lng);
-        if ($due !== null && $this->dueAtAvailable()) {
+        if ($due !== null) {
             $row['dueat'] = $due;
         }
 
@@ -319,26 +321,21 @@ class RippleReplyService
      */
     private function milesOutsideReach(int $msgid, float $lat, float $lng): ?float
     {
+        // The stored label answers whether the replier is inside the current
+        // reach: inside means zero miles outside it. Beyond that the label
+        // gives seconds, not miles, so the caller's documented origin-distance
+        // measure takes over (null here). No grid; routing unreachable is
+        // also null, and the caller's fallback keeps the delay stamped.
         try {
-            $row = DB::selectOne(
-                'SELECT ST_Distance(
-                        ST_SRID(polygon, 4326),
-                        ST_SRID(POINT(?, ?), 4326)
-                    ) AS metres
-                 FROM rippling_reach WHERE msgid = ?',
-                [$lng, $lat, $msgid]
-            );
+            $verdicts = app(ReachService::class)->labelVerdicts($lat, $lng, [$msgid]);
+            if (($verdicts[$msgid] ?? '') === 'in') {
+                return 0.0;
+            }
         } catch (\Throwable $e) {
-            Log::warning("ripple: milesOutsideReach failed for {$msgid}: {$e->getMessage()}");
-
-            return null;
+            Log::warning("ripple: milesOutsideReach label check failed for {$msgid}: {$e->getMessage()}");
         }
 
-        if ($row === null || $row->metres === null) {
-            return null;
-        }
-
-        return ((float) $row->metres) / 1609.344;
+        return null;
     }
 
     /** @return array{lat:float,lng:float}|null */
@@ -357,26 +354,6 @@ class RippleReplyService
         }
 
         return ['lat' => (float) $row->lat, 'lng' => (float) $row->lng];
-    }
-
-    /** Has the dueat migration run? Without it the sweep still works, off created_at. */
-    private function dueAtAvailable(): bool
-    {
-        if (self::$dueAtColumn === null) {
-            try {
-                self::$dueAtColumn = Schema::hasColumn('rippling_held_replies', 'dueat');
-            } catch (\Throwable) {
-                self::$dueAtColumn = false;
-            }
-        }
-
-        return self::$dueAtColumn;
-    }
-
-    /** Test-only: forget the memoized column check. */
-    public static function forgetDueAtAvailability(): void
-    {
-        self::$dueAtColumn = null;
     }
 
     /**
@@ -412,7 +389,6 @@ class RippleReplyService
         }
 
         $now = now();
-        $canStamp = $this->dueAtAvailable();
         $released = 0;
 
         foreach ($held as $row) {
@@ -426,12 +402,10 @@ class RippleReplyService
 
             // Keep the stamp in step with the policy, so changing the config re-dates
             // rows that have not come off hold rather than leaving a stale promise.
-            if ($canStamp) {
-                $stamped = $row->dueat === null ? null : Carbon::parse($row->dueat);
-                if ($stamped === null || !$stamped->equalTo($due)) {
-                    DB::table('rippling_held_replies')->where('id', $row->id)
-                        ->update(['dueat' => $due]);
-                }
+            $stamped = $row->dueat === null ? null : Carbon::parse($row->dueat);
+            if ($stamped === null || !$stamped->equalTo($due)) {
+                DB::table('rippling_held_replies')->where('id', $row->id)
+                    ->update(['dueat' => $due]);
             }
 
             if ($now->lt($due)) {
@@ -474,9 +448,16 @@ class RippleReplyService
      */
     public function releaseCovered(int $msgid): int
     {
-        $held = DB::table('rippling_held_replies')
-            ->where('msgid', $msgid)
-            ->where('status', 'held')
+        // The replier's density band comes along for the ride, because a reply held from
+        // someone the rural-access ring covers should be released by that ring too - the
+        // hold is meant to be temporary, and a hold nothing can ever release is just a
+        // silent refusal.
+        $held = DB::table('rippling_held_replies as h')
+            ->leftJoin('users as u', 'u.id', '=', 'h.replieruserid')
+            ->where('h.msgid', $msgid)
+            ->where('h.status', 'held')
+            // keep-raw: JSON_UNQUOTE(JSON_EXTRACT(...)) has no query-builder equivalent.
+            ->selectRaw("h.*, JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band")
             ->get();
 
         $released = 0;
@@ -484,7 +465,7 @@ class RippleReplyService
             if ($row->lat === null || $row->lng === null) {
                 continue;
             }
-            if (!$this->reach->isWithinReach($msgid, (float) $row->lat, (float) $row->lng)) {
+            if (!$this->reach->isWithinReach($msgid, (float) $row->lat, (float) $row->lng, $row->density_band ?? null)) {
                 continue;
             }
             $this->release($row->id, 'covered');

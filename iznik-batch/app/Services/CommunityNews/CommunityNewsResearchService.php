@@ -21,8 +21,14 @@ class CommunityNewsResearchService
 {
     private const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
-    public function __construct(private CommunityNewsSourceService $sources)
-    {
+    /** Both prompts ask what the area covers; the answer cannot change mid-run. */
+    private array $placesMemo = [];
+
+    public function __construct(
+        private CommunityNewsSourceService $sources,
+        private SourceFreshness $freshness,
+        private CommunityNewsAreaService $areas,
+    ) {
     }
 
     /**
@@ -50,7 +56,29 @@ class CommunityNewsResearchService
             return ['ok' => true, 'items' => count($items), 'intro' => $intro, 'preview' => $items];
         }
 
+        $stored = 0;
         foreach ($items as $it) {
+            if ($this->alreadyResearched($area, $it['url'])) {
+                Log::info('CommunityNews: skipping a URL already researched for this area', [
+                    'area' => $area->id,
+                    'url' => $it['url'],
+                ]);
+                continue;
+            }
+
+            // The date filters downstream only catch events already over; this
+            // catches the opposite, a stale source written up as current.
+            $stale = $this->freshness->staleReason($it['url'], $it['date'] ?? null);
+            if ($stale !== null) {
+                Log::info('CommunityNews: rejecting an item with a stale source', [
+                    'area' => $area->id,
+                    'title' => $it['title'],
+                    'url' => $it['url'],
+                    'reason' => $stale,
+                ]);
+                continue;
+            }
+
             CommunityNewsItem::create([
                 'areaid' => $area->id,
                 'title' => mb_substr($it['title'], 0, 250),
@@ -62,6 +90,7 @@ class CommunityNewsResearchService
                 'event_date' => $it['date'] ?? null,
                 'researched_at' => now(),
             ]);
+            $stored++;
         }
 
         $area->update([
@@ -69,7 +98,7 @@ class CommunityNewsResearchService
             'intro' => $intro !== '' ? $intro : $area->intro,
         ]);
 
-        return ['ok' => true, 'items' => count($items), 'intro' => $intro];
+        return ['ok' => true, 'items' => $stored, 'intro' => $intro];
     }
 
     /**
@@ -97,6 +126,29 @@ class CommunityNewsResearchService
         }
 
         return $this->parse($finalText, $maxItems);
+    }
+
+    /**
+     * True when this area has already had this exact URL written up recently.
+     *
+     * Research runs every few days and keeps re-finding the same pages, so the
+     * same story lands repeatedly: the 2014 RiverFest article was harvested for
+     * Hove twice within six days, and the second copy is the one that reached
+     * the newsfeed. Bounded rather than forever so a genuinely annual event can
+     * come round again.
+     */
+    private function alreadyResearched(CommunityNewsArea $area, ?string $url): bool
+    {
+        if ($url === null || trim($url) === '') {
+            return false;
+        }
+
+        $days = max(1, (int) config('freegle.communitynews.source_dedup_days', 180));
+
+        return CommunityNewsItem::where('areaid', $area->id)
+            ->where('url', $url)
+            ->where('researched_at', '>', now()->subDays($days))
+            ->exists();
     }
 
     /**
@@ -303,6 +355,10 @@ class CommunityNewsResearchService
         }
 
         $intro = isset($json['intro']) && is_string($json['intro']) ? $this->replaceEmDashes(trim($json['intro'])) : '';
+        // Zero mixed language: a token "Shwmae, Caernarfon!" opening never
+        // reaches the stored intro, however the model phrases it. Items are
+        // exempt - a Welsh event NAME is a name, not a greeting.
+        $intro = IntroLanguage::stripForeignGreeting($intro);
 
         $items = [];
         foreach ((array) ($json['items'] ?? []) as $it) {
@@ -410,19 +466,25 @@ class CommunityNewsResearchService
     private function systemPrompt(CommunityNewsArea $area): string
     {
         $name = $area->name;
+        $coverage = $this->coverageBlock($area);
+        $localTo = $this->localToPhrase($area);
 
         return <<<SYS
         You are the editor of "Community News", a warm, gently quirky round-up of genuinely local goings-on for {$name}.
+        {$coverage}
 
         It goes out to ordinary Freegle members. Freegle is a UK network where neighbours give away things they no longer need, for free — keeping usable stuff out of landfill. Your readers are normal people (not professionals or activists) who care a little about their community and about not being wasteful. Write for them: friendly, down-to-earth, a touch of warmth and humour, never corporate, worthy or preachy.
 
-        Use web search to find REAL, CURRENT, interesting local things in and around {$name} — community events, litter picks, swaps and give-aways, festivals and fairs, library/park/museum happenings, local good-news stories, seasonal things to do, and environmental or reuse-flavoured bits — the sort of thing a friendly neighbour would tip you off about. Prefer this week and the next couple of weeks.
+        Use web search to find REAL, CURRENT, interesting local things in and around {$localTo} — community events, litter picks, swaps and give-aways, festivals and fairs, library/park/museum happenings, local good-news stories, seasonal things to do, and environmental or reuse-flavoured bits — the sort of thing a friendly neighbour would tip you off about. Prefer this week and the next couple of weeks.
 
         Rules:
         - Only include things you actually found via search, each with a real source URL. Never invent an event, date, place or link.
-        - Keep everything genuinely LOCAL to {$name} (or clearly within it). If you can't find enough real local material, return fewer items — quality over quantity.
+        - Check every source is CURRENT before you use it. Local events recur every year and old write-ups rank well in search, so an article about a PREVIOUS year's edition looks exactly like this year's. Check when the page was published and what year its text and any poster image give; if it describes an earlier year, or you cannot tell that it is about the coming weeks, leave the item out. Never carry a date forward from an old article into this year.
+        - Keep everything genuinely LOCAL to {$localTo}. If you can't find enough real local material, return fewer items — quality over quantity.
+        - Say WHERE each item is, by name, in the text of the item. A reader at one end of the area needs to know at a glance whether something is near them.
         - Do NOT include repair cafés or Restart/Fixit-style repair events — Freegle already lists these separately (synced from the Restart Project and Repair Café Wales), so they would be duplicates.
         - UK English. Light, second-person, roughly 40-60 words per item: what it is and why someone might fancy it. No hashtags, no marketing-speak, at most the occasional emoji.
+        - Write ENTIRELY in English, the intro included, even for areas in Wales or Scotland. Never open with or sprinkle in greetings or phrases from Welsh, Gaelic or any other language ("Croeso", "Shwmae", "Bore da"): a half-and-half opening like "Croeso i mid August" reads as tokenism, not warmth. Welsh or Gaelic NAMES of places, events and organisations (the Eisteddfod, a Menter Iaith event) are fine when that is their real name.
         - Where it fits NATURALLY, end an item with a short, playful Freegle tie-in — one sentence linking the story to giving or asking for things on your local Freegle community ("Need dancing shoes? Ask on Freegle", "Got records gathering dust? Someone nearby would love them"). Skip it where it would feel forced; never salesy.
         - Give dates ABSOLUTELY ("Saturday 2 August", "until 14 September"), never relatively ("this Saturday", "tomorrow", "next week") — items may be published up to a couple of weeks after you write them, so relative dates go stale.
         - Don't plug Freegle itself unless a Freegle event genuinely comes up.
@@ -435,19 +497,24 @@ class CommunityNewsResearchService
         $lat = $area->lat;
         $lng = $area->lng;
         $groups = $this->groupNames($area);
+        $places = $this->places($area);
+        $placeLine = $places
+            ? "\nPlaces in this area, biggest first: " . implode(', ', $places)
+                . ". Spread the items across them rather than clustering on {$name}."
+            : '';
         $seedBlock = $this->seedBlock($seedSources);
         // The model cannot resolve "this Saturday" without knowing today's date.
         $today = now()->toDateString();
 
         return <<<USER
-        Area: {$name} (roughly centred on {$lat}, {$lng}; it covers the Freegle communities: {$groups}).
+        Area: {$name} (roughly centred on {$lat}, {$lng}; it covers the Freegle communities: {$groups}).{$placeLine}
         {$seedBlock}
         Find up to {$maxItems} interesting, genuinely local community happenings for readers here, this week or in the next couple of weeks.
 
-        If an item happens on a particular day, give that day as "date" in YYYY-MM-DD form. Today is {$today}, so work out the actual date of anything described as "Saturday" or "next week". Give the FIRST day for something running over several days. Leave "date" out entirely when the item is not a dated event — an ongoing service, a new footpath, a refurbished library — and never guess: an omitted date is much better than a wrong one.
+        If an item happens on a particular day, give that day as "date" in YYYY-MM-DD form. Today is {$today}, so work out the actual date of anything described as "Saturday" or "next week". Give the FINAL day for something running over several days — readers stop being shown an item once its date has passed, and a multi-day event is still worth going to until it ends. If your blurb mentions a specific day ("Saturday 8 August"), you MUST also supply the matching "date" — blurb and date must always agree. Leave "date" out only when the item genuinely has no date — an ongoing service, a new footpath, a refurbished library — and never guess: for an undated item, an omitted date is much better than a wrong one.
 
         Then reply with ONLY a JSON object — no prose, no code fences — in exactly this shape:
-        {"intro":"one or two warm, quirky sentences introducing this week's round-up for {$name}","items":[{"title":"punchy title","blurb":"~45-word friendly description","url":"the source URL you found","source":"the site or organisation name","date":"YYYY-MM-DD or omitted"}]}
+        {"intro":"one or two warm, quirky sentences in UK English introducing this week's round-up for {$name}","items":[{"title":"punchy title","blurb":"~45-word friendly description","url":"the source URL you found","source":"the site or organisation name","date":"YYYY-MM-DD or omitted"}]}
         USER;
     }
 
@@ -465,6 +532,44 @@ class CommunityNewsResearchService
         $list = implode("\n", $lines);
 
         return "\nCheck these known-good LOCAL sources FIRST (fetch them) for what's on, then use web search to fill any gaps:\n{$list}\n";
+    }
+
+    /**
+     * The prompt's statement of what this area covers.
+     *
+     * One digest for the whole area is the point: a member is mailed for the
+     * community whose catchment they live in, so the round-up has to be about
+     * everywhere in it, not just the town the area happens to be named after.
+     */
+    /** @return array<int,string> */
+    private function places(CommunityNewsArea $area): array
+    {
+        return $this->placesMemo[$area->id] ??= $this->areas->placesCovered($area);
+    }
+
+    private function coverageBlock(CommunityNewsArea $area): string
+    {
+        $places = $this->places($area);
+        if (count($places) < 2) {
+            return '';
+        }
+
+        $list = implode(', ', $places);
+
+        return "This area takes in {$list}. Readers live across all of it, so cover the area as a whole: "
+            . 'a round-up that only ever visits the biggest town is no use to someone at the other end. '
+            . 'One round-up for the lot, with the items spread about.';
+    }
+
+    /** How to describe the area's ground in a sentence. */
+    private function localToPhrase(CommunityNewsArea $area): string
+    {
+        $places = $this->places($area);
+        if (count($places) < 2) {
+            return $area->name;
+        }
+
+        return implode(', ', $places);
     }
 
     private function groupNames(CommunityNewsArea $area): string

@@ -22,6 +22,18 @@ class MessageExpiryService
      */
     public const EXPIRE_LOOKBACK_DAYS = 90;
 
+    /** How far back the age-based expiry pass looks for live postings, in days. */
+    public const AGE_EXPIRY_LOOKBACK_DAYS = 730;
+
+    /** Most posts the age-based expiry pass withdraws in one run (oldest first). */
+    public const AGE_EXPIRY_BATCH = 20000;
+
+    /**
+     * Full Message models fetched at a time by the deadline pass. These carry the
+     * text columns, so the whole candidate set at once exhausts memory.
+     */
+    public const EXPIRE_CHUNK = 500;
+
     /**
      * Process messages that have reached their deadline.
      */
@@ -70,19 +82,57 @@ class MessageExpiryService
     {
         $earliestDate = now()->subDays(self::EXPIRE_LOOKBACK_DAYS);
 
-        // Stream in keyset-paginated chunks: the 90-day candidate set can be large and
-        // these are full Message models (incl. text columns), so a single get() exhausts
-        // memory. Keyset pagination by messages.id is also safe against the outcome rows
-        // we create as each message is expired (they only fall behind the cursor).
-        return Message::select('messages.*')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
-            ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages.id')
+        // Two passes, because one is unaffordable.
+        //
+        // This used to be a single `SELECT DISTINCT messages.*` joined to
+        // messages_groups and messages_outcomes, paginated with lazyById. The
+        // `ORDER BY messages.id LIMIT 500` that lazyById adds made the optimiser
+        // walk the PRIMARY key from the start of the table rather than range-scan
+        // `arrival` - it expects to fill 500 rows quickly and stop. It does not:
+        // the matches are all recent, so it traverses the old ids first. Measured
+        // live on 2026-09-18 that was 6,301,473 rows examined and 93 seconds, to
+        // find a candidate set of 7,712. The DISTINCT, needed only because the
+        // messages_groups join multiplies a post by the groups it rippled to,
+        // added a temporary table over every column of messages including the
+        // text.
+        //
+        // So: collect the ids first with no LIMIT, which leaves the optimiser no
+        // reason to prefer the PRIMARY key (295,588 rows examined, 0.4-1.0s), then
+        // fetch the full models by id in chunks. Same streaming, same memory.
+        $ids = Message::query()
             ->where('messages.arrival', '>=', $earliestDate)
             ->whereNotNull('messages.deadline')
             ->whereRaw('messages.deadline < CURDATE()')
-            ->whereNull('messages_outcomes.id')
-            ->distinct()
-            ->lazyById(500, 'messages.id', 'id');
+            // A post with no group is not on the site, so it cannot expire off it.
+            // This is a static property of the post, so it belongs in the pass that
+            // runs once rather than in the one that runs per chunk.
+            ->whereExists(fn ($q) => $q->selectRaw('1')
+                ->from('messages_groups')
+                ->whereColumn('messages_groups.msgid', 'messages.id'))
+            ->orderBy('messages.id')
+            ->pluck('messages.id')
+            ->all();
+
+        return \Illuminate\Support\LazyCollection::make(function () use ($ids) {
+            foreach (array_chunk($ids, self::EXPIRE_CHUNK) as $chunk) {
+                // The outcome check is re-run per chunk rather than folded into the
+                // pass above. Expiring a post writes an outcome, and a member can
+                // mark one TAKEN while this is running; either would make an id
+                // collected earlier stale. Re-checking keeps what the keyset
+                // pagination used to give, at the cost of one indexed lookup per row.
+                $messages = Message::select('messages.*')
+                    ->whereIn('messages.id', $chunk)
+                    ->whereNotExists(fn ($q) => $q->selectRaw('1')
+                        ->from('messages_outcomes')
+                        ->whereColumn('messages_outcomes.msgid', 'messages.id'))
+                    ->orderBy('messages.id')
+                    ->get();
+
+                foreach ($messages as $message) {
+                    yield $message;
+                }
+            }
+        });
     }
 
     /**
@@ -122,9 +172,10 @@ class MessageExpiryService
     }
 
     /**
-     * Process messages_spatial cleanup. Mirrors V1 cron/messages_expired.php's spatial loop,
-     * which iterates every messages_spatial.successful=0 row and calls
-     * Message::processExpiry(). That V1 method reads getPublic(), which computes a
+     * Age-based auto-withdrawal (and spatial cleanup). Mirrors V1 cron/messages_expired.php's
+     * spatial loop, which iterated every messages_spatial.successful=0 row and called
+     * Message::processExpiry(); candidates now come from the live postings themselves, see
+     * getExpiredCandidates(). That V1 method reads getPublic(), which computes a
      * *virtual* OUTCOME_EXPIRED at runtime when:
      *   - No existing outcome AND
      *   - Group arrival is older than max(maxreposts, maxagetoshow) AND
@@ -169,8 +220,8 @@ class MessageExpiryService
 
     /**
      * V1-equivalent candidate selection — pushes the virtual-expiry filter into SQL
-     * rather than calling getPublic() on every spatial row. Returns msgids whose
-     * spatial row should be cleaned up.
+     * rather than calling getPublic() on every post. Returns msgids to auto-withdraw
+     * (and whose spatial row, if any, should be cleaned up).
      *
      * The formula is symmetric for Offer and Wanted: repost_interval × (max+1).
      * V1 Message::getPublic() applies the same formula to both types; only the
@@ -194,36 +245,47 @@ class MessageExpiryService
      *   - No deleted/collection filter: copies rippling had already retracted
      *     (messages_groups.deleted=1, arrival frozen at retraction) still
      *     counted, so a dead copy could expire the live post.
-     * A message with NO live Approved posting left is not expired here — its
-     * spatial row is cleaned up by MessageSpatialService's removeDeleted /
-     * removeNonApproved passes instead.
+     * A message with NO live Approved posting left is not expired here — any
+     * spatial row it still has is cleaned up by MessageSpatialService's
+     * removeDeleted / removeNonApproved passes instead.
      */
     protected function getExpiredCandidates(): \Illuminate\Support\Collection
     {
+        // Candidates are the LIVE postings (messages_groups, Approved, not deleted), not the
+        // spatial index. MessageSpatialService keeps only the last RECENT_DAYS (31) of posts,
+        // while a group's expiry threshold is routinely longer (90 days by default; a WANTED
+        // with the default repost settings is 42), so a post read from the index lost its row
+        // before it ever came due and was never withdrawn: tens of thousands of live posts
+        // three months to a year old on production (Discourse 9808/806).
+        //
+        // The scan is bounded to postings that arrived in the last AGE_EXPIRY_LOOKBACK_DAYS
+        // (using the arrival index) and returns at most AGE_EXPIRY_BATCH of the oldest each
+        // run, so a backlog drains over a few daily runs rather than in one long statement.
         $sql = <<<'SQL'
-SELECT DISTINCT ms.msgid
-FROM messages_spatial ms
-JOIN messages m ON m.id = ms.msgid
-LEFT JOIN messages_promises mp ON mp.msgid = ms.msgid
-WHERE ms.successful = 0
+SELECT m.id AS msgid, MIN(live.arrival) AS first_arrival
+FROM messages_groups live
+JOIN messages m ON m.id = live.msgid
+LEFT JOIN messages_promises mp ON mp.msgid = m.id
+WHERE live.collection = 'Approved'
+  AND live.deleted = 0
+  AND live.arrival > DATE_SUB(NOW(), INTERVAL ? DAY)
+  AND m.deleted IS NULL
+  AND m.type IN ('Offer', 'Wanted')
   AND mp.id IS NULL
   AND (
     EXISTS (
       SELECT 1 FROM messages_outcomes mo
-      WHERE mo.msgid = ms.msgid AND mo.outcome = ?
+      WHERE mo.msgid = m.id AND mo.outcome = ?
     )
     OR (
-      NOT EXISTS (
-        SELECT 1 FROM messages_outcomes mo2 WHERE mo2.msgid = ms.msgid
-      )
-      AND EXISTS (
-        SELECT 1 FROM messages_groups mgl
-        WHERE mgl.msgid = ms.msgid AND mgl.deleted = 0 AND mgl.collection = 'Approved'
+      live.arrival < DATE_SUB(NOW(), INTERVAL 1 DAY)
+      AND NOT EXISTS (
+        SELECT 1 FROM messages_outcomes mo2 WHERE mo2.msgid = m.id
       )
       AND NOT EXISTS (
         SELECT 1 FROM messages_groups mg
         JOIN `groups` g ON g.id = mg.groupid
-        WHERE mg.msgid = ms.msgid
+        WHERE mg.msgid = m.id
           AND mg.deleted = 0
           AND mg.collection = 'Approved'
           AND TIMESTAMPDIFF(DAY, mg.arrival, NOW()) <= GREATEST(
@@ -239,15 +301,22 @@ WHERE ms.successful = 0
       AND NOT EXISTS (
         SELECT 1 FROM chat_messages cm
         JOIN chat_messages cm2 ON cm2.chatid = cm.chatid
-        WHERE cm.refmsgid = ms.msgid AND cm.type != 'ModMail'
+        WHERE cm.refmsgid = m.id AND cm.type != 'ModMail'
           AND cm2.date > DATE_SUB(NOW(), INTERVAL 6 DAY)
       )
     )
   )
+GROUP BY m.id
+ORDER BY first_arrival
+LIMIT ?
 SQL;
 
-        return collect(DB::select($sql, [MessageOutcome::OUTCOME_EXPIRED]))
-            ->pluck('msgid');
+        // keep-raw: the per-group threshold is arithmetic over JSON_EXTRACT values inside GREATEST/CASE in a correlated NOT EXISTS, and the ordering is over an aggregate of the outer join; the builder cannot render either without falling back to raw fragments anyway.
+        return collect(DB::select($sql, [
+            self::AGE_EXPIRY_LOOKBACK_DAYS,
+            MessageOutcome::OUTCOME_EXPIRED,
+            self::AGE_EXPIRY_BATCH,
+        ]))->pluck('msgid');
     }
 
     /**

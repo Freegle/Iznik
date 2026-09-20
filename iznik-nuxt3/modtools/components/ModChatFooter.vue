@@ -451,47 +451,47 @@ const props = defineProps({
 const emit = defineEmits(['typing', 'scrollbottom'])
 
 // Don't use dynamic imports because it stops us being able to scroll to the bottom after render.
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
-const UserRatings = defineAsyncComponent(() =>
-  import('~/components/UserRatings')
+const UserRatings = defineAsyncComponent(
+  () => import('~/components/UserRatings')
 )
-const PromiseModal = defineAsyncComponent(() =>
-  import('~/components/PromiseModal')
+const PromiseModal = defineAsyncComponent(
+  () => import('~/components/PromiseModal')
 )
-const ProfileModal = defineAsyncComponent(() =>
-  import('~/components/ProfileModal')
+const ProfileModal = defineAsyncComponent(
+  () => import('~/components/ProfileModal')
 )
-const AddressModal = defineAsyncComponent(() =>
-  import('~/components/AddressModal')
+const AddressModal = defineAsyncComponent(
+  () => import('~/components/AddressModal')
 )
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
-const ChatRSVPModal = defineAsyncComponent(() =>
-  import('~/components/ChatRSVPModal')
+const ChatRSVPModal = defineAsyncComponent(
+  () => import('~/components/ChatRSVPModal')
 )
-const NudgeWarningModal = defineAsyncComponent(() =>
-  import('~/components/NudgeWarningModal')
+const NudgeWarningModal = defineAsyncComponent(
+  () => import('~/components/NudgeWarningModal')
 )
-const NudgeTooSoonWarningModal = defineAsyncComponent(() =>
-  import('~/components/NudgeTooSoonWarningModal')
+const NudgeTooSoonWarningModal = defineAsyncComponent(
+  () => import('~/components/NudgeTooSoonWarningModal')
 )
-const MicroVolunteering = defineAsyncComponent(() =>
-  import('~/components/MicroVolunteering')
+const MicroVolunteering = defineAsyncComponent(
+  () => import('~/components/MicroVolunteering')
 )
-const ModComments = defineAsyncComponent(() =>
-  import('~/modtools/components/ModComments')
+const ModComments = defineAsyncComponent(
+  () => import('~/modtools/components/ModComments')
 )
-const ModSpammerReport = defineAsyncComponent(() =>
-  import('~/modtools/components/ModSpammerReport')
+const ModSpammerReport = defineAsyncComponent(
+  () => import('~/modtools/components/ModSpammerReport')
 )
-const ModCommentAddModal = defineAsyncComponent(() =>
-  import('~/modtools/components/ModCommentAddModal')
+const ModCommentAddModal = defineAsyncComponent(
+  () => import('~/modtools/components/ModCommentAddModal')
 )
-const ConfirmModal = defineAsyncComponent(() =>
-  import('~/components/ConfirmModal')
+const ConfirmModal = defineAsyncComponent(
+  () => import('~/components/ConfirmModal')
 )
 
 const { me, myid, mod } = useMe()

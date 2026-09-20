@@ -43,6 +43,11 @@ type Volunteering struct {
 	Dates          []VolunteeringDate `json:"dates" gorm:"-"`
 	Expired        bool               `json:"expired"`
 	Canmodify      bool               `json:"canmodify" gorm:"-"`
+
+	// Renewed is when the owner last confirmed the opportunity is still active. The
+	// client needs it to know whether a confirmation is due, so that it only asks when
+	// the batch renewal clock says so rather than on every visit.
+	Renewed *time.Time `json:"renewed"`
 }
 
 // listLimit caps how many opportunities a member's list returns. National ops are taken

@@ -51,6 +51,15 @@ services:
       # interactive image serving (800) and outranks batch (25).
       - THREADS=4
 
+  spatial-knn:
+    # Native nginx `geocode` vhost fronts geocode.ilovefreegle.org; its
+    # proxy_pass target moves from Photon (127.0.0.1:2322) to the places /api
+    # here (see docs/ops/runbooks/geocoder-cutover.md). Loopback only, like
+    # Photon was. This host's COMPOSE_FILE does not include
+    # docker-compose.ports.yml, so the port is published here.
+    ports:
+      - "127.0.0.1:${PORT_SPATIAL_KNN:-8198}:8194"
+
   wiki-mysql:
     # Adopt the already-initialised DB datadir in place (zero copy).
     restart: unless-stopped

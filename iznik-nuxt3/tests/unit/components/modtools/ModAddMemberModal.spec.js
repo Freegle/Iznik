@@ -187,8 +187,13 @@ describe('ModAddMemberModal', () => {
       await wrapper.vm.add()
       await flushPromises()
 
-      expect(mockUserStore.add).toHaveBeenCalledWith({ email: 'existing@example.com' })
-      expect(mockMemberStore.add).toHaveBeenCalledWith({ userid: 456, groupid: 789 })
+      expect(mockUserStore.add).toHaveBeenCalledWith({
+        email: 'existing@example.com',
+      })
+      expect(mockMemberStore.add).toHaveBeenCalledWith({
+        userid: 456,
+        groupid: 789,
+      })
       expect(wrapper.vm.addedId).toBe(456)
     })
   })

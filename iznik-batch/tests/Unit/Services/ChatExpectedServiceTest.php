@@ -175,6 +175,148 @@ class ChatExpectedServiceTest extends TestCase
         $this->assertEquals(-1, $row->value);
     }
 
+    // -------------------------------------------------------------------------
+    // updateExpected: incremental behaviour
+    // -------------------------------------------------------------------------
+
+    /**
+     * The whole point of the delta: a message that is still waiting, in a chat where
+     * nothing has happened, must not be re-examined or rewritten on every run.
+     */
+    public function test_second_run_skips_chats_with_no_activity(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        $msg = $this->createTestChatMessage($room, $user1, [
+            'date'          => now()->subDays(2),
+            'replyexpected' => 1,
+            'replyreceived' => 0,
+        ]);
+
+        $first = $this->service->updateExpected();
+        $this->assertTrue($first['full'], 'the first run has no cursor so must do everything');
+        $this->assertEquals(1, $first['checked']);
+
+        $second = $this->service->updateExpected();
+
+        $this->assertFalse($second['full']);
+        $this->assertEquals(0, $second['checked'], 'nothing happened in that chat, so nothing to re-check');
+
+        // The answer is still on record, it just was not written again.
+        $this->assertEquals(-1, DB::table('users_expected')->where('chatmsgid', $msg->id)->value('value'));
+    }
+
+    public function test_a_new_message_brings_its_chat_back_into_the_delta(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        $msg = $this->createTestChatMessage($room, $user1, [
+            'date'          => now()->subDays(2),
+            'replyexpected' => 1,
+            'replyreceived' => 0,
+        ]);
+
+        $this->service->updateExpected();
+
+        // The reply the message was waiting for.
+        $this->createTestChatMessage($room, $user2, ['date' => now()->subHour()]);
+
+        $stats = $this->service->updateExpected();
+
+        $this->assertFalse($stats['full']);
+        $this->assertEquals(1, $stats['received']);
+        $this->assertEquals(1, $msg->fresh()->replyreceived);
+        $this->assertEquals(1, DB::table('users_expected')->where('chatmsgid', $msg->id)->value('value'));
+    }
+
+    /**
+     * The hazard this design has to cover: a rippling-held reply is already in
+     * chat_messages, so releasing it makes a reply deliverable without any new message
+     * arriving. A cursor that only watched message ids would miss it, and the expecter
+     * would keep being told nobody had replied.
+     */
+    public function test_releasing_a_held_reply_brings_its_chat_back_into_the_delta(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        $msg = $this->createTestChatMessage($room, $user1, [
+            'date'          => now()->subDays(2),
+            'replyexpected' => 1,
+            'replyreceived' => 0,
+        ]);
+
+        // user2's reply exists but is held by rippling, so it does not count yet.
+        $reply = $this->createTestChatMessage($room, $user2, ['date' => now()->subDays(1)]);
+        $post = $this->createTestMessage($user1, $this->createTestGroup());
+        DB::table('rippling_held_replies')->insert([
+            'chatid'         => $room->id,
+            'chatmsgid'      => $reply->id,
+            'msgid'          => $post->id,
+            'replieruserid'  => $user2->id,
+            'status'         => 'held',
+        ]);
+
+        $first = $this->service->updateExpected();
+        $this->assertEquals(1, $first['waiting'], 'a held reply must not count as received');
+
+        // Release it - no new chat message is created, only the status changes.
+        DB::table('rippling_held_replies')->where('chatmsgid', $reply->id)->update([
+            'status'     => 'released',
+            'releasedat' => now(),
+        ]);
+
+        $stats = $this->service->updateExpected();
+
+        $this->assertFalse($stats['full']);
+        $this->assertEquals(1, $stats['received'], 'the released reply must be picked up');
+        $this->assertEquals(1, DB::table('users_expected')->where('chatmsgid', $msg->id)->value('value'));
+    }
+
+    public function test_full_run_rechecks_everything_regardless_of_activity(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        $this->createTestChatMessage($room, $user1, [
+            'date'          => now()->subDays(2),
+            'replyexpected' => 1,
+            'replyreceived' => 0,
+        ]);
+
+        $this->service->updateExpected();
+
+        $stats = $this->service->updateExpected(false, true);
+
+        $this->assertTrue($stats['full']);
+        $this->assertEquals(1, $stats['checked']);
+    }
+
+    public function test_a_dry_run_does_not_move_the_cursor(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        $this->createTestChatMessage($room, $user1, [
+            'date'          => now()->subDays(2),
+            'replyexpected' => 1,
+            'replyreceived' => 0,
+        ]);
+
+        $this->service->updateExpected(true);
+
+        // Still no cursor, so the next real run must do the full pass.
+        $this->assertNull(DB::table('config')->where('key', 'chat.expected_cursor')->value('value'));
+        $this->assertTrue($this->service->updateExpected()['full']);
+    }
+
     public function test_update_expected_skips_messages_older_than_lookback(): void
     {
         $user1 = $this->createTestUser();

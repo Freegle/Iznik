@@ -267,6 +267,35 @@ describe('useReachDistance density-aware maximum', () => {
     expect(mockSaveAndGet).not.toHaveBeenCalled()
   })
 
+  it('restores a saved position above the flat fallback once the real cap arrives', async () => {
+    // Reported by a sparse-band member (SR-XRSHA) who dragged to the 45-minute top
+    // stop and found it back "just past midway" every time she returned - on the
+    // app, and on the website, from both Browse and Settings.
+    //
+    // sliderValue is first derived while maxMinutes is still the flat 30 fallback,
+    // so positionFor(45) clamps the handle to 30: just past the middle of the 5-45
+    // range, and about 19 miles once converted. loadCap() then learns the real 45
+    // cap, but savedMinutes stays 45 throughout, so the watcher on it never fires
+    // and nothing moves the handle back. Only members whose saved position is above
+    // the fallback see it - an unset member's savedMinutes tracks maxMinutes and so
+    // does change. Her stored setting was never wrong; only the handle was.
+    mockMe.value.settings = {
+      browseMaxMinutes: 45,
+      browseMaxDistance: BROWSE_DISTANCE_UNLIMITED,
+    }
+    mockFetchNear.mockResolvedValue({ cap_minutes: 45, density_band: 'sparse' })
+    const { sliderValue, loadCap } = useReachDistance()
+
+    // Before the server answers, the flat fallback is all we can honour.
+    expect(sliderValue.value).toBe(BROWSE_MINUTES_FALLBACK_MAX)
+
+    await loadCap()
+
+    expect(sliderValue.value).toBe(45)
+    // Nothing to correct - the saved position is exactly her cap.
+    expect(mockSaveAndGet).not.toHaveBeenCalled()
+  })
+
   it('does not ask for a cap when the member has no known location', async () => {
     mockMe.value.lat = null
     mockMe.value.lng = null
@@ -276,5 +305,391 @@ describe('useReachDistance density-aware maximum', () => {
 
     expect(mockFetchNear).not.toHaveBeenCalled()
     expect(maxMinutes.value).toBe(BROWSE_MINUTES_FALLBACK_MAX)
+  })
+})
+
+// The browse map shades the member's real drive-time reach. Its shape comes from the very
+// same /town/near call this composable already makes for the radius, so the map never routes
+// the reach a second time - but only when the caller asks, so the Feed settings slider (which
+// draws no map) keeps paying nothing for it.
+describe('useReachDistance reach overlay', () => {
+  let useReachDistance
+  let useReachOverlay
+
+  const FEATURE = {
+    type: 'Feature',
+    geometry: {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [0, 0],
+          [1, 0],
+          [1, 1],
+          [0, 0],
+        ],
+      ],
+    },
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockMe.value = {
+      lat: 53.4,
+      lng: -1.3,
+      settings: { browseMaxMinutes: 15, browseMaxDistance: 6 },
+    }
+    clearNuxtState()
+    ;({ useReachDistance } = await import('~/composables/useReachDistance'))
+    ;({ useReachOverlay } = await import('~/composables/useReachOverlay'))
+  })
+
+  it('does not ask for the polygon by default', async () => {
+    mockFetchNear.mockResolvedValue({ reach_radius_miles: 8.5 })
+    const { onSliderChange } = useReachDistance()
+
+    await onSliderChange(25)
+
+    expect(mockFetchNear).toHaveBeenCalledWith(53.4, -1.3, 25, false)
+    expect(useReachOverlay().reachGeoJSON.value).toBeNull()
+  })
+
+  it('asks for the polygon and publishes it when the caller wants a map', async () => {
+    mockFetchNear.mockResolvedValue({
+      reach_radius_miles: 8.5,
+      reach_polygon: FEATURE,
+    })
+    const { onSliderChange } = useReachDistance(null, { withPolygon: true })
+
+    await onSliderChange(25)
+
+    expect(mockFetchNear).toHaveBeenCalledWith(53.4, -1.3, 25, true)
+    expect(useReachOverlay().reachGeoJSON.value).toEqual(FEATURE)
+  })
+
+  // Dragging to the far-right stop takes the "no limit" shortcut, which skips the radius
+  // derivation. Without an explicit refresh the map would keep shading the travel time the
+  // member just dragged away from.
+  it('refreshes the shape at the no-limit stop, where no radius is derived', async () => {
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: BROWSE_MINUTES_MAX,
+      density_band: 'sparse',
+      reach_polygon: FEATURE,
+    })
+    const { onSliderChange, loadCap } = useReachDistance(null, {
+      withPolygon: true,
+    })
+    await loadCap()
+    mockFetchNear.mockClear()
+
+    await onSliderChange(BROWSE_MINUTES_MAX)
+
+    expect(mockFetchNear).toHaveBeenCalledWith(
+      53.4,
+      -1.3,
+      BROWSE_MINUTES_MAX,
+      true
+    )
+    expect(useReachOverlay().reachGeoJSON.value).toEqual(FEATURE)
+  })
+
+  it('clears the shape when the routing lookup fails, rather than leaving a stale one', async () => {
+    mockFetchNear.mockResolvedValue({
+      reach_radius_miles: 8.5,
+      reach_polygon: FEATURE,
+    })
+    const { onSliderChange } = useReachDistance(null, { withPolygon: true })
+    await onSliderChange(25)
+    expect(useReachOverlay().reachGeoJSON.value).toEqual(FEATURE)
+
+    mockFetchNear.mockRejectedValue(new Error('routing down'))
+    await onSliderChange(10)
+
+    expect(useReachOverlay().reachGeoJSON.value).toBeNull()
+  })
+
+  it('clears the shape when there is no location to draw a reach from', async () => {
+    mockFetchNear.mockResolvedValue({
+      reach_radius_miles: 8.5,
+      reach_polygon: FEATURE,
+    })
+    const { onSliderChange } = useReachDistance(null, { withPolygon: true })
+    await onSliderChange(25)
+    expect(useReachOverlay().reachGeoJSON.value).toEqual(FEATURE)
+
+    mockMe.value.lat = null
+    mockMe.value.lng = null
+    await onSliderChange(10)
+
+    expect(useReachOverlay().reachGeoJSON.value).toBeNull()
+  })
+
+  // A response with no shape (routing answered, but the reach traced nothing drawable) must
+  // leave nothing behind either.
+  it('clears the shape when the answer carries no polygon', async () => {
+    mockFetchNear.mockResolvedValue({
+      reach_radius_miles: 8.5,
+      reach_polygon: FEATURE,
+    })
+    const { onSliderChange } = useReachDistance(null, { withPolygon: true })
+    await onSliderChange(25)
+
+    mockFetchNear.mockResolvedValue({ reach_radius_miles: 4 })
+    await onSliderChange(10)
+
+    expect(useReachOverlay().reachGeoJSON.value).toBeNull()
+  })
+})
+
+// A member who has never touched the slider sits at the top stop, but the top stop is their
+// density band's cap and the client does not know it until the server says so. The first
+// call therefore has to guess (the flat fallback), and the shape it brings back describes
+// the wrong travel time for anyone whose band is not the fallback.
+describe('useReachDistance reach overlay for an unset slider', () => {
+  let useReachDistance
+  let useReachOverlay
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    // No browseMaxMinutes: the slider sits at whatever the cap turns out to be.
+    mockMe.value = { lat: 53.4, lng: -1.3, settings: {} }
+    clearNuxtState()
+    ;({ useReachDistance } = await import('~/composables/useReachDistance'))
+    ;({ useReachOverlay } = await import('~/composables/useReachOverlay'))
+  })
+
+  function polygonFor(minutes) {
+    return {
+      type: 'Feature',
+      minutes,
+      geometry: { type: 'Polygon', coordinates: [] },
+    }
+  }
+
+  it('redraws the shape for the real cap once the server reports it', async () => {
+    mockFetchNear.mockImplementation((lat, lng, minutes) =>
+      Promise.resolve({
+        cap_minutes: 45,
+        density_band: 'sparse',
+        reach_polygon: polygonFor(minutes),
+      })
+    )
+    const { loadCap } = useReachDistance(null, { withPolygon: true })
+
+    await loadCap()
+
+    // First asked for the flat fallback, then again for the 45 the server reported.
+    expect(mockFetchNear).toHaveBeenCalledWith(
+      53.4,
+      -1.3,
+      BROWSE_MINUTES_FALLBACK_MAX,
+      true
+    )
+    expect(mockFetchNear).toHaveBeenLastCalledWith(53.4, -1.3, 45, true)
+    expect(useReachOverlay().reachGeoJSON.value.minutes).toBe(45)
+  })
+
+  it('does not redraw when the cap turns out to be the one we guessed', async () => {
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: BROWSE_MINUTES_FALLBACK_MAX,
+      density_band: 'medium',
+      reach_polygon: polygonFor(BROWSE_MINUTES_FALLBACK_MAX),
+    })
+    const { loadCap } = useReachDistance(null, { withPolygon: true })
+
+    await loadCap()
+
+    expect(mockFetchNear).toHaveBeenCalledTimes(1)
+  })
+
+  // The extra call is for the map alone, so a caller that draws no map must not make it.
+  it('does not redraw for a caller that did not ask for a polygon', async () => {
+    mockFetchNear.mockResolvedValue({ cap_minutes: 45, density_band: 'sparse' })
+    const { loadCap } = useReachDistance()
+
+    await loadCap()
+
+    expect(mockFetchNear).toHaveBeenCalledTimes(1)
+  })
+})
+
+// The outbound axis: how far away someone can be and still see MY posts. Same slider, same
+// minutes->miles conversion, different keys - and two deliberate differences in behaviour, both
+// tested here because getting either wrong changes a member's reach without them asking.
+describe('useReachDistance axis myPosts', () => {
+  let useReachDistance
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockMe.value = {
+      lat: 53.4,
+      lng: -1.3,
+      settings: { browseMaxMinutes: 20, browseMaxDistance: 12 },
+    }
+    const mod = await import('~/composables/useReachDistance')
+    useReachDistance = mod.useReachDistance
+  })
+
+  it('writes the outbound keys and leaves the browse keys untouched', async () => {
+    mockFetchNear.mockResolvedValue({ reach_radius_miles: 18.25 })
+    const { onSliderChange } = useReachDistance(null, { axis: 'myPosts' })
+
+    await onSliderChange(30)
+
+    const saved = mockSaveAndGet.mock.calls[0][0].settings
+    expect(saved.myPostsMaxMinutes).toBe(30)
+    expect(saved.myPostsMaxDistance).toBe(18.25)
+    // The inbound pair is a separate choice and must survive untouched.
+    expect(saved.browseMaxMinutes).toBe(20)
+    expect(saved.browseMaxDistance).toBe(12)
+  })
+
+  // A post's reach grows to the ripple ceiling whatever band its origin is in, so the outbound
+  // axis is NOT band-capped. Honouring cap_minutes here would tell a city member their posts
+  // reach 20 minutes when they already reach 45.
+  it('ignores the density band cap and tops out at the ripple ceiling', async () => {
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: 20,
+      density_band: 'dense',
+      reach_radius_miles: 30,
+    })
+    const { maxMinutes, loadCap } = useReachDistance(null, { axis: 'myPosts' })
+
+    await loadCap()
+
+    expect(maxMinutes.value).toBe(BROWSE_MINUTES_MAX)
+  })
+
+  it('stores the no-limit sentinel at the top stop even for a band-capped member', async () => {
+    mockFetchNear.mockResolvedValue({ cap_minutes: 20, density_band: 'dense' })
+    const { onSliderChange } = useReachDistance(null, { axis: 'myPosts' })
+
+    await onSliderChange(BROWSE_MINUTES_MAX)
+
+    const saved = mockSaveAndGet.mock.calls[0][0].settings
+    expect(saved.myPostsMaxMinutes).toBe(BROWSE_MINUTES_MAX)
+    expect(saved.myPostsMaxDistance).toBe(BROWSE_DISTANCE_UNLIMITED)
+  })
+
+  // While unset the two axes are linked, so the outbound slider has to show the member's REAL
+  // current outbound reach rather than a default of its own.
+  it('starts at the inbound travel time when the member has chosen one', async () => {
+    mockFetchNear.mockResolvedValue({ reach_radius_miles: 12 })
+    const { sliderValue } = useReachDistance(null, { axis: 'myPosts' })
+
+    expect(sliderValue.value).toBe(20)
+  })
+
+  it('starts at no limit when the member has never chosen an inbound distance', async () => {
+    // The band default lives in the separate, inbound-only browseReachMaxDistance key, so this
+    // member's posts are not capped at all today. Showing the band default would understate it.
+    mockMe.value.settings = {
+      browseMaxMinutes: 20,
+      browseReachMaxDistance: 4.8,
+    }
+    const { sliderValue } = useReachDistance(null, { axis: 'myPosts' })
+
+    expect(sliderValue.value).toBe(BROWSE_MINUTES_MAX)
+  })
+
+  // The two axes publish to separate overlay slots. A shared slot would let a change on one
+  // discard the other's in-flight shape and blank half the map.
+  it('publishes its reach shape to its own overlay slot', async () => {
+    const { useReachOverlay } = await import('~/composables/useReachOverlay')
+    mockFetchNear.mockResolvedValue({
+      reach_radius_miles: 18.25,
+      reach_polygon: { type: 'Feature', minutes: 30 },
+    })
+    const { onSliderChange } = useReachDistance(null, {
+      axis: 'myPosts',
+      withPolygon: true,
+    })
+
+    await onSliderChange(30)
+
+    expect(useReachOverlay('myPosts').reachGeoJSON.value.minutes).toBe(30)
+    expect(useReachOverlay('browse').reachGeoJSON.value).toBeNull()
+  })
+})
+
+// The stored pair is a budget in minutes plus the radius derived from it, and the "no limit"
+// sentinel is only ever the top stop's answer. The sentinel sitting beside a budget BELOW the
+// member's cap is therefore not a choice - it is what a failed radius derivation leaves behind,
+// and it switches off every distance filter (browse, the unread-count badge, search, post
+// emails) while the slider still shows the narrow position the member set. Discourse 10096: a
+// Hastings member on the 5-minute stop was mailed Eastbourne posts 16 miles away.
+describe('useReachDistance heals a sentinel below the cap', () => {
+  let useReachDistance
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockMe.value = {
+      lat: 50.87,
+      lng: 0.6,
+      settings: {
+        browseMaxMinutes: 5,
+        browseMaxDistance: BROWSE_DISTANCE_UNLIMITED,
+      },
+    }
+    const mod = await import('~/composables/useReachDistance')
+    useReachDistance = mod.useReachDistance
+  })
+
+  it('derives the radius the saved budget asks for', async () => {
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: 45,
+      density_band: 'sparse',
+      reach_radius_miles: 3.2,
+    })
+    const { loadCap } = useReachDistance()
+
+    await loadCap()
+
+    const saved =
+      mockSaveAndGet.mock.calls[mockSaveAndGet.mock.calls.length - 1][0]
+        .settings
+    // The budget is the member's choice and stays put; only the derived radius changes.
+    expect(saved.browseMaxMinutes).toBe(5)
+    expect(saved.browseMaxDistance).toBe(3.2)
+  })
+
+  it('tells the feed to re-filter once the radius lands', async () => {
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: 45,
+      density_band: 'sparse',
+      reach_radius_miles: 3.2,
+    })
+    const onPersisted = vi.fn()
+    const { loadCap } = useReachDistance(onPersisted)
+
+    await loadCap()
+
+    expect(onPersisted).toHaveBeenCalledWith(3.2)
+  })
+
+  it('leaves the sentinel alone at the top stop, where it is the right answer', async () => {
+    mockMe.value.settings.browseMaxMinutes = BROWSE_MINUTES_MAX
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: BROWSE_MINUTES_MAX,
+      density_band: 'sparse',
+      reach_radius_miles: 24.3,
+    })
+    const { loadCap } = useReachDistance()
+
+    await loadCap()
+
+    expect(mockSaveAndGet).not.toHaveBeenCalled()
+  })
+
+  it('writes nothing when the derivation is still failing', async () => {
+    // Routing down: one wrong answer must not be swapped for another. The next visit retries.
+    mockFetchNear.mockResolvedValue({ cap_minutes: 45, density_band: 'sparse' })
+    const { loadCap } = useReachDistance()
+
+    await loadCap()
+
+    expect(mockSaveAndGet).not.toHaveBeenCalled()
+    expect(mockMe.value.settings.browseMaxDistance).toBe(
+      BROWSE_DISTANCE_UNLIMITED
+    )
   })
 })

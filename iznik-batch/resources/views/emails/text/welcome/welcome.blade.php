@@ -13,7 +13,7 @@ Ready to start freegling?
 
 Give stuff away: {{ $giveUrl }}
 Browse what's on offer: {{ $browseUrl }}
-Find what you need: {{ $findUrl }}
+Ask for what you need: {{ $askUrl }}
 
 
 THREE SIMPLE RULES

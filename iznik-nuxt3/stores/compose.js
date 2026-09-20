@@ -28,8 +28,7 @@ const defaultWanted = {
 // being silently submitted out of nowhere days later.
 const PENDING_SUBMIT_TTL = 60 * 60 * 1000 // 1 hour
 
-export const useComposeStore = defineStore({
-  id: 'compose',
+export const useComposeStore = defineStore('compose', {
   persist: {
     storage: piniaPluginPersistedstate.localStorage(),
     // Transient upload state must not survive a reload - see

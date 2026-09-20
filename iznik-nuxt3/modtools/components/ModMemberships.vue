@@ -152,8 +152,8 @@ const hiddenmemberofs = computed(() => {
   return allmemberships.value
     ? 0
     : user.value?.memberships?.length > MEMBERSHIPS_SHOW
-    ? user.value.memberships.length - MEMBERSHIPS_SHOW
-    : 0
+      ? user.value.memberships.length - MEMBERSHIPS_SHOW
+      : 0
 })
 
 const filteredApplied = computed(() => {
@@ -192,8 +192,8 @@ const hiddenapplieds = computed(() => {
   return allapplied.value
     ? 0
     : filteredApplied.value.length > MEMBERSHIPS_SHOW
-    ? filteredApplied.value.length - MEMBERSHIPS_SHOW
-    : 0
+      ? filteredApplied.value.length - MEMBERSHIPS_SHOW
+      : 0
 })
 
 function daysago(d) {

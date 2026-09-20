@@ -811,16 +811,16 @@ import {
 } from '#imports'
 import ProfileImage from '~/components/ProfileImage'
 
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
 const ExportPost = defineAsyncComponent(() => import('~/components/ExportPost'))
 const ExportChat = defineAsyncComponent(() => import('~/components/ExportChat'))
-const UserRatings = defineAsyncComponent(() =>
-  import('~/components/UserRatings')
+const UserRatings = defineAsyncComponent(
+  () => import('~/components/UserRatings')
 )
-const ExternalLink = defineAsyncComponent(() =>
-  import('~/components/ExternalLink')
+const ExternalLink = defineAsyncComponent(
+  () => import('~/components/ExternalLink')
 )
 
 const authStore = useAuthStore()

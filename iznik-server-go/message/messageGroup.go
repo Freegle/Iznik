@@ -23,12 +23,12 @@ type MessageGroup struct {
 	// There's a slight privacy issue in returning the approval id.  Potentially we might not want users to know that
 	// their messages are moderated, and we might not want to reveal the id of the moderator.  However it's a useful
 	// thing to be able to show mods themselves.
-	Approvedby              uint64           `json:"approvedby"`
-	Heldby                  *uint64          `json:"heldby,omitempty"`
-	Spamtype                *string          `json:"spamtype,omitempty"`
-	Spamreason              *string          `json:"spamreason,omitempty"`
-	ContentcheckCheckedAt   *time.Time       `json:"contentcheck_checked_at,omitempty"`
-	ContentcheckReasons     *json.RawMessage `json:"contentcheck_reasons,omitempty"`
+	Approvedby            uint64           `json:"approvedby"`
+	Heldby                *uint64          `json:"heldby,omitempty"`
+	Spamtype              *string          `json:"spamtype,omitempty"`
+	Spamreason            *string          `json:"spamreason,omitempty"`
+	ContentcheckCheckedAt *time.Time       `json:"contentcheck_checked_at,omitempty"`
+	ContentcheckReasons   *json.RawMessage `json:"contentcheck_reasons,omitempty"`
 
 	// RippledIn is set when this messages_groups row was created by the rippling engine
 	// (the post originated on another group and rippled in here). The moderation UI uses

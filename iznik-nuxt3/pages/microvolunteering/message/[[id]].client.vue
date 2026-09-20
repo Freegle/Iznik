@@ -33,8 +33,8 @@ import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
 import { ref, useRoute, useRouter } from '#imports'
 
-const MicroVolunteeringCheckMessage = defineAsyncComponent(() =>
-  import('~/components/MicroVolunteeringCheckMessage')
+const MicroVolunteeringCheckMessage = defineAsyncComponent(
+  () => import('~/components/MicroVolunteeringCheckMessage')
 )
 
 definePageMeta({

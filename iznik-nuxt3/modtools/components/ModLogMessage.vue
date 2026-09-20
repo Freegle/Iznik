@@ -10,7 +10,8 @@
     <span v-if="!notext && log.text && log.text.length > 0">
       with <em>{{ log.text }} </em></span
     >
-    <ModLogStdMsg v-if="!nostdmsg" :logid="logid" /> <ModLogGroup :logid="logid" :tag="tag" />
+    <ModLogStdMsg v-if="!nostdmsg" :logid="logid" />
+    <ModLogGroup :logid="logid" :tag="tag" />
   </span>
 </template>
 <script setup>

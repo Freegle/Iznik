@@ -72,17 +72,6 @@
                 :width="80"
                 :height="80"
               />
-              <NuxtPicture
-                v-else-if="attachment.externaluid"
-                format="webp"
-                provider="uploadcare"
-                :src="attachment.externaluid"
-                :modifiers="attachment.externalmods"
-                :alt="thumbnailAlt(index)"
-                class="thumbnail-image"
-                :width="80"
-                :height="80"
-              />
               <ProxyImage
                 v-else-if="attachment.path"
                 class-name="thumbnail-image"
@@ -104,17 +93,6 @@
             <OurUploadedImage
               v-if="currentAttachment?.ouruid"
               :src="currentAttachment.ouruid"
-              :modifiers="currentAttachment.externalmods"
-              :alt="photoAlt"
-              class="photo-image"
-              :width="640"
-              :height="480"
-            />
-            <NuxtPicture
-              v-else-if="currentAttachment?.externaluid"
-              format="webp"
-              provider="uploadcare"
-              :src="currentAttachment.externaluid"
               :modifiers="currentAttachment.externalmods"
               :alt="photoAlt"
               class="photo-image"
@@ -177,7 +155,7 @@
                     >•</span
                   >
                   <span v-if="poster.info?.wanteds" class="poster-overlay-stat">
-                    <v-icon icon="search" />{{ poster.info.wanteds }}
+                    <v-icon icon="shopping-cart" />{{ poster.info.wanteds }}
                   </span>
                 </div>
               </div>
@@ -194,7 +172,7 @@
                   <span
                     v-if="distanceText"
                     v-b-tooltip.hover.click.blur="{
-                      title: 'Show on map',
+                      title: (distanceTooltip || '') + '. Tap to show on map',
                       customClass: 'mobile-tooltip',
                     }"
                     class="location"
@@ -210,7 +188,7 @@
                     class="time"
                     @click.stop
                   >
-                    <v-icon icon="clock" />{{ timeAgo }}
+                    <v-icon icon="clock" />{{ ageBadge }}
                   </span>
                   <span
                     v-b-tooltip.hover.click.blur="{
@@ -382,7 +360,7 @@
                       >•</span
                     >
                     <span v-if="poster.info?.wanteds" class="poster-stat">
-                      <v-icon icon="search" />{{ poster.info.wanteds
+                      <v-icon icon="shopping-cart" />{{ poster.info.wanteds
                       }}<span class="poster-stat-label">WANTEDs</span>
                     </span>
                   </div>
@@ -447,7 +425,12 @@
                 variant="info"
                 class="mb-2"
               >
-                <span v-if="reachNotice" data-testid="reach-blocked-eta">
+                <span v-if="reachFinished" data-testid="reach-finished">
+                  This has finished rippling out and didn't get as far as your
+                  area, but go ahead and reply. We'll pass it on to the owner
+                  straight away.
+                </span>
+                <span v-else-if="reachNotice" data-testid="reach-blocked-eta">
                   This hasn't reached your area yet, but go ahead and reply.
                   {{ reachNotice }}
                 </span>
@@ -538,7 +521,11 @@
           variant="info"
           class="mb-2"
         >
-          <span v-if="reachNotice" data-testid="reach-blocked-eta">
+          <span v-if="reachFinished" data-testid="reach-finished">
+            This has finished rippling out and didn't get as far as your area,
+            but go ahead and reply. We'll pass it on to the owner straight away.
+          </span>
+          <span v-else-if="reachNotice" data-testid="reach-blocked-eta">
             This hasn't reached your area yet, but go ahead and reply.
             {{ reachNotice }}
           </span>
@@ -678,6 +665,7 @@ import { useMiscStore } from '~/stores/misc'
 import { useMobileStore } from '~/stores/mobile'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
+import { postAgeBadge } from '~/composables/usePostAgeBadge'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
 import { homeGroupFirst, isHomeGroup } from '~/composables/rippleStatus'
 import { reachNoticeSentence } from '~/composables/reachArrival'
@@ -691,14 +679,14 @@ import UserRatings from '~/components/UserRatings'
 import { useModalHistory } from '~/composables/useModalHistory'
 
 const MessageMap = defineAsyncComponent(() => import('~/components/MessageMap'))
-const MessagePhotosModal = defineAsyncComponent(() =>
-  import('~/components/MessagePhotosModal')
+const MessagePhotosModal = defineAsyncComponent(
+  () => import('~/components/MessagePhotosModal')
 )
-const MessageShareModal = defineAsyncComponent(() =>
-  import('~/components/MessageShareModal')
+const MessageShareModal = defineAsyncComponent(
+  () => import('~/components/MessageShareModal')
 )
-const MessageReportModal = defineAsyncComponent(() =>
-  import('~/components/MessageReportModal')
+const MessageReportModal = defineAsyncComponent(
+  () => import('~/components/MessageReportModal')
 )
 
 const props = defineProps({
@@ -744,6 +732,7 @@ const {
   gotAttachments,
   attachmentCount,
   timeAgo,
+  distanceTooltip,
   fullTimeAgo,
   distanceText,
   replyCount,
@@ -756,6 +745,14 @@ const {
   categoryIcon,
   poster,
 } = useMessageDisplay(props.id)
+
+// The same badge the summary card shows, so a post reads identically before and after you
+// click it: how long it has been available to YOU, plus "first posted N days" when it was
+// written materially earlier (reposted, or rippled to you late). Falls back to the plain age
+// when the server has not supplied visibleSince.
+const ageBadge = computed(
+  () => postAgeBadge(message.value, { wide: true }) || timeAgo.value
+)
 
 /* Alt text for the item photos. It used to be the literal "Item Photo" / "Thumbnail"
 on every image on the site, which tells a screen reader nothing and gives Google Images
@@ -808,6 +805,13 @@ const reachNotice = computed(() =>
     message.value?.reachesyoufully
   )
 )
+
+// The reach has stopped expanding without covering this viewer, so the post is not on
+// its way at all. Say so, rather than dating an arrival that has already passed ("any
+// moment now" about a reach that ended weeks ago, Discourse 9808/797). The reply is
+// still held for a moment and released by the finished-reach sweep, so it does go
+// straight on.
+const reachFinished = computed(() => message.value?.reachfinished === true)
 
 // For a bulk offer the catalogue below (BulkItemsInterest) lists the items and
 // collection times structurally. The server also stores a plain-text summary as
@@ -1606,7 +1610,8 @@ onUnmounted(() => {
   overflow: hidden;
   border: 2px solid $color-white-opacity-50;
   cursor: pointer;
-  transition: border-color var(--transition-normal),
+  transition:
+    border-color var(--transition-normal),
     transform var(--transition-normal);
 
   &.active {

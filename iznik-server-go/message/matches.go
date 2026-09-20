@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/freegle/iznik-server-go/embedding"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -79,10 +80,11 @@ func Matches(c *fiber.Ctx) error {
 	nelng := float32(lng + matchBoxDegrees)
 	candidates := embedding.Global.Search(queryVec, limit*3, "Offer", nil, nil, swlat, swlng, nelat, nelng)
 
-	// Reach-filter against the poster's chosen location.
-	blocked := ReachBlockedSet(candidateMsgids(candidates), lat, lng)
-
 	myid := user.WhoAmI(c)
+
+	// Reach-filter against the poster's chosen location. myid so that a member an
+	// overflow ring admits is offered the same matches they can see on browse.
+	blocked := ReachBlockedSet(myid, candidateMsgids(candidates), lat, lng)
 
 	out := make([]SimilarResult, 0, limit)
 	for _, cnd := range candidates {
@@ -95,7 +97,7 @@ func Matches(c *fiber.Ctx) error {
 		if blocked[cnd.Msgid] {
 			continue
 		}
-		blat, blng := utils.Blur(cnd.Lat, cnd.Lng, utils.BLUR_USER)
+		blat, blng := roadblur.RoadBlur(cnd.Lat, cnd.Lng, utils.BLUR_USER)
 		out = append(out, SimilarResult{
 			Msgid:   cnd.Msgid,
 			Groupid: cnd.Groupid,

@@ -2,11 +2,11 @@
   <div class="p-2">
     <div class="d-flex justify-content-between align-items-center mb-2">
       <h5 class="mb-0">App Debug Log</h5>
-      <b-button size="sm" variant="outline-danger" @click="clear">Clear</b-button>
+      <b-button size="sm" variant="outline-danger" @click="clear"
+        >Clear</b-button
+      >
     </div>
-    <div class="build-info text-muted small mb-2">
-      Build: {{ buildDate }}
-    </div>
+    <div class="build-info text-muted small mb-2">Build: {{ buildDate }}</div>
     <div v-if="logs.length === 0" class="text-muted small">
       No log entries yet.
     </div>
@@ -16,14 +16,19 @@
         :key="idx"
         :class="['log-entry', 'py-1', 'border-bottom', levelClass(entry.level)]"
       >
-        <span class="text-muted me-2">{{ entry.timestamp.replace('T', ' ').replace(/\.\d+Z$/, '') }}</span>
-        <span :class="['badge', 'me-2', badgeClass(entry.level)]">{{ entry.level }}</span>
+        <span class="text-muted me-2">{{
+          entry.timestamp.replace('T', ' ').replace(/\.\d+Z$/, '')
+        }}</span>
+        <span :class="['badge', 'me-2', badgeClass(entry.level)]">{{
+          entry.level
+        }}</span>
         <span class="log-message">{{ entry.message }}</span>
       </div>
     </div>
   </div>
 </template>
 <script setup>
+import { nextTick } from 'vue'
 import { useDebugStore } from '@/stores/debug'
 
 const debugStore = useDebugStore()

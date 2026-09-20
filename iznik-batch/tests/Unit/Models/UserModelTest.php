@@ -752,6 +752,20 @@ class UserModelTest extends TestCase
         $this->assertTrue(User::isInternalEmail('feed@republisher.freegle.in'));
     }
 
+    public function test_is_internal_email_detects_modtools(): void
+    {
+        // modtools.org is our own site: no MX, and an A record pointing at a
+        // static web host. Postfix falls back to that per RFC, tries port 25
+        // against a web server and times out - transient by SMTP rules, so it
+        // retried for the full queue lifetime and expired without ever marking
+        // anyone bouncing. On 2026-08-19 that was 551 queued messages to 67
+        // addresses, and one bot account had been accumulating them since
+        // February.
+        $this->assertTrue(User::isInternalEmail('modbot@modtools.org'));
+        $this->assertTrue(User::isInternalEmail('confirmmod-be79042a7595c01@modtools.org'));
+        $this->assertTrue(User::isInternalEmail('MODBOT@MODTOOLS.ORG'));
+    }
+
     public function test_is_internal_email_detects_yahoogroups(): void
     {
         $this->assertTrue(User::isInternalEmail('group@yahoogroups.com'));

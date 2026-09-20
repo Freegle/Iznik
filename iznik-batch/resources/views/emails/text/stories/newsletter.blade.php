@@ -23,7 +23,7 @@ From a freegler on {!! $story['groupname'] !!}.
 
 Tell your story: {!! $tellUrl !!}
 Give something: {!! $giveUrl !!}
-Find something: {!! $findUrl !!}
+Ask for something: {!! $askUrl !!}
 
 ---
 

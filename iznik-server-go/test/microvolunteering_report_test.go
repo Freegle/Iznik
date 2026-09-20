@@ -18,11 +18,11 @@ func addRippledCopy(msgid, groupid uint64) {
 // addReachRow seeds a rippling_reach row for msgid with the given status.
 func addReachRow(msgid uint64, status string) {
 	database.DBConn.Exec(
-		"INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, "+
+		"INSERT INTO rippling_reach (msgid, lat, lng, outer_bound, arrival, mode, tick, total_ticks, "+
 			"total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "+
-			"VALUES (?, 51.5, -0.1, ST_GeomFromText('POLYGON((-0.1 51.5, -0.2 51.5, -0.2 51.6, -0.1 51.6, -0.1 51.5))', ?), "+
+			"VALUES (?, 51.5, -0.1, "+
 			"ST_Envelope(ST_GeomFromText('POLYGON((-0.1 51.5, -0.2 51.5, -0.2 51.6, -0.1 51.6, -0.1 51.5))', ?)), "+
-			"NOW(), 'drive', 1, 3, 90, 30, NULL, NULL, ?, NOW(), NOW())", msgid, utils.SRID, utils.SRID, status)
+			"NOW(), 'drive', 1, 3, 90, 30, NULL, NULL, ?, NOW(), NOW())", msgid, utils.SRID, status)
 }
 
 func collectionOf(msgid, groupid uint64) string {
@@ -67,6 +67,18 @@ func TestReportVerdictMemberQuorumPendsAllGroupsAndFreezes(t *testing.T) {
 	}
 	if reachStatusOf(msgid) != "held" {
 		t.Errorf("reach must be frozen 'held' once the origin is Pending, got %s", reachStatusOf(msgid))
+	}
+
+	// Each group whose copy was pulled back gets a log row saying so, so its moderators
+	// can see why a post they may never have looked at is in their queue (Discourse
+	// 10102). Nobody in particular did it, so byuser is empty.
+	for _, gid := range []uint64{origin, rippled} {
+		var n int64
+		db.Raw("SELECT COUNT(*) FROM logs WHERE msgid = ? AND groupid = ? AND type = 'Message' AND subtype = 'Hold' AND byuser IS NULL AND text LIKE 'Members or moderators think%'",
+			msgid, gid).Scan(&n)
+		if n != 1 {
+			t.Errorf("group %d must have one Hold log for the quorum pull, got %d", gid, n)
+		}
 	}
 }
 

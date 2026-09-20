@@ -7,6 +7,7 @@ namespace App\Mail\Traits;
  *
  * This controls which email types iznik-batch is allowed to send.
  * Configure via .env: FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification
+ * A single '*' in the list enables every type.
  */
 trait FeatureFlags
 {
@@ -25,6 +26,13 @@ trait FeatureFlags
         }
 
         $types = array_map('trim', explode(',', $enabledTypes));
+
+        // '*' enables every type - for a deployment that adds its own mailables
+        // and would otherwise have to re-list Freegle's whole catalogue.
+        if (in_array('*', $types, TRUE)) {
+            return TRUE;
+        }
+
         return in_array($emailType, $types, TRUE);
     }
 }

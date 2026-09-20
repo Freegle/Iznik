@@ -29,8 +29,8 @@ import {
 } from '#imports'
 import { useGroupStore } from '~/stores/group'
 
-const PostMapAndList = defineAsyncComponent(() =>
-  import('~/components/PostMapAndList')
+const PostMapAndList = defineAsyncComponent(
+  () => import('~/components/PostMapAndList')
 )
 
 const runtimeConfig = useRuntimeConfig()

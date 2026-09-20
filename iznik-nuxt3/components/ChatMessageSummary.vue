@@ -52,8 +52,8 @@ import { useChatStore } from '~/stores/chat'
 import { useAuthStore } from '~/stores/auth'
 import ChatMessageCard from '~/components/ChatMessageCard'
 
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
 
 const props = defineProps({
@@ -102,7 +102,7 @@ const promisedToThem = computed(() => {
   let ret = false
 
   if (message.value?.promises) {
-    for (const p of message.value?.promises) {
+    for (const p of message.value.promises) {
       if (chat.value?.otheruid === p.userid) {
         ret = true
       }

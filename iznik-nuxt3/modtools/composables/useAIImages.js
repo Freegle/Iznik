@@ -29,7 +29,7 @@ export function useAIImages() {
     }
   }
 
-  async function regenerate(id, notes) {
+  function regenerate(id, notes) {
     return $api.aiimages.regenerate(id, notes)
   }
 

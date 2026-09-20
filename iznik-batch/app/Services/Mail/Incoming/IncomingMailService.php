@@ -1176,11 +1176,32 @@ class IncomingMailService
             return $this->dropped("Subscribe to unknown group");
         }
 
-        // Find or create the user
+        // Find or create the user.
+        //
+        // findUserByEmail falls back to a canon lookup, which is the thing that stops a
+        // Trash Nothing member's second per-group address creating a second Freegle
+        // account: canon strips the -gNNNN suffix, so every alias of one member reduces
+        // to the same value. Matching the address alone, as this did, is how the member
+        // in Discourse's 403 report came to hold two accounts - TN sends a Subscribe
+        // mail per group, each from a different alias.
         $envFrom = $email->envelopeFrom;
-        $userEmail = UserEmail::where('email', $envFrom)->first();
+        $user = $this->findUserByEmail($envFrom);
 
-        if ($userEmail === null) {
+        if ($user === null) {
+            // A row for this address with no user behind it is a broken state, not a new
+            // member. users_emails.email is UNIQUE, so creating here would collide on it
+            // and throw where this drops cleanly. A foreign key on users_emails.userid
+            // means it cannot arise on its own; the guard is for the case where that key
+            // is not there, and costs one indexed check on a path that only runs for an
+            // address nobody has seen before.
+            if (UserEmail::where('email', $envFrom)->exists()) {
+                Log::warning('User email exists but user not found', [
+                    'email' => $envFrom,
+                ]);
+
+                return $this->dropped("User email exists but user not found for subscribe");
+            }
+
             // Create a new user
             $user = User::create([
                 'fullname' => $email->fromName,
@@ -1189,12 +1210,14 @@ class IncomingMailService
                 'lastaccess' => now(),
             ]);
 
-            // Add their email
+            // Add their email. canon is what the lookup above reads, so leaving it null
+            // here would mean the member's NEXT alias created yet another account.
             UserEmail::create([
                 'userid' => $user->id,
                 'email' => $envFrom,
                 'preferred' => 1,
                 'added' => now(),
+                'canon' => $this->canonicalizeEmail($envFrom),
             ]);
 
             Log::info('Created new user for subscribe', [
@@ -1203,18 +1226,33 @@ class IncomingMailService
                 'created_new' => true,
             ]);
         } else {
-            $user = User::find($userEmail->userid);
-            if ($user === null) {
-                Log::warning('User email exists but user not found', [
-                    'email' => $envFrom,
-                ]);
-
-                return $this->dropped("User email exists but user not found for subscribe");
-            }
+            // It may have matched on canon rather than on the address itself - another
+            // per-group alias of the same member. Attach this one so later mail from it
+            // matches outright.
+            $this->addEmailToUser($user->id, $envFrom);
 
             // Update last access
             $user->lastaccess = now();
             $user->save();
+        }
+
+        // A ban is per-group and blocks rejoining. TrashNothing re-sends a Subscribe mail
+        // for every group its member is on, so without this check a banned member is put
+        // back on the group the next time TN syncs, with nothing in the modlog to explain
+        // how they returned (Discourse #10086).
+        $banned = DB::table('users_banned')
+            ->where('userid', $user->id)
+            ->where('groupid', $group->id)
+            ->exists();
+
+        if ($banned) {
+            Log::info('Subscribe from banned member - dropping', [
+                'user_id' => $user->id,
+                'group_id' => $group->id,
+                'group_name' => $groupName,
+            ]);
+
+            return $this->dropped("Subscribe from banned member");
         }
 
         // Check if already a member
@@ -1239,6 +1277,19 @@ class IncomingMailService
             'collection' => 'Approved',
             'added' => now(),
             'emailfrequency' => 24, // Daily digest by default
+        ]);
+
+        // Record the join the way every other join path does, so moderators can see how
+        // the member arrived, and so the "seen on many groups" check in
+        // MembershipsProcessingService - which counts Group/Joined rows - takes it in.
+        DB::table('logs')->insert([
+            'timestamp' => now(),
+            'type' => 'Group',
+            'subtype' => 'Joined',
+            'user' => $user->id,
+            'byuser' => $user->id,
+            'groupid' => $group->id,
+            'text' => 'Subscribed',
         ]);
 
         Log::info('Added user to group', [
@@ -1780,7 +1831,11 @@ class IncomingMailService
         [$lat, $lng] = $latlng;
         $service = app(RippleReplyService::class);
 
-        if ($service->shouldHold($msgid, $lat, $lng)) {
+        // Their own density band, so a replier the rural-access ring covers is not held for
+        // being outside a reach that a headcount, rather than distance, cut short.
+        $band = $replier->settings['browseDensityBand'] ?? null;
+
+        if ($service->shouldHold($msgid, $lat, $lng, is_string($band) ? $band : null)) {
             $service->hold($chatId, $chatMsgId, $msgid, $replier->id, $lat, $lng, $source);
             Log::info('ripple:held-external-reply', [
                 'msgid' => $msgid,
@@ -2762,9 +2817,16 @@ class IncomingMailService
             // Note: member posts are no longer Approved on arrival (see routing note
             // above). The APPROVED branch is retained for completeness / any future
             // caller; unmoderated members take the awaiting-content-check path below.
+            //
+            // Every update here is scoped to THIS group's row. A TrashNothing cross-post
+            // arrives as one email per group, minutes apart, and all of them attach to
+            // the same message; keyed on the message alone, routing the second email
+            // set the first group's copy back to Pending after the content check had
+            // already promoted it (Discourse 10142).
             if ($routingResult === RoutingResult::APPROVED) {
                 // Message is approved - update collection to Approved
                 MessageGroup::where('msgid', $messageId)
+                    ->where('groupid', $group->id)
                     ->update([
                         'collection' => MessageGroup::COLLECTION_APPROVED,
                         'approvedat' => now(),
@@ -2784,6 +2846,7 @@ class IncomingMailService
                 // content-check job's responsibility, so clean posts create no mod
                 // work and flagged posts never go live unchecked.
                 MessageGroup::where('msgid', $messageId)
+                    ->where('groupid', $group->id)
                     ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
 
                 Log::info('Message pending content check (auto-approve candidate)', [
@@ -2795,6 +2858,7 @@ class IncomingMailService
                 // worry words, unmapped user, Big Switch) - collection is already
                 // Incoming, update to Pending and notify mods now.
                 MessageGroup::where('msgid', $messageId)
+                    ->where('groupid', $group->id)
                     ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
 
                 // #15: Notify group moderators of new pending work
@@ -2835,6 +2899,22 @@ class IncomingMailService
         try {
             // Determine message type from subject using keyword matching
             $type = Message::determineType($email->subject);
+
+            // A TrashNothing item cross-posted to N groups arrives as N separate emails, one
+            // per group, all carrying the same X-Trash-Nothing-Post-Id. It is one item, so it
+            // is one message: the first email creates it, and each later one attaches its
+            // group to that message. That gives one messages row with N messages_groups rows,
+            // the same shape as a Freegle-native cross-post, which is what the feed, the
+            // badge counts and search all expect - they key on msgid.
+            $tnPostId = $this->normaliseTnPostId($email->getTrashNothingPostId());
+
+            if ($tnPostId !== null) {
+                $existingId = $this->findLiveTnMessage($tnPostId);
+
+                if ($existingId !== null) {
+                    return $this->attachGroupToTnMessage($existingId, $email, $user, $group, $type, $spamType);
+                }
+            }
 
             // Generate a unique message ID if not present
             $messageId = $email->messageId ?? (microtime(true) . '@' . config('freegle.mail.user_domain', 'users.ilovefreegle.org'));
@@ -2913,7 +2993,7 @@ class IncomingMailService
                 'subject' => $email->subject,
                 'suggestedsubject' => $email->subject, // TODO: implement subject suggestion
                 'messageid' => $messageId,
-                'tnpostid' => $email->getTrashNothingPostId(),
+                'tnpostid' => $tnPostId,
                 'textbody' => $cleanedTextBody,
                 'type' => $type,
                 'lat' => $lat,
@@ -2927,6 +3007,30 @@ class IncomingMailService
                 Log::error('Failed to create message record');
 
                 return null;
+            }
+
+            // Two emails for one post id arriving together can both pass the lookup above
+            // and both create. Each insert autocommits, so id order is commit order: the
+            // higher id was written after the lower one was already committed and therefore
+            // sees it here. That one stands down, leaving a single message - no lock needed,
+            // and it holds across cluster nodes because it only reads committed rows.
+            if ($tnPostId !== null) {
+                $earlierId = $this->findLiveTnMessage($tnPostId);
+
+                if ($earlierId !== null && $earlierId !== (int) $message->id) {
+                    DB::table('messages')->where('id', $message->id)->update([
+                        'deleted' => now(),
+                        'tnpostid' => null,
+                        'messageid' => null,
+                    ]);
+
+                    Log::info('TN cross-post lost create race; attaching to earlier message', [
+                        'discarded' => $message->id,
+                        'canonical' => $earlierId,
+                    ]);
+
+                    return $this->attachGroupToTnMessage($earlierId, $email, $user, $group, $type, $spamType);
+                }
             }
 
             // Create the messages_groups entry
@@ -2989,6 +3093,24 @@ class IncomingMailService
         } catch (\Exception $e) {
             // Check for duplicate message ID (can happen if message is resent)
             if (str_contains($e->getMessage(), 'Duplicate entry')) {
+                // If we lost a race for the same TN post, attach this group to the winner
+                // rather than dropping it, and do not leave our half-made row as a copy.
+                if (isset($tnPostId) && $tnPostId !== null) {
+                    $existingId = $this->findLiveTnMessage($tnPostId);
+
+                    if ($existingId !== null) {
+                        if ($message !== null && $message->id && (int) $message->id !== $existingId) {
+                            DB::table('messages')->where('id', $message->id)->update([
+                                'deleted' => now(),
+                                'tnpostid' => null,
+                                'messageid' => null,
+                            ]);
+                        }
+
+                        return $this->attachGroupToTnMessage($existingId, $email, $user, $group, $type, $spamType);
+                    }
+                }
+
                 Log::info('Duplicate message ID, likely resent message', [
                     'message_id' => $email->messageId,
                 ]);
@@ -3006,6 +3128,133 @@ class IncomingMailService
             if ($message !== null && $message->id) {
                 $this->recordFailure($message->id, $e->getMessage());
             }
+
+            return null;
+        }
+    }
+
+    /**
+     * A TrashNothing post id, trimmed, or null when absent or blank.
+     */
+    private function normaliseTnPostId(?string $tnPostId): ?string
+    {
+        if ($tnPostId === null) {
+            return null;
+        }
+
+        $trimmed = trim($tnPostId);
+
+        return $trimmed === '' ? null : $trimmed;
+    }
+
+    /**
+     * The live Freegle message for a TrashNothing post id, if we already hold one.
+     * Lowest id wins, so concurrent arrivals converge on the same message.
+     */
+    private function findLiveTnMessage(string $tnPostId): ?int
+    {
+        $id = DB::table('messages')
+            ->where('tnpostid', $tnPostId)
+            ->whereNull('deleted')
+            ->orderBy('id')
+            ->value('id');
+
+        return $id === null ? null : (int) $id;
+    }
+
+    /**
+     * Record a further group on a TrashNothing message we already hold.
+     *
+     * Only the per-GROUP side effects of createGroupPostMessage belong here: the
+     * messages_groups row, the spam-check history row and the receipt log. The
+     * per-MESSAGE work - the messages_items link, the TN image attachments - belongs to
+     * the message, not to each group on it, and repeating it would double-count the item
+     * in the weight stats and re-upload the photos.
+     */
+    private function attachGroupToTnMessage(
+        int $msgid,
+        ParsedEmail $email,
+        User $user,
+        Group $group,
+        string $type,
+        ?string $spamType = null
+    ): ?int {
+        try {
+            $collection = $spamType !== null
+                ? MessageGroup::COLLECTION_PENDING
+                : MessageGroup::COLLECTION_INCOMING;
+
+            // INSERT IGNORE: a redelivery of the same email for the same group must be a
+            // no-op, not an error. (msgid, groupid) is unique on messages_groups.
+            DB::statement(
+                'INSERT IGNORE INTO messages_groups (msgid, groupid, msgtype, collection, arrival) VALUES (?, ?, ?, ?, ?)',
+                [$msgid, $group->id, $type, $collection, now()]
+            );
+
+            $messageId = ($email->messageId ?? (microtime(true).'@'.config('freegle.mail.user_domain', 'users.ilovefreegle.org'))).'-'.$group->id;
+
+            // insertOrIgnore for the same reason as the row above: (msgid, groupid) is
+            // unique here too, so a second delivery of the same email for a group already
+            // on this message threw 1062 one line after the INSERT IGNORE that was meant
+            // to make exactly that case harmless. Skipping the rest is right - the first
+            // delivery did it - but arriving there by exception meant it was logged as an
+            // error every time, 8, 13 and 7 times on 2026-09-11, 09-12 and 09-13. A
+            // collision here can only mean the group is already recorded against this
+            // message, because the attach path runs only when the message exists and the
+            // creating email wrote its own group's history row.
+            $historyWritten = DB::table('messages_history')->insertOrIgnore([
+                'groupid' => $group->id,
+                'source' => Message::SOURCE_EMAIL ?? 'Email',
+                'fromuser' => $user->id,
+                'envelopefrom' => $email->envelopeFrom,
+                'envelopeto' => $email->envelopeTo,
+                'fromname' => $email->fromName,
+                'fromaddr' => $email->fromAddress,
+                'fromip' => $email->senderIp,
+                'subject' => $email->subject,
+                'prunedsubject' => $this->pruneSubject($email->subject),
+                'messageid' => $messageId,
+                'msgid' => $msgid,
+            ]);
+
+            if ($historyWritten === 0) {
+                // Already attached by an earlier delivery of this same email, which wrote
+                // the receipt log and routed the copy. Return null, as the failure path
+                // did: null tells the caller there is no fresh attach to follow up, and
+                // that follow-up must not run twice - messages_postings carries no unique
+                // key on (msgid, groupid), so a second pass would record the item as
+                // posted twice and feed the repost logic a phantom. The difference is
+                // that this is now a no-op saying so, not an exception logged as an error.
+                Log::info('TN cross-post group was already attached, nothing to do', [
+                    'msgid' => $msgid,
+                    'groupid' => $group->id,
+                ]);
+
+                return null;
+            }
+
+            DB::table('logs')->insert([
+                'timestamp' => now(),
+                'type' => 'Message',
+                'subtype' => 'Received',
+                'groupid' => $group->id,
+                'user' => $user->id,
+                'msgid' => $msgid,
+                'text' => $messageId,
+            ]);
+
+            Log::info('TN cross-post attached to existing message', [
+                'msgid' => $msgid,
+                'groupid' => $group->id,
+            ]);
+
+            return $msgid;
+        } catch (\Exception $e) {
+            Log::error('Failed to attach TN cross-post group to existing message', [
+                'msgid' => $msgid,
+                'groupid' => $group->id,
+                'error' => $e->getMessage(),
+            ]);
 
             return null;
         }
@@ -3854,6 +4103,12 @@ class IncomingMailService
             }
 
             $html = $response->body();
+            if (trim($html) === '') {
+                // loadHTML('') throws ValueError on PHP 8 - the @ silences
+                // warnings, not thrown Errors (same trap as the link-preview
+                // cron, fixed together 2026-08-17).
+                return [];
+            }
             $doc = new \DOMDocument;
             @$doc->loadHTML($html);
 
@@ -4048,6 +4303,10 @@ class IncomingMailService
                 'email' => $email,
                 'preferred' => 0,
                 'canon' => $this->canonicalizeEmail($email),
+                // backwards is REVERSE(canon), the definition V1's User::addEmail uses at
+                // both its insert sites. Leaving it null, as this did, is one source of the
+                // rows no domain prefix can find - see .claude/rules/mail-and-data.md.
+                'backwards' => strrev($this->canonicalizeEmail($email)),
             ]);
 
             Log::info('Added forwarding email to user', [

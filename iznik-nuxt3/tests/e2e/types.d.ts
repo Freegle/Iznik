@@ -1,5 +1,11 @@
 // Custom methods added to the Playwright Page object and test fixtures
-import { Page, PlaywrightTestArgs, PlaywrightTestOptions, PlaywrightWorkerArgs, PlaywrightWorkerOptions } from '@playwright/test'
+import {
+  Page,
+  PlaywrightTestArgs,
+  PlaywrightTestOptions,
+  PlaywrightWorkerArgs,
+  PlaywrightWorkerOptions,
+} from '@playwright/test'
 
 declare module '@playwright/test' {
   interface Page {
@@ -12,14 +18,23 @@ declare module '@playwright/test' {
     /**
      * Get all console errors that occurred during the test
      */
-    consoleErrors(): { text: string; location?: { url: string; lineNumber: number } }[]
+    consoleErrors(): {
+      text: string
+      location?: { url: string; lineNumber: number }
+    }[]
 
     /**
      * Get a summary of console errors grouped by allowed vs. not allowed
      */
     getErrorSummary(): {
-      allowed: { text: string; location?: { url: string; lineNumber: number } }[]
-      notAllowed: { text: string; location?: { url: string; lineNumber: number } }[]
+      allowed: {
+        text: string
+        location?: { url: string; lineNumber: number }
+      }[]
+      notAllowed: {
+        text: string
+        location?: { url: string; lineNumber: number }
+      }[]
       total: number
       allowedCount: number
       notAllowedCount: number
@@ -61,8 +76,16 @@ declare module '@playwright/test' {
       email: string
     }) => Promise<{ id: string | null; item: string; description: string }>
     withdrawPost: (options: { item: string }) => Promise<boolean>
-    setupTestPage: (options?: { path?: string; viewport?: { width: number; height: number }; timeout?: number; waitForLoad?: boolean }) => Promise<void>
-    takeTimestampedScreenshot: (description: string, options?: any) => Promise<void>
+    setupTestPage: (options?: {
+      path?: string
+      viewport?: { width: number; height: number }
+      timeout?: number
+      waitForLoad?: boolean
+    }) => Promise<void>
+    takeTimestampedScreenshot: (
+      description: string,
+      options?: any
+    ) => Promise<void>
     waitForNuxtPageLoad: (options?: { timeout?: number }) => Promise<void>
     findAndClickButton: (selectors: string[], options?: any) => Promise<boolean>
     setNewUserPassword: (password?: string) => Promise<boolean>

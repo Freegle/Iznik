@@ -3,7 +3,11 @@
     <b-container class="py-3">
       <b-row>
         <b-col cols="12" lg="8" offset-lg="2">
-          <div v-if="loading" class="text-center my-5" data-testid="bulkupdate-loading">
+          <div
+            v-if="loading"
+            class="text-center my-5"
+            data-testid="bulkupdate-loading"
+          >
             <b-spinner variant="success" />
             <p class="text-muted mt-2">Loading the items…</p>
           </div>
@@ -28,9 +32,9 @@
               These are the items in
               <strong>{{ offer.subject }}</strong
               >. If you've given some away elsewhere, switch them to
-              <em>taken</em> or change the number left, so Freeglers only ask for
-              what's still going. Your changes save as you make them - no login
-              needed.
+              <em>taken</em> or change the number left, so Freeglers only ask
+              for what's still going. Your changes save as you make them - no
+              login needed.
             </p>
 
             <div

@@ -7,6 +7,17 @@
  * windows). Recipes are from the monitor-fsm / iznik-server-go/userdump.
  */
 
+// Loki addresses a user's logs in two ways, and a query window can straddle both.
+// Entries written before 2026-08-23 carry user_id as a stream label. Later ones
+// carry a coarse user_bucket label plus the exact user_id as structured metadata,
+// because user_id had far too many values to be a label (it was silently
+// discarding entries) but structured metadata alone is not indexed and made the
+// lookup ~356x more expensive. Readers therefore ask for both and merge.
+//
+// USER_BUCKET_COUNT must match misc.userBucketCount in iznik-server-go.
+const USER_BUCKET_COUNT = 32
+const userBucket = (userid) => Number(userid) % USER_BUCKET_COUNT
+
 const { tool } = require('@anthropic-ai/claude-agent-sdk')
 const { z } = require('zod')
 const mysql = require('mysql2/promise')
@@ -144,12 +155,21 @@ const LOKI_SLIM_SOURCES = 'batch|batch_event|email|incoming_mail|similar_posts|v
 // appears verbatim in the raw line, so only candidate lines get parsed.
 async function lokiUserSearch({ userid, emails = [], window = '24h', limit = 200 }) {
   const passes = {}
-  // Labelled sources: an index lookup, ~0.5s over 30d.
+  // Labelled sources: an index lookup, ~0.5s over 30d. Both eras, merged.
   passes.byUserId = await lokiQuery({
     query: `{app="freegle", user_id="${userid}"}`,
     start: window,
     limit,
   })
+  // Merged into byUserId rather than kept as its own key: downstream reads
+  // byUserId to discover session ids, so a separate list would silently skip
+  // every entry written after the change. The two are disjoint - a stream
+  // selector cannot match structured metadata - so there is nothing to dedupe.
+  passes.byUserId.push(...(await lokiQuery({
+    query: `{app="freegle", user_bucket="${userBucket(userid)}"} | user_id="${userid}"`,
+    start: window,
+    limit,
+  })))
   // Slim unlabelled sources: prefilter, then the exact JSON post-filter.
   try {
     const slim = await lokiQuery({
@@ -192,13 +212,21 @@ async function lokiUserSearch({ userid, emails = [], window = '24h', limit = 200
         start: window,
         limit: 50,
       })
+      // The user_id filter runs before | json on purpose: json would also pull a
+      // user_id out of the line body, and the parsed one is renamed rather than
+      // overwriting the structured-metadata value.
+      const bucketed = await lokiQuery({
+        query: `{app="freegle", source="client", user_bucket="${userBucket(userid)}"} |= "${sid}" | user_id="${userid}" | json | session_id="${sid}"`,
+        start: window,
+        limit: 50,
+      })
       const anonWindow = /d$/.test(window) && parseInt(window, 10) > 7 ? '7d' : window
       const anon = await lokiQuery({
-        query: `{app="freegle", source="client", user_id=""} |= "${sid}" | json | session_id="${sid}"`,
+        query: `{app="freegle", source="client"} | user_id="" |= "${sid}" | json | session_id="${sid}"`,
         start: anonWindow,
         limit: 50,
       })
-      passes.bySession.push(...labelled, ...anon)
+      passes.bySession.push(...labelled, ...bucketed, ...anon)
     } catch (e) {
       console.error('[lokiUserSearch] session pass failed:', e.message)
     }

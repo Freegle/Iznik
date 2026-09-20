@@ -135,6 +135,24 @@ class MatchedPostsServiceTest extends TestCase
         $this->assertNull($this->notificationFor($notifications, $offerer->id), 'direction (ii) dropped — out of reach');
     }
 
+    public function test_does_not_match_a_withdrawn_post(): void
+    {
+        // Withdrawn belongs with Taken and Received: the poster has taken the item off
+        // Freegle, so offering it as a match sends someone after something that is gone.
+        [$recipient, , $offerer, $offer] = $this->seedMatch();
+
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $offer->id,
+            'outcome' => 'Withdrawn',
+            'timestamp' => now(),
+        ]);
+
+        $notifications = app(MatchedPostsService::class)->buildNotifications();
+
+        $toRecipient = $this->notificationFor($notifications, $recipient->id);
+        $this->assertNull($toRecipient, 'a withdrawn offer must not be matched to a wanted');
+    }
+
     public function test_never_re_mails_a_post_already_in_the_ledger(): void
     {
         [$recipient, $wanted, $offerer, $offer] = $this->seedMatch();

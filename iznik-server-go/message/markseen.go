@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -23,6 +24,28 @@ import (
 // still cutting round-trips ~100x for a typical feed. It also stays well under max_allowed_packet
 // and the placeholder limit.
 const markSeenChunk = 100
+
+// BrowseClearedWatermark is the messages_spatial.id this member has cleared their browse
+// count up to ("Mark all seen"), or 0 if they never have - an absent row is the right state
+// for everyone who has not pressed the button. Lives here (rather than isochrone, which
+// consumes it for the badge and the nearby feed) so the mygroups feed can apply the same
+// watermark to its unseen flags without an import cycle: a member who cleared their browse
+// must not see every post they never individually opened come back as "New to you".
+//
+// The axis is messages_spatial.id, not arrival and not msgid, because both of those are
+// stamped when the post was WRITTEN: a post Pending when the member cleared and approved
+// afterwards carries a backdated value, would fall under the watermark, and would never be
+// counted again. The spatial row is created when the post enters the feed.
+func BrowseClearedWatermark(db *gorm.DB, myid uint64) uint64 {
+	var cleared uint64
+
+	if myid > 0 {
+		// No row leaves cleared at its zero value, which is what "cleared nothing" means.
+		db.Table("browse_cleared").Select("spatialid").Where("userid = ?", myid).Row().Scan(&cleared)
+	}
+
+	return cleared
+}
 
 // MarkSeenRequest is the request body for marking messages as seen.
 type MarkSeenRequest struct {
@@ -128,6 +151,11 @@ func MarkSeen(c *fiber.Ctx) error {
 			}
 		}
 	}
+
+	// The badge count is remembered for a few seconds (see the browsecount package). Marking
+	// posts seen is the one change that must show at once, because the badge dropping is how
+	// the member knows it worked, so forget their count here rather than let it stand.
+	browsecount.Invalidate(myid)
 
 	return c.JSON(fiber.Map{
 		"success": true,

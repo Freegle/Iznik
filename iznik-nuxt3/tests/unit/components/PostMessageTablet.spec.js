@@ -151,9 +151,9 @@ describe('PostMessageTablet', () => {
       expect(wrapper.text()).toContain('What are you giving away?')
     })
 
-    it('shows "What are you looking for?" for Wanted type', () => {
+    it('shows the ask-flow item prompt for Wanted type', () => {
       const wrapper = createWrapper({ type: 'Wanted' })
-      expect(wrapper.text()).toContain('What are you looking for?')
+      expect(wrapper.text()).toContain("Tell other freeglers what you'd like")
     })
 
     it('shows "Any details that might help?" for Offer type', () => {
@@ -161,9 +161,9 @@ describe('PostMessageTablet', () => {
       expect(wrapper.text()).toContain('Any details that might help?')
     })
 
-    it('shows "Tell us more about what you need:" for Wanted type', () => {
+    it('shows the ask-flow description prompt for Wanted type', () => {
       const wrapper = createWrapper({ type: 'Wanted' })
-      expect(wrapper.text()).toContain('Tell us more about what you need:')
+      expect(wrapper.text()).toContain("Tell us more about what you'd like:")
     })
 
     it('shows "How many?" label for Offer type', () => {

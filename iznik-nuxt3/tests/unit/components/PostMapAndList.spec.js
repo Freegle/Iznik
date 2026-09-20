@@ -1096,7 +1096,6 @@ describe('PostMapAndList', () => {
       let lastFilteredIds = JSON.stringify([100, 101])
       const newIds = JSON.stringify([100, 101, 102])
       if (lastFilteredIds !== newIds) {
-        lastFilteredIds = newIds
         infiniteId++
       }
       expect(infiniteId).toBe(2)
@@ -1107,7 +1106,6 @@ describe('PostMapAndList', () => {
       let lastFilteredIds = JSON.stringify([100, 101])
       const newIds = JSON.stringify([100, 101])
       if (lastFilteredIds !== newIds) {
-        lastFilteredIds = newIds
         infiniteId++
       }
       expect(infiniteId).toBe(1) // Should not change

@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
+import BulkItemsInterest from '~/components/BulkItemsInterest.vue'
+
 const bulkInterest = vi.fn().mockResolvedValue({})
 
 const mockMessage = {
@@ -50,10 +52,11 @@ vi.mock('~/components/SpinButton', () => ({
   default: { name: 'SpinButton', template: '<button class="spin-stub" />' },
 }))
 vi.mock('~/components/NoticeMessage', () => ({
-  default: { name: 'NoticeMessage', template: '<div class="notice-stub"><slot /></div>' },
+  default: {
+    name: 'NoticeMessage',
+    template: '<div class="notice-stub"><slot /></div>',
+  },
 }))
-
-import BulkItemsInterest from '~/components/BulkItemsInterest.vue'
 
 // Auto-stub the bootstrap-vue-next components not already stubbed by the global
 // test setup (which throws on unresolved components).

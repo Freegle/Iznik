@@ -3,6 +3,7 @@ package test
 import (
 	json2 "encoding/json"
 	"fmt"
+	changespkg "github.com/freegle/iznik-server-go/changes"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -83,6 +84,61 @@ func TestChangesWithSince(t *testing.T) {
 	assert.Equal(t, 0, len(messages))
 	assert.Equal(t, 0, len(users))
 	assert.Equal(t, 0, len(ratings))
+}
+
+func TestChangesAncientSinceIsClamped(t *testing.T) {
+	// A since older than the maximum look-back must not be honoured: on
+	// 2026-08-17 one such call scanned 17.9M rows and OOM-killed the node. The
+	// response reports the window actually used so a partner can tell.
+	prefix := uniquePrefix("changes_clamp")
+	db := database.DBConn
+
+	partnerKey := prefix + "_key"
+	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/changes?partner=%s&since=1947-10-11T22:41:56Z", partnerKey), nil)
+	resp, err := getApp().Test(req, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	changes := result["changes"].(map[string]interface{})
+	since, ok := changes["since"].(string)
+	require.True(t, ok, "the response must say which window it used")
+
+	used, err := time.Parse(time.RFC3339, since)
+	require.NoError(t, err)
+
+	expected := time.Now().Add(-changespkg.MaxSinceLookback)
+	assert.WithinDuration(t, expected, used, time.Minute,
+		"an ancient since must be clamped to the maximum look-back, not honoured")
+}
+
+func TestChangesRecentSinceIsHonoured(t *testing.T) {
+	// Inside the window the clamp must not interfere.
+	prefix := uniquePrefix("changes_noclamp")
+	db := database.DBConn
+
+	partnerKey := prefix + "_key"
+	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	asked := time.Now().Add(-48 * time.Hour)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/changes?partner=%s&since=%s", partnerKey, asked.Format(time.RFC3339)), nil)
+	resp, err := getApp().Test(req, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	changes := result["changes"].(map[string]interface{})
+	used, err := time.Parse(time.RFC3339, changes["since"].(string))
+	require.NoError(t, err)
+	assert.WithinDuration(t, asked, used, time.Second)
 }
 
 func TestChangesMessageOutcome(t *testing.T) {

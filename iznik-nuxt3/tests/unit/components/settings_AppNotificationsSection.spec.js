@@ -115,9 +115,9 @@ describe('AppNotificationsSection', () => {
 
     it('renders the mobile-alt icon', () => {
       const wrapper = createWrapper()
-      expect(
-        wrapper.find('.v-icon[data-icon="mobile-alt"]').exists()
-      ).toBe(true)
+      expect(wrapper.find('.v-icon[data-icon="mobile-alt"]').exists()).toBe(
+        true
+      )
     })
 
     it('shows the toggle label text', () => {

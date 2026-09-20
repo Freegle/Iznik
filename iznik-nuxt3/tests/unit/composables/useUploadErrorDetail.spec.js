@@ -47,16 +47,18 @@ describe('describeUploadError', () => {
   it('surfaces a wrapped causingError message', () => {
     const err = new Error('Failed to upload x.jpg')
     err.causingError = new Error('net::ERR_CONNECTION_RESET')
-    expect(describeUploadError(err, {}).cause).toBe(
-      'net::ERR_CONNECTION_RESET'
-    )
+    expect(describeUploadError(err, {}).cause).toBe('net::ERR_CONNECTION_RESET')
   })
 
   it('caps an oversized response body to 200 chars', () => {
-    const d = describeUploadError(new Error('x'), {}, {
-      status: 502,
-      body: 'e'.repeat(5000),
-    })
+    const d = describeUploadError(
+      new Error('x'),
+      {},
+      {
+        status: 502,
+        body: 'e'.repeat(5000),
+      }
+    )
     expect(d.response_body.length).toBe(200)
   })
 

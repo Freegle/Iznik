@@ -25,7 +25,27 @@
             v-else-if="reach?.polygon"
             class="text-muted small text-center py-1"
           >
-            Blue area = how far this post has actually rippled out.
+            <span class="reach-key" />
+            Shaded area = how far this post has actually rippled out.
+            <template v-if="ringLegendItems.length">
+              <br />
+              The dashed outlines are further places it also reaches. People
+              there can see this post and reply to it, and are emailed about it,
+              just like people in the shaded area. Hover an outline to see why
+              it is included.
+              <br />
+              <span
+                v-for="item in ringLegendItems"
+                :key="item.label"
+                class="me-3 text-nowrap"
+              >
+                <span
+                  class="ring-key"
+                  :style="{ borderColor: item.color, background: item.color }"
+                />
+                {{ item.label }}
+              </span>
+            </template>
           </div>
           <div
             v-else-if="reach && !reach.rippling"
@@ -42,6 +62,7 @@
             :initial-lng="lng"
             :initial-elapsed-hours="elapsedHours"
             :actual-reach="reach?.polygon || null"
+            :overflow-rings="reach?.overflow || null"
             :spatial-url="spatialUrl"
             :jwt="jwt"
           />
@@ -52,11 +73,12 @@
 </template>
 <script setup>
 import { computed, ref } from 'vue'
-import { useRuntimeConfig } from '#imports'
 import RipplingExplorer from './RipplingExplorer.vue'
+import { useRuntimeConfig } from '#imports'
 import { useOurModal } from '~/composables/useOurModal'
 import { useMe } from '~/composables/useMe'
 import { useMessageStore } from '~/stores/message'
+import { ringLegend } from '~/modtools/composables/rippling/overflowrings.js'
 
 const props = defineProps({
   messageid: { type: Number, default: null },
@@ -77,6 +99,10 @@ const { modal, show: showModal, hide } = useOurModal({ autoShow: false })
 const rendered = ref(false)
 // The post's ACTUAL rippling progress from the backend (null until fetched).
 const reach = ref(null)
+
+// Which ring lanes this post carries, for the caption under the map. Empty for the
+// great majority of posts, which have no rings at all.
+const ringLegendItems = computed(() => ringLegend(reach.value?.overflow))
 
 const spatialUrl = computed(
   () => runtimeConfig.public.SPATIAL_SERVER_URL || 'http://localhost:8196'
@@ -111,3 +137,27 @@ async function show() {
 
 defineExpose({ show, hide })
 </script>
+
+<style scoped>
+.ring-key,
+.reach-key {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border: 1px solid;
+  border-radius: 2px;
+  vertical-align: baseline;
+}
+
+/* The rings are drawn dashed and faint on the map; the key says so. */
+.ring-key {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+.reach-key {
+  border-color: #0055cc;
+  background: #0055cc;
+  opacity: 0.35;
+}
+</style>

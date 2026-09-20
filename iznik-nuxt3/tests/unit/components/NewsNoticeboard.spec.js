@@ -21,6 +21,10 @@ const mockNewsfeedStore = {
   byId: vi.fn().mockReturnValue(mockNewsfeed),
 }
 
+// The component top-level-awaits a leaflet import on the client (live now
+// that import.meta.client substitutes to true); keep the real bundle out.
+vi.mock('leaflet/dist/leaflet-src.esm', () => ({}))
+
 vi.mock('~/stores/newsfeed', () => ({
   useNewsfeedStore: () => mockNewsfeedStore,
 }))

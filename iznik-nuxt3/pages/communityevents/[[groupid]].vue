@@ -88,8 +88,8 @@ import GroupSelect from '~/components/GroupSelect'
 import CommunityEvent from '~/components/CommunityEvent.vue'
 import ScrollGrid from '~/components/ScrollGrid'
 
-const CommunityEventModal = defineAsyncComponent(() =>
-  import('~/components/CommunityEventModal')
+const CommunityEventModal = defineAsyncComponent(
+  () => import('~/components/CommunityEventModal')
 )
 
 const runtimeConfig = useRuntimeConfig()

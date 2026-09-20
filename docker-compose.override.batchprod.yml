@@ -34,6 +34,30 @@ services:
 
   spatial:
     cgroup_parent: batch.slice
+    # No swap for the reach engine. Its ~6GB graph heap is the kernel's
+    # favourite eviction victim at the midday digest memory peak, and a
+    # swapped engine turns 2.7s coarse catchments into 65s ones (measured
+    # 2026-08-31: VmSwap 3.3-4.3GB, ~80 major faults/s, ripple expansion
+    # collapsed for ~4h; recurred 90 minutes after a restart). memswap_limit
+    # equal to mem_limit means zero swap; the limit is generous headroom over
+    # the measured 6.1GB working set, and an overrun OOM-kills just this
+    # container, which the restart policy heals in ~15s - strictly better
+    # than the silent daily collapse. Pressure now lands on swappable idle
+    # anon (photon's JVMs) instead. Durable form of the live cgroup
+    # memory.swap.max=0 applied during the incident.
+    #
+    # Sized to the compute gate, not the host: the gate defaults to NumCPU, so
+    # the rock36 resize (8 -> 12 cores, 2026-08-31) silently grew concurrency
+    # by half - and the page-cache share of the working set grows with the
+    # number of catchments in flight. The old 12g cap (measured 9.98GiB warm
+    # set at 8 slots: 6.1GB heap + ~4GB mmap'd leaf-table cache) sat below the
+    # 12-slot waterline (~6.1 + 4GB x 12/8 = ~12.1GiB), which put the cgroup into
+    # perpetual internal cache reclaim on first boot after the resize: ~2GB/s
+    # of refault reads, the engine unresponsive, host IO-saturated. 16g keeps
+    # the same ~1.3x headroom ratio over the projected waterline. If the core
+    # count changes again, re-derive: heap + (4GB * cores/8), plus a third.
+    mem_limit: 16g
+    memswap_limit: 16g
 
   spatial-knn:
     cgroup_parent: batch.slice

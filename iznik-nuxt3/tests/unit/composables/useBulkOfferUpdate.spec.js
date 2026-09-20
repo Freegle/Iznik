@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+import { useBulkOfferUpdate } from '~/composables/useBulkOfferUpdate'
+
 // Fake v2 API injected via $api.message.
 const api = vi.hoisted(() => ({
   fetchBulkEditOffer: vi.fn(),
@@ -9,8 +11,6 @@ const api = vi.hoisted(() => ({
 vi.mock('#imports', () => ({
   useNuxtApp: () => ({ $api: { message: api } }),
 }))
-
-import { useBulkOfferUpdate } from '~/composables/useBulkOfferUpdate'
 
 const offer = () => ({
   ret: 0,

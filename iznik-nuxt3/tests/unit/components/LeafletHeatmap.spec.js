@@ -1,147 +1,113 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { defineComponent } from 'vue'
+import LeafletHeatmap from '~/components/LeafletHeatmap.vue'
 
-/*
- * LeafletHeatmap component uses top-level await for dynamic Leaflet import
- * which causes test hanging. We test prop definitions without mounting.
- */
+// The component builds its layer from L.Layer.extend and only needs setOptions
+// and requestAnimFrame until the layer is attached to a real map, so a small
+// stub is enough to drive the real component (the same approach PostMap.spec.js
+// takes for leaflet-control-geocoder).
+vi.mock('leaflet/dist/leaflet-src.esm', () => ({
+  Layer: {
+    extend: (def) =>
+      function HeatLayerStub(latlngs, options) {
+        Object.assign(this, def)
+        this.initialize(latlngs, options)
+      },
+  },
+  setOptions: (target, options) => {
+    target.options = options
+  },
+  Util: { requestAnimFrame: vi.fn() },
+}))
+
+// The component top-level-awaits the leaflet import, so it must mount inside
+// a Suspense boundary. The wrapper also plays the part of the LMap parent:
+// findRealParent() walks up looking for `leafletObject` in a parent's
+// setupState, which is where a setup() return value lands.
+function mountHeatmap({ latLngs = [], leafletObject } = {}) {
+  const Host = defineComponent({
+    components: { LeafletHeatmap },
+    props: { latLngs: { type: Array, default: () => [] } },
+    setup() {
+      return { leafletObject }
+    },
+    template:
+      '<Suspense><LeafletHeatmap ref="heat" :lat-lngs="latLngs" /></Suspense>',
+  })
+  return mount(Host, { props: { latLngs } })
+}
 
 describe('LeafletHeatmap', () => {
-  describe('component structure', () => {
-    it('is a Leaflet heatmap layer component', () => {
-      // Component creates a heatmap layer for Leaflet maps using simpleheat
-      expect(true).toBe(true)
-    })
+  let map
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    map = { addLayer: vi.fn(), removeLayer: vi.fn() }
   })
 
-  describe('expected props', () => {
-    it('should accept latLngs array prop', () => {
-      // latLngs: Array with default []
-      const propDef = { type: Array, default: () => [] }
-      expect(propDef.type).toBe(Array)
-      expect(propDef.default()).toEqual([])
-    })
-
-    it('should accept minOpacity prop with 0.05 default', () => {
-      const propDef = { type: Number, default: 0.05 }
-      expect(propDef.default).toBe(0.05)
-    })
-
-    it('should accept maxOpacity prop with 0.5 default', () => {
-      const propDef = { type: Number, default: 0.5 }
-      expect(propDef.default).toBe(0.5)
-    })
-
-    it('should accept maxZoom prop with 19 default', () => {
-      const propDef = { type: Number, default: 19 }
-      expect(propDef.default).toBe(19)
-    })
-
-    it('should accept radius prop with 25 default', () => {
-      const propDef = { type: Number, default: 25 }
-      expect(propDef.default).toBe(25)
-    })
-
-    it('should accept blur prop with 15 default', () => {
-      const propDef = { type: Number, default: 15 }
-      expect(propDef.default).toBe(15)
-    })
-
-    it('should accept max prop with 1.0 default', () => {
-      const propDef = { type: Number, default: 1.0 }
-      expect(propDef.default).toBe(1.0)
-    })
-
-    it('should accept optional gradient prop', () => {
-      const propDef = { type: Object, required: false, default: null }
-      expect(propDef.required).toBe(false)
-      expect(propDef.default).toBe(null)
-    })
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
-  describe('exposed methods', () => {
-    it('should expose addLatLng method for adding points', () => {
-      // Component exposes addLatLng(latlng) method
-      const exposedMethods = ['addLatLng']
-      expect(exposedMethods).toContain('addLatLng')
-    })
+  async function settle(wrapper) {
+    await flushPromises()
+    vi.advanceTimersByTime(100)
+    await flushPromises()
+    return wrapper
+  }
+
+  it('attaches a heat layer carrying the points to the parent map', async () => {
+    const wrapper = await settle(
+      mountHeatmap({ latLngs: [[53.9, -2.5, 0.5]], leafletObject: map })
+    )
+
+    expect(map.addLayer).toHaveBeenCalledTimes(1)
+    const layer = map.addLayer.mock.calls[0][0]
+    expect(layer._latlngs).toEqual([[53.9, -2.5, 0.5]])
+    expect(layer.options.max).toBe(1.0)
+    expect(layer.options.radius).toBe(25)
+    wrapper.unmount()
   })
 
-  describe('heat layer functionality', () => {
-    it('creates custom Leaflet layer extending L.Layer', () => {
-      // Component creates HeatLayer class extending L.Layer
-      expect(true).toBe(true)
-    })
-
-    it('uses simpleheat library for rendering', () => {
-      // Component uses simpleheat(canvas) for heatmap rendering
-      expect(true).toBe(true)
-    })
-
-    it('supports latLngs with altitude/intensity values', () => {
-      // latLngs can be [lat, lng, alt] or {lat, lng, alt} format
-      const latLngWithAlt = [53.945, -2.5209, 0.5]
-      expect(latLngWithAlt.length).toBe(3)
-    })
-
-    it('handles map events for redraw', () => {
-      // Layer handles moveend and zoomanim events
-      const events = ['moveend', 'zoomanim']
-      expect(events).toContain('moveend')
-      expect(events).toContain('zoomanim')
-    })
+  it('survives mounting with no surrounding map', async () => {
+    // Regression pin: the legacy tail of onMounted dereferenced a null
+    // `options` ~100ms after every mount, throwing inside the setTimeout
+    // whether or not a map was present.
+    const wrapper = await settle(mountHeatmap({ latLngs: [[53.9, -2.5, 1]] }))
+    expect(map.addLayer).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
-  describe('layer methods', () => {
-    it('has setLatLngs method', () => {
-      // HeatLayer.setLatLngs(latlngs) updates all points
-      expect(true).toBe(true)
-    })
+  it('exposes addLatLng, which feeds the live layer', async () => {
+    const wrapper = await settle(
+      mountHeatmap({ latLngs: [[53.9, -2.5, 0.5]], leafletObject: map })
+    )
 
-    it('has addLatLng method', () => {
-      // HeatLayer.addLatLng(latlng) adds single point
-      expect(true).toBe(true)
-    })
-
-    it('has redraw method', () => {
-      // HeatLayer.redraw() triggers visual update
-      expect(true).toBe(true)
-    })
+    wrapper.findComponent(LeafletHeatmap).vm.addLatLng([54.0, -2.0, 1])
+    const layer = map.addLayer.mock.calls[0][0]
+    expect(layer._latlngs).toHaveLength(2)
+    wrapper.unmount()
   })
 
-  describe('lifecycle', () => {
-    it('initializes with setTimeout in onMounted', () => {
-      // Uses setTimeout(100ms) to wait for parent map
-      const delay = 100
-      expect(delay).toBe(100)
-    })
+  it('replacing the latLngs prop replaces the layer data', async () => {
+    const wrapper = await settle(
+      mountHeatmap({ latLngs: [[53.9, -2.5, 0.5]], leafletObject: map })
+    )
 
-    it('removes layer in onBeforeUnmount', () => {
-      // Calls mapInstance.removeLayer(heatLayer) on unmount
-      expect(true).toBe(true)
-    })
+    await wrapper.setProps({ latLngs: [[51.5, -0.1, 0.9]] })
+    const layer = map.addLayer.mock.calls[0][0]
+    expect(layer._latlngs).toEqual([[51.5, -0.1, 0.9]])
+    wrapper.unmount()
   })
 
-  describe('watch behavior', () => {
-    it('watches latLngs prop with deep option', () => {
-      // watch(props.latLngs, ..., { deep: true })
-      expect(true).toBe(true)
-    })
+  it('removes its layer from the map on unmount', async () => {
+    const wrapper = await settle(
+      mountHeatmap({ latLngs: [[53.9, -2.5, 0.5]], leafletObject: map })
+    )
 
-    it('watches parentLeafletObject for map attachment', () => {
-      // Attaches to parent map when leafletObject becomes available
-      expect(true).toBe(true)
-    })
-  })
-
-  describe('canvas configuration', () => {
-    it('creates canvas with leaflet-heatmap-layer class', () => {
-      const className = 'leaflet-heatmap-layer leaflet-layer'
-      expect(className).toContain('leaflet-heatmap-layer')
-    })
-
-    it('sets transformOrigin to 50% 50%', () => {
-      const origin = '50% 50%'
-      expect(origin).toBe('50% 50%')
-    })
+    const layer = map.addLayer.mock.calls[0][0]
+    wrapper.unmount()
+    expect(map.removeLayer).toHaveBeenCalledWith(layer)
   })
 })

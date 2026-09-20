@@ -149,6 +149,8 @@ function formatPageName(pageName) {
     '/': 'home page',
     '/index': 'home page',
     '/give': 'Give page',
+    '/ask': 'Ask page',
+    // The Ask page was /find until Aug 2026; logs from before then still say so.
     '/find': 'Find page',
     '/explore': 'Explore page',
     '/browse': 'Browse page',

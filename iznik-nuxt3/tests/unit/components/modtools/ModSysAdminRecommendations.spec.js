@@ -23,7 +23,8 @@ function mountComponent() {
       stubs: {
         NoticeMessage: { template: '<div class="notice"><slot /></div>' },
         'b-card': {
-          template: '<div class="card"><div class="card-title">{{ title }}</div><slot /></div>',
+          template:
+            '<div class="card"><div class="card-title">{{ title }}</div><slot /></div>',
           props: ['title'],
         },
         'b-spinner': { template: '<div class="spinner" />' },

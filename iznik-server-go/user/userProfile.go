@@ -28,8 +28,8 @@ func ProfileSetPath(profileid uint64, url string, externaluid string, externalmo
 		profile.Paththumb = url
 		profile.Ours = false
 	} else if len(externaluid) > 0 {
-		// Until Uploadcare is retired we need to return different variants to allow for client code
-		// which doesn't yet know about our own image hosting.
+		// Uploadcare is retired; every uid in circulation is a freegletusd- one. Ouruid is still
+		// returned alongside the path for client code that reads it.
 		if strings.Contains(externaluid, "freegletusd-") {
 			profile.Ouruid = externaluid
 			profile.Externalmods = externalmods

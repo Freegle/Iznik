@@ -4,7 +4,7 @@ const intersectionObserverDirective = {
   beforeMount(el, binding) {
     // We need the directive to be defined on the server as well as the client so that
     // SSR works.
-    if (process.client) {
+    if (import.meta.client) {
       let callback
       let options = {}
       let entryTopWasVisible = false
@@ -88,7 +88,7 @@ const intersectionObserverDirective = {
     }
   },
   unmounted(el) {
-    if (process.client) {
+    if (import.meta.client) {
       const observer = observers.get(el)
       if (observer) {
         observer.disconnect()

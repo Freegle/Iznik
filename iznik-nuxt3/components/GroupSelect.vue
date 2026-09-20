@@ -76,6 +76,14 @@ const props = defineProps({
     required: false,
     default: false,
   },
+  // Whether to only show groups where we are a plain member. Used where the choice
+  // leads to leaving, so a moderator or owner is never offered a way to drop their
+  // own role (Discourse 10148).
+  memberonly: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
   // Whether "All my communities" should be "My active communities"
   active: {
     type: Boolean,
@@ -189,8 +197,8 @@ const groupOptions = computed(() => {
       text: props.active
         ? '-- My active communities --'
         : props.allMy
-        ? '-- All my communities --'
-        : '-- All communities --',
+          ? '-- All my communities --'
+          : '-- All communities --',
       selected: selectedGroup.value === 0,
     })
   } else {
@@ -216,11 +224,10 @@ const groupOptions = computed(() => {
   }
 
   for (const group of sortedGroups.value) {
+    const isMod = group.role === 'Owner' || group.role === 'Moderator'
     if (
       props.listall ||
-      !props.modonly ||
-      group.role === 'Owner' ||
-      group.role === 'Moderator'
+      ((!props.modonly || isMod) && (!props.memberonly || !isMod))
     ) {
       let text = group.namedisplay
 
@@ -285,6 +292,20 @@ watch(
 onMounted(async () => {
   if (props.listall) {
     await groupStore.fetch()
+  } else {
+    // A membership only carries the group id; the NAME lives in the group store. On a
+    // page opened directly - Add event, or the unsubscribe page - that store is empty,
+    // so every one of the member's own communities renders as an option with no text.
+    // The list looks like it has nothing selectable in it, and submitting says "Please
+    // select a community" (Discourse 10046). It comes right only after visiting a page
+    // that happens to populate the store, such as Browse.
+    const missing = (myGroups.value || [])
+      .filter((g) => g.id && !g.namedisplay)
+      .map((g) => g.id)
+
+    if (missing.length) {
+      await groupStore.fetchBatch(missing)
+    }
   }
 
   if (props.remember) {

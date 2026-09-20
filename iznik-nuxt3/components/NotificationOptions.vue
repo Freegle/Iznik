@@ -1,7 +1,6 @@
 <template>
   <b-dropdown
     id="notification-list"
-    ref="theel"
     v-model="notificationsShown"
     class="white text-center notification-list topstack"
     :variant="smallScreen ? 'transparent' : ''"
@@ -18,7 +17,7 @@
         class="position-relative me-md-2 me-xl-0"
         :class="{ 'text-center small': !smallScreen }"
       >
-        <v-icon icon="bell" class="fa-2 notification-list__icon" />
+        <v-icon icon="bell" class="notification-list__icon" />
         <b-badge
           v-if="unreadNotificationCount"
           variant="danger"
@@ -58,7 +57,7 @@
     <infinite-loading
       :key="infiniteId"
       :distance="distance"
-      force-use-infinite-wrapper="#notification-list"
+      force-use-infinite-wrapper=".notification-list__dropdown-menu"
       @infinite="loadMoreNotifications"
     >
       <template #no-results />
@@ -109,7 +108,11 @@ const notificationsToShow = computed(() => {
 const { count } = storeToRefs(notificationStore)
 const unreadNotificationCount = count
 
-const theel = ref(null)
+// The scrolling element is the dropdown MENU, not the dropdown root: the menu is what
+// carries height + overflow-y (see the style block). The previous code held a ref to the
+// b-dropdown component and set scrollTop on that, which did nothing.
+const scroller = () =>
+  document.querySelector('.notification-list__dropdown-menu')
 
 const loadLatestNotifications = async () => {
   // We want to make sure we have the most up to date notifications.
@@ -117,8 +120,9 @@ const loadLatestNotifications = async () => {
   infiniteId.value++
   toShow.value = 5
 
-  if (theel.value) {
-    theel.value.scrollTop = 0
+  const el = scroller()
+  if (el) {
+    el.scrollTop = 0
   }
 }
 
@@ -173,7 +177,13 @@ const showAboutMe = () => {
 }
 
 .notification-list__icon {
+  /* Both dimensions have to be pinned. FontAwesome sets an explicit
+     width: var(--fa-width, 1.25em) on .svg-inline--fa, so a height on its own
+     leaves the icon at the default width and the glyph shrinks to fit that
+     instead of scaling to the height. 32px matches the fa-2x icons either side
+     of it in the navbar. */
   height: 32px;
+  width: 32px;
   margin-bottom: 0;
 }
 

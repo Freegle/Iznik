@@ -62,8 +62,8 @@ export default defineNuxtPlugin(() => {
               ? 'right'
               : 'left'
             : dy > 0
-            ? 'down'
-            : 'up'
+              ? 'down'
+              : 'up'
 
         captureInteraction('swipe', {
           target: e.target,

@@ -38,7 +38,9 @@ describe('applyLeafletNullMapGuards', () => {
     expect(applyLeafletNullMapGuards(L)).toBe(3)
 
     const tooltip = { _map: null, _latlng: [0, 0] }
-    expect(() => L.Tooltip.prototype._updatePosition.call(tooltip)).not.toThrow()
+    expect(() =>
+      L.Tooltip.prototype._updatePosition.call(tooltip)
+    ).not.toThrow()
     expect(L.calls.tooltip).toBe(0)
   })
 
@@ -47,7 +49,9 @@ describe('applyLeafletNullMapGuards', () => {
     applyLeafletNullMapGuards(L)
 
     const tooltip = { _latlng: [0, 0] }
-    expect(() => L.Tooltip.prototype._updatePosition.call(tooltip)).not.toThrow()
+    expect(() =>
+      L.Tooltip.prototype._updatePosition.call(tooltip)
+    ).not.toThrow()
     expect(L.calls.tooltip).toBe(0)
   })
 
@@ -69,8 +73,12 @@ describe('applyLeafletNullMapGuards', () => {
     const L = makeLeafletLike()
     applyLeafletNullMapGuards(L)
 
-    expect(() => L.Popup.prototype._updatePosition.call({ _map: null })).not.toThrow()
-    expect(() => L.DivOverlay.prototype._updatePosition.call({ _map: null })).not.toThrow()
+    expect(() =>
+      L.Popup.prototype._updatePosition.call({ _map: null })
+    ).not.toThrow()
+    expect(() =>
+      L.DivOverlay.prototype._updatePosition.call({ _map: null })
+    ).not.toThrow()
     expect(L.calls.popup).toBe(0)
     expect(L.calls.divoverlay).toBe(0)
   })

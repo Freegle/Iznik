@@ -108,6 +108,14 @@ class ChatChaseupExpectedService
                 : $chatRoom->user1;
             $sender = User::find($otherUserId);
 
+            // Their provider is refusing our mail, so this chase-up cannot
+            // arrive. Skipped BEFORE $chased is incremented: counting a
+            // reminder we never sent would record the member as chased and
+            // stop us ever chasing them for real.
+            if ($this->chatNotificationService->chaseupSuppressed($recipient, (int) $message->id)) {
+                continue;
+            }
+
             if (! $dryRun) {
                 $this->chatNotificationService->sendChaseupExpected($recipient, $sender, $chatRoom, $message);
             }

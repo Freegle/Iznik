@@ -48,11 +48,11 @@ import JobOne from './JobOne'
 import { useJobStore } from '~/stores/job'
 import { useAuthStore } from '~/stores/auth'
 import InfiniteLoading from '~/components/InfiniteLoading'
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
-const DonationButton = defineAsyncComponent(() =>
-  import('~/components/DonationButton')
+const DonationButton = defineAsyncComponent(
+  () => import('~/components/DonationButton')
 )
 
 const jobStore = useJobStore()
@@ -79,7 +79,7 @@ if (location.value && lat && lng) {
 
 // Computed for visible jobs
 const visibleJobs = computed(() => {
-  if (process.client) {
+  if (import.meta.client) {
     // We have an infinite scroll - return as many as we're currently showing.
     //
     // Don't prioritise otherwise this makes them jump around when scrolling down.

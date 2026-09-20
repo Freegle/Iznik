@@ -37,12 +37,12 @@
       </mj-column>
       <mj-column width="33%">
         <mj-button
-          href="{{ $findUrl }}"
+          href="{{ $askUrl }}"
           mj-class="btn-success"
           font-size="13px"
           border-radius="4px"
           align="center"
-        >Find something</mj-button>
+        >Ask for something</mj-button>
       </mj-column>
     </mj-section>
 
@@ -152,12 +152,12 @@
       </mj-column>
       <mj-column width="33%">
         <mj-button
-          href="{{ $findUrl }}"
+          href="{{ $askUrl }}"
           mj-class="btn-success"
           font-size="13px"
           border-radius="4px"
           align="center"
-        >Find something</mj-button>
+        >Ask for something</mj-button>
       </mj-column>
     </mj-section>
 

@@ -42,6 +42,10 @@ class UnsubscribeCategoryCoverageTest extends TestCase
         \App\Mail\Chat\ChatReviewPendingMail::class => null,
         \App\Mail\Chat\ChatReviewSummaryMail::class => null,
         \App\Mail\Chat\SpamWarningMail::class => null,
+        // Sent once after a provider stops accepting our mail, in place of the
+        // chat notifications we declined to send, so it belongs to the same
+        // category those would have carried.
+        \App\Mail\Deferrals\UnreadChatCatchUpMail::class => UnsubscribeService::TYPE_CHAT,
         \App\Mail\CommunityNews\CommunityNewsMail::class => UnsubscribeService::TYPE_NEWSLETTER,
         \App\Mail\Digest\DigestReplyNotice::class => null,
         \App\Mail\Digest\UnifiedDigest::class => UnsubscribeService::TYPE_DIGEST,
@@ -75,6 +79,7 @@ class UnsubscribeCategoryCoverageTest extends TestCase
         \App\Mail\Reengage\ReengageMail::class => UnsubscribeService::TYPE_ENGAGEMENT,
         \App\Mail\Ripple\RippleIntroMail::class => UnsubscribeService::TYPE_ENGAGEMENT,
         \App\Mail\Session\ForgotPasswordMail::class => null,
+        \App\Mail\Session\LoginLinkMail::class => null,
         \App\Mail\Session\MergeOfferMail::class => null,
         \App\Mail\Session\UnsubscribeConfirmMail::class => null,
         \App\Mail\Session\UnsubscribedNotice::class => null,
@@ -88,6 +93,27 @@ class UnsubscribeCategoryCoverageTest extends TestCase
         \App\Mail\Welcome\GroupWelcomeMail::class => null,
         \App\Mail\Welcome\WelcomeMail::class => null,
     ];
+
+    /**
+     * The pinned list, plus whatever a deployment built on this codebase pins
+     * for its own mailables in tests/Unit/Mail/unsubscribe-categories.deployment.php
+     * (a file Freegle does not ship; it returns the same class => category shape).
+     * Freegle's own entries stay authoritative: the overlay cannot override them.
+     *
+     * @return array<class-string,string|null>
+     */
+    private function expected(): array
+    {
+        $overlay = __DIR__.'/unsubscribe-categories.deployment.php';
+        if (! is_file($overlay)) {
+            return self::EXPECTED;
+        }
+
+        $extra = require $overlay;
+        $this->assertIsArray($extra, 'the deployment overlay must return an array');
+
+        return self::EXPECTED + $extra;
+    }
 
     /**
      * @return class-string[]
@@ -122,7 +148,7 @@ class UnsubscribeCategoryCoverageTest extends TestCase
         $undeclared = [];
 
         foreach ($this->allMailables() as $class) {
-            if (! array_key_exists($class, self::EXPECTED)) {
+            if (! array_key_exists($class, $this->expected())) {
                 $undeclared[] = $class;
 
                 continue;
@@ -154,12 +180,12 @@ class UnsubscribeCategoryCoverageTest extends TestCase
             // array_key_exists, not ??: most entries are legitimately null (transactional),
             // and ?? would treat every one of those as missing.
             $this->assertTrue(
-                array_key_exists($class, self::EXPECTED),
+                array_key_exists($class, $this->expected()),
                 $class.' is not pinned in this test'
             );
 
             $this->assertSame(
-                self::EXPECTED[$class],
+                $this->expected()[$class],
                 $method->invoke($mailable),
                 $class.' declares a different category from the one pinned in this test'
             );
@@ -168,7 +194,7 @@ class UnsubscribeCategoryCoverageTest extends TestCase
 
     public function test_expected_list_has_no_stale_entries(): void
     {
-        $gone = array_diff(array_keys(self::EXPECTED), $this->allMailables());
+        $gone = array_diff(array_keys($this->expected()), $this->allMailables());
 
         $this->assertSame([], array_values($gone),
             'These are listed but no longer exist - remove them: '.implode(', ', $gone));
@@ -176,7 +202,7 @@ class UnsubscribeCategoryCoverageTest extends TestCase
 
     public function test_every_declared_category_is_a_real_one(): void
     {
-        foreach (self::EXPECTED as $class => $type) {
+        foreach ($this->expected() as $class => $type) {
             if ($type === null) {
                 continue;
             }

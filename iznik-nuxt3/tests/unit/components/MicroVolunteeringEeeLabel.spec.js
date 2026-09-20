@@ -111,7 +111,9 @@ describe('MicroVolunteeringEeeLabel', () => {
       const wrapper = createWrapper()
       // We must allow users to say they don't know each question without
       // forcing them to answer — otherwise they'll guess and pollute the data.
-      const unsures = wrapper.findAll('button').filter(b => /unsure|can'?t tell|don'?t know/i.test(b.text()))
+      const unsures = wrapper
+        .findAll('button')
+        .filter((b) => /unsure|can'?t tell|don'?t know/i.test(b.text()))
       expect(unsures.length).toBeGreaterThanOrEqual(3)
     })
   })
@@ -153,7 +155,7 @@ describe('MicroVolunteeringEeeLabel', () => {
           eee_condition: 'reusable',
           eee_weight: '5_20kg',
           eee_size: 'medium',
-        }),
+        })
       )
     })
 
@@ -171,7 +173,7 @@ describe('MicroVolunteeringEeeLabel', () => {
           eee_condition: 'unsure',
           eee_weight: 'unsure',
           eee_size: 'unsure',
-        }),
+        })
       )
     })
 

@@ -197,6 +197,15 @@ const NEWSFEED_ALERT_RADIUS_KM = 32.0
 
 const NEWSFEED_MODSTATUS_SUPPRESSED = "Suppressed"
 
+// users.chatmodstatus - how a member's outgoing chat is handled.
+// 'Fully' holds every User2User message for mod review before delivery
+// (a shadow ban); 'Moderated' (the column default) runs the spam/content
+// checks; 'Unmoderated' skips them. Enforced in the batch service
+// ChatProcessService::process().
+const CHATMODSTATUS_MODERATED = "Moderated"
+const CHATMODSTATUS_UNMODERATED = "Unmoderated"
+const CHATMODSTATUS_FULLY = "Fully"
+
 const NEARBY = 50
 
 const OUTCOME_TAKEN = "Taken"

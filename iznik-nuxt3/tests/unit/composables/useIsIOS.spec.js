@@ -16,7 +16,6 @@ describe('useIsIOS', () => {
   let originalMaxTouchPoints
 
   beforeEach(() => {
-    process.client = true
     originalUserAgent = navigator.userAgent
     originalPlatform = navigator.platform
     originalMaxTouchPoints = navigator.maxTouchPoints
@@ -28,7 +27,6 @@ describe('useIsIOS', () => {
       platform: originalPlatform,
       maxTouchPoints: originalMaxTouchPoints,
     })
-    delete process.client
   })
 
   it('detects iPhone', () => {

@@ -1,0 +1,111 @@
+name: Blocked label merge guard
+
+# Enforcement for the `Blocked` label ("PR is blocked and cannot be merged").
+#
+# GitHub has no native "refuse to merge if labelled" rule, and nothing client-side
+# can veto someone clicking the green button. The only mechanism that actually
+# stops a merge is a *required status check*, so this workflow posts a commit
+# status called `blocked-label` on the PR head, and that context is listed in
+# master's branch protection. Failing required check => merge button greys out.
+#
+# Three things here are deliberate:
+#
+#  - `pull_request_target`, not `pull_request`. This trigger always uses the copy
+#    of the workflow on the BASE branch, so every open PR is covered the moment
+#    this lands on master - including branches that were cut months ago and will
+#    never pull it in. With `pull_request` an old PR could report nothing at all,
+#    and a required context that nobody reports leaves the PR stuck on
+#    "Expected - waiting for status" with no way to clear it.
+#    *** Never add a checkout of the PR's code to this workflow. *** That is what
+#    makes pull_request_target dangerous; this job reads labels through the API
+#    and runs no code from the branch, which is why it is safe as written.
+#
+#  - The job succeeds even when the PR is blocked. The verdict is the status it
+#    posts, not the result of the run, so a long-lived blocked branch does not
+#    send a failed-workflow email on every push.
+#
+#  - The context string is written out explicitly instead of being inherited from
+#    the job name, because branch protection matches on that exact string.
+#    Renaming a job would otherwise leave master requiring a context that nothing
+#    reports, which blocks every PR in the repo rather than just blocked ones.
+#
+# Run this manually (Actions > this workflow > Run workflow) to sweep every open
+# PR. Do that once before adding `blocked-label` to the required checks, so that
+# PRs which have had no event since then are not stranded on "Expected".
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review]
+  workflow_dispatch:
+
+# Writes a commit status; reads PRs. Nothing else, and no code from the branch.
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  # One in-flight run per PR, so labelling and immediately unlabelling cannot
+  # race and leave the earlier verdict as the one that was written last. Sweeps
+  # key on run_id instead, so they never cancel each other or a PR's own run.
+  group: blocked-label-guard-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post blocked-label status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          # Label and branch names are chosen by whoever opens the PR, so pass
+          # them as real environment variables rather than interpolating ${{ }}
+          # into the script - see cancel-merged-pr-ci.yml for why that matters.
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          # Labels that mean "not for merge", matched case-insensitively so that a
+          # later `blocked` behaves the same as today's `Blocked`. Add to the JSON
+          # array to make another label block merges.
+          BLOCKING_LABELS='["blocked"]'
+
+          post_status() {
+            pr="$1"
+
+            # Read the head SHA and labels from the API rather than the event
+            # payload, so the PR-event path and the sweep path cannot drift.
+            pr_json=$(gh api "repos/$REPO/pulls/$pr" \
+              --jq '{sha: .head.sha, labels: [.labels[].name]}')
+            sha=$(echo "$pr_json" | jq -r '.sha')
+            hit=$(echo "$pr_json" | jq -r --argjson want "$BLOCKING_LABELS" \
+              '[.labels[] | select(ascii_downcase | IN($want[]))] | first // ""')
+
+            if [ -n "$hit" ]; then
+              state=failure
+              description="Labelled $hit - not for merge"
+            else
+              state=success
+              description="No blocking label"
+            fi
+
+            gh api "repos/$REPO/statuses/$sha" -X POST \
+              -f state="$state" \
+              -f context="blocked-label" \
+              -f description="$description" \
+              -f target_url="$RUN_URL" >/dev/null
+            echo "PR #$pr ($sha): $state - $description"
+          }
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "Sweeping all open PRs"
+            for pr in $(gh pr list --repo "$REPO" --state open --limit 200 \
+                          --json number --jq '.[].number'); do
+              post_status "$pr"
+            done
+          else
+            post_status "$PR_NUMBER"
+          fi

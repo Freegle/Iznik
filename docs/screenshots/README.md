@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-08-19
 owner: Freegle dev team
 ---
 
@@ -52,6 +52,16 @@ node tests/e2e/docs-screenshots.mjs
 
 Images are written to `docs/<audience>/assets/<name>.png`. Review the diff and commit the
 images alongside whatever UI change prompted them.
+
+To regenerate one image rather than all of them, name it (comma-separate for several):
+
+```bash
+DOCS_SHOT=ask-start node tests/e2e/docs-screenshots.mjs
+```
+
+Worth doing when a change only touches one page: a full run rewrites every image, which
+buries the one that actually changed in a diff of twenty binaries, and it needs the whole
+stack up rather than the one page's.
 
 ## How the images stay deterministic
 

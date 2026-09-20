@@ -737,6 +737,25 @@ describe('MessageExpanded', () => {
         expect(wrapper.text()).toContain('as soon as it does')
       })
 
+      // Discourse 9808/797: a reach the governor had finished weeks earlier still read
+      // "hasn't reached your area yet ... any moment now at the latest". A finished
+      // reach is never going to arrive; say so, and that the reply goes straight on.
+      it('says the reach has finished, not that it is still on its way, when the API says so', async () => {
+        mockFromme.value = false
+        mockMessage.value.replyeligible = false
+        mockMessage.value.reachfinished = true
+        const wrapper = await createWrapper({ replyable: true })
+
+        const text = wrapper.text().replace(/\s+/g, ' ')
+        expect(wrapper.find('[data-testid="reach-finished"]').exists()).toBe(
+          true
+        )
+        expect(text).toContain('finished rippling out')
+        expect(text).toContain('straight away')
+        expect(text).not.toContain("hasn't reached your area yet")
+        expect(text).not.toContain('any moment now')
+      })
+
       it('says nothing about a hold when the post has reached the viewer', async () => {
         mockFromme.value = false
         const wrapper = await createWrapper({ replyable: true })
@@ -1288,10 +1307,11 @@ describe('MessageExpanded', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('renders NuxtPicture when attachment has externaluid', async () => {
+    it('does not render a picture for a bare externaluid', async () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       mockMessage.value.attachments = [{ id: 1, externaluid: 'ext123' }]
       const wrapper = await createWrapper()
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
 
     it('renders ProxyImage when attachment has path', async () => {
@@ -1314,14 +1334,15 @@ describe('MessageExpanded', () => {
       ).toBe(2)
     })
 
-    it('renders NuxtPicture thumbnails when externaluid exists', async () => {
+    it('renders no picture thumbnails for bare externaluids', async () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       mockAttachmentCount.value = 2
       mockMessage.value.attachments = [
         { id: 1, externaluid: 'ext123' },
         { id: 2, externaluid: 'ext456' },
       ]
       const wrapper = await createWrapper()
-      expect(wrapper.findAll('.thumbnail-item .nuxt-picture').length).toBe(2)
+      expect(wrapper.findAll('.thumbnail-item .nuxt-picture').length).toBe(0)
     })
 
     it('renders ProxyImage thumbnails when path exists', async () => {

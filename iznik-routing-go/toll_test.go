@@ -24,7 +24,7 @@ func wayWith(kv ...string) *osm.Way {
 // the cycle isochrone (using the separate, untolled foot/cycle way) still does.
 func TestWaySpeedsAndOneway_TollExcludesDriving(t *testing.T) {
 	// Baseline: an untolled primary road allows all three modes.
-	base, _ := waySpeedsAndOneway(wayWith("highway", "primary"))
+	base, _, _ := waySpeedsAndOneway(wayWith("highway", "primary"))
 	if base[Drive] <= 0 {
 		t.Fatalf("untolled primary should be drivable, got Drive=%v", base[Drive])
 	}
@@ -33,7 +33,7 @@ func TestWaySpeedsAndOneway_TollExcludesDriving(t *testing.T) {
 	}
 
 	// toll=yes on the same road drops the car edge only.
-	tolled, _ := waySpeedsAndOneway(wayWith("highway", "primary", "toll", "yes"))
+	tolled, _, _ := waySpeedsAndOneway(wayWith("highway", "primary", "toll", "yes"))
 	if tolled[Drive] != -1 {
 		t.Errorf("toll=yes primary must exclude driving (Drive=-1), got %v", tolled[Drive])
 	}
@@ -47,7 +47,7 @@ func TestWaySpeedsAndOneway_TollExcludesDriving(t *testing.T) {
 	// The Humber Bridge carriageway is highway=trunk + toll=yes (trunk already
 	// excludes foot/cycle; those cross on separate untagged ways). The car edge
 	// must still be dropped.
-	trunkToll, _ := waySpeedsAndOneway(wayWith("highway", "trunk", "toll", "yes"))
+	trunkToll, _, _ := waySpeedsAndOneway(wayWith("highway", "trunk", "toll", "yes"))
 	if trunkToll[Drive] != -1 {
 		t.Errorf("toll=yes trunk (Humber Bridge) must exclude driving, got %v", trunkToll[Drive])
 	}

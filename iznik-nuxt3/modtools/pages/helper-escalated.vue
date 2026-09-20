@@ -16,7 +16,9 @@
             <nuxt-link :to="'/clearance/' + row.msgid">
               {{ row.subject }}
             </nuxt-link>
-            <span class="ms-2 text-muted small">{{ row.escalation_reason }}</span>
+            <span class="ms-2 text-muted small">{{
+              row.escalation_reason
+            }}</span>
           </div>
           <div>
             <nuxt-link :to="'/user/' + row.userid">

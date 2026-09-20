@@ -1,0 +1,142 @@
+"alias","canonical","is_plural","quantity_only"
+"tv","tv",FALSE,FALSE
+"tvs","tv",TRUE,FALSE
+"television","tv",FALSE,FALSE
+"televisions","tv",TRUE,FALSE
+"telly","tv",FALSE,FALSE
+"tellies","tv",TRUE,FALSE
+"wheelbarrow","wheelbarrow",FALSE,FALSE
+"wheelbarrows","wheelbarrow",TRUE,FALSE
+"wheel barrow","wheelbarrow",FALSE,FALSE
+"wheel barrows","wheelbarrow",TRUE,FALSE
+"fridge freezer","fridge freezer",FALSE,FALSE
+"fridge freezers","fridge freezer",TRUE,FALSE
+"fridge/freezer","fridge freezer",FALSE,FALSE
+"fridge/freezers","fridge freezer",TRUE,FALSE
+"fridge","fridge",FALSE,FALSE
+"fridges","fridge",TRUE,FALSE
+"refrigerator","fridge",FALSE,FALSE
+"refrigerators","fridge",TRUE,FALSE
+"sofa","sofa",FALSE,FALSE
+"sofas","sofa",TRUE,FALSE
+"couch","sofa",FALSE,FALSE
+"couches","sofa",TRUE,FALSE
+"settee","sofa",FALSE,FALSE
+"settees","sofa",TRUE,FALSE
+"pram","pushchair",FALSE,FALSE
+"prams","pushchair",TRUE,FALSE
+"pushchair","pushchair",FALSE,FALSE
+"pushchairs","pushchair",TRUE,FALSE
+"buggy","pushchair",FALSE,FALSE
+"buggies","pushchair",TRUE,FALSE
+"stroller","pushchair",FALSE,FALSE
+"strollers","pushchair",TRUE,FALSE
+"vacuum cleaner","vacuum cleaner",FALSE,FALSE
+"vacuum cleaners","vacuum cleaner",TRUE,FALSE
+"vacuum","vacuum cleaner",FALSE,FALSE
+"vacuums","vacuum cleaner",TRUE,FALSE
+"hoover","vacuum cleaner",FALSE,FALSE
+"hoovers","vacuum cleaner",TRUE,FALSE
+"wardrobe","wardrobe",FALSE,FALSE
+"wardrobes","wardrobe",TRUE,FALSE
+"closet","wardrobe",FALSE,FALSE
+"closets","wardrobe",TRUE,FALSE
+"motorcycle","motorcycle",FALSE,FALSE
+"motorcycles","motorcycle",TRUE,FALSE
+"motor cycle","motorcycle",FALSE,FALSE
+"motor cycles","motorcycle",TRUE,FALSE
+"motorbike","motorcycle",FALSE,FALSE
+"motorbikes","motorcycle",TRUE,FALSE
+"motor bike","motorcycle",FALSE,FALSE
+"motor bikes","motorcycle",TRUE,FALSE
+"bike","bicycle",FALSE,FALSE
+"bikes","bicycle",TRUE,FALSE
+"bicycle","bicycle",FALSE,FALSE
+"bicycles","bicycle",TRUE,FALSE
+"cot","cot",FALSE,FALSE
+"cots","cot",TRUE,FALSE
+"crib","cot",FALSE,FALSE
+"cribs","cot",TRUE,FALSE
+"tumble dryer","tumble dryer",FALSE,FALSE
+"tumble dryers","tumble dryer",TRUE,FALSE
+"tumble drier","tumble dryer",FALSE,FALSE
+"tumble driers","tumble dryer",TRUE,FALSE
+"air fryer","airfryer",FALSE,FALSE
+"air fryers","airfryer",TRUE,FALSE
+"air frier","airfryer",FALSE,FALSE
+"air friers","airfryer",TRUE,FALSE
+"airfryer","airfryer",FALSE,FALSE
+"airfryers","airfryer",TRUE,FALSE
+"airfrier","airfryer",FALSE,FALSE
+"airfriers","airfryer",TRUE,FALSE
+"fryer","fryer",FALSE,FALSE
+"fryers","fryer",TRUE,FALSE
+"frier","fryer",FALSE,FALSE
+"friers","fryer",TRUE,FALSE
+"off cut","offcut",FALSE,FALSE
+"off cuts","offcut",TRUE,FALSE
+"offcut","offcut",FALSE,FALSE
+"offcuts","offcut",TRUE,FALSE
+"kid","kids",FALSE,FALSE
+"kids","kids",FALSE,FALSE
+"child","kids",FALSE,FALSE
+"children","kids",FALSE,FALSE
+"shelf","shelf",FALSE,FALSE
+"shelves","shelf",TRUE,FALSE
+"clothes","clothes",FALSE,FALSE
+"clothing","clothes",FALSE,FALSE
+"knife","knife",FALSE,FALSE
+"knives","knife",TRUE,FALSE
+"cookbook","cookbook",FALSE,FALSE
+"cookbooks","cookbook",TRUE,FALSE
+"cook book","cookbook",FALSE,FALSE
+"cook books","cookbook",TRUE,FALSE
+"barbecue","barbecue",FALSE,FALSE
+"barbecues","barbecue",TRUE,FALSE
+"barbeque","barbecue",FALSE,FALSE
+"barbeques","barbecue",TRUE,FALSE
+"bbq","barbecue",FALSE,FALSE
+"bbqs","barbecue",TRUE,FALSE
+"two","2",FALSE,FALSE
+"three","3",FALSE,FALSE
+"four","4",FALSE,FALSE
+"five","5",FALSE,FALSE
+"six","6",FALSE,FALSE
+"seven","7",FALSE,FALSE
+"eight","8",FALSE,FALSE
+"nine","9",FALSE,FALSE
+"ten","10",FALSE,FALSE
+"eleven","11",FALSE,FALSE
+"twelve","12",FALSE,FALSE
+"bits","bits",FALSE,FALSE
+"blinds","blinds",FALSE,FALSE
+"parasol","parasol",FALSE,FALSE
+"parasols","parasol",TRUE,FALSE
+"garden parasol","parasol",FALSE,FALSE
+"garden parasols","parasol",TRUE,FALSE
+"garden umbrella","parasol",FALSE,FALSE
+"garden umbrellas","parasol",TRUE,FALSE
+"booster seat","booster seat",FALSE,FALSE
+"booster seats","booster seat",TRUE,FALSE
+"car booster seat","booster seat",FALSE,FALSE
+"car booster seats","booster seat",TRUE,FALSE
+"canvas","canvas",FALSE,FALSE
+"canvases","canvas",TRUE,FALSE
+"toiletry","toiletries",FALSE,FALSE
+"toiletries","toiletries",FALSE,FALSE
+"boxes for moving house","moving house boxes",TRUE,FALSE
+"boxes for moving houses","moving house boxes",TRUE,FALSE
+"cardboxes for moving house","moving house boxes",TRUE,FALSE
+"cardboxes for moving houses","moving house boxes",TRUE,FALSE
+"card boxes for moving house","moving house boxes",TRUE,FALSE
+"card boxes for moving houses","moving house boxes",TRUE,FALSE
+"welly boot","welly boots",FALSE,TRUE
+"welly boots","welly boots",FALSE,TRUE
+"wellies","welly boots",FALSE,TRUE
+"wellys","welly boots",FALSE,TRUE
+"hardcore","hardcore",FALSE,FALSE
+"hard core","hardcore",FALSE,FALSE
+"hardcore rubble","hardcore",FALSE,FALSE
+"rubble hardcore","hardcore",FALSE,FALSE
+"hard core rubble","hardcore",FALSE,FALSE
+"rubble hard core","hardcore",FALSE,FALSE

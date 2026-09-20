@@ -9,8 +9,7 @@ import { useAuthStore } from '~/stores/auth'
 // nearby posts - so this is now purely a store of those posts (messageList)
 // plus a bounding box derived from them, so the map can frame itself around
 // what's actually being shown.
-export const useNearbyStore = defineStore({
-  id: 'nearby',
+export const useNearbyStore = defineStore('nearby', {
   state: () => ({
     fetchingMessages: null,
     messageList: [],

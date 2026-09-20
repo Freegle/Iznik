@@ -94,7 +94,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         let path: String?
         switch shortcutItem.type {
         case "org.ilovefreegle.shortcut.give": path = "/give"
-        case "org.ilovefreegle.shortcut.find": path = "/find"
+        case "org.ilovefreegle.shortcut.ask": path = "/ask"
         case "org.ilovefreegle.shortcut.chats": path = "/chats"
         default: path = nil
         }

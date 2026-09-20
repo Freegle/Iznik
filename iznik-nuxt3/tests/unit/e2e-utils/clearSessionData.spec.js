@@ -48,9 +48,13 @@ describe('clearSessionData (e2e util)', () => {
 
   it('swallows "Target page, context or browser has been closed" from evaluate (CI job 4788)', async () => {
     const page = makePage({
-      evaluate: vi.fn().mockRejectedValue(
-        new Error('page.apply: Target page, context or browser has been closed')
-      ),
+      evaluate: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'page.apply: Target page, context or browser has been closed'
+          )
+        ),
     })
 
     await expect(clearSessionData(page)).resolves.toBeUndefined()
@@ -58,9 +62,13 @@ describe('clearSessionData (e2e util)', () => {
 
   it('swallows "Execution context was destroyed" from evaluate', async () => {
     const page = makePage({
-      evaluate: vi.fn().mockRejectedValue(
-        new Error('Execution context was destroyed, most likely because of a navigation')
-      ),
+      evaluate: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'Execution context was destroyed, most likely because of a navigation'
+          )
+        ),
     })
 
     await expect(clearSessionData(page)).resolves.toBeUndefined()
@@ -69,9 +77,7 @@ describe('clearSessionData (e2e util)', () => {
   it('swallows "Target closed" from clearCookies', async () => {
     const page = makePage({
       context: () => ({
-        clearCookies: vi
-          .fn()
-          .mockRejectedValue(new Error('Target closed')),
+        clearCookies: vi.fn().mockRejectedValue(new Error('Target closed')),
       }),
     })
 
@@ -80,7 +86,9 @@ describe('clearSessionData (e2e util)', () => {
 
   it('re-throws unrelated evaluate errors (e.g. real bugs)', async () => {
     const page = makePage({
-      evaluate: vi.fn().mockRejectedValue(new Error('SyntaxError: Unexpected token')),
+      evaluate: vi
+        .fn()
+        .mockRejectedValue(new Error('SyntaxError: Unexpected token')),
     })
 
     await expect(clearSessionData(page)).rejects.toThrow('SyntaxError')
@@ -89,7 +97,9 @@ describe('clearSessionData (e2e util)', () => {
   it('re-throws unrelated clearCookies errors', async () => {
     const page = makePage({
       context: () => ({
-        clearCookies: vi.fn().mockRejectedValue(new Error('TypeError: bad options')),
+        clearCookies: vi
+          .fn()
+          .mockRejectedValue(new Error('TypeError: bad options')),
       }),
     })
 

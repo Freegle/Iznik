@@ -8,6 +8,8 @@ use Tests\TestCase;
 
 class ReleaseRepliesCommandTest extends TestCase
 {
+    use \Tests\Support\SeedsReachCells;
+
     private const POLY = 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))';
 
     protected function setUp(): void
@@ -25,11 +27,25 @@ class ReleaseRepliesCommandTest extends TestCase
         $message = $this->createTestMessage($user, $group);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::POLY, self::POLY]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $this->reachCellsFor(self::POLY), self::POLY]
         );
+        DB::table('rippling_reach')->where('msgid', $message->id)->update(['reach_labels' => 'label-bytes']);
+        // The stored label admits the held replier's point, so the release
+        // cron frees them - the label is the reach record, faked here.
+        \Illuminate\Support\Facades\Http::fake(function ($request) {
+            if (!str_contains($request->url(), 'reach-eval')) {
+                return null;
+            }
+            $results = array_map(
+                fn ($id) => ['msgid' => (int) $id, 'verdict' => 'in'],
+                $request['msgids'] ?? []
+            );
+
+            return \Illuminate\Support\Facades\Http::response(['results' => $results]);
+        });
 
         $u1 = $this->createTestUser();
         $u2 = $this->createTestUser();
@@ -149,10 +165,10 @@ class ReleaseRepliesCommandTest extends TestCase
         $message = $this->createTestMessage($user, $group);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::POLY, self::POLY]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $this->reachCellsFor(self::POLY), self::POLY]
         );
 
         $u1 = $this->createTestUser();

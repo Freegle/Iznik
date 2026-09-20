@@ -1266,7 +1266,7 @@ internal fun QuestionMarkPlaceholder(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                if (isOffer) Icons.Default.CardGiftcard else Icons.Default.Search,
+                if (isOffer) Icons.Default.CardGiftcard else Icons.Default.ShoppingCart,
                 contentDescription = null,
                 modifier = Modifier.size(40.dp),
                 tint = Color.White.copy(alpha = 0.7f),

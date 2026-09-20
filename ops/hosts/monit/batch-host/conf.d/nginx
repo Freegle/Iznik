@@ -1,0 +1,17 @@
+check process nginx with pidfile /run/nginx.pid
+   group www
+   group nginx
+   start program = "/etc/init.d/nginx start"
+   stop program = "/usr/sbin/nginx -s stop"
+   if failed port 80 with timeout 30 seconds for 3 cycles then restart
+   depend nginx_bin
+   depend nginx_rc
+
+ check file nginx_bin with path /usr/sbin/nginx
+   group nginx
+   include /etc/monit/templates/rootbin
+
+ check file nginx_rc with path /etc/init.d/nginx
+   group nginx
+   include /etc/monit/templates/rootbin
+

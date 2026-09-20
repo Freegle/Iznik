@@ -164,8 +164,8 @@
       v-if="showRenege && refmsgid"
       :messages="[refmsgid]"
       :selected-message="refmsgid"
-      :users="[otheruser]"
-      :selected-user="otheruser.id"
+      :users="renegeUsers"
+      :selected-user="renegeUserId"
       @hide="fetchMessages"
       @hidden="showRenege = false"
     />
@@ -194,8 +194,8 @@ import AddToCalendar from '~/components/AddToCalendar'
 import ProfileImage from '~/components/ProfileImage'
 import ChatMessageCard from '~/components/ChatMessageCard'
 
-const OutcomeModal = defineAsyncComponent(() =>
-  import('~/components/OutcomeModal')
+const OutcomeModal = defineAsyncComponent(
+  () => import('~/components/OutcomeModal')
 )
 
 const RenegeModal = defineAsyncComponent(() => import('./RenegeModal'))
@@ -259,6 +259,18 @@ if (refmsgid.value) {
 }
 
 // Component-specific computed properties
+// The other party may not be in the user store yet when Unpromise is pressed. The
+// dialog still needs someone to name, so fall back to a placeholder for them.
+const renegeUsers = computed(() => {
+  if (otheruser.value) return [otheruser.value]
+  const uid = chat.value?.otheruid
+  return uid ? [{ id: uid, displayname: 'Freegler' }] : []
+})
+
+const renegeUserId = computed(
+  () => otheruser.value?.id ?? chat.value?.otheruid ?? null
+)
+
 const tryst = computed(() => {
   return otheruser.value ? trystStore?.getByUser(otheruser.value.id) : null
 })

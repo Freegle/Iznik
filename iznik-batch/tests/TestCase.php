@@ -51,6 +51,18 @@ abstract class TestCase extends BaseTestCase
 
         parent::setUp();
 
+        // A tripped drive-metrics or reach-eval circuit breaker (static,
+        // process-wide) must not leak from one test into the next.
+        \App\Services\Ripple\ReachService::resetDriveMetricsBreaker();
+        \App\Services\Ripple\ReachService::resetLabelEvalBreaker();
+
+        // MailSuppressionService is a singleton that caches the active
+        // suppression set in-process for a minute, which is right in a batch
+        // job over tens of thousands of members and wrong here: a test that
+        // inserts a suppression would leave it visible to the next test in
+        // the same process, long after its transaction rolled back, and mail
+        // in an unrelated test would silently stop being generated.
+        app(\App\Services\Mail\MailSuppressionService::class)->flushCache();
         // Force mail driver to 'array' for testing.
         // Docker's MAIL_MAILER=smtp would otherwise override phpunit.xml's setting.
         config(['mail.default' => 'array']);

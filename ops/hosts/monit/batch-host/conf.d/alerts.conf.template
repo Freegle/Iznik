@@ -1,0 +1,16 @@
+set mailserver localhost
+
+set mail-format {
+  from: monit-$__ALERT_EMAIL__
+  subject: monit alert --  $EVENT $SERVICE
+  message: $EVENT Service $SERVICE
+                Date:        $DATE
+                Action:      $ACTION
+                Host:        $HOST
+                Description: $DESCRIPTION
+
+           Your faithful employee,
+           Monit
+}
+
+set alert __ALERT_EMAIL__ not on { instance, action } with reminder on 10 cycles

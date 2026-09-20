@@ -275,7 +275,9 @@ func Feed(c *fiber.Ctx) error {
 	// become a way for a member to widen their feed.
 	allNewsletters := c.Query("newsletters") == "all" && auth.IsChitChatMod(myid)
 
-	ret := getFeed(myid, gotDistance, distance, allNewsletters)
+	minutes, _ := strconv.ParseUint(c.Query("minutes", "0"), 10, 32)
+
+	ret := getFeed(myid, gotDistance, distance, minutes, allNewsletters)
 	if len(ret) == 0 {
 		// Force [] rather than null to be returned.
 		return c.JSON(make([]string, 0))
@@ -287,7 +289,7 @@ func Feed(c *fiber.Ctx) error {
 // allNewsletters lifts the geographic filter and the flood cap on unpinned
 // Alerts (Community News). Callers must already have established that the user
 // is a ChitChat moderator - this function does not re-check.
-func getFeed(myid uint64, gotDistance bool, distance uint64, allNewsletters bool) []NewsfeedSummary {
+func getFeed(myid uint64, gotDistance bool, distance uint64, minutes uint64, allNewsletters bool) []NewsfeedSummary {
 	db := database.DBConn
 
 	// The flood cap exists to stop a news run crowding out members' own ChitChat.
@@ -340,12 +342,16 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, allNewsletters bool
 			if latlng.Lat != 0 && latlng.Lng != 0 {
 				userLat = float64(latlng.Lat)
 				userLng = float64(latlng.Lng)
-				// Get a bounding box for the distance.
+				// Get a bounding box for the distance, which arrives in METRES.
+				// The division has to be in floating point: rounding down to whole
+				// kilometres narrows every box, and anything under 1km becomes a
+				// zero-size box that matches nothing.
 				p := geo.NewPoint(userLat, userLng)
-				ne := p.PointAtDistanceAndBearing(float64(distance/1000), 45)
+				distKm := float64(distance) / 1000
+				ne := p.PointAtDistanceAndBearing(distKm, 45)
 				nelat = ne.Lat()
 				nelng = ne.Lng()
-				sw := p.PointAtDistanceAndBearing(float64(distance/1000), 225)
+				sw := p.PointAtDistanceAndBearing(distKm, 225)
 				swlat = sw.Lat()
 				swlng = sw.Lng()
 				gotLatLng = true
@@ -388,6 +394,21 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, allNewsletters bool
 	}()
 
 	wg.Wait()
+
+	// Road-aware narrowing: with a travel-time budget and the reach engine
+	// answering, threads tagged with a road-network region must be in a
+	// region the member can actually DRIVE to within that budget - so the
+	// far bank of an estuary drops out of the radius. Untagged threads (and
+	// everything, when the engine is off or no budget was sent) keep the
+	// pure radius behaviour.
+	leafSQL := ""
+	var leafArgs []interface{}
+	if gotLatLng && distance > 0 && minutes > 0 {
+		if leaves := memberReachableLeaves(myid, userLat, userLng, minutes); len(leaves) > 0 {
+			leafSQL = "AND (newsfeed.leaf IS NULL OR newsfeed.leaf IN (?)) "
+			leafArgs = []interface{}{leaves}
+		}
+	}
 
 	var newsfeed []NewsfeedSummary
 
@@ -449,6 +470,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, allNewsletters bool
 					"AND users.deleted IS NULL "+
 					"AND spam_users.id IS NULL "+
 					"AND newsfeed.type NOT IN (?, ?, ?) "+
+					"%s"+
 					"ORDER BY timestamp DESC "+
 					"LIMIT 100 "+
 					") UNION ("+
@@ -468,6 +490,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, allNewsletters bool
 					"AND users.deleted IS NULL "+
 					"AND spam_users.id IS NULL "+
 					"AND newsfeed.type IN (?, ?) "+
+					"%s"+
 					"ORDER BY ST_Distance(position, ST_SRID(POINT(?, ?), ?)) ASC, timestamp DESC "+
 					"LIMIT %d "+
 					") UNION ("+
@@ -511,50 +534,8 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, allNewsletters bool
 					"ORDER BY pinned DESC, timestamp DESC "+
 					"LIMIT 5) "+
 					"ORDER BY pinned DESC, timestamp DESC LIMIT 100;",
-				utils.NEWSFEED_EVENTS_PER_FEED, alertArmIndex, alertArmGeo, alertsPerFeed),
-			append(append([]interface{}{
-				// UNION 1: regular posts in geographic area
-				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
-				utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
-				myid,
-				swlng, swlat,
-				swlng, nelat,
-				nelng, nelat,
-				nelng, swlat,
-				swlng, swlat,
-				utils.SRID,
-				start,
-				utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY, utils.NEWSFEED_TYPE_ALERT,
-				// UNION 2: event/volunteering posts in geographic area (flood-capped, proximity-sorted)
-				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
-				utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
-				myid,
-				swlng, swlat,
-				swlng, nelat,
-				nelng, nelat,
-				nelng, swlat,
-				swlng, swlat,
-				utils.SRID,
-				start,
-				utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
-				userLng, userLat, utils.SRID,
-				// UNION 3: alerts in the ALERT box (flood-capped) - Community News posts here.
-				// The alert box, not the feed box: the feed's density-derived radius can be
-				// far smaller than the ~20-mile scale news areas are clustered at. A ChitChat
-				// mod reviewing all newsletters gets no box at all - see alertArmGeo.
-				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
-				utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
-				myid,
-			}, alertArmGeoArgs...), []interface{}{
-				start,
-				utils.NEWSFEED_TYPE_ALERT,
-				// UNION 4: pinned alerts only (any location)
-				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
-				utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
-				myid,
-				start,
-				utils.NEWSFEED_TYPE_ALERT,
-			}...)...,
+				leafSQL, leafSQL, utils.NEWSFEED_EVENTS_PER_FEED, alertArmIndex, alertArmGeo, alertsPerFeed),
+			feedArgs(myid, swlat, swlng, nelat, nelng, userLat, userLng, start, leafArgs, alertArmGeoArgs)...,
 		).Scan(&newsfeed)
 	} else {
 		// Three-way UNION for the "everywhere" path:
@@ -1067,6 +1048,7 @@ func Count(c *fiber.Ctx) error {
 	var distance uint64 = 1609
 	var err error
 	gotDistance := true
+	minutes, _ := strconv.ParseUint(c.Query("minutes", "0"), 10, 32)
 
 	if c.Query("distance") != "" && c.Query("distance") != "nearby" {
 		if c.Query("distance") == "anywhere" {
@@ -1092,7 +1074,7 @@ func Count(c *fiber.Ctx) error {
 		defer wg.Done()
 		// Always the normal feed: the unread count is about what the member has
 		// to read, not what a moderator has asked to review.
-		ret = getFeed(myid, gotDistance, distance, false)
+		ret = getFeed(myid, gotDistance, distance, minutes, false)
 	}()
 
 	wg.Add(1)
@@ -1217,6 +1199,25 @@ func Post(c *fiber.Ctx) error {
 			}
 			db.Table("users_notifications").Where("touser = ? AND newsfeedid = ?", myid, req.ID).
 				Update("seen", gorm.Expr("1"))
+		}
+	case "SeenAll":
+		// Clear the ChitChat count outright. The client can only ever name the items it has
+		// loaded, so no id it can send clears a backlog it has not scrolled through - the
+		// same reason the browse count was unclearable (Discourse 10055).
+		//
+		// The watermark is the highest newsfeed row that exists now, so everything currently
+		// in any feed falls under it and anything posted afterwards counts normally. Count()
+		// only ever compares feed ids against this, so it drains to zero by construction.
+		//
+		// Deliberately does NOT touch users_notifications: the notification bell is a
+		// separate count with its own meaning, and clearing ChitChat is not a statement
+		// about replies addressed to you.
+		var highestNewsfeedID uint64
+		db.Table("newsfeed").Select("COALESCE(MAX(id), 0)").Row().Scan(&highestNewsfeedID)
+
+		if highestNewsfeedID > 0 {
+			db.Table("newsfeed_users").Clauses(clause.Insert{Modifier: "REPLACE"}).
+				Create(map[string]interface{}{"userid": myid, "newsfeedid": highestNewsfeedID})
 		}
 	case "Follow":
 		if req.ID > 0 {
@@ -1515,6 +1516,10 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 		"hidden":   gorm.Expr(hiddenSQL),
 		"location": location,
 	}
+	// Road-network region for the road-aware feed narrowing; NULL when the
+	// reach engine cannot answer (the backfill retries later). Only when the
+	// column exists - the code can deploy ahead of the migration.
+	row["leaf"] = leafFor(lat, lng)
 	if err := db.Table("newsfeed").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create newsfeed post")
 	}
@@ -1640,6 +1645,7 @@ func createRefer(db *gorm.DB, myid uint64, nfID uint64, referType string, msgid 
 		"msgid":    gorm.Expr("NULLIF(?, 0)", msgid),
 		"position": gorm.Expr("ST_GeomFromText(?, ?)", fmt.Sprintf("POINT(%f %f)", lng, lat), utils.SRID),
 	}
+	row["leaf"] = leafFor(lat, lng)
 	if err := db.Table("newsfeed").Create(row).Error; err != nil {
 		return
 	}
@@ -1726,4 +1732,62 @@ func Delete(c *fiber.Ctx) error {
 	db.Table("users_notifications").Where("newsfeedid = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"success": true})
+}
+
+// feedArgs assembles the ordered bind arguments for the four-way UNION feed
+// query, including the optional road-region narrowing (leafArgs) in arms 1
+// and 2 and the alert-box arguments for arm 3.
+func feedArgs(myid uint64, swlat, swlng, nelat, nelng, userLat, userLng float64, start string, leafArgs, alertArmGeoArgs []interface{}) []interface{} {
+	args := []interface{}{
+		// UNION 1: regular posts in geographic area
+		utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+		utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+		myid,
+		swlng, swlat,
+		swlng, nelat,
+		nelng, nelat,
+		nelng, swlat,
+		swlng, swlat,
+		utils.SRID,
+		start,
+		utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY, utils.NEWSFEED_TYPE_ALERT,
+	}
+	args = append(args, leafArgs...)
+	args = append(args,
+		// UNION 2: event/volunteering posts in geographic area (flood-capped, proximity-sorted)
+		utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+		utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+		myid,
+		swlng, swlat,
+		swlng, nelat,
+		nelng, nelat,
+		nelng, swlat,
+		swlng, swlat,
+		utils.SRID,
+		start,
+		utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
+	)
+	args = append(args, leafArgs...)
+	args = append(args,
+		userLng, userLat, utils.SRID,
+		// UNION 3: alerts in the ALERT box (flood-capped) - Community News posts here.
+		// The alert box, not the feed box: the feed's density-derived radius can be
+		// far smaller than the ~20-mile scale news areas are clustered at. A ChitChat
+		// mod reviewing all newsletters gets no box at all - see alertArmGeo.
+		utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+		utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+		myid,
+	)
+	args = append(args, alertArmGeoArgs...)
+	args = append(args,
+		start,
+		utils.NEWSFEED_TYPE_ALERT,
+		// UNION 4: pinned alerts only (any location)
+		utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+		utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+		myid,
+		start,
+		utils.NEWSFEED_TYPE_ALERT,
+	)
+	return args
 }

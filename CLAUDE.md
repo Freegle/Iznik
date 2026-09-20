@@ -8,6 +8,33 @@
 - **You may push the current branch and open a PR without being asked first, provided you have run the full relevant test suite locally and it passes.** If tests have not been run locally, or any are failing, do not push — run and fix them first. (Merging is still humans-only; see above.)
   - **Exception**: When CI is failing on master, you may push fixes directly to master (no PR required) — same as you would fix CI failures on an open PR.
 
+## Traps
+
+`.claude/rules/` holds the gotchas that have cost real debugging time, one file per area. Each
+declares `paths:`, so Claude Code loads it automatically when a file in that area is opened. They
+are plain markdown and worth reading directly if you are new to an area.
+
+| File | Loads for |
+|---|---|
+| `.claude/rules/go-api-traps.md` | `iznik-server-go/**/*.go` |
+| `.claude/rules/laravel-batch-traps.md` | `iznik-batch/**/*.php` |
+| `.claude/rules/frontend-traps.md` | `iznik-nuxt3/**/*.{vue,js,mjs}` |
+| `.claude/rules/tests-and-ci.md` | `.circleci/**`, the four test trees, `status-nuxt/**` |
+| `.claude/rules/dev-containers.md` | `docker-compose*.yml`, `scripts/**`, `freegle`, `.env*` |
+| `.claude/rules/rippling.md` | the Ripple services and commands, `iznik-server-go/rippling/**` |
+| `.claude/rules/modtools.md` | `iznik-nuxt3/modtools/**`, the Go user and chat packages |
+| `.claude/rules/browse-and-search.md` | the Browse pages and map, `isochrone/**`, `message/**` |
+| `.claude/rules/mail-and-data.md` | `iznik-batch/app/Mail/**`, the digest services, mail views |
+| `.claude/rules/monitor-fsm.md` | `monitor-fsm/**` |
+| `.claude/rules/conventions.md` | everywhere: settled decisions, not preferences |
+
+They share one shape: **no error, no warning, a plausible wrong answer.** A passing test does not
+clear any of them. Add to them when something fails silently twice.
+
+**Findings about this codebase go in these files, not in a personal memory note** - a memory only
+helps the machine it was written on. `.claude/check-memory-vs-rules.sh` enforces that. Preferences,
+project status, and anything naming a host, key or member stay in memory and are not published.
+
 ## Documentation
 
 Canonical documentation lives in **[`docs/`](docs/README.md)**, organised by audience: `members/`, `moderators/`, `developers/`, `ops/`. It is the place for "how things work" - not `plans/`, which is scratch that gets pruned when work ships.

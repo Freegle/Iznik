@@ -26,7 +26,7 @@ export function constructAddress(
   let processed = false
   let processingError = false
   const addressLines = []
-  let nextLinePrefix = null
+  let nextLinePrefix
 
   if (buildingNumber === 0) {
     buildingNumber = null
