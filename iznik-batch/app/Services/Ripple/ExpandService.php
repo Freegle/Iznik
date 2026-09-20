@@ -133,8 +133,6 @@ class ExpandService
         }
     }
 
-    /** Has the density-sizing migration run? Without it the cap still applies, unrecorded. */
-    private function densityColumnsReady(): bool
     /**
      * SQL fragment (leading " AND ...") excluding the communities that have opted out of
      * the given rippling direction, or '' when none have. Every id is a DB int, so the
@@ -3033,26 +3031,6 @@ class ExpandService
         if (!is_array($gids) || empty($gids)) {
             return;
         }
-        // The polygon SHRINKS here: a stale inner bound could cheap-accept viewers in
-        // the clipped-out area, so it is NULLed in the SAME statement. The outer bound
-        // is left stale-loose (safe — the MBR/exact tests still decide correctly).
-        $ready = $this->bounds->ready();
-        foreach ($gids as $gid) {
-            $update = ['mr.polygon' => new StDifference('mr.polygon', 'g.polyindex')];
-            if ($ready) {
-                $update['mr.inner_bound'] = null;
-            }
-
-            DB::table('rippling_reach as mr')
-                ->join('groups as g', function ($j) use ($gid) {
-                    $j->where('g.id', (int) $gid);
-                })
-                ->where('mr.msgid', $msgid)
-                ->whereNotNull('g.polyindex')
-                ->where(new Comparison(new StGeometryType('g.polyindex'), '<>', Value::of('POINT')))
-                ->where(new StIntersects('mr.polygon', 'g.polyindex'))
-                ->whereNot(new StWithin('mr.polygon', 'g.polyindex'))
-                ->update($update);
 
         // The clip is pure grid arithmetic - fetch the row's grid, subtract
         // each rejecting group's rasterised area, write the survivor back
