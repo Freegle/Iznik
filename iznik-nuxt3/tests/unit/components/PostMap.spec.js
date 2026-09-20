@@ -21,7 +21,7 @@ const {
   mockMyGroupsBoundingBox,
   mockMyGroupIds,
 } = vi.hoisted(() => {
-  const { ref } = require('vue')
+  const { ref, reactive } = require('vue')
 
   return {
     mockNearbyBounds: ref(null),
@@ -32,7 +32,10 @@ const {
       fetchMyGroups: vi.fn().mockResolvedValue([]),
       search: vi.fn().mockResolvedValue([]),
     },
-    mockAuthStore: {
+    // reactive, not a plain object: a computed reading authStore.user must be able to see
+    // a later reassignment (the app restores its session from a stored token rather than a
+    // cookie, so authStore.user routinely arrives after a component has already mounted).
+    mockAuthStore: reactive({
       user: {
         id: 1,
         lat: 53.945,
@@ -41,7 +44,7 @@ const {
           mylocation: { name: 'AB1 2CD' },
         },
       },
-    },
+    }),
     mockMiscStore: {
       get: vi.fn().mockReturnValue(false),
     },
@@ -913,6 +916,35 @@ describe('PostMap', () => {
       await flushPromises()
       expect(mockNearbyFetchMessages).not.toHaveBeenCalled()
       expect(mockMessageStore.fetchInBounds).toHaveBeenCalled()
+    })
+
+    it('picks up a location that arrives after mount, not just one present at mount (Discourse 10091/2)', async () => {
+      // On the app, the session is restored from a stored token rather than a cookie, so
+      // authStore.user is routinely still empty when PostMap's setup runs and arrives a
+      // moment later. If the reach-feed gate reads a one-time snapshot of authStore.user,
+      // it stays permanently blind to that late arrival: the member never gets the reach
+      // feed, falls through to the group-bounds fallback, and the sparse-results zoom-out
+      // below then keeps zooming out until it is showing hundreds of out-of-reach posts
+      // across the whole country.
+      mockAuthStore.user = { id: 1, lat: null, lng: null, settings: {} }
+      mockMyGroups.value = [{ id: 1 }]
+      await createWrapper({ showIsochrones: true })
+
+      // The session finishes restoring after mount.
+      mockAuthStore.user = {
+        id: 1,
+        lat: 53.945,
+        lng: -2.5209,
+        settings: { mylocation: { name: 'AB1 2CD' } },
+      }
+
+      mockNearbyBounds.value = [
+        [51, -2],
+        [54, 0],
+      ]
+      await flushPromises()
+      expect(mockNearbyFetchMessages).toHaveBeenCalled()
+      expect(mockMessageStore.fetchInBounds).not.toHaveBeenCalled()
     })
 
     it('asks for the posts in the map bounds once when the map settles, not once per listener', async () => {

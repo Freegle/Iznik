@@ -252,7 +252,16 @@ const messageStore = useMessageStore()
 const nearbyStore = useNearbyStore()
 const authorityStore = useAuthorityStore()
 const authStore = useAuthStore()
-const me = authStore.user
+
+// Reactive, deliberately (see JobsDaSlot.vue for the same fix on the same store field).
+// The app restores its session from a stored token rather than a cookie, so authStore.user
+// is routinely still empty when this setup runs and arrives a moment later. A plain
+// `const me = authStore.user` snapshot never sees that later reassignment, so the nearby
+// reach-feed gate below stayed permanently blind to a member's location that hadn't loaded
+// yet, fell through to the group-bounds fallback, and the "not enough showing" zoom-out
+// further down then kept zooming out until it was showing hundreds of out-of-reach posts
+// across the whole country (Discourse 10091/2).
+const me = computed(() => authStore.user)
 
 // Data properties as refs
 const messageList = ref([])
@@ -981,7 +990,11 @@ async function getMessages() {
   // "not many showing, zoom out and refetch" padding below, which was the source of far,
   // unreachable posts leaking into the nearby list. Search within nearby is handled in the
   // showIsochrones branch further down (it intersects the reach feed with a bounds search).
-  if (props.showIsochrones && !props.search && (me?.lat || me?.lng)) {
+  if (
+    props.showIsochrones &&
+    !props.search &&
+    (me.value?.lat || me.value?.lng)
+  ) {
     console.log('GetMessages - nearby reach feed')
     const nearby = await nearbyStore.fetchMessages()
     if (nearby && !destroyed.value) {
@@ -1048,7 +1061,7 @@ async function getMessages() {
     // We are trying to show posts nearby - the reach-based feed the server computes
     // from the member's location. There's no client-side polygon any more, so the
     // gate is simply whether we know where the member is.
-    if (me?.lat || me?.lng) {
+    if (me.value?.lat || me.value?.lng) {
       // We know where the member is, so ask the server for their nearby feed.
       if (props.search) {
         // Search within the nearby feed: browse=1 makes the server scope the search
@@ -1245,8 +1258,8 @@ async function getMessages() {
 async function goHome() {
   await loadLeaflet()
 
-  if (me.lat || me.lng) {
-    mapObject.value.flyTo(new window.L.LatLng(me.lat, me.lng))
+  if (me.value.lat || me.value.lng) {
+    mapObject.value.flyTo(new window.L.LatLng(me.value.lat, me.value.lng))
   }
 }
 
