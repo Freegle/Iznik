@@ -4,7 +4,7 @@ const prefix = process.env.COMPOSE_PROJECT_NAME || 'freegle'
 
 // Recreate the shared test users (test@test.com / testmod@test.com) by deleting them and
 // reloading the captured fixtures (scripts/test-fixtures.sql), which restore the users along
-// with their memberships, roles, isochrones and chats exactly as seeded.
+// with their roles, isochrones and chats exactly as seeded.
 export default defineEventHandler(async () => {
   try {
     const results: string[] = []

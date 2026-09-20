@@ -74,12 +74,6 @@ APIV2_HEALTH_PATH="${DEPLOY_APIV2_HEALTH_PATH:-/api/group}"
 ROUTING_PUBLIC_PORT="${DEPLOY_ROUTING_PUBLIC_PORT:-8196}"
 ROUTING_INTERNAL_PORT="${DEPLOY_ROUTING_INTERNAL_PORT:-8197}"   # prod internal (no auth)
 KNN_PORT="${DEPLOY_KNN_PORT:-8194}"
-# A rippled-in post's coords/group — used to prove the new /v1/group-proximity
-# route answers 200 (not 404) after a routing deploy. Override to a live example.
-PROBE_LAT="${DEPLOY_PROBE_LAT:-51.5}"
-PROBE_LNG="${DEPLOY_PROBE_LNG:--0.1}"
-PROBE_GROUPID="${DEPLOY_PROBE_GROUPID:-21250}"
-PROBE_MODE="${DEPLOY_PROBE_MODE:-drive}"
 
 # Local (this host) — batch-prod bind mount + the spatial containers it calls.
 LOCAL_REPO="${DEPLOY_LOCAL_REPO:-$(cd "$SCRIPT_DIR/.." && pwd)}"
@@ -160,7 +154,6 @@ fi
 # curl helpers (remote)
 # ---------------------------------------------------------------------------
 rcode() { rsh "$1" "curl -s -o /dev/null -w '%{http_code}' 'http://localhost:$2$3' 2>/dev/null"; }
-gp_path="/v1/group-proximity?lat=$PROBE_LAT&lng=$PROBE_LNG&groupid=$PROBE_GROUPID&mode=$PROBE_MODE"
 
 # ---------------------------------------------------------------------------
 # monit: enable monitoring for a service (if off) and wait until monit reports it
@@ -244,7 +237,7 @@ deploy_routing() {
   run "rsh '$node' 'cd $REMOTE_ROUTING_DIR && cp -a iznik-routing-go iznik-routing-go.bak-predeploy-$ts'"
   run "rsh '$node' 'cd $REMOTE_ROUTING_DIR && timeout $BUILD_TIMEOUT $GO_BIN build -o iznik-routing-go .'" || die "[$node] routing build failed"
   $DRY_RUN && { warn "[$node] routing: dry-run, skip restart/graph-reload"; return; }
-  log "[$node] routing: unmonitor, stop old, start new, reload graph (~minutes), verify group-proximity"
+  log "[$node] routing: unmonitor, stop old, start new, reload graph (~minutes), verify the reach engine"
   rsh "$node" '
     '"$MONIT_CMD"' unmonitor '"$MONIT_ROUTING_SVC"' 2>/dev/null || true   # stop monit racing the manual restart
     sudo killall -SIGINT iznik-routing-go 2>/dev/null || true
@@ -261,19 +254,17 @@ deploy_routing() {
       H=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:'"$ROUTING_PUBLIC_PORT"'/health 2>/dev/null)
       OOM=$(dmesg 2>/dev/null | tail -3 | grep -ci "out of memory\|killed process")
       if [ "$H" = "200" ]; then
-        GP=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:'"$ROUTING_INTERNAL_PORT$gp_path"'" 2>/dev/null)
-        [ "$GP" != "200" ] && { echo "routing healthy but group-proximity=$GP (route missing?)"; exit 3; }
-        # Reach-engine probe. health and group-proximity BOTH pass on the PBF
-        # fallback, so they cannot tell "engine loaded" from "engine silently
+        # Reach-engine probe. health passes on the PBF
+        # fallback, so it cannot tell "engine loaded" from "engine silently
         # absent" — on 2026-09-02 a graphSnapVersion bump met version-1
         # artifacts, every node reported clean, and /v1/reach-* 503d for ~16h.
         # 503 means the engine did not load; 400 is this empty body being
         # rejected by a live engine, which is the pass we want.
         if [ "${DEPLOY_SKIP_REACH_PROBE:-0}" = "1" ]; then
-          echo "OK health=200 group-proximity=200 reach-probe=skipped"; exit 0
+          echo "OK health=200 reach-probe=skipped"; exit 0
         fi
         RU=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "{}" \
-             "http://localhost:'"$ROUTING_INTERNAL_PORT"'/v1/reach-union" 2>/dev/null)
+             "http://localhost:'"$ROUTING_INTERNAL_PORT"'/v1/reach-eval" 2>/dev/null)
         if [ "$RU" = "503" ]; then
           # Two different faults answer 503, and they need opposite responses.
           # A REFUSING line means the engine loaded fine but its partition is
@@ -287,12 +278,12 @@ deploy_routing() {
             echo "  $REFUSED"
             exit 6
           fi
-          echo "routing up but REACH ENGINE NOT LOADED (reach-union=503) - stale artifacts?"; exit 5
+          echo "routing up but REACH ENGINE NOT LOADED (reach-eval=503) - stale artifacts?"; exit 5
         fi
         # Which partition this node is now serving; the operator should see
         # the same value on every node, and on the stored labels.
         FP=$(curl -s http://localhost:'"$ROUTING_PUBLIC_PORT"'/health 2>/dev/null | sed -n "s/.*\"reach_partition_fp\":\"\([0-9]*\)\".*/\1/p")
-        echo "OK health=200 group-proximity=200 reach-union=$RU reach-partition=${FP:-unknown}"; exit 0
+        echo "OK health=200 reach-eval=$RU reach-partition=${FP:-unknown}"; exit 0
       fi
       [ "${OOM:-0}" != "0" ] && { echo "OOM during graph load"; exit 4; }
     done
@@ -397,7 +388,7 @@ deploy_local() {
     warn "local tree at ${base:0:10}, target $TARGET_SHORT — pull master into $LOCAL_REPO before rebuilding containers"
   fi
   if $routing_changed; then
-    log "local: rebuild $LOCAL_SPATIAL_SERVICE (routing-go) container [batch group-proximity path]"
+    log "local: rebuild $LOCAL_SPATIAL_SERVICE (routing-go) container [batch reach path]"
     run "$COMPOSE build $LOCAL_SPATIAL_SERVICE"
     run "$COMPOSE up -d --no-deps $LOCAL_SPATIAL_SERVICE"
     $DRY_RUN || {
@@ -406,8 +397,10 @@ deploy_local() {
         [ "$(docker inspect --format '{{.State.Health.Status}}' "$LOCAL_SPATIAL_CONTAINER" 2>/dev/null)" = "healthy" ] && break
         sleep 12
       done
-      local gp; gp="$(docker exec "$LOCAL_SPATIAL_CONTAINER" sh -c "curl -s -o /dev/null -w '%{http_code}' 'http://localhost:$LOCAL_SPATIAL_INTERNAL_PORT$gp_path'" 2>/dev/null)"
-      [ "$gp" = "200" ] && ok "local: batch group-proximity path = 200" || die "local: batch group-proximity=$gp"
+      # 400 is a live engine rejecting the empty body; 501 is a container with no reach engine
+      # configured (the route is there). Anything else means the route or the binary is missing.
+      local re; re="$(docker exec "$LOCAL_SPATIAL_CONTAINER" sh -c "curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' 'http://localhost:$LOCAL_SPATIAL_INTERNAL_PORT/v1/reach-eval'" 2>/dev/null)"
+      case "$re" in 400|501) ok "local: batch reach path answers (reach-eval=$re)" ;; *) die "local: batch reach-eval=$re" ;; esac
     }
   fi
   if $knn_changed; then
