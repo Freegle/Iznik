@@ -357,7 +357,25 @@ Per-community statistics (`stats`, `stats_outcomes`, `stats_summaries`, `users_d
 - `<nameshort>-subscribe@` sets the TN member's email frequency to daily and `-unsubscribe@` to never. `PUT /memberships?partner=...&groupid=...` keeps its path and shape, creates or finds the TN member, and sets their location from the area when they have none. `GET /api/changes` is unchanged. The `{username}-g{id}@user.trashnothing.com` parsing is unchanged.
 
 ### Moderators
-- ModTools is national. Queues (pending, spam, chat review, reports, member review, events, volunteering) show everything; there is no community picker anywhere. Community settings, member lists per community, admins per community, stats per community, standard messages per community and the rippling explorer go. Support tools stay.
+- ModTools is national, and it is never a gate. Edward's direction on 2026-09-20: "a tool for
+  national volunteers to add value where possible but not block activity if none active."
+  The test for every screen and every backend state: if no volunteer opens ModTools for a
+  month, nothing on the site waits, stalls or stays hidden. Nothing sits in a queue for a
+  person; the states are live, taken down (with the poster told), and a short automatic wait.
+  A moderator can overturn any of them. The full rework is in the ModTools rework brief and
+  is summarised here:
+  - Posts: clean and unrestricted means live at once; flagged means a short automatic wait,
+    then live unless a danger signal is present, in which case it is taken down and the
+    poster told. A content-check block is a takedown with the poster told, not a queue.
+  - Events and volunteering are live on creation and content-checked like posts.
+  - Automated member flags are advisory and stop nothing.
+  - A member's message to Freegle gets an automatic reply at once; a volunteer may add one.
+  - No mail chases a moderator about work.
+  - ModTools' home page lists things a volunteer could do today (just published, taken down,
+    held chat messages, messages to Freegle, new members, completed freegles, flagged
+    members, events and volunteering, spammers), each describing what the system already
+    did and offering one action on top. Pending, spam and edit-review queues, badge counts,
+    hold and release, and "approve" as a verb are gone. Support tools stay.
 
 ## Ownership and waves
 
