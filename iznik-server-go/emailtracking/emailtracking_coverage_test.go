@@ -7,6 +7,128 @@ import (
 	"time"
 )
 
+// ---------------------------------------------------------------------------
+// calcEmailRates — shared rate formula helper
+// ---------------------------------------------------------------------------
+
+// TestCalcEmailRates_Formulas verifies that the extracted helper produces
+// identical values to the previous inline rate formulas used in Stats and
+// StatsByType. Each case encodes the formula manually for comparison.
+func TestCalcEmailRates_Formulas(t *testing.T) {
+	cases := []struct {
+		name            string
+		totalSent       int64
+		opened          int64
+		clicked         int64
+		linkedBounces   int64
+		wantOpen        float64
+		wantClick       float64
+		wantClickToOpen float64
+		wantBounce      float64
+	}{
+		{
+			name:      "typical engagement",
+			totalSent: 100, opened: 40, clicked: 10, linkedBounces: 5,
+			wantOpen:        40.0,
+			wantClick:       10.0,
+			wantClickToOpen: 25.0, // 10/40*100
+			wantBounce:      5.0,
+		},
+		{
+			name:      "all zeros",
+			totalSent: 0, opened: 0, clicked: 0, linkedBounces: 0,
+			wantOpen: 0, wantClick: 0, wantClickToOpen: 0, wantBounce: 0,
+		},
+		{
+			name:      "no clicks",
+			totalSent: 200, opened: 100, clicked: 0, linkedBounces: 0,
+			wantOpen:        50.0,
+			wantClick:       0,
+			wantClickToOpen: 0,
+			wantBounce:      0,
+		},
+		{
+			name:      "no opens implies zero click-to-open",
+			totalSent: 50, opened: 0, clicked: 0, linkedBounces: 2,
+			wantOpen:        0,
+			wantClick:       0,
+			wantClickToOpen: 0,
+			wantBounce:      4.0, // 2/50*100
+		},
+		{
+			name:      "perfect open rate",
+			totalSent: 1000, opened: 1000, clicked: 500, linkedBounces: 10,
+			wantOpen:        100.0,
+			wantClick:       50.0,
+			wantClickToOpen: 50.0, // 500/1000*100
+			wantBounce:      1.0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			open, click, cto, bounce := calcEmailRates(tc.totalSent, tc.opened, tc.clicked, tc.linkedBounces)
+			if open != tc.wantOpen {
+				t.Errorf("open_rate = %v, want %v", open, tc.wantOpen)
+			}
+			if click != tc.wantClick {
+				t.Errorf("click_rate = %v, want %v", click, tc.wantClick)
+			}
+			if cto != tc.wantClickToOpen {
+				t.Errorf("click_to_open_rate = %v, want %v", cto, tc.wantClickToOpen)
+			}
+			if bounce != tc.wantBounce {
+				t.Errorf("bounce_rate = %v, want %v", bounce, tc.wantBounce)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// statsByTypeQuery — FORCE INDEX conditional on date range
+// ---------------------------------------------------------------------------
+
+// TestStatsByTypeQuery_NoDateRange_OmitsForceIndex asserts that StatsByType omits
+// FORCE INDEX (sent_at) when no date range is supplied. The unconditional hint
+// misleads the optimizer when it must scan the whole table; omitting it lets
+// MySQL choose its own plan.
+func TestStatsByTypeQuery_NoDateRange_OmitsForceIndex(t *testing.T) {
+	table, _, args := statsByTypeQuery("", "")
+	if strings.Contains(table, "FORCE INDEX") {
+		t.Errorf("StatsByType without dates must not emit FORCE INDEX, got:\n%s", table)
+	}
+	if len(args) != 0 {
+		t.Errorf("expected 0 args without date range, got %d", len(args))
+	}
+}
+
+// TestStatsByTypeQuery_WithDateRange_IncludesForceIndex asserts that the hint is
+// retained when a date range is provided (range scan benefits from the index).
+func TestStatsByTypeQuery_WithDateRange_IncludesForceIndex(t *testing.T) {
+	table, _, args := statsByTypeQuery("2025-01-01", "2025-12-31")
+	if !strings.Contains(table, "FORCE INDEX") {
+		t.Errorf("StatsByType with dates must retain FORCE INDEX, got:\n%s", table)
+	}
+	if len(args) != 2 {
+		t.Errorf("expected 2 args with date range, got %d", len(args))
+	}
+}
+
+// TestStatsByTypeQuery_TNWhere_Present checks that the TN-exclusion WHERE
+// constant is present in every generated WHERE clause.
+func TestStatsByTypeQuery_TNWhere_Present(t *testing.T) {
+	for _, label := range []string{"without-dates", "with-dates"} {
+		var whereSQL string
+		if label == "without-dates" {
+			_, whereSQL, _ = statsByTypeQuery("", "")
+		} else {
+			_, whereSQL, _ = statsByTypeQuery("2025-01-01", "2025-12-31")
+		}
+		if !strings.Contains(whereSQL, emailTrackingTNWhere) {
+			t.Errorf("[%s] expected TN WHERE clause, missing; got:\n%s", label, whereSQL)
+		}
+	}
+}
+
 func TestIsNumeric(t *testing.T) {
 	cases := []struct {
 		in   string

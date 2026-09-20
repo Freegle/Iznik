@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata" // embed timezone database for Europe/London lookups
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
@@ -33,50 +34,108 @@ func canSee(myid uint64, t *Tryst) bool {
 	return t.ID > 0 && (t.User1 == myid || t.User2 == myid)
 }
 
-// calendarLink generates an Add to Calendar link for a tryst, creating a
-// 1-hour event starting at the arrangedfor time.
+// calendarEventData holds the JSON payload for the Freegle /calendar page.
+// Field order matches V1 PHP Tryst::getCalendarLink for wire-format parity.
+type calendarEventData struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	StartDate   string `json:"startDate"`
+	StartTime   string `json:"startTime"`
+	EndTime     string `json:"endTime"`
+	TimeZone    string `json:"timeZone"`
+	Location    string `json:"location"`
+}
+
+// parseArrangedFor parses a tryst arranged-for timestamp. GORM may return the
+// datetime as either "2006-01-02 15:04:05" or RFC3339 (with or without offset).
+func parseArrangedFor(arrangedfor string) (time.Time, bool) {
+	t, err := time.Parse("2006-01-02 15:04:05", arrangedfor)
+	if err != nil {
+		t, err = time.Parse(time.RFC3339, arrangedfor)
+		if err != nil {
+			return time.Time{}, false
+		}
+	}
+	return t, true
+}
+
+// calendarLink builds the Freegle-internal /calendar?data= URL for a tryst, matching
+// V1 PHP Tryst::getCalendarLink: participant names taken from the DB, a
+// 15-minute duration, Europe/London timezone, and a base64url-encoded JSON payload.
+// requesterID determines which participant is shown first in the event title (u1 in V1).
 //
-// The event data is base64url-encoded JSON in a `data` query param, matching
-// the format iznik-batch's TrystService::buildCalendarLink() already uses for
-// the calendar invite email, and that AddToCalendar.vue / pages/calendar.client.vue
-// expect. A previous version of this function returned a raw Google Calendar
-// render URL, which those consumers can't parse - the button appeared to do
-// nothing when tapped.
-func calendarLink(arrangedfor *string) string {
+// The payload is base64url-encoded (RawURLEncoding, no padding) rather than standard
+// base64 - a literal '+' in an un-escaped URL query string is decoded to a space by
+// URL parsers (e.g. URLSearchParams), which corrupts standard base64's '+'/'/' alphabet.
+// This matches iznik-batch's TrystService::buildCalendarLink() and what
+// AddToCalendar.vue / pages/calendar.client.vue expect.
+func calendarLink(db *gorm.DB, trystUser1, trystUser2, requesterID uint64, arrangedfor *string) string {
 	if arrangedfor == nil || *arrangedfor == "" {
 		return ""
 	}
 
-	// GORM may return datetime as either "2006-01-02 15:04:05" or "2006-01-02T15:04:05Z".
-	t, err := time.Parse("2006-01-02 15:04:05", *arrangedfor)
+	t, ok := parseArrangedFor(*arrangedfor)
+	if !ok {
+		return ""
+	}
+
+	// Convert to Europe/London — matches V1 PHP $arrangedfor->setTimezone('Europe/London').
+	londonLoc, err := time.LoadLocation("Europe/London")
 	if err != nil {
-		t, err = time.Parse(time.RFC3339, *arrangedfor)
-		if err != nil {
-			return ""
-		}
+		londonLoc = time.UTC
+	}
+	localStart := t.In(londonLoc)
+	localEnd := localStart.Add(15 * time.Minute)
+
+	// V1 PHP: u1 = requesting user, u2 = the other participant.
+	otherID := trystUser2
+	if requesterID == trystUser2 {
+		otherID = trystUser1
 	}
 
-	t = t.UTC()
-	end := t.Add(time.Hour)
-
-	eventData := map[string]string{
-		"name":        "Freegle Handover",
-		"description": "Arrange handover of Freegle item",
-		"startDate":   t.Format("2006-01-02"),
-		"startTime":   t.Format("15:04"),
-		"endTime":     end.Format("15:04"),
-		"timeZone":    "UTC",
-		"location":    "",
+	var myName, otherName string
+	db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", requesterID).Scan(&myName)
+	db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", otherID).Scan(&otherName)
+	if myName == "" {
+		myName = "A freegler"
+	}
+	if otherName == "" {
+		otherName = "A freegler"
 	}
 
-	jsonData, err := json.Marshal(eventData)
+	title := "Handover: " + myName + " and " + otherName
+
+	// Look up the chat room between the two participants (created at tryst creation time).
+	var chatRoomID uint64
+	db.Raw("SELECT id FROM chat_rooms WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?) LIMIT 1",
+		trystUser1, trystUser2, trystUser2, trystUser1).Scan(&chatRoomID)
+
+	userSite := os.Getenv("USER_SITE")
+	if userSite == "" {
+		userSite = "www.ilovefreegle.org"
+	}
+
+	description := fmt.Sprintf(
+		"Please add to your calendar.  If anything changes please let them know through Chat - click https://%s/chats/%d",
+		userSite, chatRoomID)
+
+	data := calendarEventData{
+		Name:        title,
+		Description: description,
+		StartDate:   localStart.Format("2006-01-02"),
+		StartTime:   localStart.Format("15:04"),
+		EndTime:     localEnd.Format("15:04"),
+		TimeZone:    "Europe/London",
+		Location:    "",
+	}
+
+	jsonBytes, err := json.Marshal(data)
 	if err != nil {
 		return ""
 	}
 
-	encoded := base64.RawURLEncoding.EncodeToString(jsonData)
-
-	return fmt.Sprintf("https://%s/calendar?data=%s", os.Getenv("USER_SITE"), encoded)
+	encoded := base64.RawURLEncoding.EncodeToString(jsonBytes)
+	return "https://" + userSite + "/calendar?data=" + encoded
 }
 
 // GetTryst handles GET /tryst - list user's trysts or single by ID.
@@ -114,7 +173,7 @@ func GetTryst(c *fiber.Ctx) error {
 				"user2":        t.User2,
 				"arrangedat":   t.Arrangedat,
 				"arrangedfor":  t.Arrangedfor,
-				"calendarLink": calendarLink(t.Arrangedfor),
+				"calendarLink": calendarLink(db, t.User1, t.User2, myid, t.Arrangedfor),
 			},
 		})
 	}
@@ -131,7 +190,7 @@ func GetTryst(c *fiber.Ctx) error {
 			"user2":        t.User2,
 			"arrangedat":   t.Arrangedat,
 			"arrangedfor":  t.Arrangedfor,
-			"calendarLink": calendarLink(t.Arrangedfor),
+			"calendarLink": calendarLink(db, t.User1, t.User2, myid, t.Arrangedfor),
 		}
 	}
 

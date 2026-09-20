@@ -16,8 +16,14 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// --- Message List types and handler ---
+// PaginationContext is the opaque cursor echoed between pages of the ModTools
+// message list (Date + last id), serialised into the `context` query param.
+type PaginationContext struct {
+	Date int64  `json:"Date"`
+	ID   uint64 `json:"id"`
+}
 
+// MessageGroupInfo describes one group entry for a message in the list response.
 type MessageGroupInfo struct {
 	Groupid    uint64    `json:"groupid"`
 	Collection string    `json:"collection"`
@@ -28,11 +34,7 @@ type MessageGroupInfo struct {
 	RippledIn uint8 `json:"rippled_in"`
 }
 
-type PaginationContext struct {
-	Date int64  `json:"Date"`
-	ID   uint64 `json:"id"`
-}
-
+// ListMessageItem is a single item in the message list response.
 type ListMessageItem struct {
 	ID                 uint64              `json:"id"`
 	Subject            string              `json:"subject"`
@@ -50,6 +52,7 @@ type ListMessageItem struct {
 	Replycount         int                 `json:"replycount"`
 }
 
+// ListMessagesResponse is the envelope returned by GET /messages and GET /modtools/messages.
 type ListMessagesResponse struct {
 	Messages []ListMessageItem  `json:"messages"`
 	Context  *PaginationContext `json:"context,omitempty"`

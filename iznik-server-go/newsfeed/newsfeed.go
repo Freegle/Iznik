@@ -1045,9 +1045,9 @@ func Count(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
-	var distance uint64 = 1609
+	var distance uint64
 	var err error
-	gotDistance := true
+	gotDistance := false
 	minutes, _ := strconv.ParseUint(c.Query("minutes", "0"), 10, 32)
 
 	if c.Query("distance") != "" && c.Query("distance") != "nearby" {
@@ -1057,7 +1057,7 @@ func Count(c *fiber.Ctx) error {
 		} else {
 			distance, err = strconv.ParseUint(c.Query("distance"), 10, 32)
 
-			if err != nil {
+			if err == nil {
 				gotDistance = true
 			}
 		}

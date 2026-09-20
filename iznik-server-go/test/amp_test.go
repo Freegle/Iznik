@@ -562,17 +562,130 @@ func TestAMPChatRosterMembershipScan(t *testing.T) {
 	assert.Equal(t, uint64(0), notMemberUserID, "Should return 0 for non-member")
 }
 
+// TestAMPPostChatReply_ProcessingRequired verifies that a message inserted via
+// PostChatReply has processingrequired=1 and processingsuccessful=0 so
+// ChatProcessService picks it up and queues push/mobile notifications.
+// Before the fix the INSERT set processingsuccessful=1 and omitted
+// processingrequired, causing push notifications to be silently dropped.
+func TestAMPPostChatReply_ProcessingRequired(t *testing.T) {
+	ampSecret := os.Getenv("AMP_SECRET")
+	if ampSecret == "" {
+		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
+	}
+	if ampSecret == "" {
+		t.Fatal("AMP_SECRET not set")
+	}
+
+	prefix := uniquePrefix("ampprocreq")
+	groupID := CreateTestGroup(t, prefix)
+	user1ID := CreateTestUser(t, prefix+"_1", "User")
+	user2ID := CreateTestUser(t, prefix+"_2", "User")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	CreateTestChatRoster(t, chatID, user1ID)
+	CreateTestChatRoster(t, chatID, user2ID)
+
+	exp := time.Now().Unix() + 3600
+	token := generateAMPToken(user1ID, chatID, exp, ampSecret)
+
+	body := map[string]string{"message": "AMP reply for processing check"}
+	bodyBytes, _ := json2.Marshal(body)
+
+	url := fmt.Sprintf("/amp/chat/%d/reply?rt=%s&uid=%d&exp=%d", chatID, token, user1ID, exp)
+	request := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var response amp.ReplyResponse
+	json2.Unmarshal(rsp(resp), &response)
+	assert.True(t, response.Success)
+
+	// Verify the inserted message has processingrequired=1 and processingsuccessful=0.
+	db := database.DBConn
+	type msgFlags struct {
+		Processingrequired   bool
+		Processingsuccessful bool
+	}
+	var flags msgFlags
+	db.Raw(
+		"SELECT processingrequired, processingsuccessful FROM chat_messages "+
+			"WHERE chatid = ? AND message = ? ORDER BY id DESC LIMIT 1",
+		chatID, "AMP reply for processing check",
+	).Scan(&flags)
+
+	assert.True(t, flags.Processingrequired, "processingrequired should be 1 so ChatProcessService queues push notifications")
+	assert.False(t, flags.Processingsuccessful, "processingsuccessful should be 0 (not yet processed)")
+}
+
+// TestAMPPostChatReply_ClosedRosterReopened verifies that posting an AMP chat
+// reply reopens CLOSED roster entries so the reply becomes visible in the
+// recipient's chat list.  Before the fix PostChatReply omitted the UPDATE,
+// leaving a CLOSED status unchanged.
+func TestAMPPostChatReply_ClosedRosterReopened(t *testing.T) {
+	ampSecret := os.Getenv("AMP_SECRET")
+	if ampSecret == "" {
+		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
+	}
+	if ampSecret == "" {
+		t.Fatal("AMP_SECRET not set")
+	}
+
+	prefix := uniquePrefix("amprosterreopen")
+	groupID := CreateTestGroup(t, prefix)
+	user1ID := CreateTestUser(t, prefix+"_1", "User")
+	user2ID := CreateTestUser(t, prefix+"_2", "User")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	CreateTestChatRoster(t, chatID, user1ID)
+	CreateTestChatRoster(t, chatID, user2ID)
+
+	// Set the recipient's (user2) roster status to Closed before the AMP reply.
+	db := database.DBConn
+	db.Exec("UPDATE chat_roster SET status = 'Closed' WHERE chatid = ? AND userid = ?", chatID, user2ID)
+
+	var statusBefore string
+	db.Raw("SELECT status FROM chat_roster WHERE chatid = ? AND userid = ?", chatID, user2ID).Scan(&statusBefore)
+	assert.Equal(t, "Closed", statusBefore, "pre-condition: user2 roster should be Closed before AMP reply")
+
+	// user1 sends an AMP reply.
+	exp := time.Now().Unix() + 3600
+	token := generateAMPToken(user1ID, chatID, exp, ampSecret)
+
+	body := map[string]string{"message": "AMP reply to reopen closed chat"}
+	bodyBytes, _ := json2.Marshal(body)
+
+	url := fmt.Sprintf("/amp/chat/%d/reply?rt=%s&uid=%d&exp=%d", chatID, token, user1ID, exp)
+	request := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var response amp.ReplyResponse
+	json2.Unmarshal(rsp(resp), &response)
+	assert.True(t, response.Success)
+
+	// Verify user2's roster status was flipped from Closed to Offline.
+	var statusAfter string
+	db.Raw("SELECT status FROM chat_roster WHERE chatid = ? AND userid = ?", chatID, user2ID).Scan(&statusAfter)
+	assert.Equal(t, "Offline", statusAfter, "CLOSED roster should be reopened to Offline after AMP reply")
+}
+
 func TestAMPAllowedSenderDomains(t *testing.T) {
 	// Test various sender domains
 	testCases := []struct {
 		sender   string
 		expected int
 	}{
-		{"noreply@ilovefreegle.org", fiber.StatusOK},             // Main domain - allowed
-		{"user@users.ilovefreegle.org", fiber.StatusOK},          // Users subdomain - allowed
-		{"notify@mail.ilovefreegle.org", fiber.StatusOK},         // Mail subdomain - allowed
-		{"amp@gmail.dev", fiber.StatusOK},                        // Google AMP Playground - allowed
-		{"hacker@evil.com", fiber.StatusForbidden},               // External domain - blocked
+		{"noreply@ilovefreegle.org", fiber.StatusOK},              // Main domain - allowed
+		{"user@users.ilovefreegle.org", fiber.StatusOK},           // Users subdomain - allowed
+		{"notify@mail.ilovefreegle.org", fiber.StatusOK},          // Mail subdomain - allowed
+		{"amp@gmail.dev", fiber.StatusOK},                         // Google AMP Playground - allowed
+		{"hacker@evil.com", fiber.StatusForbidden},                // External domain - blocked
 		{"fake@ilovefreegle.org.evil.com", fiber.StatusForbidden}, // Spoofed domain - blocked
 	}
 

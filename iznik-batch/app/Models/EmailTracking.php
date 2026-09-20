@@ -262,16 +262,26 @@ class EmailTracking extends Model
 
     /**
      * Compact tracked image for one of our own resources:
-     *   /e/d/i/{ref}/{type}/{idEnc}/{preset}/{pos}
+     *   /e/d/i/{ref}/{type}/{idEnc}/{preset}/{pos}[?s={scrollPercent}]
      * {preset} indexes a shared dimension table (0=240x240 card thumb,
      * 1=600x400 hero, 2=avatar) so width/height/fit aren't repeated in
      * every URL — the handler reconstructs the delivery URL from the
      * attachment/user id + preset.
+     *
+     * When $scrollPercent is provided, the Go handler updates
+     * email_tracking.scroll_depth_percent via the same max-update logic as
+     * the long-form Image handler, enabling scroll depth analytics for
+     * compact digest emails.
      */
-    public function getCompactImageUrl(string $type, string $idEnc, int $preset, string $position): string
+    public function getCompactImageUrl(string $type, string $idEnc, int $preset, string $position, ?int $scrollPercent = null): string
     {
         $baseUrl = config('freegle.api.base_url', 'https://api.ilovefreegle.org');
+        $url = "{$baseUrl}/e/d/i/{$this->compactRef()}/{$type}/{$idEnc}/{$preset}/{$position}";
 
-        return "{$baseUrl}/e/d/i/{$this->compactRef()}/{$type}/{$idEnc}/{$preset}/{$position}";
+        if ($scrollPercent !== null) {
+            $url .= "?s={$scrollPercent}";
+        }
+
+        return $url;
     }
 }
