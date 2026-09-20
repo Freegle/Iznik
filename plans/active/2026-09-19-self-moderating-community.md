@@ -383,8 +383,13 @@ Edward's direction on 2026-09-20: "much bigger use of ai models to check/review.
 rework rules from keyword approach to ai judgement, e.g. 'Does this post refer to animals (not
 just accessories)?'" The brief is `.claude-agent-status/briefs/ai-judgement.md`; in short:
 - The site rules are questions a model answers about a post, a chat message, an event, a
-  volunteering opportunity, a newsfeed post or a report: money, legality, medicines,
-  age-restricted, live animals, weapons, cash value, not an item, scam, decency, unsafe, vague.
+  volunteering opportunity, a newsfeed post or a report: money or loans, legality, medicines
+  (prescription, over the counter, animal, contact lenses), tobacco and vapes and adult material,
+  live animals, weapons and things unsafe by design, money and vouchers, not an item, scam,
+  decency, unsafe, vague. Alcohol and event tickets are allowed. Each question is the majority
+  position of the 496 live communities' own rules (`.claude-agent-status/briefs/frozen-settings.md`);
+  every other per-community setting is likewise frozen at its majority value, as a constant, with
+  the other branch deleted.
   Each answer carries a confidence and a one-line reason a member can read.
 - Every word list goes: concern keywords, worry words, vague words, greeting spam, the
   not-an-item heuristics. Exact checks stay as code: phone numbers, emails, addresses, link

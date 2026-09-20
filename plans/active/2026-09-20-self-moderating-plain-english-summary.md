@@ -65,18 +65,27 @@ keep the lists complete.
 
 In the experiment an AI reads each post and answers the rules as questions, twelve of them:
 
-- Is the poster asking for money, selling, or swapping for payment?
+- Is the poster asking for money, selling, swapping for payment, or only lending the item?
 - Is the item illegal to give away or own, or counterfeit?
-- Is this a medicine or a medical device meant for one patient?
-- Is it age-restricted: alcohol, tobacco, vapes, fireworks, adult material?
+- Is this a medicine, prescription or over the counter, for people or animals, or a medical
+  device meant for one person such as contact lenses?
+- Is it tobacco, a vape or e-liquid, or adult material?
 - Is it a live animal, rather than food, bedding or equipment for an animal?
-- Is it a weapon or ammunition?
-- Is it a ticket, voucher, gift card or anything with cash value?
+- Is it a weapon or ammunition, or something unsafe by design such as a sky lantern?
+- Is it money, a gift card, a voucher or a lottery ticket?
 - Is it something other than an item: a service, a job advert, a business advert, a survey?
 - Does it look like a scam, or an attempt to move people off Freegle?
 - Is the text abusive or threatening?
 - Does the poster describe a safety defect that makes the item dangerous?
 - Does the title fail to say what the item actually is ("stuff", "various items")?
+
+The questions are not invented: each one is what the majority of Freegle's 496 communities
+already required in their own settings. Where communities disagreed, the majority won and the
+minority rule was dropped: most communities allowed alcohol and tickets to events, so those are
+allowed everywhere; most did not allow weapons, live animals or medicines, so nobody does now.
+The same rule was applied to every other community setting, from how many days before a post is
+repeated to whether events are shown: one value for everyone, the one most communities used,
+and the code for the other choice deleted.
 
 For each question the AI answers yes or no, says how sure it is, and gives a one-sentence
 reason a person can read. The first ten are rules; a confident yes takes the post down and the
@@ -185,8 +194,9 @@ volunteer tools shrinking most.
 - **Post text and photos go to an outside AI company.** No names, emails or locations go with
   them, and chat messages from members in good standing are not sent at all, but this is a
   privacy decision that people, not the code, would have to take before it went further.
-- **Local knowledge is lost.** A rule one community had for a good local reason has no home. A
-  rule that matters everywhere is one edit to the questions.
+- **Local knowledge is lost.** A rule one community had for a good local reason has no home, and
+  a community that chose the minority setting (say, a 14-day repost gap) now gets the majority
+  one. A rule that matters everywhere is one edit to the questions.
 - **Fewer people are looking.** That is deliberate, but it changes what Freegle is, and it
   changes what volunteering at Freegle means.
 - **Two members could still gang up on a post** unless the AI is confident the report is unfair.
