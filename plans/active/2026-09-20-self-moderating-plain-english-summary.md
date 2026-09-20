@@ -13,6 +13,15 @@ picks or leaves a community, there is one set of rules for everyone, and one cho
 often you want email. Posts still spread outwards over time to reach more people; that part
 of "rippling out" stays exactly as it is.
 
+## The approach: the system always reaches an outcome; volunteers only add to it
+
+The rule behind every change is this. Freegle must reach an outcome on its own, with nobody
+there: a post goes live or comes down, a report is settled, a message is delivered, and the
+member is told what happened and why. Volunteers are welcome, and can improve any of those
+outcomes, but nothing waits for one and nothing depends on one being there. So "no volunteer
+needed" and "a volunteer can step in" are both true at once: the site does not need them,
+and it is better when they are around.
+
 ## Nothing waits for a volunteer
 
 Today a post can sit for hours until a volunteer approves it, a message can be held for review
@@ -29,7 +38,7 @@ the experiment:
 - Someone who has replied to five posts in one day has to pass a quick check, a small
   moderation task with a known right answer, before their next reply.
 
-Every one of these outcomes can be reversed by a volunteer, and the member is told each time.
+None of this needs a volunteer. If one is around, they can undo any of it with one tap, and the member is told again.
 
 ## The rules are judged by AI, not by lists of words
 
