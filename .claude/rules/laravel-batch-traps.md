@@ -145,10 +145,13 @@ wins: a pending post is never a candidate, and nothing in the query or the logs 
 is Discourse 9630/97 - three test posts held for a moderator, none of which got a picture,
 while the filter above them claims to include exactly that case.
 
-A post held for a moderator does get its picture once approved, because its
-`messages_groups.arrival` moves to approval time and so lands above the job's watermark. The
-gap is only while it waits. If you want a query to cover pending posts, do not reach the
-spatial index for them.
+Beware the opposite overstatement too. A post held for a moderator mostly DOES get its
+picture once approved, because its `messages_groups.arrival` moves to approval time and lands
+ahead of the job's saved position. Measured on live data, held-then-approved posts ran 8.8
+points behind never-held ones before PR #1556 and 5.3 points behind after it, not the "never
+illustrated" that #1556's title claims. Quote a rate here, not an absolute.
+
+If you want a query to cover pending posts, do not reach the spatial index for them.
 
 ## See also
 
