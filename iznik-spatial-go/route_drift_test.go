@@ -28,15 +28,20 @@ func TestRoutesMatchSwagger(t *testing.T) {
 	// static-file server registered by api.Static("/swagger", ...).
 	// HEAD routes are excluded: Fiber auto-registers HEAD alongside every GET, but
 	// swagger.json documents only GET — the HEAD behaviour is implicit.
+	//
+	// OPTIONS is excluded for the same reason. The places API registers an OPTIONS
+	// handler for the CORS preflight beside its GET (places_api.go), and a preflight
+	// is not a documented operation any more than a HEAD is — swagger describes the
+	// verb that carries the request.
 	appRoutes := make(map[string]bool) // keyed by "METHOD /fiber/:style/path"
 	for _, r := range publicApp.GetRoutes(true) {
-		if strings.ToUpper(r.Method) == "HEAD" {
+		if m := strings.ToUpper(r.Method); m == "HEAD" || m == "OPTIONS" {
 			continue
 		}
 		appRoutes[fiberRouteKey(r.Method, r.Path)] = true
 	}
 	for _, r := range adminApp.GetRoutes(true) {
-		if strings.ToUpper(r.Method) == "HEAD" {
+		if m := strings.ToUpper(r.Method); m == "HEAD" || m == "OPTIONS" {
 			continue
 		}
 		appRoutes[fiberRouteKey(r.Method, r.Path)] = true
