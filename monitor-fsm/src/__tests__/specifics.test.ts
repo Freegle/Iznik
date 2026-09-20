@@ -43,6 +43,47 @@ describe('assessReportSpecifics', () => {
     expect(r.missing).toEqual([])
   })
 
+// A moderator describing a morning's work counts the problems instead of naming
+  // them. Every one is a particular thing nobody can look up, and this phrasing went
+  // past the article patterns into a fix with nothing to hold on to: topic 10063,
+  // PR #1574, closed.
+  it('asks for detail when a report counts things without naming them', () => {
+    const r = assessReportSpecifics({
+      text: 'Today in the rippled posts I have found a couple of posts duplicated within hours, one person indicating offers of cash required, several giving full home address or telephone numbers.',
+    })
+    expect(r.isVague).toBe(true)
+    expect(r.missing.length).toBeGreaterThan(0)
+  })
+
+  it.each([
+    'I found a couple of posts duplicated within hours',
+    'several members are posting their phone numbers',
+    'many posts are coming through unchecked',
+    'a few groups have the same problem',
+    '3 messages went out twice',
+  ])('treats a counted report as needing detail: %s', (text) => {
+    expect(assessReportSpecifics({ text }).isVague).toBe(true)
+  })
+
+  // The line this must not cross. A report about behaviour anyone can go and
+  // reproduce needs no instance, so counting words alone must not trigger it.
+  it.each([
+    'Chat notification emails are going out twice.',
+    'The Give button does nothing on iOS.',
+    'Search results are ordered by distance rather than date.',
+  ])('leaves a reproducible report alone: %s', (text) => {
+    expect(assessReportSpecifics({ text }).isVague).toBe(false)
+  })
+
+  it('judges the reporter words but still finds an id in the anchor text', () => {
+    const r = assessReportSpecifics({
+      text: 'A member says her post vanished.',
+      anchorText: 'A member says her post vanished. Triage found user 1234567.',
+    })
+    expect(r.anchors).toContain('id')
+    expect(r.isVague).toBe(false)
+  })
+
   it('does not treat a year as an identifier', () => {
     const r = assessReportSpecifics({ text: 'A member told me in 2026 that a group lost her post.' })
     expect(r.isVague).toBe(true)

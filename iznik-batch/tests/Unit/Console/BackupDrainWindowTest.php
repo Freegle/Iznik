@@ -22,6 +22,11 @@ use Tests\TestCase;
  * delayed to the end of the window, and something like "30 *\/4 * * *" fires again four
  * hours later. So the rule is: literal minute AND literal hour in the cron expression, which
  * is what dailyAt(), weeklyOn() and monthlyOn() produce.
+ *
+ * The firing time is taken in the EVENT'S timezone, and on a summer date and a winter date.
+ * The window is fixed in the app timezone (UTC); a job pinned to London time moves against
+ * it by an hour twice a year. The WhatJobs digest-prep sync sat at 05:00 London, which is
+ * 04:00 UTC in summer and inside the window, and a UTC-only check called it clear.
  */
 class BackupDrainWindowTest extends TestCase
 {
@@ -60,6 +65,26 @@ class BackupDrainWindowTest extends TestCase
         return [(int) $parts[1], (int) $parts[0]];
     }
 
+    /**
+     * The instants a fixed-time event fires on the given dates, in the event's own
+     * timezone (or the app's when it has none).
+     *
+     * @param  list<array{0:int,1:int,2:int}>  $dates  [year, month, day]
+     * @return list<Carbon>
+     */
+    private function firings(Event $event, int $hour, int $minute, array $dates): array
+    {
+        $tz = $event->timezone ?: (config('app.timezone') ?: 'UTC');
+
+        return array_map(
+            fn (array $d) => Carbon::create($d[0], $d[1], $d[2], $hour, $minute, 0, $tz),
+            $dates
+        );
+    }
+
+    /** One date in British Summer Time and one in GMT, so a London-pinned job is seen in both. */
+    private const DATES = [[2026, 7, 20], [2026, 1, 20]];
+
     private function describe(Event $event): string
     {
         $command = trim(str_replace("'", '', (string) $event->command));
@@ -77,7 +102,6 @@ class BackupDrainWindowTest extends TestCase
         config(['freegle.backup.drain.enabled' => true]);
         $start = (string) config('freegle.backup.drain.start');
         $minutes = (int) config('freegle.backup.drain.minutes');
-        $tz = config('app.timezone') ?: 'UTC';
 
         $schedule = $this->loadSchedule();
 
@@ -98,10 +122,20 @@ class BackupDrainWindowTest extends TestCase
 
             $fixed++;
             [$hour, $minute] = $time;
-            $fires = Carbon::create(2026, 9, 20, $hour, $minute, 0, $tz);
 
-            if (BackupDrain::active($fires)) {
-                $inside[] = sprintf('%02d:%02d %s', $hour, $minute, $this->describe($event));
+            foreach ($this->firings($event, $hour, $minute, self::DATES) as $fires) {
+                if (BackupDrain::active($fires)) {
+                    $inside[] = sprintf(
+                        '%02d:%02d %s (%s, = %s UTC on %s)',
+                        $hour,
+                        $minute,
+                        $this->describe($event),
+                        $fires->tzName,
+                        $fires->copy()->utc()->format('H:i'),
+                        $fires->format('Y-m-d')
+                    );
+                    break;
+                }
             }
         }
 
@@ -118,7 +152,6 @@ class BackupDrainWindowTest extends TestCase
         // The window exists for the backup. If someone moves one without the other the
         // drain holds batch work off for nothing, and the backup competes with it anyway.
         config(['freegle.backup.drain.enabled' => true]);
-        $tz = config('app.timezone') ?: 'UTC';
 
         $schedule = $this->loadSchedule();
 
@@ -132,9 +165,11 @@ class BackupDrainWindowTest extends TestCase
         $this->assertNotNull($backup, 'backup:database should be scheduled');
 
         [$hour, $minute] = $this->fixedTimeOfDay($backup);
-        $this->assertTrue(
-            BackupDrain::active(Carbon::create(2026, 9, 20, $hour, $minute, 0, $tz)),
-            sprintf('backup:database fires at %02d:%02d, outside the drain window', $hour, $minute)
-        );
+        foreach ($this->firings($backup, $hour, $minute, self::DATES) as $fires) {
+            $this->assertTrue(
+                BackupDrain::active($fires),
+                sprintf('backup:database fires at %02d:%02d on %s, outside the drain window', $hour, $minute, $fires->format('Y-m-d'))
+            );
+        }
     }
 }

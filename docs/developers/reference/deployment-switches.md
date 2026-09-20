@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-19
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 covers:
   - iznik-batch/config/freegle.php
@@ -94,6 +94,10 @@ day. Every-minute jobs and anything with a second slot later in the day are only
 So nothing once-a-day may be scheduled inside the window, and
 `BackupDrainWindowTest` fails the build if something is. Move the job, or move the window
 and the backup together; the same test checks that the backup itself still sits inside it.
+The window is fixed in the app timezone (UTC). A job pinned to London time moves against it
+by an hour twice a year, so the test takes each job's firing time in the job's own timezone
+on a summer date and a winter date. A job that must run just after the window is best
+scheduled in UTC, as the WhatJobs digest-prep sync is at 04:40.
 
 `php artisan backup:drain-status` reports whether the hold is in force and exits 0 if it
 is, for the backup script to check before it desyncs. It deliberately does not stop a
@@ -105,8 +109,11 @@ and leaving that to a config entry would be a way to stop backups silently. The 
 heartbeat and `monitor:scheduled-outcomes` are structural exemptions for a different
 reason: both carry Sentry Crons check-ins, and two consecutive misses raise an issue, so a
 45-minute hold would page every night about a scheduler that is fine. Their cursor-staleness
-checks (`BacklogCheck`) report *skipped* rather than a breach from the start of the window
-until one max-age after it closes, because a backlog then is the drain doing its job.
+checks (`BacklogCheck`) report *skipped* rather than a breach once the hold has lasted longer
+than the check's own maximum age, and for up to fifteen minutes after the window while the
+workers catch up, because a backlog then is the drain doing its job. A check whose maximum
+age is longer than the window, such as the 24-hour rippling backlog check, is never skipped:
+a 45-minute hold cannot explain a day-old row.
 `always_run` matches an artisan command name or, for a scheduled closure, its `->name()`.
 
 ### Taking the backup from Laravel

@@ -1355,13 +1355,15 @@ Schedule::command('integrations:sync-whatjobs')
 // Early-morning sync ahead of the 07:00 UK daily digest. The every-3h UTC
 // schedule above starts at 09:00 UTC, so the morning digest would otherwise
 // ship jobs last synced ~21:00 the night before (9-10h stale -> closed
-// postings -> clicks don't convert to billable). Run at 05:00 UK so the sync
-// (and the post-swap KNN rebuild it triggers) completes before the digest.
-// Pinned to the local zone so it tracks BST/GMT with the digest; shares the
-// command mutex with the run above via withoutOverlapping.
+// postings -> clicks don't convert to billable). Runs at 04:40 UTC, on the
+// same clock as the backup drain window (03:50-04:35 UTC), so it starts just
+// after batch work resumes in both BST and GMT: 05:40 or 04:40 London, and
+// the run takes about 15 minutes, well before the digest. It used to be pinned
+// to 05:00 London, which is 04:00 UTC in summer, inside the window, and the
+// drain skipped it. Shares the command mutex with the run above via
+// withoutOverlapping.
 Schedule::command('integrations:sync-whatjobs')
-    ->timezone(config('freegle.timezone'))
-    ->dailyAt('05:00')
+    ->dailyAt('04:40')
     ->withoutOverlapping(240)
     ->sendOutputTo(cronLog('integrations:sync-whatjobs'))
     ->runInBackground();

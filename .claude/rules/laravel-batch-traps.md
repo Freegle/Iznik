@@ -106,6 +106,23 @@ When you add a window-shaped filter, list the once-a-day jobs it covers and move
 `BackupDrainWindowTest` does that check for the drain. When you add a `dailyAt()`, keep it out
 of the window.
 
+Check in the job's own timezone. The window is in UTC; a `->timezone('Europe/London')` job at
+05:00 is 04:00 UTC in summer and 05:00 UTC in winter. The WhatJobs digest-prep sync was inside
+the window for half the year while a UTC-only check said it was clear, and the first night
+the drain ran it was skipped with nothing to catch it up before the digest.
+
+## An excuse that scales with the threshold switches off the big thresholds
+
+When a monitoring check is told to stand down for a known cause, size the stand-down by the
+cause, not by the check. `BacklogCheck` first skipped "while the drain was in force, and for
+one maximum age after": right for a ten-minute check, but the rippling check allows a day, so
+it reported "not assessed" for the 24 hours after every window, which is always. A 45-minute
+hold cannot make a row a day late, so it cannot excuse that check at all.
+
+The rule now is that the hold excuses a backlog only once it has lasted longer than the
+check's maximum age, plus a short fixed catch-up. When you add a suppression, run it against
+the largest threshold that will pass through it and ask whether the cause could produce that.
+
 ## A contextual binding does not reach a `handle()` parameter
 
 `$this->app->when(SomeCommand::class)->needs(Runner::class)->give(...)` only applies while the
