@@ -106,6 +106,11 @@ When you add a window-shaped filter, list the once-a-day jobs it covers and move
 `BackupDrainWindowTest` does that check for the drain. When you add a `dailyAt()`, keep it out
 of the window.
 
+Check in the job's own timezone. The window is in UTC; a `->timezone('Europe/London')` job at
+05:00 is 04:00 UTC in summer and 05:00 UTC in winter. The WhatJobs digest-prep sync was inside
+the window for half the year while a UTC-only check said it was clear, and the first night
+the drain ran it was skipped with nothing to catch it up before the digest.
+
 ## A contextual binding does not reach a `handle()` parameter
 
 `$this->app->when(SomeCommand::class)->needs(Runner::class)->give(...)` only applies while the
