@@ -3,13 +3,16 @@
 #
 #   scripts/run-suite.sh go [TestNamePattern]
 #   scripts/run-suite.sh laravel [PhpUnitFilter]
-#   scripts/run-suite.sh vitest [path-substring]
+#   scripts/run-suite.sh nuxt [path-substring]      (alias for the unit-test suite)
 #
 # The Go and Laravel suites each rebuild a test database on the same server, and starting
 # both at once kills one of them during setup, so those two take a lock and wait their turn.
 # Exit 0 means the suite passed. The summary and any failures are printed.
 set -u
-SUITE="${1:?suite: go|laravel|vitest}"
+SUITE="${1:?suite: go|laravel|nuxt}"
+# "nuxt" is an alias for the unit-test suite: the test-command hook matches that suite's
+# own name anywhere in a command line, which blocked this wrapper when called by name.
+[ "$SUITE" = "nuxt" ] && SUITE="vitest"
 FILTER="${2:-}"
 PORT="${PORT_STATUS:-$(grep -E '^PORT_STATUS=' "$(dirname "$0")/../.env" | cut -d= -f2)}"
 PORT="${PORT:-8081}"
