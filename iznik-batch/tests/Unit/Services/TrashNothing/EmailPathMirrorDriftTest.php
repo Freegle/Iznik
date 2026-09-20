@@ -45,7 +45,23 @@ class EmailPathMirrorDriftTest extends TestCase
      * Regenerate with the value printed by this test's failure message.
      */
     private const PINNED_DIGESTS = [
-        'handleGroupPost'         => '1b3f0c0b7eab7fd093661982e69d0669ec91e02a11833d71a575b9c42a2a0a2d',
+        // Re-pinned for the merge of master, after doing step 1 above rather than
+        // skipping it. What master changed in the email path since this branch left it:
+        //
+        //  - 30fb3a827, a second delivery of the same TN email for a group is a no-op
+        //    instead of an exception logged as an error. The API path does not need it:
+        //    it already skips a post it has ingested for that group (the idempotency
+        //    check in GroupPostIngestionService::ingest, "reason=duplicate").
+        //  - 1fe4f0630, routing a cross-post email scopes its updates to that group's
+        //    own row (Discourse 10142). The API path does not need it either: it skips
+        //    TN's per-group copies outright ("reason=crosspost") and ingests only the
+        //    source post, so there is never a second arrival to race with.
+        //  - The rest are subscribe-mail and canon/backwards fixes, which are in the
+        //    address-matching path, not in post ingestion.
+        //
+        // This branch's own edit to the method is TN-SYNC-TRACE logging, which the API
+        // path already emits.
+        'handleGroupPost'         => '168d4bc883c039c3e536e5d2a6e9e060a4109e48323c4c3a70e86d20c63e3971',
         'createGroupPostMessage'  => '280231fd84ce35a88ec5e82658454b2c6487273b4d507735483ffa0c9dce0ecc',
     ];
 
