@@ -63,8 +63,7 @@ const authStore = useAuthStore()
 const chatStore = useChatStore()
 
 // Reactive state (was data())
-// eslint-disable-next-line no-unused-vars
-const context = ref(null)
+
 const distance = ref(1000)
 const show = ref(0)
 const bump = ref(0)

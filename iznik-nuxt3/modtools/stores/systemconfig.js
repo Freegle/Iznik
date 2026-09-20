@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import api from '~/api'
 
-export const useSystemConfigStore = defineStore({
-  id: 'systemconfig',
+export const useSystemConfigStore = defineStore('systemconfig', {
   state: () => ({
     concern_keywords: [],
     loading: false,
@@ -17,7 +16,9 @@ export const useSystemConfigStore = defineStore({
       this.loading = true
       this.error = null
       try {
-        const response = await api(this.config).config.fetchConcernKeywordsv2(params)
+        const response = await api(this.config).config.fetchConcernKeywordsv2(
+          params
+        )
         this.concern_keywords = response || []
       } catch (error) {
         this.error = error.message

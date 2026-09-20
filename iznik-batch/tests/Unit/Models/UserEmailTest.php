@@ -128,7 +128,15 @@ class UserEmailTest extends TestCase
 
         $this->assertNotNull($record->canon);
         $this->assertNotNull($record->backwards);
-        $this->assertEquals(strrev(strtolower($record->email)), $record->backwards);
+
+        // backwards is the reverse of the CANON, not of the address. V1 User::addEmail
+        // writes strrev(canonMail($email)) at both its insert sites, and canonMail drops
+        // the Trash Nothing -gNNNN suffix and the dots in the domain on purpose. This
+        // assertion used to reverse the address, which is a different string for any
+        // address with a dot in its domain, and that is how a second and incompatible
+        // form got into the column. See .claude/rules/mail-and-data.md.
+        $this->assertEquals(User::canonMail(strtolower($record->email)), $record->canon);
+        $this->assertEquals(strrev($record->canon), $record->backwards);
     }
 
     public function test_add_email_non_primary(): void

@@ -7,8 +7,6 @@ use App\Database\Expressions\Value;
 use App\Services\Ripple\ExpandService;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
-use PDOException;
-use ReflectionMethod;
 use Tests\TestCase;
 
 /**
@@ -29,9 +27,8 @@ use Tests\TestCase;
  *
  * 3. advanceSplitForUndoLog: 1713 is really about the OLD values of the
  *    updated columns (both polygon and outer_bound are SPATIAL-indexed, so
- *    their old geometries are undo-logged in full and can jointly overflow
- *    the undo page). The split stores the polygon and the bounds in separate
- *    statements so no single undo record carries both.
+ *    their old geometries were undo-logged in full and could jointly overflow
+ *    the undo page - retired with the polygons; a ~23KB grid cannot).
  */
 class ExpandGeometrySafetyTest extends TestCase
 {

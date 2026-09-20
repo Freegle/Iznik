@@ -43,7 +43,7 @@ class ReferToSupportMail extends Mailable
     public function build(): static
     {
         $modSite = config('freegle.sites.mod');
-        $body = "Please review the chat at {$modSite}/modtools/support/refer/{$this->chatId} and then reply to this email to contact the mod who requested help.";
+        $body = "Please review the chat at {$modSite}/support/refer/{$this->chatId} and then reply to this email to contact the mod who requested help.";
 
         return $this->text('emails.plain.refer-to-support', ['body' => $body]);
     }

@@ -873,6 +873,82 @@ class ContentCheckService
             ->where('category', '!=', 'allowed')
             ->get();
 
+        return $this->matchKeywords($keywords, $subject, $textbody, $groupid);
+    }
+
+    /**
+     * Whether a stored contentcheck_reasons blob records a hold by the receiving group's OWN
+     * rules - the reasons checkGroupOwnRules writes when a post ripples in.
+     *
+     * The column carries two different things. A copy held by the group's rules is written
+     * with its reasons at insert; but the periodic checkMessage pass also ANNOTATES any
+     * Pending row it visits - GroupModerated, MemberModerated, NoLocation and the rest are
+     * flags describing the row's situation, not a decision. A rippled-in copy that was Pending
+     * for some other reason and then got annotated must not read as "held by this group's
+     * rules", or nothing ever releases it: on 2026-09-04 five such copies sat Pending for
+     * hours with only a GroupModerated/MemberModerated flag on them.
+     *
+     * @param string|null $reasonsJson the messages_groups.contentcheck_reasons value
+     */
+    public static function reasonsHoldByGroupOwnRules(?string $reasonsJson): bool
+    {
+        if ($reasonsJson === null || $reasonsJson === '') {
+            return false;
+        }
+        $reasons = json_decode($reasonsJson, true);
+        if (!is_array($reasons)) {
+            return false;
+        }
+        foreach ($reasons as $r) {
+            $check = is_array($r) ? ($r['check'] ?? null) : null;
+            if ($check === self::CHECK_CONCERN_KEYWORD || $check === self::CHECK_PER_GROUP_WORRY) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The rules a group wrote down for itself: its own concern_keywords rows and its own
+     * worry words, with the Freegle-wide keywords left out.
+     *
+     * Used when a post ripples into a group. The post was already weighed against the rules
+     * of the community it was posted on - and a moderator there may have approved it in full
+     * knowledge of a Freegle-wide keyword - so re-running those here would hold it everywhere
+     * it travels over a decision already made. What has NOT been considered is whether it
+     * breaks the receiving group's own rules, and that is what this asks.
+     *
+     * @return array<int, array<string, mixed>> Empty when the group's own rules say nothing.
+     */
+    public function checkGroupOwnRules(string $subject, string $textbody, int $groupid): array
+    {
+        $keywords = DB::table('concern_keywords')
+            ->where('scope', 'group')
+            ->where('group_id', $groupid)
+            ->where('category', '!=', 'allowed')
+            ->get();
+
+        $reasons = [];
+
+        if ($r = $this->matchKeywords($keywords, $subject, $textbody, $groupid)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkPerGroupWorryWords($subject, $textbody, $groupid)) {
+            $reasons[] = $r;
+        }
+
+        return $this->dedupeReasons($reasons);
+    }
+
+    /**
+     * Match a set of concern_keywords rows against a post, returning the first hit.
+     * Shared by checkConcernKeywords (global + group) and checkGroupOwnRules (group only)
+     * so both apply the same whitelist cleaning, match modes, excludes and context check.
+     */
+    private function matchKeywords($keywords, string $subject, string $textbody, int $groupid): ?array
+    {
+
         // 'allowed'-category entries are a whitelist: text matching them is
         // removed BEFORE scanning, so a flagging keyword can't fire on a word
         // inside a whitelisted phrase. V1's worry words and the Go display path

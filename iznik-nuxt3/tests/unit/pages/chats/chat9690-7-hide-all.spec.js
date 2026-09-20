@@ -56,9 +56,15 @@ vi.mock('~/components/InfiniteLoading', () => ({
     emits: ['infinite'],
   },
 }))
-vi.mock('~/components/SidebarRight', () => ({ default: { template: '<div />' } }))
-vi.mock('~/components/ChatMobileNavbar.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('~/components/ExternalDa.vue', () => ({ default: { template: '<div />' } }))
+vi.mock('~/components/SidebarRight', () => ({
+  default: { template: '<div />' },
+}))
+vi.mock('~/components/ChatMobileNavbar.vue', () => ({
+  default: { template: '<div />' },
+}))
+vi.mock('~/components/ExternalDa.vue', () => ({
+  default: { template: '<div />' },
+}))
 vi.mock('~/components/ChatListEntry.vue', () => ({
   default: {
     template: '<div class="chat-list-entry" />',
@@ -199,33 +205,65 @@ describe('bug #9690/7 — hideAll must hide every filtered chat, not just the vi
    * After the fix (iterate over filteredChats.value.map(c => c.id) captured
    * before the loop) all five chats are hidden in a single pass → PASSES.
    */
-  it(
-    'hides all filtered chats in one pass even when showChats < total chats',
-    async () => {
-      mockChatStore.list = [
-        { id: 1, status: 'Active', latestmessage: 5, lastdate: '2026-01-01', name: 'Alice', unseen: 0 },
-        { id: 2, status: 'Active', latestmessage: 4, lastdate: '2026-01-01', name: 'Bob', unseen: 0 },
-        { id: 3, status: 'Active', latestmessage: 3, lastdate: '2026-01-01', name: 'Carol', unseen: 0 },
-        { id: 4, status: 'Active', latestmessage: 2, lastdate: '2026-01-01', name: 'Dave', unseen: 0 },
-        { id: 5, status: 'Active', latestmessage: 1, lastdate: '2026-01-01', name: 'Eve', unseen: 0 },
-      ]
+  it('hides all filtered chats in one pass even when showChats < total chats', async () => {
+    mockChatStore.list = [
+      {
+        id: 1,
+        status: 'Active',
+        latestmessage: 5,
+        lastdate: '2026-01-01',
+        name: 'Alice',
+        unseen: 0,
+      },
+      {
+        id: 2,
+        status: 'Active',
+        latestmessage: 4,
+        lastdate: '2026-01-01',
+        name: 'Bob',
+        unseen: 0,
+      },
+      {
+        id: 3,
+        status: 'Active',
+        latestmessage: 3,
+        lastdate: '2026-01-01',
+        name: 'Carol',
+        unseen: 0,
+      },
+      {
+        id: 4,
+        status: 'Active',
+        latestmessage: 2,
+        lastdate: '2026-01-01',
+        name: 'Dave',
+        unseen: 0,
+      },
+      {
+        id: 5,
+        status: 'Active',
+        latestmessage: 1,
+        lastdate: '2026-01-01',
+        name: 'Eve',
+        unseen: 0,
+      },
+    ]
 
-      const wrapper = mountComponent()
-      await flushPromises()
-      await nextTick()
+    const wrapper = mountComponent()
+    await flushPromises()
+    await nextTick()
 
-      const page = wrapper.findComponent(ChatsPage)
+    const page = wrapper.findComponent(ChatsPage)
 
-      // Simulate a paginated view: only the first 2 chats are currently
-      // rendered (user hasn't scrolled down to load more).
-      page.vm.showChats = 2
+    // Simulate a paginated view: only the first 2 chats are currently
+    // rendered (user hasn't scrolled down to load more).
+    page.vm.showChats = 2
 
-      await page.vm.hideAll()
+    await page.vm.hideAll()
 
-      // All 5 chats must be hidden — not just the 2 visible ones.
-      expect(mockChatStore.hide).toHaveBeenCalledTimes(5)
-      const hiddenIds = mockChatStore.hide.mock.calls.map((c) => c[0])
-      expect(hiddenIds).toEqual(expect.arrayContaining([1, 2, 3, 4, 5]))
-    }
-  )
+    // All 5 chats must be hidden — not just the 2 visible ones.
+    expect(mockChatStore.hide).toHaveBeenCalledTimes(5)
+    const hiddenIds = mockChatStore.hide.mock.calls.map((c) => c[0])
+    expect(hiddenIds).toEqual(expect.arrayContaining([1, 2, 3, 4, 5]))
+  })
 })

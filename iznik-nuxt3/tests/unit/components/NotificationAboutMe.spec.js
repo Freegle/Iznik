@@ -128,7 +128,7 @@ describe('NotificationAboutMe', () => {
         .findAll('.b-button')
         .find((b) => b.text().includes('Ask for something'))
       expect(askBtn.exists()).toBe(true)
-      expect(askBtn.attributes('to')).toBe('/find')
+      expect(askBtn.attributes('to')).toBe('/ask')
     })
   })
 

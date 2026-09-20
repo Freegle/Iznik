@@ -65,8 +65,8 @@ import NewsUserIntro from '~/components/NewsUserIntro'
 import NewsLoveComment from '~/components/NewsLoveComment'
 
 const AboutMeModal = defineAsyncComponent(() => import('./AboutMeModal'))
-const NewsPhotoModal = defineAsyncComponent(() =>
-  import('./NewsPhotoModal.vue')
+const NewsPhotoModal = defineAsyncComponent(
+  () => import('./NewsPhotoModal.vue')
 )
 
 const props = defineProps({

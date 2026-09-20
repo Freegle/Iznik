@@ -111,8 +111,15 @@ UPDATE messages
        date    = date    + INTERVAL @delta DAY
  WHERE @delta > 0 AND arrival <= NOW();
 
+-- messages_spatial is the table browse and explore actually read the feed from,
+-- so leaving it behind empties the feed even when the other two look right.
+UPDATE messages_spatial
+   SET arrival = arrival + INTERVAL @delta DAY
+ WHERE @delta > 0 AND arrival <= NOW();
+
 SELECT CONCAT('Fixture posts shifted forward by ', @delta, ' day(s); newest is now ',
-              IFNULL((SELECT MAX(arrival) FROM messages_groups), 'n/a')) AS result;
+              IFNULL((SELECT MAX(arrival) FROM messages_groups), 'n/a'),
+              ' (spatial ', IFNULL((SELECT MAX(arrival) FROM messages_spatial), 'n/a'), ')') AS result;
 SQL
 then
   echo "Fixture date roll-forward FAILED — aborting (the feed tests would fail with no obvious cause)"

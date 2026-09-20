@@ -299,8 +299,20 @@ const test = base.test.extend({
       /Failed to load resource: net::ERR_ABORTED/, // Can happen during page navigation when requests are cancelled
       /Failed to load resource: net::ERR_CONNECTION_REFUSED/, // Can happen when server is starting up
       /Failed to load resource: net::ERR_NAME_NOT_RESOLVED/, // External CDNs (Facebook, Google, etc.) not DNS-resolvable in isolated Docker test environment
+      // EmailValidator asks dns.google whether a typed domain resolves, and
+      // ignores the answer if the lookup fails - see the empty catch in
+      // checkValidDomain(). So a failure to reach it can never be a fault in
+      // our code, but it is not always ERR_NAME_NOT_RESOLVED above: a run on
+      // 2026-08-19 failed a ModTools test on ERR_SOCKET_NOT_CONNECTED to that
+      // same host. Allow the host rather than chase error codes.
+      /Failed to load resource.*dns\.google/,
+      /ERR_NETWORK_CHANGED/, // Docker bridge interface churn mid-request in the test environment
       /has been blocked by CORS policy/, // CORS errors can happen in test environments due to ads
-      /Failed to save credentials NotSupportedError: The user agent does not support public key credentials./, // Can happen in test environments
+      // Can happen in test environments. Newer headless Chromium (Playwright
+      // 1.62+) reports "Error connecting to Credential Management service"
+      // instead of "The user agent does not support public key credentials".
+      /Failed to save credentials NotSupportedError/,
+      /Error connecting to Credential Management service/,
       /Refused to frame/, // Can happen in test.
       /Failed to load resource.*sentry/, // Sentry errors can happen in test environments
       /Error in map idle TypeError: Cannot read properties of undefined \(reading '_leaflet_pos'\)/, // Leaflet map errors in test environment
@@ -322,6 +334,8 @@ const test = base.test.extend({
       /\[Exc?eption for Sentry\]:.*\/modtools\/modconfig/, // modconfig endpoint not yet in Go API
       /\[Exc?eption for Sentry\]:.*Page not found:/, // Go API 404 for unimplemented endpoints (e.g. /dashboard) captured by Sentry — not a code bug
       /Only one navigator\.credentials\.get request may be outstanding at one time/, // FedCM concurrent credential requests in test
+      /The provider's accounts list fetch resulted in an error response code/, // FedCM (Google Sign-In) accounts-list fetch to accounts.google.com returned an error — Chrome identity machinery talking to Google's service, not app code; same class as the FedCM entries above/below
+      /The provider's FedCM config file fetch resulted in an error response code/, // The config-file sibling of the accounts-list entry above: Chrome fetching Google's FedCM config, nothing of ours. Listing only one of the pair let the other turn the Together page red.
       /useOurModal show problem/, // Race condition fixed in useOurModal.js (nextTick) - allow until container rebuild
       /Failed to load resource: the server responded with a status of 500.*api\/user/, // Transient 500 on user API — app retries automatically
       /Failed to load resource: the server responded with a status of 500.*connect\.facebook\.net/, // Facebook SDK transient 500 errors
@@ -1158,8 +1172,8 @@ const testWithFixtures = test.extend({
       }
 
       if (mobile && type.toLowerCase() === 'wanted') {
-        // Mobile find flow: /find/mobile/photos → skip → /find/mobile/details → /find/mobile/whereami
-        await page.gotoAndVerify('/find/mobile/photos', {
+        // Mobile ask flow: /ask/mobile/photos → skip → /ask/mobile/details → /ask/mobile/whereami
+        await page.gotoAndVerify('/ask/mobile/photos', {
           timeout: timeouts.navigation.initial,
           waitUntil: 'domcontentloaded',
           maxRetries: 1,
@@ -1174,7 +1188,7 @@ const testWithFixtures = test.extend({
         await skipLink.click()
 
         // Fill item and description on the details page
-        await page.waitForURL(/\/find\/mobile\/details/, {
+        await page.waitForURL(/\/ask\/mobile\/details/, {
           timeout: timeouts.navigation.default,
         })
 
@@ -1196,7 +1210,7 @@ const testWithFixtures = test.extend({
         })
         await mobileNextBtn.click()
 
-        await page.waitForURL(/\/find\/mobile\/whereami/, {
+        await page.waitForURL(/\/ask\/mobile\/whereami/, {
           timeout: timeouts.navigation.default,
         })
 
@@ -1205,7 +1219,7 @@ const testWithFixtures = test.extend({
         // desktop-only second "Next" and whoami navigation.
       } else {
         // Navigate to the correct page based on type
-        const startPath = type.toLowerCase() === 'wanted' ? '/find' : '/give'
+        const startPath = type.toLowerCase() === 'wanted' ? '/ask' : '/give'
         await page.gotoAndVerify(startPath, {
           timeout: timeouts.navigation.initial,
           waitUntil: 'domcontentloaded',
@@ -1584,23 +1598,19 @@ const testWithFixtures = test.extend({
           const debugExists = (await debugElement.count()) > 0
           console.log('Debug element exists:', debugExists)
           if (debugExists) {
-            const messageCount = await debugElement.getAttribute(
-              'data-message-count'
-            )
+            const messageCount =
+              await debugElement.getAttribute('data-message-count')
             const hasApi = await debugElement.getAttribute('data-has-api')
-            const postcodeId = await debugElement.getAttribute(
-              'data-postcode-id'
-            )
-            const messageValid = await debugElement.getAttribute(
-              'data-message-valid'
-            )
+            const postcodeId =
+              await debugElement.getAttribute('data-postcode-id')
+            const messageValid =
+              await debugElement.getAttribute('data-message-valid')
             const postcodeValid = await debugElement.getAttribute(
               'data-postcode-valid'
             )
             const loggedIn = await debugElement.getAttribute('data-logged-in')
-            const emailValid = await debugElement.getAttribute(
-              'data-email-valid'
-            )
+            const emailValid =
+              await debugElement.getAttribute('data-email-valid')
             console.log('=== COMPOSE STORE DEBUG ===')
             console.log('Message count:', messageCount)
             console.log('Has $api:', hasApi)

@@ -39,7 +39,7 @@ class StoriesNewsletterMailTest extends TestCase
             'headerImageUrl' => 'https://example.com/header.jpg',
             'tellUrl'        => 'https://www.ilovefreegle.org/stories',
             'giveUrl'        => 'https://www.ilovefreegle.org/give',
-            'findUrl'        => 'https://www.ilovefreegle.org/find',
+            'askUrl'        => 'https://www.ilovefreegle.org/ask',
             'previewText'    => '',
             'email'          => 'reader@example.com',
             'unsubscribeUrl' => 'https://www.ilovefreegle.org/unsubscribe',

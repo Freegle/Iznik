@@ -114,7 +114,9 @@ describe('LocationAPI', () => {
 
       await createApi().fetchAddresses(4567)
 
-      expect(calledUrl()).toContain('https://api.test.com/location/4567/addresses')
+      expect(calledUrl()).toContain(
+        'https://api.test.com/location/4567/addresses'
+      )
     })
 
     it('latlng passes both coordinates', async () => {

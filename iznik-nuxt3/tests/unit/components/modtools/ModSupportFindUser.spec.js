@@ -1,4 +1,3 @@
-/* eslint-disable no-template-curly-in-string */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createMockUserStore } from '../../mocks/stores'

@@ -140,6 +140,7 @@ import { useMobileStore } from '~/stores/mobile'
 import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
+import { resolveBrowseGroup } from '~/composables/browseGroupChoice'
 import { useNearbyStore } from '~/stores/nearby'
 import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 import PostFilters from '~/components/PostFilters'
@@ -158,23 +159,23 @@ import {
 } from '#imports'
 
 // Async components
-const MicroVolunteering = defineAsyncComponent(() =>
-  import('~/components/MicroVolunteering.vue')
+const MicroVolunteering = defineAsyncComponent(
+  () => import('~/components/MicroVolunteering.vue')
 )
-const PostMapAndList = defineAsyncComponent(() =>
-  import('~/components/PostMapAndList')
+const PostMapAndList = defineAsyncComponent(
+  () => import('~/components/PostMapAndList')
 )
-const GlobalMessage = defineAsyncComponent(() =>
-  import('~/components/GlobalMessage')
+const GlobalMessage = defineAsyncComponent(
+  () => import('~/components/GlobalMessage')
 )
-const AboutMeModal = defineAsyncComponent(() =>
-  import('~/components/AboutMeModal')
+const AboutMeModal = defineAsyncComponent(
+  () => import('~/components/AboutMeModal')
 )
-const ExpectedRepliesWarning = defineAsyncComponent(() =>
-  import('~/components/ExpectedRepliesWarning')
+const ExpectedRepliesWarning = defineAsyncComponent(
+  () => import('~/components/ExpectedRepliesWarning')
 )
-const BirthdayModal = defineAsyncComponent(() =>
-  import('~/components/BirthdayModal')
+const BirthdayModal = defineAsyncComponent(
+  () => import('~/components/BirthdayModal')
 )
 
 // Page meta
@@ -262,6 +263,18 @@ watch(
   { immediate: true }
 )
 
+// And for "Show posts from" when it names a single community. It has to be restored here
+// rather than in PostFilters for the same reason as sort and type: PostFilters is lazily
+// mounted inside the collapsed Map & Filters panel, so a member who never opens the panel
+// would get the default feed back on every visit.
+watch(
+  [() => me.value?.settings?.browseGroup, myGroups],
+  ([saved, groups]) => {
+    selectedGroup.value = resolveBrowseGroup(saved, groups)
+  },
+  { immediate: true }
+)
+
 const browseView = computed(() => {
   return me.value?.settings?.browseView
     ? me.value.settings.browseView
@@ -284,7 +297,7 @@ function myGroup(id) {
 }
 
 async function calculateInitialMapBounds() {
-  if (process.client) {
+  if (import.meta.client) {
     if (browseView.value === 'nearby') {
       if (me.value) {
         // The initial bounds for the map are determined from the nearby messages once
@@ -603,7 +616,7 @@ async function onBirthdayDonationClick(amount) {
 watch(
   me,
   async (newVal, oldVal) => {
-    if (newVal && !oldVal && process.client) {
+    if (newVal && !oldVal && import.meta.client) {
       await loadLeaflet()
       calculateInitialMapBounds()
       bump.value++

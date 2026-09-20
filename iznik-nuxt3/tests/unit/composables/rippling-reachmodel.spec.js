@@ -3,7 +3,7 @@ import {
   REACH_BAND_MINUTES,
   REACH_CEILING_MINUTES,
   bandLabel,
-  reachModelSentence,
+  inboundReachSentence,
   reachSliderHelp,
 } from '~/modtools/composables/rippling/reachmodel'
 
@@ -45,42 +45,59 @@ describe('bandLabel', () => {
   })
 })
 
-describe('reachModelSentence', () => {
-  it('states BOTH limits: how far the post travels and how far this member sees', () => {
-    const s = reachModelSentence('dense', 20)
+describe('inboundReachSentence', () => {
+  it('states the band and the cap that bind this member', () => {
+    const s = inboundReachSentence('dense', 20)
 
-    expect(s).toContain("ripples out to 45 minutes' drive")
     expect(s).toContain('a town or city')
-    expect(s).toContain('within 20 minutes')
+    expect(s).toContain("within 20 minutes' drive")
   })
 
   it('uses the live cap, not the band default, when they differ', () => {
     // cap_minutes comes from the Go implementation answering for a real point; if it
     // has been re-tuned there, the page must show its number and not this file's.
-    expect(reachModelSentence('medium', 35)).toContain('within 35 minutes')
+    expect(inboundReachSentence('medium', 35)).toContain('within 35 minutes')
   })
 
   it('rounds a fractional cap rather than showing decimals', () => {
-    expect(reachModelSentence('sparse', 44.6)).toContain('within 45 minutes')
+    expect(inboundReachSentence('sparse', 44.6)).toContain('within 45 minutes')
   })
 
-  it('says nothing when the band is unmeasurable', () => {
-    expect(reachModelSentence('unknown', 30)).toBeNull()
+  it('still states the cap when the band is unmeasurable', () => {
+    // The cap binds whether or not density could be measured, and it is the whole point
+    // of this direction. Going silent lost it — and an empty caption read as breakage.
+    const s = inboundReachSentence('unknown', 30)
+
+    expect(s).toContain('within 30 minutes')
+    expect(s).toMatch(/could not be measured/i)
   })
 
   it('says nothing when the cap is missing or nonsensical', () => {
-    expect(reachModelSentence('dense', 0)).toBeNull()
-    expect(reachModelSentence('dense', undefined)).toBeNull()
-    expect(reachModelSentence('dense', NaN)).toBeNull()
+    expect(inboundReachSentence('dense', 0)).toBeNull()
+    expect(inboundReachSentence('dense', undefined)).toBeNull()
+    expect(inboundReachSentence('dense', NaN)).toBeNull()
+  })
+
+  it('does not repeat the outbound ceiling, which is a different limit', () => {
+    // The two sentences answer different questions now that one tab shows both
+    // directions; running them together is what the split was for.
+    expect(inboundReachSentence('dense', 20)).not.toContain('ripples out')
   })
 })
 
 describe('reachSliderHelp', () => {
-  it('names the production ceiling and marks anything above it as hypothetical', () => {
+  it('names the production ceiling', () => {
     const help = reachSliderHelp()
 
     expect(help).toContain('ripple out to 45 minutes')
-    expect(help).toContain('Above 45 is hypothetical')
+  })
+
+  it('claims no hypothetical stretch, because the slider stops at the ceiling', () => {
+    // The slider used to run to 60 so a wider reach could be explored, and this
+    // caption marked where that became hypothetical. The explorer describes what
+    // we run now, so the slider stops at 45 and the caveat would be describing a
+    // range the control cannot reach.
+    expect(reachSliderHelp()).not.toMatch(/hypothetical/i)
   })
 
   it('lists the bands in ascending order of travel time', () => {

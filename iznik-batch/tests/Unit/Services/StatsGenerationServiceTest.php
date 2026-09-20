@@ -210,6 +210,72 @@ class StatsGenerationServiceTest extends TestCase
         $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 2);
     }
 
+    public function test_replies_excludes_senders_on_the_spammer_list(): void
+    {
+        // On 2026-09-06 one throwaway account sent 2,155 blank replies in twenty minutes;
+        // every one was rejected and the account listed, and the day's Replies stat still
+        // more than doubled. The listing is the verdict the stat honours.
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $genuine = $this->createTestUser();
+        $spammer = $this->createTestUser();
+        // Arrives on $date so Activity (approved messages + replies) has both terms.
+        $msg = $this->createTestMessage($poster, $group, ['arrival' => $this->date.' 09:00:00']);
+
+        $genuineRoom = $this->createTestChatRoom($poster, $genuine);
+        $spamRoom = $this->createTestChatRoom($poster, $spammer);
+        $this->createTestChatMessage($genuineRoom, $genuine, [
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $msg->id,
+            'date' => $this->date.' 10:00:00',
+        ]);
+        foreach (['10:20:00', '10:21:00', '10:22:00'] as $t) {
+            $this->createTestChatMessage($spamRoom, $spammer, [
+                'type' => ChatMessage::TYPE_INTERESTED,
+                'refmsgid' => $msg->id,
+                'date' => $this->date.' '.$t,
+            ]);
+        }
+        DB::table('spam_users')->insert([
+            'userid' => $spammer->id,
+            'byuserid' => $poster->id,
+            'collection' => 'Spammer',
+            'reason' => 'Spam messages in multiple chats',
+        ]);
+
+        $this->service->generate($group->id, $this->date);
+
+        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 1);
+        // Activity is approved messages + replies, so it must not carry the spam either.
+        $this->assertStat($group->id, StatsGenerationService::TYPE_ACTIVITY, 2);
+    }
+
+    public function test_replies_still_counts_a_whitelisted_or_pending_listing(): void
+    {
+        // Only the Spammer collection is a verdict; Whitelisted and the pending states
+        // are not, and a reply from such a member counts as it always did.
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $replier = $this->createTestUser();
+        $msg = $this->createTestMessage($poster, $group);
+        $room = $this->createTestChatRoom($poster, $replier);
+        $this->createTestChatMessage($room, $replier, [
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $msg->id,
+            'date' => $this->date.' 10:00:00',
+        ]);
+        DB::table('spam_users')->insert([
+            'userid' => $replier->id,
+            'byuserid' => $poster->id,
+            'collection' => 'Whitelisted',
+            'reason' => 'Trusted',
+        ]);
+
+        $this->service->generate($group->id, $this->date);
+
+        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 1);
+    }
+
     public function test_activity_is_approved_message_count_plus_replies(): void
     {
         $group = $this->createTestGroup();
@@ -325,6 +391,43 @@ class StatsGenerationServiceTest extends TestCase
             ->count();
 
         $this->assertEquals(1, $rows, 'REPLACE INTO should leave exactly one row per (date,group,type)');
+    }
+
+    public function test_regeneration_removes_a_row_whose_count_fell_to_zero(): void
+    {
+        // A re-run that brings a count down to nothing must take the old row with
+        // it: after the 2026-09-06 spam wave was excluded, 117 groups whose only
+        // "replies" had been the bot's kept their inflated Replies rows through
+        // the regeneration, because a zero count was skipped rather than written.
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $replier = $this->createTestUser();
+        $msg = $this->createTestMessage($poster, $group, ['arrival' => '2026-03-20 09:00:00']);
+        $room = $this->createTestChatRoom($poster, $replier);
+        $this->createTestChatMessage($room, $replier, [
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $msg->id,
+            'date' => $this->date.' 10:00:00',
+        ]);
+
+        $this->service->generate($group->id, $this->date);
+        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 1);
+
+        DB::table('spam_users')->insert([
+            'userid' => $replier->id,
+            'byuserid' => $poster->id,
+            'collection' => 'Spammer',
+            'reason' => 'Spam messages in multiple chats',
+        ]);
+
+        // A dry run reports what it would do and touches nothing, stale row included.
+        $this->service->generate($group->id, $this->date, true);
+        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 1);
+
+        $this->service->generate($group->id, $this->date);
+        $this->assertNoStat($group->id, StatsGenerationService::TYPE_REPLIES);
+        // Activity is approved messages + replies; with no post on $date it is zero too.
+        $this->assertNoStat($group->id, StatsGenerationService::TYPE_ACTIVITY);
     }
 
     public function test_generate_for_all_groups_returns_counts(): void

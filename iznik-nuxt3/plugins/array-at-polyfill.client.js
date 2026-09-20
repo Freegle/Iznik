@@ -9,7 +9,7 @@
 // mutation-observer-polyfill.client.js.
 
 export default defineNuxtPlugin(() => {
-  if (!process.client) return
+  if (!import.meta.client) return
 
   function at(n) {
     const len = this.length

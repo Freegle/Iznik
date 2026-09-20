@@ -23,18 +23,6 @@
       :width="200"
       @click="zoom = true"
     />
-    <NuxtPicture
-      v-else-if="chatmessage.image?.externaluid"
-      format="webp"
-      fit="cover"
-      provider="uploadcare"
-      :src="chatmessage.image.externaluid"
-      :modifiers="chatmessage.image.externalmods"
-      alt="Chat Photo"
-      :width="200"
-      :height="200"
-      @click="zoom = true"
-    />
     <b-img
       v-else-if="chatmessage.image"
       lazy
@@ -63,12 +51,9 @@
     >
       <template #default>
         <div class="d-flex justify-content-around">
-          <NuxtPicture
-            v-if="chatmessage.image?.externaluid"
-            format="webp"
-            fit="cover"
-            provider="uploadcare"
-            :src="chatmessage.image.externaluid"
+          <OurUploadedImage
+            v-if="chatmessage.image?.ouruid"
+            :src="chatmessage.image.ouruid"
             :modifiers="chatmessage.image.externalmods"
             alt="Chat Photo"
           />

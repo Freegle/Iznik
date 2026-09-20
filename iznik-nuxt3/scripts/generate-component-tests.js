@@ -76,16 +76,8 @@ function parseComponent(filePath) {
 
 // Generate test file content
 function generateTest(componentInfo, relativePath) {
-  const {
-    name,
-    props,
-    emits,
-    hasSlots,
-    usesStore,
-    usesModal,
-    isAsync,
-    storeMatches,
-  } = componentInfo
+  const { name, props, emits, hasSlots, usesModal, isAsync, storeMatches } =
+    componentInfo
 
   // Build imports section
   const imports = `import { describe, it, expect, vi, beforeEach } from 'vitest'

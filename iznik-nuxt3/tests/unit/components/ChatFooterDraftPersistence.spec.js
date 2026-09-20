@@ -32,7 +32,7 @@ function buildBuggyFooter() {
       // Intentionally reproducing the historic bug for this regression test: these
       // hooks are registered after the await above, so they never bind to the
       // component instance.
-      // eslint-disable-next-line vue/no-watch-after-await
+
       watch(
         () => props.id,
         (newId, oldId) => {
@@ -47,7 +47,6 @@ function buildBuggyFooter() {
         { immediate: true }
       )
 
-      // eslint-disable-next-line vue/no-lifecycle-after-await
       onBeforeUnmount(() => {
         chatDraftStore.saveDraft(props.id, sendmessage.value)
       })

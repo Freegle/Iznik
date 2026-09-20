@@ -52,6 +52,7 @@
       :spatial-url="spatialUrl"
       :jwt="jwtToken"
       :apiv2-url="apiv2Url"
+      :my-group-names="myGroupNames"
     />
   </div>
 </template>
@@ -68,7 +69,14 @@ import { useMe } from '~/composables/useMe'
 import RipplingExplorer from '~/modtools/components/RipplingExplorer.vue'
 
 const runtimeConfig = useRuntimeConfig()
-const { mod, jwt: jwtToken, loginStateKnown } = useMe()
+const { mod, jwt: jwtToken, loginStateKnown, myGroups } = useMe()
+
+// Names only: the explorer matches them against its own group list by name.
+const myGroupNames = computed(() =>
+  (myGroups.value || [])
+    .map((g) => g.nameshort || g.namedisplay || g.name)
+    .filter(Boolean)
+)
 
 const spatialUrl = computed(
   () => runtimeConfig.public.SPATIAL_SERVER_URL || 'http://localhost:8196'

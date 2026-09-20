@@ -51,7 +51,7 @@ class ReengageMailRenderTest extends TestCase
         $html = view('emails.mjml.reengage.tip', $this->data(3))->render();
 
         $this->assertStringContainsString('Post a wanted', $html);
-        $this->assertStringContainsString('/find', $html);   // wanted CTA target
+        $this->assertStringContainsString('/ask', $html);   // wanted CTA target
 
         // Same as the offer tip: no "state your location" advice - the area comes
         // from the poster's postcode.
@@ -167,7 +167,7 @@ class ReengageMailRenderTest extends TestCase
     }
 
     /**
-     * The tracked CTA follows the day's destination: day 3 points at /find.
+     * The tracked CTA follows the day's destination: day 3 points at /ask.
      */
     public function test_cta_action_matches_the_day_destination(): void
     {

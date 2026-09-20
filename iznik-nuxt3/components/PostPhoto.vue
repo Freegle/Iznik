@@ -38,18 +38,6 @@
         :width="width"
         @click="emit('click')"
       />
-      <NuxtPicture
-        v-else-if="externaluid"
-        fit="cover"
-        format="webp"
-        provider="uploadcare"
-        :src="externaluid"
-        :modifiers="mods"
-        alt="Item Photo"
-        :width="width"
-        :height="width"
-        @click="emit('click')"
-      />
       <b-img
         v-else-if="thumbnail"
         lazy

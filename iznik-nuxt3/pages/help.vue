@@ -62,11 +62,11 @@ import { useMobileStore } from '@/stores/mobile'
 import { useDebugStore } from '~/stores/debug'
 
 // Async components
-const DebugLogsModal = defineAsyncComponent(() =>
-  import('~/components/DebugLogsModal.vue')
+const DebugLogsModal = defineAsyncComponent(
+  () => import('~/components/DebugLogsModal.vue')
 )
-const RateAppModal = defineAsyncComponent(() =>
-  import('~/components/RateAppModal.vue')
+const RateAppModal = defineAsyncComponent(
+  () => import('~/components/RateAppModal.vue')
 )
 
 // Setup

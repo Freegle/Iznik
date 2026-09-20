@@ -76,7 +76,9 @@ async function mountCalendarPage() {
         'client-only': { template: '<div><slot /></div>' },
         'b-row': { template: '<div><slot /></div>' },
         'b-col': { template: '<div><slot /></div>' },
-        'add-to-calendar-button': { template: '<div class="atcb"><slot /></div>' },
+        'add-to-calendar-button': {
+          template: '<div class="atcb"><slot /></div>',
+        },
       },
     },
   })

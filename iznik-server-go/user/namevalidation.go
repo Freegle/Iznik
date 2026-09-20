@@ -118,9 +118,9 @@ func tokenise(name string) []string {
 	return nonAlnum.Split(strings.Trim(nonAlnum.ReplaceAllString(sb.String(), " "), " "), -1)
 }
 
-// damerauLevenshtein returns the Damerau-Levenshtein edit distance between a
+// DamerauLevenshtein returns the Damerau-Levenshtein edit distance between a
 // and b, early-exiting at maxD+1 to avoid doing work for distant pairs.
-func damerauLevenshtein(a, b string, maxD int) int {
+func DamerauLevenshtein(a, b string, maxD int) int {
 	la, lb := len(a), len(b)
 	if abs(la-lb) > maxD {
 		return maxD + 1
@@ -192,7 +192,7 @@ func fuzzyHitTierA(tok string) bool {
 		if abs(tl-lt) > 1 {
 			continue
 		}
-		if damerauLevenshtein(tok, target, 2) <= 2 {
+		if DamerauLevenshtein(tok, target, 2) <= 2 {
 			return true
 		}
 	}

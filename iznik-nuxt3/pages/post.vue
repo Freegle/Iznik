@@ -20,12 +20,12 @@
       </div>
 
       <!-- Wanted -->
-      <div class="option-card wanted-card" @click="goto('/find')">
+      <div class="option-card wanted-card" @click="goto('/ask')">
         <div class="icon-wrapper wanted-icon">
-          <v-icon icon="search" />
+          <v-icon icon="shopping-cart" />
         </div>
         <div class="option-content">
-          <h3 class="option-title">Find something</h3>
+          <h3 class="option-title">Ask for something</h3>
           <p class="option-description">
             Ask the community and see if anyone has one spare.
           </p>
@@ -126,7 +126,8 @@ function goto(path) {
   padding: 1rem;
   box-shadow: var(--shadow-md);
   cursor: pointer;
-  transition: transform var(--transition-normal),
+  transition:
+    transform var(--transition-normal),
     box-shadow var(--transition-normal);
 
   &:active {

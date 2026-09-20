@@ -6,11 +6,11 @@ This is the monorepo for Iznik, the platform for [Freegle](https://www.ilovefree
 
 | Directory | What it is |
 |-----------|-----------|
-| `iznik-nuxt3/` | Nuxt 3 frontend — user site (ilovefreegle.org) and moderator tools (modtools.org) |
+| `iznik-nuxt3/` | Nuxt frontend — user site (ilovefreegle.org) and moderator tools (modtools.org) |
 | `iznik-server-go/` | Go API (v2) — the primary API |
 | `iznik-batch/` | Laravel batch processing — digests, notifications, scheduled tasks |
 | `status-nuxt/` | Development status dashboard and test runner |
-| `freegle-mobile/` | Capacitor mobile app (Android/iOS) |
+| `iznik-nuxt3/android/`, `ios/` | Capacitor mobile apps (Android/iOS), built from the same Nuxt code |
 
 <details>
 <summary>Installation</summary>
@@ -43,14 +43,13 @@ Add these to your hosts file:
 127.0.0.1 mailpit.localhost
 127.0.0.1 tusd.localhost
 127.0.0.1 status.localhost
-127.0.0.1 apiv1.localhost
 127.0.0.1 apiv2.localhost
 127.0.0.1 delivery.localhost
 ```
 
 ## Configuration
 
-Copy `.env.example` to `.env` and modify as needed. The basic system works without configuration, but some features require API keys (Google OAuth, Mapbox, etc.) — see `.env.example` for the full list.
+Copy `.env.example` to `.env` and modify as needed. The basic system works without configuration, but some features require API keys (Google OAuth and so on) — see `.env.example` for the full list.
 
 After configuration changes, rebuild:
 
@@ -96,7 +95,6 @@ Dev containers reload on first view (normal Nuxt dev mode behaviour). Prod conta
 | PhpMyAdmin | https://phpmyadmin.localhost |
 | Mailpit | https://mailpit.localhost |
 | Traefik Dashboard | http://localhost:8080 |
-| API v1 (PHP) | https://apiv1.localhost |
 | API v2 (Go) | https://apiv2.localhost:8192 |
 
 ### Lightweight setup (limited resources)

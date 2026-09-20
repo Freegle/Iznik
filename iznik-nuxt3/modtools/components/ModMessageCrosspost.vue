@@ -11,7 +11,8 @@
     ><span v-if="collection && collection != 'Approved'"
       ><span class="text-muted"> in</span>
       <span class="text-danger">{{ collection }}</span></span
-    ><span v-else-if="latestOutcome" class="text-black">, now {{ latestOutcome }}</span
+    ><span v-else-if="latestOutcome" class="text-black"
+      >, now {{ latestOutcome }}</span
     ><span v-else class="text-black">, still open</span>
   </div>
 </template>
@@ -19,6 +20,7 @@
 import { computed, onMounted, watch } from 'vue'
 import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
+import { homeGroupFirst } from '~/composables/rippleStatus'
 
 const props = defineProps({
   messageid: {
@@ -41,10 +43,18 @@ const latestOutcome = computed(() => {
   return null
 })
 
+// The row for the group this crosspost originated on. messages_groups comes back with
+// no ORDER BY, so for a post that also rippled into other groups the first row can be
+// a rippled-in copy; reading that would show the wrong group and collection here.
+const originGroupRow = computed(() => {
+  if (!message.value?.groups?.length) return null
+  return homeGroupFirst(message.value.groups)[0] || null
+})
+
 const messageGroupId = computed(() => {
   if (!message.value) return null
   // Individual message fetch returns groups array, not top-level groupid
-  if (message.value.groups?.length) return message.value.groups[0].groupid
+  if (originGroupRow.value) return originGroupRow.value.groupid
   return message.value.groupid || null
 })
 
@@ -72,7 +82,7 @@ const groupname = computed(() => {
 
 const collection = computed(() => {
   if (!message.value) return null
-  if (message.value.groups?.length) return message.value.groups[0].collection
+  if (originGroupRow.value) return originGroupRow.value.collection
   return message.value.collection || null
 })
 

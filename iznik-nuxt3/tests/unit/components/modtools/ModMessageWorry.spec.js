@@ -818,7 +818,7 @@ describe('ModMessageWorry', () => {
         },
         { groupid: 10, covered: [] }
       )
-      expect(wrapper.text()).toContain("This member's posts are moderated")
+      expect(wrapper.text()).toContain("This member's posts were moderated")
     })
 
     it('shows a moderation setting as information, not as a warning', () => {
@@ -1013,5 +1013,174 @@ describe('ModMessageWorry', () => {
       expect(wrapper.findAll('.notice-message').length).toBe(0)
       consoleError.mockRestore()
     })
+  })
+})
+
+/*
+ * A stored content-check reason is a SNAPSHOT of why a post was held, taken the moment it
+ * arrived. It is never re-evaluated, so it goes stale in two ways that both reached Discourse
+ * #10024 as "inappropriate flag":
+ *
+ *   - the post gets approved, and the box still says it "needs approving";
+ *   - the member's posting status is changed afterwards, and the box still says their posts
+ *     are moderated when the member is now on Group Settings.
+ *
+ * Both happened to message 121335278 on Hackney Freegle. The check ran at 22:06:01, a moderator
+ * set that member to DEFAULT at 22:26:30 and approved the post five seconds later, and the flag
+ * was still on display eight days and two autoreposts later.
+ */
+describe('ModMessageWorry - a hold that has already been resolved', () => {
+  function mountMessage(message, props = {}) {
+    mockMessageStore.byId.mockImplementation((id) =>
+      id === message.id ? message : null
+    )
+    return mount(ModMessageWorry, {
+      props: { messageid: message.id, ...props },
+      global: { stubs: STUBS },
+    })
+  }
+
+  function withCollection(collection, check = 'MemberModerated') {
+    return {
+      id: 900,
+      worry: [],
+      groups: [
+        {
+          groupid: 21449,
+          collection,
+          contentcheck_reasons: [
+            { check, category: null, action: 'flag', detail: 'x' },
+          ],
+        },
+      ],
+    }
+  }
+
+  it('says nothing about a member setting once the post is approved', () => {
+    const wrapper = mountMessage(withCollection('Approved'), { groupid: 21449 })
+
+    expect(wrapper.text()).not.toContain('moderated')
+    expect(wrapper.text()).not.toContain('needs approving')
+  })
+
+  it('says nothing about a group setting once the post is approved', () => {
+    const wrapper = mountMessage(withCollection('Approved', 'GroupModerated'), {
+      groupid: 21449,
+    })
+
+    expect(wrapper.text()).not.toContain('needs approving')
+  })
+
+  it('still explains the hold while the post is waiting', () => {
+    // Discourse #9987: a post sitting in the queue with no explanation of why.
+    const wrapper = mountMessage(withCollection('Pending'), { groupid: 21449 })
+
+    expect(wrapper.text()).toContain('needs approving')
+  })
+
+  it('explains the hold when the group collection is unknown', () => {
+    // Older payloads carry no collection. Better to over-explain than to hide the only
+    // reason a moderator has for why a post is in their queue.
+    const wrapper = mountMessage(withCollection(undefined), { groupid: 21449 })
+
+    expect(wrapper.text()).toContain('needs approving')
+  })
+
+  it('describes the member setting as it was when the post arrived', () => {
+    // The status can change while the post is still pending, so the box must not assert
+    // what the member's setting is NOW - only what held this post.
+    const wrapper = mountMessage(withCollection('Pending'), { groupid: 21449 })
+
+    expect(wrapper.text()).toContain('were moderated when this arrived')
+  })
+
+  it('keeps showing a content flag after approval', () => {
+    // Only the setting-based holds are spent once approved. A keyword flag is still the
+    // record of why this post was looked at, and mods refer back to it.
+    const wrapper = mountMessage(
+      {
+        id: 901,
+        worry: [],
+        groups: [
+          {
+            groupid: 21449,
+            collection: 'Approved',
+            contentcheck_reasons: [
+              { check: 'PhoneNumber', category: null, detail: 'phone' },
+            ],
+          },
+        ],
+      },
+      { groupid: 21449 }
+    )
+
+    expect(wrapper.text()).toContain('Phone number')
+  })
+})
+
+/*
+ * Concern-keyword reasons written before PR #1322 stored the raw REGEX rather than the text it
+ * matched, so moderators saw "Matched concern keyword '(?<!$)water\W)\butt\b(?!\s+rd)'" - the
+ * "codey type stuff we're not meant to see" of Discourse #10024. The fix stops new rows being
+ * written that way; these cases stop the rows already in the database being displayed that way.
+ */
+describe('ModMessageWorry - legacy reasons holding a raw regex', () => {
+  const REGEX_DETAIL =
+    "Matched concern keyword '(?<!$)water\\W)\\butt\\b(?!\\s+rd)'"
+
+  function mountMessage(message, props = {}) {
+    mockMessageStore.byId.mockImplementation((id) =>
+      id === message.id ? message : null
+    )
+    return mount(ModMessageWorry, {
+      props: { messageid: message.id, ...props },
+      global: { stubs: STUBS },
+    })
+  }
+
+  function withDetail(detail, category = null) {
+    return {
+      id: 902,
+      worry: [],
+      groups: [
+        {
+          groupid: 1,
+          collection: 'Pending',
+          contentcheck_reasons: [{ check: 'ConcernKeyword', category, detail }],
+        },
+      ],
+    }
+  }
+
+  it('does not print the pattern at a moderator', () => {
+    const wrapper = mountMessage(withDetail(REGEX_DETAIL), { groupid: 1 })
+
+    expect(wrapper.text()).not.toContain('(?<!')
+    expect(wrapper.text()).not.toContain('\\butt\\b')
+  })
+
+  it('still says the post was flagged for a keyword', () => {
+    const wrapper = mountMessage(withDetail(REGEX_DETAIL), { groupid: 1 })
+
+    expect(wrapper.text()).toContain('Flagged for review')
+    expect(wrapper.text()).toContain("it's fine to approve")
+  })
+
+  it('drops the "triggered by" line rather than quoting a pattern', () => {
+    const wrapper = mountMessage(withDetail(REGEX_DETAIL, 'scam'), {
+      groupid: 1,
+    })
+
+    expect(wrapper.text()).not.toContain('Triggered by the word')
+  })
+
+  it('still names a real word', () => {
+    const wrapper = mountMessage(
+      withDetail("Matched concern keyword 'water butt'", 'scam'),
+      { groupid: 1 }
+    )
+
+    expect(wrapper.text()).toContain('Triggered by the word')
+    expect(wrapper.text()).toContain('water butt')
   })
 })

@@ -39,7 +39,6 @@
             @hidden="showBanMember = false"
           />
           <ModMergeButton class="ms-2" />
-          <ModMemberExportButton class="ms-2" :groupid="groupid" />
         </div>
         <ModMemberSearchbox :search="search" @search="startsearch" />
       </div>

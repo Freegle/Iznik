@@ -67,7 +67,7 @@ describe('MyPostsSearchesList', () => {
       mockSearchList.mockReturnValue([])
       const wrapper = createWrapper()
       const link = wrapper.find('.search-link')
-      expect(link.attributes('href')).toBe('/find')
+      expect(link.attributes('href')).toBe('/ask')
       expect(link.text()).toContain('Ask for something')
     })
   })

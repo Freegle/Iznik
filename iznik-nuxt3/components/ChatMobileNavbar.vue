@@ -138,7 +138,9 @@
               </span>
               <span
                 v-if="!otheruser?.deleted && milesaway"
-                v-b-tooltip.bottom="DISTANCE_TOOLTIP"
+                v-b-tooltip.bottom="
+                  milesIsRoad ? DISTANCE_TOOLTIP_ROAD : DISTANCE_TOOLTIP
+                "
                 class="stat-chip"
               >
                 <v-icon icon="map-marker-alt" class="stat-icon" />
@@ -274,13 +276,13 @@ const router = useRouter()
 const ChatBlockModal = defineAsyncComponent(() => import('./ChatBlockModal'))
 const ChatHideModal = defineAsyncComponent(() => import('./ChatHideModal'))
 const ChatReportModal = defineAsyncComponent(
-  () => import('~/components/ChatReportModal'),
+  () => import('~/components/ChatReportModal')
 )
 const UserRatingsDownModal = defineAsyncComponent(
-  () => import('~/components/UserRatingsDownModal'),
+  () => import('~/components/UserRatingsDownModal')
 )
 const UserRatingsRemoveModal = defineAsyncComponent(
-  () => import('~/components/UserRatingsRemoveModal'),
+  () => import('~/components/UserRatingsRemoveModal')
 )
 
 const props = defineProps({
@@ -295,7 +297,7 @@ const chat = chatStore.byChatId(props.id)
 
 const { online, backButtonCount, backButton } = useNavbar()
 
-const { otheruser, milesaway, unseen } = await setupChat(props.id)
+const { otheruser, milesaway, milesIsRoad, unseen } = await setupChat(props.id)
 
 // Modal states
 const showChatBlock = ref(false)

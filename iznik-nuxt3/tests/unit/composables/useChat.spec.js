@@ -30,7 +30,8 @@ vi.mock('~/stores/chat', () => ({
   useChatStore: () => ({
     byChatId: (id) => (id === mockChat.id ? mockChat : null),
     messageById: (id) => mockMessages[id] || null,
-    messagesById: (id) => Object.values(mockMessages).filter((m) => m.chatid === id),
+    messagesById: (id) =>
+      Object.values(mockMessages).filter((m) => m.chatid === id),
   }),
 }))
 

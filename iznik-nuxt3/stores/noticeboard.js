@@ -2,8 +2,7 @@ import { defineStore } from 'pinia'
 import api from '~/api'
 import { useUserStore } from '~/stores/user'
 
-export const useNoticeboardStore = defineStore({
-  id: 'noticeboard',
+export const useNoticeboardStore = defineStore('noticeboard', {
   state: () => ({
     list: {},
     members: [],

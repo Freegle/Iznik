@@ -1,10 +1,5 @@
 // import * as Sentry from '@sentry/capacitor';
 import * as Sentry from '@sentry/vue'
-import { Integrations } from '@sentry/tracing'
-import {
-  HttpClient as HttpClientIntegration,
-  ExtraErrorData as ExtraErrorDataIntegration,
-} from '@sentry/integrations'
 import { defineNuxtPlugin, useRuntimeConfig } from '#app'
 import { useRouter } from '#imports'
 import { useMiscStore } from '~/stores/misc'
@@ -70,8 +65,19 @@ export default defineNuxtPlugin((nuxtApp) => {
       setTimeout(checkCMPComplete, 100)
     } else {
       Sentry.init({
-        app: [vueApp],
+        app: vueApp,
         dsn: config.public.SENTRY_DSN,
+        // Vue error-handler wiring (replaces the removed attachErrorHandler()
+        // and createTracingMixins() calls from the v7 SDK). The tracing knobs
+        // MUST sit inside tracingOptions - the v10 SDK never reads them as
+        // top-level siblings of dsn, it silently falls back to
+        // trackComponents: false and the component spans vanish.
+        attachProps: true,
+        tracingOptions: {
+          trackComponents: true,
+          timeout: 2000,
+          hooks: ['activate', 'mount', 'update'],
+        },
         // Some errors seem benign, and so we ignore them on the client side rather than clutter our sentry logs.
         ignoreErrors: [
           'ResizeObserver loop limit exceeded', // Benign - see https://stackoverflow.com/questions/49384120/resizeobserver-loop-limit-exceeded
@@ -98,13 +104,11 @@ export default defineNuxtPlugin((nuxtApp) => {
           'latLngToLayerPoint',
         ],
         integrations: [
-          new Integrations.BrowserTracing({
-            routingInstrumentation: Sentry.vueRouterInstrumentation(router),
-            tracePropagationTargets: ['localhost', 'ilovefreegle.org', /^\//],
-          }),
-          new HttpClientIntegration(),
-          new ExtraErrorDataIntegration(),
+          Sentry.browserTracingIntegration({ router }),
+          Sentry.httpClientIntegration(),
+          Sentry.extraErrorDataIntegration(),
         ],
+        tracePropagationTargets: ['localhost', 'ilovefreegle.org', /^\//],
         logErrors: false, // Note that this doesn't seem to work with nuxt 3
         tracesSampleRate: config.public.SENTRY_TRACES_SAMPLE_RATE || 1.0, // Sentry recommends adjusting this value in production
         debug: config.public.SENTRY_ENABLE_DEBUG || false, // Enable debug mode
@@ -124,18 +128,6 @@ export default defineNuxtPlugin((nuxtApp) => {
           // so also check the parsed event frames directly.
           if (suppressSentryEvent(event)) {
             console.log('Freestar ftUtils frame - suppress event')
-            return null
-          }
-
-          // Transitional safety net for Sentry NUXT3-BS6. OurUploadedImage now
-          // gates its captureMessage behind state checks (isUnmounting /
-          // target.isConnected) so transient fetch aborts on mobile infinite
-          // scroll + Capacitor WebView no longer fire. Cached bundles deployed
-          // before that change still emit the unconditional captureMessage —
-          // drop those here until the rollout window closes (remove ~30 days
-          // after deploy). Narrowed to freegletusd- so real load failures on
-          // other providers (e.g. uploadcare) still surface.
-          if (event.message?.startsWith('Failed to fetch image freegletusd-')) {
             return null
           }
 
@@ -232,8 +224,18 @@ export default defineNuxtPlugin((nuxtApp) => {
               // Intergient ad network errors are not our problem.
               console.log('Intergient CDN - suppress exception')
               return null
-            } else if (originalExceptionStack?.includes('/gpt/')) {
-              // Google ads are not our problem.
+            } else if (
+              originalExceptionStack?.includes('/gpt/') ||
+              originalExceptionStack?.includes(
+                'pagead2.googlesyndication.com'
+              ) ||
+              originalExceptionStack?.includes('/pagead/')
+            ) {
+              // Google ads are not our problem. The pagead host is Google's own
+              // ad-rendering telemetry (rum.js); its errors reach us only because
+              // Sentry wraps every addEventListener callback on the page, and it
+              // threw "Error: int64" thousands of times against our routes
+              // (NUXT3-DQ9) with not one frame of ours in the stack.
               console.log('Google ads - suppress exception')
               return null
             } else if (
@@ -394,21 +396,6 @@ export default defineNuxtPlugin((nuxtApp) => {
           // Continue sending to Sentry
           return event
         },
-      })
-
-      vueApp.mixin(
-        Sentry.createTracingMixins({
-          trackComponents: true,
-          timeout: 2000,
-          hooks: ['activate', 'mount', 'update'],
-        })
-      )
-      Sentry.attachErrorHandler(vueApp, {
-        logErrors: false,
-        attachProps: true,
-        trackComponents: true,
-        timeout: 2000,
-        hooks: ['activate', 'mount', 'update'],
       })
 
       // Set initial trace tags for correlation with Loki logs.

@@ -1,0 +1,140 @@
+diff --git a/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.js b/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.js
+index 2e2db5d..01f7d23 100644
+--- a/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.js
++++ b/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.js
+@@ -31,9 +31,11 @@ const nodeOps = {
+     parent.insertBefore(child, anchor || null);
+   },
+   remove: (child) => {
+-    const parent = child.parentNode;
+-    if (parent) {
+-      parent.removeChild(child);
++    if (child) {
++      const parent = child.parentNode;
++      if (parent) {
++        parent.removeChild(child);
++      }
+     }
+   },
+   createElement: (tag, namespace, is, props) => {
+@@ -51,7 +53,7 @@ const nodeOps = {
+   setElementText: (el, text) => {
+     el.textContent = text;
+   },
+-  parentNode: (node) => node.parentNode,
++  parentNode: (node) => (node ? node.parentNode : null),
+   nextSibling: (node) => node.nextSibling,
+   querySelector: (selector) => doc.querySelector(selector),
+   setScopeId(el, id) {
+diff --git a/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.prod.js b/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.prod.js
+index 007eb5d..18859ef 100644
+--- a/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.prod.js
++++ b/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.prod.js
+@@ -30,9 +30,11 @@ const nodeOps = {
+     parent.insertBefore(child, anchor || null);
+   },
+   remove: (child) => {
+-    const parent = child.parentNode;
+-    if (parent) {
+-      parent.removeChild(child);
++    if (child) {
++      const parent = child.parentNode;
++      if (parent) {
++        parent.removeChild(child);
++      }
+     }
+   },
+   createElement: (tag, namespace, is, props) => {
+@@ -50,7 +52,7 @@ const nodeOps = {
+   setElementText: (el, text) => {
+     el.textContent = text;
+   },
+-  parentNode: (node) => node.parentNode,
++  parentNode: (node) => (node ? node.parentNode : null),
+   nextSibling: (node) => node.nextSibling,
+   querySelector: (selector) => doc.querySelector(selector),
+   setScopeId(el, id) {
+diff --git a/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-browser.js b/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-browser.js
+index 7ddf536..e0127b2 100644
+--- a/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-browser.js
++++ b/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-browser.js
+@@ -11000,9 +11000,11 @@ const nodeOps = {
+     parent.insertBefore(child, anchor || null);
+   },
+   remove: (child) => {
+-    const parent = child.parentNode;
+-    if (parent) {
+-      parent.removeChild(child);
++    if (child) {
++      const parent = child.parentNode;
++      if (parent) {
++        parent.removeChild(child);
++      }
+     }
+   },
+   createElement: (tag, namespace, is, props) => {
+@@ -11020,7 +11022,7 @@ const nodeOps = {
+   setElementText: (el, text) => {
+     el.textContent = text;
+   },
+-  parentNode: (node) => node.parentNode,
++  parentNode: (node) => (node ? node.parentNode : null),
+   nextSibling: (node) => node.nextSibling,
+   querySelector: (selector) => doc.querySelector(selector),
+   setScopeId(el, id) {
+diff --git a/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-bundler.js b/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-bundler.js
+index d791438..d6d734d 100644
+--- a/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-bundler.js
++++ b/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-bundler.js
+@@ -28,9 +28,11 @@ const nodeOps = {
+     parent.insertBefore(child, anchor || null);
+   },
+   remove: (child) => {
+-    const parent = child.parentNode;
+-    if (parent) {
+-      parent.removeChild(child);
++    if (child) {
++      const parent = child.parentNode;
++      if (parent) {
++        parent.removeChild(child);
++      }
+     }
+   },
+   createElement: (tag, namespace, is, props) => {
+@@ -48,7 +50,7 @@ const nodeOps = {
+   setElementText: (el, text) => {
+     el.textContent = text;
+   },
+-  parentNode: (node) => node.parentNode,
++  parentNode: (node) => (node ? node.parentNode : null),
+   nextSibling: (node) => node.nextSibling,
+   querySelector: (selector) => doc.querySelector(selector),
+   setScopeId(el, id) {
+diff --git a/node_modules/@vue/runtime-dom/dist/runtime-dom.global.js b/node_modules/@vue/runtime-dom/dist/runtime-dom.global.js
+index 91ef888..bcd0914 100644
+--- a/node_modules/@vue/runtime-dom/dist/runtime-dom.global.js
++++ b/node_modules/@vue/runtime-dom/dist/runtime-dom.global.js
+@@ -10940,9 +10940,11 @@ Component that was made reactive: `,
+       parent.insertBefore(child, anchor || null);
+     },
+     remove: (child) => {
+-      const parent = child.parentNode;
+-      if (parent) {
+-        parent.removeChild(child);
++      if (child) {
++        const parent = child.parentNode;
++        if (parent) {
++          parent.removeChild(child);
++        }
+       }
+     },
+     createElement: (tag, namespace, is, props) => {
+@@ -10960,7 +10962,7 @@ Component that was made reactive: `,
+     setElementText: (el, text) => {
+       el.textContent = text;
+     },
+-    parentNode: (node) => node.parentNode,
++    parentNode: (node) => (node ? node.parentNode : null),
+     nextSibling: (node) => node.nextSibling,
+     querySelector: (selector) => doc.querySelector(selector),
+     setScopeId(el, id) {

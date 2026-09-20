@@ -23,6 +23,9 @@ const mockUnseenCountMT = vi.fn().mockResolvedValue(0)
 const mockAllSeen = vi.fn().mockResolvedValue()
 const mockRsvp = vi.fn().mockResolvedValue()
 const mockFetchReviewChatsMT = vi.fn().mockResolvedValue({ chatmessages: [] })
+const mockAnswerPrompt = vi.fn().mockResolvedValue({ ok: true })
+const mockCommonGroups = vi.fn().mockResolvedValue([])
+const mockReportNoGroup = vi.fn().mockResolvedValue()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -45,14 +48,21 @@ vi.mock('~/api', () => ({
       allSeen: mockAllSeen,
       fetchReviewChatsMT: mockFetchReviewChatsMT,
       rsvp: mockRsvp,
+      answerPrompt: mockAnswerPrompt,
+      commonGroups: mockCommonGroups,
+      reportNoGroup: mockReportNoGroup,
     },
   }),
 }))
 
+const mockUseAuthStore = vi.fn(() => ({
+  user: { id: 999 },
+  clearRelated: vi.fn(),
+  logout: vi.fn(),
+  login: vi.fn(),
+}))
 vi.mock('~/stores/auth', () => ({
-  useAuthStore: () => ({
-    user: { id: 999 },
-  }),
+  useAuthStore: (...args) => mockUseAuthStore(...args),
 }))
 
 vi.mock('~/stores/group', () => ({
@@ -69,10 +79,11 @@ vi.mock('~/stores/message', () => ({
   }),
 }))
 
+const mockUseMiscStore = vi.fn(() => ({
+  modtools: false,
+}))
 vi.mock('~/stores/misc', () => ({
-  useMiscStore: () => ({
-    modtools: false,
-  }),
+  useMiscStore: (...args) => mockUseMiscStore(...args),
 }))
 
 vi.mock('~/stores/user', () => ({
@@ -81,6 +92,8 @@ vi.mock('~/stores/user', () => ({
     list: {},
   }),
 }))
+
+vi.stubGlobal('useRoute', () => ({ path: '/', query: {} }))
 
 describe('chat store', () => {
   beforeEach(() => {
@@ -679,6 +692,397 @@ describe('chat store', () => {
       await store.markUnread(5, 99)
 
       expect(mockMarkRead).toHaveBeenCalledWith(5, 99, true)
+    })
+  })
+
+  describe('init', () => {
+    it('stores config and reads the current route', () => {
+      const store = useChatStore()
+      store.init({ apiUrl: 'x' })
+
+      expect(store.config).toEqual({ apiUrl: 'x' })
+      expect(store.route).toBeDefined()
+    })
+  })
+
+  describe('listChatsMT', () => {
+    it('builds default params, stores the list and remembers the search term', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockListChatsMT.mockResolvedValue({
+        chatrooms: [{ id: 1, lastdate: '2026-01-01' }],
+      })
+
+      await store.listChatsMT(null, null)
+
+      expect(store.list).toEqual([{ id: 1, lastdate: '2026-01-01' }])
+      expect(store.listByChatId[1].lastdate).toBe('2026-01-01')
+      expect(mockListChatsMT).toHaveBeenCalledWith(
+        expect.objectContaining({ summary: true })
+      )
+    })
+
+    it('does not overwrite an unchanged chat entry (avoids reactivity churn)', async () => {
+      const store = useChatStore()
+      store.config = {}
+      // Mark the existing entry so we can tell whether it survived unreplaced
+      // (Pinia's reactivity proxies nested objects, so reference equality via
+      // toBe() isn't reliable here — a marker field is).
+      store.listByChatId[1] = { id: 1, lastdate: '2026-01-01', marker: 'kept' }
+      mockListChatsMT.mockResolvedValue({
+        chatrooms: [{ id: 1, lastdate: '2026-01-01' }],
+      })
+
+      await store.listChatsMT({ search: null })
+
+      expect(store.listByChatId[1].marker).toBe('kept')
+    })
+
+    it('also fetches and merges a selectedChatId not in the list results', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockListChatsMT.mockResolvedValue({ chatrooms: [] })
+      mockFetchChat.mockResolvedValue({ id: 77, snippet: 'hi' })
+
+      await store.listChatsMT({ search: null }, 77)
+
+      expect(store.listByChatId[77].snippet).toBe('hi')
+    })
+
+    it('swallows a failed selectedChatId fetch', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockListChatsMT.mockResolvedValue({ chatrooms: [] })
+      mockFetchChat.mockRejectedValueOnce(new Error('gone'))
+
+      await expect(
+        store.listChatsMT({ search: null }, 77)
+      ).resolves.toBeUndefined()
+    })
+
+    it('swallows the listChatsMT error when noerror is set', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockListChatsMT.mockRejectedValueOnce(new Error('network'))
+
+      await expect(
+        store.listChatsMT({ search: null, noerror: true })
+      ).resolves.toBeUndefined()
+    })
+
+    it('rethrows the listChatsMT error when noerror is not set', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockListChatsMT.mockRejectedValueOnce(new Error('network'))
+
+      await expect(store.listChatsMT({ search: null })).rejects.toThrow(
+        'network'
+      )
+    })
+  })
+
+  describe('fetchLatestChatsMT', () => {
+    it('does nothing when nobody is logged in', async () => {
+      vi.useFakeTimers()
+      mockUseAuthStore.mockReturnValueOnce({ user: null })
+      const store = useChatStore()
+      store.config = {}
+
+      await store.fetchLatestChatsMT()
+
+      expect(mockUnseenCountMT).not.toHaveBeenCalled()
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    })
+
+    it('updates the badge count and refreshes the list when the count changes', async () => {
+      vi.useFakeTimers()
+      const store = useChatStore()
+      store.config = {}
+      store.currentCountMT = 0
+      mockUnseenCountMT.mockResolvedValue(3)
+      mockListChatsMT.mockResolvedValue({ chatrooms: [] })
+
+      await store.fetchLatestChatsMT()
+
+      expect(store.currentCountMT).toBe(3)
+      expect(mockListChatsMT).toHaveBeenCalled()
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    })
+
+    it('does not refresh the list mid-search even when the count changes', async () => {
+      vi.useFakeTimers()
+      const store = useChatStore()
+      store.config = {}
+      store.currentCountMT = 0
+      store.lastSearchMT = 'searching'
+      mockUnseenCountMT.mockResolvedValue(5)
+
+      await store.fetchLatestChatsMT()
+
+      expect(store.currentCountMT).toBe(5)
+      expect(mockListChatsMT).not.toHaveBeenCalled()
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    })
+
+    it('swallows errors and still schedules the next poll', async () => {
+      vi.useFakeTimers()
+      const store = useChatStore()
+      store.config = {}
+      mockUnseenCountMT.mockRejectedValueOnce(new Error('down'))
+
+      await expect(store.fetchLatestChatsMT()).resolves.toBeUndefined()
+      expect(vi.getTimerCount()).toBeGreaterThan(0)
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    })
+  })
+
+  describe('removeMessageMT', () => {
+    it('removes a message from the chat by id', () => {
+      const store = useChatStore()
+      store.messages[5] = [{ id: 10 }, { id: 11 }]
+
+      store.removeMessageMT(5, 10)
+
+      expect(store.messages[5][0]).toBeUndefined()
+      expect(store.messages[5][1]).toEqual({ id: 11 })
+    })
+
+    it('does nothing when the message id is not found', () => {
+      const store = useChatStore()
+      store.messages[5] = [{ id: 10 }]
+
+      expect(() => store.removeMessageMT(5, 999)).not.toThrow()
+      expect(store.messages[5]).toEqual([{ id: 10 }])
+    })
+  })
+
+  describe('nudge', () => {
+    it('nudges and refetches messages', async () => {
+      const store = useChatStore()
+      store.config = {}
+      const fetchSpy = vi.spyOn(store, 'fetchMessages')
+
+      await store.nudge(5)
+
+      expect(mockNudge).toHaveBeenCalledWith(5)
+      expect(fetchSpy).toHaveBeenCalledWith(5)
+    })
+  })
+
+  describe('answerPrompt', () => {
+    it('answers a prompt and refetches messages, returning the API result', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockAnswerPrompt.mockResolvedValueOnce({ ok: true })
+      const fetchSpy = vi.spyOn(store, 'fetchMessages')
+
+      const ret = await store.answerPrompt(5, 10, 'yes')
+
+      expect(mockAnswerPrompt).toHaveBeenCalledWith(5, 10, 'yes')
+      expect(fetchSpy).toHaveBeenCalledWith(5, true)
+      expect(ret).toEqual({ ok: true })
+    })
+  })
+
+  describe('commonGroups', () => {
+    it('returns the common groups from the API', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockCommonGroups.mockResolvedValueOnce([{ id: 1 }])
+
+      const groups = await store.commonGroups(5)
+
+      expect(mockCommonGroups).toHaveBeenCalledWith(5)
+      expect(groups).toEqual([{ id: 1 }])
+    })
+  })
+
+  describe('report / reportNoGroup', () => {
+    it('report sends a report reason and refetches messages', async () => {
+      const store = useChatStore()
+      store.config = {}
+      const fetchSpy = vi.spyOn(store, 'fetchMessages')
+
+      await store.report(5, 'Spam', 'This is spam', 6)
+
+      expect(mockSend).toHaveBeenCalledWith({
+        roomid: 5,
+        reportreason: 'Spam',
+        message: 'This is spam',
+        refchatid: 6,
+      })
+      expect(fetchSpy).toHaveBeenCalledWith(5)
+    })
+
+    it('reportNoGroup reports without refetching messages', async () => {
+      const store = useChatStore()
+      store.config = {}
+
+      await store.reportNoGroup(5, 'Spam', 'comment')
+
+      expect(mockReportNoGroup).toHaveBeenCalledWith(5, 'Spam', 'comment')
+    })
+  })
+
+  describe('approveAllFutureChat / releaseChat / redactChat', () => {
+    it('approveAllFutureChat sends ApproveAllFuture action', async () => {
+      const store = useChatStore()
+      store.config = {}
+
+      await store.approveAllFutureChat(42)
+
+      expect(mockSendMT).toHaveBeenCalledWith({
+        id: 42,
+        action: 'ApproveAllFuture',
+      })
+    })
+
+    it('releaseChat sends Release action', async () => {
+      const store = useChatStore()
+      store.config = {}
+
+      await store.releaseChat(42)
+
+      expect(mockSendMT).toHaveBeenCalledWith({ id: 42, action: 'Release' })
+    })
+
+    it('redactChat sends Redact action', async () => {
+      const store = useChatStore()
+      store.config = {}
+
+      await store.redactChat(42)
+
+      expect(mockSendMT).toHaveBeenCalledWith({ id: 42, action: 'Redact' })
+    })
+  })
+
+  describe('openChatToUser', () => {
+    it('defaults chattype to User2User', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockOpenChat.mockResolvedValue({ id: 30 })
+      mockFetchChat.mockResolvedValue({ id: 30 })
+
+      const id = await store.openChatToUser({ groupid: 1, userid: 2 })
+
+      expect(id).toBe(30)
+      expect(mockOpenChat).toHaveBeenCalledWith(
+        { chattype: 'User2User', groupid: 1, userid: 2 },
+        expect.any(Function)
+      )
+    })
+
+    it('honours an explicit chattype override and updateRoster flag', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockOpenChat.mockResolvedValue({ id: 31 })
+      mockFetchChat.mockResolvedValue({ id: 31 })
+
+      const id = await store.openChatToUser({
+        chattype: 'Mod2Mod',
+        groupid: 1,
+        userid: 2,
+        updateRoster: true,
+      })
+
+      expect(id).toBe(31)
+      expect(mockOpenChat).toHaveBeenCalledWith(
+        {
+          chattype: 'Mod2Mod',
+          groupid: 1,
+          userid: 2,
+          updateRoster: true,
+        },
+        expect.any(Function)
+      )
+    })
+  })
+
+  describe('pollForChatUpdates', () => {
+    it('does nothing (but still reschedules) when nobody is logged in', async () => {
+      vi.useFakeTimers()
+      mockUseAuthStore.mockReturnValueOnce({ user: null })
+      const store = useChatStore()
+      store.config = {}
+
+      await store.pollForChatUpdates()
+
+      expect(mockListChats).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBeGreaterThan(0)
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    })
+
+    it('extracts the chat id from a /chats/:id route and passes the search term', async () => {
+      vi.useFakeTimers()
+      const store = useChatStore()
+      store.config = {}
+      store.route = { path: '/chats/123', query: { search: 'freegle' } }
+      mockListChats.mockResolvedValue([])
+
+      await store.pollForChatUpdates()
+
+      expect(mockListChats).toHaveBeenCalledWith(null, 'freegle', 123, false)
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    })
+
+    it('swallows a fetchChats error during poll', async () => {
+      vi.useFakeTimers()
+      const store = useChatStore()
+      store.config = {}
+      store.route = { path: '/', query: {} }
+      mockListChats.mockRejectedValueOnce(new Error('down'))
+
+      await expect(store.pollForChatUpdates()).resolves.toBeUndefined()
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    })
+  })
+
+  describe('rsvp', () => {
+    it('rsvps and refetches the chat', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockFetchChat.mockResolvedValue({ id: 7 })
+
+      await store.rsvp(1, 7, 'yes')
+
+      expect(mockRsvp).toHaveBeenCalledWith(1, 7, 'yes')
+      expect(mockFetchChat).toHaveBeenCalledWith(7, false)
+    })
+  })
+
+  describe('fetchChats branches', () => {
+    it('uses the search-since timestamp when previously set', async () => {
+      const store = useChatStore()
+      store.config = {}
+      store.searchSince = '2026-01-01T00:00:00.000Z'
+      mockListChats.mockResolvedValue([])
+
+      await store.fetchChats('term', false, null)
+
+      expect(mockListChats).toHaveBeenCalledWith(
+        expect.stringContaining('2026-01-01'),
+        'term',
+        null,
+        false
+      )
+    })
+
+    it('uses listChatsMT when in modtools mode', async () => {
+      mockUseMiscStore.mockReturnValueOnce({ modtools: true })
+      const store = useChatStore()
+      store.config = {}
+      mockListChatsMT.mockResolvedValue({ chatrooms: [{ id: 9 }] })
+
+      await store.fetchChats()
+
+      expect(store.list).toEqual([{ id: 9 }])
     })
   })
 

@@ -102,6 +102,8 @@ vi.mock('~/constants', () => ({
   REPLY_TIME_TOOLTIP: 'How long they usually take to reply to a message',
   DISTANCE_TOOLTIP:
     'Roughly how far away they are, as the crow flies rather than by road',
+  DISTANCE_TOOLTIP_ROAD:
+    'Roughly how far away they are by road. Approximate: locations are blurred for privacy',
 }))
 
 // ChatReplyPane captures the current route at setup to derive the reply surface
@@ -716,6 +718,21 @@ describe('ChatReplyPane', () => {
       expect(wrapper.text().replace(/\s+/g, ' ')).toContain(
         "we'll pass yours on in about 3 hours"
       )
+    })
+
+    it('says the reach has finished, not that it is still on its way, when the API says so', async () => {
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        replyeligible: false,
+        reachfinished: true,
+      })
+      const wrapper = await createWrapper()
+
+      const text = wrapper.text().replace(/\s+/g, ' ')
+      expect(wrapper.find('[data-testid="reach-finished"]').exists()).toBe(true)
+      expect(text).toContain('finished rippling out')
+      expect(text).toContain('straight away')
+      expect(text).not.toContain("hasn't reached your area yet")
     })
 
     it('falls back to the open-ended wording when there is no estimate', async () => {

@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import api from '~/api'
 
-export const useDomainStore = defineStore({
-  id: 'domain',
+export const useDomainStore = defineStore('domain', {
   state: () => ({}),
   actions: {
     init(config) {

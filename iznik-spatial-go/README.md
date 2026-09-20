@@ -1,10 +1,12 @@
 # Freegle Spatial KNN Index Service (`iznik-spatial-go`)
 
-A small Go HTTP service that keeps fast, queryable spatial indexes over six
-Freegle datasets and answers two kinds of question:
+A small Go HTTP service that keeps fast, queryable spatial indexes over
+Freegle's datasets and answers three kinds of question:
 
 - **Nearest-neighbour (KNN):** "what are the N nearest records to this lat/lng?"
 - **Within-polygon:** "which records fall inside this area (WKT polygon)?"
+- **Place search:** "where is 'Kendal'?" — the photon-compatible geocoder
+  behind `geocode.ilovefreegle.org` (see below)
 
 It is the **"finder"** half of Freegle's spatial system. The **"travel-time
 mapper"** half — isochrones, fairness, the Rippling Explorer — is a separate
@@ -18,7 +20,7 @@ for its nearby-freegler queries.
 
 ## Datasets
 
-The index is rebuilt from MySQL and kept in sync. Six datasets are served:
+The index is rebuilt from MySQL and kept in sync. Eight datasets are served:
 
 | Name | Geometry | Source table | Spatial column | Sync |
 |------|----------|--------------|----------------|------|
@@ -28,10 +30,44 @@ The index is rebuilt from MySQL and kept in sync. Six datasets are served:
 | `userapproxlocs` | Point | `users_approxlocs` | `position` | full rebuild every 15 min (no incremental) |
 | `groups` | Polygon | `groups` | `polyindex` | full rebuild every 15 min (no incremental) |
 | `jobs` | Polygon | `jobs` | `geometry` | incremental on `jobs.seenat`; nightly full rebuild |
+| `reach` | Cell grid | `rippling_reach` | `polygon_cells` (the legacy `polygon` while it still exists, per row) | incremental on `updated_at` every 2 min + reconcile; daily full rebuild. Answers `/containing`, not knn — **exactly** from a cell grid, so `partial` is only ever returned for a row still on the legacy geometry. **Labels-truth retirement**: a labelled row whose grid has drained (`reach_labels` set, `polygon_cells` NULL) is REMOVED from this index — containment for it is served by the routing server's label evaluation (the reach-eval discover arm) — and once the operator drops the grid columns the dataset serves empty |
+| `reachoverflow` | Cell grid | `rippling_reach` | `overflow_cells` JSON, one ring per lane (the legacy `overflow_bounds` while it still exists, per lane) | incremental on `updated_at` every 2 min + reconcile; daily full rebuild. Answers `/containing`, not knn. **Ids are packed**: `msgid << 4 \| lane code`, so one index answers a per-lane question — see `dataset_reachoverflow.go` |
+
+Both rasterised datasets classify a query point from a 2-bit-per-cell grid over
+each geometry's bbox, so only the thin boundary band needs the exact geometry.
+`reach` uses a 96-cell grid; `reachoverflow` uses 192, because its exact
+fallback is dear - a ring is ~37k vertices parsed out of JSON (~6ms), against a
+sub-millisecond indexed lookup for a reach - so it is worth spending index size
+to make the band fire half as often.
 
 Indexes persist to disk as SQLite files under `SPATIAL_INDEX_DIR`, so a restart
 reopens existing indexes instead of rebuilding from MySQL. Pass `-rebuild` to
 force a full rebuild on startup.
+
+---
+
+## Place search (photon-compatible `GET /api`)
+
+The replacement for the Photon geocoder that used to serve
+`geocode.ilovefreegle.org`. Unlike the datasets above it is **file-backed, not
+MySQL-backed**: it loads `PLACES_FILE` (default
+`$SPATIAL_INDEX_DIR/places.jsonl.gz`), an artifact of ~200k named UK places
+built by `iznik-routing-go/cmd/placesextract` from `uk-latest.osm.pbf`, into
+an in-memory token index (`places.go`, `places_search.go`, `places_api.go`).
+
+- Responses are GeoJSON FeatureCollections matching photon's shape byte-for-
+  byte where consumers care: `properties.extent` is `[W,N,E,S]`,
+  `geometry.coordinates` is `[lng,lat]`, `properties.type` uses photon's
+  layer names (`city`/`district`/`locality`/`county`/`state`/`other`).
+- Query semantics follow photon 0.5.0's builder: all terms must match with
+  the last as a prefix; on zero hits it relaxes (stopword stripping, then
+  edit-distance-1); `bbox` hard-filters on the point; `lat`/`lon`/`zoom`
+  bias the ranking with photon's zoom-scaled decay; `limit` defaults 15,
+  caps 50; repeated `layer=` params filter.
+- The file is polled by mtime every minute and swapped atomically; a corrupt
+  or empty replacement never displaces a working index. Where the file is
+  absent (db-node instances) `/api` answers 503 — production nginx only
+  caches 200s.
 
 ---
 
@@ -45,9 +81,11 @@ trusted callers (`iznik-routing-go`, `apiv2`, batch).
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | `{"status":"ok"}` |
+| `GET` | `/api?q=&bbox=&layer=&lat=&lon=&zoom=&limit=` | Photon-compatible UK place search (see **Place search** below). This one **is** exposed publicly: production nginx proxies `geocode.ilovefreegle.org` to it, and it answers its own CORS |
 | `GET` | `/v1/datasets` | All datasets with name, record count, readiness |
 | `GET` | `/v1/{dataset}/status` | Readiness, row count, last sync time for one dataset |
 | `GET` | `/v1/{dataset}/knn?lat=&lng=&limit=&type=&polygon=` | Nearest records to a point. `limit` 1–1000 (default 1); optional `type` filter; optional WKT `polygon` to restrict results |
+| `GET` | `/v1/{dataset}/containing?lat=&lng=` | Items whose geometry contains the point, as `{in, partial}`. Only `reach` and `reachoverflow` support it. `in` is definite; `partial` sits in the raster's boundary band and the caller must exact-test it against the source geometry |
 | `GET` | `/v1/{dataset}/within?polygon=` | IDs of all records inside a WKT polygon. Max **10 000** IDs (HTTP 413 if exceeded) |
 | `GET` | `/v1/{dataset}/within_coords?polygon=` | Like `/within` but returns full items **with coordinates** (no centre-distance bias). Use POST for large polygons |
 | `POST` | `/v1/{dataset}/within_coords` | Same as GET, polygon in the request body — avoids URL-length limits for big isochrone polygons. Body may be raw WKT (`text/plain`) or `polygon=WKT` (`application/x-www-form-urlencoded`) |

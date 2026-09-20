@@ -49,7 +49,6 @@ beforeEach(() => {
   mockAudioPlay = vi.fn().mockResolvedValue(undefined)
   mockSetBadgeCount.mockReset()
   global.Audio = class MockAudio {
-    constructor(_src) {}
     play() {
       return mockAudioPlay()
     }
@@ -90,7 +89,7 @@ describe('useModMe checkWork beep behavior', () => {
     // - authStore.work is null before fetchMe (nothing loaded yet)
     // - fetchMe loads 3 pending items → totalCount becomes 3 > currentTotal 0
     // Without the fix this would immediately beep, interrupting background audio on iOS.
-    mockFetchMe.mockImplementation(async () => {
+    mockFetchMe.mockImplementation(() => {
       globalThis.__mockAuthStore.work = { total: 3 }
     })
 
@@ -103,7 +102,7 @@ describe('useModMe checkWork beep behavior', () => {
 
   it('plays beep when work count increases after first check', async () => {
     // First check: establishes baseline of 2 items (no beep)
-    mockFetchMe.mockImplementationOnce(async () => {
+    mockFetchMe.mockImplementationOnce(() => {
       globalThis.__mockAuthStore.work = { total: 2 }
     })
 
@@ -113,7 +112,7 @@ describe('useModMe checkWork beep behavior', () => {
     expect(mockAudioPlay).not.toHaveBeenCalled()
 
     // Second check: work increases to 5 → beep should fire
-    mockFetchMe.mockImplementationOnce(async () => {
+    mockFetchMe.mockImplementationOnce(() => {
       globalThis.__mockAuthStore.work = { total: 5 }
     })
     await checkWork(true)
@@ -122,7 +121,7 @@ describe('useModMe checkWork beep behavior', () => {
   })
 
   it('does not play beep when work count stays the same on subsequent checks', async () => {
-    mockFetchMe.mockImplementation(async () => {
+    mockFetchMe.mockImplementation(() => {
       globalThis.__mockAuthStore.work = { total: 2 }
     })
 
@@ -136,7 +135,7 @@ describe('useModMe checkWork beep behavior', () => {
   })
 
   it('calls setBadgeCount with work total after checkWork', async () => {
-    mockFetchMe.mockImplementation(async () => {
+    mockFetchMe.mockImplementation(() => {
       globalThis.__mockAuthStore.work = { total: 4 }
     })
 
@@ -148,7 +147,7 @@ describe('useModMe checkWork beep behavior', () => {
   })
 
   it('calls setBadgeCount with 0 when no pending work', async () => {
-    mockFetchMe.mockImplementation(async () => {
+    mockFetchMe.mockImplementation(() => {
       globalThis.__mockAuthStore.work = { total: 0 }
     })
 
@@ -162,7 +161,7 @@ describe('useModMe checkWork beep behavior', () => {
   it('respects playbeep=false user setting on subsequent checks', async () => {
     globalThis.__mockAuthStore.user = { settings: { playbeep: false } }
     // First call: baseline
-    mockFetchMe.mockImplementationOnce(async () => {
+    mockFetchMe.mockImplementationOnce(() => {
       globalThis.__mockAuthStore.work = { total: 2 }
     })
 
@@ -171,7 +170,7 @@ describe('useModMe checkWork beep behavior', () => {
     await checkWork(true)
 
     // Work increases but beep is disabled by user setting
-    mockFetchMe.mockImplementationOnce(async () => {
+    mockFetchMe.mockImplementationOnce(() => {
       globalThis.__mockAuthStore.work = { total: 5 }
     })
     await checkWork(true)
@@ -183,7 +182,7 @@ describe('useModMe checkWork beep behavior', () => {
 describe('useModMe re-login behavior', () => {
   it('spurious beep on re-login when isFirstCheckWork not reset (bug confirmation)', async () => {
     // First checkWork establishes baseline; isFirstCheckWork → false after this
-    mockFetchMe.mockImplementationOnce(async () => {
+    mockFetchMe.mockImplementationOnce(() => {
       globalThis.__mockAuthStore.work = { total: 3 }
     })
     const { useModMe } = await import('~/modtools/composables/useModMe')
@@ -197,7 +196,7 @@ describe('useModMe re-login behavior', () => {
     globalThis.__mockAuthStore.work = { total: 0 }
 
     // fetchMe returns 3 new arrivals — these appeared since the login moment
-    mockFetchMe.mockImplementationOnce(async () => {
+    mockFetchMe.mockImplementationOnce(() => {
       globalThis.__mockAuthStore.work = { total: 3 }
     })
     await checkWork(true)
@@ -209,7 +208,7 @@ describe('useModMe re-login behavior', () => {
 
   it('no spurious beep on re-login when resetCheckWork is called first', async () => {
     // First checkWork establishes baseline
-    mockFetchMe.mockImplementationOnce(async () => {
+    mockFetchMe.mockImplementationOnce(() => {
       globalThis.__mockAuthStore.work = { total: 3 }
     })
     const { useModMe } = await import('~/modtools/composables/useModMe')
@@ -223,7 +222,7 @@ describe('useModMe re-login behavior', () => {
     // FIX: resetCheckWork() so the next checkWork treats this as the first call
     // (establishes a new baseline, like a fresh page load) — prevents spurious beep
     resetCheckWork()
-    mockFetchMe.mockImplementationOnce(async () => {
+    mockFetchMe.mockImplementationOnce(() => {
       globalThis.__mockAuthStore.work = { total: 3 }
     })
     await checkWork(true)
@@ -239,7 +238,7 @@ describe('useModMe document.title refresh after mod action', () => {
     const { checkWork } = useModMe()
 
     // Establish initial state: 2 pending items → title becomes "(2) ModTools"
-    mockFetchMe.mockImplementationOnce(async () => {
+    mockFetchMe.mockImplementationOnce(() => {
       globalThis.__mockAuthStore.work = { total: 2 }
     })
     await checkWork(true)
@@ -250,7 +249,7 @@ describe('useModMe document.title refresh after mod action', () => {
     // Guard in checkWork: bodyoverflow==='hidden' && !force → skips the entire update block,
     // so document.title is never refreshed with the new zero count.
     global.document.body.style.overflow = 'hidden'
-    mockFetchMe.mockImplementation(async () => {
+    mockFetchMe.mockImplementation(() => {
       globalThis.__mockAuthStore.work = { total: 0 }
     })
     await checkWork() // no force — reproduces checkWorkDeferGetMessages() call path
@@ -272,7 +271,7 @@ describe('useModMe checkWork badge freshness after rapid mod actions (Discourse 
     // pass forceServer so fetchMe does a fresh (coalesced) fetch reflecting NOW.
     // The coalescing itself is covered in useMe.spec.js; here we assert checkWork
     // asks for it.
-    mockFetchMe.mockImplementation(async () => {
+    mockFetchMe.mockImplementation(() => {
       globalThis.__mockAuthStore.work = {
         total: 0,
         pending: 0,

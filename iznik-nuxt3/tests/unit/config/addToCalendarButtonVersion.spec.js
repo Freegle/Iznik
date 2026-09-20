@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, resolve } from 'path'
+import { describe, it, expect } from 'vitest'
 
 /**
  * Verifies the pinned add-to-calendar-button version used by
@@ -23,7 +23,8 @@ const lock = JSON.parse(readFileSync(lockPath, 'utf-8'))
 
 describe('add-to-calendar-button pinned version', () => {
   it('is at least 2.13.0, which fixes the Android Google Calendar intent:// error', () => {
-    const resolvedVersion = lock.packages['node_modules/add-to-calendar-button'].version
+    const resolvedVersion =
+      lock.packages['node_modules/add-to-calendar-button'].version
     const [major, minor] = resolvedVersion.split('.').map(Number)
 
     expect(major > 2 || (major === 2 && minor >= 13)).toBe(true)

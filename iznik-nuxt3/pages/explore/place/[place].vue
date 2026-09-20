@@ -35,8 +35,8 @@ import {
 import SupportLink from '~/components/SupportLink'
 import { useGroupStore } from '~/stores/group'
 
-const PostMapAndList = defineAsyncComponent(() =>
-  import('~/components/PostMapAndList')
+const PostMapAndList = defineAsyncComponent(
+  () => import('~/components/PostMapAndList')
 )
 
 const runtimeConfig = useRuntimeConfig()

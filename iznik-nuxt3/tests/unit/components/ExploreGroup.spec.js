@@ -48,8 +48,8 @@ describe('ExploreGroup', () => {
         stubs: {
           GroupHeader: {
             template:
-              '<div class="group-header" :data-group-id="group?.id" :data-show-join="showJoin" :data-show-give-find="showGiveFind" />',
-            props: ['group', 'showJoin', 'showGiveFind'],
+              '<div class="group-header" :data-group-id="group?.id" :data-show-join="showJoin" :data-show-give-ask="showGiveAsk" />',
+            props: ['group', 'showJoin', 'showGiveAsk'],
           },
           OurMessage: {
             template: '<div class="our-message" :data-id="id" />',
@@ -63,7 +63,7 @@ describe('ExploreGroup', () => {
               'selectedGroup',
               'bump',
               'exclude',
-              'showGiveFind',
+              'showGiveAsk',
               'showGroupHeader',
             ],
           },
@@ -141,16 +141,16 @@ describe('ExploreGroup', () => {
       expect(wrapper.findComponent(ExploreGroup).props('msgid')).toBe(100)
     })
 
-    it('has default showGiveFind of false', async () => {
+    it('has default showGiveAsk of false', async () => {
       const wrapper = await createWrapper()
-      expect(wrapper.findComponent(ExploreGroup).props('showGiveFind')).toBe(
+      expect(wrapper.findComponent(ExploreGroup).props('showGiveAsk')).toBe(
         false
       )
     })
 
-    it('accepts showGiveFind prop', async () => {
-      const wrapper = await createWrapper({ showGiveFind: true })
-      expect(wrapper.findComponent(ExploreGroup).props('showGiveFind')).toBe(
+    it('accepts showGiveAsk prop', async () => {
+      const wrapper = await createWrapper({ showGiveAsk: true })
+      expect(wrapper.findComponent(ExploreGroup).props('showGiveAsk')).toBe(
         true
       )
     })

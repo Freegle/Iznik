@@ -106,8 +106,8 @@ import { useRuntimeConfig } from '#app'
 import { action } from '~/composables/useClientLog'
 
 console.log('My Posts page setup')
-const DonationAskModal = defineAsyncComponent(() =>
-  import('~/components/DonationAskModal')
+const DonationAskModal = defineAsyncComponent(
+  () => import('~/components/DonationAskModal')
 )
 
 const authStore = useAuthStore()

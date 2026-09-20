@@ -5,8 +5,7 @@ import { fetchMe } from '~/composables/useMe'
 import { useUserStore } from '~/stores/user'
 import { useMemberStore } from '~/stores/member'
 
-export const useSpammerStore = defineStore({
-  id: 'spammer',
+export const useSpammerStore = defineStore('spammer', {
   state: () => ({
     // Use array because we need to store them in the order returned by the server.
     list: [],

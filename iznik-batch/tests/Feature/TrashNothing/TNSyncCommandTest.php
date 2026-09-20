@@ -592,6 +592,324 @@ class TNSyncCommandTest extends TestCase
         );
     }
 
+    /**
+     * The per-tick duplicate check now reads only addresses added since last time,
+     * instead of streaming all ~400,000 Trash Nothing addresses every minute. A pair
+     * created after the last run must still be caught.
+     */
+    public function test_incremental_scan_catches_a_newly_created_duplicate(): void
+    {
+        // Establish a position first, so the next run is genuinely incremental.
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->assertNotNull(
+            DB::table('config')->where('key', 'tn.dupscan_cursor')->value('value'),
+            'the first run should record how far it read'
+        );
+
+        $user1 = $this->createTestUser(['fullname' => 'Bob']);
+        $user2 = $this->createTestUser(['fullname' => 'Bob']);
+        $tnBase = 'bob_' . uniqid('', true);
+
+        foreach ([[$user1->id, 'g101'], [$user2->id, 'g202']] as [$uid, $suffix]) {
+            $email = "{$tnBase}-{$suffix}@user.trashnothing.com";
+            DB::table('users_emails')->insert([
+                'userid' => $uid,
+                'email' => $email,
+                'backwards' => strrev($email),
+                'preferred' => 0,
+                'added' => now(),
+            ]);
+        }
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertTrue(
+            (User::find($user1->id) !== null) xor (User::find($user2->id) !== null),
+            'a duplicate created since the last run must still be merged'
+        );
+    }
+
+    /**
+     * A username is not a prefix of an address. `bibiana-g%@user.trashnothing.com`
+     * also matches `bibiana-gomes-g4840@...`, so the probe on its own merged two
+     * unrelated members and deleted one of them (2026-09-13). A longer username that
+     * happens to start with `<username>-g` must be left alone.
+     */
+    public function test_incremental_scan_leaves_a_longer_username_alone(): void
+    {
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $shortBase = 'dee_' . uniqid('', true);
+        $longBase = $shortBase . '-gomes';
+
+        // The member with the longer name has been around a while.
+        $longUser = $this->createTestUser(['fullname' => 'Dee Gomes']);
+        $longEmail = "{$longBase}-g4840@user.trashnothing.com";
+        DB::table('users_emails')->insert([
+            'userid' => $longUser->id,
+            'email' => $longEmail,
+            'backwards' => strrev($longEmail),
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+
+        // Read past it, so the next run is genuinely incremental.
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        // A different member, whose name is the other's prefix, joins a group.
+        $shortUser = $this->createTestUser(['fullname' => 'Dee']);
+        $shortEmail = "{$shortBase}-g288@user.trashnothing.com";
+        DB::table('users_emails')->insert([
+            'userid' => $shortUser->id,
+            'email' => $shortEmail,
+            'backwards' => strrev($shortEmail),
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertNotNull(User::find($shortUser->id), 'the new arrival must survive');
+        $this->assertNotNull(User::find($longUser->id), 'the member with the longer name must survive');
+        $this->assertEquals(
+            $longUser->id,
+            DB::table('users_emails')->where('email', $longEmail)->value('userid'),
+            'the longer name keeps its own address'
+        );
+    }
+
+    /**
+     * The hole the incremental check cannot see: a duplicate made by re-pointing an
+     * existing row, which adds no new id. One tick a day re-scans everything to catch
+     * those, which is the only reason narrowing the per-tick check is safe.
+     */
+    public function test_a_full_rescan_catches_a_duplicate_the_cursor_missed(): void
+    {
+        $user1 = $this->createTestUser(['fullname' => 'Carol']);
+        $user2 = $this->createTestUser(['fullname' => 'Carol']);
+        $tnBase = 'carol_' . uniqid('', true);
+
+        foreach ([[$user1->id, 'g101'], [$user2->id, 'g202']] as [$uid, $suffix]) {
+            $email = "{$tnBase}-{$suffix}@user.trashnothing.com";
+            DB::table('users_emails')->insert([
+                'userid' => $uid,
+                'email' => $email,
+                'backwards' => strrev($email),
+                'preferred' => 0,
+                'added' => now(),
+            ]);
+        }
+
+        // Pretend the per-tick check has already read past them, and that a whole-table
+        // re-scan happened recently - so only --full-duplicate-scan can find this pair.
+        DB::table('config')->upsert([
+            ['key' => 'tn.dupscan_cursor', 'value' => (string) ((int) DB::table('users_emails')->max('id') + 1)],
+            ['key' => 'tn.dupscan_full_at', 'value' => now()->toDateTimeString()],
+        ], ['key'], ['value']);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        // An ordinary tick sees nothing new and leaves them alone.
+        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->assertNotNull(User::find($user1->id));
+        $this->assertNotNull(User::find($user2->id));
+
+        // The whole-table pass finds them.
+        $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
+        $this->assertTrue(
+            (User::find($user1->id) !== null) xor (User::find($user2->id) !== null),
+            'the full re-scan must catch what the cursor stepped over'
+        );
+    }
+
+    /**
+     * The blind spot that let 96 duplicate pairs pile up on production between
+     * 2026-05 and 2026-08.
+     *
+     * 5e2a90450 swapped `email LIKE '%@user.trashnothing.com'` (a 400s full scan)
+     * for a range scan on the `backwards` index, on the stated assumption that
+     * `backwards` is REVERSE(email). It is not. Rows written by V1 hold
+     * REVERSE(canon), and canon has the TN group suffix AND the dots in the
+     * domain stripped - so those rows reverse to `mocgnihtonhsartresu@...`, not
+     * `moc.gnihtonhsart.resu@...`, and the filter steps straight over them.
+     * On production that is 1,752,575 of 2,217,411 TN addresses, with a further
+     * 13,772 holding NULL that no prefix reaches at all.
+     *
+     * Every existing test here builds `backwards` as strrev($email), which is the
+     * one format the filter does match, which is why none of them caught it. This
+     * one builds the pair the way production actually holds it: the older account
+     * canon-style (invisible), the newer one raw-style (visible). The scan sees
+     * one account, groups it alone, and merges nothing.
+     */
+    public function test_full_scan_sees_a_pair_whose_older_row_has_canon_style_backwards(): void
+    {
+        config(['freegle.trashnothing.merge_legacy_duplicates' => true]);
+
+        [$older, $newer, $tnBase] = $this->createCanonStyleDuplicatePair();
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
+
+        $this->assertTrue(
+            (User::find($older->id) !== null) xor (User::find($newer->id) !== null),
+            "the pair sharing TN username {$tnBase} must be merged even though the "
+            . 'older row holds REVERSE(canon) rather than REVERSE(email)'
+        );
+    }
+
+    /**
+     * The 13,772 Trash Nothing rows on production whose backwards is NULL outright.
+     * No set of prefixes on that column can ever reach them, which is why the widened
+     * filter tests the address instead. Two of the 96 split usernames sit here.
+     */
+    public function test_full_scan_sees_a_pair_whose_older_row_has_no_backwards_at_all(): void
+    {
+        config(['freegle.trashnothing.merge_legacy_duplicates' => true]);
+
+        $older = $this->createTestUser(['fullname' => 'Nullback']);
+        $newer = $this->createTestUser(['fullname' => 'Nullback']);
+        $tnBase = 'nb' . str_replace('.', '', uniqid('', true));
+
+        DB::table('users_emails')->insert([
+            'userid' => $older->id,
+            'email' => "{$tnBase}-g1997@user.trashnothing.com",
+            'canon' => "{$tnBase}@usertrashnothingcom",
+            'backwards' => null,
+            'preferred' => 1,
+            'added' => now(),
+        ]);
+        DB::table('users_emails')->insert([
+            'userid' => $newer->id,
+            'email' => "{$tnBase}-g9190@user.trashnothing.com",
+            'canon' => null,
+            'backwards' => null,
+            'preferred' => 1,
+            'added' => now(),
+        ]);
+
+        DB::table('config')->upsert([
+            ['key' => 'tn.dupscan_cursor', 'value' => (string) ((int) DB::table('users_emails')->max('id') + 1)],
+            ['key' => 'tn.dupscan_full_at', 'value' => now()->toDateTimeString()],
+        ], ['key'], ['value']);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
+
+        $this->assertTrue(
+            (User::find($older->id) !== null) xor (User::find($newer->id) !== null),
+            'a pair with no backwards at all must still be merged'
+        );
+    }
+
+    /**
+     * The review gate. Widening the filter suddenly exposes a backlog of real
+     * member accounts, and merging members is not reversible, so the widened
+     * scan merges nothing until someone has looked at the list. Reporting is
+     * always available and always read-only.
+     */
+    public function test_report_duplicates_lists_the_legacy_pair_without_merging(): void
+    {
+        [$older, $newer, $tnBase] = $this->createCanonStyleDuplicatePair();
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync --report-duplicates')
+            ->expectsOutputToContain($tnBase)
+            ->assertExitCode(0);
+
+        $this->assertNotNull(User::find($older->id), 'reporting must not merge');
+        $this->assertNotNull(User::find($newer->id), 'reporting must not merge');
+    }
+
+    /**
+     * Until the backlog has been reviewed the live sync behaves exactly as it did
+     * before, so enabling the wider filter stays a deliberate act.
+     */
+    public function test_legacy_pair_is_left_alone_while_the_gate_is_closed(): void
+    {
+        config(['freegle.trashnothing.merge_legacy_duplicates' => false]);
+
+        [$older, $newer] = $this->createCanonStyleDuplicatePair();
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
+
+        $this->assertNotNull(User::find($older->id), 'the gate must hold the backlog back');
+        $this->assertNotNull(User::find($newer->id), 'the gate must hold the backlog back');
+    }
+
+    /**
+     * Builds the production shape: one TN member, two accounts, the older row
+     * carrying REVERSE(canon) and the newer one REVERSE(email).
+     *
+     * @return array{0: User, 1: User, 2: string}
+     */
+    private function createCanonStyleDuplicatePair(): array
+    {
+        $older = $this->createTestUser(['fullname' => 'Immy']);
+        $newer = $this->createTestUser(['fullname' => 'Immy']);
+        $tnBase = 'i9test' . str_replace('.', '', uniqid('', true));
+
+        // The older account, as V1 wrote it: canon has the -gNNNN suffix and the
+        // domain dots stripped, and backwards is the reverse of THAT.
+        $olderEmail = "{$tnBase}-g4707@user.trashnothing.com";
+        $olderCanon = "{$tnBase}@usertrashnothingcom";
+        DB::table('users_emails')->insert([
+            'userid' => $older->id,
+            'email' => $olderEmail,
+            'canon' => $olderCanon,
+            'backwards' => strrev($olderCanon),
+            'preferred' => 1,
+            'added' => now(),
+        ]);
+
+        // The account a second TN group's alias minted, as the Laravel model
+        // writes it: no canon, backwards reversed from the raw address.
+        $newerEmail = "{$tnBase}-g1586@user.trashnothing.com";
+        DB::table('users_emails')->insert([
+            'userid' => $newer->id,
+            'email' => $newerEmail,
+            'canon' => null,
+            'backwards' => strrev($newerEmail),
+            'preferred' => 1,
+            'added' => now(),
+        ]);
+
+        // Both rows predate the cursor, as the live backlog does, so only a
+        // whole-table pass can reach them.
+        DB::table('config')->upsert([
+            ['key' => 'tn.dupscan_cursor', 'value' => (string) ((int) DB::table('users_emails')->max('id') + 1)],
+            ['key' => 'tn.dupscan_full_at', 'value' => now()->toDateTimeString()],
+        ], ['key'], ['value']);
+
+        return [$older, $newer, $tnBase];
+    }
+
     public function test_no_merge_when_no_duplicates(): void
     {
         $user1 = $this->createTestUser();

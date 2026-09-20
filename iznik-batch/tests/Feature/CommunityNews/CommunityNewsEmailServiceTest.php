@@ -5,6 +5,7 @@ namespace Tests\Feature\CommunityNews;
 use App\Mail\CommunityNews\CommunityNewsMail;
 use App\Models\CommunityNewsArea;
 use App\Models\CommunityNewsItem;
+use App\Models\User;
 use App\Services\CommunityNews\CommunityNewsEmailService;
 use App\Services\CommunityNews\CommunityNewsImageService;
 use App\Services\GeminiService;
@@ -119,6 +120,43 @@ class CommunityNewsEmailServiceTest extends TestCase
         $this->locate($u4, 51.49, -0.13);
         $this->createMembership($u4, $g1);
 
+        // Dormant for over the digest inactivity threshold (182.5 days) -> no
+        // mail. The 2026-08-15 send went to every member however inactive
+        // (643,931 mails) and dead dormant mailboxes mass-deferred the relay.
+        $u5 = $this->createTestUser(['email_preferred' => 'u5@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $u5->lastaccess = now()->subDays(200);
+        $u5->save();
+        $this->locate($u5, 51.50, -0.12);
+        $this->createMembership($u5, $g1);
+
+        // Dormant but inside the threshold -> still mailed (the boundary's
+        // other side).
+        $u6 = $this->createTestUser(['email_preferred' => 'u6@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $u6->lastaccess = now()->subDays(100);
+        $u6->save();
+        $this->locate($u6, 51.50, -0.12);
+        $this->createMembership($u6, $g1);
+
+        // Asked for no email whatsoever (simplemail None) -> no mail. The
+        // hand-rolled activity check this gate replaced only looked at
+        // lastaccess, so 2,198 members who had turned all mail off were still
+        // getting Community News.
+        $u7 = $this->createTestUser([
+            'email_preferred' => 'u7@test.com',
+            'newslettersallowed' => 1,
+            'bouncing' => 0,
+            'settings' => ['simplemail' => User::SIMPLE_MAIL_NONE],
+        ]);
+        $this->locate($u7, 51.50, -0.12);
+        $this->createMembership($u7, $g1);
+
+        // On holiday -> no mail, as for every other mail we send.
+        $u8 = $this->createTestUser(['email_preferred' => 'u8@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $u8->onholidaytill = now()->addDays(7);
+        $u8->save();
+        $this->locate($u8, 51.50, -0.12);
+        $this->createMembership($u8, $g1);
+
         $area = CommunityNewsArea::create([
             'anchorgroupid' => min($g1->id, $g2->id), 'name' => 'Testville', 'intro' => 'A few nice things.',
             'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id, $g2->id], 'groupcount' => 2,
@@ -131,16 +169,72 @@ class CommunityNewsEmailServiceTest extends TestCase
         $result = $this->svc()->sendWeekly();
 
         $sent = Mail::sent(CommunityNewsMail::class);
-        $this->assertSame(2, $result['sent']);
-        $this->assertCount(2, $sent);
+        $this->assertSame(3, $result['sent']);
+        $this->assertCount(3, $sent);
         $this->assertCount(1, $sent->filter(fn ($m) => $m->userId === $u1->id)); // deduped
         $this->assertTrue($sent->contains(fn ($m) => $m->userId === $u4->id));
         $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u2->id)); // opted out
         $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u3->id)); // bouncing
+        $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u5->id)); // dormant >182.5d
+        $this->assertTrue($sent->contains(fn ($m) => $m->userId === $u6->id));  // dormant 100d, inside threshold
+        $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u7->id)); // wants no email at all
+        $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u8->id)); // on holiday
 
         // Bookkeeping: item marked emailed, area cadence stamped.
         $this->assertNotNull(CommunityNewsItem::where('areaid', $area->id)->first()->emailed_at);
         $this->assertNotNull($area->fresh()->lastemailed);
+    }
+
+    /**
+     * While a provider is refusing our mail we stop generating it, rather than
+     * rendering a weekly issue that can only sit in the spool. The count is
+     * what ModTools shows the member; the catch-up policy then drops it,
+     * because next week's issue beats a stale one.
+     */
+    public function test_skips_members_whose_provider_is_refusing_our_mail(): void
+    {
+        config(['freegle.mail.enabled_types' => 'CommunityNews']);
+
+        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
+        $this->catchment($g1);
+
+        $held = $this->createTestUser([
+            'email_preferred' => 'held@suppressed-example.com',
+            'newslettersallowed' => 1,
+            'bouncing' => 0,
+        ]);
+        $this->locate($held, 51.50, -0.12);
+        $this->createMembership($held, $g1);
+
+        DB::table('mail_suppressions')->insert([
+            'scope' => 'domain',
+            'value' => 'suppressed-example.com',
+            'reason' => '421 4.7.0 temporarily deferred',
+            'provider' => 'Example',
+            'deferred_since' => now()->subHour(),
+            'first_seen' => now(),
+            'last_seen' => now(),
+            'message_count' => 100,
+        ]);
+        app(\App\Services\Mail\MailSuppressionService::class)->flushCache();
+
+        $area = CommunityNewsArea::create([
+            'anchorgroupid' => $g1->id, 'name' => 'Testville', 'intro' => 'A few nice things.',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id], 'groupcount' => 1,
+        ]);
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'Repair Café', 'snippet' => 'Fix stuff.',
+            'url' => 'https://example.org/repair', 'source' => 'Library', 'researched_at' => now(),
+        ]);
+
+        $result = $this->svc()->sendWeekly();
+
+        $this->assertSame(0, $result['sent']);
+        Mail::assertNothingSent();
+        $this->assertDatabaseHas('mail_suppressed_counts', [
+            'userid' => $held->id,
+            'emailtype' => 'communitynews',
+        ]);
     }
 
     public function test_only_mails_members_their_home_group_covers(): void
@@ -389,6 +483,51 @@ class CommunityNewsEmailServiceTest extends TestCase
         $this->assertNull(CommunityNewsItem::where('title', 'Yesterday jumble sale')->first()->emailed_at);
     }
 
+    /**
+     * The research model omits event_date on most items — including ones whose
+     * own blurb names the day (the 2026-08-14 send mailed a food festival six
+     * days gone). When event_date is NULL, the item's TEXT is the backstop.
+     */
+    public function test_leaves_out_undated_items_whose_text_says_they_are_over(): void
+    {
+        config(['freegle.mail.enabled_types' => 'CommunityNews']);
+
+        $g = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
+        $this->catchment($g);
+        $u = $this->createTestUser(['email_preferred' => 'textdate@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $this->locate($u, 51.50, -0.12);
+        $this->createMembership($u, $g);
+
+        $area = CommunityNewsArea::create([
+            'anchorgroupid' => $g->id, 'name' => 'Testville', 'intro' => 'A few nice things.',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g->id], 'groupcount' => 1,
+        ]);
+
+        // No event_date, but the blurb names a day six days gone - must not go out.
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'Food festival',
+            'snippet' => 'On Saturday ' . now()->subDays(6)->format('j F Y') . ', the square fills with stalls.',
+            'url' => 'https://example.org/foodfest', 'source' => 'Council',
+            'researched_at' => now()->subDays(3),
+        ]);
+        // No event_date, blurb names a day still to come - must go out.
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'Family fun day',
+            'snippet' => 'On Saturday ' . now()->addDays(8)->format('j F Y') . ', the park hosts games and music.',
+            'url' => 'https://example.org/funday', 'source' => 'Parks',
+            'researched_at' => now()->subDays(3),
+        ]);
+
+        $this->svc()->sendWeekly();
+
+        $sent = Mail::sent(CommunityNewsMail::class);
+        $this->assertCount(1, $sent);
+        $titles = array_column($sent->first()->items, 'title');
+        $this->assertContains('Family fun day', $titles);
+        $this->assertNotContains('Food festival', $titles);
+        $this->assertNull(CommunityNewsItem::where('title', 'Food festival')->first()->emailed_at);
+    }
+
     /** Something on today is still worth telling people about - they can still go. */
     public function test_includes_an_event_happening_today(): void
     {
@@ -446,5 +585,66 @@ class CommunityNewsEmailServiceTest extends TestCase
         $sent = Mail::sent(CommunityNewsMail::class);
         $this->assertCount(1, $sent);
         $this->assertContains('New cycle path opens', array_column($sent->first()->items, 'title'));
+    }
+
+    /**
+     * Intros are stored on the area and reused for a week, so a mixed-language
+     * greeting written before the parse-time backstop existed (12 live Welsh
+     * areas as of 2026-08-17) would keep going out until re-research. The send
+     * path strips it too, so a stored "Shwmae, Wrecsam!" never reaches members.
+     */
+    public function test_strips_a_stored_welsh_greeting_intro_at_send_time(): void
+    {
+        config(['freegle.mail.enabled_types' => 'CommunityNews']);
+
+        $g = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
+        $this->catchment($g);
+        $u = $this->createTestUser(['email_preferred' => 'welsh@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $this->locate($u, 51.50, -0.12);
+        $this->createMembership($u, $g);
+
+        $area = CommunityNewsArea::create([
+            'anchorgroupid' => $g->id, 'name' => 'Testville',
+            'intro' => 'Shwmae, Testville! The balloons are inflating.',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g->id], 'groupcount' => 1,
+        ]);
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'T', 'snippet' => 'B',
+            'url' => 'https://example.org/x', 'source' => 'S', 'researched_at' => now(),
+        ]);
+
+        $this->svc()->sendWeekly();
+
+        $sent = Mail::sent(CommunityNewsMail::class);
+        $this->assertCount(1, $sent);
+        $this->assertSame('The balloons are inflating.', $sent->first()->intro);
+    }
+
+    /** A stored intro that is ONLY a greeting falls back to the stock line. */
+    public function test_greeting_only_stored_intro_falls_back_to_default(): void
+    {
+        config(['freegle.mail.enabled_types' => 'CommunityNews']);
+
+        $g = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
+        $this->catchment($g);
+        $u = $this->createTestUser(['email_preferred' => 'croeso@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $this->locate($u, 51.50, -0.12);
+        $this->createMembership($u, $g);
+
+        $area = CommunityNewsArea::create([
+            'anchorgroupid' => $g->id, 'name' => 'Testville',
+            'intro' => 'Croeso i mid August',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g->id], 'groupcount' => 1,
+        ]);
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'T', 'snippet' => 'B',
+            'url' => 'https://example.org/x', 'source' => 'S', 'researched_at' => now(),
+        ]);
+
+        $this->svc()->sendWeekly();
+
+        $sent = Mail::sent(CommunityNewsMail::class);
+        $this->assertCount(1, $sent);
+        $this->assertSame("Here's a little round-up of what's going on around Testville.", $sent->first()->intro);
     }
 }

@@ -667,4 +667,58 @@ class NotificationChaseUpServiceTest extends TestCase
             return $mail->hasTo($user2->email_preferred);
         });
     }
+
+    // -----------------------------------------------------------------------
+    // prepareForUser: the same rows the email would get, without sending
+    // -----------------------------------------------------------------------
+
+    public function test_prepare_for_user_returns_nothing_when_there_is_nothing_pending(): void
+    {
+        $user = $this->createTestUser(['lastaccess' => now()]);
+
+        $this->assertSame([], $this->service->prepareForUser($user));
+    }
+
+    public function test_prepare_for_user_returns_the_rows_the_email_renders(): void
+    {
+        $user = $this->createTestUser(['lastaccess' => now()]);
+        $sender = $this->createTestUser(['fullname' => 'Alice Example']);
+
+        $newsfeed = $this->createNewsfeedItem(['message' => 'Hello world post']);
+        $this->createNotification($user, $sender, [
+            'type'       => 'CommentOnYourPost',
+            'newsfeedid' => $newsfeed->id,
+        ]);
+
+        $prepared = $this->service->prepareForUser($user);
+
+        $this->assertCount(1, $prepared);
+        $this->assertSame('CommentOnYourPost', $prepared[0]['type']);
+        $this->assertNotEmpty($prepared[0]['fromname']);
+        // Every card shows an image, falling back to the Freegle logo.
+        $this->assertNotEmpty($prepared[0]['fromimage']);
+        $this->assertNotEmpty($prepared[0]['timestamp']);
+        $this->assertSame('Hello world post', $prepared[0]['newsfeed']['message']);
+    }
+
+    public function test_prepare_for_user_skips_excluded_types(): void
+    {
+        $user = $this->createTestUser(['lastaccess' => now()]);
+        $sender = $this->createTestUser();
+
+        $this->createNotification($user, $sender, ['type' => 'TryFeed']);
+
+        $this->assertSame([], $this->service->prepareForUser($user));
+    }
+
+    public function test_prepare_for_user_ignores_seen_and_mailed_notifications(): void
+    {
+        $user = $this->createTestUser(['lastaccess' => now()]);
+        $sender = $this->createTestUser();
+
+        $this->createNotification($user, $sender, ['seen' => 1]);
+        $this->createNotification($user, $sender, ['mailed' => 1]);
+
+        $this->assertSame([], $this->service->prepareForUser($user));
+    }
 }

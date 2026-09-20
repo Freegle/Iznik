@@ -104,8 +104,8 @@ import NoticeMessage from '~/components/NoticeMessage'
 import Api from '~/api'
 import SupportLink from '~/components/SupportLink'
 
-const ExternalLink = defineAsyncComponent(() =>
-  import('~/components/ExternalLink')
+const ExternalLink = defineAsyncComponent(
+  () => import('~/components/ExternalLink')
 )
 
 const route = useRoute()

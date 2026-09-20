@@ -188,7 +188,7 @@ describe('User2User — Freegle site (useChat.js)', () => {
       ).not.toBe(chatIcon)
     })
 
-    it("user1 (BELAL) message returns empty paththumb so GeneratedAvatar can render", () => {
+    it('user1 (BELAL) message returns empty paththumb so GeneratedAvatar can render', () => {
       expect(
         useChatProfileImage({
           messageUserid: 1,

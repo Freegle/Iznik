@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 const mockGroupStore = {
   get: vi.fn(),
@@ -99,14 +101,27 @@ describe('MessageList', () => {
       expect(true).toBe(true)
     })
 
-    it('passes showGiveFind prop to GroupHeader', () => {
-      // :show-give-find="showGiveFind"
+    it('passes showGiveAsk prop to GroupHeader', () => {
+      // :show-give-ask="showGiveAsk"
       expect(true).toBe(true)
     })
 
     it('has visually hidden heading for accessibility', () => {
       // h2.visually-hidden "Community Information"
       expect(true).toBe(true)
+    })
+
+    it('lets the header fold up for an established member', () => {
+      // The feed filtered to one community shows that community's header. After the first
+      // week of membership it should start as a compact bar, which GroupHeader only does
+      // when asked - the community's own page keeps the full header.
+      const src = readFileSync(
+        resolve(process.cwd(), 'components/MessageList.vue'),
+        'utf8'
+      )
+      const tag = src.match(/<GroupHeader[\s\S]*?\/>/)[0]
+      expect(tag).toMatch(/\bcollapsible\b/)
+      expect(tag).toMatch(/v-model:collapsed="groupHeaderCollapsed"/)
     })
   })
 
@@ -245,13 +260,24 @@ describe('MessageList', () => {
       // not auto-join them to a non-member group (Discourse 9733 / 9729).
       const myGroupIdSet = new Set([10])
       const store = {
-        1: { id: 1, fromuser: 5, subject: 'OFFER: Sofa', groups: [{ groupid: 20 }] },
-        2: { id: 2, fromuser: 5, subject: 'OFFER: Sofa', groups: [{ groupid: 10 }] },
+        1: {
+          id: 1,
+          fromuser: 5,
+          subject: 'OFFER: Sofa',
+          groups: [{ groupid: 20 }],
+        },
+        2: {
+          id: 2,
+          fromuser: 5,
+          subject: 'OFFER: Sofa',
+          groups: [{ groupid: 10 }],
+        },
       }
       const isOnMyGroup = (m) =>
-        !!m?.groups && m.groups.some((g) => myGroupIdSet.has(parseInt(g.groupid)))
+        !!m?.groups &&
+        m.groups.some((g) => myGroupIdSet.has(parseInt(g.groupid)))
 
-      let ret = []
+      const ret = []
       const dups = []
       ;[{ id: 1 }, { id: 2 }].forEach((m) => {
         const message = store[m.id]
@@ -279,13 +305,25 @@ describe('MessageList', () => {
       // The fix strips trailing (location) before building the dedup key so that
       // "OFFER: bike (Bethnal Green)" and "OFFER: bike (Bethel)" collapse to one.
       const store = {
-        1: { id: 1, fromuser: 5, type: 'Offer', subject: 'OFFER: bike (Bethnal Green)', groups: [{ groupid: 20 }] },
-        2: { id: 2, fromuser: 5, type: 'Offer', subject: 'OFFER: bike (Bethel)', groups: [{ groupid: 10 }] },
+        1: {
+          id: 1,
+          fromuser: 5,
+          type: 'Offer',
+          subject: 'OFFER: bike (Bethnal Green)',
+          groups: [{ groupid: 20 }],
+        },
+        2: {
+          id: 2,
+          fromuser: 5,
+          type: 'Offer',
+          subject: 'OFFER: bike (Bethel)',
+          groups: [{ groupid: 10 }],
+        },
       }
 
       const stripLocation = (s) => s.replace(/\s*\([^)]*\)\s*$/, '').trimEnd()
 
-      let ret = []
+      const ret = []
       const dups = []
       ;[{ id: 1 }, { id: 2 }].forEach((m) => {
         const message = store[m.id]

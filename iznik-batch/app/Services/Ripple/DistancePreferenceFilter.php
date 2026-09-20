@@ -86,14 +86,100 @@ class DistancePreferenceFilter
     }
 
     /**
+     * A member's drive-time budget in minutes, or 0 when they have none.
+     *
+     * Mirrors apiv2's resolveMaxMinutes (isochrone/message.go) exactly: only the
+     * member's own settings.browseMaxMinutes counts (there is deliberately NO band
+     * default for minutes — the band defaults are miles, resolved by
+     * maxDistanceMiles above), and anything absent/non-numeric/<= 0 means "no
+     * budget". The budget only ever applies WITHIN an active miles limit, because
+     * that is when the site applies it too (the browse filter skips every check
+     * when the distance slider is unlimited) — callers enforce that by consulting
+     * this only after maxDistanceMiles() came back limited.
+     */
+    public function maxMinutes(User $user): float
+    {
+        $settings = $user->settings;
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true) ?: [];
+        }
+        if (!is_array($settings)) {
+            return 0.0;
+        }
+
+        $value = $settings['browseMaxMinutes'] ?? null;
+
+        return is_numeric($value) && (float) $value > 0 ? (float) $value : 0.0;
+    }
+
+    /**
+     * The recipient's INBOUND verdict for one post, applying the SAME rule the
+     * site applies (iznik-nuxt3 roadMinuteVerdict + apiv2 countWithinBudget):
+     * when the member has a drive-minutes budget and the routing engine
+     * answered for this post, the minutes decide — in BOTH directions (a
+     * 30-minute post 8 crow miles away is out; a 20-minute post 14 crow miles
+     * away is in). Crow miles decide only when there is no budget or no road
+     * answer (null $driveMinutes: routing outage, unroutable point), which is
+     * the pre-minutes behaviour. Without this the same member's email and
+     * browse page disagreed about the same post.
+     *
+     * Boundaries are inclusive on both measures, matching passes() and the
+     * client. Own posts always pass, matching passes().
+     */
+    public function passesInbound(
+        float $distanceMiles,
+        ?float $driveMinutes,
+        float $maxDistanceMiles,
+        float $maxMinutes,
+        bool $isOwnPost
+    ): bool {
+        if ($isOwnPost || $maxDistanceMiles >= self::DISTANCE_UNLIMITED) {
+            return true;
+        }
+
+        if ($maxMinutes > 0 && $driveMinutes !== null) {
+            return $driveMinutes <= $maxMinutes;
+        }
+
+        return $distanceMiles <= $maxDistanceMiles;
+    }
+
+    /**
      * A member's OUTBOUND cap in miles: how far away other people may see the posts they
-     * write. Reads ONLY settings.browseMaxDistance - the key the member set themselves.
+     * write.
+     *
+     * Two keys, in priority order:
+     *   - settings.myPostsMaxDistance: the member's own answer to "how far away can people see
+     *     my posts", written only once they separate it from what they see.
+     *   - settings.browseMaxDistance: what they chose for what THEY see. Consulted as the
+     *     fallback because the two used to be one control, so a member who has never separated
+     *     them keeps exactly the behaviour they had before; separating them is precisely what
+     *     stops this key applying outbound.
      *
      * The band default (browseReachMaxDistance) is deliberately NOT consulted here. It says
      * how far this member will travel to collect, which is a different question from how far
      * their giveaway should travel to find a taker; applying it outbound would stop a city
      * member's posts leaving their ~4.8-mile band radius and undo the reason the ripple grows
      * to the ceiling at all.
+     *
+     * Absent, null, non-numeric or <= 0 all mean "this key holds no choice" and fall through to
+     * the next one; the sentinel means an explicit "no limit" and stops there.
+     *
+     * The null case is not hypothetical, it is the normal result of re-linking the two axes:
+     * PATCH /session replaces the settings blob wholesale, so the nulls the client sends are
+     * stored AS JSON null rather than removing the keys (verified on a live row). is_numeric(null)
+     * is false, so they read as unset - but that is load-bearing, not incidental.
+     *
+     * Non-positive falling THROUGH is a deliberate difference from the inbound maxDistanceMiles
+     * above, which collapses it to unlimited. The two have different fallbacks and so want
+     * different answers: inbound falls back to the density band default, where "0 means take the
+     * band" would silently narrow a member who had explicitly asked for no limit; outbound falls
+     * back to the member's own inbound choice, where a 0 can only be a derivation artefact - it
+     * cannot mean "show my posts to nobody" and it cannot mean "no limit" - so ignoring the key
+     * is the only sane reading.
+     *
+     * Must stay in step with iznik-server-go/utils/reachcap.go's authorCapMiles, which resolves
+     * the same two keys the same way in SQL.
      */
     public function authorMaxDistanceMiles(User $user): float
     {
@@ -101,17 +187,27 @@ class DistancePreferenceFilter
         if (is_string($settings)) {
             $settings = json_decode($settings, true) ?: [];
         }
-
-        $value = is_array($settings) ? ($settings['browseMaxDistance'] ?? null) : null;
-        if (!is_numeric($value)) {
+        if (!is_array($settings)) {
             return (float) self::DISTANCE_UNLIMITED;
         }
 
-        $value = (float) $value;
+        foreach (['myPostsMaxDistance', 'browseMaxDistance'] as $key) {
+            $value = $settings[$key] ?? null;
+            if (!is_numeric($value)) {
+                continue;
+            }
 
-        return $value <= 0 || $value >= self::DISTANCE_UNLIMITED
-            ? (float) self::DISTANCE_UNLIMITED
-            : $value;
+            $value = (float) $value;
+            if ($value <= 0) {
+                continue;
+            }
+
+            return $value >= self::DISTANCE_UNLIMITED
+                ? (float) self::DISTANCE_UNLIMITED
+                : $value;
+        }
+
+        return (float) self::DISTANCE_UNLIMITED;
     }
 
     /**

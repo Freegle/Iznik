@@ -51,9 +51,15 @@ vi.mock('~/components/InfiniteLoading', () => ({
     emits: ['infinite'],
   },
 }))
-vi.mock('~/components/SidebarRight', () => ({ default: { template: '<div />' } }))
-vi.mock('~/components/ChatMobileNavbar.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('~/components/ExternalDa.vue', () => ({ default: { template: '<div />' } }))
+vi.mock('~/components/SidebarRight', () => ({
+  default: { template: '<div />' },
+}))
+vi.mock('~/components/ChatMobileNavbar.vue', () => ({
+  default: { template: '<div />' },
+}))
+vi.mock('~/components/ExternalDa.vue', () => ({
+  default: { template: '<div />' },
+}))
 vi.mock('~/components/ChatListEntry.vue', () => ({
   default: {
     template: '<div class="chat-list-entry" />',
@@ -191,8 +197,22 @@ describe('bug #9690/9 - hide-all button must not appear on the hidden/blocked ch
   it('does not render the hide-all button when viewing hidden/blocked chats', async () => {
     mockChatStore.showClosed = true
     mockChatStore.list = [
-      { id: 1, status: 'Closed', latestmessage: 5, lastdate: '2026-01-01', name: 'Alice', unseen: 0 },
-      { id: 2, status: 'Blocked', latestmessage: 4, lastdate: '2026-01-01', name: 'Bob', unseen: 0 },
+      {
+        id: 1,
+        status: 'Closed',
+        latestmessage: 5,
+        lastdate: '2026-01-01',
+        name: 'Alice',
+        unseen: 0,
+      },
+      {
+        id: 2,
+        status: 'Blocked',
+        latestmessage: 4,
+        lastdate: '2026-01-01',
+        name: 'Bob',
+        unseen: 0,
+      },
     ]
 
     const wrapper = mountComponent()
@@ -203,7 +223,9 @@ describe('bug #9690/9 - hide-all button must not appear on the hidden/blocked ch
     page.vm.complete = true
     await nextTick()
 
-    const labels = wrapper.findAll('button.chat-action-btn').map((b) => b.text())
+    const labels = wrapper
+      .findAll('button.chat-action-btn')
+      .map((b) => b.text())
     expect(labels.some((t) => t.includes('Hide all chats'))).toBe(false)
     expect(labels.some((t) => t.includes('Delete all chats'))).toBe(false)
   })
@@ -211,8 +233,22 @@ describe('bug #9690/9 - hide-all button must not appear on the hidden/blocked ch
   it('still renders the "Hide all chats" button on the regular chats view', async () => {
     mockChatStore.showClosed = false
     mockChatStore.list = [
-      { id: 3, status: 'Active', latestmessage: 5, lastdate: '2026-01-01', name: 'Carol', unseen: 0 },
-      { id: 4, status: 'Active', latestmessage: 4, lastdate: '2026-01-01', name: 'Dave', unseen: 0 },
+      {
+        id: 3,
+        status: 'Active',
+        latestmessage: 5,
+        lastdate: '2026-01-01',
+        name: 'Carol',
+        unseen: 0,
+      },
+      {
+        id: 4,
+        status: 'Active',
+        latestmessage: 4,
+        lastdate: '2026-01-01',
+        name: 'Dave',
+        unseen: 0,
+      },
     ]
 
     const wrapper = mountComponent()
@@ -223,7 +259,9 @@ describe('bug #9690/9 - hide-all button must not appear on the hidden/blocked ch
     page.vm.complete = true
     await nextTick()
 
-    const labels = wrapper.findAll('button.chat-action-btn').map((b) => b.text())
+    const labels = wrapper
+      .findAll('button.chat-action-btn')
+      .map((b) => b.text())
     expect(labels.some((t) => t.includes('Hide all chats'))).toBe(true)
   })
 })

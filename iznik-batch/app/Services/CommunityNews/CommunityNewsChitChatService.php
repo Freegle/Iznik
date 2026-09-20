@@ -91,7 +91,12 @@ class CommunityNewsChitChatService
                 })
                 ->orderBy('id')
                 ->limit($perPost)
-                ->get();
+                ->get()
+                // Same backstop as the newsletter: event_date is usually
+                // omitted by the research model, so also drop items whose own
+                // text says the event is already over (see MentionedDates).
+                ->reject(fn ($i) => MentionedDates::visiblyOver($i, now()))
+                ->values();
 
             if ($items->isEmpty()) {
                 continue;

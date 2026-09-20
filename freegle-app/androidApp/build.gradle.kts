@@ -17,8 +17,9 @@ android {
 
         // API base URL - production V2 Go API
         buildConfigField("String", "API_BASE_URL", "\"https://api.ilovefreegle.org/apiv2\"")
-        // V1 PHP API (still needed for user creation/session management)
-        buildConfigField("String", "API_V1_BASE_URL", "\"https://fdapilive.ilovefreegle.org/api\"")
+        // V1-compatible API (still needed for user creation/session management).
+        // No longer PHP: served by the Go API's /api group alongside /apiv2.
+        buildConfigField("String", "API_V1_BASE_URL", "\"https://api.ilovefreegle.org/api\"")
     }
 
     buildFeatures {

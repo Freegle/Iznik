@@ -47,12 +47,16 @@ The app uses Capacitor to bridge web code with native device features. This sect
 
 ### Capacitor Framework
 
-The app uses Capacitor 7 to bridge web code with native functionality:
+The app uses Capacitor 8 to bridge web code with native functionality:
 
 - **App ID**: `org.ilovefreegle.direct`
 - **App Name**: Freegle
 - **Config File**: `capacitor.config.ts`
 - **Web Directory**: `.output/public` (from Nuxt static build)
+- **Minimum OS**: Android 8.0 (minSdk 26, `android/variables.gradle`); iOS 15.0
+  (`ios/App/Podfile` + pbxproj) — the iOS floor moved from 14.0 with Capacitor 8,
+  which requires iOS 15; existing installs on iOS 14 keep the last compatible
+  build but stop receiving updates
 
 ### Android Native Files
 
@@ -91,30 +95,35 @@ These features use native device capabilities not available in web browsers.
 
 The mobile app supports multiple authentication methods with native implementations:
 
-1. **Google Sign-In**
-   - Package: `@codetrix-studio/capacitor-google-auth`
+1. **Google Sign-In and Facebook Login**
+   - Package: `@capgo/capacitor-social-login`
    - Platform-specific client IDs for Android and iOS
-   - Native Google Sign-In UI
+   - Native sign-in UI; supports Facebook "Limited Login" on iOS
 
-2. **Facebook Login**
-   - Package: Custom Capacitor Social Login plugin
-   - Support for "Limited Login" on iOS
-   - Native Facebook authentication
+   **Facebook Limited Login returns no access token.** The plugin sends
+   `accessToken: null` and puts the JWT in `idToken`, so read `idToken` and
+   never reach through `accessToken`. `isLimitedLogin` in the response says
+   which kind of session it is: trust it rather than the platform, because
+   Facebook downgrades to limited login whenever App Tracking Transparency is
+   refused, whatever we asked for. The `fblimited` flag we post decides how the
+   server verifies the token, so it has to describe the token we actually read.
 
-3. **Apple Sign In**
-   - iOS only
+   The Facebook SDK version is pinned in `ios/App/Podfile`. The plugin's podspec
+   asks for `~> 18.0` and `Podfile.lock` is not in git, so without the pin every
+   iOS build picks up whatever 18.x is current that day, and sign-in can change
+   with no commit behind it. Bump the pin deliberately, and test Facebook
+   sign-in on a device when you do.
+
+2. **Apple Sign In**
+   - Package: `@capacitor-community/apple-sign-in` (iOS only)
    - Native Sign in with Apple integration
    - Identity token handling
-
-4. **Yahoo Login**
-   - Uses in-app browser (Cordova InAppBrowser)
-   - OAuth flow with native browser
 
 ### Push Notifications
 
 Custom implementation using Freegle's fork:
 
-- **Package**: `@freegle/capacitor-push-notifications-cap7`
+- **Package**: `@freegle/capacitor-push-notifications-cap8` (cap8 branch of the capacitor-push-notifications-cap7 repo, based on upstream 8.1.2)
 - **Features**:
   - Foreground and background push handling
   - Badge count management on home screen icon
@@ -175,6 +184,10 @@ Mobile-specific Stripe implementation:
    - Handle app links from external sources
    - One-click unsubscribe links
    - Push notification routing
+   - Tracked email links (`/e/d/r/...`): the universal-link association hands
+     the app the tracker's URL, not its destination, so `stores/mobile.js`
+     `resolveTrackedLink()` asks the API (`?format=json`, which also records
+     the click) and routes to the answer, falling back to `/`
 
 2. **Native Share**
    - Share posts using native share sheet
@@ -319,6 +332,14 @@ Several components have mobile-specific behavior:
 - **Google AdSense**: Modified for HTTPS enforcement
 - **Sentry**: Error reporting with device context
 - **Ad Behavior**: Some ads disabled or modified for mobile
+- **Ad slots in the app**: there is no cookie consent in the app, so no ad network runs.
+  Every slot (`components/ExternalDa.vue`, the app-without-cookies branch of
+  `visibilityChanged`) shows the WhatJobs listings instead (`JobsDaSlot`, which needs no
+  consent), with the donate banner filling the slot while there are no listings for the
+  member's location. There is no 31-second switch to another network, and supporters
+  (recent donors) see neither. Taking the jobs slot out of that branch is what left the
+  app showing only the donate banner from 2026-08-13 to 2026-09-13; a blank band means
+  the jobs slot reported nothing, and the fix belongs in what it reports.
 
 ### Status Bar
 
@@ -339,10 +360,10 @@ The mobile app requires specific Capacitor plugins and dependencies for native f
 
 ```json
 {
-  "@capacitor/core": "^7.x",
-  "@capacitor/cli": "^7.x",
-  "@capacitor/android": "^7.x",
-  "@capacitor/ios": "^7.x"
+  "@capacitor/core": "^8.x",
+  "@capacitor/cli": "^8.x",
+  "@capacitor/android": "^8.x",
+  "@capacitor/ios": "^8.x"
 }
 ```
 
@@ -630,6 +651,48 @@ The `GOOGLE_PLAY_JSON_KEY` environment variable is **CRITICAL** for:
 
 ---
 
+Google Play's technical-quality thresholds land in 2027 and both apps are in scope.
+
+<details>
+<summary><h2>Google Play Technical Quality (R8, Zero-Tap Sign-In)</h2></summary>
+
+Full write-up, including the measured numbers and the memory thresholds:
+[`docs/developers/reference/play-technical-quality.md`](../docs/developers/reference/play-technical-quality.md).
+
+### Release builds are minified (R8)
+
+`android/app/build.gradle` sets `minifyEnabled true` on the release build type, with
+`proguard-android-optimize.txt` (the plain `proguard-android.txt` carries `-dontoptimize`, which
+would leave Play's optimization metric at zero). Play requires >=25% shrinking, optimization and
+obfuscation from February 2027 for apps whose DEX exceeds 10MB: Freegle's was 40.4MB and
+ModTools' 14.9MB, both at 0%.
+
+Keep rules live in `android/app/proguard-rules.pro` and deliberately never name
+`org.ilovefreegle.direct`, because the ModTools build rewrites that package everywhere except
+that file.
+
+**R8 removes or renames whatever only reflection or JS reaches, so smoke-test on a device
+before a release goes out**: Google / Facebook / Apple sign-in, push and the home-screen badge,
+camera and share-into-app, and the Stripe donation flow. Native crash reports stay readable
+because the mapping file travels inside the AAB.
+
+### Sign-in survives a new device (Block Store)
+
+From April 2027 Play requires apps with sign-in to restore the session when someone moves to a
+new Android device. An integration with Block Store shipped by 30 September 2026 counts as
+compliant, and that is the route taken: the `persistent` token the app already holds goes into
+Block Store, which Android carries to the new device.
+
+- Native: `android/app/src/main/java/org/freegle/blockstore/BlockStorePlugin.java`, registered
+  in `MainActivity.onCreate` before `super.onCreate`.
+- Web layer: `composables/useSessionRestore.js`, called from `stores/auth.js` (`setAuth` saves,
+  `logout` clears, `adoptRestoredSession` reads) and from both boot paths.
+- Android only. iOS restores a session from the encrypted keychain backup already.
+
+</details>
+
+---
+
 Production builds are fully automated via CircleCI. Local builds are useful for testing.
 
 <details>
@@ -880,7 +943,6 @@ From `capacitor.config.ts` comments:
 
 - [ ] Status bar shows correctly on Android pre-A15, A15+ and iOS
 - [ ] Camera: take photo and select one or more photos
-- [ ] Yahoo login works
 - [ ] Google login works (Android & iOS)
 - [ ] Facebook login works (Android & iOS)
 - [ ] Apple login works (iOS only)

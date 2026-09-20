@@ -182,7 +182,7 @@ async function repost() {
     composeStore.setAttachmentsForMessage(0, message.attachments)
 
     const router = useRouter()
-    router.push(message.type === 'Offer' ? '/give' : '/find')
+    router.push(message.type === 'Offer' ? '/give' : '/ask')
   }
 }
 </script>

@@ -3,7 +3,9 @@ import { mount, flushPromises } from '@vue/test-utils'
 
 import ModSysAdminBrowseScroll from '~/modtools/components/ModSysAdminBrowseScroll.vue'
 
-const mockFetchScrollDepth = vi.fn().mockResolvedValue({ total: 0, positions: [] })
+const mockFetchScrollDepth = vi
+  .fn()
+  .mockResolvedValue({ total: 0, positions: [] })
 
 vi.mock('~/api', () => ({
   default: () => ({ browse: { fetchScrollDepth: mockFetchScrollDepth } }),
@@ -33,7 +35,14 @@ describe('ModSysAdminBrowseScroll', () => {
           'b-spinner': { template: '<span class="spinner" />' },
           'b-table': {
             template: '<table class="table" />',
-            props: ['items', 'fields', 'striped', 'hover', 'responsive', 'small'],
+            props: [
+              'items',
+              'fields',
+              'striped',
+              'hover',
+              'responsive',
+              'small',
+            ],
           },
           GChart: {
             template: '<div class="gchart" :data-type="type" />',
@@ -76,7 +85,9 @@ describe('ModSysAdminBrowseScroll', () => {
     })
 
     it('shows the chart once data is present', async () => {
-      const wrapper = await withPositions([{ position: 0, sessions_reaching: 10, pct: 100 }])
+      const wrapper = await withPositions([
+        { position: 0, sessions_reaching: 10, pct: 100 },
+      ])
       expect(wrapper.find('.gchart').exists()).toBe(true)
       expect(wrapper.find('.gchart').attributes('data-type')).toBe('LineChart')
     })

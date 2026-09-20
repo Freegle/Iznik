@@ -114,7 +114,9 @@
                 </span>
                 <span
                   v-if="milesaway"
-                  v-b-tooltip.bottom="DISTANCE_TOOLTIP"
+                  v-b-tooltip.bottom="
+                    milesIsRoad ? DISTANCE_TOOLTIP_ROAD : DISTANCE_TOOLTIP
+                  "
                   class="stat-chip"
                 >
                   <v-icon icon="map-marker-alt" class="stat-icon" />
@@ -270,6 +272,7 @@ import {
   LAST_SEEN_TOOLTIP,
   REPLY_TIME_TOOLTIP,
   DISTANCE_TOOLTIP,
+  DISTANCE_TOOLTIP_ROAD,
 } from '~/constants'
 
 // Don't use dynamic imports because it stops us being able to scroll to the bottom after render.
@@ -278,14 +281,14 @@ import { useRouter } from '#imports'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 
-const ChatBlockModal = defineAsyncComponent(() =>
-  import('~/components/ChatBlockModal')
+const ChatBlockModal = defineAsyncComponent(
+  () => import('~/components/ChatBlockModal')
 )
-const ChatHideModal = defineAsyncComponent(() =>
-  import('~/components/ChatHideModal')
+const ChatHideModal = defineAsyncComponent(
+  () => import('~/components/ChatHideModal')
 )
-const ChatReportModal = defineAsyncComponent(() =>
-  import('~/components/ChatReportModal')
+const ChatReportModal = defineAsyncComponent(
+  () => import('~/components/ChatReportModal')
 )
 
 const chatStore = useChatStore()
@@ -306,11 +309,13 @@ function resize() {
 // Pre-reserve sticky-ad height for non-donors so chatHolder doesn't shrink when the ad renders.
 const allowAd = computed(() => !recentDonor.value)
 
-const ChatNotVisible = defineAsyncComponent(() =>
-  import('~/components/ChatNotVisible.vue')
+const ChatNotVisible = defineAsyncComponent(
+  () => import('~/components/ChatNotVisible.vue')
 )
 
-const { chat, otheruser, milesaway, unseen } = await setupChat(props.id)
+const { chat, otheruser, milesaway, milesIsRoad, unseen } = await setupChat(
+  props.id
+)
 
 // Watch for changes in unseen messages count - when a new message comes in via background poll,
 // the chat's unseen count changes and we need to fetch the new messages to display them.

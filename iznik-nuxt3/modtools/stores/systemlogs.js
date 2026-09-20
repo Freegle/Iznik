@@ -2,8 +2,7 @@ import { defineStore } from 'pinia'
 import { prefetchSwaggerDocs } from '../composables/useSystemLogFormatter'
 import api from '~/api'
 
-export const useSystemLogsStore = defineStore({
-  id: 'systemlogs',
+export const useSystemLogsStore = defineStore('systemlogs', {
   state: () => ({
     loading: false,
     error: null,

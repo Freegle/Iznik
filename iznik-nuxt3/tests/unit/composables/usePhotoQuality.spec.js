@@ -7,13 +7,17 @@ import {
 
 // vi.hoisted ensures these vi.fn() instances are available when the vi.mock
 // factories execute (which are hoisted before const/let declarations).
-const { mockAnalyzeBlur, mockShouldWarnBlur, mockAnalyzeBrightness, mockShouldWarnBrightness } =
-  vi.hoisted(() => ({
-    mockAnalyzeBlur: vi.fn(),
-    mockShouldWarnBlur: vi.fn(),
-    mockAnalyzeBrightness: vi.fn(),
-    mockShouldWarnBrightness: vi.fn(),
-  }))
+const {
+  mockAnalyzeBlur,
+  mockShouldWarnBlur,
+  mockAnalyzeBrightness,
+  mockShouldWarnBrightness,
+} = vi.hoisted(() => ({
+  mockAnalyzeBlur: vi.fn(),
+  mockShouldWarnBlur: vi.fn(),
+  mockAnalyzeBrightness: vi.fn(),
+  mockShouldWarnBrightness: vi.fn(),
+}))
 
 // Mock the canvas-dependent detector modules so tests don't need a real DOM
 vi.mock('~/composables/useBlurDetector', () => ({
@@ -46,9 +50,17 @@ vi.mock('~/composables/useBrightnessDetector', () => ({
 
 // Default detector responses: a perfectly clean photo
 const CLEAN_BLUR_SCORE = 600
-const CLEAN_BLUR_WARNING = { warn: false, severity: 'none', message: 'Photo is clear' }
+const CLEAN_BLUR_WARNING = {
+  warn: false,
+  severity: 'none',
+  message: 'Photo is clear',
+}
 const CLEAN_BRIGHTNESS_RESULT = { average: 150, contrast: 50 }
-const CLEAN_BRIGHTNESS_WARNING = { warn: false, severity: 'none', message: 'Good lighting' }
+const CLEAN_BRIGHTNESS_WARNING = {
+  warn: false,
+  severity: 'none',
+  message: 'Good lighting',
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -64,7 +76,11 @@ beforeEach(() => {
 
 describe('getQualityMessage', () => {
   it('returns success message when there are no issues', () => {
-    const result = getQualityMessage({ hasIssues: false, overallSeverity: 'none', warnings: [] })
+    const result = getQualityMessage({
+      hasIssues: false,
+      overallSeverity: 'none',
+      warnings: [],
+    })
     expect(result.title).toBe('Photo looks good!')
     expect(result.severity).toBe('success')
     expect(result.message).toMatch(/good clarity/i)
@@ -86,7 +102,9 @@ describe('getQualityMessage', () => {
     const result = getQualityMessage({
       hasIssues: true,
       overallSeverity: 'warning',
-      warnings: [{ type: 'blur', message: 'This photo appears slightly blurry' }],
+      warnings: [
+        { type: 'blur', message: 'This photo appears slightly blurry' },
+      ],
     })
     expect(result.title).toBe('Photo could be better')
     expect(result.severity).toBe('warning')
@@ -193,42 +211,78 @@ describe('analyzePhotoQuality', () => {
   })
 
   it('includes both warnings when both detectors fire', async () => {
-    mockShouldWarnBlur.mockReturnValue({ warn: true, severity: 'warning', message: 'Slightly blurry' })
-    mockShouldWarnBrightness.mockReturnValue({ warn: true, severity: 'warning', message: 'Too dark' })
+    mockShouldWarnBlur.mockReturnValue({
+      warn: true,
+      severity: 'warning',
+      message: 'Slightly blurry',
+    })
+    mockShouldWarnBrightness.mockReturnValue({
+      warn: true,
+      severity: 'warning',
+      message: 'Too dark',
+    })
     const result = await analyzePhotoQuality('data:image/png;base64,abc')
     expect(result.warnings).toHaveLength(2)
     expect(result.warnings.map((w) => w.type)).toEqual(['blur', 'brightness'])
   })
 
   it('sets overallSeverity to "critical" when blur is critical', async () => {
-    mockShouldWarnBlur.mockReturnValue({ warn: true, severity: 'critical', message: 'Very blurry' })
+    mockShouldWarnBlur.mockReturnValue({
+      warn: true,
+      severity: 'critical',
+      message: 'Very blurry',
+    })
     const result = await analyzePhotoQuality('data:image/png;base64,abc')
     expect(result.overallSeverity).toBe('critical')
   })
 
   it('sets overallSeverity to "warning" when only warning-level blur fires', async () => {
-    mockShouldWarnBlur.mockReturnValue({ warn: true, severity: 'warning', message: 'Slightly blurry' })
+    mockShouldWarnBlur.mockReturnValue({
+      warn: true,
+      severity: 'warning',
+      message: 'Slightly blurry',
+    })
     const result = await analyzePhotoQuality('data:image/png;base64,abc')
     expect(result.overallSeverity).toBe('warning')
   })
 
   it('critical blur overrides warning-level brightness for overallSeverity', async () => {
-    mockShouldWarnBlur.mockReturnValue({ warn: true, severity: 'critical', message: 'Very blurry' })
-    mockShouldWarnBrightness.mockReturnValue({ warn: true, severity: 'warning', message: 'Too dark' })
+    mockShouldWarnBlur.mockReturnValue({
+      warn: true,
+      severity: 'critical',
+      message: 'Very blurry',
+    })
+    mockShouldWarnBrightness.mockReturnValue({
+      warn: true,
+      severity: 'warning',
+      message: 'Too dark',
+    })
     const result = await analyzePhotoQuality('data:image/png;base64,abc')
     expect(result.overallSeverity).toBe('critical')
   })
 
   it('critical brightness overrides warning-level blur for overallSeverity', async () => {
-    mockShouldWarnBlur.mockReturnValue({ warn: true, severity: 'warning', message: 'Slightly blurry' })
-    mockShouldWarnBrightness.mockReturnValue({ warn: true, severity: 'critical', message: 'Extremely dark' })
+    mockShouldWarnBlur.mockReturnValue({
+      warn: true,
+      severity: 'warning',
+      message: 'Slightly blurry',
+    })
+    mockShouldWarnBrightness.mockReturnValue({
+      warn: true,
+      severity: 'critical',
+      message: 'Extremely dark',
+    })
     const result = await analyzePhotoQuality('data:image/png;base64,abc')
     expect(result.overallSeverity).toBe('critical')
   })
 
   it('includes blur score and warning info in details.blur', async () => {
     mockAnalyzeBlur.mockResolvedValue(42)
-    mockShouldWarnBlur.mockReturnValue({ warn: true, severity: 'critical', message: 'Very blurry' })
+    mockShouldWarnBlur.mockReturnValue({
+      warn: true,
+      severity: 'critical',
+      message: 'Very blurry',
+    })
     const result = await analyzePhotoQuality('data:image/png;base64,abc')
     expect(result.details.blur.score).toBe(42)
     expect(result.details.blur.warn).toBe(true)
@@ -256,7 +310,9 @@ describe('analyzePhotoQuality', () => {
   it('does not throw when analysis fails — caller can always proceed', async () => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     mockAnalyzeBrightness.mockRejectedValue(new Error('DOM error'))
-    await expect(analyzePhotoQuality('data:image/png;base64,abc')).resolves.toBeDefined()
+    await expect(
+      analyzePhotoQuality('data:image/png;base64,abc')
+    ).resolves.toBeDefined()
     consoleSpy.mockRestore()
   })
 })

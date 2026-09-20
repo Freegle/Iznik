@@ -104,9 +104,8 @@ useHead(
   )
 )
 
-const { initialPostcode, postcodeValid, noGroups, closed, group } = await setup(
-  'Offer'
-)
+const { initialPostcode, postcodeValid, noGroups, closed, group } =
+  await setup('Offer')
 
 const composeStore = useComposeStore()
 const postText = computed(() => {

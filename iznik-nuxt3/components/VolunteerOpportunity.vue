@@ -12,30 +12,25 @@
     </component>
 
     <div class="volop-card__body">
-      <div
-        v-if="mine && !renewed && !summary"
-        class="volop-card__owner-actions"
-      >
-        <notice-message v-if="warning" variant="warning">
-          <span v-if="volunteering.expired">
-            We've stopped showing this opportunity, but you can reactivate it.
-          </span>
-          <span v-else>
-            We'll stop showing this opportunity soon unless you tell us it's
-            still active. Please click to let us know.
-          </span>
+      <div v-if="mine && !summary" class="volop-card__owner-actions">
+        <notice-message v-if="justRenewed" variant="primary">
+          Thanks, we've confirmed this opportunity is still active. We'll check
+          with you again on {{ nextCheckDate }}.
         </notice-message>
-        <notice-message v-else>
-          <span v-if="volunteering.expired">
-            We've stopped showing this opportunity, but you can reactivate it.
-          </span>
-          <span v-else>
-            You created this opportunity. Please click to let us know if it's
-            still active.
-          </span>
+        <notice-message v-else-if="volunteering.expired" variant="warning">
+          We've stopped showing this opportunity, but you can reactivate it.
         </notice-message>
+        <notice-message v-else-if="confirmDue" variant="warning">
+          We'll stop showing this opportunity on {{ expiryDate }} unless you
+          tell us it's still active. Please click to let us know.
+        </notice-message>
+        <notice-message v-else-if="dateless">
+          You created this opportunity, and it's active. We'll check with you on
+          {{ nextCheckDate }} that it's still needed.
+        </notice-message>
+        <notice-message v-else> You created this opportunity. </notice-message>
         <div class="volop-card__owner-buttons">
-          <b-button variant="primary" @click="renew">
+          <b-button v-if="canConfirm" variant="primary" @click="renew">
             <v-icon icon="check" /> Yes, it's still active
           </b-button>
           <b-button variant="secondary" @click="expire">
@@ -85,15 +80,6 @@
             :modifiers="volunteering.image.externalmods"
             alt="Volunteering Opportunity Photo"
           />
-          <NuxtPicture
-            v-else-if="volunteering?.image?.externaluid"
-            fit="cover"
-            format="webp"
-            provider="uploadcare"
-            :src="volunteering.image.externaluid"
-            :modifiers="volunteering.image.externalmods"
-            alt="Volunteering Opportunity Photo"
-          />
           <b-img v-else lazy :src="volunteering.image.path" />
         </div>
       </div>
@@ -140,15 +126,6 @@
             :modifiers="volunteering.image.externalmods"
             alt="Volunteering Opportunity Photo"
           />
-          <NuxtPicture
-            v-else-if="volunteering?.image?.externaluid"
-            fit="cover"
-            format="webp"
-            provider="uploadcare"
-            :src="volunteering.image.externaluid"
-            :modifiers="volunteering.image.externalmods"
-            alt="Volunteering Opportunity Photo"
-          />
           <b-img v-else lazy :src="volunteering.image.path" />
         </div>
       </div>
@@ -170,9 +147,10 @@ import { useGroupStore } from '~/stores/group'
 import { useAuthStore } from '~/stores/auth'
 import ReadMore from '~/components/ReadMore'
 import { twem } from '~/composables/useTwem'
+import { dateonly } from '~/composables/useTimeFormat'
 
-const VolunteerOpportunityModal = defineAsyncComponent(() =>
-  import('./VolunteerOpportunityModal')
+const VolunteerOpportunityModal = defineAsyncComponent(
+  () => import('./VolunteerOpportunityModal')
 )
 
 const props = defineProps({
@@ -208,7 +186,14 @@ const groupStore = useGroupStore()
 const authStore = useAuthStore()
 const myid = computed(() => authStore.user?.id)
 
-const renewed = ref(false)
+// Mirrors App\Services\VolunteeringMaintenanceService in iznik-batch, which emails the
+// owner to ask at ASK_AGE days and expires the opportunity at EXPIRE_AGE days. Keep in
+// step with those constants, or we'll promise the owner a date we don't honour.
+const ASK_AGE_DAYS = 24
+const EXPIRE_AGE_DAYS = 31
+const DAY_MS = 24 * 60 * 60 * 1000
+
+const justRenewed = ref(false)
 const showModal = ref(false)
 
 // Initialize data from props
@@ -242,20 +227,6 @@ const volunteering = computed(() => {
   return null
 })
 
-// eslint-disable-next-line no-unused-vars
-const groups = computed(() => {
-  const ret = []
-  volunteering.value?.groups?.forEach((id) => {
-    const group = groupStore?.get(id)
-
-    if (group) {
-      ret.push(group)
-    }
-  })
-
-  return ret
-})
-
 const user = computed(() => {
   return userStore?.byId(volunteering.value?.userid)
 })
@@ -267,21 +238,44 @@ const description = computed(() => {
   return desc
 })
 
-const warning = computed(() => {
-  const added = new Date(volunteering.value?.added).getTime()
-  const renewed = new Date(volunteering.value?.renewed).getTime()
-  const now = Date.now()
+// Only dateless opportunities run on the renewal clock. Ones with dates expire when
+// their last date passes, so asking their owner to confirm would be meaningless.
+const dateless = computed(() => !volunteering.value?.dates?.length)
 
-  let warn = false
+// The clock restarts on each renewal, and runs from creation until the first one.
+const renewalClockStart = computed(() => {
+  const when = new Date(
+    volunteering.value?.renewed || volunteering.value?.added
+  ).getTime()
 
-  if (renewed) {
-    warn = now - renewed > 31 * 24 * 60 * 60 * 1000
-  } else {
-    warn = now - added > 31 * 24 * 60 * 60 * 1000
+  return isNaN(when) ? null : when
+})
+
+const confirmDue = computed(() => {
+  if (!dateless.value || renewalClockStart.value === null) {
+    return false
   }
 
-  return warn
+  return Date.now() - renewalClockStart.value >= ASK_AGE_DAYS * DAY_MS
 })
+
+const nextCheckDate = computed(() =>
+  renewalClockStart.value === null
+    ? null
+    : dateonly(renewalClockStart.value + ASK_AGE_DAYS * DAY_MS)
+)
+
+const expiryDate = computed(() =>
+  renewalClockStart.value === null
+    ? null
+    : dateonly(renewalClockStart.value + EXPIRE_AGE_DAYS * DAY_MS)
+)
+
+// Nothing to confirm unless we're actually asking - offering the button when the
+// opportunity is already current is what made renewing look like it did nothing.
+const canConfirm = computed(
+  () => !justRenewed.value && (confirmDue.value || volunteering.value?.expired)
+)
 
 const mine = computed(() => {
   return user.value?.id === myid.value
@@ -294,11 +288,12 @@ function showOpportunityModal() {
 
 async function renew() {
   await volunteeringStore.renew(volunteering.value.id)
-  renewed.value = true
+  justRenewed.value = true
 }
 
-function expire() {
-  volunteeringStore.expire(volunteering.value.id)
+async function expire() {
+  justRenewed.value = false
+  await volunteeringStore.expire(volunteering.value.id)
 }
 </script>
 <style scoped lang="scss">

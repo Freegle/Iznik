@@ -30,13 +30,21 @@ class FixTNNamesCommand extends Command
             $fixed  = 0;
             $skipped = 0;
 
-            // TN emails have the format: firstname-groupid@trashnothing.com.
-            // The backwards column stores strrev(email), so TN rows begin with the reversed domain.
-            $tnBackwardsPrefix = strrev(config('freegle.mail.trashnothing_domain')) . '%';
+            // TN emails have the format: firstname-groupid@user.trashnothing.com.
+            //
+            // Matched on the address, not on backwards. That column does not hold one
+            // thing: its definition is REVERSE(canon), which drops the -gNNNN suffix and
+            // the domain dots, but some rows hold REVERSE(email) and some hold NULL. A
+            // prefix on it reached 20.5% of Trash Nothing members and silently skipped
+            // the rest. See .claude/rules/mail-and-data.md.
+            // Both shapes are live: the per-group aliases are name-gNNNN@user.trashnothing.com,
+            // and older rows sit directly on the bare domain. The reversed prefix this
+            // replaced matched both, so the address pattern has to as well.
+            $tnAddressSuffix = '%@%' . config('freegle.mail.trashnothing_domain');
 
             $rows = DB::table('users')
                 ->join('users_emails', 'users.id', '=', 'users_emails.userid')
-                ->where('users_emails.backwards', 'LIKE', $tnBackwardsPrefix)
+                ->where('users_emails.email', 'LIKE', $tnAddressSuffix)
                 ->whereNull('users.firstname')
                 ->whereNull('users.lastname')
                 ->where(function ($q) {

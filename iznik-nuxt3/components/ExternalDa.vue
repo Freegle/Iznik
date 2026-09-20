@@ -17,12 +17,42 @@
         class="d-flex w-100 justify-content-md-around"
         :style="maxWidth ? `max-width: ${maxWidth}` : ''"
       >
-        <!-- The donate banner, and ONLY the donate banner. This block is reached from a
-             single place: the app without cookies, which cannot run a real ad at all, so a
-             banner here is genuine content rather than something filling a hole. Routing
-             failed ad loads through it instead (8b8b18176) is what reserved 123px for
-             nothing when the jobs list was also empty. -->
-        <nuxt-link to="/adsoff" style="display: block; max-width: 100%">
+        <!-- Reached from a single place: the app without cookies, which cannot run a real
+             ad at all. Job listings need no cookie consent, so the slot carries them here
+             just as it does on the web, and the donate banner stands in only while the
+             jobs slot has nothing to draw for this member's location. That is honest
+             because JobsDaSlot reports what it actually rendered, so the two can never
+             both be missing.
+
+             d46acf9cd (2026-08-13) took the jobs slot out of this block to cure a blank
+             123px band. The band was blank because the slot's list never loaded in the
+             app (lat/lng read once at setup, fixed in the same batch), not because jobs
+             do not belong in the app - and from then on the app showed only the banner,
+             with dozens of listings a mile or two from the member who reported it.
+             Routing FAILED web ad loads through here (8b8b18176) stays wrong and is not
+             restored: on the web, no ad means the band collapses.
+
+             No borednow hand-off: on the web that switches the slot to the ad network
+             after ~31s, and in the app there is no network to switch to. -->
+        <JobsDaSlot
+          v-if="jobs"
+          :min-width="minWidth"
+          :max-width="maxWidth"
+          :min-height="minHeight"
+          :max-height="maxHeight"
+          :hide-header="hideJobsHeader"
+          :list-only="listOnly"
+          :placement="placement"
+          :class="{
+            'text-center': maxWidth === '100vw',
+          }"
+          @rendered="fallbackJobsRendered"
+        />
+        <nuxt-link
+          v-if="!fallbackJobsShowing"
+          to="/adsoff"
+          style="display: block; max-width: 100%"
+        >
           <img
             src="/donate/SupportFreegle_970x250px_20May20215.png"
             alt="Please donate to help keep Freegle running"
@@ -191,6 +221,15 @@ let tcDataRetry = 0
 let visibleAndScriptsLoadedTimer = null
 const isVisible = ref(false)
 const fallbackAdVisible = ref(false)
+// Whether the jobs slot inside the app fallback has drawn anything. JobsDaSlot reports
+// false on mount (its list arrives asynchronously) and true once it has jobs, so the
+// donate banner fills the band first, gives way to the jobs when they land, and comes
+// back if the member moves somewhere with none.
+const fallbackJobsShowing = ref(false)
+
+function fallbackJobsRendered(rendered) {
+  fallbackJobsShowing.value = rendered
+}
 let firstBecomeVisible = false
 
 function visibilityChanged(visible) {
@@ -200,7 +239,7 @@ function visibilityChanged(visible) {
   // Check the status here rather than on component load, as it might not be available yet.
   visibleAndScriptsLoadedTimer = null
 
-  if (process.client) {
+  if (import.meta.client) {
     const runtimeConfig = useRuntimeConfig()
 
     if (
@@ -340,7 +379,9 @@ async function checkStillVisible() {
       .toLowerCase()
     const emailDomain = myEmail ? myEmail.split('@').pop().toLowerCase() : ''
     const isSystemAccount = Boolean(
-      host && emailDomain && (emailDomain === host || emailDomain.endsWith('.' + host))
+      host &&
+      emailDomain &&
+      (emailDomain === host || emailDomain.endsWith('.' + host))
     )
 
     if (isSystemAccount) {

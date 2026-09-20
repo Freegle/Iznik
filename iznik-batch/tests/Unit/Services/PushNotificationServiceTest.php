@@ -748,6 +748,253 @@ class PushNotificationServiceTest extends TestCase
         $this->assertArrayNotHasKey('notification', $cfg);
     }
 
+    /**
+     * A mod of several communities must not get the same banner once per community.
+     *
+     * ModTools pushes are queued per GROUP but the payload is per USER - the aggregate
+     * work summary across every community they moderate. On prod 2026-08-23 a mod of
+     * three neighbouring London communities had 47 push tasks fire at 33 distinct
+     * instants, several of them 2-3 at a time for a single crossposted post, and each
+     * one landed as its own banner and beep (Discourse 9808/744).
+     */
+    public function test_notify_does_not_repeat_an_identical_modtools_push(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createPendingMessage($group);
+        $this->registerModToolsDevice($mod->id, 'tok-dupe');
+        $fake = $this->fakeMessaging();
+
+        $first = $this->service->notify($mod->id, true);
+        $second = $this->service->notify($mod->id, true);
+
+        $this->assertSame(1, $first, 'First push must be sent');
+        $this->assertSame(0, $second, 'Second identical push is the per-group fan-out, not new work');
+        $this->assertCount(1, $fake->sent, 'Only one FCM message may reach the device');
+    }
+
+    /**
+     * Suppression is on the payload, not the clock: work that changes the count still
+     * gets its banner, immediately.
+     */
+    public function test_notify_sends_again_when_the_work_changes(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createPendingMessage($group);
+        $this->registerModToolsDevice($mod->id, 'tok-changed');
+        $fake = $this->fakeMessaging();
+
+        $this->service->notify($mod->id, true);
+        $this->createPendingMessage($group);
+        $second = $this->service->notify($mod->id, true);
+
+        $this->assertSame(1, $second, 'A different pending count must still be pushed');
+        $this->assertCount(2, $fake->sent);
+    }
+
+    /**
+     * Once the window has passed, an identical summary is a fresh reminder rather than
+     * a duplicate of one already on the lock screen, so it goes out again.
+     */
+    public function test_notify_sends_again_once_the_duplicate_window_has_passed(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createPendingMessage($group);
+        $this->registerModToolsDevice($mod->id, 'tok-window');
+        $fake = $this->fakeMessaging();
+
+        $this->service->notify($mod->id, true);
+        $this->travel(10)->minutes();
+        $second = $this->service->notify($mod->id, true);
+
+        $this->assertSame(1, $second, 'Beyond the duplicate window the summary is sent again');
+        $this->assertCount(2, $fake->sent);
+    }
+
+    /**
+     * Every device of the mod's is deduplicated independently, so a second registration
+     * does not resurrect the duplicate banner.
+     */
+    public function test_notify_deduplicates_each_device_separately(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createPendingMessage($group);
+        $this->registerModToolsDevice($mod->id, 'tok-phone');
+        $this->registerModToolsDevice($mod->id, 'tok-tablet');
+        $fake = $this->fakeMessaging();
+
+        $first = $this->service->notify($mod->id, true);
+        $second = $this->service->notify($mod->id, true);
+
+        $this->assertSame(2, $first, 'Each registered device gets the first push');
+        $this->assertSame(0, $second, 'Neither device gets the duplicate');
+        $this->assertCount(2, $fake->sent);
+    }
+
+    /**
+     * iOS must replace the previous ModTools banner rather than stack another one.
+     * Android already does this via notification.tag; iOS needs apns-collapse-id, whose
+     * absence is why the fan-out showed up as three banners and beeps at once.
+     */
+    public function test_buildApnsConfig_modtools_collapses_to_one_banner(): void
+    {
+        $payload = [
+            'title' => '2 pending messages',
+            'message' => 'Open ModTools to review',
+            'channel_id' => 'modtools',
+            'count' => '2',
+        ];
+
+        $cfg = $this->invokeBuildApnsConfig(123, $payload);
+
+        $this->assertSame('modtools-123', $cfg['headers']['apns-collapse-id'],
+            'ModTools pushes must collapse onto the same banner, matching the Android tag');
+        $this->assertSame('modtools', $cfg['payload']['aps']['thread-id']);
+        $this->assertSame(2, $cfg['payload']['aps']['badge']);
+        $this->assertSame('10', $cfg['headers']['apns-priority']);
+    }
+
+    /**
+     * The silent badge-clear push has no banner to collapse onto.
+     */
+    public function test_buildApnsConfig_zero_count_modtools_does_not_collapse(): void
+    {
+        $payload = [
+            'title' => '',
+            'message' => '',
+            'channel_id' => 'modtools',
+            'count' => '0',
+        ];
+
+        $cfg = $this->invokeBuildApnsConfig(123, $payload);
+
+        $this->assertArrayNotHasKey('apns-collapse-id', $cfg['headers']);
+        $this->assertSame(0, $cfg['payload']['aps']['badge']);
+    }
+
+    /**
+     * Chat and new-post pushes are about a specific chat or post: collapsing them would
+     * replace an unread one with the next and lose it.
+     */
+    public function test_buildApnsConfig_non_modtools_pushes_never_collapse(): void
+    {
+        $payload = [
+            'title' => 'New chat message',
+            'message' => 'Hello',
+            'channel_id' => 'chat_messages',
+            'count' => '1',
+        ];
+
+        $cfg = $this->invokeBuildApnsConfig(123, $payload);
+
+        $this->assertArrayNotHasKey('apns-collapse-id', $cfg['headers']);
+        $this->assertArrayNotHasKey('thread-id', $cfg['payload']['aps']);
+    }
+
+    /**
+     * The NSE flag the rich daily-posts notification depends on must survive the
+     * extraction of this config out of sendFcm().
+     */
+    public function test_buildApnsConfig_new_posts_keeps_mutable_content(): void
+    {
+        $payload = [
+            'title' => '5 new posts near you',
+            'message' => 'Have a look',
+            'category' => PushNotificationService::CATEGORY_NEW_POSTS,
+            'count' => '5',
+        ];
+
+        $cfg = $this->invokeBuildApnsConfig(123, $payload);
+
+        $this->assertSame(1, $cfg['payload']['aps']['mutable-content'],
+            'NEW_POSTS must still wake the notification service extension');
+    }
+
+    /**
+     * Give the service a messaging double that records what it was asked to send.
+     */
+    private function fakeMessaging(): object
+    {
+        $fake = new class {
+            public array $sent = [];
+
+            public function validate($message): void {}
+
+            public function send($message): void
+            {
+                $this->sent[] = $message;
+            }
+        };
+
+        $prop = new \ReflectionProperty($this->service, 'messaging');
+        $prop->setAccessible(true);
+        $prop->setValue($this->service, $fake);
+
+        return $fake;
+    }
+
+    /**
+     * Register a ModTools device and return its subscription.
+     *
+     * The token is unique per call because the duplicate-suppression state lives in the
+     * cache, which outlives a single test run - a fixed token would let one run's entry
+     * suppress the next run's first push.
+     */
+    private function registerModToolsDevice(int $userId, string $label): string
+    {
+        $subscription = $label.'-'.uniqid('', true);
+
+        DB::table('users_push_notifications')->insert([
+            'userid' => $userId,
+            'type' => 'FCMIOS',
+            'subscription' => $subscription,
+            'apptype' => 'ModTools',
+            'added' => now(),
+            'lastsent' => null,
+        ]);
+
+        return $subscription;
+    }
+
+    private function createPendingMessage(Group $group): Message
+    {
+        $sender = $this->createTestUser();
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Test (Location)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        return $message;
+    }
+
+    private function invokeBuildApnsConfig(int $userId, array $payload): array
+    {
+        $method = new \ReflectionMethod($this->service, 'buildApnsConfig');
+        $method->setAccessible(true);
+        return $method->invoke($this->service, $userId, $payload);
+    }
+
     private function invokeBuildAndroidFcmMessage(string $token, array $payload, bool $forceVisible): array
     {
         $method = new \ReflectionMethod($this->service, 'buildAndroidFcmMessage');

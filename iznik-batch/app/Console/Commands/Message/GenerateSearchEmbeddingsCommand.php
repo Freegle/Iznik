@@ -4,6 +4,7 @@ namespace App\Console\Commands\Message;
 
 use App\Services\EmbeddingService;
 use App\Traits\GracefulShutdown;
+use App\Traits\SingleInstanceLock;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -23,6 +24,7 @@ use Illuminate\Support\Facades\Log;
 class GenerateSearchEmbeddingsCommand extends Command
 {
     use GracefulShutdown;
+    use SingleInstanceLock;
 
     protected $signature = 'embeddings:searches
                             {--backfill : Process every saved search without a current embedding}
@@ -32,6 +34,14 @@ class GenerateSearchEmbeddingsCommand extends Command
     protected $description = 'Generate vector embeddings for saved search terms';
 
     public function handle(EmbeddingService $service): int
+    {
+        // Same spawn-an-embedder cost and the same overlap hole as
+        // embeddings:generate (see SingleInstanceLock). TTL sized for a
+        // --backfill run, which shares the lock because it does the same work.
+        return $this->runSingleInstance('embeddings:searches:run', 3600, fn (): int => $this->runGuarded($service));
+    }
+
+    private function runGuarded(EmbeddingService $service): int
     {
         $this->registerShutdownHandlers();
 

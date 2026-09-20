@@ -37,7 +37,10 @@
           />
           <v-icon v-else icon="image" class="biedit__nophoto" />
         </span>
-        <span class="biedit__name" :class="{ 'biedit__name--off': !picks[item.id].checked }">
+        <span
+          class="biedit__name"
+          :class="{ 'biedit__name--off': !picks[item.id].checked }"
+        >
           {{ item.name }}
         </span>
         <b-form-select
@@ -108,7 +111,9 @@ const theirName = computed(() => {
 // or, when the offerer is viewing, the entry for that user in the full list.
 function interestFor(item) {
   if (editingOwn.value) return item.yourinterest || null
-  return (item.interest || []).find((i) => i.userid === props.interestuserid) || null
+  return (
+    (item.interest || []).find((i) => i.userid === props.interestuserid) || null
+  )
 }
 
 function stateLabel(state) {

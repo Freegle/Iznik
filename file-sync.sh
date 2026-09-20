@@ -94,7 +94,7 @@ _compute_container_info() {
             targets="$targets"$'\n'"${CN}-modtools-dev-live /app/${relative_path#iznik-nuxt3/} ModTools-Dev-Live"
         fi
         GCI_RESULT="$targets"
-    elif [[ "$relative_path" == iznik-nuxt3/plugins/* || "$relative_path" == iznik-nuxt3/composables/* || "$relative_path" == iznik-nuxt3/stores/* || "$relative_path" == iznik-nuxt3/utils/* || "$relative_path" == iznik-nuxt3/components/* || "$relative_path" == iznik-nuxt3/assets/* || "$relative_path" == iznik-nuxt3/pages/* || "$relative_path" == iznik-nuxt3/layouts/* || "$relative_path" == iznik-nuxt3/middleware/* || "$relative_path" == iznik-nuxt3/api/* || "$relative_path" == iznik-nuxt3/server/* ]]; then
+    elif [[ "$relative_path" == iznik-nuxt3/plugins/* || "$relative_path" == iznik-nuxt3/composables/* || "$relative_path" == iznik-nuxt3/stores/* || "$relative_path" == iznik-nuxt3/utils/* || "$relative_path" == iznik-nuxt3/components/* || "$relative_path" == iznik-nuxt3/assets/* || "$relative_path" == iznik-nuxt3/pages/* || "$relative_path" == iznik-nuxt3/layouts/* || "$relative_path" == iznik-nuxt3/middleware/* || "$relative_path" == iznik-nuxt3/api/* || "$relative_path" == iznik-nuxt3/server/* || "$relative_path" == iznik-nuxt3/public/* || "$relative_path" == iznik-nuxt3/nuxt.config.ts || "$relative_path" == iznik-nuxt3/constants.js ]]; then
         # Shared code used by both Freegle and ModTools - sync to all containers.
         # assets/ is here rather than in the generic iznik-nuxt3/* branch below because that
         # branch skips modtools-dev-local, which is where vitest runs: a unit test that reads
@@ -111,9 +111,22 @@ _compute_container_info() {
         # added with the never-settling-await fix (#1317) failed against a BAKED BaseAPI.js
         # that predated the warn() calls they assert - a false RED that reads exactly like a
         # real regression. The same gap hides false GREENs, which is worse.
-        # When adding a top-level source directory that unit specs import, add it here:
+        # public/ and nuxt.config.ts are here because a spec can assert on config
+        # rather than import it: tests/unit/middleware/ask.global.spec.js reads
+        # public/_redirects and nuxt.config.ts off disk to check the /find -> /ask
+        # redirect is wired up in production too. Without them the vitest runner
+        # reads the copy baked into the image and reports a stale answer.
+        # constants.js is a top-level FILE, not a directory, which is how it was missed:
+        # it fell through to the generic branch below, which never targets
+        # modtools-dev-local. 36 source files and the unit specs import ~/constants, so
+        # every new export read as undefined in a local vitest run and whole spec files
+        # failed on "Cannot destructure property ... of ... as it is undefined" against
+        # the copy baked into the image.
+        # When adding a top-level source directory OR file that unit specs import, add it
+        # here. Both of these must be a subset of this branch (plus modtools/, handled
+        # above), and so must anything a spec opens with readFileSync:
         #   grep -rhoE "from '~/[a-zA-Z0-9_-]+/" iznik-nuxt3/tests/unit/ | sort -u
-        # must be a subset of this branch (plus modtools/, handled above).
+        #   grep -rhoE "from '~/[a-zA-Z0-9_.-]+'"  iznik-nuxt3/tests/unit/ | sort -u
         local targets="${CN}-dev-local /app/${relative_path#iznik-nuxt3/} Freegle-Dev-Local"
         if is_running "${CN}-dev-live"; then
             targets="$targets"$'\n'"${CN}-dev-live /app/${relative_path#iznik-nuxt3/} Freegle-Dev-Live"
@@ -539,8 +552,15 @@ BACKFILL_PID=$!
 # IMPORTANT: close_write is essential - it signals when a file is fully written
 # Without it, we might sync files while they're still being written (empty/partial)
 # delete/moved_from are included so removals propagate to the containers too.
+#
+# --exclude is an unanchored regex over the WHOLE path, so each directory name
+# is written with slashes and each suffix is pinned to the end. A bare word
+# would also match inside a filename: "dist" hits newsfeed_distance_test.go,
+# which then never syncs while _PRUNE above, matching on -name, still copies it
+# in the back-fill. The two must agree, so edits to such a file reach the
+# container.
 inotifywait -m -r -e modify,create,move,close_write,delete \
-    --exclude '(node_modules|\.git|\.nuxt|\.output|dist|vendor|migrations|storage/spool|~|\.tmp|\.swp|\.log)' \
+    --exclude '(/node_modules/|/\.git/|/\.nuxt/|/\.output/|/dist/|/vendor/|/migrations/|/storage/spool/|~$|\.tmp$|\.swp$|\.log$)' \
     "$PROJECT_DIR/iznik-nuxt3" \
     "$PROJECT_DIR/iznik-server-go" \
     2>/dev/null | while read -r directory events filename; do

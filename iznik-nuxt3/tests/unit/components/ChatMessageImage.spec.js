@@ -124,13 +124,14 @@ describe('ChatMessageImage', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('renders NuxtPicture when image has externaluid', () => {
+    it('does not render a picture for a bare externaluid', () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture. The zoom modal now uses OurUploadedImage too.
       mockChatmessage.value = {
         id: 1,
         image: { externaluid: 'ext123', externalmods: {} },
       }
       const wrapper = createWrapper()
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
 
     it('renders b-img when image has path only', () => {

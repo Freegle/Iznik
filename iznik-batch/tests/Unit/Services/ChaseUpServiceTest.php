@@ -186,6 +186,43 @@ class ChaseUpServiceTest extends TestCase
         $this->assertEquals(0, $stats['chased']);
     }
 
+    public function test_a_post_just_past_the_chaseup_interval_is_still_fetched(): void
+    {
+        // The database is now asked to leave out posts whose last chase-up is too recent,
+        // instead of fetching every one and discarding it. The danger in doing that is
+        // asking for too little: a post left out of the fetch is never considered again,
+        // so its chase-up is lost silently. The window therefore reaches back a day
+        // further than the rule it stands in for.
+        //
+        // Defaults give an offer an interval of five days, so a chase-up sent five days
+        // and an hour ago is due. It must survive the fetch.
+        $data = $this->createChaseCandidate();
+        DB::table('messages_groups')
+            ->where('msgid', $data['message']->id)
+            ->where('groupid', $data['group']->id)
+            ->update(['lastchaseup' => now()->subHours(5 * 24 + 1)]);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(1, $stats['chased'], 'a due chase-up must not be filtered out of the fetch');
+    }
+
+    public function test_a_recently_chased_post_is_not_chased_again(): void
+    {
+        // The other side of the same window. This one is fetched - the window is
+        // deliberately a day wider than the rule - and then declined in PHP, which is
+        // the safe way round for the two to disagree.
+        $data = $this->createChaseCandidate();
+        DB::table('messages_groups')
+            ->where('msgid', $data['message']->id)
+            ->where('groupid', $data['group']->id)
+            ->update(['lastchaseup' => now()->subHours(4 * 24)]);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(0, $stats['chased'], 'a post chased up four days ago is not due again yet');
+    }
+
     public function test_skips_message_with_outcome(): void
     {
         $data = $this->createChaseCandidate();
@@ -441,6 +478,41 @@ class ChaseUpServiceTest extends TestCase
         // copy alone, not the whole message.
         $this->assertEquals(1, $count, 'a hold on group B must not suppress the unheld copy on group A');
 
+        $this->assertDatabaseHas('users_notifications', [
+            'touser' => $user->id,
+            'type' => 'OpenPosts',
+        ]);
+    }
+
+    /**
+     * The membership row a post is created with has no msgtype of its own: only the
+     * ripple, move and email paths fill that denormalised copy in. Reading the type
+     * from the message keeps those posts eligible; reading it from the membership
+     * dropped every one of them silently.
+     */
+    public function test_notify_languishing_counts_a_post_whose_membership_has_no_msgtype(): void
+    {
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['added' => now()->subDays(60)]);
+
+        $message = $this->createTestMessage($user, $group, [
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $group->id)
+            ->update([
+                'arrival' => now()->subDays(5),
+                'autoreposts' => 6,
+                'msgtype' => null,
+            ]);
+
+        $count = $this->service->notifyLanguishing();
+
+        $this->assertEquals(1, $count, 'the post is an Offer and must be chased even with no msgtype on the membership');
         $this->assertDatabaseHas('users_notifications', [
             'touser' => $user->id,
             'type' => 'OpenPosts',

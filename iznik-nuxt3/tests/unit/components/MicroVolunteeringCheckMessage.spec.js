@@ -428,11 +428,13 @@ describe('MicroVolunteeringCheckMessage', () => {
       expect(wrapper.find('.message-card').classes()).toContain('wanted')
     })
 
-    it('returns search icon for wanted messages', async () => {
+    it('returns cart icon for wanted messages', async () => {
       const messageWanted = { ...mockMessage, type: 'Wanted', attachments: [] }
       const wrapper = createWrapper({}, messageWanted)
       await flushPromises()
-      expect(wrapper.find('.placeholder-icon').classes()).toContain('search')
+      expect(wrapper.find('.placeholder-icon').classes()).toContain(
+        'shopping-cart'
+      )
     })
 
     it('returns gift icon for offer messages', async () => {

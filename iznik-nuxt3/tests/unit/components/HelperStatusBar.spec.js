@@ -49,7 +49,13 @@ describe('HelperStatusBar', () => {
     // Driver pinged 3s ago (alive), but BEFORE we paused 1s ago → not yet confirmed.
     const w = mount(HelperStatusBar, {
       ...mountOpts,
-      props: { batch: { status: 'paused', pausedat: iso(1000), lastpolledat: iso(3000) } },
+      props: {
+        batch: {
+          status: 'paused',
+          pausedat: iso(1000),
+          lastpolledat: iso(3000),
+        },
+      },
     })
     expect(w.vm.driverAlive).toBe(true)
     expect(w.vm.pausing).toBe(true)
@@ -61,7 +67,13 @@ describe('HelperStatusBar', () => {
   it('confirms the pause once the live heartbeat advances past it', () => {
     const w = mount(HelperStatusBar, {
       ...mountOpts,
-      props: { batch: { status: 'paused', pausedat: iso(5000), lastpolledat: iso(1000) } },
+      props: {
+        batch: {
+          status: 'paused',
+          pausedat: iso(5000),
+          lastpolledat: iso(1000),
+        },
+      },
     })
     expect(w.vm.pausing).toBe(false)
     expect(w.vm.pauseConfirmed).toBe(true)
@@ -81,7 +93,13 @@ describe('HelperStatusBar', () => {
     // Heartbeat is 10 min old → loop dead/stopped → nothing to wait for.
     const w = mount(HelperStatusBar, {
       ...mountOpts,
-      props: { batch: { status: 'paused', pausedat: iso(1000), lastpolledat: iso(600000) } },
+      props: {
+        batch: {
+          status: 'paused',
+          pausedat: iso(1000),
+          lastpolledat: iso(600000),
+        },
+      },
     })
     expect(w.vm.driverAlive).toBe(false)
     expect(w.vm.pauseConfirmed).toBe(true)

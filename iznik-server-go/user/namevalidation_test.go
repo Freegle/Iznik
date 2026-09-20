@@ -140,7 +140,7 @@ func TestDamerauLevenshtein(t *testing.T) {
 		{"freegle", "supp", 2, 3},     // capped at max+1
 	}
 	for _, c := range cases {
-		got := damerauLevenshtein(c.a, c.b, c.max)
+		got := DamerauLevenshtein(c.a, c.b, c.max)
 		if got != c.want && !(got >= c.max+1 && c.want >= c.max+1) {
 			t.Errorf("damerauLevenshtein(%q,%q,%d)=%d want %d", c.a, c.b, c.max, got, c.want)
 		}

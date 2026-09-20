@@ -80,7 +80,15 @@ class CommunityNewsEmailService
                 })
                 ->orderBy('id')
                 ->limit($maxItems)
-                ->get();
+                ->get()
+                // Backstop for the event_date filter above: the research model
+                // omits event_date on most items — including ones whose own
+                // blurb names a day ("On Saturday 8 August ...", mailed six
+                // days late on 2026-08-14) — so also drop anything whose TEXT
+                // says it is already over. May leave the email under
+                // $maxItems; fewer items beats stale ones.
+                ->reject(fn ($i) => MentionedDates::visiblyOver($i, now()))
+                ->values();
 
             if ($items->isEmpty()) {
                 continue;
@@ -103,7 +111,12 @@ class CommunityNewsEmailService
                 ];
             })->all();
 
-            $intro = $area->intro ?: "Here's a little round-up of what's going on around {$area->name}.";
+            // Intros are stored and reused for up to a week, so strip token
+            // Welsh/Gaelic greetings at send time too - an intro written before
+            // the parse-time backstop existed would otherwise keep going out
+            // until the area is next researched.
+            $intro = IntroLanguage::stripForeignGreeting((string) ($area->intro ?? ''))
+                ?: "Here's a little round-up of what's going on around {$area->name}.";
             $story = $this->pickStory($groupIds, $area);
 
             $sentForArea = 0;
@@ -115,6 +128,15 @@ class CommunityNewsEmailService
 
                 $email = User::find($member->id)?->email_preferred;
                 if (!$email) {
+                    continue;
+                }
+
+                // Provider is refusing our mail. Community News is weekly and
+                // dropped rather than caught up on release: next week's issue
+                // is a better email than a stale one. Counted anyway so the
+                // scale of what a member missed is visible in ModTools.
+                if (app(\App\Services\Mail\MailSuppressionService::class)
+                    ->shouldSkip($email, (int) $member->id, 'communitynews')) {
                     continue;
                 }
 
@@ -130,7 +152,7 @@ class CommunityNewsEmailService
                         areaName: $area->name,
                         intro: $intro,
                         items: $itemData,
-                        findUrl: "{$userSite}/find?src=communitynews",
+                        askUrl: "{$userSite}/ask?src=communitynews",
                         settingsUrl: "{$userSite}/settings",
                         story: $story,
                     ));
@@ -222,7 +244,7 @@ class CommunityNewsEmailService
     }
 
     /**
-     * Distinct, opted-in, non-deleted members of any group in the area whose
+     * Distinct, opted-in, deliverable members of any group in the area whose
      * HOME GROUP that group is: the group's catchment (groups.polyindex, the
      * COALESCE of DPA poly / CGA polyofficial) must contain the member's
      * location. Membership alone is not enough — someone who joined Oxford but
@@ -235,8 +257,11 @@ class CommunityNewsEmailService
      * poly/polyofficial), simply don't match ST_Contains and are not mailed.
      *
      * whereExists-free join + distinct on users.id gives one row per user even
-     * when they belong to several covering groups in the area (dedup). Mirrors
-     * StoriesNewsletterService's eligible-member query.
+     * when they belong to several covering groups in the area (dedup).
+     *
+     * "Deliverable" is User::scopeReceivingOurMails — the same gate the Stories
+     * newsletter and the events/volunteering roundups use, and the SQL form of
+     * V1's User::sendOurMails().
      */
     public function eligibleMembers(array $groupIds)
     {
@@ -253,7 +278,7 @@ class CommunityNewsEmailService
             "     ELSE lastloc.lat END" .
             "), {$srid})";
 
-        return DB::table('users')
+        return User::query()
             ->join('memberships', 'memberships.userid', '=', 'users.id')
             ->join('groups', function ($join) {
                 $join->on('groups.id', '=', 'memberships.groupid')
@@ -264,7 +289,17 @@ class CommunityNewsEmailService
             ->whereIn('memberships.groupid', $groupIds)
             ->where('memberships.collection', 'Approved')
             ->where('users.newslettersallowed', 1)
-            ->whereNull('users.deleted')
+            // People we should be mailing at all: not deleted, seen within
+            // User::USER_INACTIVE_DAYS, simplemail not 'None', not on holiday,
+            // not bouncing — the SQL form of V1's User::sendOurMails(), shared
+            // with the events/volunteering roundups and the Stories newsletter.
+            // Without the activity half of it the 2026-08-15 send spooled
+            // 643,931 mails — every member of every enabled group however
+            // dormant — and the dead mailboxes among them caused a mass
+            // deferral storm at the relay. The hand-rolled version this
+            // replaces also let through members who have never logged in at
+            // all, are on holiday, or have asked for no mail whatsoever.
+            ->receivingOurMails()
             // The ModTools "Send newsletters to members?" group toggle
             // (settings.newsletter). For Community News this defaults OFF —
             // stricter than StoriesNewsletterService's default-on — so a group

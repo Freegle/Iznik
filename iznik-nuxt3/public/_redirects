@@ -5,8 +5,10 @@
 # .well-known folder needs to be exposed.
 /.well-known/*  /well-known/:splat 200!
 
-# PayPal similarly.  This has been updated on PayPal so should fade away.
-/donateipn.php https://fdapilive.ilovefreegle.org/donateipn.php 200!
+# PayPal IPN.  PayPal itself has been updated to post elsewhere, but keep this
+# working as a safety net: it now goes to the Go API's /donateipn handler
+# (iznik-server-go/donations/paypalipn.go), the successor to V1's donateipn.php.
+/donateipn.php https://api.ilovefreegle.org/donateipn 200!
 
 /apple-touch-icon.png /icons/apple-touch-icon.png
 /apple-touch-icon-precomposed.png /icons/apple-touch-icon.png
@@ -26,10 +28,15 @@
 /.well-known/* / 404!
 
 # Proxy old /api endpoint which is still used by apps which haven't updated.
-/api* https://fdapilive.ilovefreegle.org/api/:splat 200!
+# The V1-compatible surface is served by the Go API (routes.go: app.Group("/api")).
+/api* https://api.ilovefreegle.org/api/:splat 200!
 
 # Old endpoints.
 /mygroups* /browse:splat 200!
+# The WANTED flow was called "find" until Aug 2026.  Old emails, app shortcuts and
+# bookmarks still point here, so this redirect is permanent, not a migration shim.
+/find /ask 301!
+/find/* /ask/:splat 301!
 /how-it-works /help 301!
 /handbook /help 301!
 /contact /help 301!

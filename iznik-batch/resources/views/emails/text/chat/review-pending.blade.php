@@ -4,7 +4,7 @@ Messages between members are scanned to spot spam. For some of these, we need yo
 
 You currently have some messages which have been waiting for 48 hours for review. Some of these may be real messages which members won't have received yet, so they may be wondering what's going on.
 
-Please can you review these at {{ config('freegle.sites.mod') }}/modtools/chats/review? They will automatically be deleted after 7 days.
+Please can you review these at {{ config('freegle.sites.mod') }}/chats/review? They will automatically be deleted after 7 days.
 
 Thanks.
 

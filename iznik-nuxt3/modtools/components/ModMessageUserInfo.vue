@@ -134,7 +134,6 @@ const membership = computed(() => {
 
 const joinedAge = computed(() => {
   if (membership.value) {
-    // eslint-disable-next-line new-cap
     return new dayjs().diff(new dayjs(membership.value.added), 'days')
   }
 

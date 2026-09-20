@@ -34,7 +34,7 @@ fi
 # On any failure, record it in restore-status.json — otherwise the API's job
 # for this date stays "starting" forever and blocks every later nightly load
 # (this wedged the system from 2026-07-16 after a transient GCS read error).
-trap 'rc=$?; if [ $rc -ne 0 ]; then ylvm_set_restore_status "failed" "Refresh to $DATE8 failed (exit $rc)" "$DATE8"; fi' EXIT
+trap 'rc=$?; ylvm_heartbeat_stop; if [ $rc -ne 0 ]; then ylvm_set_restore_status "failed" "Refresh to $DATE8 failed (exit $rc)" "$DATE8"; fi' EXIT
 
 # Skip if already current and snapshot exists.
 CURRENT="$(jq -r '.date // ""' "$STATE_FILE" 2>/dev/null || echo)"
@@ -47,7 +47,7 @@ mountpoint -q "$YLVM_ACTIVE_MNT" || ylvm_die "$YLVM_ACTIVE_MNT not mounted — r
 mountpoint -q "$YLVM_STAGE_MNT"  || ylvm_die "$YLVM_STAGE_MNT not mounted — run setup-lvm-thin.sh"
 
 ylvm_log "===== Nightly LVM refresh -> $DATE8 (was: ${CURRENT:-none}) ====="
-ylvm_set_restore_status "preparing" "Refreshing to latest backup $DATE8…" "$DATE8"
+ylvm_phase "Refreshing to latest backup $DATE8…" "$DATE8"
 
 # 0. Make room before we need it, and refuse to start if there isn't enough.
 #    Staging and the in-place apply both write into the same thin pool, and a
@@ -58,13 +58,17 @@ ylvm_prune_snapshots
 ylvm_require_pool_headroom
 
 # 1. Prepare the full backup in staging (percona still serving the current day).
+ylvm_phase "Downloading and preparing backup $DATE8…" "$DATE8"
 ylvm_prepare_to_stage "$DATE8"
 
 # 2. Stop percona so the active datadir is quiescent for the in-place apply.
 ylvm_log "Stopping percona for in-place apply ..."
 docker compose stop percona || true
 
-# 3. Apply changed blocks onto active, snapshot, prune.
+# 3. Apply changed blocks onto active, snapshot, prune. This is the longest phase
+#    on a full backup - well past the API's staleness window on its own, which is
+#    why the heartbeat exists.
+ylvm_phase "Applying backup $DATE8 to the live database…" "$DATE8"
 ylvm_apply_stage_to_active
 ylvm_snapshot_active "$DATE8"
 ylvm_prune_snapshots
@@ -76,6 +80,7 @@ ylvm_reset_root_password "${YLVM_DB_PASSWORD:-iznik}"
 # 5. Clear stale cache + record state.
 docker compose exec -T redis redis-cli FLUSHALL >/dev/null 2>&1 || true
 "$SCRIPT_DIR/set-current-backup.sh" "$DATE8" 2>/dev/null || true
+ylvm_heartbeat_stop
 ylvm_set_restore_status "completed" "Refreshed to backup $DATE8" "$DATE8"
 
 # 6. Ensure the rest of the stack is up.

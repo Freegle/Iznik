@@ -234,6 +234,35 @@ func (idx *Index) CountRows() (int64, error) {
 }
 
 // QueryBBox returns items whose bounding box overlaps [minLng,maxLng]×[minLat,maxLat].
+// GetByExtID fetches one item by its external id, or nil when the index does
+// not hold it. Keyed, so a caller that already knows WHICH item it is asking
+// about does not walk the R-tree to find it - the overflow rings' mail-side
+// question ("does THIS post's ring admit these members") knows the post.
+func (idx *Index) GetByExtID(extID int64) (*Item, error) {
+	var it Item
+	var extraJSON []byte
+	err := idx.db.QueryRow(`
+		SELECT i.extid, i.area, i.wkb, i.extra,
+		       r.min_lng, r.max_lng, r.min_lat, r.max_lat
+		FROM   items i
+		JOIN   items_rtree r ON r.id = i.id
+		WHERE  i.extid = ?
+	`, extID).Scan(&it.ExtID, &it.Area, &it.WKB, &extraJSON,
+		&it.MinLng, &it.MaxLng, &it.MinLat, &it.MaxLat)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if extraJSON != nil {
+		if err := json.Unmarshal(extraJSON, &it.Extra); err != nil {
+			return nil, fmt.Errorf("unmarshal extra for extid %d: %w", it.ExtID, err)
+		}
+	}
+	return &it, nil
+}
+
 func QueryBBox(idx *Index, minLng, maxLng, minLat, maxLat float64) ([]Item, error) {
 	rows, err := idx.db.Query(`
 		SELECT i.extid, i.area, i.wkb, i.extra,

@@ -3,9 +3,12 @@ package misc
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1006,4 +1009,239 @@ func TestNewLokiMiddleware_EnabledLoki_SkipFuncTrue_Skips(t *testing.T) {
 	resp, err := app.Test(req)
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
+}
+
+// --- line-size bounding -----------------------------------------------------
+//
+// Truncating string VALUES does not bound a log line. A response body that is a
+// long array of small objects sailed through truncateMap at full length, and a
+// real /api/changes response reached 1.85MB that way. Loki's max_line_size is
+// 256KB and it discards the whole entry rather than clipping it, so those
+// requests vanished from the logs completely - 1,727 entries / 1.10GB in two
+// days on 2026-08-23. These tests pin the bound on every dimension.
+
+func wideResponseBody(elements int) map[string]interface{} {
+	items := make([]interface{}, elements)
+	for i := range items {
+		items[i] = map[string]interface{}{
+			"id":      float64(i),
+			"subject": "a reasonably typical subject line",
+			"type":    "Offer",
+		}
+	}
+	return map[string]interface{}{"messages": items}
+}
+
+func TestTruncateValue_LongSlice_CappedWithCount(t *testing.T) {
+	in := make([]interface{}, maxSliceElements+50)
+	for i := range in {
+		in[i] = float64(i)
+	}
+
+	out, ok := truncateValue(in).([]interface{})
+	assert.True(t, ok)
+	assert.Len(t, out, maxSliceElements+1, "kept elements plus one marker")
+	assert.Equal(t, "...(50 more elements)", out[len(out)-1])
+}
+
+func TestTruncateValue_ShortSlice_Unchanged(t *testing.T) {
+	in := []interface{}{float64(1), float64(2), float64(3)}
+	out, ok := truncateValue(in).([]interface{})
+	assert.True(t, ok)
+	assert.Len(t, out, 3, "a slice within the cap must not gain a marker")
+	assert.Equal(t, float64(3), out[2])
+}
+
+func TestTruncateMap_ManyKeys_Capped(t *testing.T) {
+	in := map[string]interface{}{}
+	for i := 0; i < maxMapKeys+10; i++ {
+		in[fmt.Sprintf("key%03d", i)] = "v"
+	}
+
+	out := truncateMap(in)
+	assert.Len(t, out, maxMapKeys+1, "kept keys plus the _truncated marker")
+	assert.Equal(t, "10 more keys", out["_truncated"])
+}
+
+func TestTruncateMap_DeepNesting_StopsAtDepthLimit(t *testing.T) {
+	// Build a chain deeper than the limit; it must terminate, not recurse away.
+	deep := map[string]interface{}{"leaf": "end"}
+	for i := 0; i < maxValueDepth+5; i++ {
+		deep = map[string]interface{}{"next": deep}
+	}
+
+	encoded, err := json.Marshal(truncateMap(deep))
+	assert.NoError(t, err)
+	assert.Contains(t, string(encoded), "depth limit")
+}
+
+func TestCapLogLine_OversizedResponseBody_OmittedNotDropped(t *testing.T) {
+	logData := map[string]interface{}{
+		"endpoint":      "/api/changes",
+		"duration_ms":   float64(10500),
+		"user_id":       float64(3378155),
+		"timestamp":     "2026-08-23T17:13:48Z",
+		"request_id":    "1a02f9d3b37eca9efc0",
+		"response_body": strings.Repeat("x", maxLogLineBytes*2),
+	}
+
+	line := capLogLine(logData)
+	assert.NotNil(t, line, "an oversized entry must still produce a line")
+	assert.LessOrEqual(t, len(line), maxLogLineBytes)
+
+	var decoded map[string]interface{}
+	assert.NoError(t, json.Unmarshal(line, &decoded))
+	assert.Equal(t, "/api/changes", decoded["endpoint"], "context fields survive")
+	assert.Equal(t, float64(3378155), decoded["user_id"])
+	assert.Contains(t, decoded["response_body"], "omitted")
+}
+
+func TestCapLogLine_NormalEntry_Untouched(t *testing.T) {
+	logData := map[string]interface{}{
+		"endpoint":      "/api/item/42",
+		"response_body": map[string]interface{}{"status": "ok"},
+	}
+
+	line := capLogLine(logData)
+	assert.NotNil(t, line)
+
+	var decoded map[string]interface{}
+	assert.NoError(t, json.Unmarshal(line, &decoded))
+	body, ok := decoded["response_body"].(map[string]interface{})
+	assert.True(t, ok, "a small body must be left intact, not stringified")
+	assert.Equal(t, "ok", body["status"])
+}
+
+func TestLogApiRequestFull_HugeResponseBody_LineUnderLokiLimit(t *testing.T) {
+	dir := t.TempDir()
+	l := newDirectEnabledClient(dir)
+	// 5,000 small objects: every string inside is already under maxStringLength,
+	// so the old string-only truncation left this at megabytes.
+	l.LogApiRequestFull("v2", "GET", "/api/changes", 200, 10500.0, nil, nil, nil, nil, wideResponseBody(5000))
+	l.Close()
+
+	data, err := os.ReadFile(filepath.Join(dir, "go-api-"+time.Now().Format("2006-01-02")+".log"))
+	assert.NoError(t, err)
+
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		assert.LessOrEqual(t, len(line), 256*1024,
+			"every emitted line must fit Loki's max_line_size or the entry is discarded whole")
+	}
+
+	entries := readAllLogEntries(t, dir)
+	assert.NotEmpty(t, entries, "the request must still be logged, not dropped")
+	assert.Equal(t, "/api/changes", messageOf(t, entries[0])["endpoint"])
+}
+
+func TestCapLogLine_OversizedNonBodyField_HardClipped(t *testing.T) {
+	// Nothing here is a body, so dropping bodies cannot help: the guard has to
+	// fall through to the hard clip. `endpoint` is a string we do not control,
+	// so the clip must truncate it rather than copy it through.
+	logData := map[string]interface{}{
+		"endpoint":    strings.Repeat("e", maxLogLineBytes*2),
+		"duration_ms": float64(3),
+		"user_id":     float64(99),
+		"timestamp":   "2026-08-23T17:13:48Z",
+	}
+
+	line := capLogLine(logData)
+	assert.NotNil(t, line)
+	assert.LessOrEqual(t, len(line), maxLogLineBytes,
+		"the last-resort clip must itself be within the limit")
+
+	var decoded map[string]interface{}
+	assert.NoError(t, json.Unmarshal(line, &decoded))
+	assert.Contains(t, decoded["_truncated"], "exceeded")
+	assert.Equal(t, float64(99), decoded["user_id"], "context worth keeping survives the clip")
+	assert.LessOrEqual(t, len(decoded["endpoint"].(string)), maxStringLength+3)
+}
+
+func TestCapLogLine_UnmarshalableValue_StillEmitsAnEntry(t *testing.T) {
+	// A channel cannot be marshalled. The first Marshal fails, so every later
+	// step fails too - we must still emit a valid line rather than nothing.
+	line := capLogLine(map[string]interface{}{
+		"endpoint": "/api/thing",
+		"bad":      make(chan int),
+	})
+
+	assert.NotNil(t, line, "an unmarshalable payload must not silently vanish")
+	var decoded map[string]interface{}
+	assert.NoError(t, json.Unmarshal(line, &decoded), "whatever we emit must be valid JSON")
+}
+
+func TestTruncateValueDepth_ScalarAtDepthLimit_Marked(t *testing.T) {
+	assert.Equal(t, fmt.Sprintf("...(depth limit %d reached)", maxValueDepth),
+		truncateValueDepth("anything", maxValueDepth))
+}
+
+func TestLogClientEntry_HugeBrowserPayload_LineUnderLokiLimit(t *testing.T) {
+	// LogClientEntry marshals a map supplied straight from the browser, so its
+	// size is controlled by the client rather than by us.
+	dir := t.TempDir()
+	l := newDirectEnabledClient(dir)
+	l.LogClientEntry("info", "scroll", map[string]interface{}{
+		"user_id": float64(3378155),
+		"blob":    strings.Repeat("z", maxLogLineBytes*2),
+	})
+	l.Close()
+
+	data, err := os.ReadFile(filepath.Join(dir, "go-api-"+time.Now().Format("2006-01-02")+".log"))
+	assert.NoError(t, err)
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		assert.LessOrEqual(t, len(line), 256*1024)
+	}
+}
+
+// --- user_id cardinality / bucketing ---------------------------------------
+
+func TestUserBucket_InRange(t *testing.T) {
+	for _, uid := range []uint64{0, 1, 31, 32, 33, 3378155, 45076655, 1 << 62} {
+		b, err := strconv.Atoi(UserBucket(uid))
+		assert.NoError(t, err)
+		assert.GreaterOrEqual(t, b, 0)
+		assert.Less(t, b, userBucketCount, "bucket must stay inside the configured count")
+	}
+}
+
+func TestUserBucket_Stable(t *testing.T) {
+	// Readers recompute this to find a user's logs. If it is not stable, a dump
+	// silently returns nothing for that user.
+	assert.Equal(t, UserBucket(45076655), UserBucket(45076655))
+	assert.Equal(t, "0", UserBucket(0))
+	assert.Equal(t, "1", UserBucket(1))
+	assert.Equal(t, "0", UserBucket(uint64(userBucketCount)))
+	assert.Equal(t, "7", UserBucket(uint64(userBucketCount)*3+7))
+}
+
+func TestUserBucket_SpreadsAcrossAllBuckets(t *testing.T) {
+	// A bucket that everyone lands in would be a full scan wearing a label.
+	seen := map[string]bool{}
+	for uid := uint64(1); uid <= 5000; uid++ {
+		seen[UserBucket(uid)] = true
+	}
+	assert.Len(t, seen, userBucketCount)
+}
+
+func TestLogApiRequest_SetsBucketLabelNotJustUserID(t *testing.T) {
+	dir := t.TempDir()
+	l := newDirectEnabledClient(dir)
+	uid := uint64(45076655)
+	l.LogApiRequest("v2", "GET", "/api/thing", 200, 1.0, &uid, nil)
+	l.Close()
+
+	labels := labelsOf(t, readAllLogEntries(t, dir)[0])
+	assert.Equal(t, "45076655", labels["user_id"])
+	assert.Equal(t, UserBucket(uid), labels["user_bucket"],
+		"without this label the shipper has nothing to index on")
+}
+
+func TestLogApiRequest_NoUserID_NoBucketLabel(t *testing.T) {
+	dir := t.TempDir()
+	l := newDirectEnabledClient(dir)
+	l.LogApiRequest("v2", "GET", "/api/thing", 200, 1.0, nil, nil)
+	l.Close()
+
+	labels := labelsOf(t, readAllLogEntries(t, dir)[0])
+	_, has := labels["user_bucket"]
+	assert.False(t, has, "anonymous traffic must not be bucketed into user 0")
 }

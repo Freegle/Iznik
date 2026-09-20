@@ -103,8 +103,8 @@ function resize() {
 
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 
-const ChatNotVisible = defineAsyncComponent(() =>
-  import('~/components/ChatNotVisible.vue')
+const ChatNotVisible = defineAsyncComponent(
+  () => import('~/components/ChatNotVisible.vue')
 )
 
 const { chat } = await setupChatMT(props.id)

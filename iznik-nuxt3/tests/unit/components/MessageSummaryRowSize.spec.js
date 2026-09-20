@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+import { describe, it, expect } from 'vitest'
 
 /**
  * The lg+ feed card is a horizontal row whose photo is a square, so the square's side is

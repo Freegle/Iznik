@@ -18,7 +18,7 @@ const saving = ref(false)
 
 async function copy() {
   saving.value = true
-  if (process.client) {
+  if (import.meta.client) {
     if (process.env.IS_APP) {
       window.cordova.plugins.clipboard.copy(props.value)
     } else {

@@ -124,8 +124,8 @@ describe('address store', () => {
 
     it('deduplicates concurrent fetch-all calls', async () => {
       let resolveFirst
-      const firstPromise = new Promise((r) => {
-        resolveFirst = r
+      const firstPromise = new Promise((resolve) => {
+        resolveFirst = resolve
       })
       mockFetchv2.mockReturnValueOnce(firstPromise)
 

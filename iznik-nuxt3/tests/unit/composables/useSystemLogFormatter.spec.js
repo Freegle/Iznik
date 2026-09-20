@@ -633,6 +633,8 @@ describe('formatLogText', () => {
       ['/', 'Opened home page'],
       [undefined, 'Opened a page'],
       ['/give', 'Opened Give page'],
+      ['/ask', 'Opened Ask page'],
+      // Logs written before the Aug 2026 rename still say /find.
       ['/find', 'Opened Find page'],
       ['/myposts', 'Opened My Posts'],
       ['/message/123', 'Opened message #123'],

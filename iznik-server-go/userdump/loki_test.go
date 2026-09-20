@@ -67,9 +67,12 @@ func TestSplitRange(t *testing.T) {
 	assert.Equal(t, 2*span+5, three[2].end)
 }
 
-// Pass A1 must use the user_id STREAM LABEL for the sources that have it. As a
-// `| json` filter it had to parse every Freegle log line in the window - over a
-// minute for a single day against production.
+// Pass A1 must stay INDEX-NARROWED. As a bare `| json` filter it had to parse
+// every Freegle log line in the window - over a minute for a single day against
+// production. Since 2026-08-23 that means two legs: the pre-bucket user_id stream
+// label for entries still in retention from before the change, and the
+// user_bucket label plus an exact structured-metadata filter for entries after
+// it. Both are index lookups.
 func TestCollectLoki_PassAUsesLabelSelector(t *testing.T) {
 	f := &fakeLoki{byMatch: map[string][]lokiEntry{
 		`{app="freegle", user_id="42"}`: {{tsNs: 5, source: "api", line: `{"user_id":42}`}},
@@ -290,4 +293,47 @@ func TestCollectLoki_SessionsUseLabelledAndAnonLegs(t *testing.T) {
 	}
 	assert.True(t, labelled, "pass C must run the indexed-label leg")
 	assert.True(t, anon, "pass C must run the anonymous (pre-login) leg")
+}
+
+// The bucketed leg is what finds anything written from 2026-08-23 onwards. If it
+// is dropped, a dump silently returns only the pre-change tail of the window and
+// nothing errors - so pin it explicitly.
+func TestCollectLoki_PassAAlsoQueriesTheBucketedForm(t *testing.T) {
+	f := &fakeLoki{byMatch: map[string][]lokiEntry{
+		`user_bucket="10"`: {{tsNs: 7, source: "api", line: `{"user_id":42}`}},
+	}}
+
+	b, err := NewBuilder()
+	assert.NoError(t, err)
+	defer b.Remove()
+
+	end := time.Now().UnixNano()
+	n, err := collectLoki(b, f, 42, nil, end-int64(24*time.Hour), end)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, n, "the bucketed leg alone must be able to return entries")
+
+	joined := strings.Join(f.queries, "\n")
+	// 42 % 32 = 10; the reader must compute the same bucket the writer used.
+	assert.Contains(t, joined, `{app="freegle", user_bucket="10"} | user_id="42"`)
+	assert.Contains(t, joined, `{app="freegle", user_id="42"}`,
+		"the pre-bucket leg must remain while old entries are still in retention")
+}
+
+// The two legs address disjoint entries, so an entry must never be counted twice
+// even though both legs run over the same window.
+func TestCollectLoki_BothLegsReturningTheSameEntryDedupes(t *testing.T) {
+	same := lokiEntry{tsNs: 11, source: "api", line: `{"user_id":42}`}
+	f := &fakeLoki{byMatch: map[string][]lokiEntry{
+		`{app="freegle", user_id="42"}`: {same},
+		`user_bucket="10"`:              {same},
+	}}
+
+	b, err := NewBuilder()
+	assert.NoError(t, err)
+	defer b.Remove()
+
+	end := time.Now().UnixNano()
+	n, err := collectLoki(b, f, 42, nil, end-int64(24*time.Hour), end)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, n, "the same entry from both legs must collapse to one")
 }

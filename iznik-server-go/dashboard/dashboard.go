@@ -84,6 +84,15 @@ func GetDashboard(c *fiber.Ctx) error {
 
 	groupIDs := resolveGroupIDs(myid, uint64(groupID), systemwide, allgroups)
 
+	// Asking for one community and for everything at once is a contradiction, and
+	// resolveGroupIDs settles it by taking the community. Settle it the same way here, so
+	// the components that branch on this agree with the groups they were handed. Left as
+	// it was, group=5&systemwide=true would work out the figures for the whole network
+	// and then file them under community 5.
+	if groupID > 0 {
+		systemwide = false
+	}
+
 	// Check if user is a moderator (for mod-only components).
 	isMod := false
 	if myid > 0 && len(groupIDs) > 0 {
@@ -206,7 +215,7 @@ func getComponent(comp string, groupIDs []uint64, startQ, endQ string, systemwid
 		if !isMod {
 			return nil
 		}
-		compute = func() interface{} { return getHappiness(groupIDs, startQ, endQ) }
+		compute = func() interface{} { return getHappiness(groupIDs, startQ, endQ, systemwide) }
 	case "DiscourseTopics":
 		if !isMod {
 			return nil
@@ -943,12 +952,19 @@ var happinessTypes = []string{"Happy", "Fine", "Unhappy"}
 // The repeat cost is handled by the component cache instead: measured at 5.6s for a
 // systemwide year on production, which is paid once per scope per cache window rather
 // than on every dashboard load.
-func getHappiness(groupIDs []uint64, startQ, endQ string) []map[string]interface{} {
-	if len(groupIDs) == 0 {
+func getHappiness(groupIDs []uint64, startQ, endQ string, systemwide bool) []map[string]interface{} {
+	if !systemwide && len(groupIDs) == 0 {
 		return []map[string]interface{}{}
 	}
 
-	db := database.DBConn
+	// Every other component that was slow enough to need caching also bounds itself, so
+	// that one stuck query can't hold up the request. That matters more now they share
+	// results: callers asking for the same figures wait on the first one to finish
+	// instead of each running their own, so without a limit they would all wait forever.
+	ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
+	defer cancel()
+
+	db := database.DBConn.WithContext(ctx)
 
 	type HappyRow struct {
 		Count     int
@@ -956,13 +972,28 @@ func getHappiness(groupIDs []uint64, startQ, endQ string) []map[string]interface
 	}
 
 	var rows []HappyRow
-	db.Table("messages_outcomes").
-		Select("COUNT(DISTINCT messages_outcomes.id) AS count, messages_outcomes.happiness").
-		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages_outcomes.msgid AND messages_groups.rippled_in = 0").
-		Where("messages_outcomes.timestamp >= ? AND messages_outcomes.timestamp < ? AND messages_groups.groupid IN (?) AND messages_outcomes.happiness IS NOT NULL",
-			startQ, endQ, groupIDs).
-		Group("messages_outcomes.happiness").
-		Scan(&rows)
+
+	q := db.Table("messages_outcomes").
+		Where("messages_outcomes.timestamp >= ? AND messages_outcomes.timestamp < ? AND messages_outcomes.happiness IS NOT NULL",
+			startQ, endQ)
+
+	if systemwide {
+		// Nothing to narrow by, so don't bring in the listings table at all. Each rating
+		// is one row here already, so a plain count is right and no de-duplicating is
+		// needed. It also means a rating still counts when the post it was left on has
+		// since been deleted or moved between communities, which the join would drop.
+		q = q.Select("COUNT(*) AS count, messages_outcomes.happiness")
+	} else {
+		// Per-community, the listings table is the only thing that says which community a
+		// rating belongs to, so the join has to be here. rippled_in = 0 picks the
+		// community the post was written in; counting the copies it rippled out to as
+		// well was what made these figures four times too high.
+		q = q.Select("COUNT(DISTINCT messages_outcomes.id) AS count, messages_outcomes.happiness").
+			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages_outcomes.msgid AND messages_groups.rippled_in = 0").
+			Where("messages_groups.groupid IN (?)", groupIDs)
+	}
+
+	q.Group("messages_outcomes.happiness").Scan(&rows)
 
 	totals := map[string]int{}
 	for _, r := range rows {

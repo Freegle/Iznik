@@ -190,8 +190,8 @@ import {
 import InviteSomeone from '~/components/InviteSomeone'
 import { buildHead } from '~/composables/useBuildHead'
 
-const PosterModal = defineAsyncComponent(() =>
-  import('~/components/PosterModal')
+const PosterModal = defineAsyncComponent(
+  () => import('~/components/PosterModal')
 )
 
 definePageMeta({

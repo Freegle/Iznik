@@ -68,7 +68,11 @@ describe('SimilarPosts', () => {
       // Default: a distinct subject and a real (non-AI) photo, so the look-alike
       // dedupe never collapses these. Tests that exercise the dedupe set their own
       // AI/placeholder attachments.
-      mockList[id] = { id, subject: `Item ${id}`, attachments: [{ id: id * 100, ai: false }] }
+      mockList[id] = {
+        id,
+        subject: `Item ${id}`,
+        attachments: [{ id: id * 100, ai: false }],
+      }
       return Promise.resolve(mockList[id])
     })
   })
@@ -117,7 +121,11 @@ describe('SimilarPosts', () => {
         subject: 'OFFER: Garden furniture (Preston PR1)',
         attachments: [{ id: 13, ai: false }],
       },
-      4: { id: 4, subject: 'WANTED: Rugs (Skerton LA1)', attachments: [{ id: 14, ai: true }] },
+      4: {
+        id: 4,
+        subject: 'WANTED: Rugs (Skerton LA1)',
+        attachments: [{ id: 14, ai: true }],
+      },
     }
     mockFetch.mockImplementation((id) => {
       mockList[id] = data[id]
@@ -160,7 +168,10 @@ describe('SimilarPosts', () => {
     expect(mockSimilar).toHaveBeenCalledWith(100, 12)
     expect(wrapper.text()).not.toContain('More like this nearby')
     expect(wrapper.findAll('.msg-summary')).toHaveLength(0)
-    expect(mockMarkSeen).toHaveBeenCalledWith([1, 2, 3], 'similar_posts_holdout')
+    expect(mockMarkSeen).toHaveBeenCalledWith(
+      [1, 2, 3],
+      'similar_posts_holdout'
+    )
     expect(mockMarkSeen).not.toHaveBeenCalledWith([1, 2, 3], 'similar_posts')
   })
 
@@ -186,7 +197,10 @@ describe('SimilarPosts', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('More like this nearby')
     expect(mockMarkSeen).toHaveBeenCalledWith([1, 2, 3], 'similar_posts')
-    expect(mockMarkSeen).not.toHaveBeenCalledWith([1, 2, 3], 'similar_posts_holdout')
+    expect(mockMarkSeen).not.toHaveBeenCalledWith(
+      [1, 2, 3],
+      'similar_posts_holdout'
+    )
   })
 
   it('never holds out an anonymous user, even on a holdout draw', async () => {

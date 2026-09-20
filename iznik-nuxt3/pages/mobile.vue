@@ -35,7 +35,7 @@
         </ExternalLink>
       </div>
       <p class="mobile-page__support">
-        We support Android 8.0/iOS 13 or later.
+        We support Android 8.0/iOS 15 or later.
       </p>
       <p class="mobile-page__issues">
         Please report any issues to <SupportLink />.
@@ -52,11 +52,11 @@ import {
 } from '#imports'
 import { buildHead } from '~/composables/useBuildHead'
 
-const ExternalLink = defineAsyncComponent(() =>
-  import('~/components/ExternalLink')
+const ExternalLink = defineAsyncComponent(
+  () => import('~/components/ExternalLink')
 )
-const SupportLink = defineAsyncComponent(() =>
-  import('~/components/SupportLink')
+const SupportLink = defineAsyncComponent(
+  () => import('~/components/SupportLink')
 )
 
 const runtimeConfig = useRuntimeConfig()

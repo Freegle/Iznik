@@ -6,8 +6,7 @@ import api from '~/api'
 import { addStrings, earliestDate } from '~/composables/useTimeFormat'
 import { useAuthStore } from '~/stores/auth'
 
-export const useVolunteeringStore = defineStore({
-  id: 'volunteering',
+export const useVolunteeringStore = defineStore('volunteering', {
   state: () => ({
     list: {},
     forUser: [],

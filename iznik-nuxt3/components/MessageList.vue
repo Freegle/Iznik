@@ -5,9 +5,11 @@
     </h2>
     <GroupHeader
       v-if="group && showGroupHeader"
+      v-model:collapsed="groupHeaderCollapsed"
       :group="group"
       show-join
-      :show-give-find="showGiveFind"
+      :show-give-ask="showGiveAsk"
+      collapsible
     />
     <h2 class="visually-hidden">List of wanteds and offers</h2>
     <div id="visobserver" v-observe-visibility="visibilityChanged" />
@@ -63,11 +65,12 @@
       </ScrollGrid>
     </div>
 
-    <div
-      v-if="
-        initialFetchDone && selectedSort === 'Unseen' && showCountsUnseen && me
-      "
-    >
+    <!-- Deliberately NOT gated on selectedSort. The unseen/seen SPLIT below only makes
+         sense in Unseen sort, but "Mark seen" is the only way to clear the count without
+         scrolling every post into view, and the count is shown in the nav whatever the
+         sort. Gating both together left the 5,719 members whose saved browseSort is
+         Newest or Nearby with a count they could never clear (Discourse 10055). -->
+    <div v-if="initialFetchDone && showCountsUnseen && me">
       <!-- Only announce new posts we can actually show. The count comes from the server
            and is polled independently of the feed, so it can run ahead of the loaded list
            (a post arriving after this page was fetched). Announcing it then puts "N new
@@ -211,6 +214,7 @@ import { useMessageStore } from '~/stores/message'
 import { useNearbyStore } from '~/stores/nearby'
 import { throttleFetches } from '~/composables/useThrottle'
 import { useMe } from '~/composables/useMe'
+import { useGroupHeaderCollapsed } from '~/composables/groupHeaderCollapse'
 import { useScrollDepth } from '~/composables/useScrollDepth'
 import { useFeedCountSync } from '~/composables/useFeedCountSync'
 import {
@@ -223,14 +227,14 @@ import {
   dedupKey,
 } from '~/composables/useMessageDedup'
 
-const OurMessage = defineAsyncComponent(() =>
-  import('~/components/OurMessage.vue')
+const OurMessage = defineAsyncComponent(
+  () => import('~/components/OurMessage.vue')
 )
-const GroupHeader = defineAsyncComponent(() =>
-  import('~/components/GroupHeader.vue')
+const GroupHeader = defineAsyncComponent(
+  () => import('~/components/GroupHeader.vue')
 )
-const MessageSkeleton = defineAsyncComponent(() =>
-  import('~/components/MessageSkeleton.vue')
+const MessageSkeleton = defineAsyncComponent(
+  () => import('~/components/MessageSkeleton.vue')
 )
 
 const MIN_TO_SHOW = 10
@@ -285,7 +289,7 @@ const props = defineProps({
     required: false,
     default: true,
   },
-  showGiveFind: {
+  showGiveAsk: {
     type: Boolean,
     required: false,
     default: false,
@@ -435,6 +439,11 @@ const group = computed(() => {
 
   return ret
 })
+
+// Whether the community header above the feed is folded up to a compact bar. Starts folded
+// for a member of more than a week, full for a newer member or a non-member; the member can
+// toggle it, and it is reset when the feed moves to another community.
+const groupHeaderCollapsed = useGroupHeaderCollapsed(group, myMemberships)
 
 const reduceSuccessful = computed(() => {
   const ret = []
@@ -653,34 +662,30 @@ useFeedCountSync(browseCount, async () => {
   }
 })
 
-function markSeen() {
-  // Mark the whole list the count is computed over (the full nearby/mygroups response),
-  // not just the rendered/viewport subset — otherwise unseen posts that are off-screen or
-  // filtered out keep the server count above zero and "Mark seen" can never clear it.
+async function markSeen() {
+  // One call, no ids. The browser only ever holds the posts it has loaded, and the ordinary
+  // backlog is around a thousand, so no list the client can assemble clears the count - that
+  // is exactly why members were scrolling weeks back to shift it (Discourse 10055). The
+  // server clears its own count.
+  //
+  // This does NOT record the posts as viewed. Pressing a button is not reading a thousand
+  // posts, and a "seen" row is an impression that feeds the view count posters see, so
+  // clearing moves a watermark instead (see browse_cleared).
+  await messageStore.clearCount()
+
+  // Local only, and never sent anywhere: drop the loaded cards below the "You're up to date"
+  // divider at once, rather than leaving them above it until the count poll refreshes.
   const source = nearbyStore.messageList?.length
     ? nearbyStore.messageList
     : props.messagesForList
-  const ids = []
-
-  source.forEach((m) => {
-    if (m.unseen) {
-      ids.push(m.id)
-    }
-  })
+  const ids = source.filter((m) => m.unseen).map((m) => m.id)
 
   if (ids.length) {
-    // Send markSeen once
-    messageStore.markSeen(ids)
-
-    // Clear the unseen flags in the cached feed immediately so these posts drop below the
-    // "You're up to date" divider right away, rather than lingering above it until the
-    // count-poll below refreshes the feed.
     nearbyStore.markSeen(ids)
-
-    // Start polling the count - the server processes this in the background
-    pollCount = 0
-    pollUntilZero()
   }
+
+  pollCount = 0
+  pollUntilZero()
 }
 
 function pollUntilZero() {

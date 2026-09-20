@@ -116,7 +116,10 @@ async function navigateToMessageViaBrowse(
   console.log(
     `[Browse] Navigating to ${browsePath} to find message ${messageId}`
   )
-  await page.gotoAndVerify(browsePath, { timeout: timeouts.navigation.default, maxRetries: 1 })
+  await page.gotoAndVerify(browsePath, {
+    timeout: timeouts.navigation.default,
+    maxRetries: 1,
+  })
 
   // Dismiss login modal if it appears (browse page shows signup modal for non-logged-in users)
   await dismissLoginModalIfPresent(page)

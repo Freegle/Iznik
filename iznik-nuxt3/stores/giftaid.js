@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import api from '~/api'
 
-export const useGiftAidStore = defineStore({
-  id: 'giftaid',
+export const useGiftAidStore = defineStore('giftaid', {
   state: () => ({
     giftaid: {},
   }),

@@ -24,7 +24,7 @@ const store = useMiscStore()
 const breakpoint = computed(() => store.breakpoint)
 
 const show = computed(() => {
-  if (process.server) {
+  if (import.meta.server) {
     // Drop all optional components for SSR, otherwise we might start to render them on the client when we
     // don't need to.
     return false

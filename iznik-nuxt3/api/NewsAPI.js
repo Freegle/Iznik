@@ -7,13 +7,17 @@ export default class NewsAPI extends BaseAPI {
 
   // newsletters: 'all' asks for the Community News posts from every area rather
   // than just our own. The server honours it only for ChitChat moderators.
-  async fetch(id, distance, lovelist, logError, newsletters) {
+  // minutes: the member's travel-time budget (settings.newsfeedMinutes).
+  // With it, the server narrows the radius road-aware - threads tagged with a
+  // road-network region must be in one the member can actually drive to.
+  async fetch(id, distance, lovelist, logError, newsletters, minutes) {
     return await this.$getv2(
       id ? '/newsfeed/' + id : '/newsfeed',
       {
         distance,
         lovelist,
         newsletters,
+        minutes,
       },
       logError
     )
@@ -87,15 +91,23 @@ export default class NewsAPI extends BaseAPI {
     await this.$postv2('/newsfeed?bump=' + id, { id, action: 'Seen' })
   }
 
+  // Clear the ChitChat count outright. seen() above needs an id, and the browser only ever
+  // has the items it has loaded, so it cannot clear a backlog it has not scrolled through.
+  // The server resolves the watermark itself.
+  async seenAll() {
+    await this.$postv2('/newsfeed', { action: 'SeenAll' })
+  }
+
   del(id) {
     return this.$requestv2('DELETE', `/newsfeed/${id}`, {})
   }
 
-  async count(distance, log) {
+  async count(distance, log, minutes) {
     return await this.$getv2(
       '/newsfeedcount',
       {
         distance,
+        minutes,
       },
       log
     )

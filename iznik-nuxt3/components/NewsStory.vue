@@ -26,18 +26,6 @@
               class="clickme story-image"
               @click="showPhotoModal"
             />
-            <NuxtPicture
-              v-else-if="story?.image?.externaluid"
-              fit="cover"
-              format="webp"
-              provider="uploadcare"
-              :src="story?.image?.externaluid"
-              :modifiers="story?.image?.externalmods"
-              alt="Freegler Story Photo"
-              sizes="100vw md:200px"
-              class="clickme story-image"
-              @click="showPhotoModal"
-            />
             <b-img
               v-else-if="story?.image"
               thumbnail
@@ -129,14 +117,14 @@ defineEmits(['focus-comment'])
 const showNewsPhotoModal = ref(false)
 const showNewsShareModal = ref(false)
 
-const NewsPhotoModal = defineAsyncComponent(() =>
-  import('~/components/NewsPhotoModal')
+const NewsPhotoModal = defineAsyncComponent(
+  () => import('~/components/NewsPhotoModal')
 )
-const StoryAddModal = defineAsyncComponent(() =>
-  import('~/components/StoryAddModal')
+const StoryAddModal = defineAsyncComponent(
+  () => import('~/components/StoryAddModal')
 )
-const StoryShareModal = defineAsyncComponent(() =>
-  import('~/components/StoryShareModal')
+const StoryShareModal = defineAsyncComponent(
+  () => import('~/components/StoryShareModal')
 )
 
 const storyStore = useStoryStore()

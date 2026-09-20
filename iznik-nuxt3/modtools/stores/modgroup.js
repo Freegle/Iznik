@@ -6,8 +6,7 @@ import api from '~/api'
 // authStore.work has total work counts across all group - re-got every 30s in modme->checkWork
 // this.list has all mod groups, with group.work updated in getModGroups() ie on route change and every 30s
 
-export const useModGroupStore = defineStore({
-  id: 'modgroups',
+export const useModGroupStore = defineStore('modgroups', {
   state: () => ({
     list: {},
     getting: [], // To avoid repeat gettings

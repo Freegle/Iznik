@@ -43,6 +43,18 @@ describe('OutcomeBy', () => {
     mockMessageStore.byId.mockReturnValue(mockMessage)
   })
 
+  it('names a promisee whose profile has not loaded as Freegler', async () => {
+    mockUserStore.byId.mockReturnValue(null)
+    mockMessageStore.byId.mockReturnValue({
+      ...mockMessage,
+      replies: [],
+      promises: [{ userid: 300 }],
+    })
+    const wrapper = await createWrapper()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Freegler')
+  })
+
   async function createWrapper(props = {}) {
     const TestWrapper = defineComponent({
       setup() {
@@ -99,6 +111,18 @@ describe('OutcomeBy', () => {
     it('renders outcome by container', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.find('.layout').exists()).toBe(true)
+    })
+
+    it('keeps Bootstrap spacing utilities off the stepper wrapper', async () => {
+      // The stepper is held against the right edge of the row by
+      // margin-left: auto. Bootstrap's m*-* utilities are !important, so one
+      // of them on this element silently beats that margin: the stepper
+      // drifts back to the left and nothing errors or warns. It was .ms-1
+      // that did exactly this before.
+      const wrapper = await createWrapper({ availablenow: 2, left: 2 })
+      const took = wrapper.find('.took')
+      expect(took.exists()).toBe(true)
+      expect(took.classes().filter((c) => /^m[tbsexy]?-/.test(c))).toEqual([])
     })
 
     it('shows please tell us label for single item', async () => {

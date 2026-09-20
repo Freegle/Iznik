@@ -436,7 +436,10 @@ describe('ModSupportChat', () => {
 
     it('does NOT call userStore.fetch for User2User chat (reads store only)', () => {
       mockUserStore.byId.mockReturnValue({ id: 2, displayname: 'Alice' })
-      mountComponent({ chatid: 123, pov: 1 }, { ...defaultChat, chattype: 'User2User' })
+      mountComponent(
+        { chatid: 123, pov: 1 },
+        { ...defaultChat, chattype: 'User2User' }
+      )
       expect(mockUserStore.fetch).not.toHaveBeenCalled()
     })
 

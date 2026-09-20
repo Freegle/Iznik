@@ -200,11 +200,12 @@ describe('MessageAttachments', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('uses NuxtPicture for externaluid attachment', () => {
+    it('does not render a picture for a bare externaluid', () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       const wrapper = createWrapper({
         attachments: [{ externaluid: 'external123' }],
       })
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
 
     it('uses ProxyImage for path attachment', () => {

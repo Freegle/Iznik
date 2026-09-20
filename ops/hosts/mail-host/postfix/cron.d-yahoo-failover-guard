@@ -1,0 +1,7 @@
+# Installed in root's crontab on bulk2, not /etc/cron.d (kept here for rebuild).
+#
+# Reverts the MANUAL Yahoo failover (see yahoo-failover). Turns it OFF only -
+# when the backlog drains, or when the secondary ip starts being throttled too.
+# Nothing may ever turn it ON automatically: doing so trades the reputation of
+# our only working ip for throughput, which is a human's call to make.
+*/5 * * * * /usr/local/sbin/yahoo-failover-guard >/dev/null 2>&1

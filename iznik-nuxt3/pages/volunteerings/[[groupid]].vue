@@ -92,8 +92,8 @@ import { ref, computed, useRoute, useRouter } from '#imports'
 import GroupSelect from '~/components/GroupSelect'
 import VolunteerOpportunity from '~/components/VolunteerOpportunity.vue'
 import ScrollGrid from '~/components/ScrollGrid'
-const VolunteerOpportunityModal = defineAsyncComponent(() =>
-  import('~/components/VolunteerOpportunityModal')
+const VolunteerOpportunityModal = defineAsyncComponent(
+  () => import('~/components/VolunteerOpportunityModal')
 )
 
 const runtimeConfig = useRuntimeConfig()

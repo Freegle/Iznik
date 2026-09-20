@@ -21,13 +21,15 @@ describe('useCameraErrorMessage', () => {
   // photos app" is a plain back-out that must stay silent.
   describe('cameraErrorMessage (pure mapping)', () => {
     it('stays silent on a plain cancellation', () => {
-      expect(cameraErrorMessage(new Error('User cancelled photos app'))).toBeNull()
+      expect(
+        cameraErrorMessage(new Error('User cancelled photos app'))
+      ).toBeNull()
     })
 
     it('explains a declined permission', () => {
-      expect(cameraErrorMessage(new Error('User denied access to camera'))).toMatch(
-        /permission was declined/i
-      )
+      expect(
+        cameraErrorMessage(new Error('User denied access to camera'))
+      ).toMatch(/permission was declined/i)
     })
 
     it('falls back to a generic message for an unknown failure', () => {
