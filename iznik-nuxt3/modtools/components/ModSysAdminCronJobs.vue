@@ -90,6 +90,16 @@
 <script setup>
 import api from '~/api'
 import { timeago } from '~/composables/useTimeFormat'
+import {
+  cronJobNextDueText,
+  isCronJobOverdue,
+} from '~/modtools/composables/useCronJobDue'
+
+// The table is a snapshot of when each job last started, and per-minute jobs
+// are due again a minute later, so it must keep both its clock and its data
+// fresh or every per-minute job reads as overdue shortly after the page loads.
+const CLOCK_TICK_MS = 30000
+const REFETCH_EVERY_TICKS = 2
 
 const runtimeConfig = useRuntimeConfig()
 const apiInstance = api(runtimeConfig)
@@ -99,6 +109,9 @@ const error = ref(null)
 const cronJobs = ref([])
 const expandedCommand = ref(null)
 const expandedOutput = ref(null)
+const now = ref(new Date())
+let clockTimer = null
+let ticks = 0
 
 const groupedJobs = computed(() => {
   const groups = {}
@@ -130,10 +143,7 @@ function isOk(job) {
 }
 
 function isOverdue(job) {
-  if (!job.last_run_at || !job.interval_minutes) return false
-  const lastRun = new Date(job.last_run_at)
-  const deadline = new Date(lastRun.getTime() + job.interval_minutes * 60000)
-  return new Date() > deadline
+  return isCronJobOverdue(job, now.value)
 }
 
 function rowClass(job) {
@@ -143,27 +153,13 @@ function rowClass(job) {
 }
 
 function nextDue(job) {
-  if (!job.last_run_at || !job.interval_minutes) return '-'
-  const lastRun = new Date(job.last_run_at)
-  const deadline = new Date(lastRun.getTime() + job.interval_minutes * 60000)
-  const now = new Date()
-
-  if (now > deadline) {
-    return 'overdue'
-  }
-
-  // For very short intervals, show minutes remaining instead of vague "a few seconds"
-  const remainMs = deadline - now
-  const remainMins = Math.ceil(remainMs / 60000)
-  if (remainMins <= 5) {
-    return remainMins <= 1 ? '~1m' : `~${remainMins}m`
-  }
-
-  return timeago(deadline)
+  return cronJobNextDueText(job, now.value, timeago)
 }
 
-async function fetchCronJobs() {
-  loading.value = true
+// quiet: a background refresh keeps the table on screen instead of swapping
+// it for the spinner.
+async function fetchCronJobs(quiet = false) {
+  if (!quiet) loading.value = true
   error.value = null
 
   try {
@@ -178,6 +174,15 @@ async function fetchCronJobs() {
 
 onMounted(() => {
   fetchCronJobs()
+  clockTimer = setInterval(() => {
+    now.value = new Date()
+    ticks++
+    if (ticks % REFETCH_EVERY_TICKS === 0) fetchCronJobs(true)
+  }, CLOCK_TICK_MS)
+})
+
+onUnmounted(() => {
+  if (clockTimer) clearInterval(clockTimer)
 })
 </script>
 
