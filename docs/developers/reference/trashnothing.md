@@ -420,6 +420,16 @@ partner_areas.polyindex   GEOGRAPHY -- the area's polygon
 
 There is nothing per-area to switch on or off.
 
+#### What partner requests still see
+
+TN files each post under one of its groups from the `groups` array on the message, so any
+request carrying a valid partner key (`GET /api/changes?partner=`, `GET /api/messages?partner=`,
+a single fetch with `partner=`) still gets `groups: [{groupid, nameshort}]` on every message
+item, derived at response time in the `partner` package: the smallest `partner_areas` polygon
+containing the post's location, else the nearest within 20 miles, else an empty array. The
+`groupid` is the `partner_areas` id, which is the old group id, so TN's mapping is unchanged.
+Requests without a partner key never carry the field; users and ratings entries never did.
+
 ### Ratings Table
 ```sql
 ratings.tn_rating_id  -- TrashNothing rating ID for sync deduplication

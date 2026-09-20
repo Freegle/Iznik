@@ -129,6 +129,7 @@ classifier being good; it relies on the outcome being reversible and the member 
 | `GET /api/changes?partner=` | `changes.go` | No. Already group-free |
 | `{username}-g{groupid}@user.trashnothing.com` | `TNSyncCommand` | No. Parsed, never shown |
 | `groups.ontn`, `groups.onlovejunk` | `group.go`, `location.go` | No |
+| Message payloads TN reads (`GET /api/changes?partner=`, `GET /api/messages?partner=`, single fetch with `partner=`) carry `groups: [{groupid, nameshort}]` | `partner` package | No. Derived at response time from `partner_areas` (smallest containing area, else nearest within 20 miles, else empty). Only when a partner key is present |
 
 Nothing TN relies on needs a member to see a group. The internal tables survive; the member
 site stops mentioning them.

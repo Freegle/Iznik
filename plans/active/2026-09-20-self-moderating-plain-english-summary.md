@@ -140,8 +140,18 @@ reads that table. When a TrashNothing post arrives addressed to a community, Fre
 the name and gives the post a location: the postcode in the post if there is one, otherwise the
 centre of that community's old area. When TrashNothing subscribes or unsubscribes a member, that
 sets the member's one email choice (daily, or never). When it creates a member, the member gets
-a location from the area. Freegle's own posts flow back to TrashNothing as before. So
-TrashNothing carries on speaking about communities, and Freegle quietly translates.
+a location from the area.
+
+TrashNothing also reads from Freegle, not just writes to it. Every few minutes it asks our
+API "what has changed since I last looked?" and then fetches the posts it is told about, and
+it files each post under one of its own groups by reading which Freegle community the post
+belongs to. Those replies keep naming a community: when the request comes from a partner,
+Freegle works out which old community area the post's location falls in (the smallest one,
+or the nearest within twenty miles) and puts that name and number in the reply, exactly as
+before. Requests from ordinary members never see it. TrashNothing also tells us about its
+members' profile changes and the ratings they give, which never involved communities and
+carries on unchanged. So TrashNothing keeps speaking about communities, in both directions,
+and Freegle quietly translates.
 
 ## What stays the same
 
@@ -183,7 +193,8 @@ volunteer tools shrinking most.
 - **The AI costs money for every post it reads.** The cost is measured for every call and the
   choice of model is a setting; a cheaper model can be used for chat.
 - **TrashNothing depends on the hidden table staying accurate.** If a community boundary was
-  wrong before, it stays wrong for TrashNothing posts.
+  wrong before, it stays wrong for TrashNothing posts, and a post that falls outside every old
+  area is filed under the nearest one.
 
 ## Where it is
 
