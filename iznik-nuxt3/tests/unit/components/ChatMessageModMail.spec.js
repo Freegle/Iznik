@@ -84,6 +84,11 @@ vi.mock('#imports', () => ({
   computed: (fn) => ({ value: fn() }),
 }))
 
+const mockGroupless = { value: false }
+vi.mock('~/composables/useGroupless', () => ({
+  useGroupless: () => mockGroupless.value,
+}))
+
 describe('ChatMessageModMail', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -536,6 +541,18 @@ describe('ChatMessageModMail', () => {
       mockMyid.value = 1
       const wrapper = await createWrapper()
       expect(wrapper.find('.b-card').classes()).not.toContain('ms-auto')
+    })
+  })
+
+
+  describe('groupless site (experiment)', () => {
+    it('is a message from Freegle, not from a community', async () => {
+      mockGroupless.value = true
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('Message from Freegle')
+      expect(wrapper.text()).not.toContain('Freegle Cambridge')
+      expect(wrapper.text()).not.toContain('Volunteers')
+      mockGroupless.value = false
     })
   })
 })

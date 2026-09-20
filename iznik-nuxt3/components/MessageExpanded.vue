@@ -378,7 +378,10 @@
                 />
                 <v-icon icon="chevron-right" class="poster-chevron" />
               </div>
-              <div v-if="messageGroups.length" class="posted-on-groups">
+              <div
+                v-if="messageGroups.length && !groupless"
+                class="posted-on-groups"
+              >
                 On:
                 <ShowMore :items="messageGroups" :limit="3" inline>
                   <template #item="{ item }"
@@ -665,6 +668,7 @@ import { useMiscStore } from '~/stores/misc'
 import { useMobileStore } from '~/stores/mobile'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
+import { useGroupless } from '~/composables/useGroupless'
 import { postAgeBadge } from '~/composables/usePostAgeBadge'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
 import { homeGroupFirst, isHomeGroup } from '~/composables/rippleStatus'
@@ -722,6 +726,8 @@ const miscStore = useMiscStore()
 const mobileStore = useMobileStore()
 const groupStore = useGroupStore()
 const { me, loggedIn } = useMe()
+// Experiment: no community identity on the member site.
+const groupless = useGroupless()
 
 // Use shared composable for common message display logic
 const {

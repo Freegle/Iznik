@@ -1902,4 +1902,41 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertNotContains($duplicate->id, $ids, 'Duplicate copy of the current message should be excluded');
     }
 
+
+    public function test_warn_not_hold_emails_a_held_message_with_a_warning_not_the_text(): void
+    {
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient, ['latestmessage' => now()]);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => 'Send me £20 first',
+            'date' => now()->subMinutes(5),
+            'reviewrequired' => 1,
+        ]);
+        DB::table('chat_messages')->where('id', $msg->id)->update(['reportreason' => 'Money']);
+
+        $selected = function () use ($room, $msg): bool {
+            $method = new \ReflectionMethod($this->service, 'getUnmailedMessages');
+            $method->setAccessible(true);
+            $rows = $method->invoke($this->service, ChatRoom::TYPE_USER2USER, $room->id, 0, 24, false);
+
+            return $rows->contains(fn ($r) => (int) $r->id === (int) $msg->id);
+        };
+
+        config(['freegle.moderation.chat_warn_not_hold' => false]);
+        $this->assertFalse($selected(), 'held messages are not emailed today');
+
+        config(['freegle.moderation.chat_warn_not_hold' => true]);
+        $this->assertTrue($selected(), 'with the flag on the held message is emailed');
+
+        $mail = new \App\Mail\Chat\ChatNotification(
+            $recipient->fresh(), $sender->fresh(), $room->fresh(), $msg->fresh(), ChatRoom::TYPE_USER2USER
+        );
+        $prepare = new \ReflectionMethod($mail, 'prepareMessage');
+        $prepare->setAccessible(true);
+        $prepared = $prepare->invoke($mail, $msg->fresh());
+        $this->assertStringNotContainsString('£20', $prepared['text'], 'the email does not carry the guarded text');
+        $this->assertSame(\App\Support\ChatWarnNotHold::warningText('money'), $prepared['text']);
+        $this->assertSame('money', $prepared['sensitive']);
+    }
 }

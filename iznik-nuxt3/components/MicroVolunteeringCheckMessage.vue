@@ -287,7 +287,7 @@ function notRight(callback) {
 
 async function sendComments(callback) {
   // Record the result with comments.
-  await microVolunteeringStore.respond({
+  const result = await microVolunteeringStore.respond({
     msgid: props.id,
     groupid: groupid.value,
     response: 'Reject',
@@ -295,22 +295,28 @@ async function sendComments(callback) {
     msgcategory: msgcategory.value,
   })
   await refreshNotificationCount()
-  callback()
+  if (typeof callback === 'function') {
+    callback()
+  }
 
-  emit('next')
+  // The mark (true/false) when the post was already settled by other members, else
+  // undefined. Only the reply gate cares.
+  emit('next', result?.graded)
 }
 
 async function approve(callback) {
   // Approved - that's it.
-  await microVolunteeringStore.respond({
+  const result = await microVolunteeringStore.respond({
     msgid: props.id,
     groupid: groupid.value,
     response: 'Approve',
   })
   await refreshNotificationCount()
-  callback()
+  if (typeof callback === 'function') {
+    callback()
+  }
 
-  emit('next')
+  emit('next', result?.graded)
 }
 
 // After recording a response the server has already marked the "post to check"

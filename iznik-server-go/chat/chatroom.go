@@ -58,6 +58,8 @@ type ChatRoomListEntry struct {
 	Unseen         uint64          `json:"unseen"`
 	Chatmsg        string          `json:"-"`
 	Chatmsgtype    string          `json:"-"`
+	Chatmsgheld    bool            `json:"-"`
+	Chatmsguserid  uint64          `json:"-"`
 	Refmsgtype     string          `json:"-"`
 	Hasmessages    bool            `json:"-" gorm:"column:hasmessages"`
 	Hasvisiblemsg  bool            `json:"-" gorm:"column:hasvisiblemsg"`
@@ -291,6 +293,11 @@ func GetChatRoom(id uint64, myid uint64) (ChatRoomListEntry, bool) {
 	}
 	chats = listChats(participant, []string{room.Chattype}, "2009-09-11", "", id, id, true, false)
 	if len(chats) > 0 {
+		// The list ran as the participant, so a held message's preview was masked for them.
+		// The caller here is a moderator, who reads the text as before.
+		if WarnNotHold() && chats[0].Chatmsgheld {
+			chats[0].Snippet = getSnippet(chats[0].Chatmsgtype, chats[0].Chatmsg, chats[0].Refmsgtype)
+		}
 		return chats[0], false
 	}
 
@@ -1189,7 +1196,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				// Rippling held-reply gate: a reply held because the post hasn't yet rippled to the
 				// replier's area (rippling_held_replies, status <> 'released') must not inflate the
 				// poster's unseen badge — mirrors the FetchChatMessages delivery gate. Param-free.
-				"  " + statusq + "), 0) AND chatid = chat_rooms.id AND userid != ? AND chat_messages.date >= ? AND (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1) AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')) AS unseen, " +
+				"  " + statusq + "), 0) AND chatid = chat_rooms.id AND userid != ? AND chat_messages.date >= ? AND (" + deliverableSQL("") + " AND processingsuccessful = 1) AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')) AS unseen, " +
 				"(SELECT COUNT(*) AS count FROM chat_messages WHERE chatid = chat_rooms.id AND replyexpected = 1 AND" +
 				"  replyreceived = 0 AND userid != ? AND chat_messages.date >= ? AND chat_rooms.chattype = ? AND processingsuccessful = 1) AS replyexpected, " +
 				"i1.id AS u1imageid, " +
@@ -1214,7 +1221,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				// Brand-new rooms with no messages at all keep showing (hasmessages = 0).
 				"EXISTS(SELECT 1 FROM chat_messages WHERE chat_messages.chatid = chat_rooms.id) AS hasmessages, " +
 				"EXISTS(SELECT 1 FROM chat_messages cmv WHERE cmv.chatid = chat_rooms.id AND " +
-				"  (cmv.userid = ? OR (cmv.reviewrequired = 0 AND cmv.reviewrejected = 0 AND " +
+				"  (cmv.userid = ? OR (" + deliverableSQL("cmv.") + " AND " +
 				"   NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr2 WHERE rhr2.chatmsgid = cmv.id AND rhr2.status <> 'released')))) AS hasvisiblemsg, " +
 				"rcm.* " +
 				ChatRoomListFrom(idlist)
@@ -1365,6 +1372,10 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 					// Snippet is set for all chats, including deleted users.
 					if chats[ix].Search {
 						chats[ix].Snippet = "...contains '" + search + "'"
+					} else if WarnNotHold() && chat.Chatmsgheld && chat.Chatmsguserid != myid {
+						// A held message is delivered behind a warning; the preview must
+						// not show the text the warning is there to guard.
+						chats[ix].Snippet = SensitiveSnippet
 					} else {
 						chats[ix].Snippet = getSnippet(chat.Chatmsgtype, chat.Chatmsg, chat.Refmsgtype)
 					}
@@ -1646,7 +1657,7 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 		Where("chatid = ? AND userid != ? "+
 			"AND id > COALESCE((SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?), 0) "+
 			"AND chat_messages.date >= ? "+
-			"AND reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 "+
+			"AND "+deliverableSQL("")+" AND processingsuccessful = 1 "+
 			"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')",
 			req.ID, myid, req.ID, myid, activeSince).
 		Count(&unseen)
@@ -2032,14 +2043,14 @@ func ChatRoomListFrom(idlist string) string {
 		"LEFT JOIN users_images i2 ON i2.id = (SELECT id FROM users_images WHERE userid = u2.id ORDER BY id DESC LIMIT 1) " +
 		"LEFT JOIN groups_images i3 ON i3.id = (SELECT id FROM groups_images WHERE groupid = chat_rooms.groupid ORDER BY id DESC LIMIT 1) " +
 		"LEFT JOIN chat_messages ON chat_messages.id = " +
-		"  (SELECT id FROM chat_messages WHERE chat_messages.chatid = chat_rooms.id AND reviewrequired = 0 AND reviewrejected = 0 AND (processingsuccessful = 1 OR chat_messages.userid = ?) AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') ORDER BY chat_messages.id DESC LIMIT 1) " +
+		"  (SELECT id FROM chat_messages WHERE chat_messages.chatid = chat_rooms.id AND " + deliverableSQL("") + " AND (processingsuccessful = 1 OR chat_messages.userid = ?) AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') ORDER BY chat_messages.id DESC LIMIT 1) " +
 		"LEFT JOIN messages ON messages.id = chat_messages.refmsgid " +
 		"LEFT JOIN (WITH cm AS (SELECT chat_messages.id AS lastmsg, chat_messages.chatid, chat_messages.message AS chatmsg," +
-		" chat_messages.date AS lastdate, chat_messages.type AS chatmsgtype, ROW_NUMBER() OVER (PARTITION BY chatid ORDER BY id DESC) AS rn " +
+		" chat_messages.date AS lastdate, chat_messages.type AS chatmsgtype, chat_messages.reviewrequired AS chatmsgheld, chat_messages.userid AS chatmsguserid, ROW_NUMBER() OVER (PARTITION BY chatid ORDER BY id DESC) AS rn " +
 		// Rippling held-reply gate inside the deliverable branch: a held reply must not be the
 		// poster's snippet/preview. The trailing `OR userid = ?` still lets the sender see their
 		// own message, matching FetchChatMessages. Param-free (correlates on chat_messages.id).
-		" FROM chat_messages WHERE chatid IN " + idlist + " AND (reviewrequired = 0 AND reviewrejected = 0 AND (processingsuccessful = 1 OR chat_messages.userid = ?) AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') OR userid = ?)) " +
+		" FROM chat_messages WHERE chatid IN " + idlist + " AND (" + deliverableSQL("") + " AND (processingsuccessful = 1 OR chat_messages.userid = ?) AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') OR userid = ?)) " +
 		"  SELECT * FROM cm WHERE rn = 1) rcm ON rcm.chatid = chat_rooms.id " +
 		"WHERE chat_rooms.id IN " + idlist
 }

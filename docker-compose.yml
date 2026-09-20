@@ -751,6 +751,11 @@ services:
       - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
       - TUS_UPLOADER=http://tusd:8080/tus
+      # Self-moderating community experiment switches. Empty means off; see
+      # plans/active/2026-09-19-self-moderating-community.md.
+      - CHAT_WARN_NOT_HOLD=${CHAT_WARN_NOT_HOLD:-}
+      - REPLY_GATE_AFTER=${REPLY_GATE_AFTER:-}
+      - REPORTS_RESOLVE=${REPORTS_RESOLVE:-}
       # In dev, uploaded photos live in the local tusd, not the production
       # store. The Go API builds delivery URLs as IMAGE_DELIVERY?url=UPLOADS+uid;
       # without this UPLOADS defaults to production (uploads.ilovefreegle.org),
@@ -1156,6 +1161,8 @@ services:
     environment:
       - IZNIK_API_V2=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
+      # Self-moderating community experiment: a member site with no community identity.
+      - GROUPLESS=${GROUPLESS:-}
       - TUS_UPLOADER=http://tusd.localhost:${PORT_TRAEFIK_HTTP:-80}/tus/
       - USER_SITE=http://freegle-dev-local.localhost:${PORT_FREEGLE_DEV_LOCAL:-3002}
       - IMAGE_BASE_URL=http://tusd:8080/tus
@@ -1632,6 +1639,8 @@ services:
         required: false
     restart: "no"
     environment:
+      # Self-moderating community experiment: the batch tier reads the same switch as the API.
+      - CHAT_WARN_NOT_HOLD=${CHAT_WARN_NOT_HOLD:-}
       - APP_NAME=Freegle Batch Jobs
       - APP_KEY=base64:JXsa9TVxy8PQIrAgimIh0+4v8U7rSYhd3/+an8WYYQc=
       - APP_ENV=local

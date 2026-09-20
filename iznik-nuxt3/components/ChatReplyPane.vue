@@ -253,6 +253,16 @@
           <NewFreegler v-if="!me" class="composer-hint" />
         </div>
 
+        <!-- Experiment: the reply gate. A graded micro-volunteering task the member
+             must get right before this reply is sent. -->
+        <MicroVolunteering
+          v-if="stateMachine.state.value === ReplyState.REPLY_GATE"
+          gate
+          force
+          @verified="stateMachine.onGatePassed"
+          @failed="stateMachine.onGateFailed"
+        />
+
         <!-- Error message -->
         <NoticeMessage
           v-if="stateMachine.error.value"
@@ -353,6 +363,7 @@ import ChatButton from '~/components/ChatButton'
 import ChatMessageCard from '~/components/ChatMessageCard'
 import SpinButton from '~/components/SpinButton.vue'
 import NoticeMessage from '~/components/NoticeMessage'
+import MicroVolunteering from '~/components/MicroVolunteering'
 import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import SupporterInfo from '~/components/SupporterInfo'

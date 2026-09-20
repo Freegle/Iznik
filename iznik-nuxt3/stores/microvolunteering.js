@@ -25,7 +25,8 @@ export const useMicroVolunteeringStore = defineStore('microvolunteering', {
       return item
     },
     async respond(params) {
-      await api(this.config).microvolunteering.response(params)
+      // Returned so a graded task (the reply gate) can read whether the answer was right.
+      return await api(this.config).microvolunteering.response(params)
     },
     async fetch(params) {
       const { context, microvolunteerings } = await api(

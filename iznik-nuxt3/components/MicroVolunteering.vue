@@ -63,9 +63,10 @@
         scrollable
         variant="info"
         size="lg"
-        :no-close-on-backdrop="force"
-        :hide-header-close="force"
-        :no-close-on-esc="force"
+        :no-close-on-backdrop="force || gate"
+        :hide-header-close="force || gate"
+        :no-close-on-esc="force || gate"
+        :modal-class="gate ? 'reply-gate-modal' : undefined"
         no-fade
       >
         <template #header>
@@ -88,7 +89,8 @@
                     />
                   </span>
                 </span>
-                <span v-if="task.type === 'CheckMessage'">
+                <span v-if="gate"> Before you send more replies today </span>
+                <span v-else-if="task.type === 'CheckMessage'">
                   Does this post look OK?
                 </span>
                 <span v-else-if="task.type === 'SearchTerm'"> Word Match </span>
@@ -102,7 +104,11 @@
                   Help train Freegle's photo recognition
                 </span>
               </h1>
-              <div class="fw-bold">
+              <div v-if="gate" class="fw-bold">
+                You've replied to a lot of posts today. Please check one post
+                for us first. Does it look OK?
+              </div>
+              <div v-else class="fw-bold">
                 These little things help Freegle run smoothly. Thank you!
               </div>
             </div>
@@ -115,6 +121,15 @@
               you're a mod, so you can see what it looks like to them.)
             </p>
             <div v-if="task" :key="bump">
+              <NoticeMessage
+                v-if="gate && gateWrong"
+                variant="warning"
+                class="mb-2"
+                data-testid="gate-wrong"
+              >
+                That's not what other freeglers said about that post. Have
+                another look at a different one.
+              </NoticeMessage>
               <div v-if="task.type === 'CheckMessage'">
                 <MicroVolunteeringCheckMessage
                   :id="task.msgid"
@@ -169,7 +184,7 @@
             </div>
           </b-card-text>
         </template>
-        <template v-if="!force" #footer>
+        <template v-if="!force && !gate" #footer>
           <div class="d-flex justify-content-between flex-wrap w-100">
             <b-button
               v-if="inviteAccepted && !force"
@@ -196,6 +211,7 @@ import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 import { useClientLog } from '~/composables/useClientLog'
+import NoticeMessage from '~/components/NoticeMessage'
 
 const MicroVolunteeringFacebook = defineAsyncComponent(
   () => import('./MicroVolunteeringFacebook')
@@ -228,9 +244,21 @@ const props = defineProps({
     required: false,
     default: false,
   },
+  // Experiment: the reply gate. One graded task, whose answer other members have already
+  // settled; the gate opens on a right answer (verified) and gives up after three wrong
+  // ones (failed). Implies force.
+  gate: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
 })
 
-const emit = defineEmits(['verified'])
+const emit = defineEmits(['verified', 'failed'])
+
+const gateWrong = ref(false)
+const gateAttempts = ref(0)
+const GATE_MAX_ATTEMPTS = 3
 
 const microVolunteeringStore = useMicroVolunteeringStore()
 const miscStore = useMiscStore()
@@ -308,7 +336,12 @@ if (me.value && !miscStore.modtools) {
   )
 
   let gateOutcome
-  if (!allowed) {
+  if (props.gate) {
+    gateOutcome = 'reply_gate'
+    // The reply gate: nothing about opt-in or timing applies. Fetch a graded task.
+    todo.value = 1
+    fetchTask.value = true
+  } else if (!allowed) {
     gateOutcome = 'not_allowed'
     // Not on a group with this function enabled.
   } else if (!askDue) {
@@ -354,9 +387,9 @@ if (me.value && !miscStore.modtools) {
 
 async function getTask() {
   // Try to get a task.
-  task.value = await microVolunteeringStore.challenge({
-    types: types.value,
-  })
+  task.value = await microVolunteeringStore.challenge(
+    props.gate ? { types: ['CheckMessage'], graded: 1 } : { types: types.value }
+  )
 
   if (task.value) {
     clientLog.info('Microvolunteering challenge received', {
@@ -393,6 +426,12 @@ async function getTask() {
       challenge_type: 'none',
     })
     // Nothing to do.
+    if (props.gate) {
+      // Nothing settled to ask about, so there is nothing to mark. Open.
+      showTask.value = false
+      emit('verified')
+      return
+    }
     doneForNow()
   }
 
@@ -410,7 +449,25 @@ async function stopIt() {
   doneForNow()
 }
 
-function considerNext() {
+function considerNext(graded) {
+  if (props.gate) {
+    if (graded === false) {
+      gateAttempts.value++
+      gateWrong.value = true
+      if (gateAttempts.value >= GATE_MAX_ATTEMPTS) {
+        showTask.value = false
+        emit('failed')
+        return
+      }
+      getTask()
+      return
+    }
+    // Right, or could not be marked: open.
+    showTask.value = false
+    emit('verified')
+    return
+  }
+
   todo.value--
   done.value++
 
@@ -503,5 +560,15 @@ onMounted(async () => {
 
 .text-danger {
   color: $color-red;
+}
+</style>
+<style lang="scss">
+/* The reply composer is a full-screen overlay at z-index 9999, above where a modal
+   normally sits. The gate opens on top of that composer, so it goes higher still. */
+.reply-gate-modal {
+  /* Bootstrap sets the modal's own z-index inline from --bs-modal-zindex, so both
+     the variable and the property need overriding. */
+  --bs-modal-zindex: 10001;
+  z-index: 10001 !important;
 }
 </style>

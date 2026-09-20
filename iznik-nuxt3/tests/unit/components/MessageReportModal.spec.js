@@ -70,6 +70,11 @@ vi.mock('nuxt/app', () => ({
   }),
 }))
 
+const mockGroupless = { value: false }
+vi.mock('~/composables/useGroupless', () => ({
+  useGroupless: () => mockGroupless.value,
+}))
+
 describe('MessageReportModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -454,6 +459,18 @@ describe('MessageReportModal', () => {
       wrapper.vm.selectedReason = 'spam'
       wrapper.vm.selectedGroupIds = []
       expect(wrapper.vm.canSubmit).toBe(false)
+    })
+  })
+
+
+  describe('groupless site (experiment)', () => {
+    it('promises an outcome rather than a volunteer', async () => {
+      mockGroupless.value = true
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain('volunteers')
+      expect(wrapper.text()).toContain('let you know what happens')
+      expect(wrapper.find('.report-groups').exists()).toBe(false)
+      mockGroupless.value = false
     })
   })
 })
