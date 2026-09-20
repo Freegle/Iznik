@@ -12,10 +12,9 @@ class MessageIllustrationsService
     private const CONFIG_KEY = 'illustrations_last_arrival';
     private const CLEANUP_WATERMARK_KEY = 'illustrations_cleanup_last_id';
 
-    // How long we keep holding the saved position for a post that is still waiting to be
-    // approved. Long enough for ordinary moderation, short enough that an abandoned post in
-    // a queue cannot stall the job indefinitely.
-    private const WAITING_WINDOW_DAYS = 3;
+    // How far back the pending branch looks. Long enough for ordinary moderation, short
+    // enough that a post abandoned in a queue is not retried for ever.
+    private const PENDING_WINDOW_DAYS = 3;
 
     // Most passes a single run will make. Holding the saved position back means a run starts
     // at the oldest post still waiting, so without a cap one run could try to work through
@@ -153,22 +152,63 @@ class MessageIllustrationsService
             }
 
             $passStart = $lastArrival;
+            // Two branches, because the two collections are found in different ways.
+            //
+            // Approved posts come through messages_spatial, which is the cheap index of live,
+            // located, recent posts and is what keeps this query off a full scan.
+            //
+            // Pending posts are NOT in that index - the index job drops everything that is not
+            // approved - so the mention of 'Pending' in the old single query never matched
+            // anything. The join won, silently, from the May migration onwards, and a post
+            // waiting for a moderator got no picture until it was approved. Discourse 9630/97.
+            //
+            // The pending branch is therefore not watermarked. It drives off the collection
+            // index, so it costs the size of the moderation queue (~1.1k rows in production,
+            // 172 of them undeleted) however far back the saved position is, and it drains
+            // itself: a post drops out the moment it has a picture. Not watermarking it is
+            // the point - a watermark sweeping past a post that is not yet a candidate is the
+            // bug being fixed here.
+            //
+            // It is capped at half the batch so that a backed-up moderation queue, or an
+            // outage in which every generation fails, cannot fill every slot and starve the
+            // approved branch. Candidates are merged and sorted by arrival, so without the cap
+            // the oldest waiting posts would take the lot.
             $msgs = DB::select("
-                SELECT DISTINCT mg.msgid, m.subject, mg.arrival
-                FROM messages_groups mg
-                INNER JOIN messages m ON m.id = mg.msgid
-                INNER JOIN messages_spatial ms ON ms.msgid = mg.msgid
-                LEFT JOIN messages_attachments ma ON ma.msgid = m.id
-                LEFT JOIN messages_ai_declined maid ON maid.msgid = m.id
-                WHERE mg.arrival >= ?
-                AND mg.collection IN ('Approved', 'Pending')
-                AND ma.id IS NULL
-                AND maid.msgid IS NULL
-                AND m.subject IS NOT NULL
-                AND m.subject != ''
-                ORDER BY mg.arrival ASC, mg.msgid ASC
+                SELECT msgid, subject, arrival FROM (
+                    SELECT DISTINCT mg.msgid, m.subject, mg.arrival
+                    FROM messages_groups mg
+                    INNER JOIN messages m ON m.id = mg.msgid
+                    INNER JOIN messages_spatial ms ON ms.msgid = mg.msgid
+                    LEFT JOIN messages_attachments ma ON ma.msgid = m.id
+                    LEFT JOIN messages_ai_declined maid ON maid.msgid = m.id
+                    WHERE mg.arrival >= ?
+                    AND mg.collection = 'Approved'
+                    AND ma.id IS NULL
+                    AND maid.msgid IS NULL
+                    AND m.subject IS NOT NULL
+                    AND m.subject != ''
+
+                    UNION
+
+                    (SELECT DISTINCT mg.msgid, m.subject, mg.arrival
+                    FROM messages_groups mg
+                    INNER JOIN messages m ON m.id = mg.msgid
+                    LEFT JOIN messages_attachments ma ON ma.msgid = m.id
+                    LEFT JOIN messages_ai_declined maid ON maid.msgid = m.id
+                    WHERE mg.collection = 'Pending'
+                    AND mg.arrival >= ?
+                    AND mg.deleted = 0
+                    AND m.deleted IS NULL
+                    AND ma.id IS NULL
+                    AND maid.msgid IS NULL
+                    AND m.subject IS NOT NULL
+                    AND m.subject != ''
+                    ORDER BY mg.arrival ASC
+                    LIMIT ?)
+                ) candidates
+                ORDER BY arrival ASC, msgid ASC
                 LIMIT ?
-            ", [$lastArrival, self::BATCH_SIZE * 2]);
+            ", [$lastArrival, $this->pendingWindowStart(), self::BATCH_SIZE, self::BATCH_SIZE * 2]);
 
             if (empty($msgs)) {
                 break;
@@ -177,7 +217,6 @@ class MessageIllustrationsService
             $cachedMessages = [];
             $newMessages = [];
             $maxArrival = $lastArrival;
-            $createdThisPass = 0;
             $unresolved = [];
 
             foreach ($msgs as $msg) {
@@ -223,7 +262,6 @@ class MessageIllustrationsService
                             'contenttype' => 'image/jpeg',
                         ]);
                         $processed++;
-                        $createdThisPass++;
                         Log::info("MessageIllustrations: used cached illustration for message {$cached['msgid']}: {$cached['itemName']}");
                     }
                     $cachedHits++;
@@ -294,7 +332,6 @@ class MessageIllustrationsService
                             'contenttype' => 'image/jpeg',
                         ]);
                         $processed++;
-                        $createdThisPass++;
                         Log::info("MessageIllustrations: created illustration for message {$msgid}: {$itemName}");
                     }
                 }
@@ -322,17 +359,6 @@ class MessageIllustrationsService
                 if ($pinned === null || $earliest < $pinned) {
                     $pinned = $earliest;
                 }
-            }
-
-            // A post is only a candidate once it is approved, because the query above needs a
-            // row in the spatial index and that holds approved posts. The watermark moves on
-            // arrival time regardless, so a post sitting in a moderation queue while the sweep
-            // goes past its arrival is never looked at again, and gets no illustration even
-            // after a moderator approves it. Discourse 9630/97 is two such posts. Hold the
-            // saved mark at the oldest post still waiting, so approval is not too late.
-            $waiting = $this->oldestWaitingForApproval();
-            if ($waiting !== null && ($pinned === null || $waiting < $pinned)) {
-                $pinned = $waiting;
             }
 
             // The cursor still sweeps forward, so this run does not re-read what it has
@@ -383,32 +409,13 @@ class MessageIllustrationsService
     }
 
     /**
-     * Arrival of the oldest post still waiting for a moderator, within the window we would
-     * still illustrate. Null when there is none.
-     *
-     * Bounded by WAITING_WINDOW_DAYS so one post left in a moderation queue for ever cannot
-     * hold the whole job at its arrival for ever: past that age we give up on it, which is
-     * the same thing the run already does with a post it cannot illustrate.
+     * The oldest arrival the pending branch will still illustrate. A post abandoned in a
+     * moderation queue is not worth a generation call for ever; past this it waits for
+     * approval, which puts it in front of the approved branch at its new arrival time.
      */
-    private function oldestWaitingForApproval(): ?string
+    private function pendingWindowStart(): string
     {
-        $cutoff = date('Y-m-d H:i:s', strtotime('-' . self::WAITING_WINDOW_DAYS . ' days'));
-
-        $row = DB::selectOne("
-            SELECT MIN(mg.arrival) AS arrival
-            FROM messages_groups mg
-            INNER JOIN messages m ON m.id = mg.msgid
-            LEFT JOIN messages_attachments ma ON ma.msgid = m.id
-            LEFT JOIN messages_ai_declined maid ON maid.msgid = m.id
-            WHERE mg.collection = 'Pending'
-            AND mg.arrival >= ?
-            AND ma.id IS NULL
-            AND maid.msgid IS NULL
-            AND m.subject IS NOT NULL
-            AND m.subject != ''
-        ", [$cutoff]);
-
-        return $row?->arrival;
+        return date('Y-m-d H:i:s', strtotime('-' . self::PENDING_WINDOW_DAYS . ' days'));
     }
 
     private function getLastArrival(): string
