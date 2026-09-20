@@ -135,9 +135,9 @@ site stops mentioning them.
 
 ## Prototypes on this branch
 
-Four vertical slices, each built test-first and each behind a switch that is off unless set,
-so the branch runs as today until you turn one on. Each one is judged by the same question:
-what happens with nobody there?
+Four vertical slices, each built test-first. In phase 1 each sat behind a switch that was off
+unless set; phase 2 (below) made three of them the behaviour and left only the reply gate's
+number as a switch. Each one is judged by the same question: what happens with nobody there?
 
 | Switch | Where | What it changes |
 |---|---|---|

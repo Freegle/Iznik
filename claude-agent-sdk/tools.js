@@ -408,7 +408,7 @@ function buildTools(ctx) {
   const get_user_dump = tool(
     'get_user_dump',
     'Download a full read-only snapshot of a member as a local SQLite database: ~69 user-linked tables ' +
-      '(profile, messages, BOTH sides of every chat, memberships, emails, bounces, spam flags, push tokens, ' +
+      '(profile, messages, BOTH sides of every chat, emails, bounces, spam flags, push tokens, ' +
       'email logs, mod logs) PLUS their Loki logs and Sentry issues, secrets redacted. This is usually the best ' +
       'first move — then use query_dump to run SQL against it (cheap, no timeouts) instead of many small queries.',
     {

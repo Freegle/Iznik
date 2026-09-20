@@ -11,38 +11,6 @@ How rippling is meant to work is in
 [`docs/developers/reference/rippling-algorithm.md`](../../docs/developers/reference/rippling-algorithm.md).
 This page is only the things that have caught people out.
 
-## One post, many rows: `SELECT DISTINCT` does not save you
-
-A rippled post is **one `messages` row** with **one `messages_groups` row per receiving
-group**. Any query that joins `messages_groups` returns one row per group unless it dedupes.
-
-`SELECT DISTINCT` reads as "this query is deduped" and makes an audit skip it. It is not.
-DISTINCT drops only rows identical in **every** selected column, so as soon as a per-group
-column such as the arrival time is in the select list, nothing is dropped:
-
-```sql
-SELECT DISTINCT m.id, m.subject, mg.arrival   -- mg.arrival differs per group, so DISTINCT does nothing
-INNER JOIN messages_groups mg ON mg.msgid = m.id
-```
-
-This is how a member's posting history showed the same offer 23 times: it had rippled to 23
-groups. An audit that trusted DISTINCT then declared one list "the only remaining example" and
-was wrong, because the replies modal had the same shape behind a DISTINCT.
-
-Dedupe with `GROUP BY m.id`, or filter to origin rows with `AND mg.rippled_in = 0`, which is the
-established pattern across the Go code. `COUNT(*)` over such a join is wrong for the same
-reason; use `COUNT(DISTINCT messages.id)`.
-
-## Deleting is per group, editing is global
-
-Per-group moderation state lives in the per-group row, so deleting or rejecting a rippled post
-removes **only that group's** row. The shared `messages.deleted` stamp is set as a cascade only
-once no undeleted group rows remain anywhere.
-
-Editing is the opposite: an edit mutates the single shared `messages` row, so it appears on
-every group at once. That is a genuinely different mechanism rather than an inconsistency, and
-it is worth saying plainly to moderators who notice the asymmetry.
-
 ## A missing reach row means retention, not failure
 
 The reach table is **transient**. Rows are deleted when a post is removed, when a community opts
@@ -72,16 +40,6 @@ opposite:
   the sentinel a step at a time. A migration that runs on a schedule has to be able to tell
   whether it has already run.
 
-## Rippled-in copies are not the receiving community's own posts
-
-They arrive already approved, which has repeatedly meant they skip things that apply to a
-community's own posts: the receiving community's rules were not checked, and its moderators
-could contact the poster when only one action had been suppressed. When you add anything that
-acts on a post in a community, decide explicitly what it does to a copy that rippled in.
-
-For the same reason, statistics that count local activity must exclude memberships rippling
-created itself, or auto-joins get counted as pre-existing local members.
-
 ## A held reply released to somebody who never got the post
 
 Replies held while a post spreads can be released long after, and most of them go to people the
@@ -109,7 +67,14 @@ When comparing reaches across that date, you are not comparing like with like.
 Size a cap from the **recipient's** local density, not the post's origin. Sizing it at the
 origin permanently blocks rural members from posts in the nearest town they already drive to.
 
+## There are no per-community rows any more
+
+A post is one `messages` row with one moderation state, and the reach polygon is the only
+spread mechanism. If you find yourself joining a per-community table, it was removed in
+`2026_09_20_000001_remove_group_model.php`; the answer you want is on `messages` or on the
+member.
+
 ## See also
 
 - `.claude/rules/tests-and-ci.md` - a reach row inserted in a test needs its bounding geometry.
-- `docs/moderators/rippling-out.md` and `docs/members/rippling-out.md` - what we tell people.
+- `docs/members/rippling-out.md` - what we tell people.
