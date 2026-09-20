@@ -274,3 +274,102 @@ An independent review of the branch, with the fixes made and the gaps kept:
 - Check the "recently published" and "recently withdrawn" queues when they feel like it.
 
 None of these is a queue anyone has to clear.
+
+---
+
+# Phase 2: removing the group model for real (2026-09-20)
+
+Edward's direction after the prototypes: the schema was untouched and the stated gaps are
+problems to fix. This phase removes every trace of the group model from the code and the
+schema, on the same branch, and closes the gaps. TrashNothing keeps working through a
+hidden partner-area table. The four switches from phase 1 stop being switches: with no
+per-community moderation to fall back on, warn-not-hold and reports-resolve are simply how
+the site works, the reply gate has a default, and there is nothing for a groupless switch to
+hide.
+
+## The one rule, again
+
+Humans should be able to add value. The system must reach an outcome with nobody there.
+"Humans" now means members with `users.systemrole` of Moderator, Support or Admin: a
+national pool, at most a handful, with no community scoping anywhere.
+
+## Schema contract
+
+One Laravel migration, `2026_09_20_000001_remove_group_model.php`, with a matching
+production `*_migration.sql`. Applied in this order.
+
+### Added
+
+| Table | Column | Replaces |
+|---|---|---|
+| `users` | `emailfrequency INT NOT NULL DEFAULT 24` (-1 immediate, 0 never, 24 daily) | `memberships.emailfrequency` |
+| `users` | `eventsallowed TINYINT(1) DEFAULT 1`, `volunteeringallowed TINYINT(1) DEFAULT 1` | `memberships.*` |
+| `users` | `postingstatus ENUM('MODERATED','DEFAULT','PROHIBITED','UNMODERATED') NULL` | `memberships.ourPostingStatus` |
+| `users` | `banned TIMESTAMP NULL`, `bannedby BIGINT NULL` | `users_banned` (now site-wide) |
+| `users` | `welcomed TIMESTAMP NULL` | `memberships_history.processingrequired` driving the welcome mail |
+| `users` | `modconfigid BIGINT NULL` | `memberships.configid` |
+| `messages` | `collection ENUM('Incoming','Pending','Approved','Spam','Rejected') NOT NULL DEFAULT 'Pending'` | `messages_groups.collection` |
+| `messages` | `approvedby BIGINT NULL`, `approvedat TIMESTAMP NULL`, `rejectedat TIMESTAMP NULL` | `messages_groups.*` |
+| `messages` | `autoreposts INT NOT NULL DEFAULT 0`, `lastautopostwarning TIMESTAMP NULL`, `lastchaseup TIMESTAMP NULL` | `messages_groups.*` |
+| `messages` | `contentcheck_checked_at TIMESTAMP NULL`, `contentcheck_reasons JSON NULL` | `messages_groups.*` |
+| `partner_areas` (new) | `id, nameshort, namefull, lat, lng, polyindex GEOGRAPHY` copied from `groups WHERE ontn = 1` | the only surviving use of a community: TrashNothing addresses mail and members by it |
+| `community_news_areas` | `authorityid BIGINT NULL` | `anchorgroupid`, `groupids` |
+
+`messages.heldby`, `spamtype`, `spamreason`, `arrival` already exist and take the per-post role.
+
+### Data moved before anything is dropped
+
+- `messages.collection/approvedby/approvedat/rejectedat/autoreposts/lastautopostwarning/lastchaseup/contentcheck_*` from the post's origin `messages_groups` row (`rippled_in = 0`, else the earliest row).
+- `users.emailfrequency` = -1 if any membership was immediate, else 24 if any was daily, else 0. `eventsallowed`/`volunteeringallowed` = any membership had them on. `postingstatus` = PROHIBITED if any, else MODERATED if any, else NULL. `banned` = earliest `users_banned` row. `modconfigid` = any membership's `configid`. `welcomed` = `users.added` (everyone existing counts as welcomed).
+
+### Dropped
+
+Tables: `memberships`, `memberships_history`, `memberships_yahoo`, `memberships_yahoo_dump`, `messages_groups`, `groups`, `groups_digests`, `groups_facebook`, `groups_facebook_shares`, `groups_facebook_toshare`, `groups_images`, `groups_mods_welfare`, `groups_sponsorship`, `groups_twitter`, `users_banned`, `communityevents_groups`, `volunteering_groups`, `partnerships_groups`, `rippling_proximity`, `rippling_proximity_checked`, `mod_bulkops_run`, `plugin`.
+
+Columns (`groupid` unless stated): `chat_rooms`, `messages_spatial`, `messages_drafts`, `messages_postings`, `messages_history`, `messages_index`, `messages_popular`, `newsfeed`, `logs`, `users_comments`, `users_modmails`, `users_dashboard`, `users_postnotifications_tracking`, `alerts`, `alerts_tracking`, `admins`, `polls`, `shortlinks`, `vouchers`, `locations_excluded`, `newsletters`, `changes`, `email_tracking`, `stats`, `stats_outcomes`, `stats_summaries`, `reengage.volunteer_groupid`, `rippling_reach.rejected_groups`, `rippling_reach.reachable_group_ids`, `community_news_areas.anchorgroupid` and `.groupids`, `concern_keywords.scope` and `.group_id`, `simulation_message_isochrones_messages.groupid`.
+
+Per-community statistics (`stats`, `stats_outcomes`, `stats_summaries`, `users_dashboard`) are truncated: they were per community and the batch regenerates national figures.
+
+## Behaviour contract
+
+### Posting and moderation
+- A post has one location and one moderation state, on `messages`. Nothing is copied per community.
+- A new post is `Pending` until the content check runs (every minute). Clean and the poster not `MODERATED`/`PROHIBITED` means `Approved` at once; flagged means `Pending` with reasons; a block reason means `Spam`. `Pending` posts auto-approve after the existing delay unless a danger signal is present. The 48-hour fallback stays as the last resort.
+- Two member reports, or one from a national moderator, take a post down and tell the poster and the reporters. No Pending queue for reports.
+- Reposts, chase-ups and expiry use site-wide defaults from `config/freegle.php` (offer 3 days, wanted 7, max 5 reposts, 90 days shown).
+- Rippling: the reach polygon is the only spread mechanism. No community rows, no auto-join, no opt-out.
+
+### Members
+- One email frequency, one events and one volunteering switch, on the member.
+- A ban is site-wide (`users.banned`). A banned member cannot post, reply or chat.
+- The reply gate is on by default: after `REPLY_GATE_AFTER` replies in a day (default 5, 0 disables), a graded micro-volunteering task must be answered correctly.
+- A held chat message is delivered behind a warning. A hold about the sender (quiet ban) is never delivered.
+- Welcome mail once, nationally, when a member is created.
+
+### Chat
+- `chat_rooms.groupid` is gone. A `User2Mod` room is a member's room with Freegle; the recipients are the national moderators. Two members can always chat.
+
+### Rules
+- One rule set, site-wide, at `/rules`. Personal details are always kept out of posts.
+
+### TrashNothing
+- Inbound mail to `<nameshort>@groups...` resolves the short name through `partner_areas`; the post's location is the mail's postcode, else the area centre.
+- `<nameshort>-subscribe@` sets the TN member's email frequency to daily and `-unsubscribe@` to never. `PUT /memberships?partner=...&groupid=...` keeps its path and shape, creates or finds the TN member, and sets their location from the area when they have none. `GET /api/changes` is unchanged. The `{username}-g{id}@user.trashnothing.com` parsing is unchanged.
+
+### Moderators
+- ModTools is national. Queues (pending, spam, chat review, reports, member review, events, volunteering) show everything; there is no community picker anywhere. Community settings, member lists per community, admins per community, stats per community, standard messages per community and the rippling explorer go. Support tools stay.
+
+## Ownership and waves
+
+| Wave | Owner | Scope |
+|---|---|---|
+| 0 | this session | migration, production SQL, fixture regeneration, `run-suite.sh` lock |
+| 1 | Go agent | `iznik-server-go` |
+| 1 | Laravel agent | `iznik-batch` |
+| 1 | Member-site agent | `iznik-nuxt3` except `modtools/` |
+| 1 | ModTools agent | `iznik-nuxt3/modtools/` (reads, does not edit, the member-site agent's files) |
+| 2 | this session | integration, full suites, docs, screenshots, PR |
+
+The four run against the same worktree and the same database. The Go and Laravel suites
+share `scripts/../run-suite.sh`, which takes a lock, because starting both at once kills one
+of them during setup.

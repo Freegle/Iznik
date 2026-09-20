@@ -96,19 +96,15 @@ echo "Rolling fixture post dates forward so they stay inside the feed's 31-day w
 if ! docker exec -i "${PREFIX}-percona" sh -c "mysql -u root -piznik iznik" <<'SQL'
 SET @delta := (
   SELECT GREATEST(DATEDIFF(NOW(), MAX(arrival)) - 1, 0)
-  FROM messages_groups
+  FROM messages
   WHERE arrival <= NOW()
 );
 
-UPDATE messages_groups
+UPDATE messages
    SET arrival     = arrival     + INTERVAL @delta DAY,
+       date        = date        + INTERVAL @delta DAY,
        approvedat  = approvedat  + INTERVAL @delta DAY,
        rejectedat  = rejectedat  + INTERVAL @delta DAY
- WHERE @delta > 0 AND arrival <= NOW();
-
-UPDATE messages
-   SET arrival = arrival + INTERVAL @delta DAY,
-       date    = date    + INTERVAL @delta DAY
  WHERE @delta > 0 AND arrival <= NOW();
 
 -- messages_spatial is the table browse and explore actually read the feed from,
@@ -118,7 +114,7 @@ UPDATE messages_spatial
  WHERE @delta > 0 AND arrival <= NOW();
 
 SELECT CONCAT('Fixture posts shifted forward by ', @delta, ' day(s); newest is now ',
-              IFNULL((SELECT MAX(arrival) FROM messages_groups), 'n/a'),
+              IFNULL((SELECT MAX(arrival) FROM messages), 'n/a'),
               ' (spatial ', IFNULL((SELECT MAX(arrival) FROM messages_spatial), 'n/a'), ')') AS result;
 SQL
 then
@@ -132,10 +128,10 @@ fi
 # Fail here instead, where the message names the actual problem.
 FEED_WINDOW_DAYS=31
 NEWEST_AGE=$(docker exec "${PREFIX}-percona" sh -c \
-  "mysql -u root -piznik iznik -N -B -e \"SELECT DATEDIFF(NOW(), MAX(arrival)) FROM messages_groups WHERE arrival <= NOW()\"" 2>/dev/null | tr -d '[:space:]')
+  "mysql -u root -piznik iznik -N -B -e \"SELECT DATEDIFF(NOW(), MAX(arrival)) FROM messages WHERE arrival <= NOW()\"" 2>/dev/null | tr -d '[:space:]')
 if [ -n "$NEWEST_AGE" ] && [ "$NEWEST_AGE" -ge "$FEED_WINDOW_DAYS" ] 2>/dev/null; then
   echo "Newest seeded post is ${NEWEST_AGE} days old, outside the ${FEED_WINDOW_DAYS}-day feed window"
-  echo "(group/groupMessages.go). Browse and explore would return nothing and every"
+  echo "(isochrone/message.go). Browse would return nothing and every"
   echo "test that browses for a seeded post would fail. Aborting."
   exit 1
 fi
