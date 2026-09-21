@@ -16,6 +16,22 @@ class ContentCheckService
         private readonly ?MessageSpatialService $messageSpatialService = null,
     ) {}
 
+    /**
+     * A block keyword whose alphanumeric skeleton is at least this long also
+     * gets the spaced-letters pass (see matchesSpaced). Domains and phrases
+     * qualify; single words do not.
+     */
+    public const SKELETON_MIN_LENGTH = 10;
+
+    /**
+     * Normalised form of each literal and fuzzy keyword, computed once per
+     * process: matchKeywords runs every keyword against every message, and
+     * there are over a thousand of them.
+     *
+     * @var array<string, string>
+     */
+    private static array $normalisedKeywords = [];
+
     public const CHECK_CONCERN_KEYWORD    = 'ConcernKeyword';
     public const CHECK_VAGUE             = 'Vague';
     public const CHECK_PHONE_NUMBER      = 'PhoneNumber';
@@ -989,8 +1005,12 @@ class ContentCheckService
      */
     private function matchKeywords($keywords, string $subject, string $textbody, int $groupid): ?array
     {
-        $raw = $subject . ' ' . $textbody;
-        $rawLower = mb_strtolower($raw);
+        // Both the text and every literal/fuzzy keyword are folded to a plain,
+        // lower-case form first (KeywordTextNormalizer), so styled or obfuscated
+        // spellings - bold alphabets, zero-width characters, look-alike letters,
+        // "dot" spelled out - match the plain keyword. Regex patterns are used
+        // as written: folding would rewrite the pattern itself.
+        $raw = KeywordTextNormalizer::normalize($subject . ' ' . $textbody);
 
         // 'allowed'-category entries are a whitelist: text matching them is
         // removed BEFORE scanning, so a flagging keyword can't fire on a word
@@ -1000,7 +1020,6 @@ class ContentCheckService
         // tripping the fuzzy keyword 'cash' via its 'cashes' inflection
         // (Discourse 9944). Computed lazily: a block-only scan never needs it.
         $cleaned = null;
-        $cleanedLower = null;
 
         $ordered = collect($keywords)->sortBy(fn($kw) => ($kw->action ?? 'flag') === 'block' ? 0 : 1)->values();
 
@@ -1011,17 +1030,23 @@ class ContentCheckService
             }
 
             $isBlock = ($kw->action ?? 'flag') === 'block';
+            $isRegex = $kw->match_mode === 'regex';
 
             if ($isBlock) {
                 $original = $raw;
-                $haystack = $rawLower;
             } else {
                 if ($cleaned === null) {
                     $cleaned = $this->removeAllowedKeywords($raw, $groupid);
-                    $cleanedLower = mb_strtolower($cleaned);
                 }
                 $original = $cleaned;
-                $haystack = $cleanedLower;
+            }
+            $haystack = $original;
+
+            $needle = $isRegex
+                ? $word
+                : (self::$normalisedKeywords[$word] ??= KeywordTextNormalizer::normalize($word));
+            if ($needle === '') {
+                continue;
             }
 
             // For regex mode, $word is a PATTERN rather than the literal text
@@ -1031,9 +1056,19 @@ class ContentCheckService
 
             $matched = match ($kw->match_mode) {
                 'regex'   => ($matchedText = $this->safePregCapture('/' . $word . '/i', $original)) !== null,
-                'literal' => $this->matchesLiteral($haystack, $word),
-                default   => $this->matchesFuzzy($haystack, $word),
+                'literal' => $this->matchesLiteral($haystack, $needle),
+                default   => $this->matchesFuzzy($haystack, $needle),
             };
+
+            // A long block keyword (a domain, a phrase) gets a second pass that
+            // tolerates its letters being spaced or punctuated apart -
+            // "i l o v e f r e e g l e . s h o p", "i-l-o-v-e..." - see
+            // matchesSpaced. Never for short keywords or flag keywords: the
+            // looser the match, the longer the keyword must be to stay safe.
+            if (!$matched && $isBlock && !$isRegex
+                && mb_strlen(KeywordTextNormalizer::skeleton($needle)) >= self::SKELETON_MIN_LENGTH) {
+                $matched = $this->matchesSpaced($haystack, $needle);
+            }
 
             if (!$matched) {
                 continue;
@@ -1074,6 +1109,29 @@ class ContentCheckService
      * in mathematical-bold letters (which scam mail uses to dodge filters) could
      * never match, and 'caf' would match inside 'café'.
      */
+    /**
+     * The keyword's letters and digits in order, each separated from the next by
+     * at most three characters that are neither, with a non-alphanumeric (or the
+     * edge of the text) on both sides. Every non-alphanumeric in the keyword is
+     * a separator too, so "ilovefreegle.shop" is looked for as
+     * i-l-o-v-e-f-r-e-e-g-l-e-s-h-o-p. The boundaries are what a plain skeleton
+     * comparison lacked: "ilovefreegleshopping" contains the domain's skeleton
+     * and is not the domain.
+     */
+    private function matchesSpaced(string $haystack, string $keyword): bool
+    {
+        $chars = preg_split('//u', KeywordTextNormalizer::skeleton($keyword), -1, PREG_SPLIT_NO_EMPTY);
+        if ($chars === false || $chars === []) {
+            return false;
+        }
+
+        $pattern = '/(?<![\pL\pN])'
+            . implode('[^\pL\pN]{0,3}', array_map(fn ($c) => preg_quote($c, '/'), $chars))
+            . '(?![\pL\pN])/u';
+
+        return @preg_match($pattern, $haystack) === 1;
+    }
+
     private function matchesLiteral(string $haystack, string $keyword): bool
     {
         $pattern = '/(?<![\pL\pN_])' . preg_quote(mb_strtolower($keyword), '/') . '(?![\pL\pN_])/u';

@@ -136,9 +136,40 @@ the same thing; they are different decisions.
   checks). `ChatProcessService` logs one line per drop and counts them in the run
   summary.
 
-Literal keywords match whole words, case-insensitively, with Unicode-aware boundaries,
-so a keyword written in mathematical-bold letters (scam mail uses them to dodge
-filters) matches the same bold text.
+Literal keywords match whole words, case-insensitively, with Unicode-aware boundaries.
+
+### Text is folded before matching
+
+Scam mail dodges keyword filters by spelling the same letters differently. Both the
+text and every literal or fuzzy keyword go through `KeywordTextNormalizer` first, so a
+plain ASCII keyword matches every spelling and the keyword list does not have to
+enumerate them:
+
+1. **NFKC** folds mathematical alphabets (bold, italic, script, fraktur, double-struck,
+   sans, monospace), fullwidth forms, circled letters, superscripts and ligatures to
+   plain letters.
+2. **Invisible characters** (zero-width space, joiner and non-joiner, word joiner, byte
+   order mark, soft hyphen, invisible separator, bidi overrides) and **combining marks**
+   are removed. In ordinary chat these occur only inside emoji sequences and phone
+   signatures, and removing them there changes nothing.
+3. **Dot look-alikes** become `.`: ideographic full stop, middle dots, bullets, `[.]`,
+   `(.)` and "dot" spelled out between letters, so `ilovefreegle[.]shop` and
+   `ilovefreegle dot shop` are the domain.
+4. **Look-alike letters** from Cyrillic, Greek and the small-capital blocks fold to
+   ASCII (`іlоvеfrееglе`, `ɪʟᴏᴠᴇꜰʀᴇᴇɢʟᴇ`).
+5. Lower-case.
+
+A block keyword whose letters-and-digits skeleton is at least
+`ContentCheckService::SKELETON_MIN_LENGTH` (10) characters - a domain, a phrase - also
+gets a second pass that accepts its letters in order with up to three other characters
+between each pair, and nothing alphanumeric stuck to either end, so
+`i l o v e f r e e g l e . s h o p` and `i-l-o-v-e-f-r-e-e-g-l-e[.]s-h-o-p` still match
+while `shopping` and `ilovefreegleshopper` do not. Short keywords and flag keywords never
+get that pass. The pass is deliberately blind to spacing, so a block domain made of
+ordinary words also matches those words written in a row: `ilovefreegle.shop` drops
+"I love Freegle. Shop local". Choose block domains with that in mind, or use a flag
+keyword, which holds for review instead. Regex keywords are used as written, against
+the folded text.
 
 ### Backfill when a block keyword is created
 
