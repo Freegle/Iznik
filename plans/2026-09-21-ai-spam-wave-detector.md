@@ -252,432 +252,443 @@ These numbers seed the fixtures and the young-account budget. They are not thres
 
 ## 10. The lockdown switch
 
-Written on 21 September after the officer sections, from the code as it is on master and
-from what other platforms do. Design only.
+Design only, 21 September, from master and from what other platforms do.
 
 ### 10.1 What it is
 
-A button on the Support page, and a command on the batch host, that anyone with Support
-tools can press. Freegle stays up. Members can still post, reply, chat and write on
-ChitChat, and what they write looks sent to them. It reaches nobody. No email goes out. No
-push goes out. Nothing can be downloaded. Moderators can see everything and do two things:
-approve, and report a spammer. It stays that way until a person lifts it, surface by
-surface, in an order that is written down. It is for hours, not days: there is no expiry,
-because nothing should lift itself, and the costs of a long one are met by lifting surfaces
-and classes one at a time rather than by the clock.
-
-It needs no model, no baseline and no threshold. It needs a person who has noticed, and last
-night that person existed within minutes of the probe. What they lacked was one thing to
-press. At the wave's rate of 2,200 to 2,600 replies every ten minutes, each ten minutes
-between noticing and pressing is another two thousand phishing messages read by people who
-advertised a sofa.
-
-The officer of sections 2 to 6 recommends this switch before it is trusted to press it, and
-its response service (section 4) is the same hold and release, applied to a cluster instead
-of the whole site.
+- A button on the Support page and a command on the batch host. Any Support or Admin user
+  presses it and any Support or Admin user lifts it.
+- Freegle stays up. Members can post, reply, chat and write on ChitChat. What they write
+  looks sent. It reaches nobody.
+- No email, no push, no download. Moderators see everything and can approve and report a
+  spammer. Nothing else.
+- It lasts hours, not days. There is no expiry. Nothing lifts itself. Lifting is by
+  surface and by class, in a written order.
+- Cost of a slow press: at 2,200 to 2,600 replies every ten minutes, each ten minutes
+  between noticing and pressing is another two thousand phishing messages read.
+- Relation to the officer: the officer recommends the switch before it is trusted to press
+  it, and its response service (section 4) is the same hold and release applied to a
+  cluster instead of the site.
 
 ### 10.2 What others do
 
-- [Twitch Shield Mode](https://safety.twitch.tv/s/article/Protect-your-channel-with-Shield-Mode?language=en_US)
-  (2022): safety settings prepared in advance and applied with one button or a slash
-  command, by the streamer or a moderator, during a hate raid. Ban phrases entered while it
-  is on are cleared when it is turned off. Lesson: prepare the bundle in calm, press it in a
-  hurry, and leave nothing behind when it is lifted.
-- [GitHub interaction limits](https://docs.github.com/en/communities/moderating-comments-and-conversations/limiting-interactions-in-your-repository)
-  (2017): restrict who may comment or open issues by account age or prior contribution, for
-  24 hours to six months, expiring by themselves; an organisation-level limit overrides
-  repository ones. Lesson: an expiry is part of the switch, and the limit is by trust, not by
-  everyone.
-- [Discord Security Actions](https://support.discord.com/hc/en-us/articles/17439993574167-Activity-Alerts-Security-Actions):
-  pause invites and pause direct messages, straight from the alert about unusual activity,
-  time-limited, with a "mark as resolved" note for the other moderators. Lesson: pause rather
-  than block, and write the note for whoever comes next.
-- [Meta's "break glass" measures](https://www.techpolicy.press/we-know-a-little-about-metas-break-glass-measures-we-should-know-more/):
-  a prepared list of reach reductions used around the 2020 election and 6 January, rolled
-  back afterwards and argued over since because nobody outside knew what was in it. Lesson:
-  the list is written before the emergency, and lifting is a decision recorded as carefully
-  as pressing.
-- [Reddit Crowd Control](https://mods.reddithelp.com/hc/en-us/articles/360038129231-Crowd-Control):
-  comments from outsiders and new accounts are collapsed or held in the moderation queue
-  until approved; moderators see them expanded and labelled. Lesson: the reader and the
-  writer see different things, and the moderator view labels what was held and why.
-- [Wikipedia pending changes](https://en.wikipedia.org/wiki/Wikipedia:Pending_changes):
-  edits by new and unregistered users are saved and shown to the editor but hidden from
-  readers until a reviewer accepts them; reviewers check that a change is broadly acceptable,
-  not that it is correct; the protection is not to be applied before a problem exists.
-  Lesson: this is exactly our shape, and the review standard is low and quick.
-- [Twitter, 15 July 2020](https://en.wikipedia.org/wiki/2020_Twitter_account_hijacking):
-  during the account hijack it blocked every verified account from tweeting for about two and
-  a half hours and blocked password resets, with the message "To protect our users from
-  spam and other malicious activity, we can't complete this action right now". Innocent
-  people who had changed their password were locked out for days. Lesson: a manual,
-  site-wide degraded mode is an ordinary incident tool even at that scale; blocking identity
-  recovery has collateral; and when you must refuse, say so honestly.
-- [Discourse read-only mode](https://meta.discourse.org/t/what-to-do-when-you-have-locked-yourself-out-by-invalid-sso-configuration-or-read-only-mode/89605)
-  locks administrators out too, and needs a back door. Lesson: the people working the
-  incident are exempt, and there is a way in that does not depend on the app.
-- [Mastodon, February 2024](https://techcrunch.com/?p=2667481): the advice to server
-  operators under a spam wave was to switch registration to approval and block disposable
-  email providers. Lesson: a signup gate is the standard blunt lever; ours is in section 9.
-- The [Google SRE chapter on cascading failures](https://sre.google/sre-book/addressing-cascading-failures/)
-  asks of any degraded mode what enters it, automatically or by hand, and what it does once
-  in. A [PostHog post-mortem from September 2025](https://posthog.com/handbook/company/post-mortems/2025-09-29-flags-is-down.md)
-  records the feature-flag service itself failing and recovery delayed by "untested rollback
-  procedures". Lesson: the switch must not depend on anything that is likely to be broken,
-  and both directions are drilled.
+| platform | mechanism | taken from it |
+|---|---|---|
+| [Twitch Shield Mode](https://safety.twitch.tv/s/article/Protect-your-channel-with-Shield-Mode?language=en_US) (2022) | safety settings prepared in advance, applied by one button or a slash command, by streamer or moderator; ban phrases cleared when it ends | prepare in calm, press in a hurry, leave nothing behind |
+| [GitHub interaction limits](https://docs.github.com/en/communities/moderating-comments-and-conversations/limiting-interactions-in-your-repository) (2017) | limit by account age or prior contribution for a fixed period; organisation overrides repository | limit by trust, not everyone; a hierarchy of scope |
+| [Discord Security Actions](https://support.discord.com/hc/en-us/articles/17439993574167-Activity-Alerts-Security-Actions) | pause invites and direct messages from the alert; "mark as resolved" with a note | pause rather than block; a note for whoever comes next |
+| [Meta break-glass measures](https://www.techpolicy.press/we-know-a-little-about-metas-break-glass-measures-we-should-know-more/) | a prepared list of reach reductions, used in 2020 and on 6 January, rolled back after | the list is written before the emergency; lifting is recorded as carefully as pressing |
+| [Reddit Crowd Control](https://mods.reddithelp.com/hc/en-us/articles/360038129231-Crowd-Control) | comments from outsiders and new accounts collapsed or held for approval; moderators see them labelled | writer and reader see different things; the moderator view labels what was held |
+| [Wikipedia pending changes](https://en.wikipedia.org/wiki/Wikipedia:Pending_changes) | edits saved and shown to the editor, hidden from readers until accepted; reviewers check "broadly acceptable", not correct | our shape exactly; the review standard is low and quick |
+| [Twitter, 15 July 2020](https://en.wikipedia.org/wiki/2020_Twitter_account_hijacking) | all verified accounts blocked from tweeting for about two and a half hours; password resets blocked; innocent people locked out for days | a manual site-wide degraded mode is an ordinary incident tool; blocking identity recovery has collateral; refuse honestly |
+| [Discourse read-only mode](https://meta.discourse.org/t/what-to-do-when-you-have-locked-yourself-out-by-invalid-sso-configuration-or-read-only-mode/89605) | locks administrators out too; needs a back door | the people working the incident are exempt; a way in that does not depend on the app |
+| [Mastodon, February 2024](https://techcrunch.com/?p=2667481) | advice under a spam wave: registration to approval, block disposable email | the signup gate is the blunt lever (section 9) |
+| [Google SRE, cascading failures](https://sre.google/sre-book/addressing-cascading-failures/); [PostHog post-mortem, September 2025](https://posthog.com/handbook/company/post-mortems/2025-09-29-flags-is-down.md) | what enters a degraded mode and what it does there; the flag service itself failed, recovery delayed by "untested rollback procedures" | depend on nothing likely to be broken; drill both directions |
 
 ### 10.3 Why it is cheap to build
 
-Everything a member writes reaches other people through a loop in the batch, and every one
-of those loops already has a "not yet" state that the front end shows to the author as if it
-were done:
+Everything a member writes reaches other people through a batch loop, and each loop has a
+"not yet" state the front end shows to the author as done:
 
-- A chat message is created with `processingrequired = 1` and stays visible only to its
-  sender until `chats:process-incoming` (every minute) marks it processed
-  (`chat/chatmessage.go` `CreateChatMessage`; the listing in `FetchChatMessages` shows the
-  other party only rows with `processingsuccessful = 1`). The flags are blanked before they reach a
-  participant, and there is no "held" wording in the member UI: the rippling hold badge is
-  deliberately never shown to the sender, so their reply "should look like an ordinary sent
-  message awaiting a response". Chat notification mail and push both require the message
-  to be processed.
-- Every post starts `Pending` (the comment at the top of the create path in
-  `message/message.go` says so: the content check promotes clean posts), and
-  `messages:contentcheck` (every minute) promotes it to `Approved` and into
-  `messages_spatial`, which is the only thing Browse and search read. The poster's own posts
-  are unioned in separately, "so that it is less obvious if a message is delayed for
-  approval", and My Posts shows a Pending post exactly as it shows an Approved one. Email
-  posts, TrashNothing posts and rippled copies take the same path.
-- A ChitChat post with `hidden` set is returned to its author and to moderators and to
-  nobody else, the author sees no notice (the "This has been hidden" text is mod-only), and
-  reply notifications are skipped for hidden posts.
-- Every outgoing email goes through one method, `EmailSpoolerService::spool()`, into a file
-  spool drained by four daemons, and `MailSuppressionService::shouldSkip()` is already
-  called before rendering in every per-recipient loop, recording what it skipped in
-  `mail_suppressed_counts` so that `DeferralCatchUpService` can send the right catch-up
-  later. That machinery was built for the Yahoo episode and its catch-up policy is already
-  the right one: drop stale post mails and periodics, one digest, one chat summary.
-- Every push goes through one class, `PushNotificationService`.
-- Every moderator action is served by the Go API, and post actions already pass one gate,
-  `dispatchPostMessageAction`, written so that "a new moderation action cannot silently skip
-  the check by forgetting to call it". Membership, chat, group settings, comments, concern
-  keywords and spammer actions each have one handler.
-- Data leaves through four endpoints: the member's own GDPR export, the Support user dump
-  (which also accepts an API key without a login), the spammer list export and the
-  partnership stats file.
+- Chat: created with `processingrequired = 1`; visible only to the sender until
+  `chats:process-incoming` (every minute) marks it processed (`chat/chatmessage.go`
+  `CreateChatMessage`; `FetchChatMessages` shows the other party only rows with
+  `processingsuccessful = 1`). Flags are blanked before they reach a participant. No "held"
+  wording exists in the member UI; the rippling hold badge is deliberately never shown to
+  the sender. Chat mail and push both require the message to be processed.
+- Posts: every post starts `Pending`; `messages:contentcheck` (every minute) promotes to
+  `Approved` and into `messages_spatial`, the only thing Browse and search read. The
+  poster's own posts are unioned in separately "so that it is less obvious if a message is
+  delayed for approval". My Posts shows Pending as Approved. Email posts, TrashNothing posts
+  and rippled copies take the same path.
+- ChitChat: a post with `hidden` set is returned to its author and moderators only; the
+  author sees no notice; reply notifications skip hidden posts.
+- Email: every mail goes through `EmailSpoolerService::spool()` into a file spool drained
+  by four daemons; `MailSuppressionService::shouldSkip()` runs before rendering in every
+  per-recipient loop and records skips in `mail_suppressed_counts`; `DeferralCatchUpService`
+  already holds the right catch-up policy (drop stale post mails and periodics, one digest,
+  one chat summary).
+- Push: one class, `PushNotificationService`, FCM only.
+- Moderator actions: all in the Go API. Post actions pass one gate,
+  `dispatchPostMessageAction`, written so "a new moderation action cannot silently skip the
+  check by forgetting to call it". Membership, chat, group, comment, keyword and spammer
+  actions each have one handler.
+- Data export: four endpoints (member GDPR export, Support user dump with a login-free key
+  path, spammer list export, partnership stats file).
 
-So the switch is mostly the batch declining to move things, plus a few refusals in the Go
-API, plus a place to read the state. The one surface the API delivers directly, ChitChat,
-needs one line at creation.
+So: the batch declines to move things; the Go API refuses a short list; ChitChat creation
+gets one line; the state has one reader in each codebase.
 
 ### 10.4 The state
 
-A table `lockdowns`, append-only, one row per change, so the history is the audit:
-`id`, `active`, `surfaces` (JSON: `chat`, `chat_mode` hard or soft, `posts`, `chitchat`,
-`events`, `email`, `push`, `export`, `mods`), `reason`, `notice` (text or null),
-`notice_audience` (`none`, `mods`, `members`), `startedby`, `startedat`, `endedby`,
-`endedat`, `endnote`. The current state is the newest row. Two companions:
-`lockdown_holds` (`id`, `lockdownid`, `kind`, `refid`, `userid`, `created`, `risk` low,
-risky or spam, `releasedat`, `outcome`), written by the triage loop for chat and posts and
-by the Go API at creation for ChitChat (the only way to tell a lockdown-hidden post from one
-hidden because its author is suppressed, since both have `hiddenby` null), and
-`lockdown_counters` (`id`, `lockdownid`, `kind`, `count`) for what was refused or not sent.
+- `lockdowns`, append-only, one row per change, the history is the audit: `id`, `active`,
+  `surfaces` (JSON: `chat`, `chat_mode` hard or soft, `posts`, `chitchat`, `events`,
+  `email`, `push`, `export`, `mods`), `reason`, `notice`, `notice_audience` (`none`,
+  `mods`, `members`), `startedby`, `startedat`, `endedby`, `endedat`, `endnote`. Current
+  state is the newest row.
+- `lockdown_holds`: `id`, `lockdownid`, `kind`, `refid`, `userid`, `created`, `risk`
+  (low, risky, spam), `releasedat`, `outcome`. Written by the triage for chat and posts;
+  written by the Go API at creation for ChitChat, because a lockdown-hidden post and a
+  suppressed author's post both have `hiddenby` null.
+- `lockdown_counters`: `id`, `lockdownid`, `kind`, `count`. What was refused or not sent.
+- Go reads the newest row through a five-second in-memory cache (`browsecount/cache.go`
+  pattern). A failed read keeps the last state. A process that has never read one treats the
+  site as open; that only happens with the database unreachable.
+- Batch reads at the top of every loop iteration, not per process; the spool daemons and
+  the scheduler run for days.
+- Not the `config` table (no history; a public-read allowlist would leak which surfaces
+  are held). Not an environment variable (needs a restart per container).
+- Members' clients: `GET /lockdown` returns only whether there is a notice and its text,
+  fetched with the navbar's sixty-second pass. Which surfaces are held is never returned.
+- ModTools: full state on the thirty-second work poll; the platform traffic light in
+  `ModStatus.vue` turns red.
+- Setting and lifting: `PATCH /lockdown` behind `RequireSupportOrAdminMiddleware`;
+  `php artisan lockdown:on|off|status` on the batch host, for when ModTools or the API is
+  what is broken or what an attacker holds.
+- Every change: a row, a Sentry event, a mail to geeks@.
 
-There is no expiry. A lockdown is designed to last a few hours, the hourly report of 10.10
-is the reminder that one is on, and the soft chat mode of 10.6 is how a longer one keeps
-the site useful. Nothing lifts by itself, because lifting into an empty room at four in the
-morning releases the wave to nobody watching.
+### 10.5 Every write endpoint, and what happens to it
 
-The Go API reads the newest row through a five-second in-memory cache (the
-`browsecount/cache.go` pattern), so the gates cost nothing per request; if a read fails it
-keeps the last state it saw, and a process that has never read one treats the site as open,
-which only happens when the database is unreachable and nothing else works either. The
-batch reads it at the top of every loop iteration, not once per process, because the spool
-daemons and the scheduler run for days. Neither the shared `config` table nor an environment
-variable is used: the first has no history and a public-read allowlist that would leak
-which surfaces are held, and the second needs a restart in each container.
+Treatments:
 
-Members' clients learn only whether there is a notice and what it says, from a public
-`GET /lockdown` fetched with the navbar's sixty-second pass. They never learn which surfaces
-are held; an attacker with an account must not be able to read the switch. ModTools gets
-the full state on its thirty-second work poll, and the platform traffic light it already
-shows turns red. Setting and lifting are `PATCH /lockdown` behind the existing
-`RequireSupportOrAdminMiddleware`, open to any Support or Admin user, and
-`php artisan lockdown:on|off|status` on the batch host, which still works when ModTools or
-the API is what is broken or what an attacker holds. Every change writes a row, sends a
-Sentry event and mails geeks@ at once.
+- **held**: accepted, shown to the author as done, reaches nobody until lifted.
+- **refused**: 409 with a lockdown status; the client hides or disables the control first.
+  Member-facing wording: "Changes are paused for a few hours while we deal with a
+  security incident."
+- **allowed**: continues, including its email where named.
+- **own**: private to the caller or telemetry; reaches nobody; continues.
+- **exempt**: Support or Admin only; continues.
 
-### 10.5 What the switch does, surface by surface
+Every non-GET route in `iznik-server-go/router/routes.go`, grouped. An endpoint with an
+`action` or a field list is split by what it does.
 
-| surface | the member sees | what happens | where |
+**Session, identity, account**
+
+| endpoint | what | treatment | note |
 |---|---|---|---|
-| chat (User2User) | an ordinary sent message | the processor leaves `processingrequired = 1` rows alone; nothing is delivered, mailed or pushed. Replies by email and LoveJunk replies enter the same state | `ChatProcessService::processIncoming`, skipping User2User while chat is held; User2Mod and Mod2Mod keep flowing so member reports reach volunteers |
-| chat, soft mode | as above | the processor runs, and the triage of 10.7 decides each message: spam is dropped through the existing `dropBlocked` path, risky goes to the review queue with `reportreason = 'Lockdown'`, low risk is processed normally | same, plus one new `reportreason` value (appended to the enum, which MariaDB applies without rewriting the table; confirmed on the live version before the migration runs) |
-| posts | their post in My Posts, as always | nothing is promoted from `Pending`; auto-approve does not run; the direct-approve path for unmoderated members is forced to `Pending` | `ContentCheckService` promote guard, `AutoApproveService` guard, `message.go` where `collection` becomes `Approved` on `PUT /message` |
-| post edits | their edit, on their own view | an edit to a live post goes to the pending-edits state that `ApproveEdits` already serves, whatever the member's moderation status | the edit path in `message.go` |
-| ChitChat | their post and replies, as always | created with `hidden = NOW()` and a `lockdown_holds` row; no reply notifications | `newsfeed.go` `createPost`, `create.go` |
-| ChitChat edits, profile text, avatar | "Changes are paused for a few hours while we deal with a security incident." | refused; rare, visible to others, and cheaper to refuse honestly than to queue | the edit and profile handlers |
-| events, volunteering | their submission | created with `pending = 1` | the Go creators |
-| email | nothing | `shouldSkip()` answers yes for everyone, recording the count by type; `spool()` refuses anything not on the allowlist; the spool daemons pause, so mail spooled just before the button waits and can be purged; `background_tasks` email rows are stepped over and left untouched, not attempted, so the queue keeps moving and nothing counts as failed; the welcome mail command does not run at all, because its cursor advances past anyone it skips | `MailSuppressionService`, `EmailSpoolerService::spool()` and `processSpool()`, `ProcessBackgroundTasksCommand`, `SendPendingWelcomeMailsCommand` |
-| email allowlist | still arrives | verify address, sign-in link and forgot password (a member locked out is harm, and these were what Twitter regretted blocking), the lockdown's own reports to geeks@ and Support, backup failure | a short list in code, not configuration |
-| push | nothing | every entry point returns 0 and counts | `PushNotificationService` |
-| export | "Downloads are paused while we deal with a security incident." | refused, including the user dump's API-key path | `export.go`, `userdump.go`, `spammers.go` export, partnership stats file |
-| moderator actions | ModTools banner: "Freegle is in lockdown since 22:41, started by <name>. You can approve and report spammers. Everything else is paused." | approve (posts, chat, member requests, events), unhide (ChitChat) and `POST /modtools/spammers` are allowed, one item at a time; ModTools offers only the basic approve button, with the approve-with-message controls hidden, and the API refuses an approve that carries a message rather than stripping it, so a stale client cannot send one; bulk approve, including the one in the chat review page, is refused; every other write returns 409 with a lockdown status; Support and Admin are exempt | `lockdown.ModActionAllowed()` in `dispatchPostMessageAction`, the membership action switch, the chat action switch, `group.go` PATCH, comments, concern keywords, spammer PATCH and DELETE; and a fail-closed middleware on every other `/modtools` write, allowlisting the two |
-| signups, joins, logins, identity changes | as always | continue; accounts created during the window are counted and their holds start as risky | nothing |
+| `POST /session` login | sign in | allowed | |
+| `POST /session` `LostPassword` | sends the reset or sign-in link | allowed, mail allowed | Twitter's regret |
+| `POST /session` `Unsubscribe`, `POST /user/unsubscribe` | leave Freegle | allowed, mail allowed | |
+| `POST /session` `Forget`, `DELETE /user` | delete account | allowed | |
+| `POST /session` `Related` | related-account record | own | |
+| `PATCH /session` | own settings | allowed | |
+| `DELETE /session` | sign out | allowed | |
+| `PUT /user` | signup | allowed, verification mail allowed | account counted; its holds start risky |
+| `POST /user` `AddEmail`, `RemoveEmail` | change addresses | allowed, verification mail allowed | recorded in the section 3.5 audit |
+| `POST /user` `Merge`, `PUT|POST|DELETE /merge` | merge accounts | allowed | the merge mail waits with the rest |
+| `POST /user` `Rate` | rate a member | allowed | no text reaches anyone |
+| `POST /user` `RatingReviewed` | moderator | refused | |
+| `POST /user` `Unbounce`, `POST /user/relevantoff` | own flags | own | |
+| `PATCH /user` display name, about me, avatar | profile visible to others | refused | rare, visible, cheaper to refuse than to queue |
+| `PATCH /user` own settings, holiday | private | allowed | |
+| `PATCH /user` moderation statuses | moderator | refused | "moderated membership changes" |
+| `DELETE /usersearch` | own | own | |
 
-Not held in the first version, with the reason: group joins (needed for replying, and the
-join notifications are mail, which is stopped); inbound mail parsing (it creates Pending
-posts and unprocessed chat rows, which the holds above cover); the system chat messages the
-batch writes already processed (ModMail, Completed, Promised), which carry no member text
-and, with approve limited to the basic button, no moderator text either. Stories and
-noticeboards are checked during the build and given a hold if either reaches anyone without
-a person in between. One thing the switch cannot reach: mail the relay has already
-accepted, which only a hold on the relay's own queue can stop (10.14).
+**Posts**
+
+| endpoint | what | treatment | note |
+|---|---|---|---|
+| `PUT /message` | create or submit | held | stays `Pending`; the direct-approve path for unmoderated members forced to `Pending` |
+| `PATCH /message` member edit | edit a live post | held | the pending-edits state `ApproveEdits` already serves |
+| `PATCH /message` moderator edit | | refused | |
+| `POST /message` `Reply`, `JoinAndPost` | reply, join then post | held | reply is a chat message; post is `Pending` |
+| `POST /message` `Promise`, `Renege`, `AddBy`, `RemoveBy` | handover state | allowed | system chat messages, no member text |
+| `POST /message` `Outcome`, `OutcomeIntended` | taken, received, withdrawn | allowed | outcome mail waits |
+| `POST /message` `View`, `AcceptAgreement`, `PartnerConsent` | | own | |
+| `POST /message` `BulkInterest`, `BulkInterestState`, `BulkEditLink`; `POST /bulkoffer/update/:token`; `POST /helper` | bulk offer flows, the concierge | held | their chat messages are held; the edit is held |
+| `POST /message` `Approve` | moderator | allowed, basic button only | the API refuses an approve carrying a message |
+| `POST /message` `Reject`, `Delete`, `Spam`, `Hold`, `Release`, `ApproveEdits`, `RevertEdits`, `Move`, `BackToPending`, `RejectToDraft`, `BackToDraft` | moderator | refused | |
+| `PATCH /message/tn/:tnpostid` | partner fan-out of the above | as the action | |
+| `DELETE /message/:id` | withdraw own post | allowed | |
+| `POST /messages/markseen`, `POST /messages/clearcount` | | own | |
+
+**Chat**
+
+| endpoint | what | treatment | note |
+|---|---|---|---|
+| `POST /chat/:id/message` | send | held | `processingrequired = 1`; User2Mod and Mod2Mod rooms keep flowing |
+| `POST /chat/lovejunk`; `POST /amp/chat/:id/reply`; `POST /amp/digest/:id/reply`; `POST /amp/digest/reply` | partner and AMP-email replies | held | all set `processingrequired = 1` (`chatmessage.go`, `amp.go`) |
+| `POST /chat/:id/message/:mid/prompt` | answer a prompt | held | |
+| `PUT /chat/rooms` | open a room | allowed | a room with no visible message is not listed to the other party |
+| `POST /chatrooms` `Typing`, `AllSeen` | | own | |
+| `POST /chatrooms` `Nudge` | nudge | held | confirm in the build that the Nudge row takes the processing flag |
+| `POST /chatrooms` `ReferToSupport`, `ReportNoGroup` | report | allowed | User2Mod |
+| `PATCH /chatmessages` | reply expected | own | |
+| `DELETE /chatmessages` | delete own message | allowed | |
+| `POST /chatmessages` `Approve` | moderator | allowed, basic button only | |
+| `POST /chatmessages` `ApproveAllFuture` | changes the member's moderation status | refused | |
+| `POST /chatmessages` `Reject`, `Hold`, `Release`, `Redact` | moderator | refused | |
+| `PUT|POST|PATCH|DELETE /tryst` | handover arrangements | held | its chat messages carry the processing flag; its calendar mail waits |
+
+**ChitChat**
+
+| endpoint | what | treatment | note |
+|---|---|---|---|
+| `POST /newsfeed` post or reply | write | held | `hidden = NOW()` plus a `lockdown_holds` row |
+| `POST /newsfeed` `Love`, `Unlove`, `Follow`, `Unfollow`, `Seen`, `SeenAll` | | own | |
+| `POST /newsfeed` `Report` | report | allowed | |
+| `POST /newsfeed` `Unhide` | moderator | allowed | the approve for ChitChat |
+| `POST /newsfeed` `Hide`, `ConvertToStory`, `ConvertedToPost`, `AttachToThread`, `ReferToOffer`, `ReferToWanted`, `ReferToTaken`, `ReferToReceived` | moderator | refused | |
+| `PATCH /newsfeed` | edit | refused | |
+| `DELETE /newsfeed/:id` | delete own | allowed | |
+
+**Memberships**
+
+| endpoint | what | treatment | note |
+|---|---|---|---|
+| `PUT /memberships` | join | allowed | needed for replying; a join request to a group that approves members waits as a request |
+| `DELETE /memberships` own | leave | allowed | |
+| `DELETE /memberships` by a moderator, with or without `ban` | remove, ban | refused | |
+| `PATCH /memberships` `Emailfrequency`, `Eventsallowed`, `Volunteeringallowed`, `Settings` | own | allowed | |
+| `PATCH /memberships` `Role`, `OurPostingStatus` | moderator | refused | "moderated membership changes" |
+| `POST /memberships` `Leave Member`, `Leave Approved Member`, `Happy`, `Unhappy`, `Fine` | own | allowed | |
+| `POST /memberships` `Approve` | approve a join request | allowed, basic button only | |
+| `POST /memberships` `Reject`, `Delete Approved Member`, `Ban`, `Unban`, `Hold`, `Release`, `ReviewHold`, `ReviewIgnore`, `ReviewRelease`, `HappinessReviewed` | moderator | refused | |
+
+**Events, volunteering, noticeboards, stories**
+
+| endpoint | what | treatment | note |
+|---|---|---|---|
+| `POST /communityevent`, `POST /volunteering` | create | held | `pending = 1` |
+| `PATCH /communityevent`, `PATCH /volunteering` | edit or moderator approve | edit refused; approve allowed | |
+| `DELETE /communityevent/:id`, `DELETE /volunteering/:id` own | | allowed | |
+| `POST /noticeboard` | create | held | needs a hold state; confirm in the build |
+| `PATCH /noticeboard` | edit | refused | |
+| `DELETE /noticeboard/:id` | own | allowed | |
+| `PUT /story`, `POST /story` | write a story | held | stories wait for review before publication; confirm in the build |
+| `PATCH /story` | edit or review | refused | |
+| `DELETE /story/:id` own | | allowed | |
+| `POST /story/like`, `unlike` | | own | |
+
+**Moderator tooling**
+
+| endpoint | what | treatment | note |
+|---|---|---|---|
+| `POST|PATCH|DELETE /comment` | notes on members | refused | |
+| `PATCH /group` | community settings | refused | |
+| `POST|PATCH|DELETE /modtools/admin` | ADMIN broadcasts to whole communities | refused | the widest reach on the site; the mail would wait, but the row must not be created |
+| `POST|PATCH|DELETE /modtools/modconfig`, `/modtools/stdmsg` | standard messages and configs | refused | |
+| `POST /modtools/spammers` | report a spammer | allowed | lands as `PendingAdd` for Support |
+| `PATCH|DELETE /modtools/spammers` | confirm, remove | refused | Support exempt |
+| `PATCH /microvolunteering` | feedback | refused | |
+| `POST /shortlink` | create a link | refused | |
+| `PUT|POST|PATCH /locations` | map editing | refused | Support exempt |
+
+**Support tooling (exempt)**
+
+`POST /group`; `PUT|POST /modtools/alert`; `POST|DELETE /config/admin/concern_keywords`;
+`PATCH /config/admin`; `POST /rippling/analytics/*`; `POST /admin/ai-images/*`;
+`POST|PATCH|DELETE /team`; `POST|PATCH|DELETE /partnership/*`; `PUT /donations`,
+`POST /donations/bulk`; `POST /charities`; `POST /locations/kml`. All behind Support or
+Admin checks today, all continue.
+
+**Downloads**
+
+| endpoint | what | treatment |
+|---|---|---|
+| `POST /export`, `GET /export` | member's data export | refused: "Downloads are paused while we deal with a security incident." |
+| `GET /modtools/user/:id/dump`, both auth paths | Support user dump | refused |
+| `GET /modtools/spammers/export` | spammer list | refused |
+| `GET /partnership/statsfile/:id` | stats file | refused |
+
+**Own state, telemetry, uploads, payments**
+
+| endpoint | treatment | note |
+|---|---|---|
+| `POST /abtest`, `/clientlog`, `/src`, `/scrolldepth`, `/job`, `/drivedistance`, `/notification/seen`, `/notification/allseen` | own | |
+| `PUT|PATCH|DELETE /address`; `PUT|PATCH|DELETE /isochrone`; `POST|PATCH|DELETE /giftaid` | own | |
+| `POST /image` | allowed | reaches nobody until attached to something that is held |
+| `POST /microvolunteering` | not offered | member verdicts feed moderation; the GET returns no tasks while locked down |
+| `POST /donateipn`, `/stripeipn`, `/stripecreateintent`, `/stripecreatesubscription` | allowed | webhooks must keep working; thank-you mail waits |
+| `POST /housekeeper/*` | allowed | internal |
+
+Not reached by the switch:
+
+- Mail the relay has already accepted (10.14).
+- The system chat messages the batch writes already processed (ModMail, Completed,
+  Promised): no member text, and with approve limited to the basic button, no moderator
+  text.
+- Facebook, the support mailbox, Discourse.
 
 ### 10.6 Review, and who reads what
 
-Posts and ChitChat are public, and holding them in the Pending queue and the hidden state
-is the normal moderation path made universal. Moderators see them in the queues they
-already use, labelled "held by lockdown", and approve them one at a time. That is the
-review the moderators are for, and it costs nothing in privacy.
-
-Chat is different. Today a moderator reads a chat message only when a rule flagged it or the
-member is on moderation. Sending every chat message on the site to the review queue would
-turn that into moderators reading everyone's private messages for the duration, and a wave
-would put twenty thousand phishing messages in front of them. So chat has two modes, and
-the rule is the same in both: **no person reads a chat message the lockdown held unless the
-triage classed it as risky or the recipient reported it.**
-
-- **Hard** (what the button does when pressed): nothing is processed and nobody reads
-  anything. This is the mode for the first minutes, when nobody knows what is happening.
-- **Soft** (switched to from the Support page once the triage's classification has been
-  looked at for this incident): the triage runs every minute over new messages; spam is
-  dropped, low risk flows as normal, risky goes to the review queue for the moderators of
-  the groups involved, who approve or report. A member's ordinary chat is delayed by a minute
-  and never read; a phishing message is never delivered; the residue gets a human.
-
-What is risky is decided by the triage of 10.7, and its classification is shown to Support
-with samples of the spam and risky sets, never of the low-risk set. Review of held chat
-records `reviewedby` as it does now. **Nothing held is released without a person deciding.**
-Risky chat that no moderator reviews stays in the queue, where the existing
-`chats:review-pending` chases the moderators and rejects after seven days as it does for
-any held message; and Support can release or reject a whole class from the page with the
-samples in front of them. The privacy page gains one sentence saying that during a security
-incident messages may be held and a small number reviewed by volunteers (10.13).
+- Posts and ChitChat are public. Held items sit in the queues moderators already use,
+  labelled "held by lockdown". Moderators approve one at a time. No privacy cost.
+- Chat is private. Today a moderator reads a chat message only when a rule flagged it or
+  the member is on moderation. Rule for the lockdown: **no person reads a held chat message
+  unless the triage classed it risky or the recipient reported it.**
+- Hard mode (the button): nothing processed, nobody reads anything. For the first minutes.
+- Soft mode (switched to from the Support page once the triage has been looked at for this
+  incident): triage every minute over new messages; spam dropped through `dropBlocked`;
+  low risk processed normally, a minute's delay, never read; risky to the review queue
+  with `reportreason = 'Lockdown'`, for the moderators of the groups involved, approve or
+  report.
+- Support sees counts and samples of the spam and risky sets. Never of the low set.
+- `reviewedby` is recorded as now.
+- **Nothing held is released without a person deciding.** Unreviewed risky chat stays in
+  the queue; the existing `chats:review-pending` chases the moderators and rejects after
+  seven days as for any held message; Support can release or reject a whole class from the
+  page with the samples in front of them.
+- Privacy page: one sentence that during a security incident messages may be held and a
+  small number reviewed by volunteers (10.13).
 
 ### 10.7 Triage
 
-A batch command, `lockdown:triage`, run every minute while a lockdown is active and once on
-lifting. For each held chat message and post it writes a `lockdown_holds` row with a class:
+`lockdown:triage`, every minute while active and once on lifting. One `lockdown_holds` row
+per held chat message and post, with a class:
 
-- **spam**: the sender is in `spam_users`, or the account was created during the window and
-  the item carries a link or matches a phrase Support has entered for this incident, or the
-  item is in a cluster of five or more near-identical items (same folded opening line, or
-  cosine similarity from the embedding sidecar above the threshold used by the officer)
-  whose senders include a marked spammer.
-- **low**: the account is older than thirty days with at least one earlier reply or post,
-  the item carries no link, it is not in any cluster of five or more, and the sender's rate
-  over the last hour is within their own history.
+- **spam**: sender in `spam_users`; or account created during the window and the item
+  carries a link or matches an incident phrase; or the item is in a cluster of five or more
+  near-identical items (same folded opening line, or sidecar cosine similarity above the
+  officer's threshold) whose senders include a marked spammer.
+- **low**: account older than thirty days with an earlier reply or post; no link; not in
+  any cluster of five or more; sender's rate over the last hour within their own history.
 - **risky**: everything else.
 
-For posts the class is a label and a count only. A post held for the group's own reasons
-(moderated group, moderated member, no location) is indistinguishable in the queue from one
-held by the lockdown, so posts are never released by the triage: lifting lets the content
-check run again, and it re-decides every Pending post exactly as it would have on the day.
-The label says which posts it would have promoted.
-
-The numbers are the calibration wave's (section 8) and are constants in the service with
-their reasoning beside them, not settings. Support can enter phrases and addresses for the
-incident on the Support page, which the triage applies from its next run; they are cleared
-when the lockdown ends, as Twitch clears Shield Mode's ban phrases.
+- Posts: the class is a label and a count only. A post held for the group's own reasons is
+  indistinguishable in the queue from one held by the lockdown, so lifting lets the content
+  check re-decide every Pending post as it would have on the day. The label says which it
+  would have promoted.
+- Numbers are the calibration wave's (section 8): constants with their reasoning beside
+  them, not settings.
+- Incident phrases and addresses: entered on the Support page, applied from the next run,
+  cleared when the lockdown ends (Twitch clears Shield Mode's ban phrases).
 
 ### 10.8 The notice
 
-Members see nothing by default; moderators always see the banner. The presser may choose
-one of two pre-written member notices instead of none:
-
-- a delay notice: "Freegle is running slowly today. Messages and posts may take longer than
-  usual to reach people."
-- a security notice: "We're dealing with a spam attack. Messages may be delayed. If you
-  received a message about vouchers or payments, please don't click the link."
-
-The second is the one that limits harm, because the damage from a scam is done when it is
-read, and it is also the one that worries people and tells the attacker the site has
-noticed. That is why it is a choice on the day and not a default. Rendered by a
-`LockdownNotice` component next to `MailDelayed` in `LayoutCommon.vue`, fed by
-`GET /lockdown`.
+- Members: nothing, by default. Moderators: always the banner.
+- The presser may choose one member notice instead:
+  - delay: "Freegle is running slowly today. Messages and posts may take longer than usual
+    to reach people."
+  - security: "We're dealing with a spam attack. Messages may be delayed. If you received a
+    message about vouchers or payments, please don't click the link."
+- The security notice limits harm (the damage is done when the message is read) and worries
+  people and tells the crew the site has noticed. A choice on the day, not a default.
+- `LockdownNotice.vue` next to `MailDelayed` in `LayoutCommon.vue`, fed by `GET /lockdown`.
 
 ### 10.9 Lifting: the sequence
 
-Lifting releases what was held, so it is the dangerous direction, and it is done by any
-Support user from a page that shows the counts at every step. The order matters: people
-before content, content before mail, and the door data leaves through last.
+Any Support user, from a page that shows the counts at every step. People before content,
+content before mail, downloads last.
 
-1. **Understand.** The cause is known, the wave-specific holes are fixed and deployed, and
-   the rate of new holds per minute is back at the baseline. The page shows those three
-   things and the Support user decides.
-2. **Triage** runs once more over everything held. Support reads the spam and risky counts
-   and samples, adds phrases and addresses, and reruns until the spam set looks right.
-3. **Mark the actors.** The spam set's senders are added to `spam_users`; the existing
-   `users:remove-spammers` and `chats:process-spam` remove them and warn the members they
-   reached before the button. Their held items are rejected: chat through `dropBlocked`
-   (`reviewrejected = 1`, marked processed so nothing picks it up later), posts to `Spam`,
-   ChitChat deleted. Nothing of theirs is ever delivered or mailed.
-4. **Moderators back.** The mods surface is lifted first so that people are in the queues
-   before the queues fill. The ModTools banner changes to say the lockdown is lifting and
-   the queues hold released items.
-5. **Release low risk.** Chat: the processor takes the held rows in id order at a bounded
-   rate (a few hundred a minute, inside its existing one-minute iteration budget) with the
-   normal checks, so the mail and push that follow are paced too; the chat notification
-   mail re-admits them by `lockdown_holds.releasedat`, as it already does for released
-   rippling holds, because their `date` may be older than its look-back. Posts: the content
-   check promotes as it always did, at most a couple of hundred a minute so the immediate
-   digests are paced, with `arrival` set to now so a post held for three hours appears at
-   the top of Browse and in the next digest rather than three hours down. ChitChat:
-   `hidden` cleared for rows with a hold. The chat mode goes to soft at this step if it was
-   hard.
-6. **Risky to review.** Chat is processed with `reviewrequired = 1, reportreason =
-   'Lockdown'`; posts stay Pending with the label; ChitChat stays hidden with the label.
-   Moderators approve or report, one at a time. Nothing in this set is released by the
-   passage of time.
-7. **Push on.** Chat pushes are created by the processor as it works, so they follow the
-   paced release.
-8. **Email on.** First `mail:spool:purge-spammers` removes any spooled mail from step 3's
-   actors that was written before the button. Then the daemons resume and the deferral
-   catch-up runs for what was attempted and skipped: one unread-chat summary per member
-   owed one, one digest, stale post mails and periodics dropped. Chat notifications for
-   messages released in step 5 go out as ordinary mail, paced by the release. The untouched
-   `background_tasks` email rows go out.
+1. **Understand.** Cause known; wave-specific holes fixed and deployed; new holds per
+   minute back at baseline. The page shows all three.
+2. **Triage** once more over everything held. Read the spam and risky counts and samples;
+   add phrases and addresses; rerun until the spam set looks right.
+3. **Mark the actors.** Spam set's senders into `spam_users`; `users:remove-spammers` and
+   `chats:process-spam` remove them and warn the members they reached before the button.
+   Their held items rejected: chat through `dropBlocked` (`reviewrejected = 1`, marked
+   processed), posts to `Spam`, ChitChat deleted.
+4. **Moderators back.** Mods surface lifted first, so people are in the queues before the
+   queues fill. Banner changes to "lifting; the queues hold released items".
+5. **Release low risk.**
+   - Chat: processor takes held rows in id order, a few hundred a minute inside its
+     one-minute iteration, normal checks; mail and push follow at that pace. Chat mail
+     re-admits them by `lockdown_holds.releasedat`, as it does released rippling holds,
+     because their `date` may be older than its look-back.
+   - Posts: the content check promotes as it always did, a couple of hundred a minute so
+     the immediate digests are paced, with `arrival` set to now so a post held three hours
+     appears at the top of Browse and in the next digest.
+   - ChitChat: `hidden` cleared for rows with a hold.
+   - Chat mode goes to soft here if it was hard.
+6. **Risky to review.** Chat processed with `reviewrequired = 1, reportreason =
+   'Lockdown'`; posts stay Pending, labelled; ChitChat stays hidden, labelled. Moderators
+   approve or report, one at a time. Nothing in this set is released by time.
+7. **Push on.** Chat pushes are created by the processor as it works.
+8. **Email on.** `mail:spool:purge-spammers` removes spooled mail from step 3's actors
+   written before the button. Daemons resume. Deferral catch-up runs for what was attempted
+   and skipped: one unread-chat summary per member owed one, one digest, stale post mails
+   and periodics dropped. Chat notifications for step 5's messages go out as ordinary mail
+   at the release pace. Untouched `background_tasks` email rows go out.
 9. **Export on.**
-10. **Notice off**, or changed for a day to "Things are back to normal."
-11. **Close.** The `lockdowns` row gets `endedby`, `endedat` and `endnote`; the closing
-    report of 10.10 goes to geeks@ and, if the operator chooses, to Discourse; the
-    incident's phrases are cleared.
+10. **Notice off**, or "Things are back to normal" for a day.
+11. **Close.** `endedby`, `endedat`, `endnote` on the row; closing report (10.10) to geeks@
+    and, if chosen, Discourse; incident phrases cleared.
 
-Steps 4 to 10 are each a switch on the page with its count beside it, so a lift can stop
-part way, and so a surface can be pressed again on its own if the wave resumes.
-
-**A false alarm** is the same sequence with an empty spam set: the triage finds nothing,
-step 3 has nothing to do, and the page offers "lift everything" which runs steps 4 to 10 in
-order. The cost of a mistaken press is the delay, and 10.10 measures it.
+- Steps 4 to 10 are each a switch with its count beside it. A lift can stop part way. A
+  surface can be pressed again alone if the wave resumes.
+- **False alarm**: the same sequence with an empty spam set; the page offers "lift
+  everything", which runs 4 to 10 in order. The cost is the delay, and 10.10 measures it.
 
 ### 10.10 Stats on impact
 
-Two views, both from `lockdown_holds`, `lockdown_counters` and `mail_suppressed_counts`.
+From `lockdown_holds`, `lockdown_counters` and `mail_suppressed_counts`.
 
-**While it is on**, the Support page refreshes every minute, and the same numbers go to
-geeks@ every hour, which is also what reminds everyone that it is on:
+**While on**: the Support page every minute, and the same numbers to geeks@ every hour,
+which is also the reminder that it is on.
 
 | | |
 |---|---|
-| held per surface | count, distinct members, oldest hold, and the rate of new holds per minute against the same hour last week |
-| triage | spam, risky and low counts; the largest clusters with three samples each; accounts created during the window |
+| held per surface | count, distinct members, oldest hold, new holds per minute against the same hour last week |
+| triage | spam, risky, low counts; largest clusters with three samples each; accounts created during the window |
 | not sent | emails by type, pushes, exports refused |
-| moderation | actions refused and approvals made, by moderator, so Support can see anyone hammering a button or approving a wave within a minute of it starting |
+| moderation | actions refused and approvals made, by moderator; a moderator approving a wave is visible within a minute |
 | time | pressed at, by whom, how long ago |
 
-**On closing**, a report with the same numbers plus what happened to the holds (rejected,
-released without a person reading, reviewed and approved, reviewed and rejected, still in
-review), the delay distribution for released chat (median and worst), the number of members
-whose mail was caught up and how, and the comparison that justifies the button: messages
-from the marked actors delivered before it was pressed against messages from them held
-after. The replay fixtures of section 8 give the same numbers for the calibration wave
-pressed at each minute after the probe, so the cost of a slow press is a known curve rather
-than an argument.
+**On closing**: the same, plus:
+
+| | |
+|---|---|
+| holds | rejected; released with no person reading; reviewed and approved; reviewed and rejected; still in review |
+| delay | median and worst for released chat |
+| mail | members caught up, and how |
+| the justification | messages from the marked actors delivered before the press against messages from them held after |
+| the curve | the replay fixtures (section 8) give the same numbers for the calibration wave pressed at each minute after the probe |
 
 ### 10.11 Tests and drills
 
-- Unit tests at every gate, in the codebase that owns it: the batch does not promote,
-  process, render or send while held; the Go API refuses the listed actions and exports and
-  allows the two; the cache; the triage classes; the catch-up.
-- One cross-stack Playwright test: press; member A replies to member B; B sees nothing and
-  A sees a sent message; a moderator cannot reject and can approve; lift; B sees it; exactly
-  one email is spooled.
-- A drill, because an untested switch is the one that fails: the full preset for ten
-  minutes in the yesterday environment monthly, and push alone for five minutes in
-  production quarterly at a quiet hour, both recorded in `lockdowns` with the reason "drill".
-- The switch depends on the database and nothing else: not on the Go API (the artisan path),
-  not on ModTools, not on email (Sentry and the Support banner also carry every change),
-  and not on the model.
+- Unit tests at every gate, in the codebase that owns it: batch does not promote, process,
+  render or send while held; Go refuses the listed actions and downloads and allows the
+  rest; the cache; the triage classes; the catch-up.
+- One cross-stack Playwright test: press; A replies to B; B sees nothing, A sees a sent
+  message; a moderator cannot reject and can approve; lift; B sees it; exactly one email is
+  spooled.
+- Drills: full preset for ten minutes in yesterday monthly; push alone for five minutes in
+  production quarterly at a quiet hour; both rows in `lockdowns` with reason "drill".
+- Dependencies: the database and nothing else. Not the Go API (artisan path), not
+  ModTools, not email (Sentry and the banner carry every change), not the model.
 
 ### 10.12 Where it goes
 
 | piece | where |
 |---|---|
-| state | migrations for `lockdowns`, `lockdown_holds`, `lockdown_counters`; `iznik-server-go/lockdown/lockdown.go` (state with a five-second cache, `GET /lockdown`, `PATCH /lockdown`); `iznik-batch/app/Services/Lockdown/LockdownService.php`; commands `lockdown:on`, `off`, `status`, `triage`, `release`, `report` |
-| chat | `ChatProcessService::processIncoming` (hard skip, soft triage, paced release); `reportreason` enum gains `Lockdown`; `ChatNotificationService` re-admits by `lockdown_holds.releasedat` |
-| posts | `ContentCheckService` guard and paced promotion; `AutoApproveService` guard; `message.go` direct-approve path and the edit path; the Pending list label in `message_list.go` and ModTools |
-| ChitChat | `newsfeed.go` `createPost` and `create.go` set `hidden` and write the hold row; the edit handler refuses; a "held" filter in the ModTools ChitChat view |
-| profile | the profile text and avatar handlers refuse with the short message |
-| email | `MailSuppressionService::shouldSkip()` global branch with scope `lockdown`; `EmailSpoolerService::spool()` allowlist; `ProcessSpoolCommand` pause per iteration; `ProcessBackgroundTasksCommand` steps over email tasks; `SendPendingWelcomeMailsCommand` skip; `mail:spool:purge-spammers`; `DeferralCatchUpService` as is |
+| state | migrations `lockdowns`, `lockdown_holds`, `lockdown_counters`; `iznik-server-go/lockdown/lockdown.go` (five-second cache, `GET /lockdown`, `PATCH /lockdown`); `iznik-batch/app/Services/Lockdown/LockdownService.php`; commands `lockdown:on`, `off`, `status`, `triage`, `release`, `report` |
+| chat | `ChatProcessService::processIncoming` (hard skip, soft triage, paced release); `reportreason` enum gains `Lockdown` (appended; MariaDB applies without a rewrite, confirmed on the live version first); `ChatNotificationService` re-admits by `lockdown_holds.releasedat` |
+| posts | `ContentCheckService` guard and paced promotion; `AutoApproveService` guard; `message.go` direct-approve path and member edit path; Pending list label in `message_list.go` and ModTools |
+| ChitChat | `newsfeed.go` `createPost` and `create.go` set `hidden` and write the hold row; `Edit` refuses; a "held" filter in the ModTools ChitChat view |
+| profile, events, noticeboards, stories | the handlers in 10.5 refuse edits and set the pending flags |
+| email | `MailSuppressionService::shouldSkip()` global branch, scope `lockdown`; `EmailSpoolerService::spool()` allowlist; `ProcessSpoolCommand` pause per iteration; `ProcessBackgroundTasksCommand` steps over email tasks; `SendPendingWelcomeMailsCommand` skip; `mail:spool:purge-spammers`; `DeferralCatchUpService` as is |
 | push | `PushNotificationService` entry points |
-| moderator gate | `lockdown.ModActionAllowed()` at the seven dispatch points in 10.5, approve refused when it carries a message, bulk approve refused, plus a `/modtools` write middleware; ModTools shows only the basic approve button while locked down and handles the 409 the way `heldConflict.js` handles a held post |
-| export gate | `export.go`, `userdump.go` (both auth paths), `spammers.go`, partnerships stats file |
-| Support page | `modtools/pages/support`: a Lockdown tab first, red: press, preset, notice choice, incident phrases, live stats, the lift sequence as switches with counts, "lift everything" for a false alarm, history |
-| notice | `LockdownNotice.vue` in `LayoutCommon.vue`; the ModTools banner in `modtools/layouts/default.vue` and the traffic light in `ModStatus.vue`; fetched by `useNavbar` and `useModMe` |
-| docs | `docs/ops/reference/spam-and-abuse.md` gains a "Lockdown" section; a runbook page under `docs/ops/` that is the lift sequence plus the relay-queue step of 10.14; one sentence on the privacy page |
-| tests | Go and batch unit tests; `iznik-nuxt3/tests/e2e/lockdown.spec.js`; the drill entries |
+| moderator gate | `lockdown.ModActionAllowed()` at the dispatch points in 10.5; approve refused when it carries a message; bulk approve refused; a fail-closed middleware on every other `/modtools` write; ModTools shows only the basic approve button and handles the 409 as `heldConflict.js` handles a held post |
+| download gate | `export.go`, `userdump.go` (both auth paths), `spammers.go`, partnerships stats file |
+| Support page | `modtools/pages/support`: a Lockdown tab first, red: press, preset, notice choice, incident phrases, live stats, the lift sequence as switches with counts, "lift everything", history |
+| notice | `LockdownNotice.vue` in `LayoutCommon.vue`; the ModTools banner in `modtools/layouts/default.vue`; the traffic light in `ModStatus.vue`; fetched by `useNavbar` and `useModMe` |
+| docs | `docs/ops/reference/spam-and-abuse.md` "Lockdown" section; a runbook under `docs/ops/` that is 10.9 plus the relay step of 10.14; one sentence on the privacy page |
+| tests | Go and batch unit tests; `iznik-nuxt3/tests/e2e/lockdown.spec.js`; the drill rows |
 
 ### 10.13 Open questions, each with a default
 
-Decided while writing: nothing held is released without a person; members see no notice
-unless the presser chooses one; there is no expiry; any Support user can press and any
-Support user can lift. What remains, with the default that applies unless the operator says
-otherwise:
+Decided: nothing held is released without a person; no member notice unless chosen; no
+expiry; any Support user presses and lifts; approve is the basic button.
 
-- **Who reviews risky chat.** Default: the moderators of the groups involved, in the queue
-  they already use, because that is today's exposure model with a broader rule, and Support
-  alone is a bottleneck at three in the morning. The alternative is Support only.
-- **The privacy page.** Default: add one sentence saying that during a security incident
-  messages may be held and a small number reviewed by volunteers. The alternative is to say
-  nothing, on the ground that flagged messages are already reviewed and the page does not
-  say that either.
-- **The user dump's API-key path.** Default: remove it outright, lockdown or not, unless the
-  operator names what uses it. A login-free door to every table about a member is not
-  something a lockdown should have to think about.
-- **Post edits and profile text.** Default: as in 10.5, edits to the pending-edits state and
-  profile changes refused with the short message. The alternative is to leave both open in
-  the first version and accept that a hijacked established account can put a link on a live
-  post.
-- **Identity changes during a lockdown.** Default: they continue, because blocking recovery
-  is what Twitter regretted, and section 3.5's audit prerequisite records them. If the next
-  wave is hijacked accounts, hold email-address changes only.
-- **Mail already at the relay.** Default: a manual runbook step on the relay host (10.14),
-  not part of the button, because the button must not depend on reaching another host.
-- **Drills.** Default: the full preset monthly in yesterday, push alone quarterly in
-  production at a quiet hour. The alternative is yesterday only, which never proves the
-  production path.
+| question | default | alternative |
+|---|---|---|
+| who reviews risky chat | the moderators of the groups involved, in the queue they use today; same exposure model, broader rule; Support alone is a bottleneck at 3am | Support only |
+| the privacy page | one sentence: during a security incident messages may be held and a small number reviewed by volunteers | say nothing, as flagged messages are reviewed today without the page saying so |
+| the user dump's API-key path | remove it, lockdown or not, unless the operator names what uses it | keep, refused during lockdown only |
+| post edits and profile changes | edits to the pending-edits state; profile changes refused with the short message | leave both open and accept that a hijacked established account can put a link on a live post |
+| identity changes during a lockdown | continue; section 3.5's audit records them | hold email-address changes if the next wave is hijacked accounts |
+| mail already at the relay | a manual runbook step on the relay host (10.14) | make the button reach the relay, which adds a host it must depend on |
+| drills | full preset monthly in yesterday; push alone quarterly in production | yesterday only, which never proves the production path |
+| noticeboards and stories | give each a hold state if it reaches anyone without a person in between (confirm in the build) | refuse creation during a lockdown |
 
 ### 10.14 What an attacker can still do
 
-Written against the design above, so that what is accepted is accepted on purpose.
-
-- **Detect the lockdown.** Two accounts and a test message reveal within a minute that
-  nothing is being delivered, whatever the member notice says. The switch is not there to
-  deceive the crew; it is there to stop delivery. Once they know, they stop, which is the
-  aim, or move surface, which the soft mode, the triage and the per-surface switches are
-  for. The secrecy about which surfaces are held buys the minutes before they test.
-- **Approve their own wave with a hijacked moderator account.** Approve is one item at a
-  time, in that moderator's groups only, without a message to the poster, and the page
-  lists approvals by moderator every minute, so a moderator approving a wave is visible
-  before it has approved a dozen. Support removes the moderator's role, which is an
-  existing Support action and exempt from the gate.
-- **Lift it with a hijacked Support account.** Every change mails geeks@ and raises a
-  Sentry event at once, lifting is several switches each of which does the same, and the
-  batch-host command presses it again without the API. The cost of the window is bounded by
-  how quickly someone reads geeks@; the same account could do far worse things with Support
-  tools than lift a lockdown, and that is section 3.5's problem, not this one's.
-- **Use what was already sent.** Mail the relay accepted before the button is out of reach
-  of the application. The runbook's first step on the relay host is to hold its queue
-  (`postsuper -h ALL`) and, before releasing it, delete what is from or about the marked
-  actors (`postsuper -d` by queue id from a `postqueue -p` listing); the relay queue reader
-  the batch already has (`RelayQueueRecorder`) shows what is there. Messages already read
-  are the officer's "warn the recipients" action (section 4, step 5), and the existing
-  `chats:process-spam` warning covers everyone a marked actor contacted.
-- **Reach members somewhere the switch does not run.** The Facebook page, the support
-  mailbox and Discourse, which are not ours to hold and where the notice, if chosen, is
-  repeated by hand.
-- **Wait it out.** The lockdown's cost is every innocent chat delayed for its length, and a
-  crew that pauses until it is lifted costs nothing to wait. That is why lifting is by
-  surface and by class, why the soft mode exists, and why the young-account budget of
-  section 5 is the next thing to build: it is the one that holds a resumed wave without
-  holding everyone.
+| attack | what limits it | accepted because |
+|---|---|---|
+| detect the lockdown with two accounts and a test message | nothing; the member notice does not matter | the switch stops delivery, it does not deceive; once they know they stop (the aim) or move surface (the soft mode, the triage and per-surface switches); secrecy about surfaces buys the minutes before they test |
+| approve their own wave with a hijacked moderator account | approve is one item at a time, in that moderator's groups, basic button only; approvals listed by moderator every minute; Support removes the role, an exempt action | visible before a dozen approvals |
+| lift it with a hijacked Support account | every change mails geeks@ and raises Sentry at once; lifting is several switches, each doing the same; the batch-host command presses again without the API | bounded by how fast someone reads geeks@; the same account could do worse with Support tools, which is section 3.5's problem |
+| use mail already sent | runbook step on the relay host: `postsuper -h ALL` to hold the queue; `postqueue -p` to list; `postsuper -d` by queue id for anything from or about the marked actors before release; `RelayQueueRecorder` shows what is there | out of the application's reach; already-read messages are the officer's "warn the recipients" (section 4, step 5) and `chats:process-spam` |
+| reach members where the switch does not run | Facebook, the support mailbox, Discourse: the notice, if chosen, repeated by hand | not ours to hold |
+| wait it out | lifting by surface and class; the soft mode; the young-account budget (section 5) is the next thing to build, as it holds a resumed wave without holding everyone | the lockdown's cost is every innocent chat delayed for its length; a crew that waits costs nothing to wait |
