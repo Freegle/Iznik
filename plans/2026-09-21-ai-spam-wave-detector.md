@@ -421,19 +421,17 @@ Sentry event and mails geeks@ at once.
 | email allowlist | still arrives | verify address, sign-in link and forgot password (a member locked out is harm, and these were what Twitter regretted blocking), the lockdown's own reports to geeks@ and Support, backup failure | a short list in code, not configuration |
 | push | nothing | every entry point returns 0 and counts | `PushNotificationService` |
 | export | "Downloads are paused while we deal with a security incident." | refused, including the user dump's API-key path | `export.go`, `userdump.go`, `spammers.go` export, partnership stats file |
-| moderator actions | ModTools banner: "Freegle is in lockdown since 22:41, started by <name>. You can approve and report spammers. Everything else is paused." | approve (posts, chat, member requests, events), unhide (ChitChat) and `POST /modtools/spammers` are allowed, one item at a time and without a message to the poster; bulk approve, including the one in the chat review page, is refused; every other write returns 409 with a lockdown status; Support and Admin are exempt | `lockdown.ModActionAllowed()` in `dispatchPostMessageAction`, the membership action switch, the chat action switch, `group.go` PATCH, comments, concern keywords, spammer PATCH and DELETE; and a fail-closed middleware on every other `/modtools` write, allowlisting the two |
+| moderator actions | ModTools banner: "Freegle is in lockdown since 22:41, started by <name>. You can approve and report spammers. Everything else is paused." | approve (posts, chat, member requests, events), unhide (ChitChat) and `POST /modtools/spammers` are allowed, one item at a time; ModTools offers only the basic approve button, with the approve-with-message controls hidden, and the API refuses an approve that carries a message rather than stripping it, so a stale client cannot send one; bulk approve, including the one in the chat review page, is refused; every other write returns 409 with a lockdown status; Support and Admin are exempt | `lockdown.ModActionAllowed()` in `dispatchPostMessageAction`, the membership action switch, the chat action switch, `group.go` PATCH, comments, concern keywords, spammer PATCH and DELETE; and a fail-closed middleware on every other `/modtools` write, allowlisting the two |
 | signups, joins, logins, identity changes | as always | continue; accounts created during the window are counted and their holds start as risky | nothing |
 
 Not held in the first version, with the reason: group joins (needed for replying, and the
 join notifications are mail, which is stopped); inbound mail parsing (it creates Pending
 posts and unprocessed chat rows, which the holds above cover); the system chat messages the
 batch writes already processed (ModMail, Completed, Promised), which carry no member text
-and, with approve stripped of its message, no moderator text either. Stories and
+and, with approve limited to the basic button, no moderator text either. Stories and
 noticeboards are checked during the build and given a hold if either reaches anyone without
-a person in between. Two things the switch cannot reach: a V1 daily digest cron may still
-run on the bulk host outside this repo (noted in `routes/console.php`), which is confirmed
-dead or made to read the flag before the switch is relied on; and mail the relay has
-already accepted, which only a hold on the relay's own queue can stop (10.14).
+a person in between. One thing the switch cannot reach: mail the relay has already
+accepted, which only a hold on the relay's own queue can stop (10.14).
 
 ### 10.6 Review, and who reads what
 
@@ -612,7 +610,7 @@ than an argument.
 | profile | the profile text and avatar handlers refuse with the short message |
 | email | `MailSuppressionService::shouldSkip()` global branch with scope `lockdown`; `EmailSpoolerService::spool()` allowlist; `ProcessSpoolCommand` pause per iteration; `ProcessBackgroundTasksCommand` steps over email tasks; `SendPendingWelcomeMailsCommand` skip; `mail:spool:purge-spammers`; `DeferralCatchUpService` as is |
 | push | `PushNotificationService` entry points |
-| moderator gate | `lockdown.ModActionAllowed()` at the seven dispatch points in 10.5, approve stripped of its message, bulk approve refused, plus a `/modtools` write middleware; ModTools handles the 409 the way `heldConflict.js` handles a held post |
+| moderator gate | `lockdown.ModActionAllowed()` at the seven dispatch points in 10.5, approve refused when it carries a message, bulk approve refused, plus a `/modtools` write middleware; ModTools shows only the basic approve button while locked down and handles the 409 the way `heldConflict.js` handles a held post |
 | export gate | `export.go`, `userdump.go` (both auth paths), `spammers.go`, partnerships stats file |
 | Support page | `modtools/pages/support`: a Lockdown tab first, red: press, preset, notice choice, incident phrases, live stats, the lift sequence as switches with counts, "lift everything" for a false alarm, history |
 | notice | `LockdownNotice.vue` in `LayoutCommon.vue`; the ModTools banner in `modtools/layouts/default.vue` and the traffic light in `ModStatus.vue`; fetched by `useNavbar` and `useModMe` |
@@ -675,9 +673,9 @@ Written against the design above, so that what is accepted is accepted on purpos
   the batch already has (`RelayQueueRecorder`) shows what is there. Messages already read
   are the officer's "warn the recipients" action (section 4, step 5), and the existing
   `chats:process-spam` warning covers everyone a marked actor contacted.
-- **Reach members somewhere the switch does not run.** The V1 digest cron on the bulk host
-  until it is confirmed dead; the Facebook page, the support mailbox and Discourse, which
-  are not ours to hold and where the notice, if chosen, is repeated by hand.
+- **Reach members somewhere the switch does not run.** The Facebook page, the support
+  mailbox and Discourse, which are not ours to hold and where the notice, if chosen, is
+  repeated by hand.
 - **Wait it out.** The lockdown's cost is every innocent chat delayed for its length, and a
   crew that pauses until it is lifted costs nothing to wait. That is why lifting is by
   surface and by class, why the soft mode exists, and why the young-account budget of
