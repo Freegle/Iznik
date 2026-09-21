@@ -360,6 +360,109 @@
           }
         }
       }
+    },
+    "/v1/reach/rasterize": {
+      "post": {
+        "description": "WKT in (raw text/plain body), the compact cell set out (application/octet-stream). This is the only place a rippling reach polygon is converted to its canonical stored form; callers store the returned bytes verbatim and never rasterise themselves.\n\nBinds to SPATIAL_PORT (default 8194).",
+        "tags": [
+          "spatial"
+        ],
+        "summary": "Rasterize a reach polygon to its stored cell set",
+        "operationId": "reachRasterize",
+        "parameters": [
+          {
+            "description": "WKT polygon as raw text body (Content-Type text/plain)",
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "500": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/v1/reachoverflow/admits": {
+      "post": {
+        "description": "The ring question from the mail's end: one post, many candidate members. Body: {\"msgid\": N, \"points\": [{\"lng\": x, \"lat\": y, \"lanes\": [\"$.rural.sparse\"]}]}. Returns the indexes of the admitted points, so the caller keeps whatever it had attached to them: {\"in\": [...], \"partial\": bool, \"filtered\": bool}.\n\nBinds to SPATIAL_PORT (default 8194).",
+        "tags": [
+          "spatial"
+        ],
+        "summary": "Which candidate members does a post's ring admit",
+        "operationId": "reachOverflowAdmits",
+        "parameters": [
+          {
+            "description": "JSON with msgid and the candidate points, each with lng, lat and optional lanes",
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "500": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/v1/groups/intersecting": {
+      "post": {
+        "description": "Encoded cell bytes in (Content-Type application/octet-stream); out come the groups whose area shares at least one covered cell, each flagged with whether the grid lies entirely within that group. The cell form of the ST_Intersects and ST_Within pair, answered on the same lattice as the reach itself.\n\nBinds to SPATIAL_PORT (default 8194).",
+        "tags": [
+          "spatial"
+        ],
+        "summary": "Groups whose area shares a cell with an encoded reach",
+        "operationId": "groupsIntersecting",
+        "parameters": [
+          {
+            "description": "Encoded cell set bytes (Content-Type application/octet-stream)",
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "binary"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "500": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
     }
   },
   "responses": {

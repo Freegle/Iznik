@@ -180,6 +180,84 @@ package main
 //	400: errorResponse
 //	500: errorResponse
 
+// swagger:route POST /v1/reach/rasterize spatial reachRasterize
+//
+// Rasterize a reach polygon to its stored cell set
+//
+// WKT in (raw text/plain body), the compact cell set out (application/octet-stream).
+// This is the only place a rippling reach polygon is converted to its canonical
+// stored form; callers store the returned bytes verbatim and never rasterise
+// themselves.
+//
+// Binds to SPATIAL_PORT (default 8194).
+//
+// Parameters:
+//   + name: body
+//     in: body
+//     description: WKT polygon as raw text body (Content-Type text/plain)
+//     required: true
+//     schema:
+//       type: string
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	500: errorResponse
+
+// swagger:route POST /v1/reachoverflow/admits spatial reachOverflowAdmits
+//
+// Which candidate members does a post's ring admit
+//
+// The ring question from the mail's end: one post, many candidate members.
+// Body: {"msgid": N, "points": [{"lng": x, "lat": y, "lanes": ["$.rural.sparse"]}]}.
+// Returns the indexes of the admitted points, so the caller keeps whatever it had
+// attached to them: {"in": [...], "partial": bool, "filtered": bool}.
+//
+// Binds to SPATIAL_PORT (default 8194).
+//
+// Parameters:
+//   + name: body
+//     in: body
+//     description: JSON with msgid and the candidate points, each with lng, lat and optional lanes
+//     required: true
+//     schema:
+//       type: object
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	404: errorResponse
+//	500: errorResponse
+
+// swagger:route POST /v1/groups/intersecting spatial groupsIntersecting
+//
+// Groups whose area shares a cell with an encoded reach
+//
+// Encoded cell bytes in (Content-Type application/octet-stream); out come the
+// groups whose area shares at least one covered cell, each flagged with whether
+// the grid lies entirely within that group. The cell form of the ST_Intersects and
+// ST_Within pair, answered on the same lattice as the reach itself.
+//
+// Binds to SPATIAL_PORT (default 8194).
+//
+// Parameters:
+//   + name: body
+//     in: body
+//     description: Encoded cell set bytes (Content-Type application/octet-stream)
+//     required: true
+//     schema:
+//       type: string
+//       format: binary
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	404: errorResponse
+//	500: errorResponse
+
 // swagger:route POST /v1/{dataset}/rebuild admin rebuildDataset
 //
 // Rebuild dataset (admin)
