@@ -149,6 +149,37 @@ package main
 //	500: errorResponse
 //	503: errorResponse
 
+// swagger:route POST /v1/reach/vectorize spatial reachVectorize
+//
+// Vectorize an encoded reach cell set
+//
+// The inverse of rasterising: encoded cell bytes in (Content-Type
+// application/octet-stream), a traced boundary out, for the few places that need
+// a vector now the grid is the stored form (the map overlay; re-deriving the
+// sandwich bounds after a clip). Response: {"wkt": "...", "geojson": {...}}.
+//
+// Binds to SPATIAL_PORT (default 8194).
+//
+// Parameters:
+//   + name: tolerance
+//     in: query
+//     description: Simplification tolerance in degrees. 0 (the default) keeps the exact lattice outline, whose rasterisation reproduces the input grid bit for bit; positive values simplify for display.
+//     required: false
+//     type: number
+//   + name: body
+//     in: body
+//     description: Encoded cell set bytes (Content-Type application/octet-stream)
+//     required: true
+//     schema:
+//       type: string
+//       format: binary
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	500: errorResponse
+
 // swagger:route POST /v1/{dataset}/rebuild admin rebuildDataset
 //
 // Rebuild dataset (admin)

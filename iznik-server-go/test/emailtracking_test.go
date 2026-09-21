@@ -625,6 +625,8 @@ func TestEmailTrackingImageCompactScrollDepth(t *testing.T) {
 	var images []emailtracking.EmailTrackingImage
 	db.Where("email_tracking_id = ?", after2.ID).Find(&images)
 	assert.Equal(t, 2, len(images), "expected 2 image load records")
+}
+
 // Looking a member up by their own address must find them.
 //
 // The lookup carried "AND backwards IS NULL", which made it miss almost every real

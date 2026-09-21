@@ -321,6 +321,45 @@
           }
         }
       }
+    },
+    "/v1/reach/vectorize": {
+      "post": {
+        "description": "The inverse of rasterising: encoded cell bytes in (Content-Type application/octet-stream), a traced boundary out, for the few places that need a vector now the grid is the stored form (the map overlay; re-deriving the sandwich bounds after a clip). Response: {\"wkt\": \"...\", \"geojson\": {...}}.\n\nBinds to SPATIAL_PORT (default 8194).",
+        "tags": [
+          "spatial"
+        ],
+        "summary": "Vectorize an encoded reach cell set",
+        "operationId": "reachVectorize",
+        "parameters": [
+          {
+            "type": "number",
+            "description": "Simplification tolerance in degrees. 0 (the default) keeps the exact lattice outline, whose rasterisation reproduces the input grid bit for bit; positive values simplify for display.",
+            "name": "tolerance",
+            "in": "query"
+          },
+          {
+            "description": "Encoded cell set bytes (Content-Type application/octet-stream)",
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "binary"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "500": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
     }
   },
   "responses": {
