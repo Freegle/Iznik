@@ -5283,6 +5283,61 @@ type housekeeperTasksResponse struct {
 //
 //	200: successResponse
 
+// swagger:route POST /drivedistance drivedistance postDriveDistance
+// Road drive time and distance to a batch of points
+//
+// Returns road drive minutes and miles from the logged-in member's approximate
+// location to up to 100 target points, in one batched call, computed by the
+// routing server's reach engine. Fails soft: targets the engine cannot answer
+// come back with null minutes and the caller keeps showing crow-flies distance.
+// Requires authentication.
+//
+// Responses:
+//
+//	200: genericResponse
+//	401: errorResponse
+
+// swagger:route GET /electricals/stats electricals getElectricalsStats
+// Latest electricals statistics
+//
+// Returns the most recent electricals statistics payload. Answers 404 rather
+// than an empty object when nothing has been generated yet, so a page can tell
+// "not yet" from "nothing".
+//
+// Responses:
+//
+//	200: genericResponse
+//	404: errorResponse
+
+// swagger:route POST /messages/clearcount messages clearBrowseCount
+// Clear the browse unread count
+//
+// Marks the member's whole browse feed as cleared, without needing the client
+// to enumerate posts. Moves one watermark rather than writing a view row per
+// post. Requires authentication.
+//
+// Security:
+//   BearerAuth:
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+
+// swagger:route GET /modtools/email/deferrals modtools getEmailDeferrals
+// List members whose mail is currently delayed
+//
+// Support's view of a deferral episode: which providers have stopped accepting
+// our mail, since when, and which members are affected. Support or Admin only.
+//
+// Security:
+//   BearerAuth:
+//
+// Responses:
+//
+//	200: genericResponse
+//	403: errorResponse
+
 // swagger:route GET /version misc getVersion
 // Get API version
 //
