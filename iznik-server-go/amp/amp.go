@@ -458,16 +458,17 @@ func PostChatReply(c *fiber.Ctx) error {
 		})
 	}
 
-	// Insert the message.
-	// Plain, isolated, literal single-row
-	// INSERT; id read back via GORM's map-Create "@id" writeback.
+	// Insert the message flagged for chats:process-incoming, exactly as a reply made on the
+	// site is. The batch runs the spam checks, makes it visible to the other party and bumps
+	// chat_rooms.latestmessage when it delivers. Plain, isolated, literal single-row INSERT;
+	// id read back via GORM's map-Create "@id" writeback.
 	row := map[string]interface{}{
-		"chatid":               chatID,
-		"userid":               userID,
-		"message":              message,
-		"type":                 utils.CHAT_MESSAGE_DEFAULT,
-		"date":                 gorm.Expr("NOW()"),
-		"processingsuccessful": gorm.Expr("1"),
+		"chatid":             chatID,
+		"userid":             userID,
+		"message":            message,
+		"type":               utils.CHAT_MESSAGE_DEFAULT,
+		"date":               gorm.Expr("NOW()"),
+		"processingrequired": gorm.Expr("1"),
 	}
 	if err := db.Table("chat_messages").Create(row).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(ReplyResponse{
@@ -478,9 +479,6 @@ func PostChatReply(c *fiber.Ctx) error {
 
 	messageIDInt, _ := row["@id"].(int64)
 	messageID := uint64(messageIDInt)
-
-	// Update chat room latest message time
-	db.Table("chat_rooms").Where("id = ?", chatID).Update("latestmessage", gorm.Expr("NOW()"))
 
 	recordAmpReplyTracking(db, emailTrackingID, "amp://reply", "amp_reply_form")
 
