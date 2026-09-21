@@ -62,7 +62,13 @@ class EmailPathMirrorDriftTest extends TestCase
         // This branch's own edit to the method is TN-SYNC-TRACE logging, which the API
         // path already emits.
         'handleGroupPost'         => '168d4bc883c039c3e536e5d2a6e9e060a4109e48323c4c3a70e86d20c63e3971',
-        'createGroupPostMessage'  => '280231fd84ce35a88ec5e82658454b2c6487273b4d507735483ffa0c9dce0ecc',
+        // Re-pinned on 21 September: createGroupPostMessage now checks that the
+        // location id the spatial index hands back still exists in `locations`
+        // before writing it to users.lastlocation, and ingests without a location
+        // when it does not. That is the guard the API mirror already had
+        // (GroupPostIngestionService, "LOCATION-STALE"); without it a stale id
+        // failed the foreign key and lost the whole post.
+        'createGroupPostMessage'  => 'b7b6e4ed336c2d49016969223f7228e595a6b0b220740954445ee6c75fe381aa',
     ];
 
     public static function mirroredMethods(): array

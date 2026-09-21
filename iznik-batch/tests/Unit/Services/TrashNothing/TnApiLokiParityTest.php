@@ -6,6 +6,7 @@ use App\Models\Message;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\TrashNothing\Sync\PostSyncer;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 /**
@@ -234,6 +235,41 @@ class TnApiLokiParityTest extends TestCase
      * IncomingMailService::shouldSkipSpamCheck()'s unconfigured-secret fallback
      * never fires and the post routes as spam instead.
      */
+    /**
+     * The spatial index is a separate store and can hand back a location id that is
+     * no longer in `locations`. The API path already ingests without a location in
+     * that case. The email path wrote the stale id to users.lastlocation, failed the
+     * foreign key inside createGroupPostMessage, and lost the whole post - and with
+     * it the numeric message id the parity test above relies on.
+     */
+    public function test_email_path_ingests_the_post_when_the_spatial_index_returns_a_stale_location(): void
+    {
+        $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
+        $user = $this->createMappedUser();
+        $userEmail = $this->createTestUserEmail($user, ['preferred' => 1]);
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'MODERATED']);
+        $lastLocationBefore = $user->fresh()->lastlocation;
+
+        $staleId = 999999999;
+        $this->assertDatabaseMissing('locations', ['id' => $staleId]);
+        Http::fake([
+            '*/v1/postcodes/knn*' => Http::response(['results' => [['id' => $staleId]]]),
+        ]);
+
+        $postId = 'tn-stale-loc-'.uniqid();
+        $envelopeTo = $group->nameshort.'@'.config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
+        $raw = $this->buildTnPostEmail($userEmail->email, $envelopeTo, 'OFFER: Old wooden bookshelf', $postId);
+
+        $parser = app(\App\Services\Mail\Incoming\MailParserService::class);
+        $mailService = app(\App\Services\Mail\Incoming\IncomingMailService::class);
+        $result = $mailService->route($parser->parse($raw, $userEmail->email, $envelopeTo));
+
+        $this->assertSame(RoutingResult::PENDING, $result);
+        $this->assertSame(1, Message::where('tnpostid', $postId)->count(), 'the post is created without a location');
+        $this->assertIsInt($mailService->getLastRoutingContext()['message_id'] ?? null, 'its numeric id reaches the routing context');
+        $this->assertSame($lastLocationBefore, $user->fresh()->lastlocation, 'a stale location is never written to the user');
+    }
+
     private function buildTnPostEmail(string $from, string $to, string $subject, string $postId): string
     {
         $headers = [
