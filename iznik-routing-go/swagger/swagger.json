@@ -656,6 +656,377 @@
      }
     }
    }
+  },
+  "/v1/catchment": {
+   "get": {
+    "description": "Inbound catchment polygon: the area from which posts would ripple far enough to reach a group. Seeded from the whole group boundary when groupid is given, so corridor reach into the group's edges is captured; otherwise the catchment of a single point. coarse=1 asks for the region-scale grid form used by ripple expansion.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Inbound catchment polygon for a group or point",
+    "operationId": "getCatchment",
+    "parameters": [
+     {
+      "type": "integer",
+      "description": "Group id; seeds the catchment from the group boundary",
+      "name": "groupid",
+      "in": "query",
+      "required": false
+     },
+     {
+      "type": "number",
+      "description": "Latitude of the point form",
+      "name": "lat",
+      "in": "query",
+      "required": false
+     },
+     {
+      "type": "number",
+      "description": "Longitude of the point form",
+      "name": "lng",
+      "in": "query",
+      "required": false
+     },
+     {
+      "type": "number",
+      "description": "Drive-time budget in minutes (default 30)",
+      "name": "minutes",
+      "in": "query",
+      "required": false
+     },
+     {
+      "type": "string",
+      "description": "Travel mode",
+      "name": "mode",
+      "in": "query",
+      "required": false
+     },
+     {
+      "type": "integer",
+      "description": "1 for the region-scale grid form",
+      "name": "coarse",
+      "in": "query",
+      "required": false
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
+  },
+  "/v1/group-actives": {
+   "get": {
+    "description": "The 90-day-active member count for a group and the Stage-A audience target derived from it: {groupid, actives, nstar}. Cached in-process per group for about an hour. Answers 503 when no MySQL is configured or reachable.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Active member count and audience target for a group",
+    "operationId": "getGroupActives",
+    "parameters": [
+     {
+      "type": "integer",
+      "description": "Group id",
+      "name": "groupid",
+      "in": "query",
+      "required": true
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     },
+     "503": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
+  },
+  "/v1/group-extent": {
+   "get": {
+    "description": "The group's own road diameter: the widest road drive-time between two points inside the group, with both endpoints reverse-geocoded on a best-effort basis. A yardstick for the catchment view.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Widest internal road drive-time of a group",
+    "operationId": "getGroupExtent",
+    "parameters": [
+     {
+      "type": "integer",
+      "description": "Group id",
+      "name": "groupid",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "description": "Search ceiling in minutes (default 240)",
+      "name": "max_minutes",
+      "in": "query",
+      "required": false
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
+  },
+  "/v1/group-proximity": {
+   "get": {
+    "description": "For an offer at lat,lng rippling into a group: the nearest in-group point P and the in-group point furthest from P (Q), each with road drive-time, plus quicker = offer to P is shorter than P to Q. Backs the moderator proximity note.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Nearest and furthest in-group points for an offer",
+    "operationId": "getGroupProximity",
+    "parameters": [
+     {
+      "type": "integer",
+      "description": "Group id",
+      "name": "groupid",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "description": "Offer latitude",
+      "name": "lat",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "description": "Offer longitude",
+      "name": "lng",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "string",
+      "description": "Travel mode",
+      "name": "mode",
+      "in": "query",
+      "required": false
+     },
+     {
+      "type": "number",
+      "description": "Search ceiling in minutes (default 120)",
+      "name": "max_minutes",
+      "in": "query",
+      "required": false
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
+  },
+  "/v1/groups/list": {
+   "get": {
+    "description": "Every publishable Freegle group with id, short name and polygon centroid, for the catchment tab's group picker. Requires MySQL; returns an empty list without it.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "List publishable groups with centroids",
+    "operationId": "getGroupsList",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     }
+    }
+   }
+  },
+  "/v1/quintile": {
+   "get": {
+    "description": "IMD deprivation quintile of the nearest LSOA centroid: 1 is most deprived, 5 least, 0 no data. A grid lookup, no routing. For a whole set of points use POST /v1/quintiles.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Deprivation quintile for one point",
+    "operationId": "getQuintile",
+    "parameters": [
+     {
+      "type": "number",
+      "description": "Latitude",
+      "name": "lat",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "description": "Longitude",
+      "name": "lng",
+      "in": "query",
+      "required": true
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
+  },
+  "/v1/quintiles": {
+   "post": {
+    "description": "Deprivation quintiles for a batch of points, in input order. Body: {points: [[lat, lng], ...]}. 1 is most deprived, 5 least, 0 no data; the batch size is bounded and a caller wanting more pages.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Deprivation quintiles for a batch of points",
+    "operationId": "postQuintiles",
+    "parameters": [
+     {
+      "name": "body",
+      "in": "body",
+      "required": true,
+      "description": "{points: [[lat, lng], ...]}",
+      "schema": {
+       "type": "object"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
+  },
+  "/v1/reachable-groups": {
+   "get": {
+    "description": "Groups with at least one active member whose own location is road-reachable from the origin within the budget. The ripple-targeting signal: a group counts only when a real person there can drive to the post. reachable_group_ids is always present; empty means computable but zero.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Groups a post can reach through an active member",
+    "operationId": "getReachableGroups",
+    "parameters": [
+     {
+      "type": "number",
+      "description": "Origin latitude",
+      "name": "lat",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "description": "Origin longitude",
+      "name": "lng",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "description": "Drive-time budget in minutes (default 30)",
+      "name": "minutes",
+      "in": "query",
+      "required": false
+     },
+     {
+      "type": "string",
+      "description": "Travel mode",
+      "name": "mode",
+      "in": "query",
+      "required": false
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
+  },
+  "/v1/reach-eval": {
+   "post": {
+    "description": "Reach engine: verdict and arrival seconds for a member against a post's stored labels. Body: {labels: base64, points: [{lat,lng}], t?: seconds}. An out verdict with origin_area set means the member stands inside the origin group's area and callers let the cell grid decide. 501 when this server has no reach engine at all; 503 when a configured engine could not read its labels for this request.",
+    "tags": [
+     "reach"
+    ],
+    "summary": "Evaluate a member against stored reach labels",
+    "operationId": "postReachEval",
+    "parameters": [
+     {
+      "name": "body",
+      "in": "body",
+      "required": true,
+      "description": "{labels: base64, points: [{lat,lng}], t?: seconds}",
+      "schema": {
+       "type": "object"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     },
+     "501": {
+      "description": "No reach engine on this server (REACH_DIR unset)"
+     },
+     "503": {
+      "description": "Reach engine could not read its label store"
+     }
+    }
+   }
+  },
+  "/v1/reach-union": {
+   "post": {
+    "description": "The backfill face of the origin-group union: for a post whose labels are already stored, decode the blob and compute origin_union_secs and the union leaves without refetching labels. Body: {labels: base64, msgid: N}.",
+    "tags": [
+     "reach"
+    ],
+    "summary": "Origin-group union from stored reach labels",
+    "operationId": "postReachUnion",
+    "parameters": [
+     {
+      "name": "body",
+      "in": "body",
+      "required": true,
+      "description": "{labels: base64, msgid: N}",
+      "schema": {
+       "type": "object"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
   }
  },
  "responses": {
