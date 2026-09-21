@@ -73,7 +73,8 @@ existing filters held.
 
 The officer can ask for more before deciding, through a small tool set with read-only
 access: the full text of a cluster's messages, an account's history (created when, joined
-what, posted what, replied to whom, from where), the recipients' side (did anyone reply,
+what, posted what, replied to whom, from where, and its login and identity-change audit
+rows once those carry a network and device), the recipients' side (did anyone reply,
 report, or leave), the signup stream around a burst, and a similarity search against past
 confirmed waves and past false alarms. Each tool call is logged with its cost.
 
@@ -85,11 +86,50 @@ similarity when it looks at something new. This is how "we have seen this kind o
 and "last time this looked alarming it was a partner import" enter the judgement without
 anyone writing a rule.
 
+### 3.5 Whose hands are on the account
+
+The calibration wave used fresh accounts, and nothing in this design depends on that. A
+crew that buys or phishes a few hundred established members' logins, or that forges the
+From address on the inbound mail path, produces the same wave from accounts that are years
+old and have real histories. The officer is therefore asked, for every actor in a cluster,
+not "how new is this account" but **"is this the person who usually uses it"**:
+
+- **Out of character.** Each account's own history is its baseline: how often it acts,
+  on what surface, at what hours, in what communities, at what distance, in what register.
+  A member who has replied to four posts in three years and now replies to twelve in a
+  minute, all outside their communities, all in bold text about vouchers, is a hijacked
+  account whatever its age. The picture carries each actor's deviation from itself, and
+  the officer weighs it above age.
+- **Session and identity evidence.** Today there is almost none: the sessions table holds
+  no address or device, the User/Login audit row records only the method, the site and
+  the session series, and no log row is written for a password or email change. Detecting a
+  takeover needs those traces, so a prerequisite is to record, on the login audit row and
+  on identity changes, a coarse address (network, not host), a user-agent family and a
+  country, kept for a bounded period. New session series from a new network on a dormant
+  account, followed by a burst, is the shape to look for.
+- **Spoofed identity on the mail path.** Inbound mail is attributed to a member by its
+  From address (`IncomingMailService`, `findUserByEmail` with the canon fallback);
+  `SpamCheckService` looks for our-domain spoofing and Spamhaus listings but consults no
+  DKIM, SPF or DMARC result. rspamd sits in front and computes them. The attribution must
+  carry that verdict, and an action arriving by unauthenticated mail in a member's name
+  is scored as **unverified identity**, not as the member.
+- **Partner and API identities.** TrashNothing and LoveJunk act on behalf of members
+  through partner accounts; a compromise there is a wave from one credential. The picture
+  shows partner-originated actions as their own surface with their own baseline.
+
+The response differs, and the officer is required to say which case it believes it is in:
+a hijacked member is **not marked as a spammer**. Their sessions are ended, their password
+reset, their recent actions held and reviewed, and the real owner told through a channel
+the attacker does not control (the existing preferred email, plus the app push if
+registered). Marking them as a spammer removes a genuine member and warns everyone they
+ever spoke to; the wrong call there does more harm than the wave.
+
 ### 3.4 What it must decide
 
 For each thing it flags: what it is (coordinated scam or phishing; coordinated commercial
 spam; harassment; a legitimate campaign, import or event; a system fault such as a mailer
-loop; or unclear), how confident it is and why, who is affected, and which of the actions in
+loop; or unclear), how confident it is and why, who is affected, whether the actors are throwaway
+accounts, hijacked members or spoofed identities (3.5), and which of the actions in
 section 4 it recommends. A verdict without reasoning is rejected by the harness.
 
 ## 4. What it may do
@@ -110,6 +150,9 @@ promoted to automatic on its own record:
    whitelisted) in each affected room, the sender's roster silenced so only the victim is
    told. This is the step that limits harm: the damage from a scam is done when it is read.
 6. **Tell people**: email to geeks@, a Sentry event, a Discourse post with the summary.
+7. **Secure a hijacked account** instead of 4: end its sessions, force a password reset,
+   hold its recent actions for review, and tell the owner through the existing preferred
+   email and app push. Never a spammer mark.
 
 A damage bound sits above all of it: no more than a configured share of a surface's
 last-hour volume may be held without a human, and past that the officer alerts and stops
@@ -124,7 +167,10 @@ Two cheap layers exist for cost and latency, and neither decides anything on its
 - **A budget for young accounts, synchronously in the Go API** (`chat/chatmessage.go
   CreateChatMessage` and the post, ChitChat and join creators): an account under a day old
   that exceeds a small number of distinct targets in a few minutes has the rest held, not
-  dropped, for the officer to look at. This is the one place a hard number is defensible,
+  dropped, for the officer to look at. The same budget applies, relative to the account's
+  own history, to any account whose rate in the last ten minutes is far above anything it
+  has done before: an established member who suddenly replies to a dozen posts a minute
+  is held the same way, whatever their age. This is the one place a hard number is defensible,
   because it is set from the genuine population (five distinct posts in an hour is the
   99.4th percentile of real accounts) and because holding is cheap to reverse. It would
   have held 21,900 of the 21,977 messages before any mail went out, and it costs a keen
@@ -145,8 +191,9 @@ without anyone editing a constant.
   import and a group announcement copied to many rooms. Measure what the officer would have
   held, when, and what it would have released.
 - **Red team.** Ask a model to write five waves that this design should still catch and
-  that share nothing with the calibration wave: aged accounts, a slow drip over a day,
-  varied wording, replies to fresh posts, a different surface, a different ask. Replay
+  that share nothing with the calibration wave: hijacked dormant members, a slow drip over
+  a day, varied wording, replies to fresh posts, a different surface, a different ask,
+  forged From addresses on the mail path. Replay
   those too. The ones that get through are the next iteration's work.
 - **Shadow run.** Two weeks live with every action switched off, recording decisions and
   emailing them. Compare with what moderators actually did.
@@ -158,6 +205,8 @@ without anyone editing a constant.
 | piece | where |
 |---|---|
 | young-account budget | `iznik-server-go/chat/chatmessage.go`, `message/`, `newsfeed/`, group join; limits in the Go env |
+| login and identity audit | `iznik-server-go/auth/auth.go LogLogin` and the password and email change paths: coarse network, user-agent family, country, bounded retention; a prerequisite for hijack detection |
+| mail identity verdict | `IncomingMailService` attribution carries rspamd's DKIM/SPF/DMARC result; unauthenticated From in a member's name scored as unverified |
 | picture builder and clustering | `iznik-batch/app/Services/Spam/WavePicture.php`, called from the per-minute loops; sidecar via `ContentEmbeddingService::fetchEmbeddings`; last-hour vectors in Redis |
 | baselines | `iznik-batch/app/Services/Spam/WaveBaselines.php` + nightly `spam:wave-baselines` |
 | the officer | `iznik-batch/app/Services/Spam/WaveOfficer.php`: prompt, tools, memory lookup, decision schema; metered Anthropic API (`ANTHROPIC_API_KEY`, not the shared subscription token, which exhausts its week on one job); every call logged with cost |
@@ -189,5 +238,7 @@ These numbers seed the fixtures and the young-account budget. They are not thres
   budget is the gentler answer; a challenge on a signup burst is the blunter one.
 - Who confirms actions 2-5 out of hours: support volunteers, or the operator only?
 - Should confirmed wave actors be banned outright, rather than marked and removed?
+- Recording a coarse address and device on login and identity changes is a privacy
+  decision as well as a security one: what retention, and does the privacy page change?
 - The nine wave senders whose addresses did not match the cleanup pattern are still
   unmarked; the officer would have caught them by behaviour. Mark them now?
