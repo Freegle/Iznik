@@ -256,7 +256,6 @@ describe('message store - searchMT()', () => {
       search: 'sofa',
       messagetype: 'All',
       groupids: '123',
-      searchmode: 'vector',
     })
   })
 
