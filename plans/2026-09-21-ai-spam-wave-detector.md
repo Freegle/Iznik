@@ -407,7 +407,8 @@ Every non-GET route in `iznik-server-go/router/routes.go`, grouped. An endpoint 
 | endpoint | what | treatment | note |
 |---|---|---|---|
 | `POST /chat/:id/message` | send | held | `processingrequired = 1`; User2Mod and Mod2Mod rooms keep flowing |
-| `POST /chat/lovejunk`; `POST /amp/chat/:id/reply`; `POST /amp/digest/:id/reply`; `POST /amp/digest/reply` | partner and AMP-email replies | held | all set `processingrequired = 1` (`chatmessage.go`, `amp.go`) |
+| `POST /chat/lovejunk`; `POST /amp/digest/:id/reply`; `POST /amp/digest/reply` | partner replies; replies to a post from inside a digest email | held | set `processingrequired = 1` (`chatmessage.go`, `amp.go` `processDigestReply`) |
+| `POST /amp/chat/:id/reply` | reply from inside a chat notification email | held, after a fix | today `PostChatReply` inserts with `processingsuccessful = 1` and no processing flag, so the reply is delivered at once and never sees the processor or any spam check. Fix on master regardless of the switch: create with `processingrequired = 1` like the site. The form still answers "Message sent!"; the sender sees the reply in their chat; the AMP view of the chat uses the shared `FetchChatMessages`, so the other party does not |
 | `POST /chat/:id/message/:mid/prompt` | answer a prompt | held | |
 | `PUT /chat/rooms` | open a room | allowed | a room with no visible message is not listed to the other party |
 | `POST /chatrooms` `Typing`, `AllSeen` | | own | |
@@ -653,7 +654,7 @@ which is also the reminder that it is on.
 | piece | where |
 |---|---|
 | state | migrations `lockdowns`, `lockdown_holds`, `lockdown_counters`; `iznik-server-go/lockdown/lockdown.go` (five-second cache, `GET /lockdown`, `PATCH /lockdown`); `iznik-batch/app/Services/Lockdown/LockdownService.php`; commands `lockdown:on`, `off`, `status`, `triage`, `release`, `report` |
-| chat | `ChatProcessService::processIncoming` (hard skip, soft triage, paced release); `reportreason` enum gains `Lockdown` (appended; MariaDB applies without a rewrite, confirmed on the live version first); `ChatNotificationService` re-admits by `lockdown_holds.releasedat` |
+| chat | `ChatProcessService::processIncoming` (hard skip, soft triage, paced release); `amp.go` `PostChatReply` creates with the processing flag (a fix on its own); `reportreason` enum gains `Lockdown` (appended; MariaDB applies without a rewrite, confirmed on the live version first); `ChatNotificationService` re-admits by `lockdown_holds.releasedat` |
 | posts | `ContentCheckService` guard and paced promotion; `AutoApproveService` guard; `message.go` direct-approve path and member edit path; Pending list label in `message_list.go` and ModTools |
 | ChitChat | `newsfeed.go` `createPost` and `create.go` set `hidden` and write the hold row; `Edit` refuses; a "held" filter in the ModTools ChitChat view |
 | profile, events, noticeboards, stories | the handlers in 10.5 refuse edits and set the pending flags |
@@ -669,7 +670,11 @@ which is also the reminder that it is on.
 ### 10.13 Open questions, each with a default
 
 Decided: nothing held is released without a person; no member notice unless chosen; no
-expiry; any Support user presses and lifts; approve is the basic button.
+expiry; any Support user presses and lifts; approve is the basic button; AMP email replies
+behave as the site does, sent to the sender and held from everyone else.
+
+Prerequisite found on the way: `amp.go` `PostChatReply` writes chat replies as already
+processed, skipping every spam check. That is fixed on master before anything here.
 
 | question | default | alternative |
 |---|---|---|
