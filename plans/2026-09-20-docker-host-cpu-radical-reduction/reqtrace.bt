@@ -1,0 +1,2 @@
+tracepoint:syscalls:sys_enter_sendto /cgroup == 706617 && comm == "php"/ { $s = str(args->buff, 72); if ($s == "POST /v1/reach-eval HTTP/1.1\r\nHost" || strncmp($s, "GET ", 4) == 0 || strncmp($s, "POST ", 5) == 0) { printf("R %d %s\n", pid, $s); } }
+tracepoint:syscalls:sys_enter_write /cgroup == 706617 && comm == "php"/ { $s = str(args->buf, 72); if (strncmp($s, "GET ", 4) == 0 || strncmp($s, "POST ", 5) == 0) { printf("R %d %s\n", pid, $s); } }
