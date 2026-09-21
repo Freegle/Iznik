@@ -812,6 +812,9 @@ class ChatProcessServiceTest extends TestCase
             'processingsuccessful' => 0,
             'platform' => 1,
         ]);
+        // Creating the message stamps the room; clear that so the assertion
+        // below sees only what processing does.
+        DB::table('chat_rooms')->where('id', $room->id)->update(['latestmessage' => null]);
 
         $count = $this->service->processIncoming();
 
