@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-04
+last_reviewed: 2026-09-21
 owner: Freegle ops
 covers:
   - conf/rspamd
@@ -98,7 +98,7 @@ Reference data lives in its own tables, each with a moderator-facing editor in M
 
 | Table | What it holds |
 |---|---|
-| `spam_keywords` | Phrases that flag or block a post |
+| `concern_keywords` | Phrases that flag or block a post or chat message, Freegle-wide (`scope = global`) or for one community. `category = allowed` rows are the whitelist: phrases such as place and shop names that must never feed a match |
 | `worrywords` | Words that signal a safeguarding or welfare concern rather than spam - these route to people, not to a bin |
 | `spam_users` | Known bad accounts, shared across communities |
 | `spam_countries` | Country-level signals |
@@ -111,7 +111,57 @@ the whitelist path is still honoured.
 
 Matching is deliberately fuzzy (inflections, Damerau-Levenshtein distance) because
 spammers misspell on purpose. That also means it produces false positives, which is why
-the outcome is "hold for a moderator", not "delete".
+the outcome for a **flag** keyword is "hold for a moderator", not "delete".
+
+### Flag and block keywords
+
+A concern keyword's `action` decides what a match does. The two are not degrees of
+the same thing; they are different decisions.
+
+- **flag** holds the content for a human. A post stays Pending; a chat message from a
+  Moderated member goes to Chat Review. Before the scan, `allowed` phrases are removed
+  from the text, and a match can be waived when the embedding sidecar judges the
+  context innocent ("glue gun" against a weapons keyword). Both exist to spare
+  ordinary words in ordinary posts.
+- **block** is absolute. The keyword is matched against the text as written: allowed
+  phrases are not removed first (the whitelist holds everyday words such as "shop",
+  and stripping one out of the middle of "ilovefreegle.shop" would leave the keyword
+  nothing to match), the innocent-context waiver is not consulted, and a block match
+  is reported ahead of any flag match. A post that matches goes to the Spam
+  collection. A chat message that matches is dropped: `reviewrequired = 0,
+  reviewrejected = 1`, the row a moderator's Reject writes, with the reason kept. It
+  is never delivered, never emailed, never pushed, and never enters Chat Review; a
+  wave of scam mail must not land thousands of items on the volunteers. This applies
+  to Moderated and Fully-moderated senders alike (Unmoderated senders skip content
+  checks). `ChatProcessService` logs one line per drop and counts them in the run
+  summary.
+
+Literal keywords match whole words, case-insensitively, with Unicode-aware boundaries,
+so a keyword written in mathematical-bold letters (scam mail uses them to dodge
+filters) matches the same bold text.
+
+### Backfill when a block keyword is created
+
+A block keyword is usually added in response to a wave that has already landed, so
+creating a Freegle-wide one through the Go API (`config.CreateConcernKeyword`) queues a
+`concern_keyword_backfill` background task, and `queue:background-tasks` applies the
+keyword to the last 24 hours of chat messages and posts. Chat messages that were
+delivered and match are rejected as above. Posts that match are removed the way a
+moderator's Spam action removes them (`messages_spamham` row, `messages_groups.deleted
+= 1`, `messages.deleted` once no live copy remains, `freebie_alerts_remove` queued).
+Every write is a single-row statement with a short pause after it, and a re-run over
+the same window changes nothing.
+
+The same pass is available by hand:
+
+```
+php artisan content:reject-blocked-keyword --since="2026-09-20 00:00:00" --keyword=3830 --dry-run
+```
+
+`--since` widens the window (default 24 hours), `--keyword` (id or text, repeatable)
+restricts it to particular keywords, `--limit` caps matches, and `--dry-run` reports
+counts per keyword and sample ids without changing anything. Matching goes through
+`ContentCheckService::checkBlockKeywords()`, the same test the processor applies.
 
 ## Chat spam and cleanup
 

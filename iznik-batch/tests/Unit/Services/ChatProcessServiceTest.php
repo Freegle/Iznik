@@ -772,4 +772,183 @@ class ChatProcessServiceTest extends TestCase
 
         $this->assertNull($task, 'Spammer messages must not push');
     }
+
+    // --- Block keywords drop the message (V1 parity: Spam::checkSpam) ---
+    //
+    // A Freegle-wide concern keyword with action 'block' does not hold the message
+    // for review; it drops it: reviewrequired = 0, reviewrejected = 1, the row a
+    // moderator's Reject writes. It never reaches the recipient, never enters the
+    // Chat Review queue and never pushes. Only the keyword's action carries this:
+    // links, money and language checks hold for review as before.
+
+    private function seedBlockKeyword(string $word): void
+    {
+        DB::table('concern_keywords')->insert([
+            'keyword' => $word,
+            'category' => 'scam',
+            'action' => 'block',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+        ]);
+    }
+
+    public function test_moderated_user_message_with_block_keyword_is_dropped_not_held(): void
+    {
+        $word = 'testblockword' . uniqid();
+        $this->seedBlockKeyword($word);
+
+        $sender = $this->createTestUser(['chatmodstatus' => 'Moderated']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        DB::table('chat_roster')->insert([
+            'chatid' => $room->id, 'userid' => $recipient->id,
+            'status' => ChatRoster::STATUS_CLOSED, 'lastmsgseen' => null, 'lastmsgemailed' => null,
+        ]);
+
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => "Claim your voucher at {$word} today",
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $count = $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(0, $updated->reviewrequired, 'a block keyword must not put the message in the review queue');
+        $this->assertEquals(1, $updated->reviewrejected, 'a block keyword drops the message, as a moderator Reject would');
+        $this->assertNull($updated->reviewedby, 'nobody reviewed it');
+        $this->assertEquals('WorryWord', $updated->reportreason, 'the reason stays so a moderator opening the chat can see why');
+        $this->assertEquals(0, $updated->processingrequired);
+        $this->assertEquals(1, $updated->processingsuccessful);
+
+        $this->assertNull(
+            DB::table('background_tasks')->where('task_type', 'push_notify_chat_message')->first(),
+            'a dropped message must not push'
+        );
+        $this->assertNull(
+            DB::table('chat_rooms')->where('id', $room->id)->value('latestmessage'),
+            'a dropped message must not surface the room in the recipient\'s chat list'
+        );
+        $this->assertEquals(
+            ChatRoster::STATUS_CLOSED,
+            DB::table('chat_roster')->where('chatid', $room->id)->where('userid', $recipient->id)->value('status'),
+            'a dropped message must not reopen a chat the recipient closed'
+        );
+        $this->assertEquals(1, $count, 'a dropped message counts as processed');
+        $this->assertEquals(1, $this->service->droppedCount());
+    }
+
+    public function test_flag_keyword_still_holds_for_review_rather_than_dropping(): void
+    {
+        $word = 'testflagword' . uniqid();
+        DB::table('concern_keywords')->insert([
+            'keyword' => $word, 'category' => 'review', 'action' => 'flag',
+            'match_mode' => 'literal', 'scope' => 'global',
+        ]);
+
+        $sender = $this->createTestUser(['chatmodstatus' => 'Moderated']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => "Hello there {$word} have a look",
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $updated->reviewrequired, 'a flag keyword holds for review');
+        $this->assertEquals(0, $updated->reviewrejected, 'a flag keyword never drops');
+        $this->assertEquals('WorryWord', $updated->reportreason);
+        $this->assertEquals(0, $this->service->droppedCount());
+    }
+
+    public function test_fully_moderated_user_message_with_block_keyword_is_dropped(): void
+    {
+        // 'Fully' normally holds everything for review. V1 let a spam keyword beat
+        // that, so the message is dropped rather than queued for a volunteer.
+        $word = 'testblockword' . uniqid();
+        $this->seedBlockKeyword($word);
+
+        $sender = $this->createTestUser(['chatmodstatus' => 'Fully']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => "Confirm your payment at {$word}",
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(0, $updated->reviewrequired);
+        $this->assertEquals(1, $updated->reviewrejected, 'a block keyword drops even for a fully moderated member');
+        $this->assertNull(DB::table('background_tasks')->where('task_type', 'push_notify_chat_message')->first());
+    }
+
+    public function test_dropped_message_does_not_hold_the_next_one(): void
+    {
+        // The hold chain follows reviewrequired. A dropped message has
+        // reviewrequired = 0, so, as in V1, it is not a held predecessor.
+        $word = 'testblockword' . uniqid();
+        $this->seedBlockKeyword($word);
+
+        $sender = $this->createTestUser(['chatmodstatus' => 'Moderated']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        $this->createTestChatMessage($room, $sender, [
+            'message' => "Go to {$word}",
+            'processingrequired' => 1, 'processingsuccessful' => 0, 'platform' => 1,
+        ]);
+        $clean = $this->createTestChatMessage($room, $sender, [
+            'message' => 'Is the lamp still available?',
+            'processingrequired' => 1, 'processingsuccessful' => 0, 'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $clean->id)->first();
+        $this->assertEquals(0, $updated->reviewrequired, 'a dropped predecessor does not hold the next message');
+        $this->assertEquals(0, $updated->reviewrejected);
+    }
+
+    public function test_block_keyword_drops_even_when_an_allowed_entry_overlaps_it(): void
+    {
+        // The whitelist holds everyday words. Stripping 'shop' from the text before
+        // the scan turned 'ilovefreegle.shop' into 'ilovefreegle.' and the block
+        // keyword for the domain matched nothing, so a scam wave was delivered.
+        DB::table('concern_keywords')->insertOrIgnore([
+            'keyword' => 'shop', 'category' => 'allowed', 'action' => 'flag',
+            'match_mode' => 'literal', 'scope' => 'global',
+        ]);
+        DB::table('concern_keywords')->insertOrIgnore([
+            'keyword' => 'Ilovefreegle.shop', 'category' => 'scam', 'action' => 'block',
+            'match_mode' => 'literal', 'scope' => 'global',
+        ]);
+
+        $sender = $this->createTestUser(['chatmodstatus' => 'Moderated']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => "(copy and paste into your browser):\nilovefreegle.shop\n\nOnce confirmed the funds will be credited.",
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'processingrequired' => 1, 'processingsuccessful' => 0, 'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $updated->reviewrejected, 'an allowed word inside a block keyword must not defeat the block');
+        $this->assertEquals(0, $updated->reviewrequired);
+    }
 }

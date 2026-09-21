@@ -17,6 +17,7 @@ use App\Mail\Message\ModStdMessageMail;
 use App\Models\BackgroundTask;
 use App\Models\ChatRoom;
 use App\Models\User;
+use App\Services\BlockedKeywordBackfillService;
 use App\Services\EmailSpoolerService;
 use App\Services\HousekeeperService;
 use App\Services\PostcodeRemapService;
@@ -237,6 +238,7 @@ class ProcessBackgroundTasksCommand extends Command
             BackgroundTask::TASK_FREEBIE_ALERTS_ADD      => $this->handleFreebieAlertsAdd($data),
             BackgroundTask::TASK_FREEBIE_ALERTS_REMOVE   => $this->handleFreebieAlertsRemove($data),
             BackgroundTask::TASK_HOUSEKEEPER_NOTIFY      => $this->handleHousekeeperNotify($data),
+            BackgroundTask::TASK_CONCERN_KEYWORD_BACKFILL => $this->handleConcernKeywordBackfill($data),
             BackgroundTask::TASK_REMAP_POSTCODES         => $this->handleRemapPostcodes($data),
             BackgroundTask::TASK_USER_FORGET             => $this->handleUserForget($data),
             BackgroundTask::TASK_TN_SYNC                 => $this->handleTnSyncCommand($data),
@@ -1231,6 +1233,37 @@ class ProcessBackgroundTasksCommand extends Command
     {
         $service = app(HousekeeperService::class);
         $service->process($data);
+    }
+
+    /**
+     * A Freegle-wide block keyword was just created: apply it to the last 24 hours
+     * of chat messages and posts, which arrived before it existed. Queued by the Go
+     * API's CreateConcernKeyword. A keyword that no longer qualifies (deleted, or
+     * not a global block) is a no-op, so a retried task cannot act on the wrong row.
+     */
+    protected function handleConcernKeywordBackfill(array $data): void
+    {
+        $keywordId = (int) ($data['keyword_id'] ?? 0);
+        if ($keywordId === 0) {
+            throw new \RuntimeException('concern_keyword_backfill requires keyword_id');
+        }
+
+        $keyword = DB::table('concern_keywords')->where('id', $keywordId)->first();
+        if (!$keyword || $keyword->action !== 'block' || $keyword->scope !== 'global') {
+            Log::info('Concern keyword backfill skipped: not a global block keyword', ['keyword_id' => $keywordId]);
+            return;
+        }
+
+        $result = app(BlockedKeywordBackfillService::class)->run(now()->subDay(), [$keywordId]);
+
+        Log::info('Concern keyword backfill complete', [
+            'keyword_id' => $keywordId,
+            'keyword' => $keyword->keyword,
+            'chat_matched' => $result['chat']['matched'],
+            'chat_changed' => $result['chat']['changed'],
+            'posts_matched' => $result['posts']['matched'],
+            'posts_changed' => $result['posts']['changed'],
+        ]);
     }
 
     /**

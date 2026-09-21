@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Services\ContentCheckService;
+use App\Services\ContentEmbeddingService;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\DataProvider;
 use ReflectionClass;
@@ -1205,5 +1206,126 @@ class ContentCheckServiceTest extends TestCase
         // All tokens are stopwords — significantCount = 0 → not flagged
         $result = $this->service->checkVagueItem('and the or');
         $this->assertNull($result);
+    }
+
+    // =========================================================================
+    // Block keywords are absolute
+    //
+    // A keyword with action 'block' is matched against the text as written:
+    // the 'allowed' whitelist removal does not run first, the innocent-context
+    // sidecar is not asked, literal matching is Unicode-aware, and a block hit
+    // is reported ahead of any flag hit. Each of these once switched a block
+    // keyword off with no error.
+    // =========================================================================
+
+    public function test_block_keyword_matches_despite_an_overlapping_allowed_entry(): void
+    {
+        // Allowed 'shop' used to be stripped first, leaving 'ilovefreegle.' for
+        // the block keyword 'Ilovefreegle.shop' to match against.
+        DB::table('concern_keywords')->insertOrIgnore([
+            'keyword' => 'shop', 'category' => 'allowed', 'action' => 'flag',
+            'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,
+        ]);
+        DB::table('concern_keywords')->insertOrIgnore([
+            'keyword' => 'Ilovefreegle.shop', 'category' => 'scam', 'action' => 'block',
+            'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,
+        ]);
+
+        $text = "(copy and paste into your browser):\nilovefreegle.shop\n\nOnce confirmed the funds will be credited.";
+
+        $result = $this->service->checkConcernKeywords('', $text, 0);
+        $this->assertNotNull($result, 'an allowed word inside a block keyword must not defeat the block');
+        $this->assertSame('block', $result['action']);
+        $this->assertSame('Ilovefreegle.shop', $result['keyword']);
+
+        $this->assertNotNull($this->service->checkBlockKeywords('', $text), 'the block-only check must agree');
+        $this->assertNotNull($this->service->checkChatMessage($text), 'and so must the chat check');
+    }
+
+    public function test_block_keyword_is_not_waived_by_the_innocent_context_check(): void
+    {
+        $embedding = $this->createMock(ContentEmbeddingService::class);
+        $embedding->method('isInnocentContext')->willReturn(true);
+        $service = new ContentCheckService($embedding);
+
+        $blockWord = 'testblockword' . uniqid();
+        $flagWord = 'testflagword' . uniqid();
+        DB::table('concern_keywords')->insert([
+            ['keyword' => $blockWord, 'category' => 'scam', 'action' => 'block',
+             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
+            ['keyword' => $flagWord, 'category' => 'scam', 'action' => 'flag',
+             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
+        ]);
+
+        $blocked = $service->checkConcernKeywords('', "please confirm at {$blockWord} now", 0);
+        $this->assertNotNull($blocked, 'a sidecar vote of "innocent" must not switch off a block keyword');
+        $this->assertSame('block', $blocked['action']);
+
+        // Flag keywords keep the waiver: that is what it is for.
+        $this->assertNull($service->checkConcernKeywords('', "please confirm at {$flagWord} now", 0));
+    }
+
+    public function test_literal_keyword_in_bold_unicode_matches_bold_unicode_text(): void
+    {
+        // Scam mail writes its text in mathematical-bold letters to dodge filters.
+        // ASCII \b treats every such letter as a boundary, so the keyword could
+        // never match; the boundary must be Unicode-aware.
+        $keyword = '𝐓𝐡𝐞 𝐯𝐚𝐥𝐮𝐞 𝐨𝐟 𝐭𝐡𝐞 𝐠𝐢𝐟𝐭 𝐯𝐨𝐮𝐜𝐡𝐞𝐫 𝐢𝐬 𝟏𝟎𝟎 𝐆𝐁𝐏';
+        DB::table('concern_keywords')->insertOrIgnore([
+            'keyword' => $keyword, 'category' => 'scam', 'action' => 'block',
+            'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,
+        ]);
+
+        $text = "𝐇𝐞𝐥𝐥𝐨, 𝐝𝐞𝐚𝐫 𝐮𝐬𝐞𝐫,\n\n𝐓𝐡𝐞 𝐯𝐚𝐥𝐮𝐞 𝐨𝐟 𝐭𝐡𝐞 𝐠𝐢𝐟𝐭 𝐯𝐨𝐮𝐜𝐡𝐞𝐫 𝐢𝐬 𝟏𝟎𝟎 𝐆𝐁𝐏\n\n𝐓𝐨 𝐚𝐜𝐭𝐢𝐯𝐚𝐭𝐞 𝐭𝐡𝐞 𝐯𝐨𝐮𝐜𝐡𝐞𝐫";
+
+        $result = $this->service->checkConcernKeywords('', $text, 0);
+        $this->assertNotNull($result, 'a bold-Unicode literal keyword must match bold-Unicode text');
+        $this->assertSame($keyword, $result['keyword']);
+    }
+
+    public function test_literal_keyword_is_case_insensitive_and_whole_word(): void
+    {
+        $word = 'Testblockword' . uniqid();
+        DB::table('concern_keywords')->insert([
+            'keyword' => $word, 'category' => 'scam', 'action' => 'block',
+            'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,
+        ]);
+
+        $this->assertNotNull($this->service->checkBlockKeywords('', 'see ' . strtoupper($word) . ' here'));
+        $this->assertNull($this->service->checkBlockKeywords('', 'see ' . $word . 'extra here'), 'still whole-word');
+    }
+
+    public function test_block_hit_is_reported_ahead_of_an_earlier_flag_hit(): void
+    {
+        $flagWord = 'aaaflagword' . uniqid();
+        $blockWord = 'zzzblockword' . uniqid();
+        DB::table('concern_keywords')->insert([
+            ['keyword' => $flagWord, 'category' => 'review', 'action' => 'flag',
+             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
+            ['keyword' => $blockWord, 'category' => 'scam', 'action' => 'block',
+             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
+        ]);
+
+        $result = $this->service->checkConcernKeywords('', "{$flagWord} and {$blockWord}", 0);
+        $this->assertNotNull($result);
+        $this->assertSame('block', $result['action'], 'a text matching both must be blocked, not merely flagged');
+    }
+
+    public function test_check_block_keywords_can_be_restricted_to_ids(): void
+    {
+        $one = 'testblockone' . uniqid();
+        $two = 'testblocktwo' . uniqid();
+        $idOne = DB::table('concern_keywords')->insertGetId([
+            'keyword' => $one, 'category' => 'scam', 'action' => 'block',
+            'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,
+        ]);
+        DB::table('concern_keywords')->insert([
+            'keyword' => $two, 'category' => 'scam', 'action' => 'block',
+            'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,
+        ]);
+
+        $this->assertNotNull($this->service->checkBlockKeywords('', "has {$two}"));
+        $this->assertNull($this->service->checkBlockKeywords('', "has {$two}", [$idOne]));
+        $this->assertNotNull($this->service->checkBlockKeywords('', "has {$one}", [$idOne]));
     }
 }

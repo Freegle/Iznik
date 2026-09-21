@@ -942,12 +942,55 @@ class ContentCheckService
     }
 
     /**
+     * The Freegle-wide keywords whose action is 'block', optionally restricted to
+     * specific ids. These are the keywords a block decision is made from, so the
+     * backfill and the chat processor read the same list.
+     */
+    public function globalBlockKeywords(?array $keywordIds = null)
+    {
+        return DB::table('concern_keywords')
+            ->where('scope', 'global')
+            ->where('action', 'block')
+            ->where('category', '!=', 'allowed')
+            ->when($keywordIds !== null, fn($q) => $q->whereIn('id', $keywordIds))
+            ->orderBy('id')
+            ->get();
+    }
+
+    /**
+     * Does this text match a Freegle-wide concern keyword whose action is 'block'?
+     *
+     * Only block keywords are consulted, so the answer does not depend on which
+     * flag keyword happens to sit earlier in the table. Used by the chat processor
+     * (a hit drops the message) and by the backfill that runs when a block
+     * keyword is created. $keywordIds narrows the test to particular keywords.
+     */
+    public function checkBlockKeywords(string $subject, string $textbody, ?array $keywordIds = null): ?array
+    {
+        return $this->matchKeywords($this->globalBlockKeywords($keywordIds), $subject, $textbody, 0);
+    }
+
+    /**
      * Match a set of concern_keywords rows against a post, returning the first hit.
      * Shared by checkConcernKeywords (global + group) and checkGroupOwnRules (group only)
-     * so both apply the same whitelist cleaning, match modes, excludes and context check.
+     * so both apply the same match modes and excludes.
+     *
+     * A keyword whose action is 'block' is absolute. It is matched against the text
+     * as written, before and independently of the 'allowed' whitelist removal, and
+     * the innocent-context waiver is not consulted for it. Both of those steps exist
+     * to spare ordinary words in ordinary posts, and both can silently defeat a
+     * block: the whitelist contains everyday words such as 'shop', so removing them
+     * first turned 'ilovefreegle.shop' into 'ilovefreegle.' and the block keyword for
+     * that domain matched nothing; and the sidecar's similarity vote judged a scam
+     * mail's text "innocent". Block keywords are also tried first, so a text that
+     * matches both a flag and a block keyword is reported as blocked.
+     *
+     * Flag keywords keep the whitelist removal and the innocent-context check.
      */
     private function matchKeywords($keywords, string $subject, string $textbody, int $groupid): ?array
     {
+        $raw = $subject . ' ' . $textbody;
+        $rawLower = mb_strtolower($raw);
 
         // 'allowed'-category entries are a whitelist: text matching them is
         // removed BEFORE scanning, so a flagging keyword can't fire on a word
@@ -955,14 +998,30 @@ class ContentCheckService
         // both do this; this path only excluded allowed rows from the flagger
         // list, which left the whitelist with no effect - 'Cashes Green' kept
         // tripping the fuzzy keyword 'cash' via its 'cashes' inflection
-        // (Discourse 9944).
-        $original = $this->removeAllowedKeywords($subject . ' ' . $textbody, $groupid);
-        $haystack = strtolower($original);
+        // (Discourse 9944). Computed lazily: a block-only scan never needs it.
+        $cleaned = null;
+        $cleanedLower = null;
 
-        foreach ($keywords as $kw) {
+        $ordered = collect($keywords)->sortBy(fn($kw) => ($kw->action ?? 'flag') === 'block' ? 0 : 1)->values();
+
+        foreach ($ordered as $kw) {
             $word = trim($kw->keyword);
             if ($word === '') {
                 continue;
+            }
+
+            $isBlock = ($kw->action ?? 'flag') === 'block';
+
+            if ($isBlock) {
+                $original = $raw;
+                $haystack = $rawLower;
+            } else {
+                if ($cleaned === null) {
+                    $cleaned = $this->removeAllowedKeywords($raw, $groupid);
+                    $cleanedLower = mb_strtolower($cleaned);
+                }
+                $original = $cleaned;
+                $haystack = $cleanedLower;
             }
 
             // For regex mode, $word is a PATTERN rather than the literal text
@@ -972,7 +1031,7 @@ class ContentCheckService
 
             $matched = match ($kw->match_mode) {
                 'regex'   => ($matchedText = $this->safePregCapture('/' . $word . '/i', $original)) !== null,
-                'literal' => preg_match('/\b' . preg_quote(strtolower($word), '/') . '\b/', $haystack) === 1,
+                'literal' => $this->matchesLiteral($haystack, $word),
                 default   => $this->matchesFuzzy($haystack, $word),
             };
 
@@ -987,7 +1046,8 @@ class ContentCheckService
             // Contextual check: if the embedding service identifies this as an
             // innocent use of the keyword (e.g. "glue gun" vs real weapon),
             // skip the flag. Falls back to flagging when the sidecar is absent.
-            if ($this->embeddingService?->isInnocentContext($original, $kw->category)) {
+            // Never consulted for a block keyword - see the method comment.
+            if (!$isBlock && $this->embeddingService?->isInnocentContext($original, $kw->category)) {
                 continue;
             }
 
@@ -1003,6 +1063,29 @@ class ContentCheckService
         }
 
         return null;
+    }
+
+    /**
+     * Whole-word, case-insensitive, Unicode-aware literal match.
+     *
+     * $haystack is already lower-cased with mb_strtolower. The boundary is the
+     * Unicode generalisation of \b's word class (letters, digits, underscore):
+     * ASCII \b treats every non-ASCII letter as a boundary, so a keyword written
+     * in mathematical-bold letters (which scam mail uses to dodge filters) could
+     * never match, and 'caf' would match inside 'café'.
+     */
+    private function matchesLiteral(string $haystack, string $keyword): bool
+    {
+        $pattern = '/(?<![\pL\pN_])' . preg_quote(mb_strtolower($keyword), '/') . '(?![\pL\pN_])/u';
+        $result = @preg_match($pattern, $haystack);
+
+        if ($result === false) {
+            // Invalid UTF-8 in the text: fall back to a byte-wise match so a
+            // damaged message cannot switch the keyword off.
+            $result = preg_match('/\b' . preg_quote(strtolower($keyword), '/') . '\b/', strtolower($haystack));
+        }
+
+        return $result === 1;
     }
 
     // -------------------------------------------------------------------------
