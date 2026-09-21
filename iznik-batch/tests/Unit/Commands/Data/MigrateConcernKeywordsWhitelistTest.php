@@ -81,6 +81,10 @@ class MigrateConcernKeywordsWhitelistTest extends TestCase
      */
     public function test_an_allowed_word_inside_a_longer_keyword_disables_it(): void
     {
+        // A flag keyword: the whitelist is removed from the text before a flag
+        // keyword is tried, so an allowed word inside it blinds it. (A block
+        // keyword is matched against the text as written and is immune - see
+        // the end of this test.)
         $plant = 'purple pampas grass';
         DB::table('concern_keywords')->insert([
             'keyword'    => $plant,
@@ -88,7 +92,7 @@ class MigrateConcernKeywordsWhitelistTest extends TestCase
             'match_mode' => 'fuzzy',
             'scope'      => 'global',
             'group_id'   => 0,
-            'action'     => 'block',
+            'action'     => 'flag',
         ]);
         $this->words[] = $plant;
 
@@ -111,6 +115,24 @@ class MigrateConcernKeywordsWhitelistTest extends TestCase
         $missed = $this->service->checkConcernKeywords('Free plants', "Offering {$plant}", 1);
         $this->assertNull($missed,
             'this is the harm the migration avoids: allowing "grass" blinds the plant keyword');
+
+        // A block keyword containing the allowed word is not blinded: the
+        // whitelist holds everyday words, and stripping one out of the middle of
+        // a block keyword would switch that keyword off with no error.
+        $blocked = 'blocked pampas grass';
+        DB::table('concern_keywords')->insert([
+            'keyword'    => $blocked,
+            'category'   => 'substance_regulated',
+            'match_mode' => 'fuzzy',
+            'scope'      => 'global',
+            'group_id'   => 0,
+            'action'     => 'block',
+        ]);
+        $this->words[] = $blocked;
+
+        $stillCaught = $this->service->checkConcernKeywords('Free plants', "Offering {$blocked}", 1);
+        $this->assertNotNull($stillCaught, 'an allowed word must not blind a block keyword');
+        $this->assertSame('block', $stillCaught['action']);
     }
 
     public function test_review_and_spam_actions_keep_their_own_categories(): void

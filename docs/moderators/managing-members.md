@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-18
+last_reviewed: 2026-09-21
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -115,6 +115,13 @@ note that both people in the chat can see. "Delete All" clears the queue.
 Some chats are held because a post has not yet rippled out to the member who replied.
 Those release automatically; you do not need to do anything. See
 [./rippling-out.md](./rippling-out.md).
+
+A message that matches a Freegle-wide **block** keyword does not come to this queue at
+all. It is dropped: the other person never receives it, and it is marked rejected with
+the reason recorded, exactly as if you had rejected it yourself. That applies whatever
+the sender's chat moderation setting, apart from Unmoderated. Block keywords are
+Freegle-wide scam signatures kept by support; the words that bring a message here for
+you to judge are flag keywords.
 
 ### Putting one member's chat under review
 

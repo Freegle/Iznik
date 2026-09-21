@@ -29,6 +29,7 @@ class BackgroundTask extends Model
 
     // Task types produced by the Go API and consumed by the PHP batch processor.
     // Keep in sync with the Go API (iznik-server-go).
+    public const TASK_CONCERN_KEYWORD_BACKFILL  = 'concern_keyword_backfill';
     public const TASK_EMAIL_CHARITY_SIGNUP      = 'email_charity_signup';
     public const TASK_EMAIL_CHAT_SPAM_REPORT    = 'email_chat_spam_report';
     public const TASK_EMAIL_CHITCHAT_REPORT     = 'email_chitchat_report';
