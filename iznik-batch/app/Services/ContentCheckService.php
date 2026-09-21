@@ -16,6 +16,13 @@ class ContentCheckService
         private readonly ?MessageSpatialService $messageSpatialService = null,
     ) {}
 
+    /**
+     * A block keyword whose alphanumeric skeleton is at least this long also
+     * gets a skeleton comparison (see matchKeywords). Domains and phrases
+     * qualify; single words do not.
+     */
+    public const SKELETON_MIN_LENGTH = 10;
+
     public const CHECK_CONCERN_KEYWORD    = 'ConcernKeyword';
     public const CHECK_VAGUE             = 'Vague';
     public const CHECK_PHONE_NUMBER      = 'PhoneNumber';
@@ -989,8 +996,13 @@ class ContentCheckService
      */
     private function matchKeywords($keywords, string $subject, string $textbody, int $groupid): ?array
     {
-        $raw = $subject . ' ' . $textbody;
-        $rawLower = mb_strtolower($raw);
+        // Both the text and every literal/fuzzy keyword are folded to a plain,
+        // lower-case form first (KeywordTextNormalizer), so styled or obfuscated
+        // spellings - bold alphabets, zero-width characters, look-alike letters,
+        // "dot" spelled out - match the plain keyword. Regex patterns are used
+        // as written: folding would rewrite the pattern itself.
+        $raw = KeywordTextNormalizer::normalize($subject . ' ' . $textbody);
+        $rawSkeleton = null;
 
         // 'allowed'-category entries are a whitelist: text matching them is
         // removed BEFORE scanning, so a flagging keyword can't fire on a word
@@ -1000,7 +1012,6 @@ class ContentCheckService
         // tripping the fuzzy keyword 'cash' via its 'cashes' inflection
         // (Discourse 9944). Computed lazily: a block-only scan never needs it.
         $cleaned = null;
-        $cleanedLower = null;
 
         $ordered = collect($keywords)->sortBy(fn($kw) => ($kw->action ?? 'flag') === 'block' ? 0 : 1)->values();
 
@@ -1011,17 +1022,21 @@ class ContentCheckService
             }
 
             $isBlock = ($kw->action ?? 'flag') === 'block';
+            $isRegex = $kw->match_mode === 'regex';
 
             if ($isBlock) {
                 $original = $raw;
-                $haystack = $rawLower;
             } else {
                 if ($cleaned === null) {
                     $cleaned = $this->removeAllowedKeywords($raw, $groupid);
-                    $cleanedLower = mb_strtolower($cleaned);
                 }
                 $original = $cleaned;
-                $haystack = $cleanedLower;
+            }
+            $haystack = $original;
+
+            $needle = $isRegex ? $word : KeywordTextNormalizer::normalize($word);
+            if ($needle === '') {
+                continue;
             }
 
             // For regex mode, $word is a PATTERN rather than the literal text
@@ -1031,9 +1046,23 @@ class ContentCheckService
 
             $matched = match ($kw->match_mode) {
                 'regex'   => ($matchedText = $this->safePregCapture('/' . $word . '/i', $original)) !== null,
-                'literal' => $this->matchesLiteral($haystack, $word),
-                default   => $this->matchesFuzzy($haystack, $word),
+                'literal' => $this->matchesLiteral($haystack, $needle),
+                default   => $this->matchesFuzzy($haystack, $needle),
             };
+
+            // A long block keyword (a domain, a phrase) gets a second pass with
+            // every non-alphanumeric removed from both sides, so letters spaced
+            // or punctuated apart - "i l o v e f r e e g l e . s h o p",
+            // "ilovefreegle[.]shop" - still match. Never for short keywords or
+            // flag keywords: without boundaries a short skeleton matches inside
+            // ordinary words.
+            if (!$matched && $isBlock && !$isRegex) {
+                $needleSkeleton = KeywordTextNormalizer::skeleton($needle);
+                if (mb_strlen($needleSkeleton) >= self::SKELETON_MIN_LENGTH) {
+                    $rawSkeleton ??= KeywordTextNormalizer::skeleton($raw);
+                    $matched = str_contains($rawSkeleton, $needleSkeleton);
+                }
+            }
 
             if (!$matched) {
                 continue;
