@@ -73,7 +73,8 @@ Incoming mail is processed through a filtering stack: a milter-based spam check 
 time plus an application-layer content check running in parallel, with mail then routed to
 the batch processor. The layers, the thresholds and where to tune them are in
 [./reference/spam-and-abuse.md](./reference/spam-and-abuse.md), along with the
-application-layer content checks and the reasons there is no AI moderator.
+application-layer content checks, what a block keyword does to chat and posts (including
+the backfill that runs when one is created) and the reasons there is no AI moderator.
 
 ## Backups
 

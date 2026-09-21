@@ -148,9 +148,11 @@ creating a Freegle-wide one through the Go API (`config.CreateConcernKeyword`) q
 keyword to the last 24 hours of chat messages and posts. Chat messages that were
 delivered and match are rejected as above. Posts that match are removed the way a
 moderator's Spam action removes them (`messages_spamham` row, `messages_groups.deleted
-= 1`, `messages.deleted` once no live copy remains, `freebie_alerts_remove` queued).
-Every write is a single-row statement with a short pause after it, and a re-run over
-the same window changes nothing.
+= 1`, `messages.deleted` once no live copy remains, `freebie_alerts_remove` queued). A
+post here means a `messages` row with a live copy on a community; a mail that never
+became one - a member's "Reporting member" mail quoting the scam, an emailed chat reply -
+has no `messages_groups` row and is left alone. Every write is a single-row statement
+with a short pause after it, and a re-run over the same window changes nothing.
 
 The same pass is available by hand:
 

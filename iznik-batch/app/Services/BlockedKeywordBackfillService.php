@@ -149,6 +149,12 @@ class BlockedKeywordBackfillService
     /**
      * Live posts that arrived in the window and match a block keyword in their
      * subject or body.
+     *
+     * A post is a messages row with a live copy on a community. The messages table
+     * also holds mail that never became a post - a member's "Reporting member" mail
+     * quoting the scam, an emailed chat reply - with no messages_groups row at all.
+     * Those quote the keyword because someone is complaining about it, and they are
+     * not what a moderator's Spam action acts on, so they are not candidates.
      */
     private function backfillPosts(CarbonInterface $since, array $ids, bool $dryRun, ?int $limit, ?callable $progress): array
     {
@@ -157,6 +163,12 @@ class BlockedKeywordBackfillService
         $query = DB::table('messages')
             ->where('arrival', '>=', $since)
             ->whereNull('deleted')
+            ->whereExists(function ($q) {
+                $q->from('messages_groups')
+                    ->select('msgid')
+                    ->whereColumn('messages_groups.msgid', 'messages.id')
+                    ->where('messages_groups.deleted', 0);
+            })
             ->select('id', 'fromuser', 'subject', 'textbody')
             ->orderBy('id');
 

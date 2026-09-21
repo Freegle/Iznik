@@ -3,6 +3,7 @@
 namespace Tests\Unit\Commands\Content;
 
 use App\Models\ChatMessage;
+use App\Models\Message;
 use App\Services\BlockedKeywordBackfillService;
 use App\Services\ContentCheckService;
 use Illuminate\Support\Facades\DB;
@@ -166,6 +167,32 @@ class RejectBlockedKeywordCommandTest extends TestCase
         ])->assertSuccessful();
 
         $this->assertEquals(0, DB::table('chat_messages')->where('id', $chatMatch->id)->value('reviewrejected'));
+    }
+
+    public function test_a_mail_with_no_community_copy_is_not_a_post(): void
+    {
+        // A member's "Reporting member" mail quotes the scam it is reporting. It sits
+        // in messages with no messages_groups row, and it is not a post to remove.
+        $reporter = $this->createTestUser();
+        $report = Message::create([
+            'type' => Message::TYPE_OTHER,
+            'fromuser' => $reporter->id,
+            'subject' => 'Reporting member "notify-1-2" (#4512)',
+            'textbody' => "They sent me this: Claim it at {$this->word} today",
+            'source' => 'Email',
+            'date' => now(),
+            'arrival' => now(),
+        ]);
+
+        $this->artisan('content:reject-blocked-keyword', [
+            '--since' => now()->subDay()->toDateTimeString(),
+            '--keyword' => [(string) $this->keywordId],
+        ])
+            ->expectsOutputToContain('Posts: 0 matched, changed 0')
+            ->assertSuccessful();
+
+        $this->assertNull(DB::table('messages')->where('id', $report->id)->value('deleted'));
+        $this->assertNull(DB::table('messages_spamham')->where('msgid', $report->id)->first());
     }
 
     public function test_unknown_keyword_fails_rather_than_applying_every_keyword(): void
