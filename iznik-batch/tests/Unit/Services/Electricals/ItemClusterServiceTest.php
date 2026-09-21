@@ -318,15 +318,37 @@ class ItemClusterServiceTest extends TestCase
         arsort($counts);
 
         $this->assertSame(
-            12,
+            13,
             $counts['tv'] ?? null,
-            'brand, screen size, panel type and size words should all fold into one item: '
-            . json_encode($counts)
+            'brand, product name, screen size, panel type and size words should all fold '
+            . 'into one item: ' . json_encode($counts)
         );
+    }
 
-        // "Sony Bravia tv" is left on its own, on purpose. Bravia is a model, and telling
-        // a model from an item needs a catalogue this does not have; guessing would merge
-        // things that are genuinely different. It is the known edge of the folding.
-        $this->assertArrayHasKey('bravia tv', $counts);
+    /**
+     * The page promises a Beko and a Bosch are both just fridge freezers. The catalogue
+     * knows "bravia" is Sony's, but marks it not-to-strip because for "iPad" or "Kindle"
+     * the product name is the whole item. Removing it only where a word remains keeps
+     * both promises.
+     */
+    #[Test]
+    public function it_debrands_a_product_name_only_when_something_is_left(): void
+    {
+        $clusters = $this->svc->cluster($this->rows([
+            ['Sony Bravia TV', 1, 11, 21],
+            ['Trinitron television', 2, 12, 22],
+            ['Tv', 3, 13, 23],
+        ]));
+
+        $this->assertCount(1, $clusters, 'a Bravia and a Trinitron are both just TVs');
+        $this->assertSame('tv', reset($clusters)['canonical']);
+
+        // Nothing would be left of these, so the product name has to stay.
+        $kept = $this->svc->cluster($this->rows([
+            ['Kindle', 4, 14, 24],
+            ['iPad', 5, 15, 25],
+        ]));
+
+        $this->assertSame(['kindle', 'ipad'], array_keys($kept));
     }
 }
