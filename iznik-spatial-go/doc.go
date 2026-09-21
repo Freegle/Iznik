@@ -180,6 +180,50 @@ package main
 //	400: errorResponse
 //	500: errorResponse
 
+// swagger:route GET /api places placesSearch
+//
+// Photon-compatible forward geocoding over the places index
+//
+// The place search behind the app's location pickers and the map geocoder. Full UK
+// postcodes are answered from the platform's own locations table; anything else is
+// searched in the OSM places index. The response is a GeoJSON FeatureCollection in
+// the shape Photon returns, so the existing consumers parse it unchanged.
+//
+// Binds to SPATIAL_PORT (default 8194).
+//
+// Parameters:
+//   + name: q
+//     in: query
+//     description: Search term (a place name or a full UK postcode)
+//     required: true
+//     type: string
+//   + name: limit
+//     in: query
+//     description: Maximum number of features to return
+//     required: false
+//     type: integer
+//   + name: bbox
+//     in: query
+//     description: Bounding box swlng,swlat,nelng,nelat to restrict results to
+//     required: false
+//     type: string
+//   + name: lat
+//     in: query
+//     description: Map-centre latitude to bias results towards
+//     required: false
+//     type: number
+//   + name: lon
+//     in: query
+//     description: Map-centre longitude to bias results towards
+//     required: false
+//     type: number
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	503: errorResponse
+
 // swagger:route POST /v1/reach/rasterize spatial reachRasterize
 //
 // Rasterize a reach polygon to its stored cell set
