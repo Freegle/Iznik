@@ -13,24 +13,6 @@
  },
  "basePath": "/",
  "paths": {
-  "/demo": {
-   "get": {
-    "description": "Returns an interactive HTML demo page for the routing service.",
-    "produces": [
-     "text/html"
-    ],
-    "tags": [
-     "demo"
-    ],
-    "summary": "Demo page",
-    "operationId": "getDemoPage",
-    "responses": {
-     "200": {
-      "$ref": "#/responses/routingGenericResponse"
-     }
-    }
-   }
-  },
   "/health": {
    "get": {
     "description": "Returns the health status of the routing service including the number of\nloaded graph nodes.",
