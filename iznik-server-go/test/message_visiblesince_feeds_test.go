@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/stretchr/testify/assert"
 )
@@ -126,6 +127,22 @@ func TestSearchVisibleSinceIsOldestGroupArrival(t *testing.T) {
 	word := coinedWord()
 	token, msgID, cleanup := visibleSinceFixture(t, uniquePrefix("search_visiblesince"), word)
 	defer cleanup()
+
+	// Search is served from the in-memory embedding store, not a keyword index, so the
+	// post has to be there to be found. Its vector is the one the mocked sidecar returns
+	// for the query, and the subject carries the coined word for the lexical path.
+	var groupID uint64
+	database.DBConn.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? AND deleted = 0 ORDER BY arrival LIMIT 1", msgID).Scan(&groupID)
+	vec := makeTestVec(1.0)
+	embedding.Global.SetEntries([]embedding.Entry{{
+		Msgid: msgID, Groupid: groupID, GroupIDs: []uint64{groupID}, Msgtype: "Offer",
+		Lat: 51.5, Lng: -0.1, Subject: "OFFER: " + word + " gadget", Arrival: time.Now(), SubjectVec: vec,
+	}})
+	t.Cleanup(func() { embedding.Global.SetEntries(nil) })
+	server := mockSidecarReturning(t, vec[:])
+	defer server.Close()
+	embedding.SetSidecarURL(server.URL)
+	t.Cleanup(func() { embedding.SetSidecarURL("") })
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/search/"+word+"?jwt="+token, nil), 60000)
 	assert.Equal(t, 200, resp.StatusCode)
