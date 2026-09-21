@@ -18,10 +18,19 @@ class ContentCheckService
 
     /**
      * A block keyword whose alphanumeric skeleton is at least this long also
-     * gets a skeleton comparison (see matchKeywords). Domains and phrases
+     * gets the spaced-letters pass (see matchesSpaced). Domains and phrases
      * qualify; single words do not.
      */
     public const SKELETON_MIN_LENGTH = 10;
+
+    /**
+     * Normalised form of each literal and fuzzy keyword, computed once per
+     * process: matchKeywords runs every keyword against every message, and
+     * there are over a thousand of them.
+     *
+     * @var array<string, string>
+     */
+    private static array $normalisedKeywords = [];
 
     public const CHECK_CONCERN_KEYWORD    = 'ConcernKeyword';
     public const CHECK_VAGUE             = 'Vague';
@@ -1002,7 +1011,6 @@ class ContentCheckService
         // "dot" spelled out - match the plain keyword. Regex patterns are used
         // as written: folding would rewrite the pattern itself.
         $raw = KeywordTextNormalizer::normalize($subject . ' ' . $textbody);
-        $rawSkeleton = null;
 
         // 'allowed'-category entries are a whitelist: text matching them is
         // removed BEFORE scanning, so a flagging keyword can't fire on a word
@@ -1034,7 +1042,9 @@ class ContentCheckService
             }
             $haystack = $original;
 
-            $needle = $isRegex ? $word : KeywordTextNormalizer::normalize($word);
+            $needle = $isRegex
+                ? $word
+                : (self::$normalisedKeywords[$word] ??= KeywordTextNormalizer::normalize($word));
             if ($needle === '') {
                 continue;
             }
@@ -1050,18 +1060,14 @@ class ContentCheckService
                 default   => $this->matchesFuzzy($haystack, $needle),
             };
 
-            // A long block keyword (a domain, a phrase) gets a second pass with
-            // every non-alphanumeric removed from both sides, so letters spaced
-            // or punctuated apart - "i l o v e f r e e g l e . s h o p",
-            // "ilovefreegle[.]shop" - still match. Never for short keywords or
-            // flag keywords: without boundaries a short skeleton matches inside
-            // ordinary words.
-            if (!$matched && $isBlock && !$isRegex) {
-                $needleSkeleton = KeywordTextNormalizer::skeleton($needle);
-                if (mb_strlen($needleSkeleton) >= self::SKELETON_MIN_LENGTH) {
-                    $rawSkeleton ??= KeywordTextNormalizer::skeleton($raw);
-                    $matched = str_contains($rawSkeleton, $needleSkeleton);
-                }
+            // A long block keyword (a domain, a phrase) gets a second pass that
+            // tolerates its letters being spaced or punctuated apart -
+            // "i l o v e f r e e g l e . s h o p", "i-l-o-v-e..." - see
+            // matchesSpaced. Never for short keywords or flag keywords: the
+            // looser the match, the longer the keyword must be to stay safe.
+            if (!$matched && $isBlock && !$isRegex
+                && mb_strlen(KeywordTextNormalizer::skeleton($needle)) >= self::SKELETON_MIN_LENGTH) {
+                $matched = $this->matchesSpaced($haystack, $needle);
             }
 
             if (!$matched) {
@@ -1103,6 +1109,29 @@ class ContentCheckService
      * in mathematical-bold letters (which scam mail uses to dodge filters) could
      * never match, and 'caf' would match inside 'café'.
      */
+    /**
+     * The keyword's letters and digits in order, each separated from the next by
+     * at most three characters that are neither, with a non-alphanumeric (or the
+     * edge of the text) on both sides. Every non-alphanumeric in the keyword is
+     * a separator too, so "ilovefreegle.shop" is looked for as
+     * i-l-o-v-e-f-r-e-e-g-l-e-s-h-o-p. The boundaries are what a plain skeleton
+     * comparison lacked: "ilovefreegleshopping" contains the domain's skeleton
+     * and is not the domain.
+     */
+    private function matchesSpaced(string $haystack, string $keyword): bool
+    {
+        $chars = preg_split('//u', KeywordTextNormalizer::skeleton($keyword), -1, PREG_SPLIT_NO_EMPTY);
+        if ($chars === false || $chars === []) {
+            return false;
+        }
+
+        $pattern = '/(?<![\pL\pN])'
+            . implode('[^\pL\pN]{0,3}', array_map(fn ($c) => preg_quote($c, '/'), $chars))
+            . '(?![\pL\pN])/u';
+
+        return @preg_match($pattern, $haystack) === 1;
+    }
+
     private function matchesLiteral(string $haystack, string $keyword): bool
     {
         $pattern = '/(?<![\pL\pN_])' . preg_quote(mb_strtolower($keyword), '/') . '(?![\pL\pN_])/u';

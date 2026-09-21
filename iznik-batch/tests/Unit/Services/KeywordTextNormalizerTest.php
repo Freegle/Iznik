@@ -137,6 +137,29 @@ class KeywordTextNormalizerTest extends TestCase
         );
     }
 
+    public function test_the_spaced_pass_wants_the_whole_keyword_with_nothing_stuck_to_it(): void
+    {
+        // The domain's letters appear in order inside each of these, but as part
+        // of a longer word. A member writing them must not be dropped.
+        foreach ([
+            'I love Freegle! Shopping for a sofa this weekend',
+            'ilovefreegleshopper here, is it still available?',
+            'see xilovefreegle.shop for details',
+            'ilovefreegle.shopx is not the domain',
+        ] as $text) {
+            $this->assertNull($this->service->checkBlockKeywords('', $text), json_encode($text));
+        }
+
+        // Up to three separator characters between letters is the domain
+        // spaced out; more is not.
+        $this->assertNotNull(
+            $this->service->checkBlockKeywords('', 'claim at i - l - o - v - e - f - r - e - e - g - l - e . s - h - o - p now')
+        );
+        $this->assertNull(
+            $this->service->checkBlockKeywords('', 'i    l    o    v    e    f    r    e    e    g    l    e    s    h    o    p')
+        );
+    }
+
     // --- ordinary text with the same invisible characters matches nothing ---
 
     public function test_emoji_sequences_and_phone_signatures_match_nothing(): void

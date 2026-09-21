@@ -161,10 +161,15 @@ enumerate them:
 
 A block keyword whose letters-and-digits skeleton is at least
 `ContentCheckService::SKELETON_MIN_LENGTH` (10) characters - a domain, a phrase - also
-gets a second pass comparing skeletons with every non-alphanumeric removed, so
-`i l o v e f r e e g l e . s h o p` still matches. Short keywords and flag keywords
-never get that pass: without boundaries a short skeleton matches inside ordinary words.
-Regex keywords are used as written, against the folded text.
+gets a second pass that accepts its letters in order with up to three other characters
+between each pair, and nothing alphanumeric stuck to either end, so
+`i l o v e f r e e g l e . s h o p` and `i-l-o-v-e-f-r-e-e-g-l-e[.]s-h-o-p` still match
+while `shopping` and `ilovefreegleshopper` do not. Short keywords and flag keywords never
+get that pass. The pass is deliberately blind to spacing, so a block domain made of
+ordinary words also matches those words written in a row: `ilovefreegle.shop` drops
+"I love Freegle. Shop local". Choose block domains with that in mind, or use a flag
+keyword, which holds for review instead. Regex keywords are used as written, against
+the folded text.
 
 ### Backfill when a block keyword is created
 
