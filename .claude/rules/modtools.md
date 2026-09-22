@@ -97,3 +97,15 @@ banned.
 
 - `.claude/rules/rippling.md` - one post, many group rows.
 - `docs/moderators/` - what moderators are told these screens do.
+
+## The roster date is not when anything happened
+
+`chat_roster.date` is rewritten to now by **every** roster call: mark-as-read, Away or Offline
+presence, and Closed all bump it, not just the status change you are looking for. A Blocked row
+dated today may have been blocked months ago and merely opened today. Counting "blocks made
+today" from it overstated a day by a third.
+
+The moment a member pressed Block is in the API request log, not the table:
+`{api_version="v2"} |= "/apiv2/chatrooms" |= "\"status\":\"Blocked\""` in Loki, one per distinct
+member and room. The same applies to any "when did they do X" question answered from a roster
+watermark: `lastmsgseen` and friends move forward on ordinary viewing.
