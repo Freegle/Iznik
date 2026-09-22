@@ -200,6 +200,7 @@ backend edge_legacy_backend
 
 frontend api_server_frontend
   bind *:8192 ssl crt /etc/haproxy/api.ilovefreegle.org.pem alpn h2,http/1.1
+  option httplog
   mode http
 
   # Extract loggedInAs user ID from query string for per-user rate limiting.
