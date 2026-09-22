@@ -25,6 +25,8 @@ class LoveJunkInvoiceService
             $end = date('Y-m-d', strtotime('first day of this month'));
         }
 
+        // keep-raw: REGEXP_REPLACE()/TRIM() and an aliased COUNT(DISTINCT ...)
+        // alongside a CASE-derived grouped column have no builder form.
         $rows = DB::select(
             "SELECT
                 COUNT(DISTINCT TRIM(REGEXP_REPLACE(messages.subject, '\\\\[.*?\\\\](.*)', '$1'))) AS count,

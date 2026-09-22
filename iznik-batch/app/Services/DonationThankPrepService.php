@@ -76,7 +76,7 @@ class DonationThankPrepService
             // unaffected. Server time is UTC; donation timestamps are UTC.
             $lastId    = null;
             $donations = DB::table('users_donations')
-                ->whereRaw('timestamp >= CURDATE()')
+                ->where('timestamp', '>=', today()->toDateString())
                 ->orderBy('id')
                 ->get();
         } else {
@@ -290,10 +290,11 @@ class DonationThankPrepService
 
     private function setLastSentId(int $id): void
     {
-        DB::statement(
-            "INSERT INTO config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?",
-            [self::CONFIG_KEY_LAST_ID, (string) $id, (string) $id]
-        );
+        DB::table('config')->upsert(
+                [['key' => self::CONFIG_KEY_LAST_ID, 'value' => (string) $id]],
+                ['key'],
+                ['value']
+            );
     }
 
     /**
@@ -520,8 +521,8 @@ class DonationThankPrepService
                 ->where('userid', $userId)
                 ->where('GrossAmount', $donation->GrossAmount)
                 ->whereIn('TransactionType', self::RECURRING_TYPES)
-                ->whereRaw('DATE(timestamp) >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)')
-                ->whereRaw('DATE(timestamp) < CURDATE()')
+                ->whereDate('timestamp', '>=', today()->subMonth()->toDateString())
+                ->whereDate('timestamp', '<', today()->toDateString())
                 ->count();
             $skipBirthdayCheck = $lastMonth > 0;
         }
@@ -543,8 +544,15 @@ class DonationThankPrepService
             ->where('groups.type', Group::TYPE_FREEGLE)
             ->where('groups.publish', 1)
             ->where('groups.onmap', 1)
-            ->whereRaw("DATE_FORMAT(groups.founded, '%m-%d') IN (?, ?, ?)", [$today, $yesterday, $twoDaysAgo])
-            ->whereRaw("YEAR(NOW()) - YEAR(groups.founded) > 0")
+            ->where(function ($q) use ($today, $yesterday, $twoDaysAgo) {
+                foreach ([$today, $yesterday, $twoDaysAgo] as $md) {
+                    [$m, $d] = explode('-', $md);
+                    $q->orWhere(function ($q2) use ($m, $d) {
+                        $q2->whereMonth('groups.founded', (int) $m)->whereDay('groups.founded', (int) $d);
+                    });
+                }
+            })
+            ->whereYear('groups.founded', '<', now()->year)
             ->count();
 
         return $count > 0;

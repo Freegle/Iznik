@@ -55,14 +55,13 @@ class SpamCleanupService
      */
     public function removeSpamMemberships(bool $dryRun = false): int
     {
-        $spammers = DB::select(
-            "SELECT memberships.userid, memberships.groupid
-             FROM memberships
-             INNER JOIN spam_users ON memberships.userid = spam_users.userid
-             WHERE spam_users.collection = ?
-               AND memberships.role = ?",
-            [self::SPAMMER_COLLECTION, self::MEMBER_ROLE]
-        );
+        $spammers = DB::table('memberships')
+            ->select('memberships.userid', 'memberships.groupid')
+            ->join('spam_users', 'memberships.userid', '=', 'spam_users.userid')
+            ->where('spam_users.collection', self::SPAMMER_COLLECTION)
+            ->where('memberships.role', self::MEMBER_ROLE)
+            ->get()
+            ->all();
 
         if ($dryRun) {
             return count($spammers);
@@ -104,17 +103,25 @@ class SpamCleanupService
      */
     public function deleteSpamMessages(bool $dryRun = false): int
     {
-        $msgs = DB::select(
-            "SELECT DISTINCT messages.id, messages_groups.groupid
-             FROM messages
-             INNER JOIN spam_users ON messages.fromuser = spam_users.userid
-               AND spam_users.collection = ?
-             INNER JOIN messages_groups ON messages.id = messages_groups.msgid
-             INNER JOIN users ON messages.fromuser = users.id
-               AND users.systemrole = 'User'
-             WHERE messages.deleted IS NULL",
-            [self::SPAMMER_COLLECTION]
-        );
+        $msgs = DB::table('messages')
+            ->distinct()
+            ->select('messages.id', 'messages_groups.groupid')
+            // Both extra predicates stay in their ON clauses, where the raw
+            // statement put them, rather than migrating to the WHERE.
+            ->join('spam_users', function ($j) {
+                $j->on('messages.fromuser', '=', 'spam_users.userid')
+                  ->where('spam_users.collection', self::SPAMMER_COLLECTION);
+            })
+            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
+            // users.systemrole = 'User' is a GUARD: it keeps this from deleting
+            // posts by moderators or support staff who happen to be flagged.
+            ->join('users', function ($j) {
+                $j->on('messages.fromuser', '=', 'users.id')
+                  ->where('users.systemrole', 'User');
+            })
+            ->whereNull('messages.deleted')
+            ->get()
+            ->all();
 
         if ($dryRun) {
             return count($msgs);
@@ -183,10 +190,9 @@ class SpamCleanupService
         // moves rows out of the filter behind the cursor, so lazyById is safe here.
         $updated = 0;
         foreach ($idsQuery->lazyById(1000) as $row) {
-            $updated += DB::update(
-                'UPDATE chat_messages SET reviewrejected = 1, reviewrequired = 0 WHERE id = ?',
-                [$row->id],
-            );
+            $updated += DB::table('chat_messages')
+                ->where('id', $row->id)
+                ->update(['reviewrejected' => 1, 'reviewrequired' => 0]);
         }
 
         return $updated;
@@ -204,11 +210,16 @@ class SpamCleanupService
                 })
                 ->count();
         }
-        return (int) DB::delete(
-            "DELETE FROM newsfeed
-             WHERE userid IN (SELECT userid FROM spam_users WHERE collection = ?)",
-            [self::SPAMMER_COLLECTION]
-        );
+        return DB::table('newsfeed')
+            // whereIn with a closure renders the same correlated
+            // IN (SELECT ...) the raw statement had. Fetching the ids
+            // first and passing an array would be a different
+            // statement - and a race, since the spam list can change
+            // between the two queries.
+            ->whereIn('userid', fn ($q) => $q->from('spam_users')
+                ->select('userid')
+                ->where('collection', self::SPAMMER_COLLECTION))
+            ->delete();
     }
 
     /**
@@ -223,11 +234,16 @@ class SpamCleanupService
                 })
                 ->count();
         }
-        return (int) DB::delete(
-            "DELETE FROM users_notifications
-             WHERE fromuser IN (SELECT userid FROM spam_users WHERE collection = ?)",
-            [self::SPAMMER_COLLECTION]
-        );
+        return DB::table('users_notifications')
+            // whereIn with a closure renders the same correlated
+            // IN (SELECT ...) the raw statement had. Fetching the ids
+            // first and passing an array would be a different
+            // statement - and a race, since the spam list can change
+            // between the two queries.
+            ->whereIn('fromuser', fn ($q) => $q->from('spam_users')
+                ->select('userid')
+                ->where('collection', self::SPAMMER_COLLECTION))
+            ->delete();
     }
 
     /**
@@ -242,11 +258,16 @@ class SpamCleanupService
                 })
                 ->count();
         }
-        return (int) DB::delete(
-            "DELETE FROM users_expected
-             WHERE expecter IN (SELECT userid FROM spam_users WHERE collection = ?)",
-            [self::SPAMMER_COLLECTION]
-        );
+        return DB::table('users_expected')
+            // whereIn with a closure renders the same correlated
+            // IN (SELECT ...) the raw statement had. Fetching the ids
+            // first and passing an array would be a different
+            // statement - and a race, since the spam list can change
+            // between the two queries.
+            ->whereIn('expecter', fn ($q) => $q->from('spam_users')
+                ->select('userid')
+                ->where('collection', self::SPAMMER_COLLECTION))
+            ->delete();
     }
 
     /**
@@ -262,11 +283,13 @@ class SpamCleanupService
                 ->whereNotNull('userid')
                 ->count();
         }
-        return (int) DB::delete(
-            "DELETE FROM sessions
-             WHERE userid IN (SELECT userid FROM spam_users WHERE collection = ?)
-               AND userid IS NOT NULL",
-            [self::SPAMMER_COLLECTION]
-        );
+        return DB::table('sessions')
+            ->whereIn('userid', fn ($q) => $q->from('spam_users')
+                ->select('userid')
+                ->where('collection', self::SPAMMER_COLLECTION))
+            // Redundant against the IN, but kept: the raw statement had it and
+            // this converts behaviour, not style.
+            ->whereNotNull('userid')
+            ->delete();
     }
 }

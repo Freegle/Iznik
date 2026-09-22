@@ -84,15 +84,13 @@ class DonationService
      */
     protected function getUnthankedDonors(): Collection
     {
-        $excludeCondition = $this->getExcludedPayersCondition();
-
         return DB::table('users_donations')
             ->select('users_donations.userid')
             ->leftJoin('users_thanks', 'users_thanks.userid', '=', 'users_donations.userid')
             ->where('users_donations.timestamp', '>', now()->subDays(self::RECENT_DONATION_DAYS))
             ->whereNotNull('users_donations.userid')
             ->whereNull('users_thanks.userid')
-            ->whereRaw($excludeCondition)
+            ->whereNotIn('Payer', self::EXCLUDED_PAYERS)
             ->distinct()
             ->get();
     }
@@ -105,20 +103,6 @@ class DonationService
         DB::table('users_thanks')->insert([
             'userid' => $userId,
         ]);
-    }
-
-    /**
-     * Get SQL condition to exclude test/internal payers.
-     */
-    protected function getExcludedPayersCondition(string $field = 'Payer'): string
-    {
-        $conditions = [];
-
-        foreach (self::EXCLUDED_PAYERS as $payer) {
-            $conditions[] = "{$field} != '{$payer}'";
-        }
-
-        return '(' . implode(' AND ', $conditions) . ')';
     }
 
     /**
@@ -194,6 +178,11 @@ class DonationService
         $end = now()->setTime(17, 0);
 
         return DB::table('messages_by')
+            // keep-raw: COUNT(*) as count is an aliased aggregate in a multi-row
+            // SELECT list under GROUP BY — no query-builder method projects an
+            // aliased aggregate column alongside a grouped column; and the alias
+            // ("count") is consumed as an output field by callers/tests, not
+            // just an ORDER BY key, so it can't be dropped in favour of ->count().
             ->select('userid', DB::raw('COUNT(*) as count'))
             ->join('users', 'users.id', '=', 'messages_by.userid')
             ->where('messages_by.timestamp', '>=', $start)
@@ -232,7 +221,7 @@ class DonationService
             })
             ->where('messages.type', '=', 'Offer')
             ->where('messages_by.userid', '=', $userId)
-            ->where('messages_by.userid', '!=', DB::raw('messages.fromuser'))
+            ->whereColumn('messages_by.userid', '!=', 'messages.fromuser')
             ->where('messages.arrival', '>=', $mysqlTime)
             ->orderByDesc('messages_by.timestamp')
             ->first();
@@ -270,14 +259,14 @@ class DonationService
 
         $targetMax = (float) $targetMax;
 
-        $excludeCondition = $this->getExcludedPayersCondition('Payer');
-
-        $donated24h = (float) DB::selectOne("
-            SELECT COALESCE(SUM(GrossAmount), 0) AS total
-            FROM users_donations
-            WHERE TIMESTAMPDIFF(HOUR, users_donations.timestamp, NOW()) <= 24
-            AND {$excludeCondition}
-        ")->total;
+        // TIMESTAMPDIFF(HOUR, ts, NOW()) <= 24 (truncating-towards-zero hour diff) is
+        // true iff ts is within the last <25 hours, i.e. ts > now()->subHours(25).
+        // Query builder's sum() already coalesces a no-rows NULL to 0 (Builder::sum()
+        // does `$result ?: 0`), matching the raw COALESCE(SUM(...), 0).
+        $donated24h = (float) DB::table('users_donations')
+            ->where('users_donations.timestamp', '>', now()->subHours(25))
+            ->whereNotIn('Payer', self::EXCLUDED_PAYERS)
+            ->sum('GrossAmount');
 
         $remaining = (int) ceil($targetMax - $donated24h);
         if ($remaining < 0) {

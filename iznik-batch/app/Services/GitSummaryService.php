@@ -83,9 +83,10 @@ class GitSummaryService
     {
         $timestamp = (string) time();
 
-        DB::statement(
-            "INSERT INTO config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?",
-            [self::CONFIG_KEY_LAST_RUN, $timestamp, $timestamp]
+        DB::table('config')->upsert(
+            [['key' => self::CONFIG_KEY_LAST_RUN, 'value' => $timestamp]],
+            ['key'],
+            ['value']
         );
     }
 

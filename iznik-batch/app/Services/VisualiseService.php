@@ -15,16 +15,23 @@ class VisualiseService
     {
         $since = date('Y-m-d H:i:s', strtotime($ago));
 
-        $rows = DB::select(
-            "SELECT DISTINCT messages.id, a.id AS attid, messages.fromuser, messages_by.userid AS touser,
-                    messages_by.timestamp
-             FROM messages
-             INNER JOIN messages_by ON messages.id = messages_by.msgid
-             INNER JOIN messages_attachments a ON messages.id = a.msgid
-             WHERE messages_by.timestamp > ? AND messages.type = ? AND messages_by.userid IS NOT NULL
-             ORDER BY messages_by.timestamp DESC",
-            [$since, Message::TYPE_OFFER]
-        );
+        $rows = DB::table('messages')
+            ->distinct()
+            ->select(
+                'messages.id',
+                'a.id as attid',
+                'messages.fromuser',
+                'messages_by.userid as touser',
+                'messages_by.timestamp'
+            )
+            ->join('messages_by', 'messages.id', '=', 'messages_by.msgid')
+            ->join('messages_attachments as a', 'messages.id', '=', 'a.msgid')
+            ->where('messages_by.timestamp', '>', $since)
+            ->where('messages.type', Message::TYPE_OFFER)
+            ->whereNotNull('messages_by.userid')
+            ->orderByDesc('messages_by.timestamp')
+            ->get()
+            ->all();
 
         $count = 0;
 
@@ -64,11 +71,18 @@ class VisualiseService
                 continue;
             }
 
-            DB::statement(
-                "INSERT IGNORE INTO visualise (msgid, attid, timestamp, fromuser, touser, fromlat, fromlng, tolat, tolng, distance)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [$row->id, $row->attid, $row->timestamp, $row->fromuser, $row->touser, $flat, $flng, $tlat, $tlng, $metres]
-            );
+            DB::table('visualise')->insertOrIgnore([
+                'msgid' => $row->id,
+                'attid' => $row->attid,
+                'timestamp' => $row->timestamp,
+                'fromuser' => $row->fromuser,
+                'touser' => $row->touser,
+                'fromlat' => $flat,
+                'fromlng' => $flng,
+                'tolat' => $tlat,
+                'tolng' => $tlng,
+                'distance' => $metres,
+            ]);
 
             $count++;
         }

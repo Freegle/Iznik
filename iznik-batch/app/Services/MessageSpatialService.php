@@ -2,6 +2,11 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Point;
+use App\Database\Expressions\StSrid;
+use App\Database\Expressions\StX;
+use App\Database\Expressions\StY;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Services\Ripple\ReachBoundsService;
@@ -244,13 +249,14 @@ class MessageSpatialService
             ->leftJoin('messages_spatial', 'messages_spatial.msgid', '=', 'messages_groups.msgid')
             ->where(function ($q) {
                 $q->whereNull('messages_spatial.msgid')
-                    ->orWhereRaw('ST_X(messages_spatial.point) != messages.lng')
-                    ->orWhereRaw('ST_Y(messages_spatial.point) != messages.lat')
+                    ->orWhere(new Comparison(new StX('messages_spatial.point'), '!=', 'messages.lng'))
+                    ->orWhere(new Comparison(new StY('messages_spatial.point'), '!=', 'messages.lat'))
                     ->orWhereNull('messages_spatial.groupid')
-                    ->orWhereRaw('messages_spatial.groupid != messages_groups.groupid')
-                    ->orWhereRaw('messages_groups.arrival != messages_spatial.arrival')
+                    ->orWhereColumn('messages_spatial.groupid', '!=', 'messages_groups.groupid')
+                    ->orWhereColumn('messages_groups.arrival', '!=', 'messages_spatial.arrival')
                     // Null-safe: the type is nullable on both sides, so a plain !=
-                    // never matches a row that needs correcting.
+                    // never matches a row that needs correcting. No builder equivalent
+                    // of <=>, so this one stays raw.
                     ->orWhereRaw('NOT (messages_spatial.msgtype <=> messages.type)');
             })
             ->select(
@@ -270,20 +276,23 @@ class MessageSpatialService
         $count = 0;
         foreach ($msgs as $msg) {
             if (!$dryRun) {
-                // Coordinates come from DB, not user input — safe to embed in WKT.
-                $wkt = "POINT({$msg->lng} {$msg->lat})";
-                $srid = self::SRID;
-
-                DB::statement(
-                    "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
-                     VALUES (?, ST_GeomFromText('$wkt', $srid), ?, ?, ?)
-                     ON DUPLICATE KEY UPDATE
-                       point = ST_GeomFromText('$wkt', $srid),
-                       groupid = ?,
-                       msgtype = ?,
-                       arrival = ?",
-                    [$msg->id, $msg->groupid, $msg->msgtype, $msg->arrival,
-                     $msg->groupid, $msg->msgtype, $msg->arrival]
+                // Atomic INSERT ... ON DUPLICATE KEY UPDATE via upsert(). Passing column
+                // names (not a key=>value map) as the third argument makes it compile
+                // `col = VALUES(col)`, which reuses the just-computed insert value, so the
+                // update side needs no separate ST_SRID(POINT(...)). lat/lng are DECIMAL
+                // columns, which PDO returns as strings - cast to float so Point() renders
+                // them as literals (RendersOperands treats a bare string as a COLUMN NAME,
+                // not a value - see its docblock).
+                DB::table('messages_spatial')->upsert(
+                    [[
+                        'msgid' => $msg->id,
+                        'point' => new StSrid(new Point((float) $msg->lng, (float) $msg->lat), self::SRID),
+                        'groupid' => $msg->groupid,
+                        'msgtype' => $msg->msgtype,
+                        'arrival' => $msg->arrival,
+                    ]],
+                    ['msgid'],
+                    ['point', 'groupid', 'msgtype', 'arrival']
                 );
             }
             $count++;
@@ -489,7 +498,7 @@ class MessageSpatialService
                 'messages.id',
                 'messages.lat',
                 'messages.lng',
-                DB::raw('messages.type as msgtype'),
+                'messages.type as msgtype',
                 'messages_groups.groupid',
                 'messages_groups.arrival',
             );
@@ -504,20 +513,18 @@ class MessageSpatialService
             return;
         }
 
-        // Coordinates come from the DB, not user input — safe to embed in WKT.
-        $wkt  = "POINT({$msg->lng} {$msg->lat})";
-        $srid = self::SRID;
-
-        DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
-             VALUES (?, ST_GeomFromText('$wkt', $srid), ?, ?, ?)
-             ON DUPLICATE KEY UPDATE
-               point = ST_GeomFromText('$wkt', $srid),
-               groupid = ?,
-               msgtype = ?,
-               arrival = ?",
-            [$msg->id, $msg->groupid, $msg->msgtype, $msg->arrival,
-             $msg->groupid, $msg->msgtype, $msg->arrival]
+        // Atomic INSERT ... ON DUPLICATE KEY UPDATE via upsert() - see the equivalent
+        // conversion (and its verification) in upsertRecentMessages() above.
+        DB::table('messages_spatial')->upsert(
+            [[
+                'msgid' => $msg->id,
+                'point' => new StSrid(new Point((float) $msg->lng, (float) $msg->lat), self::SRID),
+                'groupid' => $msg->groupid,
+                'msgtype' => $msg->msgtype,
+                'arrival' => $msg->arrival,
+            ]],
+            ['msgid'],
+            ['point', 'groupid', 'msgtype', 'arrival']
         );
     }
 }

@@ -186,7 +186,10 @@ class SendAdminCommand extends Command
             ->where('memberships.collection', 'Approved')
             ->whereIn('memberships.role', ['Moderator', 'Owner'])
             ->where('users.lastaccess', '>', $oneYearAgo)
-            ->whereRaw("(JSON_EXTRACT(users.settings, '$.showmod') IS NULL OR JSON_EXTRACT(users.settings, '$.showmod') = TRUE)")
+            ->where(function ($q) {
+                $q->whereJsonDoesntContainKey('users.settings->showmod')
+                    ->orWhere('users.settings->showmod', true);
+            })
             ->whereNull('users.deleted')
             ->limit(100)
             ->get();

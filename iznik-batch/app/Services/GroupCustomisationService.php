@@ -35,7 +35,7 @@ class GroupCustomisationService
             ->where('type', Group::TYPE_FREEGLE)
             ->where('publish', 1)
             ->where('onhere', 1)
-            ->orderByRaw('RAND()')
+            ->inRandomOrder()
             ->select(['id', 'nameshort', 'profile', 'tagline', 'welcomemail', 'description'])
             ->get();
 

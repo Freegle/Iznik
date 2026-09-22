@@ -54,6 +54,8 @@ class ItemService
             $name = mb_substr($name, 0, self::MAX_ITEM_NAME_LENGTH);
         }
 
+        // keep-raw: LAST_INSERT_ID(id) readback on a case-insensitive-unique
+        // upsert - no builder form returns the existing row's id this way.
         DB::statement(
             'INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), name = ?',
             [$name, $name]
@@ -93,10 +95,7 @@ class ItemService
      */
     public function linkToMessage(int $msgid, int $itemid): void
     {
-        $inserted = DB::affectingStatement(
-            'INSERT IGNORE INTO messages_items (msgid, itemid) VALUES (?, ?)',
-            [$msgid, $itemid]
-        );
+        $inserted = DB::table('messages_items')->insertOrIgnore(['msgid' => $msgid, 'itemid' => $itemid]);
 
         if ($inserted > 0) {
             DB::table('items')->where('id', $itemid)->increment('popularity');
@@ -154,9 +153,9 @@ class ItemService
     {
         if ($this->weights === null) {
             $this->weights = DB::table('weights')
-                ->selectRaw('CASE WHEN simplename IS NOT NULL THEN simplename ELSE name END AS name, weight')
+                ->select(['simplename', 'name', 'weight'])
                 ->get()
-                ->map(fn ($row) => ['name' => (string) $row->name, 'weight' => (float) $row->weight])
+                ->map(fn ($row) => ['name' => (string) ($row->simplename ?? $row->name), 'weight' => (float) $row->weight])
                 ->all();
         }
 

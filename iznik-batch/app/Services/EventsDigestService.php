@@ -164,7 +164,7 @@ class EventsDigestService
             ->join('communityevents_dates', 'communityevents_dates.eventid', '=', 'communityevents.id')
             ->whereIn('communityevents_groups.groupid', $groupIds)
             ->where('communityevents_dates.start', '>=', now())
-            ->whereRaw('DATEDIFF(communityevents_dates.start, NOW()) <= ?', [self::HORIZON_DAYS])
+            ->whereDate('communityevents_dates.start', '<=', today()->addDays(self::HORIZON_DAYS))
             ->where('communityevents.pending', 0)
             ->where('communityevents.deleted', 0)
             ->orderBy('communityevents_dates.start')

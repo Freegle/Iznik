@@ -126,8 +126,7 @@ class EeeClassificationService
             $attachments = DB::table('messages_attachments as ma')
                 ->join('messages as m', 'm.id', '=', 'ma.msgid')
                 ->whereExists(function ($query) use ($itemName) {
-                    $query->select(DB::raw(1))
-                        ->from('messages_items as mi')
+                    $query->from('messages_items as mi')
                         ->join('items as i', 'i.id', '=', 'mi.itemid')
                         ->whereColumn('mi.msgid', 'm.id')
                         ->where('i.name', $itemName);
@@ -147,7 +146,7 @@ class EeeClassificationService
                       });
                 })
                 ->where('m.type', 'Offer')   // WANTED posts use stock illustrations — exclude
-                ->whereRaw("(ma.externalmods IS NULL OR JSON_EXTRACT(ma.externalmods, '$.ai') IS NULL)")
+                ->whereJsonDoesntContainKey('ma.externalmods->ai')
                 ->orderByDesc('m.arrival')
                 ->limit(self::SAMPLE_SIZE)
                 ->select(['ma.id as attid', 'ma.externaluid', 'm.id as messageid', 'm.subject', 'm.textbody'])
@@ -606,7 +605,7 @@ class EeeClassificationService
     {
         if ($attid <= 0) return;
         try {
-            DB::statement('INSERT IGNORE INTO eee_classified_attachments (messageid, attid) VALUES (?, ?)', [$messageid, $attid]);
+            DB::table('eee_classified_attachments')->insertOrIgnore(['messageid' => $messageid, 'attid' => $attid]);
         } catch (\Throwable $e) {
             // Best-effort: the classifier's own write to SQLite is what matters,
             // this is only an index for downstream MV serving. A DB error here

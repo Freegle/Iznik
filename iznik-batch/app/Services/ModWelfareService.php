@@ -119,13 +119,14 @@ class ModWelfareService
                 }
 
                 // Check last approval activity
-                $approvalData = DB::table('messages_groups')
-                    ->where('approvedby', $mod->id)
-                    ->selectRaw('COUNT(*) AS acted, DATEDIFF(NOW(), MAX(arrival)) AS activeago')
-                    ->first();
-
-                $acted = (int) ($approvalData->acted ?? 0);
-                $lastActive = $approvalData->activeago ?? null;
+                $approvedByModQuery = DB::table('messages_groups')->where('approvedby', $mod->id);
+                $acted = (int) $approvedByModQuery->count();
+                $maxArrival = $acted > 0
+                    ? DB::table('messages_groups')->where('approvedby', $mod->id)->max('arrival')
+                    : null;
+                $lastActive = $maxArrival === null
+                    ? null
+                    : (int) today()->diffInDays(\Illuminate\Support\Carbon::parse($maxArrival)->startOfDay(), true);
 
                 if (!$acted || $lastActive > self::ACTIVE_LIMIT_DAYS) {
                     $inactiveMods++;
@@ -234,13 +235,18 @@ class ModWelfareService
 
     private function getLastApprovalDays(int $userId, int $groupId): int
     {
-        $row = DB::table('messages_groups')
+        $baseQuery = DB::table('messages_groups')
             ->where('approvedby', $userId)
-            ->where('groupid', $groupId)
-            ->selectRaw('COUNT(*) AS count, DATEDIFF(NOW(), MAX(arrival)) AS ago')
-            ->first();
+            ->where('groupid', $groupId);
 
-        return ($row && $row->count > 0) ? (int) $row->ago : PHP_INT_MAX;
+        $count = (clone $baseQuery)->count();
+        if ($count <= 0) {
+            return PHP_INT_MAX;
+        }
+
+        $maxArrival = $baseQuery->max('arrival');
+
+        return (int) today()->diffInDays(\Illuminate\Support\Carbon::parse($maxArrival)->startOfDay(), true);
     }
 
     private function isActiveMod(int $userId, int $groupId, ?string $settingsJson): bool

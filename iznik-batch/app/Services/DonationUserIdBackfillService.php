@@ -74,8 +74,7 @@ class DonationUserIdBackfillService
             ->whereNotNull('Payer')
             ->where('Payer', '<>', '')
             ->whereExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('users')
+                $q->from('users')
                     ->whereColumn('users.id', 'users_donations.userid')
                     ->whereNotNull('users.deleted');
             })

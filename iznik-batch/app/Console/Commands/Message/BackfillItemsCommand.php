@@ -64,8 +64,7 @@ class BackfillItemsCommand extends Command
             ->where('arrival', '>=', $start)
             ->where('arrival', '<=', $end)
             ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('messages_items')
+                $q->from('messages_items')
                     ->whereColumn('messages_items.msgid', 'messages.id');
             })
             ->select('messages.id', 'messages.subject')

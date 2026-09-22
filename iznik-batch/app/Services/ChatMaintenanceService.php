@@ -52,23 +52,21 @@ class ChatMaintenanceService
     protected function updateRoomCounts(int $chatId, bool $dryRun = false): void
     {
         // Count valid vs invalid messages.
-        // Valid = reviewrequired=0 AND reviewrejected=0 AND processingsuccessful=1
-        $counts = DB::table('chat_messages')
-            ->selectRaw('CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END AS valid, COUNT(*) AS count')
+        // Valid = reviewrequired=0 AND reviewrejected=0 AND processingsuccessful=1.
+        // The CASE WHEN always resolves to exactly one bucket, so invalid is just
+        // the remainder of the total - no need to group by the CASE expression.
+        $totalCount = DB::table('chat_messages')
             ->where('chatid', $chatId)
-            ->groupByRaw('CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END')
-            ->get();
+            ->count();
 
-        $validCount = 0;
-        $invalidCount = 0;
+        $validCount = DB::table('chat_messages')
+            ->where('chatid', $chatId)
+            ->where('reviewrequired', 0)
+            ->where('reviewrejected', 0)
+            ->where('processingsuccessful', 1)
+            ->count();
 
-        foreach ($counts as $row) {
-            if ($row->valid == 1) {
-                $validCount = $row->count;
-            } else {
-                $invalidCount = $row->count;
-            }
-        }
+        $invalidCount = $totalCount - $validCount;
 
         // For Mod2Mod chats, don't count invalid messages (could hide the chat).
         $chatType = DB::table('chat_rooms')->where('id', $chatId)->value('chattype');
@@ -100,7 +98,7 @@ class ChatMaintenanceService
     {
         $chats = DB::table('chat_rooms')
             ->join('chat_roster', 'chat_roster.chatid', '=', 'chat_rooms.id')
-            ->where('chat_rooms.user1', '=', DB::raw('chat_roster.userid'))
+            ->whereColumn('chat_rooms.user1', '=', 'chat_roster.userid')
             ->where('chat_roster.status', ChatRoster::STATUS_CLOSED)
             ->where('chat_rooms.chattype', ChatRoom::TYPE_USER2MOD)
             ->whereColumn('chat_rooms.latestmessage', '>', 'chat_roster.date')

@@ -25,7 +25,7 @@ class DonationSummaryService
         $fundraisingAddr = config('freegle.mail.fundraising_addr');
 
         $donations = DB::table('users_donations')
-            ->whereRaw('DATE(users_donations.timestamp) = DATE(NOW())')
+            ->whereDate('users_donations.timestamp', today())
             ->orderByDesc('timestamp')
             ->get();
 
@@ -50,8 +50,8 @@ class DonationSummaryService
                         ->where('userid', $donation->userid)
                         ->where('GrossAmount', $donation->GrossAmount)
                         ->whereIn('TransactionType', self::RECURRING_TYPES)
-                        ->whereRaw('DATE(timestamp) >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)')
-                        ->whereRaw('DATE(timestamp) < CURDATE()')
+                        ->whereDate('timestamp', '>=', today()->subMonth()->toDateString())
+                        ->whereDate('timestamp', '<', today()->toDateString())
                         ->count();
 
                     $skipBirthdayCheck = $lastMonth > 0;
@@ -145,8 +145,15 @@ class DonationSummaryService
             ->where('groups.type', Group::TYPE_FREEGLE)
             ->where('groups.publish', 1)
             ->where('groups.onmap', 1)
-            ->whereRaw("DATE_FORMAT(groups.founded, '%m-%d') IN (?, ?, ?)", [$today, $yesterday, $twoDaysAgo])
-            ->whereRaw("YEAR(NOW()) - YEAR(groups.founded) > 0")
+            ->where(function ($q) use ($today, $yesterday, $twoDaysAgo) {
+                foreach ([$today, $yesterday, $twoDaysAgo] as $md) {
+                    [$m, $d] = explode('-', $md);
+                    $q->orWhere(function ($q2) use ($m, $d) {
+                        $q2->whereMonth('groups.founded', (int) $m)->whereDay('groups.founded', (int) $d);
+                    });
+                }
+            })
+            ->whereYear('groups.founded', '<', now()->year)
             ->count();
 
         return $count > 0;

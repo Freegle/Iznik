@@ -174,6 +174,7 @@ class MessageSearchService
             return (int) $existing;
         }
 
+        // keep-raw: SOUNDEX()/SUBSTRING() computed inline for the insert value have no builder method.
         DB::statement(
             "INSERT IGNORE INTO words (word, firstthree, soundex) VALUES (?, ?, SUBSTRING(SOUNDEX(?), 1, 10))",
             [$word, substr($word, 0, 3), $word]
@@ -197,9 +198,10 @@ class MessageSearchService
                 ['arrival']
             );
 
+            $popularity = -(DB::table('messages_index')->where('wordid', $wordId)->count());
             DB::table('words')
                 ->where('id', $wordId)
-                ->update(['popularity' => DB::raw('-(SELECT COUNT(*) FROM messages_index WHERE wordid = ' . $wordId . ')')]);
+                ->update(['popularity' => $popularity]);
         }
     }
 }
