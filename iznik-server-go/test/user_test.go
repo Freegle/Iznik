@@ -2321,6 +2321,52 @@ func TestPostUserMergeByEmail(t *testing.T) {
 	assert.Equal(t, int64(1), cntU2, "id2 (kept) must still exist")
 }
 
+func TestPostUserMergeByEmailKeepsChosenDominantEmail(t *testing.T) {
+	// UI text: "the second user's preferred email will be the preferred
+	// email of the merged user" - id2's own email must stay dominant even
+	// when id2's preferred flag was never (re)set, which is reachable
+	// independently of the merge itself.
+	prefix := uniquePrefix("mergemailpref")
+	db := database.DBConn
+
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	email1 := prefix + "_u1@test.com"
+	email2 := prefix + "_u2@test.com"
+	CreateTestUserWithEmail(t, prefix+"_u1", email1)
+	user2ID := CreateTestUserWithEmail(t, prefix+"_u2", email2)
+
+	// Simulate id2's email having no preferred flag set.
+	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", user2ID)
+
+	payload := map[string]interface{}{
+		"action": "Merge",
+		"email1": email1,
+		"email2": email2,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+adminToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// id2's own email (the moderator's chosen dominant email) must be the
+	// merged account's preferred email, not id1's.
+	var preferredEmail string
+	db.Raw("SELECT email FROM users_emails WHERE userid = ? AND preferred = 1", user2ID).Scan(&preferredEmail)
+	assert.Equal(t, email2, preferredEmail, "id2's own email must be the merged account's preferred email")
+
+	var preferredCount int64
+	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND preferred = 1", user2ID).Scan(&preferredCount)
+	assert.Equal(t, int64(1), preferredCount, "exactly one preferred email must survive the merge")
+}
+
 func TestPostUserMergeByModerator(t *testing.T) {
 	// V1 parity: a moderator who moderates both users can merge them.
 	prefix := uniquePrefix("mergemod")
