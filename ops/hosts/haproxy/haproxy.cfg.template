@@ -247,7 +247,7 @@ backend api_server_backend
   stick-table type ip size 200k expire 30m
   stick on src
   option redispatch
-  option forwardfor
+  http-request set-header X-Forwarded-For %[src]
   http-request set-header X-Real-IP %[src]
 
   # Apply graduated delay on response for heavy users.
@@ -276,7 +276,7 @@ backend tusd_backend
   stick on src
   option redispatch
   http-request set-header X-Forwarded-Proto "https"
-  http-request add-header X-Forwarded-For %[src]
+  http-request set-header X-Forwarded-For %[src]
   http-response add-header Access-Control-Allow-Origin *
   http-response add-header Access-Control-Allow-Headers 'Authorization, Origin, X-Requested-With, X-Request-ID, X-HTTP-Method-Override, Content-Type, Upload-Length, Upload-Offset, Tus-Resumable, Upload-Metadata, Upload-Defer-Length, Upload-Concat, Upload-Complete, Upload-Draft-Interop-Version, x-token, baggage, sentry-trace'
   http-response add-header Access-Control-Allow-Methods 'POST, HEAD, PATCH, OPTIONS, GET, DELETE'
@@ -317,7 +317,7 @@ listen stats
 
 backend spatial_backend
   mode http
-  option forwardfor
+  http-request set-header X-Forwarded-For %[src]
   option httpchk GET /health
   http-request set-header X-Real-IP %[src]
   server db3-katapult __IP_db3-katapult__:8196 check
@@ -330,7 +330,7 @@ backend spatial_backend
 # hence the extended server/tunnel timeouts (global timeout server is 50s).
 backend ai_support_backend
   mode http
-  option forwardfor
+  http-request set-header X-Forwarded-For %[src]
   option httpchk GET /health
   http-request set-header X-Real-IP %[src]
   http-request replace-path ^/api/ai-support(/.*)$ \1
