@@ -75,7 +75,7 @@ provider queues on the relay; the batch side notices and pauses generation for i
 
 ## Restarting a database node, or rejoining one to the cluster
 
-The database is a three-node Galera cluster. A node that is stopped cleanly rejoins by
+The database is a Galera cluster of two data nodes and an arbitrator. A node that is stopped cleanly rejoins by
 itself on the next start, catching up incrementally if the others' write-set cache still
 covers its downtime and by a full copy from a donor otherwise. The service wrapper does the
 position recovery and refuses two unsafe automatic starts; nearly every manual step beyond

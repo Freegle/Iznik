@@ -23,8 +23,8 @@ SELECT OBJECT_NAME, INDEX_NAME, COUNT_READ, COUNT_INSERT + COUNT_UPDATE + COUNT_
  WHERE OBJECT_SCHEMA = 'iznik';
 ```
 
-**Run this on every node and add the results up.** Production is a three-node
-Percona XtraDB Cluster. All nodes apply all writes, but reads are unevenly
+**Run this on every node and add the results up.** Production is a Percona XtraDB
+Cluster of two data nodes plus an arbitrator that holds no data. Both data nodes apply all writes, but reads are unevenly
 distributed, and the node reachable through the live tunnel serves almost none
 of them. Reading one node makes nearly every index look unused: `memberships`
 indexes that are genuinely read billions of times per fortnight show zero there.
