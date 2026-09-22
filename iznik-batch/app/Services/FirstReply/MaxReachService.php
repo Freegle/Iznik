@@ -89,81 +89,6 @@ class MaxReachService
     {
         $stats = ['scanned' => 0, 'filled' => 0, 'routed' => 0, 'skipped' => 0];
 
-        if (!$this->available()) {
-            return $stats;
-        }
-
-        $rows = DB::table('rippling_reach')
-            ->select('msgid', 'lat', 'lng', 'schedule')
-            ->whereNull('max_polygon')
-            ->whereNotNull('schedule')
-            // Only posts still expanding: a done post's current reach IS its
-            // eventual reach, so no reply to it can be held inside max_polygon
-            // and filling one buys nothing. Without this filter the pass,
-            // having covered every live post, spent its whole routing budget
-            // for days working through completed history (observed 2026-08-08:
-            // 320 fills/run against status=done rows after the live backlog
-            // emptied).
-            ->where('status', 'expanding')
-            ->orderByDesc('updated_at')
-            ->limit($limit)
-            ->get()
-            ->all();
-
-        foreach ($rows as $row) {
-            $stats['scanned']++;
-
-            try {
-                $ticks = json_decode((string) $row->schedule, true);
-                if (!is_array($ticks) || empty($ticks)) {
-                    $stats['skipped']++;
-                    continue;
-                }
-
-                $final = $this->finalTick($ticks);
-                if ($final === null) {
-                    $stats['skipped']++;
-                    continue;
-                }
-
-                $wkt = !empty($final['wkt']) ? (string) $final['wkt'] : null;
-                if ($wkt === null) {
-                    $driveMin = (float) ($final['drive_min'] ?? 0);
-                    if ($driveMin <= 0 || $stats['routed'] >= $routingBudget) {
-                        // Either nothing to ask for, or we have spent this run's
-                        // routing budget. Leave the row for the next pass.
-                        $stats['skipped']++;
-                        continue;
-                    }
-                    $geom = $this->reach->catchmentGeometry((float) $row->lat, (float) $row->lng, $driveMin);
-                    $stats['routed']++;
-                    if ($geom === null || empty($geom['wkt'])) {
-                        $stats['skipped']++;
-                        continue;
-                    }
-                    $wkt = (string) $geom['wkt'];
-                }
-
-                $cumulative = isset($final['cumulative_users']) ? (int) $final['cumulative_users'] : null;
-
-                // keep-raw: ST_GeomFromText() is a spatial function the query builder
-                // has no method for.
-                DB::statement(
-                    'UPDATE rippling_reach
-                     SET max_polygon = ST_GeomFromText(?, ' . self::SRID . '),
-                         max_cumulative_users = ?
-                     WHERE msgid = ?',
-                    [$wkt, $cumulative, $row->msgid]
-                );
-                $stats['filled']++;
-            } catch (\Throwable $e) {
-                $stats['skipped']++;
-                Log::warning('firstreply: max reach populate failed', [
-                    'msgid' => $row->msgid,
-                    'error' => $e->getMessage(),
-                ]);
-            }
-        }
         // The one remaining fill: max_cumulative_users - the "will be shown
         // to around N more people" nudge - read from the cached schedule's
         // final tick. The grid sweep is gone: the stored label answers the
@@ -173,74 +98,6 @@ class MaxReachService
         return $stats;
     }
 
-    /**
-     * Fill in one post's max_polygon right now, from its cached schedule only.
-     *
-     * Exists because scouting fires as soon as a post is seen, and both it and
-     * the background populate pass run every minute - so a brand-new post is
-     * regularly considered for scouting a beat before its eventual reach is
-     * known, and without that nobody is eligible at all. Rather than make the
-     * post wait a minute for the next tick of a different cron, the scout path
-     * asks for it directly.
-     *
-     * Never calls the routing server: this is on the path of a job we want to
-     * stay fast, and the posts that need a routing call are exactly the ones
-     * worth leaving to the background pass. Returns false when it could not fill
-     * it, and the caller simply finds nobody eligible this time round.
-     */
-    public function populateForPost(int $msgid): bool
-    {
-        if (!$this->available()) {
-            return false;
-        }
-
-        try {
-            $row = DB::table('rippling_reach')
-                ->select('schedule')
-                ->where('msgid', $msgid)
-                ->whereNull('max_polygon')
-                ->whereNotNull('schedule')
-                ->first();
-
-            if ($row === null) {
-                // Either no reach row, or it is already populated. Both are
-                // "nothing to do here" rather than a failure.
-                return false;
-            }
-
-            $ticks = json_decode((string) $row->schedule, true);
-            if (!is_array($ticks) || empty($ticks)) {
-                return false;
-            }
-
-            $final = $this->finalTick($ticks);
-            if ($final === null || empty($final['wkt'])) {
-                return false;
-            }
-
-            // keep-raw: ST_GeomFromText() is a spatial function the query builder has
-            // no method for.
-            DB::statement(
-                'UPDATE rippling_reach
-                 SET max_polygon = ST_GeomFromText(?, ' . self::SRID . '),
-                     max_cumulative_users = ?
-                 WHERE msgid = ?',
-                [
-                    (string) $final['wkt'],
-                    isset($final['cumulative_users']) ? (int) $final['cumulative_users'] : null,
-                    $msgid,
-                ]
-            );
-
-            return true;
-        } catch (\Throwable $e) {
-            Log::warning('firstreply: could not fill max reach on demand', [
-                'msgid' => $msgid, 'error' => $e->getMessage(),
-            ]);
-
-            return false;
-        }
-    }
 
     /**
      * Work out how long each recorded passthrough would have waited, had it been
@@ -264,15 +121,16 @@ class MaxReachService
         $stats = ['scanned' => 0, 'computed' => 0, 'unknown' => 0];
 
         try {
-            $rows = DB::table('firstreply_passthroughs as p')
-                ->join('rippling_reach as rr', 'rr.msgid', '=', 'p.msgid')
-                ->whereNull('p.computed_at')
-                ->whereNotNull('p.lat')
-                ->whereNotNull('p.lng')
-                ->orderBy('p.created_at')
-                ->limit($limit)
-                ->select('p.id', 'p.msgid', 'p.lat', 'p.lng', 'p.created_at', 'rr.schedule', 'rr.arrival', 'rr.total_ticks')
-                ->get();
+            $rows = DB::select(
+                'SELECT p.id, p.msgid, p.lat, p.lng, p.created_at,
+                        rr.schedule, rr.arrival, rr.total_ticks
+                 FROM firstreply_passthroughs p
+                 JOIN rippling_reach rr ON rr.msgid = p.msgid
+                 WHERE p.computed_at IS NULL AND p.lat IS NOT NULL AND p.lng IS NOT NULL
+                 ORDER BY p.created_at
+                 LIMIT ?',
+                [$limit]
+            );
         } catch (\Throwable $e) {
             Log::warning('firstreply: passthrough saving sweep failed', ['error' => $e->getMessage()]);
 
@@ -416,10 +274,6 @@ class MaxReachService
 
         foreach ($withGeometry as $entry) {
             try {
-                // keep-raw: ST_Contains/ST_GeomFromText/ST_SRID/POINT are spatial
-                // functions with no query builder equivalent, and this SELECT has no
-                // FROM table to build a query builder chain against in the first
-                // place - it evaluates the pair of geometries directly.
                 $row = DB::selectOne(
                     'SELECT ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), '
                     . 'ST_SRID(POINT(?, ?), ' . self::SRID . ')) AS inside',

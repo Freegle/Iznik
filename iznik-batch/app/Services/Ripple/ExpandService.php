@@ -217,11 +217,28 @@ class ExpandService
      * polygon WKT being written, so polygon and bounds land in ONE statement — no
      * timing window in which a new polygon has stale bounds.
      *
-     * @return array<string,mixed> empty if bounds columns don't exist yet
+     * @return array{0:string,1:array<int,string>}
      */
     private function boundsSetSql(string $storeWkt): array
     {
         $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
+
+        return [
+            ', outer_bound = ' . ReachBoundsService::outerExpr($poly)
+            . ', inner_bound = ' . ReachBoundsService::innerExpr($poly),
+            [$storeWkt, $storeWkt],
+        ];
+    }
+
+    /**
+     * The same derivation as boundsSetSql, as builder values for an update() call:
+     * the WKT is bound through Value::of, so the expressions carry their own parameter.
+     *
+     * @return array<string,mixed>
+     */
+    private function boundsSetValues(string $storeWkt): array
+    {
+        $poly = new StGeomFromText(Value::of($storeWkt), self::SRID);
 
         return [
             'outer_bound' => new StBuffer(new StSimplify($poly, ReachBoundsService::TOLERANCE), ReachBoundsService::TOLERANCE),
@@ -235,14 +252,23 @@ class ExpandService
      * row, the exact polygon decides. Never a degenerate POINT for an open post — that
      * would prune it from the browse R-tree.
      *
-     * @return array<string,mixed> empty if bounds columns don't exist yet
+     * @return array{0:string,1:array<int,string>}
      */
     private function boundsEnvelopeSql(string $storeWkt): array
     {
-        if (!$this->bounds->ready()) {
-            return [];
-        }
+        return [
+            ', outer_bound = ST_Envelope(ST_GeomFromText(?, ' . self::SRID . ')), inner_bound = NULL',
+            [$storeWkt],
+        ];
+    }
 
+    /**
+     * The envelope fallback of boundsEnvelopeSql, as builder values for an update() call.
+     *
+     * @return array<string,mixed>
+     */
+    private function boundsEnvelopeValues(string $storeWkt): array
+    {
         return [
             'outer_bound' => new StEnvelope(new StGeomFromText(Value::of($storeWkt), self::SRID)),
             'inner_bound' => null,
@@ -1977,7 +2003,16 @@ class ExpandService
             // and stays as belt-and-braces for a playground community created before anyone gives
             // it the setting; the setting is the deliberate, per-community mechanism (set by
             // ripple:opt-out), and the only one that also covers ripple-OUT (see initialiseNew).
-            $inOptOut = $this->optOut->excludedGroupIds(GroupRippleOptOut::DIRECTION_IN);
+            // cheap spatial-index prefilter; this is an AND gate on top. IDs are
+            // server-sourced int64s, cast via (int) so they can't inject. Empty set or gate
+            // off => clause omitted => unchanged behaviour (fall back to polygon only).
+            $reachableGate = ($this->reachableGateEnabled() && !empty($reachableGroupIds))
+                ? ' AND g.id IN (' . implode(',', array_map('intval', $reachableGroupIds)) . ')'
+                : '';
+
+            // This statement stays raw (the spatial predicates and the correlated NOT EXISTS
+            // arms), so the opt-out is the SQL fragment, not the id list the builder form uses.
+            $inOptOut = $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN);
 
             // Groups this poster has already opted out of by leaving a ripple-join, worked out
             // in PHP from ONE indexed pass over their own Group Joined/Left logs. As a
@@ -2621,11 +2656,7 @@ class ExpandService
         // The advance UPDATE without the bounds columns.
         DB::table('rippling_reach')->where('msgid', $msgid)->update($advanceValues($wkt));
 
-        $boundsSet = $this->boundsSetSql($wkt);
-
-        if ($boundsSet === []) {
-            return;
-        }
+        $boundsSet = $this->boundsSetValues($wkt);
 
         try {
             try {
@@ -2633,7 +2664,7 @@ class ExpandService
                     ->update(['updated_at' => now()] + $boundsSet);
             } catch (\Throwable $e) {
                 DB::table('rippling_reach')->where('msgid', $msgid)
-                    ->update(['updated_at' => now()] + $this->boundsEnvelopeSql($wkt));
+                    ->update(['updated_at' => now()] + $this->boundsEnvelopeValues($wkt));
             }
         } catch (\Throwable $e) {
             Log::warning('ripple: split advance stored polygon but bounds update failed', [
@@ -2889,7 +2920,7 @@ class ExpandService
                     $schedule['max_drive_min'],
                     $row->msgid,
                 ];
-                $boundsSet = $this->boundsSetSql($storeWkt);
+                [$boundsSet, $boundsParams] = $this->boundsSetSql($storeWkt);
                 try {
                     // keep-raw: UPDATE with ST_GeomFromText/derived-bounds SQL expressions in SET - the builder cannot render these
                     DB::statement($backfillSql($boundsSet), array_merge($lead, $boundsParams, $backfillTail));
