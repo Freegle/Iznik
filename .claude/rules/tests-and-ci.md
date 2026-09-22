@@ -29,6 +29,18 @@ A genuine failure names a test. If nothing is named, look at the status containe
 the diff - and treat the unreachability itself as the bug to chase, because every suite polls
 that one container and they all go red together.
 
+## A red Go suite that names no test
+
+When the Go step fails and neither the status message nor `test-output/go.out` names a
+test, look for a `[condenseCrashDumps: N chars elided]` marker in the log. The condenser
+keeps the head and tail of a large log and cuts the middle; a suite with no crash marker
+but more than 300,000 characters of output loses whatever failed in the middle, including
+its `--- FAIL` line. The parallel step still says `FAIL-FAST: Go tests failed`, so the
+red is real and the cut suites beside it are not. Get the names by running the suite
+locally with `?coverage=true` (CI's `-race -p 1` variant) and reading the status
+message, which lists them. Seen twice on 2026-09-21: a swagger drift guard and a search
+test, both invisible in CI.
+
 ## A green run that did not finish
 
 - **Vitest through the status API.** A run that dies partway still reports
