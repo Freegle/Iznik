@@ -6,30 +6,21 @@ use App\Database\Expressions\Alias;
 use App\Database\Expressions\AnyValue;
 use App\Database\Expressions\Arithmetic;
 use App\Database\Expressions\CaseWhen;
-use App\Database\Expressions\CastAs;
 use App\Database\Expressions\Coalesce;
 use App\Database\Expressions\Comparison;
 use App\Database\Expressions\CountDistinct;
 use App\Database\Expressions\In;
-use App\Database\Expressions\JsonContains;
-use App\Database\Expressions\JsonValid;
 use App\Database\Expressions\Min;
 use App\Database\Expressions\NullIf;
-use App\Database\Expressions\Point;
 use App\Database\Expressions\StArea;
 use App\Database\Expressions\StAsText;
 use App\Database\Expressions\StBuffer;
 use App\Database\Expressions\StContains;
-use App\Database\Expressions\StDifference;
-use App\Database\Expressions\StEnvelope;
 use App\Database\Expressions\StGeometryType;
 use App\Database\Expressions\StGeomFromText;
 use App\Database\Expressions\StIntersection;
 use App\Database\Expressions\StIntersects;
-use App\Database\Expressions\StSimplify;
-use App\Database\Expressions\StSrid;
 use App\Database\Expressions\StUnion;
-use App\Database\Expressions\StWithin;
 use App\Database\Expressions\StX;
 use App\Database\Expressions\StY;
 use App\Database\Expressions\Value;
@@ -231,22 +222,6 @@ class ExpandService
     }
 
     /**
-     * The same derivation as boundsSetSql, as builder values for an update() call:
-     * the WKT is bound through Value::of, so the expressions carry their own parameter.
-     *
-     * @return array<string,mixed>
-     */
-    private function boundsSetValues(string $storeWkt): array
-    {
-        $poly = new StGeomFromText(Value::of($storeWkt), self::SRID);
-
-        return [
-            'outer_bound' => new StBuffer(new StSimplify($poly, ReachBoundsService::TOLERANCE), ReachBoundsService::TOLERANCE),
-            'inner_bound' => new StBuffer(new StSimplify($poly, ReachBoundsService::TOLERANCE), -ReachBoundsService::TOLERANCE),
-        ];
-    }
-
-    /**
      * As boundsSetSql, but the envelope fallback for polygons whose derivation THROWS
      * (~94% of production polygons are technically invalid): the MBR still finds the
      * row, the exact polygon decides. Never a degenerate POINT for an open post — that
@@ -259,19 +234,6 @@ class ExpandService
         return [
             ', outer_bound = ST_Envelope(ST_GeomFromText(?, ' . self::SRID . ')), inner_bound = NULL',
             [$storeWkt],
-        ];
-    }
-
-    /**
-     * The envelope fallback of boundsEnvelopeSql, as builder values for an update() call.
-     *
-     * @return array<string,mixed>
-     */
-    private function boundsEnvelopeValues(string $storeWkt): array
-    {
-        return [
-            'outer_bound' => new StEnvelope(new StGeomFromText(Value::of($storeWkt), self::SRID)),
-            'inner_bound' => null,
         ];
     }
 
@@ -2635,165 +2597,6 @@ class ExpandService
                 new Alias(new StAsText(new StUnion('iso', 'grp')), 'u'),
             ])
             ->first();
-    }
-
-    /**
-     * Advance a post where polygon and bounds cannot share one UPDATE. MySQL
-     * error 1713 is about the UNDO record, which holds the OLD values of every
-     * updated column - and polygon + outer_bound are both SPATIAL-indexed, so
-     * their old geometries are logged in full. Together they can exceed the
-     * 16KB undo page even when each alone fits (the posts stuck since late
-     * July: old polygon ~7KB + old outer_bound ~19KB; verified each column
-     * updates fine alone, and simplifying the NEW polygon - the first fix -
-     * cannot touch old-value size at all). Split so each statement carries
-     * only one spatial column. The bounds lag the polygon by one statement,
-     * which is acceptable for a post that otherwise never advances; if the
-     * bounds statement still fails, keep the fresh polygon with stale bounds
-     * rather than failing the whole advance.
-     */
-    private function advanceSplitForUndoLog(string $wkt, callable $advanceValues, int $msgid): void
-    {
-        // The advance UPDATE without the bounds columns.
-        DB::table('rippling_reach')->where('msgid', $msgid)->update($advanceValues($wkt));
-
-        $boundsSet = $this->boundsSetValues($wkt);
-
-        try {
-            try {
-                DB::table('rippling_reach')->where('msgid', $msgid)
-                    ->update(['updated_at' => now()] + $boundsSet);
-            } catch (\Throwable $e) {
-                DB::table('rippling_reach')->where('msgid', $msgid)
-                    ->update(['updated_at' => now()] + $this->boundsEnvelopeValues($wkt));
-            }
-        } catch (\Throwable $e) {
-            Log::warning('ripple: split advance stored polygon but bounds update failed', [
-                'msgid' => $msgid,
-                'error' => substr($e->getMessage(), 0, 200),
-            ]);
-
-            return;
-        }
-
-        Log::info('ripple: advance split to fit undo log', ['msgid' => $msgid]);
-    }
-
-    /**
-     * True when the failure is MySQL error 1713, "Undo log record is too big" -
-     * the row image for the polygon update cannot fit an undo record. Checked
-     * via the driver's structured errorInfo where available; the message
-     * fallback matches the specific 1713 phrase, which cannot collide with
-     * polygon coordinate digits the way a bare error-number match would.
-     */
-    private function isUndoLogTooBig(\Throwable $e): bool
-    {
-        for ($t = $e; $t !== null; $t = $t->getPrevious()) {
-            if ($t instanceof \PDOException && isset($t->errorInfo[1]) && (int) $t->errorInfo[1] === 1713) {
-                return true;
-            }
-        }
-
-        return str_contains(strtolower($e->getMessage()), 'undo log record is too big');
-    }
-
-    /**
-     * One Douglas-Peucker simplification pass over a polygon WKT, with a
-     * ST_Buffer(geom, 0) repair (plain ST_Simplify can emit self-intersecting
-     * output). Returns the simplified WKT only when it is still polygonal and
-     * actually smaller; null tells the caller to try a coarser tolerance.
-     */
-    private function simplifyPolygonWkt(string $wkt, float $tolerance): ?string
-    {
-        try {
-            // A pure spatial-function computation with no table behind it - a from-less
-            // SELECT (no FROM clause emitted) renders and executes fine.
-            $row = DB::query()
-                ->select(new Alias(
-                    new StAsText(new StBuffer(new StSimplify(
-                        new StGeomFromText(Value::of($wkt), self::SRID), $tolerance
-                    ), 0)),
-                    'w'
-                ))
-                ->first();
-            $out = $row->w ?? null;
-
-            if ($out !== null
-                && (str_starts_with($out, 'POLYGON') || str_starts_with($out, 'MULTIPOLYGON'))
-                && strlen($out) < strlen($wkt)) {
-                return $out;
-            }
-        } catch (\Throwable $e) {
-            // Fall through - the caller tries the next tolerance.
-        }
-
-        return null;
-    }
-
-    /**
-     * Run $store($wkt); if MySQL rejects it with error 1713 (undo log record
-     * too big - seen once reach polygons grow into the multi-megabyte range,
-     * which left posts permanently stuck: every expand run retried the same
-     * oversized UPDATE and failed), progressively simplify the polygon and
-     * retry, so the post stores a slightly coarser reach instead of never
-     * advancing. Returns the WKT actually stored, which the caller must use
-     * for anything downstream (group targeting reads the stored polygon).
-     * Non-1713 failures propagate unchanged, as does 1713 if even the
-     * coarsest simplification cannot fit.
-     */
-    private function storeWithUndoLogShrink(callable $store, string $wkt, int $msgid): string
-    {
-        try {
-            $store($wkt);
-
-            return $wkt;
-        } catch (\Throwable $e) {
-            if (!$this->isUndoLogTooBig($e)) {
-                throw $e;
-            }
-        }
-
-        // The geometry is tagged SRID 3857 but its coordinates are lon/lat
-        // DEGREES (a site-wide quirk - see the routing/spatial services, which
-        // carry the same mislabel). Tolerances must therefore be degree-scale:
-        // at UK latitudes 0.0003 is roughly 25m, 0.002 roughly 160m, 0.01
-        // roughly 800m. A metre-scale ladder (40/160/1000) exceeds the whole
-        // polygon's extent, and MySQL's ST_Simplify just returns NULL for
-        // every rung - which is how the first version of this fix silently
-        // never simplified anything.
-        foreach ([0.0003, 0.002, 0.01] as $tolerance) {
-            $shrunk = $this->simplifyPolygonWkt($wkt, $tolerance);
-
-            if ($shrunk === null) {
-                continue;
-            }
-
-            try {
-                $store($shrunk);
-
-                Log::info('ripple: polygon simplified to fit undo log', [
-                    'msgid' => $msgid,
-                    'tolerance' => $tolerance,
-                    'bytes_before' => strlen($wkt),
-                    'bytes_after' => strlen($shrunk),
-                ]);
-
-                return $shrunk;
-            } catch (\Throwable $e) {
-                if (!$this->isUndoLogTooBig($e)) {
-                    throw $e;
-                }
-            }
-        }
-
-        // Every rung either failed to simplify or still would not fit. Say so
-        // before rethrowing - the first version of this ladder failed silently
-        // on every rung and looked identical to never having run.
-        Log::warning('ripple: undo-log shrink exhausted all tolerances', [
-            'msgid' => $msgid,
-            'bytes' => strlen($wkt),
-        ]);
-
-        throw $e;
     }
 
 
