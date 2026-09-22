@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Be careful - you have been talking to ' . $spammerName . (!empty($messageSubject) ? ' about: ' . $messageSubject : '')])
+  @include('emails.mjml.partials.head', ['preview' => 'Be careful - you have been talking to ' . $spammerName . ' about the voucher scam'])
   <mj-body background-color="#ffffff">
     {{-- Header --}}
     <mj-section mj-class="bg-freegle" padding="20px">
@@ -26,7 +26,9 @@
         </mj-text>
         <mj-text font-size="15px" color="#333333" line-height="1.6">
           You've been talking to <strong>{{ $spammerName }}</strong>.
-          Our checks suggest that this person might be a scammer or spammer.
+          Our checks suggest this is the voucher scam: a well-known trick where someone
+          contacts you about an item and then tries to get you to pay using a fake voucher,
+          gift card or payment link, so they can steal your money or card details.
         </mj-text>
       </mj-column>
     </mj-section>
@@ -35,7 +37,12 @@
     <mj-section background-color="#ffffff" padding="10px 20px">
       <mj-column>
         <mj-text font-size="14px" color="#333333" line-height="1.5">
-          We think you were talking about: <strong>{{ $messageSubject }}</strong>
+          This email only goes to you. Your post is mentioned below because it's what
+          <strong>{{ $spammerName }}</strong> contacted you about, not because there's
+          anything wrong with it.
+        </mj-text>
+        <mj-text font-size="14px" color="#333333" line-height="1.5" font-weight="bold">
+          {{ $messageSubject }}
         </mj-text>
       </mj-column>
     </mj-section>
@@ -44,8 +51,8 @@
     <mj-section background-color="#ffffff" padding="10px 20px">
       <mj-column>
         <mj-text font-size="15px" color="#333333" line-height="1.6">
-          <strong>Don't give them any money</strong>, no matter how tempting it might be,
-          and don't arrange to receive anything by courier.
+          <strong>Don't send any money or vouchers</strong>, don't click any payment links
+          they send, and don't arrange to receive anything by courier.
         </mj-text>
       </mj-column>
     </mj-section>

@@ -125,9 +125,10 @@ class ChatPreheaderTest extends TestCase
     // -----------------------------------------------------------------------
 
     /**
-     * Preheader includes the spammer name and message subject when a subject is provided.
+     * Preheader names the voucher scam, not the member's own post subject, even when a
+     * subject is provided - showing the item in the preview read as an accusation about it.
      */
-    public function test_spam_warning_preheader_with_subject_shows_spammer_and_subject(): void
+    public function test_spam_warning_preheader_with_subject_names_the_scam_not_the_item(): void
     {
         $html = view('emails.mjml.chat.spam-warning', [
             'spammerName'    => 'Suspicious Pete',
@@ -136,15 +137,16 @@ class ChatPreheaderTest extends TestCase
         ])->render();
 
         $this->assertStringContainsString(
-            '<mj-preview>Be careful - you have been talking to Suspicious Pete about: OFFER: Free laptop (London)</mj-preview>',
+            '<mj-preview>Be careful - you have been talking to Suspicious Pete about the voucher scam</mj-preview>',
             $html
         );
+        $this->assertStringNotContainsString('OFFER: Free laptop (London)</mj-preview>', $html);
     }
 
     /**
-     * Preheader omits the "about:" clause when no message subject is supplied.
+     * Preheader is unchanged when no message subject is supplied.
      */
-    public function test_spam_warning_preheader_without_subject_omits_about_clause(): void
+    public function test_spam_warning_preheader_without_subject_names_the_scam(): void
     {
         $html = view('emails.mjml.chat.spam-warning', [
             'spammerName'    => 'Suspicious Pete',
@@ -153,9 +155,8 @@ class ChatPreheaderTest extends TestCase
         ])->render();
 
         $this->assertStringContainsString(
-            '<mj-preview>Be careful - you have been talking to Suspicious Pete</mj-preview>',
+            '<mj-preview>Be careful - you have been talking to Suspicious Pete about the voucher scam</mj-preview>',
             $html
         );
-        $this->assertStringNotContainsString('about:', $html);
     }
 }
