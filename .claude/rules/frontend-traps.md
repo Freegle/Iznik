@@ -104,6 +104,36 @@ Chat has three header implementations and the one members actually see is inline
 component named `ChatHeader`, which is ModTools only. Changing the obvious file changes nothing
 for members.
 
+## A widget a third party draws for us can fail without saying so
+
+`LoginModal` leaves an empty element for Google to draw the sign-in button into, and Facebook's
+SDK decides whether its button is usable. Neither tells us when it goes wrong, and both go wrong
+in the field: Facebook login was dead on the iOS app for five days in August 2026, and in
+September 2026 a member's login screen had no Google button at all, because Google's script never
+delivered one.
+
+The shape to avoid is asking a third party to draw something and then trusting that it did.
+**Check the result, retry, and report**: `drawGoogleButton` measures the element afterwards, so a
+button never drawn and a button drawn too small to use are both caught. Code that only checks the
+call returned cannot tell either from success.
+
+Three things make this worse than it sounds:
+
+- **An empty container is not necessarily blank.** `.social-button--google` carries
+  `border: 1px solid` and `min-height: 42px`, and sits in a centred column, so an empty one
+  shrink-wraps to a **1px wide, 42px tall grey line**. That is what the member photographed. It
+  reads as a broken button rather than a missing one, which sends you looking for why Google drew
+  it wrong instead of why Google drew nothing. Reproduce the empty state and measure it before
+  believing either story.
+
+- **A flag that nothing ever sets reads as "never blocked".** `showSocialLoginBlocked` was
+  declared, read in two computed properties, and assigned nowhere, so the "social sign in
+  blocked" warning could not appear for Google however broken it was.
+
+- **Waiting is not failing.** The script is deliberately held back until the browser is idle for
+  a first-time visitor, so a retry loop that counts those ticks as attempts will report every
+  slow visitor as broken. Only count an attempt when we actually asked.
+
 ## Libraries and packaging
 
 - **vue-leaflet imports a bare `leaflet`** when the global is unset, producing a second Leaflet

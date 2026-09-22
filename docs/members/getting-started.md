@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-22
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/index.vue
@@ -35,6 +35,12 @@ To sign up:
 
 Already have an account? Choose **Log in** in the same box. Forgotten your password? Use
 the "forgotten password" link and we will email you a link to get back in.
+
+The Facebook, Google and Apple buttons are drawn by those companies, so now and again one
+of them does not appear. The login box will tell you when Google sign in has not loaded.
+Reloading the page usually brings it back. If it does not, and you have only ever signed in
+with Google, use the "forgotten password" link: that sets a password on the same account,
+and you can still use Google later.
 
 ## Finding and joining your local community
 
