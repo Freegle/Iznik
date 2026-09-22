@@ -73,7 +73,14 @@ TLS certificates, and it deletes `grastate.dat`, which trips the reboot gate abo
    SST". Until "ready for connections" appears, `mysql` cannot connect; that is the transfer
    in progress, not a hang.
 6. Confirm with `mysql -e "SHOW STATUS LIKE 'wsrep_local_state_comment'"` (Synced) and
-   `wsrep_cluster_size`, then `monit start iznik-server-go`.
+   `wsrep_cluster_size`, then `systemctl start monit`, which starts the API, spatial and
+   routing servers it manages.
+
+Monit is deliberately **not** enabled at boot on the data nodes. When it was, it started and
+restarted the services it manages against a node that was still resyncing, and made the
+rejoin worse. So after a reboot nothing monit manages runs until a person has seen `Synced`
+and started monit by hand. The arbitrator machine is the exception: nothing resyncs there,
+and `garbd` needs watching from boot, so monit is enabled at boot on it alone.
 
 If the node was down longer than the write-set cache covers, step 5 is an SST and takes 10
 to 18 minutes. Let it run. Killing the joiner during an SST is what produces the stale pid
@@ -141,8 +148,10 @@ routing checkouts, binaries and `.env` files; their monit checks in `conf.d`, wh
 been told to leave alone; the OSM extract and the spatial indexes under `/data`; the log
 shipper; its entries in the load balancer, which health-check down. **Removed**: the MySQL
 data directory, the reach artefacts under the routing data directory, build caches and old
-deploy backups, and 8 GB of swap. **Changed**: `mysql` is masked at boot, `garb` is enabled,
-and the deploy script's node list on the Docker host names only the data nodes.
+deploy backups, and 8 GB of swap. **Changed**: `mysql` is masked at boot, `garb` is enabled, monit is enabled at boot on this
+machine alone (see the planned-reboot section), the six retired checks carry `mode manual` so
+monit never starts them, and the deploy script's node list on the Docker host names only the
+data nodes.
 
 **Before starting anything:**
 
@@ -163,7 +172,10 @@ and the deploy script's node list on the Docker host names only the data nodes.
 2. `systemctl unmask mysql && systemctl enable --now mysql`. The empty data directory means an
    SST from a donor; watch `wsrep_local_state_comment` on db1 reach `Synced` and the donor
    return to `Synced`, as above.
-3. `monit monitor mysqld`, `monit monitor mysql`, `monit monitor mysql_processes`.
+3. For every retired check from here on, first delete its `mode manual` line in
+   `/etc/monit/conf.d/` (that line is what keeps monit from starting it) and `monit reload`,
+   then `monit monitor <name>`. Start with `mysqld`, `mysql` and `mysql_processes` in
+   `mysql.conf`.
 4. Routing. Rebuild the reach artefacts from the extract it still has:
    `cd /var/www/iznik-routing-go && . ./.env && ./iznik-routing-go reach build`. If the map
    was refreshed on the data nodes since, copy their extract into `/data` first
@@ -185,6 +197,7 @@ and the deploy script's node list on the Docker host names only the data nodes.
 addresses in `wsrep_incoming_addresses`; `monit summary` on db1 all `OK`; the API through the
 load balancer still 200.
 
-To go back to arbitrator-only, reverse it: `monit stop` the six checks, stop and mask
-`mysql`, empty the data directory, enable and start `garb`, and take db1 out of the deploy
-node list.
+To go back to arbitrator-only, reverse it: put `mode manual` back on the six checks and
+`monit unmonitor` each (not `monit stop`: its stop program calls `service mysql stop`, which a
+masked unit refuses, and the check stays monitored), stop and mask `mysql`, empty the data
+directory, enable and start `garb`, and take db1 out of the deploy node list.
