@@ -758,3 +758,59 @@ func TestGetDashboardUnknownComponent(t *testing.T) {
 	comps := result["components"].(map[string]interface{})
 	assert.Nil(t, comps["NonExistent"])
 }
+
+// The active volunteers list is one row per person, most recent first, however many
+// communities they moderate. It was one row per membership in whatever order the scan
+// returned, so a moderator of several communities appeared once per community with a
+// different time on each, and the ten rows the page shows first were arbitrary.
+func TestGetDashboardModeratorsActiveOnePerModeratorMostRecentFirst(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("DashMAOrder")
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+
+	// The viewer moderates both, so allgroups=true spans A and B. They approved nothing.
+	viewer := CreateTestUser(t, prefix+"_viewer", "User")
+	CreateTestMembership(t, viewer, groupA, "Moderator")
+	CreateTestMembership(t, viewer, groupB, "Moderator")
+	_, token := CreateTestSession(t, viewer)
+
+	// Moderates both: last approved ten days ago in A and an hour ago in B.
+	twoGroups := CreateTestUser(t, prefix+"_two", "User")
+	CreateTestMembership(t, twoGroups, groupA, "Moderator")
+	CreateTestMembership(t, twoGroups, groupB, "Moderator")
+
+	// Moderates A only: last approved five days ago.
+	oneGroup := CreateTestUser(t, prefix+"_one", "User")
+	CreateTestMembership(t, oneGroup, groupA, "Moderator")
+
+	approve := func(mod, group uint64, hoursAgo int, subject string) {
+		msg := CreateTestMessage(t, mod, group, subject, 52.5, -1.8)
+		db.Exec("UPDATE messages_groups SET collection = 'Approved', approvedby = ?, approvedat = NOW(), arrival = DATE_SUB(NOW(), INTERVAL ? HOUR) WHERE msgid = ? AND groupid = ?",
+			mod, hoursAgo, msg, group)
+	}
+	approve(twoGroups, groupA, 10*24, prefix+" OFFER: ten days ago in A")
+	approve(twoGroups, groupB, 1, prefix+" OFFER: an hour ago in B")
+	approve(oneGroup, groupA, 5*24, prefix+" OFFER: five days ago in A")
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=ModeratorsActive&allgroups=true&jwt=%s", token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	mods, ok := result["components"].(map[string]interface{})["ModeratorsActive"].([]interface{})
+	assert.True(t, ok, "ModeratorsActive should be an array")
+
+	ids := []uint64{}
+	for _, m := range mods {
+		ids = append(ids, uint64(m.(map[string]interface{})["id"].(float64)))
+	}
+	assert.Equal(t, []uint64{twoGroups, oneGroup}, ids, "one row per moderator, most recent first, nobody who approved nothing")
+
+	if len(mods) == 2 {
+		first := mods[0].(map[string]interface{})["lastactive"].(string)
+		second := mods[1].(map[string]interface{})["lastactive"].(string)
+		assert.Greater(t, first, second, "the time shown is the most recent across their communities")
+	}
+}
