@@ -1,12 +1,14 @@
 ---
-last_reviewed: 2026-09-20
+last_reviewed: 2026-09-22
 owner: Freegle dev team
 ---
 
 # Restarting a database node, and rejoining it to the cluster
 
-The database is a three-node Percona XtraDB Cluster (Galera). Each node keeps its own copy
-of the data and rejoins the others after a restart by itself. The service wrapper that
+The database is a Percona XtraDB Cluster (Galera) of two data nodes and an arbitrator. Each
+data node keeps its own copy of the data and rejoins the other after a restart by itself. The
+arbitrator (`garbd`, on the third machine) holds no data and only votes, so one data node can
+be down without the cluster losing quorum. The service wrapper that
 systemd runs, `/usr/bin/mysql-systemd`, does the position recovery and the state transfer
 for you. Almost every manual step beyond `systemctl stop` and `systemctl start` makes the
 rejoin slower, not faster.
@@ -59,7 +61,7 @@ TLS certificates, and it deletes `grastate.dat`, which trips the reboot gate abo
 ## Planned reboot of one node
 
 1. On the load-balancer side nothing is needed: HAProxy sends API traffic to one active
-   node with the other two as backups, and Galera routes around a missing node.
+   node with the others as backups, and Galera routes around a missing node.
 2. Drain the API on the node first, so clients are not stuck to a node that is about to go
    (`monit stop iznik-server-go`, or follow the deploy drain in the developer docs).
 3. `systemctl stop mysql`. Wait for it to return; a busy node can take a minute or two to
@@ -127,3 +129,23 @@ directories have been removed.
   `move`.
 - `journalctl --list-boots` for reboot times, and `grastate.dat` and `gvwstate.dat` for the
   node's saved position and last primary component.
+
+## Making the arbitrator machine a data node again
+
+The arbitrator machine still has Percona, the API, the spatial server and the routing server
+installed and configured; they are stopped, `mysql` is masked at boot, and monit has been told
+to leave them alone. Its data directory is empty, so the first start is an SST from a data
+node, with the donor desynced for its duration (see above).
+
+1. `systemctl stop garb` - the arbitrator and `mysqld` both listen on the Galera port, so it
+   must go first. The cluster is two nodes until `mysqld` joins.
+2. `systemctl unmask mysql && systemctl enable --now mysql`, then watch for `Synced` as for any
+   rejoin.
+3. `monit monitor mysqld mysql mysql_processes`, and the same for `iznik-server-go`,
+   `iznik-spatial-go` and `iznik-routing-go`; monit starts what it now watches.
+4. Put the machine back in the deploy script's node list (`scripts/deploy-prod.env` on the
+   Docker host), and leave `garb` disabled so it does not race `mysqld` for the port on the
+   next boot.
+
+The load balancer never stopped listing it, so it takes traffic again as soon as its health
+checks pass.
