@@ -109,3 +109,25 @@ The moment a member pressed Block is in the API request log, not the table:
 `{api_version="v2"} |= "/apiv2/chatrooms" |= "\"status\":\"Blocked\""` in Loki, one per distinct
 member and room. The same applies to any "when did they do X" question answered from a roster
 watermark: `lastmsgseen` and friends move forward on ordinary viewing.
+
+## The sender's address is not in the database
+
+`chat_roster.lastip` is written only by the roster-status call (`chatroom.go`, the Blocked /
+Online / mark-as-read path). A member, or a script, that only sends messages never touches it,
+so for an abuse wave every roster row for the senders is NULL, `logs_events` has nothing, and
+`messages.fromip` only covers posts. A "which addresses did these accounts use" query returns
+an empty set with no error.
+
+The record is the apiv2 request log in Loki: `{app="freegle",source="api"}`, JSON fields `ip`
+(taken from `X-Forwarded-For`, so it is the client, not the gateway), `user_id`, `endpoint`,
+`session_id` (the client's `X-Session-Id`, one value across thousands of accounts means one
+scripted client) and `request_id`. The `api_headers` stream, kept seven days, has `User-Agent`
+and `Accept-Language` under `request_headers` and joins on `request_id`. Sign-up is
+`PUT /apiv2/user`, not POST; a reply from a profile page is `POST /apiv2/user/:id/message`
+and from a chat `POST /apiv2/chat/:id/message`. Pull with `query_range`, `direction=forward`,
+at most 5000 lines per call; a line filter over the whole retention is slow and a paged pull
+across the busy hours will time out silently, so bound each call to a day or an hour.
+
+The gateway's per-address limit is a one-second burst cap of 200 requests. It does not slow a
+client sending a few requests a second for hours, which is what a wave looks like; any
+per-address defence has to be a longer window or a count of sign-ups.
