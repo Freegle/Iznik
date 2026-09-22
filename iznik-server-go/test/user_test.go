@@ -2334,7 +2334,7 @@ func TestPostUserMergeByEmailKeepsChosenDominantEmail(t *testing.T) {
 
 	email1 := prefix + "_u1@test.com"
 	email2 := prefix + "_u2@test.com"
-	user1ID := CreateTestUserWithEmail(t, prefix+"_u1", email1)
+	CreateTestUserWithEmail(t, prefix+"_u1", email1)
 	user2ID := CreateTestUserWithEmail(t, prefix+"_u2", email2)
 
 	// Simulate id2's email having no preferred flag set.
