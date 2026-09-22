@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-21
+last_reviewed: 2026-09-22
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -34,8 +34,27 @@ From here you can:
 - **Ban** a member by id, with a reason.
 - **Merge** two accounts that are the same person (irreversible; you choose which email
   survives).
-- **Export** the members list.
 - Change a member's **role** (Member, Moderator, Owner).
+
+### How far a search reaches
+
+A search only ever looks at the communities **you** moderate. That is true whichever way
+you search - by name, by email, or by the member's number.
+
+- With a community chosen in the box at the top left, you search that community.
+- With **-- Please choose --** selected, you search every community you moderate at once.
+  This is the one to use when somebody reports a member and you do not know which
+  community they are on.
+
+So a search that finds nobody does not mean the account does not exist. It usually means
+that freegler has only ever joined communities you do not moderate, and rippling makes
+that more common: a post can reach your community from a freegler who is not on it.
+
+Someone with **Support** access can look up any freegler on the system, on any community,
+so ask them when you need to see an account that is outside your own communities. See
+[Support Tools](https://wiki.ilovefreegle.org/Support_Tools) on the wiki.
+
+You can type the member's number with or without a `#` in front of it. Both work.
 
 ## "Email delayed" is not the same as "bouncing"
 
