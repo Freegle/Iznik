@@ -1,5 +1,5 @@
 global
-  log 127.0.0.1 local0
+  log /dev/log local0
   maxconn 100000
   daemon
   uid 99
@@ -201,6 +201,7 @@ backend edge_legacy_backend
 frontend api_server_frontend
   bind *:8192 ssl crt /etc/haproxy/api.ilovefreegle.org.pem alpn h2,http/1.1
   option httplog
+  option dontlognull
   mode http
 
   # Extract loggedInAs user ID from query string for per-user rate limiting.
@@ -224,6 +225,8 @@ frontend api_server_frontend
   http-request deny deny_status 429 if { sc1_http_req_rate gt 100 } has_userid !is_privileged
   # Per-IP hard limit: 200 req/s (matches https_frontend so same backend has same ceiling)
   http-request deny deny_status 429 if { sc0_http_req_rate gt 200 } !is_privileged
+  # Log writes and refusals only: reads are 94% of requests and the API records them itself.
+  http-request set-log-level silent if METH_GET
 
   # CORS on HAProxy-generated errors (see https_frontend for rationale).
   http-after-response set-header Access-Control-Allow-Origin "*" unless { res.hdr(Access-Control-Allow-Origin) -m found }
