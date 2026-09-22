@@ -1,6 +1,7 @@
 # Spam waves: a lockdown switch and an AI duty officer
 
-Date: 21 September 2026. Design only; nothing here is implemented. Written the morning after
+Date: 21 September 2026, with what the first response cost added on 22 September (4.1).
+Design only; nothing here is implemented. Written the morning after
 the voucher-phishing wave. The wave is used as one worked example. It is not a template: the
 next crew will change their addresses, their timing, their wording, their targets and
 possibly the surface they use, and any detector built from this wave's shape will be looking
@@ -72,8 +73,9 @@ did more than one thing, the largest clusters of similar content (from the embed
 sidecar Freegle already runs, `POST /embed`, grouped by cosine similarity, with three
 samples each), the targets those clusters went at (posts by age and type, groups, rooms),
 member reports received (`ReportedUser` rows: four members reported the wave within
-minutes and nothing read them), moderator actions in the window, and anything the
-existing filters held.
+minutes and nothing read them; after a notice they also carry the notice's echo, as in
+4.1, so the picture says whether a notice is out), moderator actions in the window, and
+anything the existing filters held.
 
 ### 3.2 The means to look closer
 
@@ -166,6 +168,44 @@ last-hour volume may be held without a human, and past that the officer alerts a
 holding, because a runaway detector is a worse outage than a wave. Everything is undone by
 the same service in reverse, and keywords it adds carry a tag.
 
+### 4.1 What warning the recipients cost, measured
+
+Step 5 is not free, and the first use of it shows the shape of the cost. At 04:17 on 21
+September the notice "Warning: any mention of free vouchers is a scam." went into 21,958
+rooms, reaching 21,942 members. In the fourteen hours that followed those members pressed
+Block 94 times. Blocks are counted from the API request log, not from `chat_roster.date`,
+which every mark-as-read and presence call rewrites and which therefore overstated the day
+by a third.
+
+| blocks by notified members, 04:17-18:38 | |
+|---|---|
+| of the wave's own accounts | 71 |
+| of members who were not spammers | 23 |
+| of those, where the blocked member had written in the last day (an ordinary block) | 6 |
+| of those, where the blocked member had been silent for over a day | 17 (12 over three days) |
+| the same members, any ordinary day of the previous week: blocks of non-spammers | 9 to 15, of which 3 to 8 on silent conversations |
+
+So roughly ten genuine members were blocked on dormant conversations because of the
+notice, one for every two thousand recipients; one of them wrote again afterwards and was
+not heard. The next morning the only member report on the site named a member who joined
+in 2014 as a "Scammer" for offering to send a postage voucher, in the notice's own word.
+
+What follows for the design:
+
+- **The notice describes the message, not a rule.** "The message you received from
+  <name> on <date> was a scam. We have removed it and dealt with the sender. You do not
+  need to do anything." A rule ("any mention of X is a scam") is applied by members to
+  each other, and its key word seeds blocks and reports against genuine members who use
+  it. The officer writes the notice from the cluster, per wave, and the harness rejects a
+  notice that states a general rule or asks the member to act.
+- **Collateral is part of the outcome record** (3.3): blocks of non-actors and reports
+  naming non-actors by notified members in the following 24 hours, against the previous
+  week. The memory then knows what a notice costs, and a notice that costs more innocent
+  blocks than the wave it answers is a false positive of its own kind.
+- **How to count it.** `{api_version="v2"} |= "/apiv2/chatrooms" |= "\"status\":\"Blocked\""`
+  in Loki, one per distinct member and room, each judged against the last message from the
+  member blocked. The same recipe serves the lockdown's closing stats (10.10).
+
 ## 5. What stays statistical, and why
 
 The model does not read every message: that is too slow, too expensive and unnecessary.
@@ -206,6 +246,8 @@ without anyone editing a constant.
   emailing them. Compare with what moderators actually did.
 - **Promotion.** Hold on from day one after the shadow run; each further action promoted
   to automatic after a month without a false positive at that step, one step at a time.
+  For the notice (step 5) a false positive includes its collateral (4.1): more innocent
+  blocks or reports than the wave it answered.
 
 ## 7. Where it goes
 
@@ -238,6 +280,13 @@ These numbers seed the fixtures and the young-account budget. They are not thres
 | age of the post replied to | 77% older than a week | 12% |
 | distinct opening lines | 11 across 21,977 messages | every reply differs |
 | member reports during the wave | 4 `ReportedUser` messages, unread by anything | - |
+
+The night after the wave (21-22 September, 19:30-06:45 UTC) is a second ordinary fixture
+for the same hours, watched every 30 minutes: delivered chat messages per 30 minutes fell
+from 260 at 19:30 to 4 at 02:15 and were back to 90 by 06:30; senders under 48 hours old
+were 0 to 10 per window; signups 4 to 37 an hour; the block-keyword filter dropped 0 or 1
+messages an hour and held 0 to 2; at no point was there a cluster of eight similar
+messages from five senders. A replay of that night must produce no hold.
 
 ## 9. Open questions for the operator
 
@@ -565,6 +614,9 @@ per held chat message and post, with a class:
     message about vouchers or payments, please don't click the link."
 - The security notice limits harm (the damage is done when the message is read) and worries
   people and tells the crew the site has noticed. A choice on the day, not a default.
+- Wording: say what happened and what has been done, never a rule for members to apply to
+  each other. The rule-shaped notice of 21 September cost about ten genuine members a
+  block and one a scammer report (4.1).
 - `LockdownNotice.vue` next to `MailDelayed` in `LayoutCommon.vue`, fed by `GET /lockdown`.
 
 ### 10.9 Lifting: the sequence
@@ -634,6 +686,7 @@ which is also the reminder that it is on.
 | delay | median and worst for released chat |
 | mail | members caught up, and how |
 | the justification | messages from the marked actors delivered before the press against messages from them held after |
+| collateral of the notice | blocks and reports by notified members against non-actors in the following 24 hours, against the previous week; counted from the request log, not `chat_roster.date` (4.1) |
 | the curve | the replay fixtures (section 8) give the same numbers for the calibration wave pressed at each minute after the probe |
 
 ### 10.11 Tests and drills
