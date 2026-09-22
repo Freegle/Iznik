@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 )
 
 func init() {
@@ -262,6 +263,21 @@ func TestChatMessageTypeValues(t *testing.T) {
 
 	msg.Type = "Interested"
 	assert.Equal(t, "Interested", msg.Type)
+}
+
+func TestGetSnippetReportShowsReporterComment(t *testing.T) {
+	// Reproduces Discourse #10182/68810: a member reports a post via the app
+	// and adds a comment, but the boilerplate report text (which includes a
+	// full message URL) pushes the reporter's comment past the snippet's
+	// 100-char cutoff, so mods only see the report, never why it was made.
+	chatmsg := "I'm reporting this post as inappropriate:\n" +
+		"https://www.ilovefreegle.org/message/68810\n\n" +
+		"Reason: Possible scam\n\n" +
+		"Additional details: \"it may be a medicine, not sure though\""
+
+	snippet := getSnippet(utils.CHAT_MESSAGE_INTERESTED, chatmsg, "")
+
+	assert.Contains(t, snippet, "it may be a medicine, not sure though")
 }
 
 func TestChatMessageImageID(t *testing.T) {
