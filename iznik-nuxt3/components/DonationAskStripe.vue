@@ -80,7 +80,9 @@
 
           <!-- Cancel button below donation -->
           <div class="text-center mt-3">
-            <b-button variant="secondary" @click="cancel"> Not now </b-button>
+            <b-button variant="primary" class="not-now" @click="cancel">
+              Not now
+            </b-button>
           </div>
         </div>
         <!-- Traditional variant: Show thermometer inside container -->
@@ -88,7 +90,7 @@
           v-if="!hideThermometer && !isMinimalVariant"
           ref="thermo"
           :groupid="groupid"
-          class="ml-md-4 flex-shrink-0"
+          class="ml-md-4 flex-shrink-0 d-none d-md-block"
         />
       </div>
       <!-- Traditional variant: supporter badge info and footnotes. Outside the
@@ -350,6 +352,26 @@ onMounted(async () => {
   max-width: 600px;
   margin: 0 auto;
   text-align: center;
+  width: 100%;
+}
+
+// On a phone the ask has the whole width: the thermometer is hidden above,
+// the container padding is halved, and Not now is nearly full width so it is
+// as easy to hit as the payment buttons it sits under.
+.not-now {
+  width: 90%;
+  max-width: 320px;
+
+  @include media-breakpoint-up(md) {
+    width: auto;
+    max-width: none;
+  }
+}
+
+@include media-breakpoint-down(md) {
+  .donation-ask-container {
+    padding: 1rem;
+  }
 }
 
 @keyframes rainbow-glow {
