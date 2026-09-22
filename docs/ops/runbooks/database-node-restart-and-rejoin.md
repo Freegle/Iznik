@@ -150,7 +150,8 @@ shipper; its entries in the load balancer, which health-check down. **Removed**:
 data directory, the reach artefacts under the routing data directory, build caches and old
 deploy backups, and 8 GB of swap. **Changed**: `mysql` is masked at boot, `garb` is enabled, monit is enabled at boot on this
 machine alone (see the planned-reboot section), the six retired checks carry `mode manual` so
-monit never starts them, and the deploy script's node list on the Docker host names only the
+monit never starts them, which the ModTools host check reads as held on purpose
+rather than as a warning, and the deploy script's node list on the Docker host names only the
 data nodes.
 
 **Before starting anything:**
