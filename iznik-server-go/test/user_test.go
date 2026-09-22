@@ -5281,3 +5281,45 @@ func TestPrivateLocationName_FallsBackToClosestPostcode(t *testing.T) {
 			"privateposition.name should stay empty when the nearest postcode is outside the guard box")
 	}
 }
+
+func TestPostUserMergeByIdKeptUserWithoutEmailInheritsBest(t *testing.T) {
+	// Merge-by-id can keep a user that has no email of its own. The merged
+	// account must not be left with zero preferred emails: the discarded
+	// user's best email becomes the kept user's preferred one.
+	prefix := uniquePrefix("mergenoemail")
+	db := database.DBConn
+
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	email1 := prefix + "_u1@test.com"
+	user1ID := CreateTestUserWithEmail(t, prefix+"_u1", email1)
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+
+	// The kept user has no email rows at all.
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", user2ID)
+
+	payload := map[string]interface{}{
+		"action": "Merge",
+		"id1":    user1ID,
+		"id2":    user2ID,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+adminToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	var preferredEmail string
+	db.Raw("SELECT email FROM users_emails WHERE userid = ? AND preferred = 1", user2ID).Scan(&preferredEmail)
+	assert.Equal(t, email1, preferredEmail, "the discarded user's email becomes the kept user's preferred email")
+
+	var preferredCount int64
+	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND preferred = 1", user2ID).Scan(&preferredCount)
+	assert.Equal(t, int64(1), preferredCount, "exactly one preferred email after the merge")
+}
