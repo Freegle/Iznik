@@ -32,6 +32,8 @@ frontend https_frontend
   mode http
 
   bind *:443 ssl crt-list /etc/haproxy/haproxy.crtlist alpn h2,http/1.1
+  option httplog
+  option dontlognull
 
   # Define ACLs early so we can use them for rate limit exemptions.
   acl new_modtools hdr(host) -i modtools.org
@@ -86,6 +88,8 @@ frontend https_frontend
   # Per-IP hard limit: 200 req/s (fallback for anonymous or as absolute cap)
   http-request deny deny_status 429 if { sc0_http_req_rate gt 200 } api_path !is_privileged
   http-request deny deny_status 429 if { sc0_http_req_rate gt 200 } api_host !is_privileged
+  # Log API writes and refusals only: reads and preflights are almost all requests and the API records them itself.
+  http-request set-log-level silent if !api_host || METH_GET || METH_OPTIONS
 
   # ModTools is now on Netlify, as a branch deployment of the ILF site.  We can't manage to get certificates working on there,
   # but we can proxy to it from here.
@@ -200,8 +204,6 @@ backend edge_legacy_backend
 
 frontend api_server_frontend
   bind *:8192 ssl crt /etc/haproxy/api.ilovefreegle.org.pem alpn h2,http/1.1
-  option httplog
-  option dontlognull
   mode http
 
   # Extract loggedInAs user ID from query string for per-user rate limiting.
@@ -225,8 +227,6 @@ frontend api_server_frontend
   http-request deny deny_status 429 if { sc1_http_req_rate gt 100 } has_userid !is_privileged
   # Per-IP hard limit: 200 req/s (matches https_frontend so same backend has same ceiling)
   http-request deny deny_status 429 if { sc0_http_req_rate gt 200 } !is_privileged
-  # Log writes and refusals only: reads are 94% of requests and the API records them itself.
-  http-request set-log-level silent if METH_GET
 
   # CORS on HAProxy-generated errors (see https_frontend for rationale).
   http-after-response set-header Access-Control-Allow-Origin "*" unless { res.hdr(Access-Control-Allow-Origin) -m found }
