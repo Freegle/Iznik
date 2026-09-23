@@ -471,8 +471,8 @@ function buildReferralMjml(referral, nowMs = Date.now()) {
                   referral.ref
                 )}</strong>. `
               : ''
-          }Sent by the AI Support Helper in ModTools. Reply to this email to reach
-          ${escapeHtml(referral.replyTo || 'the support team')}.
+          }Sent by the AI Support Helper in ModTools.
+          Reply to this email to reach ${escapeHtml(referral.replyTo || 'the support team')}.
         </mj-text>
       </mj-column>
     </mj-section>
