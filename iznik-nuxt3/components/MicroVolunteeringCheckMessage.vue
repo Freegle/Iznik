@@ -6,6 +6,12 @@
         volunteers. But thanks for looking!
       </NoticeMessage>
     </div>
+    <div v-else-if="noLongerNeeded">
+      <NoticeMessage variant="info" class="no-longer-needed">
+        Thanks for looking. This post doesn't need checking any more: it has
+        been sorted, or it is no longer on your communities.
+      </NoticeMessage>
+    </div>
     <div v-else>
       <p class="instruction-text">
         This is someone else's post. Does it look ok to you?
@@ -212,6 +218,9 @@ const comments = ref(null)
 const msgcategory = ref(null)
 const showMessagePhotosModal = ref(false)
 const found = ref(false)
+// The server refused the vote, because the post has left the communities we
+// share with it since it was offered.
+const refused = ref(false)
 
 // Initialize
 await messageStore.fetch(props.id, true)
@@ -237,6 +246,35 @@ const groupid = computed(() => {
     .sort((a, b) => new Date(b.arrival || 0) - new Date(a.arrival || 0))
   return Number.parseInt((shared[0] || groups[0]).groupid)
 })
+
+// A post that has been taken, received or withdrawn, or that has left every
+// community this member is on, cannot be voted on: the server refuses the
+// vote (SR-DYS36). Say so rather than asking.
+const noLongerNeeded = computed(() => {
+  if (refused.value) return true
+  if (!message.value) return false
+  if (message.value.outcomes?.length) return true
+  const mine = authStore.groups || []
+  if (!mine.length) return false
+  const myGroupIds = new Set(mine.map((g) => Number.parseInt(g.groupid)))
+  return !(message.value.groups || []).some((g) =>
+    myGroupIds.has(Number.parseInt(g.groupid))
+  )
+})
+
+// A 403 means the post is no longer ours to check; anything else is a real error.
+async function recordResponse(params) {
+  try {
+    await microVolunteeringStore.respond(params)
+    return true
+  } catch (e) {
+    if (e?.response?.status === 403) {
+      refused.value = true
+      return false
+    }
+    throw e
+  }
+}
 
 // Computed properties for display
 const strippedSubject = computed(() => {
@@ -287,7 +325,7 @@ function notRight(callback) {
 
 async function sendComments(callback) {
   // Record the result with comments.
-  await microVolunteeringStore.respond({
+  const recorded = await recordResponse({
     msgid: props.id,
     groupid: groupid.value,
     response: 'Reject',
@@ -297,12 +335,12 @@ async function sendComments(callback) {
   await refreshNotificationCount()
   callback()
 
-  emit('next')
+  if (recorded) emit('next')
 }
 
 async function approve(callback) {
   // Approved - that's it.
-  await microVolunteeringStore.respond({
+  const recorded = await recordResponse({
     msgid: props.id,
     groupid: groupid.value,
     response: 'Approve',
@@ -310,7 +348,7 @@ async function approve(callback) {
   await refreshNotificationCount()
   callback()
 
-  emit('next')
+  if (recorded) emit('next')
 }
 
 // After recording a response the server has already marked the "post to check"

@@ -381,7 +381,9 @@ func getPendingMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine
 	// (clause/where.go buildExprs), which would diverge from the golden.
-	pendingWhereSQL := "messages_groups.groupid IN (?) AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
+	// messages_groups.deleted = 0: a copy retracted from a group keeps its row, and
+	// PostResponse refuses a vote from a member whose only copy is gone (SR-DYS36).
+	pendingWhereSQL := "messages_groups.groupid IN (?) AND messages_groups.deleted = 0 AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
 		"AND microvolunteering = 1 AND messages.deleted IS NULL AND microactions.id IS NULL " +
 		"AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1) " +
 		"AND collection = ? AND autoreposts = 0"
@@ -424,7 +426,8 @@ func getApprovedMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) 
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine
 	// (clause/where.go buildExprs), which would diverge from the golden.
-	approvedWhereSQL := "messages_groups.groupid IN (?) AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
+	// messages_groups.deleted = 0 for the same reason as getPendingMessageChallenge.
+	approvedWhereSQL := "messages_groups.groupid IN (?) AND messages_groups.deleted = 0 AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
 		"AND microvolunteering = 1 AND messages_outcomes.id IS NULL AND messages.deleted IS NULL AND microactions.id IS NULL " +
 		"AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1) " +
 		"AND collection = ? AND autoreposts = 0"
