@@ -472,7 +472,7 @@ function buildReferralMjml(referral, nowMs = Date.now()) {
                 )}</strong>. `
               : ''
           }Sent by the AI Support Helper in ModTools. Reply to this email to reach
-          ${escapeHtml(by.email || 'the support volunteer who referred it')}.
+          ${escapeHtml(referral.replyTo || 'the support team')}.
         </mj-text>
       </mj-column>
     </mj-section>
@@ -490,6 +490,7 @@ function buildReferralText(referral) {
   lines.push('')
   if (referral.ref) lines.push(`Reference: ${referral.ref}`)
   lines.push(`Referred by: ${by.name || by.email || 'a support volunteer'}${by.email ? ` <${by.email}>` : ''}`)
+  if (referral.replyTo) lines.push(`Reply to: ${referral.replyTo}`)
   lines.push(`When: ${formatWhen(referral.generatedAt)}`)
   lines.push(
     `Member: ${member.displayname || 'Member'}${member.id ? ` (ID: ${member.id})` : ''}${
