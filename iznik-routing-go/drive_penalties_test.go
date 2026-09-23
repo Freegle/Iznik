@@ -10,14 +10,14 @@ import (
 func driveSecs(g *Graph, from, to NodeID) float32 {
 	for _, e := range g.EdgesFrom(from) {
 		if e.To == to {
-			return e.Seconds[Drive]
+			return e.Sec()
 		}
 	}
 	return -2
 }
 
 func modeSecs(g *Graph, from, to NodeID, m Mode) float32 {
-	for _, e := range g.EdgesFrom(from) {
+	for _, e := range g.ModalEdgesFrom(from) {
 		if e.To == to {
 			return e.Seconds[m]
 		}

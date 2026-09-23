@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\DB;
 use OwenIt\Auditing\Contracts\Auditable;
 
 /**
@@ -69,6 +70,11 @@ class Membership extends Model implements Auditable
     public const ROLE_MODERATOR = 'Moderator';
     public const ROLE_OWNER = 'Owner';
 
+    public const POSTING_STATUS_MODERATED = 'MODERATED';
+    public const POSTING_STATUS_PROHIBITED = 'PROHIBITED';
+    public const POSTING_STATUS_DEFAULT = 'DEFAULT';
+    public const POSTING_STATUS_UNMODERATED = 'UNMODERATED';
+
     public const COLLECTION_APPROVED = 'Approved';
     public const COLLECTION_PENDING = 'Pending';
     public const COLLECTION_BANNED = 'Banned';
@@ -82,6 +88,40 @@ class Membership extends Model implements Auditable
     public const EMAIL_DIGEST_IMMEDIATE = self::EMAIL_FREQUENCY_IMMEDIATE;
     public const EMAIL_DIGEST_HOURLY = self::EMAIL_FREQUENCY_HOURLY;
     public const EMAIL_DIGEST_DAILY = self::EMAIL_FREQUENCY_DAILY;
+
+    /**
+     * The posting status this member has been given on each of $groupIds, keyed by group id
+     * and upper-cased. Groups where the moderators have expressed no view are absent.
+     *
+     * Only a status that is actually set counts. A membership row with no posting status is
+     * not a moderation decision: rippling creates such rows itself (see
+     * ExpandService::addPosterMembershipToRippledGroups), so reading a blank status as
+     * "moderated" would hold every rippled-in post from everyone rippling has ever joined
+     * to a group. ContentCheckService::isUserModerated deliberately takes the opposite view
+     * for posts made to a group directly, where a member joined that group themselves.
+     */
+    public static function explicitPostingStatuses(int $userid, array $groupIds): array
+    {
+        $groupIds = array_values(array_unique(array_map('intval', $groupIds)));
+        if (empty($groupIds)) {
+            return [];
+        }
+
+        $rows = DB::table('memberships')
+            ->select('groupid', 'ourPostingStatus')
+            ->where('userid', $userid)
+            ->whereIn('groupid', $groupIds)
+            ->whereNotNull('ourPostingStatus')
+            ->where('ourPostingStatus', '<>', '')
+            ->get();
+
+        $statuses = [];
+        foreach ($rows as $row) {
+            $statuses[(int) $row->groupid] = strtoupper($row->ourPostingStatus);
+        }
+
+        return $statuses;
+    }
 
     protected $casts = [
         'added' => 'datetime',

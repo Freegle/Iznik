@@ -42,6 +42,8 @@ import (
 	"github.com/freegle/iznik-server-go/deprecation"
 	"github.com/freegle/iznik-server-go/domain"
 	"github.com/freegle/iznik-server-go/donations"
+	"github.com/freegle/iznik-server-go/driving"
+	"github.com/freegle/iznik-server-go/electricals"
 	"github.com/freegle/iznik-server-go/emailtracking"
 	"github.com/freegle/iznik-server-go/export"
 	"github.com/freegle/iznik-server-go/group"
@@ -273,6 +275,16 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {object} item.ImpactResponse
 		// @Failure 400 {object} fiber.Error "Missing or empty name"
 		rg.Get("/item/impact", item.Impact)
+
+		// Electricals statistics
+		// @Router /electricals/stats [get]
+		// @Summary Public statistics for electrical items on Freegle
+		// @Description Rolling twelve-month figures for electrical reuse: counts and share, tonnes and CO2e, most popular and most unusual items, success rate against non-electrical posts, and the condition split. Generated on a schedule by the Laravel command electricals:stats and served from electricals_stats; not computed per request.
+		// @Tags electricals
+		// @Produce json
+		// @Success 200 {object} map[string]interface{} "Generated statistics payload"
+		// @Failure 404 {object} fiber.Error "No statistics generated yet"
+		rg.Get("/electricals/stats", electricals.Stats)
 
 		// Chats
 		// @Router /chat [get]
@@ -880,6 +892,12 @@ func SetupRoutes(app *fiber.App) {
 		rg.Get("/locations", location.SearchLocations)
 		rg.Get("/town/near", town.Near)
 
+		// Road drive time/distance from the logged-in member to a batch of
+		// points, via the routing server's reach engine. Fail-soft: empty
+		// results when the engine is unavailable (clients show crow-flies).
+		// @Router /drivedistance [post]
+		rg.Post("/drivedistance", driving.DriveDistance)
+
 		// Location Write Operations
 		rg.Put("/locations", location.CreateLocation)
 		rg.Patch("/locations", location.UpdateLocation)
@@ -1040,7 +1058,7 @@ func SetupRoutes(app *fiber.App) {
 		// Message Actions (POST)
 		// @Router /message [post]
 		// @Summary Message actions
-		// @Description Handles message actions: Promise, Renege, OutcomeIntended, Outcome, AddBy, RemoveBy, View, Approve, Reject, Delete, Spam, Hold, Release, ApproveEdits, RevertEdits, PartnerConsent, Reply, JoinAndPost, Move, BackToPending, RejectToDraft, Report. When tnpostid is supplied instead of id, the action is applied to ALL Freegle messages sharing that TN post ID.
+		// @Description Handles message actions: Promise, AcceptAgreement, Renege, OutcomeIntended, Outcome, AddBy, RemoveBy, View, Approve, Reject, Delete, Spam, Hold, Release, ApproveEdits, RevertEdits, PartnerConsent, Reply, JoinAndPost, Move, BackToPending, RejectToDraft, Report. When tnpostid is supplied instead of id, the action is applied to ALL Freegle messages sharing that TN post ID.
 		// @Tags message
 		// @Accept json
 		// @Produce json

@@ -233,6 +233,10 @@ func canModerateComment(myid uint64, commentID uint64) bool {
 	return canModerate(myid, groupid)
 }
 
+// flaggedReviewReason is what a member's other groups are told when a note about
+// them is flagged. flagOthers writes it; unflagOthers looks for it to undo that.
+const flaggedReviewReason = "Note flagged to other groups"
+
 // flagOthers flags a user for review in all their groups except the given group.
 // Sets reviewrequestedat on each membership so mods on those groups see the flag.
 func flagOthers(userid uint64, groupid uint64) {
@@ -242,12 +246,34 @@ func flagOthers(userid uint64, groupid uint64) {
 	db.Table("memberships").Where("userid = ? AND groupid != ?", userid, groupid).Pluck("groupid", &otherGroupIDs)
 
 	now := time.Now().Format("2006-01-02 15:04")
-	reason := "Note flagged to other groups"
 
 	for _, gid := range otherGroupIDs {
 		db.Table("memberships").Where("groupid = ? AND userid = ?", gid, userid).
-			Updates(map[string]interface{}{"reviewreason": reason, "reviewrequestedat": now})
+			Updates(map[string]interface{}{"reviewreason": flaggedReviewReason, "reviewrequestedat": now})
 	}
+}
+
+// unflagOthers takes away the reviews that flagged notes about this member asked
+// for on their other groups. Notes are removed outright rather than marked as
+// deleted, so without this the review outlives the note that explains it and
+// moderators are left with nothing to read.
+func unflagOthers(userid uint64) {
+	db := database.DBConn
+
+	// Any other flagged note about this member still needs those reviews.
+	var remaining int64
+	db.Table("users_comments").Where("userid = ? AND flag = 1", userid).Count(&remaining)
+
+	if remaining > 0 {
+		return
+	}
+
+	db.Table("memberships").Where("userid = ? AND reviewreason = ?", userid, flaggedReviewReason).
+		Updates(map[string]interface{}{
+			"reviewrequestedat": gorm.Expr("NULL"),
+			"reviewreason":      gorm.Expr("NULL"),
+			"heldby":            gorm.Expr("NULL"),
+		})
 }
 
 // Create handles POST /api/comment
@@ -359,6 +385,13 @@ func Edit(c *fiber.Ctx) error {
 		if commentUserid > 0 && commentGroupid > 0 {
 			flagOthers(commentUserid, commentGroupid)
 		}
+	} else if req.Flag != nil {
+		// Flag taken off, so the review it asked for on the other groups goes too.
+		var commentUserid uint64
+		db.Table("users_comments").Select("userid").Where("id = ?", req.ID).Row().Scan(&commentUserid)
+		if commentUserid > 0 {
+			unflagOthers(commentUserid)
+		}
 	}
 
 	return c.JSON(fiber.Map{
@@ -383,7 +416,17 @@ func Delete(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
+
+	// Read who the note is about, and whether it was flagged, before it goes.
+	var commentUserid uint64
+	var flag int
+	db.Table("users_comments").Select("userid, flag").Where("id = ?", id).Row().Scan(&commentUserid, &flag)
+
 	db.Table("users_comments").Where("id = ?", id).Delete(nil)
+
+	if flag > 0 && commentUserid > 0 {
+		unflagOthers(commentUserid)
+	}
 
 	return c.JSON(fiber.Map{
 		"success": true,

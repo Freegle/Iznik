@@ -28,7 +28,7 @@
               Log in to continue <v-icon icon="angle-double-right" />
             </b-button>
           </div>
-          <div v-else>
+          <div v-else class="my-posts-body">
             <NewUserInfo v-if="newUserPassword" :password="newUserPassword" />
             <MyPostsDonationAsk
               v-else-if="type === 'Offer' && !donated"
@@ -275,4 +275,13 @@ function donationMade() {
 <style scoped lang="scss">
 @import 'assets/css/sticky-banner.scss';
 @import 'assets/css/sidebar-ads.scss';
+@import 'assets/css/navbar.scss';
+
+.my-posts-body {
+  /* Room for the fixed bottom navigation bar, which slides back over the end
+     of the page when scrolling stops (Discourse 9808/805). It sits here rather
+     than on the posts list so that the searches panel, which renders after the
+     list, is not left under the bar. */
+  padding-bottom: $page-bottom-padding;
+}
 </style>

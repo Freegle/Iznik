@@ -47,11 +47,11 @@ func MetresToDegrees(m float64) float64 {
 // The resolution is unchanged from the exact polygon's, so the shape is the real one and
 // only the vertex count is reduced; coarsening the grid instead would alter which gaps
 // get closed, and so would change what the overlay claims is reachable.
-func displayPolygonFor(g *Graph, reached map[NodeID]float32, mode Mode, simplifyM float64) *GeoJSONPolygon {
+func displayPolygonFor(g *Graph, reached map[NodeID]float32, simplifyM float64) *GeoJSONPolygon {
 	if len(reached) == 0 {
 		return nil
 	}
-	res := NetworkResolution(g, reached, mode)
+	res := NetworkResolution(g, reached)
 	poly := IsochronePolygon(g, reached, res)
 	if len(poly.Geometry.Coordinates) == 0 || len(poly.Geometry.Coordinates[0]) < 4 {
 		return nil

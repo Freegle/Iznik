@@ -16,6 +16,22 @@ class ContentCheckService
         private readonly ?MessageSpatialService $messageSpatialService = null,
     ) {}
 
+    /**
+     * A block keyword whose alphanumeric skeleton is at least this long also
+     * gets the spaced-letters pass (see matchesSpaced). Domains and phrases
+     * qualify; single words do not.
+     */
+    public const SKELETON_MIN_LENGTH = 10;
+
+    /**
+     * Normalised form of each literal and fuzzy keyword, computed once per
+     * process: matchKeywords runs every keyword against every message, and
+     * there are over a thousand of them.
+     *
+     * @var array<string, string>
+     */
+    private static array $normalisedKeywords = [];
+
     public const CHECK_CONCERN_KEYWORD    = 'ConcernKeyword';
     public const CHECK_VAGUE             = 'Vague';
     public const CHECK_PHONE_NUMBER      = 'PhoneNumber';
@@ -898,19 +914,163 @@ class ContentCheckService
             ->where('category', '!=', 'allowed')
             ->get();
 
+        return $this->matchKeywords($keywords, $subject, $textbody, $groupid);
+    }
+
+    /**
+     * Whether a stored contentcheck_reasons blob records a hold by the receiving group's OWN
+     * rules - the reasons checkGroupOwnRules writes when a post ripples in.
+     *
+     * The column carries two different things. A copy held by the group's rules is written
+     * with its reasons at insert; but the periodic checkMessage pass also ANNOTATES any
+     * Pending row it visits - GroupModerated, MemberModerated, NoLocation and the rest are
+     * flags describing the row's situation, not a decision. A rippled-in copy that was Pending
+     * for some other reason and then got annotated must not read as "held by this group's
+     * rules", or nothing ever releases it: on 2026-09-04 five such copies sat Pending for
+     * hours with only a GroupModerated/MemberModerated flag on them.
+     *
+     * @param string|null $reasonsJson the messages_groups.contentcheck_reasons value
+     */
+    public static function reasonsHoldByGroupOwnRules(?string $reasonsJson): bool
+    {
+        if ($reasonsJson === null || $reasonsJson === '') {
+            return false;
+        }
+        $reasons = json_decode($reasonsJson, true);
+        if (!is_array($reasons)) {
+            return false;
+        }
+        foreach ($reasons as $r) {
+            $check = is_array($r) ? ($r['check'] ?? null) : null;
+            if ($check === self::CHECK_CONCERN_KEYWORD || $check === self::CHECK_PER_GROUP_WORRY) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The rules a group wrote down for itself: its own concern_keywords rows and its own
+     * worry words, with the Freegle-wide keywords left out.
+     *
+     * Used when a post ripples into a group. The post was already weighed against the rules
+     * of the community it was posted on - and a moderator there may have approved it in full
+     * knowledge of a Freegle-wide keyword - so re-running those here would hold it everywhere
+     * it travels over a decision already made. What has NOT been considered is whether it
+     * breaks the receiving group's own rules, and that is what this asks.
+     *
+     * @return array<int, array<string, mixed>> Empty when the group's own rules say nothing.
+     */
+    public function checkGroupOwnRules(string $subject, string $textbody, int $groupid): array
+    {
+        $keywords = DB::table('concern_keywords')
+            ->where('scope', 'group')
+            ->where('group_id', $groupid)
+            ->where('category', '!=', 'allowed')
+            ->get();
+
+        $reasons = [];
+
+        if ($r = $this->matchKeywords($keywords, $subject, $textbody, $groupid)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkPerGroupWorryWords($subject, $textbody, $groupid)) {
+            $reasons[] = $r;
+        }
+
+        return $this->dedupeReasons($reasons);
+    }
+
+    /**
+     * The Freegle-wide keywords whose action is 'block', optionally restricted to
+     * specific ids. These are the keywords a block decision is made from, so the
+     * backfill and the chat processor read the same list.
+     */
+    public function globalBlockKeywords(?array $keywordIds = null)
+    {
+        return DB::table('concern_keywords')
+            ->where('scope', 'global')
+            ->where('action', 'block')
+            ->where('category', '!=', 'allowed')
+            ->when($keywordIds !== null, fn($q) => $q->whereIn('id', $keywordIds))
+            ->orderBy('id')
+            ->get();
+    }
+
+    /**
+     * Does this text match a Freegle-wide concern keyword whose action is 'block'?
+     *
+     * Only block keywords are consulted, so the answer does not depend on which
+     * flag keyword happens to sit earlier in the table. Used by the chat processor
+     * (a hit drops the message) and by the backfill that runs when a block
+     * keyword is created. $keywordIds narrows the test to particular keywords.
+     */
+    public function checkBlockKeywords(string $subject, string $textbody, ?array $keywordIds = null): ?array
+    {
+        return $this->matchKeywords($this->globalBlockKeywords($keywordIds), $subject, $textbody, 0);
+    }
+
+    /**
+     * Match a set of concern_keywords rows against a post, returning the first hit.
+     * Shared by checkConcernKeywords (global + group) and checkGroupOwnRules (group only)
+     * so both apply the same match modes and excludes.
+     *
+     * A keyword whose action is 'block' is absolute. It is matched against the text
+     * as written, before and independently of the 'allowed' whitelist removal, and
+     * the innocent-context waiver is not consulted for it. Both of those steps exist
+     * to spare ordinary words in ordinary posts, and both can silently defeat a
+     * block: the whitelist contains everyday words such as 'shop', so removing them
+     * first turned 'ilovefreegle.shop' into 'ilovefreegle.' and the block keyword for
+     * that domain matched nothing; and the sidecar's similarity vote judged a scam
+     * mail's text "innocent". Block keywords are also tried first, so a text that
+     * matches both a flag and a block keyword is reported as blocked.
+     *
+     * Flag keywords keep the whitelist removal and the innocent-context check.
+     */
+    private function matchKeywords($keywords, string $subject, string $textbody, int $groupid): ?array
+    {
+        // Both the text and every literal/fuzzy keyword are folded to a plain,
+        // lower-case form first (KeywordTextNormalizer), so styled or obfuscated
+        // spellings - bold alphabets, zero-width characters, look-alike letters,
+        // "dot" spelled out - match the plain keyword. Regex patterns are used
+        // as written: folding would rewrite the pattern itself.
+        $raw = KeywordTextNormalizer::normalize($subject . ' ' . $textbody);
+
         // 'allowed'-category entries are a whitelist: text matching them is
         // removed BEFORE scanning, so a flagging keyword can't fire on a word
         // inside a whitelisted phrase. V1's worry words and the Go display path
         // both do this; this path only excluded allowed rows from the flagger
         // list, which left the whitelist with no effect - 'Cashes Green' kept
         // tripping the fuzzy keyword 'cash' via its 'cashes' inflection
-        // (Discourse 9944).
-        $original = $this->removeAllowedKeywords($subject . ' ' . $textbody, $groupid);
-        $haystack = strtolower($original);
+        // (Discourse 9944). Computed lazily: a block-only scan never needs it.
+        $cleaned = null;
 
-        foreach ($keywords as $kw) {
+        $ordered = collect($keywords)->sortBy(fn($kw) => ($kw->action ?? 'flag') === 'block' ? 0 : 1)->values();
+
+        foreach ($ordered as $kw) {
             $word = trim($kw->keyword);
             if ($word === '') {
+                continue;
+            }
+
+            $isBlock = ($kw->action ?? 'flag') === 'block';
+            $isRegex = $kw->match_mode === 'regex';
+
+            if ($isBlock) {
+                $original = $raw;
+            } else {
+                if ($cleaned === null) {
+                    $cleaned = $this->removeAllowedKeywords($raw, $groupid);
+                }
+                $original = $cleaned;
+            }
+            $haystack = $original;
+
+            $needle = $isRegex
+                ? $word
+                : (self::$normalisedKeywords[$word] ??= KeywordTextNormalizer::normalize($word));
+            if ($needle === '') {
                 continue;
             }
 
@@ -921,9 +1081,19 @@ class ContentCheckService
 
             $matched = match ($kw->match_mode) {
                 'regex'   => ($matchedText = $this->safePregCapture('/' . $word . '/i', $original)) !== null,
-                'literal' => preg_match('/\b' . preg_quote(strtolower($word), '/') . '\b/', $haystack) === 1,
-                default   => $this->matchesFuzzy($haystack, $word),
+                'literal' => $this->matchesLiteral($haystack, $needle),
+                default   => $this->matchesFuzzy($haystack, $needle),
             };
+
+            // A long block keyword (a domain, a phrase) gets a second pass that
+            // tolerates its letters being spaced or punctuated apart -
+            // "i l o v e f r e e g l e . s h o p", "i-l-o-v-e..." - see
+            // matchesSpaced. Never for short keywords or flag keywords: the
+            // looser the match, the longer the keyword must be to stay safe.
+            if (!$matched && $isBlock && !$isRegex
+                && mb_strlen(KeywordTextNormalizer::skeleton($needle)) >= self::SKELETON_MIN_LENGTH) {
+                $matched = $this->matchesSpaced($haystack, $needle);
+            }
 
             if (!$matched) {
                 continue;
@@ -936,7 +1106,8 @@ class ContentCheckService
             // Contextual check: if the embedding service identifies this as an
             // innocent use of the keyword (e.g. "glue gun" vs real weapon),
             // skip the flag. Falls back to flagging when the sidecar is absent.
-            if ($this->embeddingService?->isInnocentContext($original, $kw->category)) {
+            // Never consulted for a block keyword - see the method comment.
+            if (!$isBlock && $this->embeddingService?->isInnocentContext($original, $kw->category)) {
                 continue;
             }
 
@@ -952,6 +1123,52 @@ class ContentCheckService
         }
 
         return null;
+    }
+
+    /**
+     * Whole-word, case-insensitive, Unicode-aware literal match.
+     *
+     * $haystack is already lower-cased with mb_strtolower. The boundary is the
+     * Unicode generalisation of \b's word class (letters, digits, underscore):
+     * ASCII \b treats every non-ASCII letter as a boundary, so a keyword written
+     * in mathematical-bold letters (which scam mail uses to dodge filters) could
+     * never match, and 'caf' would match inside 'café'.
+     */
+    /**
+     * The keyword's letters and digits in order, each separated from the next by
+     * at most three characters that are neither, with a non-alphanumeric (or the
+     * edge of the text) on both sides. Every non-alphanumeric in the keyword is
+     * a separator too, so "ilovefreegle.shop" is looked for as
+     * i-l-o-v-e-f-r-e-e-g-l-e-s-h-o-p. The boundaries are what a plain skeleton
+     * comparison lacked: "ilovefreegleshopping" contains the domain's skeleton
+     * and is not the domain.
+     */
+    private function matchesSpaced(string $haystack, string $keyword): bool
+    {
+        $chars = preg_split('//u', KeywordTextNormalizer::skeleton($keyword), -1, PREG_SPLIT_NO_EMPTY);
+        if ($chars === false || $chars === []) {
+            return false;
+        }
+
+        $pattern = '/(?<![\pL\pN])'
+            . implode('[^\pL\pN]{0,3}', array_map(fn ($c) => preg_quote($c, '/'), $chars))
+            . '(?![\pL\pN])/u';
+
+        return @preg_match($pattern, $haystack) === 1;
+    }
+
+    private function matchesLiteral(string $haystack, string $keyword): bool
+    {
+        $pattern = '/(?<![\pL\pN_])' . preg_quote(mb_strtolower($keyword), '/') . '(?![\pL\pN_])/u';
+        $result = @preg_match($pattern, $haystack);
+
+        if ($result === false) {
+            // Invalid UTF-8 in the text: fall back to a byte-wise match so a
+            // damaged message cannot switch the keyword off.
+            $result = preg_match('/\b' . preg_quote(strtolower($keyword), '/') . '\b/', strtolower($haystack));
+        }
+
+        return $result === 1;
     }
 
     // -------------------------------------------------------------------------

@@ -28,18 +28,41 @@ a post you think is out of their area.
 
 ## How posters appear in your community
 
-When a post ripples into your community, **the poster is automatically joined as a full
-Member/Approved**. This is intentional - moderators need to be able to contact posters
-and moderate their posts in the usual way, so they must be real members.
+When a post ripples into your community, **the poster is automatically joined as a
+Member/Approved**. That is what lets the post live on your community and lets you
+moderate it.
+
+It is not a relationship with your community, though, and it does not make the poster
+yours to write to. They posted somewhere else and may never have heard of you - see
+[Talking to the poster](#talking-to-the-poster) below.
 
 What this means in practice:
 
-- You can contact the poster, moderate their post, and use all the normal moderation
-  tools, exactly as you would for any other member.
-- The poster appears in your member list.
+- You moderate their post exactly as you would any other: approve it, or take it off
+  your community.
+- The poster appears in your member list, but with no Chat button and no standard
+  messages that only write to a member, because there is no conversation for you to
+  start. If they write to you first, that chat works as normal.
+- You can still take them off your community or ban them, and that happens as usual. It
+  is done quietly: they never joined you, so a message about it would be as confusing as
+  one about their post.
 - Your community's member count may include rippled members.
 - The join is recorded as **'Rippled'** in the membership log, so you can distinguish it
   from a manual or organic join if you need to.
+- If they later join your community themselves, or move house into your area, the
+  membership becomes an ordinary one and none of the above applies any more.
+
+### Talking to the poster
+
+Anything we send a poster about their post comes from the community they posted it on.
+If a post only reached you by rippling, **your moderation of it is silent to them**:
+taking it off your community removes it here and tells them nothing, because it is still
+live where they put it.
+
+So on a rippled-in post you will not see Blank Reply, or the standard messages whose only
+job is to write to the poster. Approving it and taking it off your community are still
+yours to do. This holds however you remove it - the Reject button, a standard message
+that rejects, or a standard message that deletes.
 
 ---
 
@@ -52,11 +75,24 @@ yours. You will see a small notice on the post making this clear ("This post has
 in from a neighbouring community").
 
 A post only ripples after it has already been approved on the community where it started,
-so it has already been vetted. We therefore do not make it sit out a full review again.
-**With the default settings it is approved on your community straight away** - it appears
-among your approved posts with the rippled-in notice, not in your pending list. You can
-still reject it for the usual reasons (spam, breaks the rules, wrong sort of thing) - see
-"Rejecting a rippled-in post" below.
+so it has already been vetted - against **that** community's rules. We therefore do not
+make it sit out a full review again: **with the default settings it is approved on your
+community straight away**, appearing among your approved posts with the rippled-in notice
+rather than in your pending list.
+
+Your own rules still get a say. As the post ripples in it is checked against **your
+community's own keywords and worry words**, and if it matches, that copy goes to your
+**pending list** instead - your copy, on your community, leaving every other community's
+copy alone. What matched is recorded on the post so you can see why, and it waits for one
+of you to decide rather than auto-approving when the usual window passes.
+
+Freegle-wide keywords are not applied again here. Those were weighed on the community the
+post was made on, where a moderator may have approved it knowing exactly what it said. So
+this catches the thing **your** community bans and others allow - which is the case worth
+keeping your group's word list up to date for.
+
+You can still reject it for the usual reasons (spam, breaks the rules, wrong sort of
+thing) - see "Rejecting a rippled-in post" below.
 
 (If your instance is configured with a mod-veto window - `RIPPLE_RIPPLED_IN_PENDING_HOURS`
 set above zero - a rippled-in post instead waits in your pending list for that many hours
@@ -170,10 +206,16 @@ Importantly, this preference now applies in **three** ways:
 
 - **What they see when browsing** - moving it "Nearer" hides posts from further away.
 - **The posts we email them** (their daily digest and immediate emails) - the same narrowing.
-- **How far away other people see their own posts** (new). Setting it "Nearer" also caps who
+- **How far away other people see their own posts**. Setting it "Nearer" also caps who
   their own offers and wanteds reach: someone far away won't see the post in their Nearby feed
   or be emailed about it, even though rippling had carried it that far. Left at "Further" (the
   default), there is no such cap and the post reaches as far as rippling takes it.
+
+Members who want those to differ can now say so. Under the slider there is a **Set separately**
+link, which splits it into two: "Posts I see" and "Who sees my posts". Until they use it the two
+move together exactly as before, so nothing changes for the great majority. The second slider can
+go further than the first - a member may reasonably want to browse only their own town while
+still letting their giveaways travel as far as rippling will carry them.
 
 It still has **no effect on the rippling engine itself** (what it approves or joins, or how far
 it carries a post) **or on moderation**, and their choice is remembered between visits.
@@ -248,6 +290,7 @@ settings for that community are set as follows:
 - **Immediate email** - downgraded to daily digest.
 - **Daily digest or no emails** - preserved exactly as-is.
 - **Community events and volunteering** - copied from their home community settings (no extra emails).
+- **No community at all** - a poster who has left every community starts with all emails off, rather than on a daily digest.
 
 The poster receives one bundled intro email explaining all of this, rather than a separate
 welcome email from each community they were joined to.

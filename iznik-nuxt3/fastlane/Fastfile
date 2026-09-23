@@ -1,8 +1,34 @@
 default_platform(:android)
 
+# The release bundles run close to the 8GB CI container limit (see
+# android/gradle.properties); when the cgroup OOM killer takes the Gradle JVM,
+# gradle reports only "daemon disappeared unexpectedly" with no memory evidence.
+# Sample resident-set sizes for the whole lane so both failures and green runs
+# show what was resident and how much headroom the build actually has.
+MEM_SAMPLE_LOG = '/tmp/gradle-mem.log'.freeze
+
+def start_mem_sampler
+  File.delete(MEM_SAMPLE_LOG) if File.exist?(MEM_SAMPLE_LOG)
+  pid = spawn("while true; do date '+%H:%M:%S' >> #{MEM_SAMPLE_LOG}; " \
+              "ps -eo rss,pid,comm --sort=-rss | head -8 >> #{MEM_SAMPLE_LOG}; " \
+              "sleep 15; done")
+  Process.detach(pid)
+end
+
+def dump_mem_samples(label, lines)
+  return unless File.exist?(MEM_SAMPLE_LOG)
+  UI.important("=== #{label}: top RSS (KB) sampled every 15s, newest last ===")
+  UI.message(File.read(MEM_SAMPLE_LOG).split("\n").last(lines).join("\n"))
+end
+
 platform :android do
+  error do |lane, exception|
+    dump_mem_samples("#{lane} failed", 90)
+  end
+
   desc "Build and deploy to Google Play Beta Testing"
   lane :beta do
+    start_mem_sampler
     # Validate that Google Play API key file exists
     unless File.exist?('google-play-api-key.json')
       UI.user_error!("❌ CRITICAL: Google Play API key file not found at google-play-api-key.json")
@@ -81,11 +107,13 @@ platform :android do
     UI.success("📊 Maximum version code across all tracks: #{latest_build}")
     UI.success("📊 New version code: #{new_version_code}")
 
-    # Each gradle call runs in its own JVM (--no-daemon). The two builds below are
-    # back to back, and a shared daemon holds the first one's heap while the second
-    # runs. android/gradle.properties allows that daemon 4GB plus 1GB metaspace, which
-    # the 8GB CI container cannot hold alongside the Kotlin daemon and node - the
-    # daemon is killed and gradle reports only that it "disappeared unexpectedly".
+    # Each gradle call runs in its own JVM (--no-daemon): the two builds below are
+    # back to back, and a shared daemon would hold the first build's heap while the
+    # second runs. The JVM sizing itself lives in android/gradle.properties - see
+    # the comment there for how the release bundle is kept inside the 8GB CI
+    # container (a breach is killed by the cgroup OOM killer and gradle reports
+    # only that the daemon "disappeared unexpectedly"; the mem sampler started at
+    # the top of this lane captures what was actually resident).
     # Build the Android App Bundle (AAB) for Play Store
     gradle(
       task: 'bundle',
@@ -129,10 +157,12 @@ platform :android do
       skip_upload_screenshots: true
     )
     UI.success("✅ Successfully uploaded to Google Play Beta Testing!")
+    dump_mem_samples("beta succeeded - memory headroom evidence", 27)
   end
 
   desc "Build and deploy ModTools to Google Play Beta Testing"
   lane :modtools_beta do
+    start_mem_sampler
     unless File.exist?('modtools-google-play-api-key.json')
       UI.user_error!("❌ CRITICAL: modtools-google-play-api-key.json not found")
     end
@@ -212,6 +242,7 @@ platform :android do
       skip_upload_screenshots: true
     )
     UI.success("✅ Successfully uploaded ModTools to Google Play Beta!")
+    dump_mem_samples("modtools_beta succeeded - memory headroom evidence", 27)
   end
 
   desc "Build and deploy ModTools directly to Google Play Production"

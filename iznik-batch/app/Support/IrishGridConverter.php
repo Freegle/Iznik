@@ -33,7 +33,7 @@ class IrishGridConverter
 
     // Irish Grid projection constants
     private const IG_LAM0 = -0.13962634016;  // −8° in radians
-    private const IG_PHI0 = 0.93375297612;   // 53.5° in radians
+    private const IG_PHI0 = 0.93375114981696627;  // 53.5° in radians
     private const IG_E0   = 200_000.0;
     private const IG_N0   = 250_000.0;
     private const IG_K0   = 1.000035;
@@ -84,7 +84,7 @@ class IrishGridConverter
         $n3 = $n ** 3;
         $n4 = $n ** 4;
 
-        $M0 = $a * (
+        $M0 = self::AM_B * (
             (1 + $n + 5/4 * $n2 + 5/4 * $n3) * self::IG_PHI0
           - (3*$n + 3*$n2 + 21/8 * $n3) * sin(self::IG_PHI0) * cos(self::IG_PHI0)
           + (15/8 * $n2 + 15/8 * $n3) * sin(2*self::IG_PHI0) * cos(2*self::IG_PHI0)
@@ -94,7 +94,7 @@ class IrishGridConverter
         $phi = (($N - $N0) + $k0 * $M0) / ($k0 * $a);
 
         for ($i = 0; $i < 100; $i++) {
-            $M = $a * (
+            $M = self::AM_B * (
                 (1 + $n + 5/4 * $n2 + 5/4 * $n3) * $phi
               - (3*$n + 3*$n2 + 21/8 * $n3) * sin($phi) * cos($phi)
               + (15/8 * $n2 + 15/8 * $n3) * sin(2*$phi) * cos(2*$phi)
@@ -115,7 +115,7 @@ class IrishGridConverter
         $rho = $a * (1 - $e2) / (1 - $e2 * $sinPhi ** 2) ** 1.5;
         $eta2 = $nu / $rho - 1;
 
-        $x = ($E - $E0) / ($k0 * $nu);
+        $x = ($E - $E0) / $k0;
 
         $lat = $phi
             - ($tanPhi / (2 * $rho * $nu)) * $x**2

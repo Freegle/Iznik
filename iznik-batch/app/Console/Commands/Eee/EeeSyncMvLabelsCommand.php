@@ -45,6 +45,9 @@ class EeeSyncMvLabelsCommand extends Command
         $dryRun = (bool) $this->option('dry-run');
 
         if (!$dryRun && !$secret) {
+            // Scheduled every 10 minutes: no secret means the label loop is dark.
+            \App\Support\EeeAlarm::raise('sync-secret',
+                'eee:sync-mv-labels cannot run: EEE_SYNC_SECRET is not set');
             $this->error('EEE_SYNC_SECRET env var is required (set on iznik-batch and on freegle-eee-browser).');
             return Command::FAILURE;
         }
@@ -129,6 +132,10 @@ class EeeSyncMvLabelsCommand extends Command
                 ->post($url . '/api/review/sync-mv-labels', ['labels' => $chunk]);
 
             if (!$resp->successful()) {
+                if (in_array($resp->status(), [401, 403], true)) {
+                    \App\Support\EeeAlarm::raise('sync-credential',
+                        'eee:sync-mv-labels rejected by eee-browser (HTTP ' . $resp->status() . ') - EEE_SYNC_SECRET mismatch?');
+                }
                 $this->error(sprintf('Batch %d failed: HTTP %d %s', $i, $resp->status(), $resp->body()));
                 return Command::FAILURE;
             }

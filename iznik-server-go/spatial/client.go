@@ -150,8 +150,9 @@ func Within(dataset, polygonWKT string) ([]int64, error) {
 }
 
 // ReachContaining calls GET /v1/reach/containing: all live reaches covering
-// the point. `in` are definite; `partial` fall in the raster boundary band
-// and the caller must exact-test them against rippling_reach.polygon.
+// the point. `in` are definite; `partial` fall in a legacy coarse raster's
+// boundary band - healthy cells-backed index rows never produce them, and
+// callers log and exclude them.
 func ReachContaining(lng, lat float64) (in []int64, partial []int64, err error) {
 	params := url.Values{
 		"lng": {fmt.Sprintf("%f", lng)},

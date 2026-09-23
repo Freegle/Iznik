@@ -20,6 +20,12 @@ use Illuminate\Mail\Mailables\Envelope;
  * behaviour that gets a sender deferred in the first place.
  *
  * So: one email, saying there are messages waiting and where to read them.
+ *
+ * "Where" is two places. Chats with other members are read on the member
+ * site. A moderator's chats on the volunteers' side of their groups (and
+ * mod-to-mod chats) are read in ModTools, and the member site does not list
+ * them at all - so each half of the summary carries its own link, and a half
+ * with nothing in it is left out.
  */
 class UnreadChatCatchUpMail extends MjmlMailable
 {
@@ -34,17 +40,21 @@ class UnreadChatCatchUpMail extends MjmlMailable
         public readonly int $messageCount,
         public readonly string $delayedSince,
         public readonly ?string $provider,
+        public readonly int $modChatCount = 0,
+        public readonly int $modMessageCount = 0,
     ) {
         parent::__construct();
     }
 
     protected function getSubject(): string
     {
-        if ($this->chatCount === 1) {
+        $chats = $this->chatCount + $this->modChatCount;
+
+        if ($chats === 1) {
             return 'You have unread messages on '.config('freegle.branding.name');
         }
 
-        return "You have unread messages in {$this->chatCount} chats on ".config('freegle.branding.name');
+        return "You have unread messages in {$chats} chats on ".config('freegle.branding.name');
     }
 
     /**
@@ -76,7 +86,9 @@ class UnreadChatCatchUpMail extends MjmlMailable
     public function build(): static
     {
         $userSite = rtrim((string) config('freegle.sites.user'), '/');
+        $modSite = rtrim((string) config('freegle.sites.mod'), '/');
         $chatsUrl = $this->trackedUrl($userSite . '/chats', 'catchup_chats', 'chats');
+        $modChatsUrl = $this->trackedUrl($modSite . '/chats', 'catchup_modchats', 'modchats');
         $settingsUrl = $this->trackedUrl($userSite . '/settings', 'footer_settings', 'settings');
 
         return $this->mjmlView('emails.mjml.deferrals.unread-chat-catchup', array_merge([
@@ -84,9 +96,12 @@ class UnreadChatCatchUpMail extends MjmlMailable
             'email' => $this->recipientEmail,
             'chatCount' => $this->chatCount,
             'messageCount' => $this->messageCount,
+            'modChatCount' => $this->modChatCount,
+            'modMessageCount' => $this->modMessageCount,
             'delayedSince' => $this->delayedSince,
             'provider' => $this->provider,
             'chatsUrl' => $chatsUrl,
+            'modChatsUrl' => $modChatsUrl,
             'settingsUrl' => $settingsUrl,
             'userSite' => $userSite,
         ], $this->getTrackingData()), 'emails.text.deferrals.unread-chat-catchup')

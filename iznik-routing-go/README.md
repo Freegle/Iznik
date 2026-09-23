@@ -21,6 +21,8 @@ This means the same spatial capabilities (isochrones, nearby freeglers, group bo
 
 ## API endpoints
 
+Set `REACH_DIR_PREV` alongside `REACH_DIR` to keep the PREVIOUS partition build loaded after a map refresh: stored labels embed their build's fingerprint and every evaluator routes each blob to the build that can read it, so the re-backfill becomes a rolling migration instead of a site-wide "nolabels" window (costs a second resident graph+matrices, ~5GB).
+
 All endpoints are available on both ports. On the external port (8196) every `/v1/*` endpoint requires a valid JWT passed as `?jwt=<token>` or an `Authorization` header; `/health` and `/demo` are always open.
 
 | Endpoint | Description |
@@ -33,11 +35,41 @@ All endpoints are available on both ports. On the external port (8196) every `/v
 | `GET /v1/groups/nearby?lat=&lng=` | Freegle group boundaries near a point (GeoJSON FeatureCollection) |
 | `GET /v1/ripple-schedule?lat=&lng=&mode=&ticks=&max_minutes=` | The "rippling out" schedule: the expanding sequence of reachable areas over time used to introduce a post gradually. Steps are smaller in dense regions and larger across empty voids. Powers the Rippling Explorer |
 | `POST /v1/ripple-eval` | Evaluate a rippling scenario for a post (JSON body) — who would be reached at each tick |
+| `GET /v1/reach-labels?lat=&lng=&minutes=&msgid=` | Reach engine: compute a post's per-region reach labels (returns the stored-form bytes, base64, plus the build fingerprint). With `msgid` it also answers the road-native origin-group union: `origin_union_secs` (the budget at which the label covers 90% of the origin group's road nodes; -1 = never) and `union_leaves` (the group area's partition regions, merged into the stored leaves so union-admitted members discover the post). 503 until `REACH_DIR` is configured |
+| `POST /v1/reach-union` | Reach engine: the backfill face of the union computation - decode an already-stored label blob (`{labels, msgid}`) and return `origin_union_secs` + `union_leaves` + the build fingerprint, no label refetch. 422 when the blob belongs to a build the server no longer holds |
+| `POST /v1/reach-arrival` | Reach engine: exact arrival seconds + in-reach flag for up to 1000 points, evaluated from label bytes (JSON body `{labels, points[]}`) |
+| `POST /v1/reach-eval` | Reach engine: membership verdicts from STORED labels (JSON body `{lat, lng, msgids[], budget?, discover?}`) — `in`/`out`/`nolabels` per candidate at the post's current tick budget (`budget:"max"` for its full budget), honouring `rejected_groups` area subtractions (POLYGON or MULTIPOLYGON); an `out` inside the post's origin group's area carries `origin_area: true` (callers let the union-holding cell grid decide); `discover:true` additionally returns label-admitted, non-held posts the candidate list missed (msgids may then be empty). A non-snapping member point answers all-`nolabels`, never a 4xx. The labels-truth read side for the browse feed, badge, search, reply gate and digest |
+| `POST /v1/drive-metrics` | Reach engine: road drive minutes AND road miles from one origin to up to 1000 targets in a single call (one labeling query + table lookups). Powers the site's road-distance display via apiv2 `/drivedistance` |
+| `GET /v1/blur?lat=&lng=&metres=` | Road-aware location blur: a deterministic pseudo-random road point whose CONVERGED road distance is within [R/2, 3R/2] metres AND whose crow-flies displacement is at least R/4 — never jumps an unbridged river the way circular blur can, and never sits deceptively close along a hairpin. Engine-independent (works without `REACH_DIR`) |
+| `POST /v1/blur-batch` | The batch face of blur (up to 1000 points, JSON `{metres, points[]}`): apiv2 blurs every member/post display location through this, one call per list response |
+| `GET /v1/leaf?lat=&lng=` | Which partition region(s) a point belongs to (two for a mid-lane point straddling a region cut) — the tagging primitive for road-aware feed prefilters |
 | `GET /v1/posts-for-member?lat=&lng=&date=&max_minutes=` | The posts a member at this location would be shown (`date` defaults to today, `max_minutes` to 30) |
 | `GET /v1/digest-simulator?lat=&lng=&max_minutes=&w_closeness=&w_freshness=&w_budget=&w_anchor=&cap=&group_by_poster=` | Simulate a member's ranked digest with tunable scoring weights and a result cap |
 | `GET /swagger` | Browsable OpenAPI reference (Redoc). Raw spec at `/swagger/swagger.json` |
 
 See [the rippling algorithm reference](../docs/developers/reference/rippling-algorithm.md) for the thinking behind the ripple / digest endpoints.
+
+---
+
+## Deprecated endpoints
+
+`GET /v1/digest-simulator` and `GET /v1/posts-for-member` have no remaining
+callers (the ModTools digest-simulator front end was removed; posts-for-member
+was never adopted). Both endpoints are kept because old clients may persist,
+but they get no further work and are candidates for removal in a future
+release.
+
+## Reach engine
+
+Reach (the growing drive-time area of a post) can be computed once and stored as
+a few KB of per-region labels instead of being re-searched on every expansion
+tick. Every arrival the engine computes carries road METRES alongside seconds
+(verified UK-wide: 5.1M checks), which is what lets the site show "miles by
+road" instead of crow-flies. The road graph is contracted to junctions, cut into regions along its
+natural narrow seams by a maximum-flow partitioner, and membership is answered
+exactly from labels + per-region tables. Plain-English walkthrough, measurements
+and verification: [REACH-ENGINE.md](REACH-ENGINE.md). Offline tooling:
+`go run . reach <build|partition|matrices|query|parity|sweep>`.
 
 ---
 
@@ -60,6 +92,7 @@ Multiplier: `1 + W × (5 − q) / 4` where q is the IMD quintile (1 = most depri
 | `SPATIAL_PORT` | `8196` | External (authenticated) port |
 | `SPATIAL_INTERNAL_PORT` | `8194` | Internal (unauthenticated) port |
 | `SPATIAL_KNN_URL` | `http://localhost:8194` | URL of the `iznik-spatial-go` KNN index service |
+| `REACH_DIR` | *(empty)* | Reach-engine artifact directory (`graph.snap` + `partition.snap` + `matrices.snap`). When set, the server boots from artifacts in seconds instead of rebuilding from the PBF, and the reach endpoints go live; missing partition/matrices are derived at boot (~3min UK) and saved back. See [REACH-ENGINE.md](REACH-ENGINE.md) |
 | `ROUTING_DRIVE_SPEED_FACTOR` | `1.0` | Global multiplier on drive speeds, applied at graph **build** time (e.g. `0.7` ≈ OSRM, `0.6` ≈ Google with UK traffic). Changing it takes effect on the next graph build/restart |
 | `JWT_SECRET` | *(required for external port)* | HMAC secret for JWT validation |
 | `MYSQL_HOST` | `localhost` | MySQL host (for group boundaries and session validation) |

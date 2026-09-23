@@ -25,6 +25,12 @@ use Illuminate\Support\Facades\Log;
  * The email path (IncomingMailService) is never touched. Logic here is
  * duplicated — not extracted — until parity is proven.
  *
+ * Because the two are tied together only by hand, a fix made to one and not
+ * the other is invisible. Tests\Unit\Services\TrashNothing\EmailPathMirrorDriftTest
+ * pins a digest of both mirrored email-path methods and fails the moment
+ * either changes, so the mirror is at least LOOKED at on every such edit.
+ * tn:parity-check remains the thorough check of whether it is right.
+ *
  * With $dryRun = true, no DB writes occur. Every would-be write emits a
  * TN-SYNC-TRACE [WRITE] log line for diffing against the email path.
  */
@@ -243,7 +249,13 @@ class GroupPostIngestionService
         // Update user's last access.
         Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastaccess=now()');
         if (!$this->dryRun) {
-            DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()]);
+            // ->save() rather than a query-builder update: $user is already a
+            // loaded Eloquent model, and the repo convention is that writes go
+            // through it so model events fire and Laravel Auditing sees them
+            // (iznik-batch/CLAUDE.md, "Code Style"). The trace line above is
+            // diffed byte-for-byte against the email path and is unaffected.
+            $user->lastaccess = now();
+            $user->save();
         }
 
         // No membership gate: the group here was chosen for the post (via
@@ -462,22 +474,28 @@ class GroupPostIngestionService
             if ($locationId && $user->id) {
                 Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastlocation=' . $locationId);
                 if (!$this->dryRun) {
-                    DB::table('users')->where('id', $user->id)->update(['lastlocation' => $locationId]);
+                    $user->lastlocation = $locationId;
+                    $user->save();
                 }
             }
 
             $fromName = $user->fullname ?? $user->firstname ?? null;
 
+            // TN's own post date, however it arrived. The OpenAPI client hands
+            // us a DateTime; an array-shaped post (fixtures, --local-testing,
+            // the backfill path) carries the same value as an ISO-8601 string,
+            // and taking now() for those silently rewrote every such post's
+            // date to ingestion time.
+            $postedAt = $this->normalizePostDate($date);
+
             // Synthesize minimal RFC822 message blob so downstream code that
             // re-parses messages.message still recovers the key fields.
-            $dateStr = $date instanceof \DateTime
-                ? $date->format('D, d M Y H:i:s +0000')
-                : now()->format('D, d M Y H:i:s +0000');
+            $dateStr = ($postedAt ?? now())->format('D, d M Y H:i:s +0000');
             $groupEmail = $group->nameshort . '@' . config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
             $rfc822 = $this->synthesizeRfc822($fromName, $groupEmail, $subject, $dateStr, $messageid, $postId, $lat, $lng, $content);
 
             $msgData = [
-                'date'            => $date instanceof \DateTime ? $date->format('Y-m-d H:i:s') : now(),
+                'date'            => $postedAt !== null ? $postedAt->format('Y-m-d H:i:s') : now(),
                 'source'          => Message::SOURCE_EMAIL,
                 'sourceheader'    => self::SOURCEHEADER,
                 'message'         => $rfc822,
@@ -1004,6 +1022,31 @@ class GroupPostIngestionService
      * @param  string  $arrayKey  Key name for array (fixture) access
      * @param  string  $method    Getter method name for object access
      */
+    /**
+     * TN's post date as a DateTimeInterface, or null when there isn't a usable one.
+     *
+     * The API client returns a DateTime, but the same post reaches us as a plain
+     * array with an ISO-8601 string from fixtures, --local-testing and anything
+     * that rebuilt the post from JSON. Both must keep TN's date; only a missing
+     * or unparseable value falls back to now().
+     */
+    private function normalizePostDate(mixed $date): ?\DateTimeInterface
+    {
+        if ($date instanceof \DateTimeInterface) {
+            return $date;
+        }
+
+        if (is_string($date) && trim($date) !== '') {
+            try {
+                return new \DateTimeImmutable($date);
+            } catch (\Exception $e) {
+                Log::warning('TN post ingestion: unparseable post date, using now()', ['date' => $date]);
+            }
+        }
+
+        return null;
+    }
+
     private function getField(mixed $post, string $arrayKey, string $method): mixed
     {
         if (is_array($post)) {

@@ -21,8 +21,6 @@ class PostSyncer
 
     // /posts/all enforces per_page <= 50.
     private const PAGE_SIZE = 50;
-    // TN API rate limit is 2 requests/second; enforce a minimum 750ms gap.
-    private const MIN_REQUEST_INTERVAL_US = 750_000;
 
     /**
      * Outcomes meaning the post was never going to be posted to FD anyway, so
@@ -47,7 +45,10 @@ class PostSyncer
     private const REASON_INGESTION_EXCEPTION = 'ingestion-exception';
 
     private GroupPostIngestionService $ingestionService;
-    private float $lastRequestTime = 0.0;
+
+    // Shared with RatingsSyncer and UserChangesSyncer — TN rate-limits per API
+    // key, and one tn:sync run calls all three endpoints with the same key.
+    private TrashNothingRateLimiter $rateLimiter;
 
     // Set only for the duration of ingestFetchedPost(), so a backfilled post's
     // routed Loki entry is distinguishable from one the scheduled sync caught.
@@ -63,7 +64,9 @@ class PostSyncer
         // need a scenario-specific fixture directory instead of the shared default.
         // Defaults to tests/fixtures/tn_sync.
         private ?string $fixtureDir = null,
+        ?TrashNothingRateLimiter $rateLimiter = null,
     ) {
+        $this->rateLimiter = $rateLimiter ?? app(TrashNothingRateLimiter::class);
         $this->ingestionService = new GroupPostIngestionService(
             dryRun: $this->dryRun,
             loki: $this->loki,
@@ -466,12 +469,7 @@ class PostSyncer
 
     private function throttle(): void
     {
-        $elapsed = microtime(true) - $this->lastRequestTime;
-        $waitUs  = self::MIN_REQUEST_INTERVAL_US - (int) ($elapsed * 1_000_000);
-        if ($waitUs > 0) {
-            usleep($waitUs);
-        }
-        $this->lastRequestTime = microtime(true);
+        $this->rateLimiter->await();
     }
 
     private function buildApiClient(): PostsApi

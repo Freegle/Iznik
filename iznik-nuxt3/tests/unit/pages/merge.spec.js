@@ -61,6 +61,11 @@ async function mountMergePage() {
       stubs: {
         NoticeMessage: { template: '<div class="notice"><slot /></div>' },
         SupportLink: { template: '<span>support</span>' },
+        // The page loads ExternalLink lazily. Left real, that import can still be in
+        // flight when the test ends, and its rejection then surfaces as an unhandled
+        // "async component loader" error that fails the whole run (seen on CI), so stub
+        // it as the other page specs do.
+        ExternalLink: { template: '<a><slot /></a>', props: ['href'] },
         // The shared global b-form-select stub reads the native <select>'s
         // string value, losing the numeric type of the bound user ids. This
         // page's ids are always numeric, so override with a stub that

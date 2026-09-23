@@ -16,9 +16,16 @@ const mockConvertToStory = vi.fn()
 const mockReferto = vi.fn()
 const mockReport = vi.fn()
 
+let mockUser = {
+  id: 77,
+  displayname: 'Poster',
+  profile: { paththumb: 'p.jpg' },
+}
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => ({
-    user: { id: 77, displayname: 'Poster', profile: { paththumb: 'p.jpg' } },
+    get user() {
+      return mockUser
+    },
   }),
 }))
 
@@ -115,14 +122,14 @@ describe('newsfeed store', () => {
       expect(result).toBe(5)
       expect(store.count).toBe(5)
       expect(store.lastDistance).toBe('nearby')
-      expect(mockCount).toHaveBeenCalledWith('nearby', true)
+      expect(mockCount).toHaveBeenCalledWith('nearby', true, undefined)
     })
 
     it('defaults distance to anywhere when falsy', async () => {
       mockCount.mockResolvedValue({ count: 3 })
 
       await store.fetchCount(0)
-      expect(mockCount).toHaveBeenCalledWith('anywhere', true)
+      expect(mockCount).toHaveBeenCalledWith('anywhere', true, undefined)
     })
 
     it('returns 0 when API returns null', async () => {
@@ -137,7 +144,7 @@ describe('newsfeed store', () => {
       mockCount.mockResolvedValue({ count: 1 })
 
       await store.fetchCount('nearby', false)
-      expect(mockCount).toHaveBeenCalledWith('nearby', false)
+      expect(mockCount).toHaveBeenCalledWith('nearby', false, undefined)
     })
   })
 
@@ -469,6 +476,7 @@ describe('newsfeed store', () => {
         'nearby',
         undefined,
         undefined,
+        undefined,
         undefined
       )
     })
@@ -482,8 +490,26 @@ describe('newsfeed store', () => {
         'anywhere',
         undefined,
         undefined,
+        undefined,
         undefined
       )
+    })
+
+    it('forwards the travel-time budget for road-aware narrowing', async () => {
+      mockFetchNews.mockResolvedValue([])
+      const prev = mockUser
+      mockUser = { ...prev, settings: { newsfeedMinutes: 25 } }
+
+      await store.fetchFeed(16093)
+      expect(mockFetchNews).toHaveBeenCalledWith(
+        null,
+        16093,
+        undefined,
+        undefined,
+        undefined,
+        25
+      )
+      mockUser = prev
     })
 
     it('asks for every area when all newsletters are wanted', async () => {
@@ -495,7 +521,8 @@ describe('newsfeed store', () => {
         'nearby',
         undefined,
         undefined,
-        'all'
+        'all',
+        undefined
       )
     })
 
@@ -512,7 +539,8 @@ describe('newsfeed store', () => {
         'anywhere',
         undefined,
         undefined,
-        'all'
+        'all',
+        undefined
       )
     })
   })
@@ -648,6 +676,7 @@ describe('newsfeed store', () => {
       expect(mockFetchNews).toHaveBeenCalledWith(
         null,
         'anywhere',
+        undefined,
         undefined,
         undefined,
         undefined

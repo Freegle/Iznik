@@ -41,7 +41,7 @@ class CommunityNewsMail extends MjmlMailable
 
     protected function getSubject(): string
     {
-        return 'Community News for ' . $this->areaName;
+        return 'Community News near you';
     }
 
     protected function unsubscribeType(): ?string

@@ -14,7 +14,7 @@ func TestSnapMembersAndTickGroups(t *testing.T) {
 	g := makeLineGraph(7) // nodes 1..7 west->east, walk times increase with distance
 
 	// Reach everything from the west end so every node has a known walk time.
-	iso := Isochrone(g, float64(g.Nodes[1].Lat), float64(g.Nodes[1].Lng), 1e9, Walk)
+	iso := Isochrone(g, float64(g.Nodes[1].Lat), float64(g.Nodes[1].Lng), 1e9)
 
 	nearSecs := iso.ReachedNodes[2]
 	farSecs := iso.ReachedNodes[6]
@@ -28,7 +28,7 @@ func TestSnapMembersAndTickGroups(t *testing.T) {
 		{groupID: 300, lat: 59.0, lng: 1.0},                                        // no road node: dropped
 	}
 
-	snaps := snapMembers(g, iso.ReachedNodes, members, Walk)
+	snaps := snapMembers(g, iso.ReachedNodes, members)
 	if len(snaps) != 2 {
 		t.Fatalf("snapMembers kept %d members, want 2 (offshore dropped)", len(snaps))
 	}
@@ -52,7 +52,7 @@ func TestSnapMembersAndTickGroups(t *testing.T) {
 // crossing) must not appear in the snaps at any budget.
 func TestSnapMembers_UnreachedNodeDropped(t *testing.T) {
 	g := makeLineGraph(7)
-	full := Isochrone(g, float64(g.Nodes[1].Lat), float64(g.Nodes[1].Lng), 1e9, Walk).ReachedNodes
+	full := Isochrone(g, float64(g.Nodes[1].Lat), float64(g.Nodes[1].Lng), 1e9).ReachedNodes
 
 	// Simulate severance: remove the eastern node from the reached set.
 	reached := make(map[NodeID]float32, len(full))
@@ -64,7 +64,7 @@ func TestSnapMembers_UnreachedNodeDropped(t *testing.T) {
 	members := []memberLoc{
 		{groupID: 400, lat: float64(g.Nodes[7].Lat), lng: float64(g.Nodes[7].Lng)},
 	}
-	snaps := snapMembers(g, reached, members, Walk)
+	snaps := snapMembers(g, reached, members)
 	if len(snaps) != 0 {
 		t.Fatalf("severed member snapped anyway: %v", snaps)
 	}

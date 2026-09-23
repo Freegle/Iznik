@@ -257,7 +257,14 @@ describe('PostMap', () => {
               'maxZoom',
               'style',
             ],
-            emits: ['ready', 'update:bounds', 'zoomend', 'moveend', 'dragend'],
+            emits: [
+              'ready',
+              'update:bounds',
+              'update:zoom',
+              'zoomend',
+              'moveend',
+              'dragend',
+            ],
             setup(props, { expose }) {
               const leafletObject = {
                 getBounds: vi.fn().mockReturnValue({
@@ -907,6 +914,55 @@ describe('PostMap', () => {
       expect(mockNearbyFetchMessages).not.toHaveBeenCalled()
       expect(mockMessageStore.fetchInBounds).toHaveBeenCalled()
     })
+
+    it('asks for the posts in the map bounds once when the map settles, not once per listener', async () => {
+      // LMap is wired with both v-model:bounds and @update:bounds="idle". One settled map
+      // therefore runs getMessages() twice with identical bounds, and the two fetches
+      // raced to replace the marker layer. Leaflet then removed a layer whose renderer
+      // had never attached and the browse page fell over (Sentry NUXT3-DC6 and DS0).
+      const wrapper = await createWrapper()
+      const map = wrapper.findComponent({ name: 'LMap' })
+      await map.vm.$emit('ready')
+      await flushPromises()
+      // Zoomed in far enough to show posts rather than groups.
+      await map.vm.$emit('update:zoom', 12)
+      await flushPromises()
+      mockMessageStore.fetchInBounds.mockClear()
+
+      await map.vm.$emit('update:bounds', {
+        getSouthWest: () => ({ lat: 51, lng: -2 }),
+        getNorthEast: () => ({ lat: 54, lng: 0 }),
+      })
+      await flushPromises()
+
+      expect(mockMessageStore.fetchInBounds).toHaveBeenCalledTimes(1)
+    })
+
+    it('asks again for the same bounds once the earlier fetch has settled', async () => {
+      // The guard is only against an identical fetch that is still in flight. A later
+      // ask for the same box, such as the feed reloading when the unseen count rises,
+      // must still reach the server so new posts appear.
+      const wrapper = await createWrapper()
+      const map = wrapper.findComponent({ name: 'LMap' })
+      await map.vm.$emit('ready')
+      await flushPromises()
+      // Zoomed in far enough to show posts rather than groups.
+      await map.vm.$emit('update:zoom', 12)
+      await flushPromises()
+      mockMessageStore.fetchInBounds.mockClear()
+
+      const settled = {
+        getSouthWest: () => ({ lat: 51, lng: -2 }),
+        getNorthEast: () => ({ lat: 54, lng: 0 }),
+      }
+      await map.vm.$emit('update:bounds', settled)
+      await flushPromises()
+      expect(mockMessageStore.fetchInBounds).toHaveBeenCalledTimes(1)
+
+      await map.vm.$emit('update:bounds', { ...settled })
+      await flushPromises()
+      expect(mockMessageStore.fetchInBounds).toHaveBeenCalledTimes(2)
+    })
   })
 
   describe('zoom behavior', () => {
@@ -1129,6 +1185,36 @@ describe('PostMap', () => {
       return markers.find((m) => m.props('cssClass') === 'fadedMarker')
     }
 
+    // The debounced re-fit (PostMap.vue: watch -> setTimeout(fitToShownMarkers, 200)) used to be
+    // reached only by luck. Nothing here waited for that timer, so whether its body ran before the
+    // file finished was wall-clock timing, and this file's covered-line count moved by six between
+    // two runs of the SAME code. That is enough on its own to fail a Coveralls comparison on a
+    // branch that changed nothing near the map, which is how it was found.
+    //
+    // Waiting past the debounce is deterministic rather than hopeful: our timer is scheduled after
+    // the component's and for longer, so the component's always fires first.
+    it('re-fits the map to the shown markers once the debounce settles', async () => {
+      const wrapper = await mountNearbyWithMessages(
+        [
+          { id: 1, lat: 52.0, lng: -1.0, distance: 1, groupid: 1 },
+          { id: 2, lat: 52.1, lng: -1.1, distance: 2, groupid: 1 },
+        ],
+        { selectedMaxDistance: 5 }
+      )
+      const map = wrapper.findComponent({ name: 'LMap' })
+
+      await new Promise((resolve) => setTimeout(resolve, 260))
+      await flushPromises()
+
+      // Distinguishable from the initial framing on initialBounds, which passes the bounds alone;
+      // only the re-fit passes padding.
+      const refit = map.vm.leafletObject.fitBounds.mock.calls.find(
+        (c) => c[1] && Array.isArray(c[1].padding)
+      )
+      expect(refit).toBeTruthy()
+      expect(refit[1].padding).toEqual([40, 40])
+    })
+
     it('passes only within-distance posts as markers to the primary ClusterMarker', async () => {
       const wrapper = await mountNearbyWithMessages(
         [
@@ -1321,6 +1407,79 @@ describe('PostMap', () => {
         const geo = wrapper.findComponent({ name: 'LGeoJson' }).props('geojson')
         expect(geo).not.toEqual(REACH)
         expect(geo.type).toBe('Polygon')
+      })
+
+      // The outbound half of the distance control: how far away someone can be and still see
+      // this member's posts. Only drawn once they have set it separately from what they see -
+      // while the two are linked there is one shape, and drawing the same outline twice would
+      // just thicken it.
+      const MY_POSTS_REACH = {
+        type: 'Feature',
+        geometry: {
+          type: 'Polygon',
+          coordinates: [
+            [
+              [-0.9, 50.9],
+              [0.7, 50.9],
+              [0.7, 52.2],
+              [-0.9, 52.2],
+              [-0.9, 50.9],
+            ],
+          ],
+        },
+      }
+
+      it('draws nothing extra while the two axes are linked', async () => {
+        const { nextReachSeq, publishReach } = useReachOverlay()
+        publishReach(nextReachSeq(), REACH)
+
+        const wrapper = await mountNearbyWithMessages(HULL_MESSAGES, {
+          selectedMaxDistance: 10,
+        })
+
+        expect(wrapper.findAllComponents({ name: 'LGeoJson' }).length).toBe(1)
+      })
+
+      it('shades both extents once the member sets them separately', async () => {
+        const browse = useReachOverlay()
+        browse.publishReach(browse.nextReachSeq(), REACH)
+        const myPosts = useReachOverlay('myPosts')
+        myPosts.publishReach(myPosts.nextReachSeq(), MY_POSTS_REACH)
+
+        const wrapper = await mountNearbyWithMessages(HULL_MESSAGES, {
+          selectedMaxDistance: 10,
+        })
+
+        const layers = wrapper.findAllComponents({ name: 'LGeoJson' })
+        expect(layers.length).toBe(2)
+        expect(layers[0].props('geojson')).toEqual(REACH)
+        expect(layers[1].props('geojson')).toEqual(MY_POSTS_REACH)
+
+        // What you SEE is filled; who sees YOU is an outline. The outbound extent is usually
+        // the wider of the two, so filling it as well would wash out the shape that answers
+        // "what will I see".
+        expect(layers[0].props('options').fill).toBe(true)
+        expect(layers[1].props('options').fill).toBe(false)
+        expect(layers[1].props('options').dashArray).toBeTruthy()
+      })
+
+      // The slots are independent: a change on one axis must not discard the other's shape.
+      it('keeps the outbound shape when the inbound one is cleared', async () => {
+        const browse = useReachOverlay()
+        browse.publishReach(browse.nextReachSeq(), REACH)
+        const myPosts = useReachOverlay('myPosts')
+        myPosts.publishReach(myPosts.nextReachSeq(), MY_POSTS_REACH)
+        browse.clearReach()
+
+        const wrapper = await mountNearbyWithMessages(HULL_MESSAGES, {
+          selectedMaxDistance: 10,
+        })
+
+        const layers = wrapper.findAllComponents({ name: 'LGeoJson' })
+        expect(layers.length).toBe(2)
+        // Inbound fell back to the hull; outbound is untouched.
+        expect(layers[0].props('geojson')).not.toEqual(REACH)
+        expect(layers[1].props('geojson')).toEqual(MY_POSTS_REACH)
       })
     })
   })

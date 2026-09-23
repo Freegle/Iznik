@@ -10,6 +10,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -177,8 +178,14 @@ func ListMessages(c *fiber.Ctx) error {
 				Joins("INNER JOIN messages m ON m.id = mg.msgid").
 				Joins("INNER JOIN users u ON u.id = m.fromuser").
 				Joins("LEFT JOIN users_emails ue ON ue.userid = u.id").
-				Where("mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND (u.fullname LIKE ? OR ue.email LIKE ?)",
-					groupIDs, collection, searchTerm, searchTerm).
+				// firstname/lastname and the concatenation of the two as well as fullname:
+				// LoveJunk-origin members have fullname NULL and their name split across the
+				// two columns, and the displayname a mod is shown (and types back in) is
+				// "firstname lastname", which matches neither column alone (Discourse 9518/379).
+				Where("mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND "+
+					"(u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR "+
+					"CONCAT_WS(' ', u.firstname, u.lastname) LIKE ? OR ue.email LIKE ?)",
+					groupIDs, collection, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm).
 				Order("mg.arrival DESC").
 				Limit(limit).
 				Pluck("msgid", &msgIDs)
@@ -308,7 +315,7 @@ func ListMessages(c *fiber.Ctx) error {
 			msg.Attachments = attachments
 
 			// Blur location for privacy.
-			msg.Lat, msg.Lng = utils.Blur(msg.Lat, msg.Lng, utils.BLUR_USER)
+			msg.Lat, msg.Lng = roadblur.RoadBlur(msg.Lat, msg.Lng, utils.BLUR_USER)
 
 			mu.Lock()
 			messages[idx] = msg
@@ -564,10 +571,13 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				"LEFT JOIN users_emails ue ON ue.userid = u.id " +
 				"WHERE mg.groupid = %GID% AND mg.collection = ? AND mg.deleted = 0 " +
 				"AND m.deleted IS NULL AND u.deleted IS NULL " +
-				"AND (u.fullname LIKE ? OR ue.email LIKE ?) " +
+				// Same fullname/firstname/lastname/concat matching as the non-union branch
+				// above - see the comment there (Discourse 9518/379).
+				"AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? " +
+				"OR CONCAT_WS(' ', u.firstname, u.lastname) LIKE ? OR ue.email LIKE ?) " +
 				contentcheckFilter +
 				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
-			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchTerm, searchTerm}, groupIDs, limit)
+			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm}, groupIDs, limit)
 			listErr = db.Raw(sql, args...).Pluck("msgid", &msgIDs).Error
 		}
 	} else {
@@ -659,6 +669,7 @@ func GetMessagesWithHistory(c *fiber.Ctx) error {
 	}
 
 	messages := GetMessagesByIds(myid, ids, isPartner)
+	addRoadMetrics(myid, messages)
 
 	if len(ids) == 1 {
 		if len(messages) == 1 {

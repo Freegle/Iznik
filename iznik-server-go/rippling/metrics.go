@@ -137,23 +137,15 @@ type GroupOption struct {
 }
 
 // ReplySourceSplitSQL builds the per-day attribution-channel query over
-// rippling_reply_attribution. Exported (and parameterised) so the legacy variant - which only
-// runs against an unmigrated production DB - stays testable against a migrated test DB.
-//
-//   - wide: read the attribution channel the reply handler derived at capture time. Rows
-//     without one (pre-migration rows the backfill hasn't visited yet) fall back PER ROW to
-//     the same live derivation as the legacy variant - otherwise the window between the
-//     migration landing and the backfill running would read as a misleading zero-ripple
-//     chart (every attribution NULL folding to home/unknown).
-//   - legacy (graded columns not yet migrated): derive the durable channels live from the
-//     notified ledger, rippled-group memberships and origin-membership provenance. Correct for
-//     home/notified/group/join; the location channels (ripple_reach/organic_local) are not
-//     derivable retrospectively (locations drift, polygons grow) so they read 0 and those
-//     replies sit in unknown.
+// rippling_reply_attribution. Reads the attribution channel the reply handler derived at
+// capture time; rows without one (older rows the backfill has not visited) fall back PER ROW
+// to a live derivation from the notified ledger, rippled-group memberships and
+// origin-membership provenance - otherwise those rows would read as a misleading
+// zero-ripple chart, every attribution NULL folding to home/unknown.
 //
 // srcGroup is the optional origin-group scoping JOIN (aliases rra); it takes one bind arg
 // before the two replied_at window args.
-func ReplySourceSplitSQL(wide bool, srcGroup string) string {
+func ReplySourceSplitSQL(srcGroup string) string {
 	return `
 		SELECT day,
 		       COUNT(*) AS replies,
@@ -164,13 +156,13 @@ func ReplySourceSplitSQL(wide bool, srcGroup string) string {
 		       SUM(bucket = 'ripple_reach') AS ripple_reach,
 		       SUM(bucket = 'organic_local') AS organic_local,
 		       SUM(bucket = 'unknown') AS unknown
-		FROM ` + ReplySourceInnerFrom(wide, srcGroup) + `
+		FROM ` + ReplySourceInnerFrom(srcGroup) + `
 		GROUP BY day
 		ORDER BY day DESC`
 }
 
 // ReplySourceInnerFrom builds the day+bucket derived-table subquery shared by
-// ReplySourceSplitSQL's raw-SQL form (legacy/unmigrated-DB callers) and the
+// ReplySourceSplitSQL's raw-SQL form and the
 // GORM chain at Metrics' reply_source_split section (ORM migration site
 // 568a5645fba7): the attribution-channel CASE expression lives in exactly
 // this one place either way, so pulling the outer aggregation out into a
@@ -179,7 +171,7 @@ func ReplySourceSplitSQL(wide bool, srcGroup string) string {
 // (removed in d22ba1d6c) between a legitimate
 // .Table() subquery (this) and relocating a whole statement into .Select()
 // (not this). Master's ripple_join derivation lives here for the same reason.
-func ReplySourceInnerFrom(wide bool, srcGroup string) string {
+func ReplySourceInnerFrom(srcGroup string) string {
 	// "The only origin-group membership backing this row is one rippling created" - the frozen
 	// was_home_member bit on a legacy row cannot tell home from ripple_join, because the capture
 	// that wrote it did not look at membership provenance. Re-derived here from the surviving
@@ -210,10 +202,7 @@ func ReplySourceInnerFrom(wide bool, srcGroup string) string {
 	       WHEN ` + rippleJoinOnly + ` THEN 'ripple_join'
 	       ELSE 'unknown'
 	       END`
-	bucket := derive
-	if wide {
-		bucket = "COALESCE(rra.attribution, " + derive + ")"
-	}
+	bucket := "COALESCE(rra.attribution, " + derive + ")"
 	return `(
 		    SELECT DATE_FORMAT(rra.replied_at, '%Y-%m-%d') AS day,
 		           ` + bucket + ` AS bucket
@@ -340,13 +329,6 @@ func Metrics(c *fiber.Ctx) error {
 	if end == "" {
 		end = time.Now().Format("2006-01-02 15:04:05")
 	}
-	// Whether the graded-attribution columns exist yet (production may lag the migration):
-	// picks the reply-source query variant and is surfaced to the dashboard so it can note
-	// that the location-based channels are pending. Deliberately NOT on the deadline-bound
-	// handle: it is a one-off information_schema lookup whose answer is cached for the life of
-	// the process, so letting a deadline make it fail would stick this API on the legacy variant
-	// until the next restart.
-	attributionWide := AttributionSchemaReady(database.DBConn)
 	srcGroup := ""
 	if gid > 0 {
 		srcGroup = " JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
@@ -433,7 +415,8 @@ func Metrics(c *fiber.Ctx) error {
 
 	// §16.1 / §16.2 volume + reach: overall live-metrics from weekly batch rollup.
 	// Returns the two most recent weekly periods' overall rows so the dashboard can show a
-	// trend. Defensive: returns empty if rippling_live_metrics doesn't exist yet.
+	// trend. Like every section here, a query error leaves the slice empty rather than
+	// failing the whole dashboard.
 	section("live_metrics", func() error {
 		return db.Table("rippling_live_metrics").
 			Select("DATE_FORMAT(period_start, '%Y-%m-%d') AS period_start, metric, value, sample_size").
@@ -444,7 +427,7 @@ func Metrics(c *fiber.Ctx) error {
 
 	// §15 / §16.5 held-reply friction summary.
 	// Live aggregate of rippling_held_replies by status, with median hold duration for
-	// released rows. Defensive: returns empty if rippling_held_replies doesn't exist yet.
+	// released rows.
 	section("held_reply_summary", func() error {
 		return db.Table("rippling_held_replies").
 			Select("status, COUNT(*) AS count, COALESCE(AVG(TIMESTAMPDIFF(SECOND, created_at, COALESCE(releasedat, NOW())) / 3600.0), 0) AS median_hold_hours").
@@ -453,9 +436,7 @@ func Metrics(c *fiber.Ctx) error {
 			Scan(&heldReplySummary).Error
 	})
 
-	// Held replies broken down by origin channel (email / tn / web). Defensive: the `source`
-	// column is added by migration 2026_07_08_000001 — before it runs the query errors and the
-	// slice stays empty (the panel just omits the breakdown), which is fine.
+	// Held replies broken down by origin channel (email / tn / web).
 	section("held_reply_by_source", func() error {
 		return db.Table("rippling_held_replies").
 			Select("source, status, COUNT(*) AS count").
@@ -465,9 +446,8 @@ func Metrics(c *fiber.Ctx) error {
 	})
 
 	// §16.4 timing / capture: latest offline-simulator week.
-	// Reads the most recent 'all'-group row from rippling_algorithm_metrics (renamed from
-	// ripple_algorithm_metrics by migration 2026_06_18_000002). Returns zero struct if the
-	// table is empty or doesn't exist yet.
+	// Reads the most recent 'all'-group row from rippling_algorithm_metrics. Returns the zero
+	// struct when the table is empty, which it is until the offline simulator has run.
 	section("capture_summary", func() error {
 		return db.Table("rippling_algorithm_metrics").
 			Select("DATE_FORMAT(week_start, '%Y-%m-%d') AS week_start, curve, pairs_total, pairs_in_time, pairs_late, COALESCE(reply_p50_hours, 0) AS reply_p50_hours, COALESCE(reply_p75_hours, 0) AS reply_p75_hours").
@@ -479,17 +459,12 @@ func Metrics(c *fiber.Ctx) error {
 
 	// (1) Reply attribution channels, per day, from rippling_reply_attribution (captured at
 	//     reply time - the only sound attribution, since replying joins the member to the group).
-	//     Two variants sharing one output shape:
-	//     - wide: read the attribution channel the Go reply handler derived at capture time.
-	//       Rows the backfill hasn't visited (attribution NULL) are bucketed live off the legacy
-	//       was_home_member bit, qualified by the surviving membership's provenance so a
-	//       ripple-created auto-join reads as ripple_join rather than home.
-	//     - legacy (graded columns not yet migrated, e.g. production before the deploy): derive
-	//       the durable channels live from the notified ledger and rippled-group memberships.
-	//       Correct for notified/group/home; the location channels (ripple_reach/organic_local)
-	//       are not derivable retrospectively (locations drift, polygons grow) so they read 0
-	//       and those replies sit in unknown - attribution_channels_available tells the
-	//       dashboard to say so.
+	//     Reads the attribution channel the Go reply handler derived at capture time. Rows the
+	//     backfill hasn't visited (attribution NULL) are bucketed live off the was_home_member
+	//     bit, qualified by the surviving membership's provenance so a ripple-created auto-join
+	//     reads as ripple_join rather than home. The location channels
+	//     (ripple_reach/organic_local) are not derivable retrospectively for those rows
+	//     (locations drift, polygons grow) so they read 0 and those replies sit in unknown.
 	// The attribution-
 	// channel CASE expression is built once, in ReplySourceInnerFrom, and
 	// shared by ReplySourceSplitSQL's raw-SQL form (rippling/metrics_test.go
@@ -502,25 +477,19 @@ func Metrics(c *fiber.Ctx) error {
 	// .Select() (proven by the retired ormharness's bareexists_test.go,
 	// removed in d22ba1d6c).
 	section("reply_source_split", func() error {
-		return db.Table(ReplySourceInnerFrom(attributionWide, srcGroup), gargs()...).
+		return db.Table(ReplySourceInnerFrom(srcGroup), gargs()...).
 			Select("day, COUNT(*) AS replies, SUM(bucket = 'home') AS home, SUM(bucket = 'ripple_notified') AS ripple_notified, SUM(bucket = 'ripple_group') AS ripple_group, SUM(bucket = 'ripple_join') AS ripple_join, SUM(bucket = 'ripple_reach') AS ripple_reach, SUM(bucket = 'organic_local') AS organic_local, SUM(bucket = 'unknown') AS unknown").
 			Group("day").
 			Order("day DESC").
 			Scan(&replySources).Error
 	})
 
-	// (1b) Client-reported reply surfaces over the same window (wide schema only - the column
-	//      arrives with the graded-attribution migration). Advisory cross-check of (1).
+	// (1b) Client-reported reply surfaces over the same window. Advisory cross-check of (1).
 	//
-	// srcGroup is
-	// the only toggle reachable here (this section only runs when
-	// attributionWide is true) - 2 possible rendered forms, both proven by
+	// srcGroup is the only toggle reachable here - 2 possible rendered forms, both proven by
 	// the retired ormharness (shapes.json / TestTier3Shapes_10ee37c98574,
 	// removed in d22ba1d6c).
 	section("client_source_summary", func() error {
-		if !attributionWide {
-			return nil
-		}
 		// srcGroup's own "mg.groupid = ?" placeholder (present only when
 		// gid>0) binds to the Table() expression it lives in, not to the
 		// WHERE clause below - unlike gargs()'s flat ordering for db.Raw,
@@ -538,9 +507,6 @@ func Metrics(c *fiber.Ctx) error {
 	// (1c) When did LIVE capture start? See attributionCaptureFrom - answered from cache after
 	//      the first time, because the query behind it cannot use an index.
 	section("attribution_capture_from", func() error {
-		if !attributionWide {
-			return nil
-		}
 		var err error
 		captureFrom, err = attributionCaptureFrom(db)
 		return err
@@ -592,9 +558,6 @@ func Metrics(c *fiber.Ctx) error {
 		"capture_summary":       capture,
 		"reply_source_split":    replySources,
 		"client_source_summary": clientSources,
-		// False until the graded-attribution migration has run on this DB: the location
-		// channels (ripple_reach/organic_local) read 0 and client sources are absent.
-		"attribution_channels_available": attributionWide,
 		// First day with reply-time-captured evidence ('' until the capture deploy has seen
 		// a reply): the boundary the dashboard marks on the attribution chart.
 		"attribution_capture_from": captureFrom,

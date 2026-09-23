@@ -19,14 +19,16 @@ RUN useradd -m -s /bin/bash claude && \
 
 WORKDIR /app
 
-# Clone the Freegle MONOREPO (public) as root, then fix ownership. The old
-# standalone repos (iznik-nuxt3, iznik-server-go, ...) were retired in Apr 2026
-# and now just carry a "redirect to monorepo" commit, so cloning them left the
-# agent 3+ months stale. The monorepo has the same subdirs (iznik-nuxt3/,
-# iznik-server-go/, ...) at the same /app/codebase/<name> paths, minus secrets
-# (.env is gitignored).
-RUN git clone --depth 1 https://github.com/Freegle/Iznik.git /app/codebase && \
-    chown -R claude:claude /app/codebase
+# The agent's checkout of the Freegle MONOREPO is fetched at RUNTIME into the empty
+# /app/codebase created above, by syncCodebase() on startup and every 30 minutes after
+# (see codebase.js). It is deliberately NOT cloned here: a clone in the image build makes
+# `docker compose build` depend on reaching github.com anonymously, and when that was refused
+# the whole CI stack bringup failed with it. A build-time clone is also frozen at whenever the
+# image was built, while the runtime one is current.
+#
+# The monorepo has the subdirs the agent reads (iznik-nuxt3/, iznik-server-go/, ...) at
+# /app/codebase/<name>, minus secrets (.env is gitignored). The old standalone repos were
+# retired in Apr 2026 and now carry only a "redirect to monorepo" commit.
 
 # Copy package files and install dependencies
 COPY --chown=claude:claude package*.json ./

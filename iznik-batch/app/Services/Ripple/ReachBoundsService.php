@@ -4,7 +4,6 @@ namespace App\Services\Ripple;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 
 /**
  * Sandwich bounds for rippling_reach.polygon, stored as same-row columns
@@ -48,9 +47,6 @@ class ReachBoundsService
      */
     public const INNER_MIN_AREA_RATIO = 0.5;
 
-    /** Cached column-existence check so a pre-migration deploy degrades to a no-op. */
-    private static ?bool $columnsExist = null;
-
     /**
      * SQL expression deriving the outer bound from a polygon expression, for embedding
      * in the same statement that writes the polygon.
@@ -66,19 +62,6 @@ class ReachBoundsService
         return "ST_Buffer(ST_Simplify($polyExpr, " . self::TOLERANCE . '), -' . self::TOLERANCE . ')';
     }
 
-    public function ready(): bool
-    {
-        if (self::$columnsExist === null) {
-            try {
-                self::$columnsExist = Schema::hasColumn('rippling_reach', 'outer_bound');
-            } catch (\Throwable) {
-                self::$columnsExist = false;
-            }
-        }
-
-        return self::$columnsExist;
-    }
-
     /**
      * Set the bounds for a post whose polygon was JUST written without inline bounds
      * (or needs them re-verified): prefer bounds the routing server derived on its own
@@ -92,11 +75,8 @@ class ReachBoundsService
      * INNER_MIN_AREA_RATIO) or no inner at all ends as a polygon-derived inner, never
      * as NULL, because NULL sends every in-outer viewer to the full polygon test.
      */
-    public function sync(int $msgid, ?string $outerWkt = null, ?string $innerWkt = null): void
+    public function sync(int $msgid, ?string $outerWkt = null, ?string $innerWkt = null, bool $retired = false): void
     {
-        if (!$this->ready()) {
-            return;
-        }
         if ($outerWkt === null) {
             $this->syncFromPolygon($msgid);
 
@@ -119,6 +99,18 @@ class ReachBoundsService
         }
         if (!$stored) {
             $this->syncFromPolygon($msgid);
+
+            return;
+        }
+
+        if ($retired) {
+            // A retired row has no grid: every verify below reads it and can
+            // only answer "cannot say", costing three round trips to conclude
+            // nothing and then DISCARDING the inner bound just written. The
+            // routing-provided bounds are trusted directly; the one real step
+            // kept is widening the outer with the origin group's area, since
+            // the provided outer bounds the raw isochrone only.
+            $this->unionOuterWithOriginGroup($msgid);
 
             return;
         }
@@ -149,25 +141,16 @@ class ReachBoundsService
     }
 
     /**
-     * The true reach as a SQL geometry source for the derivations below, era
-     * for era: the stored polygon (through the dedup COALESCE) while it
-     * exists, otherwise the stored cell grid traced back to a scratch WKT
-     * parameter by the spatial server (CellSetService::vectorize at tolerance
-     * 0 - exact, roundtrip-proven). Null when nothing can supply a geometry;
-     * callers then skip or take the envelope fallback.
+     * The true reach as a SQL geometry source for the derivations below: the
+     * stored cell grid traced back to a scratch WKT parameter by the spatial
+     * server (CellSetService::vectorize at tolerance 0 - exact,
+     * roundtrip-proven). Null when nothing can supply a geometry; callers
+     * then skip or take the envelope fallback.
      *
      * @return array{join:string,expr:string,binds:array<int,string>}|null
      */
     private function reachSource(int $msgid): ?array
     {
-        if (LegacyGeometry::polygonReady()) {
-            return [
-                'join' => GeomShareService::joinSql('rippling_reach', 'polygon', 'g'),
-                'expr' => GeomShareService::sourceExpr('rippling_reach', 'polygon', 'g'),
-                'binds' => [],
-            ];
-        }
-
         $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
         if ($cells === null || $cells === '') {
             return null;
@@ -188,14 +171,7 @@ class ReachBoundsService
      */
     public function ensureUsefulInner(int $msgid, float $minRatio = self::INNER_MIN_AREA_RATIO): string
     {
-        if (!$this->ready()) {
-            return 'skipped';
-        }
-
-        // The exact geometry may live in rippling_reach_geom (content-addressed
-        // dedup); every derivation below reads the shared row when the hash points
-        // at one, the blob otherwise - a drained row can still get its bounds
-        // re-derived. Post-drop the source is the traced grid as a scratch param.
+        // The source is the stored grid traced back to a scratch WKT param.
         $src = $this->reachSource($msgid);
         if ($src === null) {
             return 'skipped';
@@ -261,10 +237,6 @@ class ReachBoundsService
      */
     public function syncFromPolygon(int $msgid): void
     {
-        if (!$this->ready()) {
-            return;
-        }
-
         // The exact geometry may live in rippling_reach_geom (content-addressed
         // dedup); post-drop the source is the traced grid as a scratch param.
         $src = $this->reachSource($msgid);
@@ -319,10 +291,6 @@ class ReachBoundsService
      */
     public function degradeForCompleted(int $msgid): void
     {
-        if (!$this->ready()) {
-            return;
-        }
-
         try {
             DB::update(
                 'UPDATE rippling_reach
@@ -408,37 +376,24 @@ class ReachBoundsService
     private function fallbackToEnvelope(int $msgid): void
     {
         try {
-            if (!LegacyGeometry::polygonReady()) {
-                // The grid's bounding box, straight from its header - the
-                // cell form of ST_Envelope, needing neither a trace nor the
-                // spatial server. No cells at all leaves the previous outer
-                // (safe-loose) and clears the inner.
-                $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
-                $bbox = $cells === null || $cells === '' ? null : app(CellSetService::class)->boundsWkt($cells);
-                if ($bbox === null) {
-                    $this->nullInner($msgid);
-
-                    return;
-                }
-                // keep-raw: ST_GeomFromText SET expression; updated_at preserved deliberately
-                DB::update(
-                    'UPDATE rippling_reach
-                        SET outer_bound = ST_GeomFromText(?, 3857), inner_bound = NULL,
-                            updated_at = updated_at
-                      WHERE msgid = ?',
-                    [$bbox, $msgid]
-                );
+            // The grid's bounding box, straight from its header - the cell
+            // form of ST_Envelope, needing neither a trace nor the spatial
+            // server. No cells at all leaves the previous outer (safe-loose)
+            // and clears the inner.
+            $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
+            $bbox = $cells === null || $cells === '' ? null : app(CellSetService::class)->boundsWkt($cells);
+            if ($bbox === null) {
+                $this->nullInner($msgid);
 
                 return;
             }
-
-            // keep-raw: ST_Envelope over the deduped-or-local geometry; updated_at preserved deliberately
+            // keep-raw: ST_GeomFromText SET expression; updated_at preserved deliberately
             DB::update(
-                'UPDATE rippling_reach' . GeomShareService::joinSql('rippling_reach', 'polygon', 'g') . '
-                    SET outer_bound = ST_Envelope(' . GeomShareService::sourceExpr('rippling_reach', 'polygon', 'g') . '), inner_bound = NULL,
+                'UPDATE rippling_reach
+                    SET outer_bound = ST_GeomFromText(?, 3857), inner_bound = NULL,
                         updated_at = updated_at
                   WHERE msgid = ?',
-                [$msgid]
+                [$bbox, $msgid]
             );
         } catch (\Throwable $e) {
             // Even the envelope failed. The column keeps its previous value: a stale

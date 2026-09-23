@@ -37,6 +37,10 @@ export const useEmailTrackingStore = defineStore('emailtracking', {
     deferralSuppressions: [],
     deferralMembers: [],
     deferralMemberLimit: 0,
+    // What is actually sitting in the relay queue, per recipient domain -
+    // including mail nothing has refused, which is queued behind our own
+    // pacing and so appears in no suppression.
+    deferralQueues: [],
     deferralsLoading: false,
     deferralsError: null,
 
@@ -144,6 +148,7 @@ export const useEmailTrackingStore = defineStore('emailtracking', {
         this.deferralSuppressions = response?.suppressions || []
         this.deferralMembers = response?.members || []
         this.deferralMemberLimit = response?.memberlimit || 0
+        this.deferralQueues = response?.queues || []
       } catch (e) {
         this.deferralsError = e.message
       } finally {

@@ -394,12 +394,16 @@ class StatsGenerationService
                 ->where('chat_messages.date', '>=', $date)
                 ->where('chat_messages.date', '<', $next)
                 ->where('chat_messages.type', ChatMessage::TYPE_INTERESTED)
+                // A rejected reply (moderator reject, or dropped by a block
+                // keyword) was never delivered and is not a reply.
+                ->where('chat_messages.reviewrejected', 0)
                 ->where('messages_groups.rippled_in', 0) // native posts only
                 ->whereNotExists(function ($q) {
                     $q->select(DB::raw(1))
                         ->from('messages_bulk_items')
                         ->whereColumn('messages_bulk_items.msgid', 'chat_messages.refmsgid');
                 })
+                ->whereNotExists(fn ($q) => $this->senderOnSpammerList($q, 'chat_messages.userid'))
                 ->groupBy('messages_groups.groupid')
                 ->selectRaw('messages_groups.groupid AS gid, COUNT(*) AS cnt')
                 ->get() as $row
@@ -415,6 +419,7 @@ class StatsGenerationService
                 ->where('messages_groups.rippled_in', 0)
                 ->where('messages_bulk_items_interest.created_at', '>=', $date)
                 ->where('messages_bulk_items_interest.created_at', '<', $next)
+                ->whereNotExists(fn ($q) => $this->senderOnSpammerList($q, 'messages_bulk_items_interest.userid'))
                 ->groupBy('messages_groups.groupid')
                 ->selectRaw('messages_groups.groupid AS gid, COUNT(*) AS cnt')
                 ->get() as $row
@@ -432,6 +437,7 @@ class StatsGenerationService
                 ->where('chat_messages.date', '>=', $date)
                 ->where('chat_messages.date', '<', $next)
                 ->where('chat_messages.type', ChatMessage::TYPE_INTERESTED)
+                ->where('chat_messages.reviewrejected', 0)
                 ->where('messages_groups.rippled_in', 0)
                 ->whereExists(function ($q) {
                     $q->select(DB::raw(1))
@@ -444,6 +450,7 @@ class StatsGenerationService
                         ->whereColumn('messages_bulk_items_interest.msgid', 'chat_messages.refmsgid')
                         ->whereColumn('messages_bulk_items_interest.userid', 'chat_messages.userid');
                 })
+                ->whereNotExists(fn ($q) => $this->senderOnSpammerList($q, 'chat_messages.userid'))
                 ->groupBy('messages_groups.groupid')
                 ->selectRaw('messages_groups.groupid AS gid, COUNT(*) AS cnt')
                 ->get() as $row
@@ -778,6 +785,19 @@ class StatsGenerationService
     private function writeCount(string $date, int $groupId, string $type, int $val, bool $dryRun): int
     {
         if ($val === 0) {
+            // No row for a zero count - and no STALE row either. A regeneration
+            // that brings a count down to nothing must take the old row with it,
+            // or the old figure stands: after the 2026-09-06 spam wave was
+            // excluded, 117 groups whose only "replies" had been the bot's kept
+            // their inflated Replies rows through the re-run.
+            if (! $dryRun) {
+                DB::table('stats')
+                    ->where('date', $date)
+                    ->where('groupid', $groupId)
+                    ->where('type', $type)
+                    ->delete();
+            }
+
             return 0;
         }
         if ($dryRun) {
@@ -809,5 +829,24 @@ class StatsGenerationService
         );
 
         return 1;
+    }
+
+    /**
+     * The "sender is on the spammer list" subquery every reply source excludes on.
+     *
+     * A reply from a listed spammer is not a reply: on 2026-09-06 one account created
+     * the evening before sent 2,155 blank "Interested" messages to 2,155 different posts
+     * in twenty minutes, every one rejected in chat review and none delivered - and the
+     * day's Replies stat (and Activity, which is built on it) still counted them, more
+     * than doubling a Sunday. The listing is the moderators' verdict, so it is the
+     * exclusion here too; the review flags on individual messages are not consulted,
+     * because a listed account's earlier, un-reviewed messages are just as worthless.
+     */
+    private function senderOnSpammerList(\Illuminate\Database\Query\Builder $q, string $userColumn): \Illuminate\Database\Query\Builder
+    {
+        return $q->select(DB::raw(1))
+            ->from('spam_users')
+            ->whereColumn('spam_users.userid', $userColumn)
+            ->where('spam_users.collection', 'Spammer');
     }
 }

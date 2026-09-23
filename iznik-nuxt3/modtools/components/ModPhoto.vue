@@ -14,12 +14,23 @@
       :messageid="messageid"
       :attachmentid="attachmentid"
     />
+    <AiImageRemoveModal
+      ref="aiRemoveModal"
+      @choose="confirmRemove"
+      @cancel="pendingRemoveId = null"
+    />
   </span>
 </template>
 
 <script setup>
 import { ref, computed, defineAsyncComponent } from 'vue'
 import { useMessageStore } from '~/stores/message'
+import {
+  attachmentMods,
+  isAIAttachment,
+  removePhotoPatch,
+} from '~/composables/usePhotoRemoval'
+import AiImageRemoveModal from '~/components/AiImageRemoveModal.vue'
 
 const PostPhoto = defineAsyncComponent(
   () => import('../../components/PostPhoto')
@@ -40,6 +51,8 @@ const messageStore = useMessageStore()
 
 const zoom = ref(false)
 const modphotomodal = ref(null)
+const aiRemoveModal = ref(null)
+const pendingRemoveId = ref(null)
 
 const message = computed(() => messageStore.byId(props.messageid))
 
@@ -47,44 +60,50 @@ const attachment = computed(() => {
   return message.value?.attachments?.find((a) => a.id === props.attachmentid)
 })
 
-const mods = computed(() => {
-  const raw = attachment.value?.externalmods || attachment.value?.mods
-  if (raw) {
-    try {
-      const jsonmods = typeof raw === 'string' ? JSON.parse(raw) : raw
-      if (!jsonmods) return {}
-      return jsonmods
-    } catch (e) {
-      return {}
-    }
-  }
-  return {}
-})
+const mods = computed(() => attachmentMods(attachment.value))
 
 function showModal() {
   zoom.value = true
   modphotomodal.value?.show()
 }
 
-// Removing an AI-generated image is recorded server-side: the V2 message PATCH handler
-// records a review vote and protects this message from the illustrations cron re-adding
-// an image. To stop AI images for an item entirely, use the "Don't use AI for this item"
-// control on the ModTools AI Images page.
+// An AI-generated image gets the "why are you removing it?" question first, because one
+// of the answers ("bad for any post of this item") stops AI images for the item. Every
+// moderator gets that question, not only Support (Discourse 9630, post 92). Anything
+// else comes straight off.
 async function removePhoto(id) {
-  const attachments = []
+  if (isAIAttachment(attachment.value)) {
+    pendingRemoveId.value = id
+    aiRemoveModal.value?.show()
+    return
+  }
 
-  message.value?.attachments?.forEach((a) => {
-    if (a.id !== id) {
-      attachments.push(a.id)
-    }
-  })
+  await doRemove(id, false)
+}
 
-  await messageStore.patch({ id: props.messageid, attachments })
+async function confirmRemove(isBadForAnyPost) {
+  const id = pendingRemoveId.value
+  pendingRemoveId.value = null
+  if (id) {
+    await doRemove(id, isBadForAnyPost)
+  }
+}
+
+async function doRemove(id, isBadForAnyPost) {
+  await messageStore.patch(
+    removePhotoPatch(
+      { id: props.messageid, attachments: message.value?.attachments },
+      id,
+      isBadForAnyPost
+    )
+  )
 }
 
 async function updatedPhoto() {
   await messageStore.patch({ id: props.messageid })
 }
+
+defineExpose({ removePhoto, doRemove, confirmRemove, pendingRemoveId })
 </script>
 
 <style scoped>

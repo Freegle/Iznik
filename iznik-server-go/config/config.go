@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -238,6 +239,17 @@ func CreateConcernKeyword(c *fiber.Ctx) error {
 	result := database.DBConn.Create(&kw)
 	if result.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create concern keyword")
+	}
+
+	// A Freegle-wide block keyword is usually added in response to a wave that has
+	// already landed, so have the batch apply it to the last 24 hours of chat
+	// messages and posts. Flag keywords hold new content for review and are not
+	// backfilled. A queue failure is logged inside QueueTask; the keyword itself
+	// is created either way, so the caller still gets it back.
+	if kw.Action == "block" && kw.Scope == "global" {
+		queue.QueueTask(queue.TaskConcernKeywordBackfill, map[string]interface{}{
+			"keyword_id": kw.ID,
+		})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(kw)

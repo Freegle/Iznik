@@ -156,6 +156,7 @@ export function useMe() {
           volunteeringallowed: g.volunteeringallowed,
           microvolunteeringallowed: g.microvolunteeringallowed,
           configid: g.configid,
+          added: g.added,
           // Group-level fields from the cached group store.
           namedisplay: groupData.namedisplay || groupData.nameshort || '',
           nameshort: groupData.nameshort || '',

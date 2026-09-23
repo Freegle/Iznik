@@ -389,17 +389,13 @@ class DeprivationDataServiceTest extends TestCase
     // writeCsv — unwritable output path
     // =========================================================================
 
-    // TODO: latent bug — writeCsv()'s `if (!$handle) throw new RuntimeException(...)`
-    // guard is unreachable: fopen() against a non-existent directory raises a PHP
-    // warning first, which Laravel's HandleExceptions bootstrap promotes to an
-    // ErrorException before the guard ever sees a false $handle. Callers expecting
-    // to catch RuntimeException from build() will not catch this. Not fixed here —
-    // this PR is test-only.
     public function test_unwritable_output_path_throws(): void
     {
-        $this->markTestSkipped(
-            'Latent bug: fopen() warning is promoted to ErrorException before the '
-            .'intended RuntimeException guard in writeCsv() can run — see TODO above.'
-        );
+        $this->fakeAll();
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Cannot open CSV output path');
+
+        $this->service->build(sys_get_temp_dir().'/no-such-dir-'.uniqid().'/out.csv');
     }
 }

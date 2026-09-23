@@ -1,6 +1,34 @@
 <template>
+  <!-- Compact bar. A member of more than a week has seen the full header enough, so on a
+       feed filtered to their community it starts folded up to logo + name, with the full
+       detail a click away. Someone who has not joined always gets the full header: that is
+       where the Join button and the description are. -->
+  <div v-if="collapsible && collapsed" class="group-compact">
+    <b-img
+      rounded
+      alt=""
+      :src="group.profile ? group.profile : '/icon.png'"
+      class="group-compact__logo"
+    />
+    <span class="group-compact__name">
+      {{ group.namedisplay }}
+      <v-icon
+        v-if="amAMember === 'Owner' || amAMember === 'Moderator'"
+        icon="crown"
+        class="text-success"
+      />
+    </span>
+    <b-button
+      variant="link"
+      size="sm"
+      class="group-compact__toggle"
+      @click="emit('update:collapsed', false)"
+    >
+      Show details
+    </b-button>
+  </div>
   <!-- Mobile/Tablet Layout -->
-  <div class="d-block d-lg-none mobile-group-header">
+  <div v-if="showFull" class="d-block d-lg-none mobile-group-header">
     <div class="mobile-hero">
       <div class="mobile-hero__top">
         <div class="mobile-hero__content">
@@ -56,6 +84,15 @@
             label="Leave"
             @handle="leave"
           />
+          <b-button
+            v-if="collapsible"
+            variant="link"
+            size="sm"
+            class="d-block mt-1 ms-auto mobile-hero__hide"
+            @click="emit('update:collapsed', true)"
+          >
+            Hide details
+          </b-button>
         </div>
       </div>
     </div>
@@ -78,6 +115,15 @@
         label="Leave"
         @handle="leave"
       />
+      <b-button
+        v-if="collapsible"
+        variant="link"
+        size="sm"
+        class="d-block mt-1 mobile-actions__hide"
+        @click="emit('update:collapsed', true)"
+      >
+        Hide details
+      </b-button>
     </div>
 
     <div v-if="showGiveAsk" class="mobile-give-ask">
@@ -99,7 +145,7 @@
           you don't need, and ask for things you'd like.
         </span>
         <!-- eslint-disable-next-line -->
-        <span v-else v-html="description"/>
+        <span v-else v-html="description" />
       </span>
       <a
         v-if="description && description.length > 400 && !descriptionExpanded"
@@ -193,7 +239,7 @@
   </div>
 
   <!-- Desktop Layout (large screens only) -->
-  <b-card bg-light class="d-none d-lg-block">
+  <b-card v-if="showFull" bg-light class="d-none d-lg-block">
     <div class="group mb-3">
       <div class="group__image">
         <b-img
@@ -224,13 +270,21 @@
       <div class="group__links text-muted small">
         See
         <!--eslint-disable-next-line-->
-        <nuxt-link no-prefetch :to="{ path: '/communityevents/' + group.id }">community events</nuxt-link>,
+        <nuxt-link no-prefetch :to="{ path: '/communityevents/' + group.id }"
+          >community events</nuxt-link
+        >,
         <!--eslint-disable-next-line-->
-        <nuxt-link no-prefetch :to="{ path: '/volunteerings/' + group.id }">volunteer opportunities</nuxt-link>,
+        <nuxt-link no-prefetch :to="{ path: '/volunteerings/' + group.id }"
+          >volunteer opportunities</nuxt-link
+        >,
         <!--eslint-disable-next-line-->
-        <nuxt-link no-prefetch :to="{ path: '/stories/' + group.id }">stories</nuxt-link>, or
+        <nuxt-link no-prefetch :to="{ path: '/stories/' + group.id }"
+          >stories</nuxt-link
+        >, or
         <!--eslint-disable-next-line-->
-        <nuxt-link no-prefetch :to="{ path: '/stats/' + group.nameshort }">stats</nuxt-link>
+        <nuxt-link no-prefetch :to="{ path: '/stats/' + group.nameshort }"
+          >stats</nuxt-link
+        >
       </div>
       <div class="mt-2 group__buttons">
         <div class="button__items">
@@ -251,6 +305,15 @@
             @handle="leave"
           />
         </div>
+        <div v-if="collapsible" class="group__hide">
+          <b-button
+            variant="link"
+            size="sm"
+            @click="emit('update:collapsed', true)"
+          >
+            Hide details
+          </b-button>
+        </div>
       </div>
     </div>
     <div class="group-description">
@@ -260,7 +323,7 @@
         reuse with Freegle!
       </p>
       <!-- eslint-disable-next-line -->
-      <span v-else="description" v-html="description"/>
+      <span v-else="description" v-html="description" />
     </div>
     <div v-if="showGiveAsk" class="d-flex justify-content-between flex-wrap">
       <b-button to="/give" class="mt-1" size="lg" block variant="primary">
@@ -374,7 +437,23 @@ const props = defineProps({
     required: false,
     default: false,
   },
+  // Whether the feed may fold this header up to a compact bar (see the template). Off by
+  // default: on the community's own page the header is the content.
+  collapsible: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
+  // Folded or not. The parent owns this (v-model:collapsed) so it can decide the starting
+  // state from the viewer's membership and reset it when the feed moves to another community.
+  collapsed: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
 })
+
+const emit = defineEmits(['update:collapsed'])
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -386,6 +465,8 @@ const myid = computed(() => authStore?.user?.id)
 const amAMember = computed(() => {
   return authStore?.member(props.group?.id)
 })
+
+const showFull = computed(() => !(props.collapsible && props.collapsed))
 
 const contactLabel = computed(() => {
   // Normalize caretaker-type groups to display as 'volunteers'
@@ -541,6 +622,23 @@ async function join(callback) {
     grid-column: 3 / 4;
     grid-row: 1 / 2;
     justify-self: end;
+  }
+}
+
+.group__hide {
+  display: flex;
+  justify-content: flex-start;
+
+  @include media-breakpoint-up(md) {
+    justify-content: flex-end;
+  }
+
+  @include media-breakpoint-up(lg) {
+    justify-content: flex-start;
+  }
+
+  @include media-breakpoint-up(xl) {
+    justify-content: flex-end;
   }
 }
 
@@ -837,6 +935,43 @@ async function join(callback) {
   &__label {
     color: var(--color-gray-600);
     display: block;
+  }
+}
+
+.group-compact {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+  background: $color-white;
+  border-bottom: 1px solid $color-gray--light;
+
+  @include media-breakpoint-up(lg) {
+    border: 1px solid $color-gray--light;
+    border-radius: 0.25rem;
+  }
+
+  &__logo {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    object-fit: cover;
+  }
+
+  &__name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 700;
+    color: $color-header;
+  }
+
+  &__toggle {
+    flex-shrink: 0;
+    padding: 0;
   }
 }
 </style>

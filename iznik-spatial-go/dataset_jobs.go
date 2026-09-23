@@ -11,15 +11,16 @@ import (
 )
 
 // minJobsCPC is the minimum cost-per-click for a job to be servable. Kept in
-// step with the WhatJobs sync (WhatJobsService::MINIMUM_CPC) and jobsLiveFilter.
-const minJobsCPC = 0.10
+// lockstep with the other floors: batch WhatJobsService::MINIMUM_CPC (ingest),
+// batch Job::MINIMUM_CPC and apiv2 job.JOBS_MINIMUM_CPC (serving).
+const minJobsCPC = 0.08
 
 // jobsLiveFilter selects the rows the server actually serves: visible, paying,
 // and geolocated. Single-sourced so the full load (loadJobs) and the drift
 // live-count query stay identical; ApplyDelta applies the same predicate in Go
 // so the incremental set can never diverge from the full-load set (which would
 // otherwise make the index/table count comparison report phantom drift).
-const jobsLiveFilter = "visible = 1 AND cpc >= 0.10 AND geometry IS NOT NULL"
+var jobsLiveFilter = fmt.Sprintf("visible = 1 AND cpc >= %.2f AND geometry IS NOT NULL", minJobsCPC)
 
 // driftCountTolerance is how far the index row count may drift from the live
 // table before the backstop forces a rebuild. The seenat trigger already

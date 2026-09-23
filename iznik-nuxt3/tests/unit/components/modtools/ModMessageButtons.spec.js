@@ -416,6 +416,38 @@ describe('ModMessageButtons', () => {
       )
       expect(takenButton).toBeUndefined()
     })
+
+    // Outcomes are facts about the whole post, so they belong to the poster or to the
+    // moderators of the group it was posted on. On a copy the post merely rippled into,
+    // the server refuses them, so the buttons must not be offered there (Discourse 10102).
+    it('hides TAKEN, RECEIVED and Withdrawn on a copy the post rippled into', () => {
+      const wrapper = mountComponent(
+        { isHomeGroup: false },
+        {
+          groups: [{ groupid: 456, collection: 'Approved' }],
+          type: 'Offer',
+          outcomes: [],
+        }
+      )
+      const labels = wrapper.findAll('.spin-button').map((btn) => btn.text())
+      expect(labels.some((l) => l.includes('Mark as TAKEN'))).toBe(false)
+      expect(labels.some((l) => l.includes('Mark as RECEIVED'))).toBe(false)
+      expect(labels.some((l) => l.includes('Mark as Withdrawn'))).toBe(false)
+    })
+
+    it('still offers Withdrawn on the home group when there is no outcome', () => {
+      const wrapper = mountComponent(
+        { isHomeGroup: true },
+        {
+          groups: [{ groupid: 456, collection: 'Approved' }],
+          type: 'Offer',
+          outcomes: [],
+        }
+      )
+      const labels = wrapper.findAll('.spin-button').map((btn) => btn.text())
+      expect(labels.some((l) => l.includes('Mark as Withdrawn'))).toBe(true)
+      expect(labels.some((l) => l.includes('Mark as TAKEN'))).toBe(true)
+    })
   })
 
   describe('editreview buttons', () => {
@@ -474,6 +506,37 @@ describe('ModMessageButtons', () => {
       )
       expect(wrapper.vm.pending).toBe(false)
       expect(wrapper.vm.approved).toBe(false)
+    })
+
+    // A post that rippled to several groups has one row per group, each with its own
+    // collection. The buttons must describe the copy being administered, not whichever
+    // other group still has the post waiting (Discourse 10102).
+    it('reads the collection of the group being administered, not any group', () => {
+      const wrapper = mountComponent(
+        { groupid: 456 },
+        {
+          groups: [
+            { groupid: 456, collection: 'Approved' },
+            { groupid: 789, collection: 'Pending' },
+          ],
+        }
+      )
+      expect(wrapper.vm.pending).toBe(false)
+      expect(wrapper.vm.approved).toBe(true)
+    })
+
+    it('falls back to any group when no group is being administered', () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            { groupid: 456, collection: 'Approved' },
+            { groupid: 789, collection: 'Pending' },
+          ],
+        }
+      )
+      expect(wrapper.vm.pending).toBe(true)
+      expect(wrapper.vm.approved).toBe(true)
     })
   })
 
@@ -702,8 +765,10 @@ describe('ModMessageButtons', () => {
         },
       }
 
+      // The buttons describe the copy on the group being administered, so the pending
+      // row has to be on that group for any button to render.
       const messageData = createMessage({
-        groups: [{ groupid: 456, collection: 'Pending' }],
+        groups: [{ groupid: 789, collection: 'Pending' }],
       })
       mockMessageStore.byId.mockImplementation((id) =>
         id === messageData.id ? messageData : null

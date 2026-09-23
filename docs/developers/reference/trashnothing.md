@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-27
+last_reviewed: 2026-09-21
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -15,6 +15,7 @@ covers:
   - iznik-nuxt3/modtools/components/ModMessageTnNotice.vue
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-server-go/test/modmessaging_test.go
+  - iznik-server-go/user/partner.go
 ---
 
 # TrashNothing Integration Documentation
@@ -58,6 +59,68 @@ To prevent duplicate user accounts when the same TN user joins multiple groups:
 1. Strip `-g{groupid}` suffix: `john-g123@user.trashnothing.com` → `john@user.trashnothing.com`
 2. Strip plus addressing
 3. Remove dots (Gmail-style normalization)
+
+### Identifying the member behind an address
+
+A member's TN identity is the username in their per-group addresses - `bibiana` in
+`bibiana-g288@user.trashnothing.com` - and it is the whole of it, not a prefix of it.
+`tn:sync`'s duplicate check (`TNSyncCommand::mergeDuplicateTNUsers`) merges the accounts
+that share one, keeping the lowest `users_emails.id`.
+
+Per tick it reads only addresses added since the last run and probes for siblings of each
+with `LIKE '<username>-g%@user.trashnothing.com'`; one tick a day regroups the whole table
+instead, which is what catches a duplicate made by re-pointing an existing row. That
+`LIKE` is an index narrowing and not the test: its `%` runs on past the end of the
+username, so `bibiana-g%` also matches `bibiana-gomes-g4840@...`, a different member.
+Both passes decide on an exact username from `tnUsernameFromAddress()`. Merging two
+members into one account deletes one of them and re-points their mail, so the exact test
+is what stands between a longer username and being absorbed by its own prefix.
+
+### Finding the addresses: not via the backwards column
+
+Both passes have to narrow to Trash Nothing addresses first. That narrowing is done on the
+address, `email LIKE '%@user.trashnothing.com'`, and deliberately **not** on the `backwards`
+index, because `backwards` holds three different things for one address:
+
+| Written from | `i9-g4707@user.trashnothing.com` becomes | Production rows |
+|---|---|---|
+| the address | `moc.gnihtonhsart.resu@7074g-9i` | 450,846 |
+| `canon` (suffix and domain dots stripped) | `mocgnihtonhsartresu@9i` | 1,752,575 |
+| nothing | `NULL` | 13,772 |
+
+The canon form is the column's definition: V1's `User::addEmail` writes `strrev(canonMail($email))`
+at both its insert sites, so the address-shaped rows are the deviation, not the target.
+
+Filtering on one prefix reads a fifth of the table, and nothing reaches the NULLs. That is what
+happened between 2026-05-14 and 2026-09: the check reported "roughly zero duplicates a day",
+which read like success, while for each split member it could see only one of the two accounts
+and so grouped each alone. 96 duplicate pairs accumulated, and the first symptom to surface was
+a partner API `403 "Not your message"` when TN acted on a post owned by the account it could
+not see.
+
+The index was never earning its incompleteness: EXPLAIN shows the optimiser choosing a full scan
+for either filter, because every prefix matches far too much of the table. Measured on
+production over 4.2M rows, `backwards` takes 3.3s and finds 94 of the 96, the address takes 5.1s
+and finds all 96. The per-tick pass pays neither, since its `id >` range narrows on the primary
+key first.
+
+### Reviewing the backlog before merging it
+
+Widening that filter exposes ~96 pairs of live member accounts at once, and `User::merge`
+deletes one of each, so merging them is gated:
+
+```bash
+php artisan tn:sync --report-duplicates
+```
+
+is read-only. It always uses the wider filter, lists each candidate pair with its
+`tnuserid` and message count, flags pairs whose accounts carry **two different tnuserids**
+(a member who re-registered on TN, or a username released and retaken by somebody else -
+only a person can tell which), moves no cursor and merges nothing.
+
+The sync itself keeps the old, narrow filter until
+`FREEGLE_TN_MERGE_LEGACY_DUPLICATES=true`. Until then its behaviour is exactly what it was,
+so duplicates created from now on are still merged and the reviewed backlog waits.
 
 **Key functions**:
 - `User::isTN()` - Check if user is from TN
@@ -306,6 +369,35 @@ command fails only on those escalations, not on any miss at all.
 
 Design rationale and the live evidence behind each rule are in
 `plans/tn-api-post-ingestion.md` section S.
+### Group Membership (Subscribe Mail)
+
+TN keeps its members' Freegle group list in step by emailing
+`<groupname>-subscribe@groups.ilovefreegle.org` from the member's TN address, one mail per
+group. `IncomingMailService::handleSubscribe()` handles it: it finds the group by
+`nameshort`, finds or creates the user from the envelope-from, and adds an Approved
+membership on daily digest.
+
+"Finds or creates the user" reads on the canon, not on the address. TN sends one of these
+per group and each comes from a different per-group alias, so matching the address alone
+meant the second alias found nothing and created a second Freegle account for the same
+member. Every `-gNNNN` alias canonicalises to one value, so the canon lookup finds the
+account the member already has; the new alias is then attached to it, and later mail from
+it matches outright.
+
+Two things gate and record that join:
+
+- **A ban blocks it.** A row in `users_banned` for that (user, group) means the subscribe
+  mail is dropped. TN re-sends these mails routinely, so without the gate a member a
+  moderator had banned would simply reappear on the group at the next TN sync.
+- **The join is logged.** A `Group`/`Joined` row with text `Subscribed` goes into `logs`,
+  so the join shows in the modlog as "Joined by emailing the group's subscribe address"
+  and counts toward the "seen on many groups" check in `MembershipsProcessingService`.
+
+Removal is the mirror image: `<groupname>-unsubscribe@` drops the membership, except for
+moderators and owners.
+
+`membership:remove-banned` clears up any membership held by a member banned from that
+group, for the rows written before the gate existed.
 
 ### Photo Handling
 
@@ -498,7 +590,7 @@ The two are handled at different layers, deliberately.
 | Case | Same `tnpostid`? | Handled where | Result |
 |------|------------------|---------------|--------|
 | Cross-post: one item, N groups, N emails | Yes | Ingestion, `IncomingMailService::createGroupPostMessage` | One `messages` row with N `messages_groups` rows |
-| Repost: same item offered again later | No - new id each time | `UnifiedDigestService` content key | Collapsed within a digest; both remain live posts on the site |
+| Repost: same item offered again later | No - new id each time | `UnifiedDigestService` content key | One digest card, and one immediate mail, for the set; both remain live posts on the site |
 
 ### Cross-posts: one message, many groups
 
@@ -539,8 +631,16 @@ Keying on the post id alone was tried and reverted (`423c6b0e6`): because a repo
 fresh id, the digest listed the same item once per posting - "Small lamp" four times,
 27 such items in four days (Discourse 9808/#233).
 
-Note the deliberate asymmetry: a repost is **not** collapsed on the browse feed. Two
-postings days apart are two real posts, and the member meant to make both.
+The same key now decides the immediate mails too, over a seven-day window
+(`UnifiedDigestService::ITEM_DEDUP_DAYS`). Past that, a member re-offering the same thing is
+news again and gets a fresh mail.
+
+Note the deliberate asymmetry: a repost is **not** collapsed on the browse feed. The feed
+collapses on `msgid` and nothing else, so each posting is its own card. Two postings days
+apart are two real posts, and the member meant to make both. The same is true of a
+TrashNothing set that predates the merge above: until `tn:merge-crossposts` collapses it,
+each copy is its own card on browse, even though the mail paths now treat the set as one
+item.
 
 ### Merging copies created before this
 
@@ -563,12 +663,30 @@ excluded from rippling (below).
 
 ### Copies and mail
 
-A member gets one immediate email per post, however many of their groups it is on.
-`UnifiedDigestService::processGroupImmediate()` runs once per group, so without a check
-across groups a cross-posted item would be mailed to the same member once per group they
-share with it. It records each send in `rippling_reach_notified` and reads that back on a
-later group's pass, which is the same ledger that stops the reach mailer re-mailing
-someone this path has already reached.
+A member is mailed **once per item**, not once per message. That distinction matters because
+one item can exist as several messages: a hand cross-post to two groups, a repost, or a
+TrashNothing set that predates the merge above.
+
+The rule is the daily digest's, called rather than restated. `itemSiblingMsgids()` groups
+messages using `getDeduplicationKey()` and `bodiesMatch()`, the same two functions
+`deduplicatePosts()` uses, so the two cannot drift.
+
+| Path | What it mails | How it knows the member has had it |
+|------|---------------|------------------------------------|
+| `processGroupImmediate()` - non-rippling posts, per-group cursor | one message | `rippling_reach_notified`, read across every copy of the item |
+| `mailNewlyReachedForPost()` - rippling posts, reach-gated | one message | the same ledger, in the recipient query |
+| `mailPostToUsers()` - first-reply scouting | one message | the same ledger, in `spoolPostToRecipients()` |
+| daily digest and daily push | a roll-up | `deduplicatePosts()` within one send, the member's cursor across sends |
+
+The ledger is written against the message actually mailed, and read across the whole set, so
+a member who had the first copy is passed over when a second arrives, whichever path would
+have mailed it.
+
+The two daily channels have no per-send ledger, so their across-sends check uses the
+member's own cursor: a copy the cursor has already passed is one they were shown. That
+stands in closely because copies of an item share a poster and a location, so the two things
+that decide whether a post reaches a member at all - it being their own post, and their
+distance slider - treat every copy of it alike.
 
 ### Copies and rippling
 
@@ -650,9 +768,14 @@ The following one-off maintenance scripts existed in the legacy V1 PHP implement
 
 ### 7. Duplicate User Detection
 
-**Current State**: Email canonicalization helps, but duplicate TN users can still occur.
+**Current State**: Creation is handled - `EnsurePartnerIdentifiers` attaches a member's new
+per-group alias to the account they already have, which stopped new duplicates on
+2026-08-11. What remains is the backlog created before that, which merges once
+`FREEGLE_TN_MERGE_LEGACY_DUPLICATES` is set (see "Reviewing the backlog before merging it").
 
-**Improvement**: More aggressive de-duplication when TN user ID is known, automatic merging when same TN user creates multiple Freegle accounts.
+**Improvement**: Retire the flag once the backlog is cleared. The Go partner path meanwhile
+acts as whichever of a member's accounts owns the post rather than refusing the action, so a
+duplicate that slips through is no longer member-visible.
 
 ### 8. Error Handling for TN API Failures
 

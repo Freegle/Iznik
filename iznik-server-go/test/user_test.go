@@ -609,6 +609,45 @@ func TestPostUserAddEmail(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 }
 
+func TestPostUserAddEmailLinksDonations(t *testing.T) {
+	// V1 linked unmatched donations to the user on every addEmail
+	// (User::assignUserToToDonation): a donation made under an email before that
+	// email was on any account sits with userid NULL, and adding the email
+	// claims it. Donations already linked to another account must not move.
+	db := database.DBConn
+	prefix := uniquePrefix("addemaildon")
+	userID := CreateTestUser(t, prefix, "User")
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	_, token := CreateTestSession(t, userID)
+
+	newEmail := prefix + "_payer@test.com"
+	db.Exec("INSERT INTO users_donations (userid, Payer, PayerDisplayName, GrossAmount, timestamp, TransactionID) VALUES (NULL, ?, ?, 5.00, NOW(), ?)",
+		newEmail, prefix, prefix+"_txn1")
+	db.Exec("INSERT INTO users_donations (userid, Payer, PayerDisplayName, GrossAmount, timestamp, TransactionID) VALUES (?, ?, ?, 10.00, NOW(), ?)",
+		otherID, newEmail, prefix, prefix+"_txn2")
+
+	payload := map[string]interface{}{
+		"action": "AddEmail",
+		"id":     userID,
+		"email":  newEmail,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// The unmatched donation is now linked to the user.
+	var linked int64
+	db.Raw("SELECT COUNT(*) FROM users_donations WHERE userid = ? AND TransactionID = ?", userID, prefix+"_txn1").Scan(&linked)
+	assert.Equal(t, int64(1), linked)
+
+	// The donation on the other account stays put.
+	var kept int64
+	db.Raw("SELECT COUNT(*) FROM users_donations WHERE userid = ? AND TransactionID = ?", otherID, prefix+"_txn2").Scan(&kept)
+	assert.Equal(t, int64(1), kept)
+}
+
 func TestPostUserAddEmailAlreadyUsed(t *testing.T) {
 	prefix := uniquePrefix("addemaildup")
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
@@ -1471,6 +1510,131 @@ func TestPatchUserMuteChitchat(t *testing.T) {
 	assert.Equal(t, "Suppressed", modstatus)
 }
 
+// TestPatchUserChatmodstatusFully is the regression test for the field being
+// absent from UserPatchRequest: BodyParser dropped it, so PATCH returned 200
+// and left the column untouched. Asserting the DB value, not the status code,
+// is the point - the old code passed any status-only assertion.
+func TestPatchUserChatmodstatusFully(t *testing.T) {
+	prefix := uniquePrefix("patchchatmod")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	payload := map[string]interface{}{
+		"id":            targetID,
+		"chatmodstatus": "Fully",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var chatmodstatus string
+	db.Raw("SELECT COALESCE(chatmodstatus, '') FROM users WHERE id = ?", targetID).Scan(&chatmodstatus)
+	assert.Equal(t, "Fully", chatmodstatus)
+
+	// The change is invisible to the member, so it has to be auditable.
+	var logs int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = 'User' AND subtype = 'Edit' AND user = ? AND byuser = ? AND text LIKE '%Fully%'",
+		targetID, modID).Scan(&logs)
+	assert.Equal(t, int64(1), logs, "setting chatmodstatus should be logged")
+}
+
+func TestPatchUserChatmodstatusBackToModerated(t *testing.T) {
+	prefix := uniquePrefix("patchchatmodback")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	db.Exec("UPDATE users SET chatmodstatus = 'Fully' WHERE id = ?", targetID)
+
+	payload := map[string]interface{}{
+		"id":            targetID,
+		"chatmodstatus": "Moderated",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var chatmodstatus string
+	db.Raw("SELECT COALESCE(chatmodstatus, '') FROM users WHERE id = ?", targetID).Scan(&chatmodstatus)
+	assert.Equal(t, "Moderated", chatmodstatus)
+}
+
+// An unrecognised value must be refused rather than reaching the ENUM column,
+// where non-strict MySQL coerces it to the empty string - which is neither
+// Moderated nor Fully, so the member silently stops being spam-checked at all.
+func TestPatchUserChatmodstatusInvalidRejected(t *testing.T) {
+	prefix := uniquePrefix("patchchatmodbad")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	payload := map[string]interface{}{
+		"id":            targetID,
+		"chatmodstatus": "Bogus",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+
+	var chatmodstatus string
+	db.Raw("SELECT COALESCE(chatmodstatus, '') FROM users WHERE id = ?", targetID).Scan(&chatmodstatus)
+	assert.Equal(t, "Moderated", chatmodstatus, "rejected value must not reach the column")
+}
+
+// A member of a shared group who is NOT a mod there must not be able to
+// shadow-ban another member.
+func TestPatchUserChatmodstatusNonModForbidden(t *testing.T) {
+	prefix := uniquePrefix("patchchatmodnonmod")
+	db := database.DBConn
+
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, otherID, groupID, "Member")
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, otherToken := CreateTestSession(t, otherID)
+
+	payload := map[string]interface{}{
+		"id":            targetID,
+		"chatmodstatus": "Fully",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+otherToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+
+	var chatmodstatus string
+	db.Raw("SELECT COALESCE(chatmodstatus, '') FROM users WHERE id = ?", targetID).Scan(&chatmodstatus)
+	assert.Equal(t, "Moderated", chatmodstatus)
+}
+
 func TestPatchUserPasswordBySupportUser(t *testing.T) {
 	prefix := uniquePrefix("patchpw")
 	db := database.DBConn
@@ -2155,6 +2319,52 @@ func TestPostUserMergeByEmail(t *testing.T) {
 	var cntU2 int64
 	db.Raw("SELECT COUNT(*) FROM users WHERE id = ?", user2ID).Scan(&cntU2)
 	assert.Equal(t, int64(1), cntU2, "id2 (kept) must still exist")
+}
+
+func TestPostUserMergeByEmailKeepsChosenDominantEmail(t *testing.T) {
+	// UI text: "the second user's preferred email will be the preferred
+	// email of the merged user" - id2's own email must stay dominant even
+	// when id2's preferred flag was never (re)set, which is reachable
+	// independently of the merge itself.
+	prefix := uniquePrefix("mergemailpref")
+	db := database.DBConn
+
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	email1 := prefix + "_u1@test.com"
+	email2 := prefix + "_u2@test.com"
+	CreateTestUserWithEmail(t, prefix+"_u1", email1)
+	user2ID := CreateTestUserWithEmail(t, prefix+"_u2", email2)
+
+	// Simulate id2's email having no preferred flag set.
+	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", user2ID)
+
+	payload := map[string]interface{}{
+		"action": "Merge",
+		"email1": email1,
+		"email2": email2,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+adminToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// id2's own email (the moderator's chosen dominant email) must be the
+	// merged account's preferred email, not id1's.
+	var preferredEmail string
+	db.Raw("SELECT email FROM users_emails WHERE userid = ? AND preferred = 1", user2ID).Scan(&preferredEmail)
+	assert.Equal(t, email2, preferredEmail, "id2's own email must be the merged account's preferred email")
+
+	var preferredCount int64
+	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND preferred = 1", user2ID).Scan(&preferredCount)
+	assert.Equal(t, int64(1), preferredCount, "exactly one preferred email must survive the merge")
 }
 
 func TestPostUserMergeByModerator(t *testing.T) {
@@ -3101,16 +3311,23 @@ func TestGetUserMembershipsPostingStatus(t *testing.T) {
 	CreateTestMembership(t, prohibitedUser, groupID, "Member")
 	db.Exec("UPDATE memberships SET ourPostingStatus = 'PROHIBITED' WHERE userid = ? AND groupid = ?", prohibitedUser, groupID)
 
+	// A membership rippling created for the poster (rippled = 1) carries no posting
+	// status because no moderator ever set one. It must not read as MODERATED.
+	rippledUser := CreateTestUser(t, prefix+"_rip", "User")
+	CreateTestMembership(t, rippledUser, groupID, "Member")
+	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", rippledUser, groupID)
+
 	// Fetch each user with modtools=true and check posting status.
 	for _, tc := range []struct {
 		name     string
 		uid      uint64
-		expected string
+		expected interface{}
 	}{
 		{"NULL→MODERATED", nullUser, "MODERATED"},
 		{"DEFAULT stays DEFAULT", defaultUser, "DEFAULT"},
 		{"MODERATED stays MODERATED", moderatedUser, "MODERATED"},
 		{"PROHIBITED stays PROHIBITED", prohibitedUser, "PROHIBITED"},
+		{"NULL on a rippled membership stays unset", rippledUser, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", tc.uid, modToken)
@@ -4486,6 +4703,93 @@ func TestUserLocationChangesModInfo(t *testing.T) {
 	})
 }
 
+// Rippling Out auto-joins a poster to every group their post ripples into (memberships.rippled
+// = 1 / memberships_history.rippled = 1), which can legitimately span a wide geographic area with
+// no action by the member at all. enrichUserForModtools' activedistance spread must exclude those
+// ripple-created memberships_history rows - counting them flags/bans innocent freeglers purely for
+// having a post ripple out (Discourse 10064/1).
+func TestActivedistanceExcludesRippleOnlyMemberships(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("activedist")
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	group1 := CreateTestGroup(t, prefix+"_g1")
+	group2 := CreateTestGroup(t, prefix+"_g2")
+	CreateTestMembership(t, modID, group1, "Moderator")
+	// The target is a genuine current member of group1 (as a ripple auto-join leaves them) - this
+	// is what makes the mod a mod of this member (IsModOfUser) and gates activedistance into the response.
+	CreateTestMembership(t, targetID, group1, "Member")
+
+	// Edinburgh and London - far enough apart to trigger the "miles apart" warning.
+	db.Exec("UPDATE `groups` SET lat = 55.9533, lng = -3.1883, publish = 1, onmap = 1 WHERE id = ?", group1)
+	db.Exec("UPDATE `groups` SET lat = 51.5074, lng = -0.1278, publish = 1, onmap = 1 WHERE id = ?", group2)
+
+	// Both memberships_history rows are ripple-created (rippled = 1), within the 31-day window -
+	// the member never joined either group themselves.
+	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, added, rippled) "+
+		"VALUES (?, ?, 'Approved', NOW(), 1)", targetID, group1)
+	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, added, rippled) "+
+		"VALUES (?, ?, 'Approved', NOW(), 1)", targetID, group2)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM memberships_history WHERE userid = ?", targetID)
+	})
+
+	url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	err = json.NewDecoder(resp.Body).Decode(&u)
+	assert.NoError(t, err)
+	assert.Equal(t, targetID, u.ID)
+
+	// FAILS on current code: activedistance is computed from ALL memberships_history rows in the
+	// window with no `rippled` filter, so a member who never chose to spread out still gets flagged.
+	assert.Nil(t, u.Activedistance,
+		"activedistance must not be computed from memberships created purely by rippling auto-join")
+}
+
+// Regression guard for the fix above: a member who genuinely joined distant groups themselves
+// (rippled = 0) must still be flagged - the fix must exclude only ripple-created rows, not
+// activedistance altogether.
+func TestActivedistanceStillFlagsGenuineSpread(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("activedistgenuine")
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	group1 := CreateTestGroup(t, prefix+"_g1")
+	group2 := CreateTestGroup(t, prefix+"_g2")
+	CreateTestMembership(t, modID, group1, "Moderator")
+	CreateTestMembership(t, targetID, group1, "Member")
+
+	db.Exec("UPDATE `groups` SET lat = 55.9533, lng = -3.1883, publish = 1, onmap = 1 WHERE id = ?", group1)
+	db.Exec("UPDATE `groups` SET lat = 51.5074, lng = -0.1278, publish = 1, onmap = 1 WHERE id = ?", group2)
+
+	// The member chose to join both groups themselves (rippled = 0).
+	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, added, rippled) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0)", targetID, group1)
+	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, added, rippled) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0)", targetID, group2)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM memberships_history WHERE userid = ?", targetID)
+	})
+
+	url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	err = json.NewDecoder(resp.Body).Decode(&u)
+	assert.NoError(t, err)
+	assert.NotNil(t, u.Activedistance, "genuine (non-rippled) group spread must still be flagged to mods")
+}
+
 // TestGetUserMessageHistory_IncludesPending verifies that Pending messages appear in the
 // messagehistory returned by GET /api/user/:id?modtools=true.
 //
@@ -4976,4 +5280,46 @@ func TestPrivateLocationName_FallsBackToClosestPostcode(t *testing.T) {
 		assert.Empty(t, privatePositionName(farID),
 			"privateposition.name should stay empty when the nearest postcode is outside the guard box")
 	}
+}
+
+func TestPostUserMergeByIdKeptUserWithoutEmailInheritsBest(t *testing.T) {
+	// Merge-by-id can keep a user that has no email of its own. The merged
+	// account must not be left with zero preferred emails: the discarded
+	// user's best email becomes the kept user's preferred one.
+	prefix := uniquePrefix("mergenoemail")
+	db := database.DBConn
+
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	email1 := prefix + "_u1@test.com"
+	user1ID := CreateTestUserWithEmail(t, prefix+"_u1", email1)
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+
+	// The kept user has no email rows at all.
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", user2ID)
+
+	payload := map[string]interface{}{
+		"action": "Merge",
+		"id1":    user1ID,
+		"id2":    user2ID,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+adminToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	var preferredEmail string
+	db.Raw("SELECT email FROM users_emails WHERE userid = ? AND preferred = 1", user2ID).Scan(&preferredEmail)
+	assert.Equal(t, email1, preferredEmail, "the discarded user's email becomes the kept user's preferred email")
+
+	var preferredCount int64
+	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND preferred = 1", user2ID).Scan(&preferredCount)
+	assert.Equal(t, int64(1), preferredCount, "exactly one preferred email after the merge")
 }

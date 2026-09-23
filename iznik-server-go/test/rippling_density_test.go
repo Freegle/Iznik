@@ -24,9 +24,9 @@ const (
 	bandGap     = "tdgap"
 	bandWindow  = "tdwin"
 	reachPoly   = "ST_GeomFromText('POLYGON((-1 51, 1 51, 1 52, -1 52, -1 51))', 3857)"
-	reachInsert = "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status, " +
+	reachInsert = "INSERT INTO rippling_reach (msgid, lat, lng, outer_bound, status, " +
 		"total_freeglers, max_drive_min, density_band, density_radius_miles, max_minutes_cap, created_at) " +
-		"VALUES (?, 51.5, -0.1, " + reachPoly + ", ST_Envelope(" + reachPoly + "), 'expanding', ?, ?, ?, ?, ?, ?)"
+		"VALUES (?, 51.5, -0.1, ST_Envelope(" + reachPoly + "), 'expanding', ?, ?, ?, ?, ?, ?)"
 )
 
 // insideWindow is "recent" for a fixture: an hour ago rather than this instant.
@@ -177,9 +177,9 @@ func TestRipplingDensityKeepsUnmeasuredPostsAsUnknown(t *testing.T) {
 	db := database.DBConn
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
-	mustExec(t, "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status, "+
+	mustExec(t, "INSERT INTO rippling_reach (msgid, lat, lng, outer_bound, status, "+
 		"total_freeglers, max_drive_min, created_at) "+
-		"VALUES (?, 51.5, -0.1, "+reachPoly+", ST_Envelope("+reachPoly+"), 'expanding', 900, 30, ?)",
+		"VALUES (?, 51.5, -0.1, ST_Envelope("+reachPoly+"), 'expanding', 900, 30, ?)",
 		msgID, insideWindow())
 
 	row := bandRow(t, token, "unknown")

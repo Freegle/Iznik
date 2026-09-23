@@ -18,6 +18,10 @@ class RatingsSyncer
         private readonly string $apiKey,
         private readonly string $apiBaseUrl,
         private readonly LokiService $loki,
+        // Shared with the other TN syncers — TN rate-limits per API key and one
+        // tn:sync run calls three endpoints with the same key, so a throttle
+        // that only paces this class's own requests protects nothing.
+        private readonly ?TrashNothingRateLimiter $rateLimiter = null,
     ) {}
 
     /**
@@ -41,8 +45,13 @@ class RatingsSyncer
             foreach ($ratings as $rating) {
                 $count++;
 
-                if (!$maxDate || $rating['date'] > $maxDate) {
-                    $maxDate = $rating['date'];
+                // A row without a date must not move the watermark: taking the
+                // missing value would either warn and compare as '' (leaving
+                // $maxDate null on the first row, so the whole page's progress
+                // is lost) or, worse, be stored as the new sync date.
+                $ratingDate = $rating['date'] ?? null;
+                if ($ratingDate !== null && (!$maxDate || $ratingDate > $maxDate)) {
+                    $maxDate = $ratingDate;
                 }
 
                 if (!($rating['ratee_fd_user_id'] ?? null)) {
@@ -55,7 +64,9 @@ class RatingsSyncer
                 }
 
                 try {
-                    if ($rating['rating']) {
+                    // Only an absent/null rating means "deleted" — a falsy but
+                    // present value is a real rating, not a deletion.
+                    if (($rating['rating'] ?? null) !== null) {
                         $ratingModel = Rating::firstOrNew(['tn_rating_id' => $rating['rating_id']]);
                         $isNew = !$ratingModel->exists;
                         if ($isNew) {
@@ -63,8 +74,8 @@ class RatingsSyncer
                             $ratingModel->visible = 1;
                         }
                         $ratingModel->rating    = $rating['rating'];
-                        $ratingModel->timestamp = $rating['date'];
-                        Log::info('TN-SYNC-TRACE [WRITE] table=ratings op=upsert where=tn_rating_id=' . $rating['rating_id'] . ' set=ratee=' . $rating['ratee_fd_user_id'] . ',rating=' . $rating['rating'] . ',timestamp=' . $rating['date'] . ',visible=1');
+                        $ratingModel->timestamp = $ratingDate;
+                        Log::info('TN-SYNC-TRACE [WRITE] table=ratings op=upsert where=tn_rating_id=' . $rating['rating_id'] . ' set=ratee=' . $rating['ratee_fd_user_id'] . ',rating=' . $rating['rating'] . ',timestamp=' . ($ratingDate ?? 'null') . ',visible=1');
                         if (!$this->dryRun) {
                             $ratingModel->save();
                         }
@@ -89,7 +100,7 @@ class RatingsSyncer
                         }
                     }
                 } catch (\Exception $e) {
-                    Log::info('TN-SYNC-TRACE [RATING] id=' . $rating['rating_id'] . ' ratee=' . $rating['ratee_fd_user_id'] . ' rating=' . $rating['rating'] . ' action=error');
+                    Log::info('TN-SYNC-TRACE [RATING] id=' . ($rating['rating_id'] ?? 'null') . ' ratee=' . ($rating['ratee_fd_user_id'] ?? 'null') . ' rating=' . ($rating['rating'] ?? 'null') . ' action=error');
                     Log::error('TN sync: ratings sync failed', [
                         'error'  => $e->getMessage(),
                         'rating' => $rating,
@@ -118,6 +129,8 @@ class RatingsSyncer
             $payload = json_decode(file_get_contents($file), true);
             return is_array($payload) ? ($payload['ratings'] ?? []) : [];
         }
+
+        ($this->rateLimiter ?? app(TrashNothingRateLimiter::class))->await();
 
         $response = Http::get("{$this->apiBaseUrl}/ratings", [
             'key'      => $this->apiKey,

@@ -56,6 +56,12 @@ ylvm_log "Mounting $YLVM_ACTIVE_MNT ..."
 # stale cached data from a previous switch (validated).
 mount -o nouuid "/dev/$YLVM_VG/$YLVM_ACTIVE" "$YLVM_ACTIVE_MNT"
 
+# The clone carries whatever ownership was correct when the snapshot was taken, which
+# is not necessarily what the percona image runs as today. Without this, switching to a
+# snapshot written under a different mysql uid leaves mysqld unable to create auto.cnf
+# and it crash-loops.
+ylvm_chown_datadir
+
 # Start percona and reset the root password (the cloned snapshot carries the
 # production password baked into the backup; the containers expect the local one).
 ylvm_reset_root_password "${YLVM_DB_PASSWORD:-iznik}"

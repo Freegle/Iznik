@@ -210,7 +210,7 @@ func TestClusterOverflowWedges_FiresOnRealClusterAndExtendsBeyondCommittedReach(
 
 	// Probe real drive-times on the shared grid rather than assuming a road speed - the
 	// calibrated class factors are not something this test should have to know about.
-	probe := Isochrone(g, clusterTestOriginLat, clusterTestOriginLng, 20*60, Drive)
+	probe := Isochrone(g, clusterTestOriginLat, clusterTestOriginLng, 20*60)
 	eastSecs, ok := probe.ReachedNodes[clusterTestEastNodeID]
 	if !ok {
 		t.Fatal("fixture assumption broken: east target node not reachable on the shared test grid")
@@ -219,7 +219,7 @@ func TestClusterOverflowWedges_FiresOnRealClusterAndExtendsBeyondCommittedReach(
 	committedSecs := eastSecs * 0.4
 	clusterMaxSecs := eastSecs * 1.5
 
-	iso2 := Isochrone(g, clusterTestOriginLat, clusterTestOriginLng, clusterMaxSecs, Drive)
+	iso2 := Isochrone(g, clusterTestOriginLat, clusterTestOriginLng, clusterMaxSecs)
 	eastNode := g.Nodes[clusterTestEastNodeID]
 
 	var shellMembers []clusterMember
@@ -229,8 +229,9 @@ func TestClusterOverflowWedges_FiresOnRealClusterAndExtendsBeyondCommittedReach(
 		})
 	}
 
-	wedges := clusterOverflowWedges(g, iso2, clusterTestOriginLat, clusterTestOriginLng, Drive,
+	wedges := clusterOverflowWedges(g, iso2, clusterTestOriginLat, clusterTestOriginLng,
 		shellMembers, committedSecs, clusterMaxSecs, 10, 3, 1000, 0)
+
 	if wedges == nil {
 		t.Fatal("expected a wedge for a real, dense, in-bounds cluster")
 	}
@@ -270,7 +271,7 @@ func TestClusterOverflowWedges_FiresOnRealClusterAndExtendsBeyondCommittedReach(
 			committedFiltered[nid] = tt
 		}
 	}
-	res := NetworkResolution(g, iso2.ReachedNodes, Drive)
+	res := NetworkResolution(g, iso2.ReachedNodes)
 	committedPoly := IsochronePolygon(g, committedFiltered, res)
 	committedRing := committedPoly.Geometry.Coordinates[0]
 	allInsideCommitted := true
@@ -287,14 +288,14 @@ func TestClusterOverflowWedges_FiresOnRealClusterAndExtendsBeyondCommittedReach(
 
 func TestClusterOverflowWedges_NilWhenPoolAlreadyAtFloor(t *testing.T) {
 	g := getTestGraph(t)
-	iso2 := Isochrone(g, clusterTestOriginLat, clusterTestOriginLng, 10*60, Drive)
+	iso2 := Isochrone(g, clusterTestOriginLat, clusterTestOriginLng, 10*60)
 	members := []clusterMember{{Lat: clusterTestOriginLat, Lng: clusterTestOriginLng, Secs: 100}}
 
-	if got := clusterOverflowWedges(g, iso2, clusterTestOriginLat, clusterTestOriginLng, Drive,
+	if got := clusterOverflowWedges(g, iso2, clusterTestOriginLat, clusterTestOriginLng,
 		members, 60, 600, 1, 3, 50, 50); got != nil {
 		t.Error("expected nil when poolAtCeiling already equals floor")
 	}
-	if got := clusterOverflowWedges(g, iso2, clusterTestOriginLat, clusterTestOriginLng, Drive,
+	if got := clusterOverflowWedges(g, iso2, clusterTestOriginLat, clusterTestOriginLng,
 		members, 60, 600, 1, 3, 50, 60); got != nil {
 		t.Error("expected nil when poolAtCeiling already exceeds floor")
 	}
@@ -302,14 +303,14 @@ func TestClusterOverflowWedges_NilWhenPoolAlreadyAtFloor(t *testing.T) {
 
 func TestClusterOverflowWedges_NilWithNoShellMembersOrNoWedges(t *testing.T) {
 	g := getTestGraph(t)
-	iso2 := Isochrone(g, clusterTestOriginLat, clusterTestOriginLng, 10*60, Drive)
+	iso2 := Isochrone(g, clusterTestOriginLat, clusterTestOriginLng, 10*60)
 	members := []clusterMember{{Lat: clusterTestOriginLat, Lng: clusterTestOriginLng, Secs: 100}}
 
-	if got := clusterOverflowWedges(g, iso2, clusterTestOriginLat, clusterTestOriginLng, Drive,
+	if got := clusterOverflowWedges(g, iso2, clusterTestOriginLat, clusterTestOriginLng,
 		nil, 60, 600, 1, 3, 1000, 0); got != nil {
 		t.Error("expected nil with no shell members")
 	}
-	if got := clusterOverflowWedges(g, iso2, clusterTestOriginLat, clusterTestOriginLng, Drive,
+	if got := clusterOverflowWedges(g, iso2, clusterTestOriginLat, clusterTestOriginLng,
 		members, 60, 600, 1, 0, 1000, 0); got != nil {
 		t.Error("expected nil with maxWedges<=0")
 	}
@@ -510,7 +511,7 @@ func TestClusterOverflow_FiresEndToEndOnGenuineTownCluster(t *testing.T) {
 
 	// Probe the town's real drive-time rather than assuming a road speed, then derive
 	// committed/shell ceilings from it with generous margin either side.
-	probe := Isochrone(g, originLat, originLng, 3600, Drive)
+	probe := Isochrone(g, originLat, originLng, 3600)
 	townSecs, ok := probe.ReachedNodes[townNodeID]
 	if !ok {
 		t.Fatal("fixture assumption broken: town not reachable within 60 minutes")

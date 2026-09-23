@@ -9,6 +9,7 @@ use App\Mail\Chat\ReferToSupportMail;
 use App\Mail\Donation\DonateExternalMail;
 use App\Mail\Newsfeed\ChitchatReportMail;
 use App\Mail\Session\ForgotPasswordMail;
+use App\Mail\Session\LoginLinkMail;
 use App\Mail\Session\MergeOfferMail;
 use App\Mail\Session\UnsubscribeConfirmMail;
 use App\Mail\Session\VerifyEmailMail;
@@ -16,6 +17,7 @@ use App\Mail\Message\ModStdMessageMail;
 use App\Models\BackgroundTask;
 use App\Models\ChatRoom;
 use App\Models\User;
+use App\Services\BlockedKeywordBackfillService;
 use App\Services\EmailSpoolerService;
 use App\Services\HousekeeperService;
 use App\Services\PostcodeRemapService;
@@ -236,6 +238,7 @@ class ProcessBackgroundTasksCommand extends Command
             BackgroundTask::TASK_FREEBIE_ALERTS_ADD      => $this->handleFreebieAlertsAdd($data),
             BackgroundTask::TASK_FREEBIE_ALERTS_REMOVE   => $this->handleFreebieAlertsRemove($data),
             BackgroundTask::TASK_HOUSEKEEPER_NOTIFY      => $this->handleHousekeeperNotify($data),
+            BackgroundTask::TASK_CONCERN_KEYWORD_BACKFILL => $this->handleConcernKeywordBackfill($data),
             BackgroundTask::TASK_REMAP_POSTCODES         => $this->handleRemapPostcodes($data),
             BackgroundTask::TASK_USER_FORGET             => $this->handleUserForget($data),
             BackgroundTask::TASK_TN_SYNC                 => $this->handleTnSyncCommand($data),
@@ -388,6 +391,26 @@ class ProcessBackgroundTasksCommand extends Command
             }
         }
 
+        if (config('freegle.auth.passwordless', false)) {
+            // Passwordless deployments: the same request means "send me a
+            // sign-in link". The Go API has already minted the member's u/k
+            // credentials into reset_url; keep those, but land on the page that
+            // signs them in rather than the set-a-new-password settings page.
+            $mail = new LoginLinkMail(
+                userId: (int) $data['user_id'],
+                email: $data['email'],
+                loginUrl: $this->signInLinkFromResetUrl($data['reset_url']),
+            );
+
+            $spooler->spool($mail, $data['email']);
+
+            Log::info('Sent sign-in link email', [
+                'user_id' => $data['user_id'],
+            ]);
+
+            return;
+        }
+
         $mail = new ForgotPasswordMail(
             userId: (int) $data['user_id'],
             email: $data['email'],
@@ -399,6 +422,29 @@ class ProcessBackgroundTasksCommand extends Command
         Log::info('Sent forgot password email', [
             'user_id' => $data['user_id'],
         ]);
+    }
+
+    /**
+     * Turn the Go-generated reset URL (.../settings?u=&k=&src=forgotpass) into a
+     * sign-in link: the same u/k credentials on freegle.auth.login_link_path,
+     * anchored to OUR configured public site rather than whatever host the API
+     * baked in (that env can lag - e.g. a localhost default - and would send
+     * members an unusable link).
+     */
+    protected function signInLinkFromResetUrl(string $resetUrl): string
+    {
+        parse_str((string) parse_url($resetUrl, PHP_URL_QUERY), $query);
+
+        $base = rtrim((string) config('freegle.sites.user'), '/');
+        $path = '/'.ltrim((string) config('freegle.auth.login_link_path', '/'), '/');
+
+        return sprintf(
+            '%s%s?u=%s&k=%s',
+            $base,
+            $path,
+            rawurlencode((string) ($query['u'] ?? '')),
+            rawurlencode((string) ($query['k'] ?? '')),
+        );
     }
 
     /**
@@ -591,6 +637,21 @@ class ProcessBackgroundTasksCommand extends Command
             return;
         }
 
+        // The acting group is a group the post RIPPLED INTO. Its moderators administer
+        // their own copy; correspondence about the post belongs to the community it was
+        // posted on (Discourse 10102). The log entry and moderator push above still
+        // happen, because the action did happen here - it is only the words to the
+        // freegler that are dropped. Absent means notify: every task queued before this
+        // existed, and every home-group action, must still reach the poster.
+        if (array_key_exists('notifyposter', $data) && (int) $data['notifyposter'] === 0) {
+            Log::info("Mod action {$taskType} on a rippled-in copy, poster not contacted", [
+                'msgid' => $msgId,
+                'groupid' => $groupId,
+                'byuser' => $byUser,
+            ]);
+            return;
+        }
+
         if (! $posterId) {
             Log::warning("No poster found for message {$msgId}");
             return;
@@ -730,6 +791,19 @@ class ProcessBackgroundTasksCommand extends Command
         if ($this->userIsUnaddressedOnly($userId)) {
             Log::info('Mod stdmsg for a member who has not opted in to Freegle, sending nothing', [
                 'userid' => $userId,
+                'byuser' => $byUser,
+            ]);
+            return;
+        }
+
+        // The member's only tie to this group is a post of theirs that rippled in. The
+        // group's decision about them still stands and is logged by the API; what does not
+        // go is the message, because they never joined this community (Discourse 10102).
+        // Absent means notify, so every task queued before this existed still sends.
+        if (array_key_exists('notifyposter', $data) && (int) $data['notifyposter'] === 0) {
+            Log::info('Mod stdmsg for a member whose membership rippling created, not contacted', [
+                'userid' => $userId,
+                'groupid' => $groupId,
                 'byuser' => $byUser,
             ]);
             return;
@@ -1236,6 +1310,37 @@ class ProcessBackgroundTasksCommand extends Command
     {
         $service = app(HousekeeperService::class);
         $service->process($data);
+    }
+
+    /**
+     * A Freegle-wide block keyword was just created: apply it to the last 24 hours
+     * of chat messages and posts, which arrived before it existed. Queued by the Go
+     * API's CreateConcernKeyword. A keyword that no longer qualifies (deleted, or
+     * not a global block) is a no-op, so a retried task cannot act on the wrong row.
+     */
+    protected function handleConcernKeywordBackfill(array $data): void
+    {
+        $keywordId = (int) ($data['keyword_id'] ?? 0);
+        if ($keywordId === 0) {
+            throw new \RuntimeException('concern_keyword_backfill requires keyword_id');
+        }
+
+        $keyword = DB::table('concern_keywords')->where('id', $keywordId)->first();
+        if (!$keyword || $keyword->action !== 'block' || $keyword->scope !== 'global') {
+            Log::info('Concern keyword backfill skipped: not a global block keyword', ['keyword_id' => $keywordId]);
+            return;
+        }
+
+        $result = app(BlockedKeywordBackfillService::class)->run(now()->subDay(), [$keywordId]);
+
+        Log::info('Concern keyword backfill complete', [
+            'keyword_id' => $keywordId,
+            'keyword' => $keyword->keyword,
+            'chat_matched' => $result['chat']['matched'],
+            'chat_changed' => $result['chat']['changed'],
+            'posts_matched' => $result['posts']['matched'],
+            'posts_changed' => $result['posts']['changed'],
+        ]);
     }
 
     /**

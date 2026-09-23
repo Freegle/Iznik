@@ -96,6 +96,83 @@ return [
         'paypal_url' => env('FREEGLE_DONATE_PAYPAL_URL', 'https://freegle.in/paypal1510'),
     ],
 
+    // Deployment switches. Each one defaults to how Freegle behaves today, so
+    // leaving them unset changes nothing; another deployment built on this
+    // codebase sets them instead of carrying its own edits to shared files.
+    // See docs/developers/reference/deployment-switches.md.
+    'auth' => [
+        // Passwordless sign-in. When true, the "forgot password" request sends a
+        // sign-in link email (App\Mail\Session\LoginLinkMail) that lands on
+        // login_link_path with ?u=&k=, which the web app consumes to sign the
+        // member in - instead of the "set a new password" email.
+        'passwordless' => filter_var(env('FREEGLE_PASSWORDLESS_LOGIN', false), FILTER_VALIDATE_BOOLEAN),
+        'login_link_path' => env('FREEGLE_LOGIN_LINK_PATH', '/'),
+    ],
+    'schedule' => [
+        // 'full' (default) runs everything in routes/console.php. 'overlay-only'
+        // runs nothing from that file except what the overlay below schedules,
+        // for deployments that want a small hand-picked set of jobs. Any other
+        // value behaves as 'full', so a typo can never silently stop the schedule.
+        'profile' => env('FREEGLE_SCHEDULE_PROFILE', 'full'),
+        // Optional extra schedule file, loaded if it exists (path relative to the
+        // app root unless absolute). Freegle ships no such file; a deployment
+        // adds its own jobs there instead of editing routes/console.php.
+        'overlay' => env('FREEGLE_SCHEDULE_OVERLAY', 'routes/console.deployment.php'),
+    ],
+
+    'backup' => [
+        // Batch work is held off while the nightly database backup runs, because the
+        // backup desyncs a node and that node is the one serving bulk reads under the
+        // two-node topology. See App\Console\BackupDrain.
+        //
+        // OFF by default: this does nothing until BACKUP_DRAIN_ENABLED is set on the
+        // batch host. A malformed start time or a duration of zero also leaves it off,
+        // so a typo can never hold the whole schedule back.
+        'drain' => [
+            'enabled' => (bool) env('BACKUP_DRAIN_ENABLED', false),
+            // HH:MM in the app timezone. Set this EARLIER than the backup's own cron so
+            // jobs already running have time to finish: that gap is the drain, the rest
+            // of the window is the delay.
+            'start' => env('BACKUP_DRAIN_START', '03:50'),
+            // Long enough to cover the pre-roll plus the backup, with headroom. The
+            // backup itself measured about 18 minutes on 18 September 2026.
+            'minutes' => (int) env('BACKUP_DRAIN_MINUTES', 45),
+            // Artisan command names that run anyway, matched without their arguments.
+            // Keep this short: anything here is competing with the backup.
+            'always_run' => array_values(array_filter(array_map(
+                'trim',
+                explode(',', (string) env('BACKUP_DRAIN_ALWAYS_RUN', ''))
+            ))),
+        ],
+
+        // Taking the nightly physical backup. OFF by default: until this is switched on,
+        // the shell script on the database node remains the thing that runs, and this
+        // command refuses to do anything.
+        'database' => [
+            'enabled' => (bool) env('BACKUP_DB_ENABLED', false),
+            // The node being backed up. xtrabackup copies a local data directory, so the
+            // whole pipeline runs there and only control flow crosses ssh.
+            'host' => env('BACKUP_DB_HOST', ''),
+            // The key AppServiceProvider hands this command's ssh runner. docker-compose mounts
+            // the monitoring key at this path; the backup needs the same root shell on the
+            // node (xtrabackup reads the data directory, mysql sets wsrep_desync), so it is
+            // the default rather than a path nothing mounts.
+            'ssh_key' => env('BACKUP_DB_SSH_KEY', '/etc/monitoring-ssh-key'),
+            // The backup measured about 18 minutes; allow generously for a bad night. The
+            // monitoring runner's 30 seconds would kill it partway.
+            'ssh_timeout_seconds' => (int) env('BACKUP_DB_SSH_TIMEOUT', 7200),
+            'xtrabackup' => env('BACKUP_DB_XTRABACKUP', '/usr/bin/xtrabackup'),
+            // xtrabackup's scratch directory on the node. Streaming writes nothing of size
+            // there, but the shell script always gave one and the default would otherwise be
+            // a directory under the ssh user's home.
+            'target_dir' => env('BACKUP_DB_TARGET_DIR', '/backup'),
+            'gsutil' => env('BACKUP_DB_GSUTIL', '/usr/lib/google-cloud-sdk/platform/gsutil/gsutil'),
+            'bucket' => env('BACKUP_DB_BUCKET', 'gs://freegle_backup_uk'),
+            'compress_threads' => (int) env('BACKUP_DB_COMPRESS_THREADS', 4),
+            'alert_email' => env('BACKUP_DB_ALERT_EMAIL', 'geek-alerts@ilovefreegle.org'),
+        ],
+    ],
+
     'branding' => [
         'name' => env('FREEGLE_SITE_NAME', 'Freegle'),
         'logo_url' => env('FREEGLE_LOGO_URL', 'https://www.ilovefreegle.org/icon.png'),
@@ -137,6 +214,11 @@ return [
         // Email types: Welcome, ChatNotification, etc.
         // If empty, NO emails will be sent (fail-safe default).
         'enabled_types' => env('FREEGLE_MAIL_ENABLED_TYPES', ''),
+        // Open/click tracking (the email_tracking row, tracked links, the pixel).
+        // Off, every mailable's tracked*() helpers hand back the plain destination
+        // URL and no email_tracking row is written - for deployments whose API
+        // does not serve the tracking redirect/pixel endpoints.
+        'tracking_enabled' => filter_var(env('FREEGLE_MAIL_TRACKING_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         // GeekAlerts email for system alerts and failure notifications.
         'geek_alerts_addr' => env('FREEGLE_GEEK_ALERTS_ADDR', 'geek-alerts@ilovefreegle.org'),
         // Geeks address for system emails (FROM address for reports etc).
@@ -239,6 +321,60 @@ return [
             // than silently stop mailing a provider for ever.
             'stale_after_hours' => (int) env('FREEGLE_MAIL_DEFERRALS_STALE_HOURS', 24),
         ],
+
+        // What the delayed view shows about the queue itself, as opposed to
+        // which providers are refusing us. Mail waiting behind our own rate
+        // limits is not a fault and raises no alarm anywhere, so without this
+        // a backlog hours deep is invisible.
+        'relay_queue' => [
+            // Two ways in, because depth and age catch different failures:
+            // a domain qualifies on either.
+            'min_queued' => (int) env('FREEGLE_MAIL_RELAY_QUEUE_MIN', 25),
+            'min_age_minutes' => (int) env('FREEGLE_MAIL_RELAY_QUEUE_MIN_AGE', 120),
+            // An estate-wide episode names thousands of domains and nobody
+            // reads the hundredth.
+            'max_rows' => (int) env('FREEGLE_MAIL_RELAY_QUEUE_MAX_ROWS', 500),
+        ],
+
+        // Reading the relay's maillog into logs_emails, so a member can be
+        // told whether we actually sent them something. Replaces V1's
+        // scripts/cron/eximlogs.php, which ran from root's crontab on the
+        // relay itself.
+        'relay_logs' => [
+            'enabled' => (bool) env('FREEGLE_MAIL_RELAY_LOGS_ENABLED', true),
+
+            // ssh target, same shape and same restricted account as the
+            // deferral probe - it needs only to read a file the `adm` group
+            // can already read. Topology lives ONLY in the environment.
+            // Empty = disabled (dev/CI).
+            'host' => env('FREEGLE_MAIL_RELAY_LOGS_HOST', env('FREEGLE_MAIL_DEFERRALS_HOST', '')),
+
+            // Same restricted key as the deferral probe: this only reads a log
+            // file the relay account can already read.
+            'ssh_key' => env('FREEGLE_MAIL_RELAY_LOGS_SSH_KEY', env('FREEGLE_MAIL_DEFERRALS_SSH_KEY', '/etc/mail-deferrals-ssh-key')),
+            'ssh_timeout_seconds' => (int) env('FREEGLE_MAIL_RELAY_LOGS_SSH_TIMEOUT', 120),
+
+            'path' => env('FREEGLE_MAIL_RELAY_LOGS_PATH', '/var/log/mail.log'),
+
+            // We keep a byte offset and fetch only what was appended, which is
+            // about 5MB a run. The cap is for the case where the offset is
+            // lost: without it the first run afterwards would pull the whole
+            // multi-gigabyte log through ssh and into PHP's memory, every run,
+            // for ever. Skipping ahead loses some history, which is the better
+            // of the two failures.
+            // A ten-minute slice is about 5MB, so this is generous headroom
+            // rather than a target. It has to cross ssh and be held in memory,
+            // so it is not sized in tens of megabytes.
+            'max_slice_bytes' => (int) env('FREEGLE_MAIL_RELAY_LOGS_MAX_SLICE_BYTES', 16 * 1024 * 1024),
+
+            // The relay hands paced providers to a second postfix instance
+            // over a loopback hop. That hop logs exactly like a delivery, so
+            // it must not be recorded as one. Two independent signals, so that
+            // one going stale on its own cannot quietly turn hops back into
+            // "sent". Keep in step with scripts/bulk2/ip-warmup.sh.
+            'handover_port' => (int) env('FREEGLE_MAIL_RELAY_LOGS_HANDOVER_PORT', 10026),
+            'handover_transport' => env('FREEGLE_MAIL_RELAY_LOGS_HANDOVER_TRANSPORT', 'relaywarm'),
+        ],
     ],
 
     'mod_welfare' => [
@@ -276,6 +412,14 @@ return [
         // instead, neither of which needs the email path switched off.
         'ingest_posts_via_api' => env('FREEGLE_TN_INGEST_POSTS_VIA_API', false),
 
+        // Minimum gap between ANY two Trash Nothing API requests, in
+        // microseconds. TN allows 2 requests/second and rate-limits per API
+        // key, so this is enforced once for the whole run by
+        // TrashNothingRateLimiter rather than per endpoint. Set to 0 to
+        // disable (the test suite does, via phpunit.xml — Http::fake() never
+        // reaches TN, and 750ms per faked request would add minutes).
+        'min_request_interval_us' => (int) env('FREEGLE_TN_MIN_REQUEST_INTERVAL_US', 750000),
+
         // Post-cutover coverage verification — tn:verify-email-coverage.
         // See plans/tn-api-post-ingestion.md section S.
         'verify_coverage' => [
@@ -312,6 +456,11 @@ return [
             // problem than a real miss.
             'max_age_hours' => (int) env('FREEGLE_TN_VERIFY_MAX_AGE_HOURS', 72),
         ],
+
+        // Merge the duplicate TN accounts the old address filter could not see. Off
+        // until the backlog has been reviewed with "tn:sync --report-duplicates": it is
+        // ~96 pairs of live members and merging a pair deletes one of them.
+        'merge_legacy_duplicates' => env('FREEGLE_TN_MERGE_LEGACY_DUPLICATES', false),
     ],
 
     // Discourse forum REST API (V1 discourse_not_signed_up.php).
@@ -561,6 +710,12 @@ return [
         // unit); beyond it the group stands alone as its own area.
         'area_cluster_miles' => (float) env('COMMUNITY_NEWS_AREA_MILES', 20),
 
+        // How many of an area's places to name in the research prompt, biggest
+        // first. Areas hold a median of 6 and a p90 of 14, so this covers most
+        // of them whole; past that the list crowds out the instructions without
+        // telling the model anything it will use.
+        'places_per_area' => (int) env('COMMUNITY_NEWS_PLACES_PER_AREA', 8),
+
         // How many nuggets the researcher aims to produce per area.
         'items_per_area' => (int) env('COMMUNITY_NEWS_ITEMS_PER_AREA', 6),
 
@@ -579,6 +734,27 @@ return [
 
         // How many days a researched item stays eligible for posting/emailing.
         'item_freshness_days' => (int) env('COMMUNITY_NEWS_ITEM_FRESHNESS_DAYS', 10),
+
+        // Staleness guards (SourceFreshness): stop the research model dressing up
+        // an old source as something happening now.
+        //
+        // How old a dated news ARTICLE may be and still be announcing a current
+        // event. Only applied to og:type=article pages carrying an explicit
+        // article:published_time - on an evergreen page that date is just when
+        // the page was created, and trusting it rejects live events.
+        'source_max_age_days' => (int) env('COMMUNITY_NEWS_SOURCE_MAX_AGE_DAYS', 365),
+
+        // How long the same URL stays deduped within one area, so repeated
+        // research runs don't write up the same story again and again.
+        'source_dedup_days' => (int) env('COMMUNITY_NEWS_SOURCE_DEDUP_DAYS', 180),
+
+        // Read the year off the source's own picture and drop the item when the
+        // picture advertises an earlier one (the 2014 RiverFest poster). Needs
+        // anthropic_api_key; silently skipped without it.
+        'check_image_year' => (bool) env('COMMUNITY_NEWS_CHECK_IMAGE_YEAR', true),
+        // Deliberately a small, fast model: this is short OCR-shaped work run
+        // once per researched item, not the research itself. Override to raise it.
+        'vision_model' => env('COMMUNITY_NEWS_VISION_MODEL', 'claude-haiku-4-5'),
 
         // Curated per-place source store (JSON files). Research seeds the model
         // with these known-good local feeds, health-checks them each run, and
@@ -652,6 +828,13 @@ return [
         // Maximum drive-time (minutes) the reach may grow to. This is the FLAT cap, used
         // when the density-conditional cap below is off or cannot measure.
         'max_minutes' => (float) env('RIPPLE_MAX_MINUTES', 30),
+
+        // How long one ripple:expand run may keep taking rows before it stops cleanly
+        // and lets the next tick resume. MUST stay below ExpandCommand's single-instance
+        // lock TTL (3600s) - a run that outlives the lock lets the every-minute schedule
+        // stack another run at each expiry, which is the 2026-08-30 gate-saturation
+        // collapse. 0 disables (tests / operator one-offs).
+        'expand_time_box_seconds' => (int) env('RIPPLE_EXPAND_TIME_BOX_SECONDS', 2700),
         // Density-conditional cap. Measured on 887 posts split by local freegler
         // density, the chance a replier goes on to collect collapses past ~20-25
         // minutes in dense areas and does not fall at all out to 45 in sparse ones, so
@@ -707,6 +890,15 @@ return [
         // retraction to polygon-overlap only). Independent of RIPPLE_ENABLED; an
         // empty/absent list falls back to polygon-only for that post.
         'reachable_gate' => filter_var(env('RIPPLE_REACHABLE_GATE', true), FILTER_VALIDATE_BOOLEAN),
+        // coarse_tick_geometry: fetch each tick's catchment in the routing server's
+        // region-scale form rather than at road resolution. Expansion only asks
+        // region-scale questions of it (sandwich bounds, origin-group union, which
+        // groups the reach touches), and the full-resolution form costs seconds and
+        // megabytes at the large budgets late ticks use - on eight shared compute
+        // slots. Only applied where the reachable gate makes the group answer exact
+        // regardless (ExpandService::coarseTickGeometryOk). Default ON; set
+        // RIPPLE_COARSE_TICK_GEOMETRY=false as the killswitch.
+        'coarse_tick_geometry' => filter_var(env('RIPPLE_COARSE_TICK_GEOMETRY', true), FILTER_VALIDATE_BOOLEAN),
         'proximity_slow_ms' => (int) env('RIPPLE_PROXIMITY_SLOW_MS', 3000),
         // Reply-saturation stop (extent-governor design T1.1): a post with at least this many
         // DISTINCT repliers (distinct users with an Interested chat reply on the post,
@@ -840,6 +1032,10 @@ return [
             ],
             'window_hours' => (float) env('RIPPLE_DIGEST_WINDOW_HOURS', 24),
             'budget_decay' => (float) env('RIPPLE_DIGEST_BUDGET_DECAY', 25),
+            // The reference close term's horizon (1 - driveMin/max_minutes):
+            // defaults to the ripple max_minutes knob, the same value the
+            // /rippling digest preview defaults to.
+            'max_minutes' => (float) env('RIPPLE_DIGEST_SCORE_MAX_MINUTES', env('RIPPLE_MAX_MINUTES', 30)),
             // ~30km, the 30-min drive-isochrone analogue. Used for posts with no
             // rippling_reach row (the dominant case while rippling is dark, and for
             // all backlog posts after go-live).
@@ -1295,6 +1491,15 @@ return [
         // within this many hours (tolerates the overnight gap + slow cold runs).
         'whatjobs_max_age_hours' => (int) env('FREEGLE_MONITORING_WHATJOBS_MAX_AGE_HOURS', 24),
 
+        // ripple:expand — alert when more than the threshold of 'expanding'
+        // rows are further than max_age past next_expansion_at. A day is far
+        // beyond the deliberate overnight pause plus the morning catch-up, so
+        // rows that late mean the expander is wedged (2026-08-31: ~10k rows
+        // sat days overdue for days, unnoticed). The threshold tolerates a few
+        // individually-stuck rows without masking a stalled pipeline.
+        'ripple_backlog_max_age_minutes' => (int) env('FREEGLE_MONITORING_RIPPLE_BACKLOG_MAX_AGE_MIN', 1440),
+        'ripple_backlog_threshold' => (int) env('FREEGLE_MONITORING_RIPPLE_BACKLOG_THRESHOLD', 50),
+
         // data:git-summary (weekly) — alert if its config timestamp is older
         // than this many days.
         'git_summary_max_age_days' => (int) env('FREEGLE_MONITORING_GIT_SUMMARY_MAX_AGE_DAYS', 10),
@@ -1351,9 +1556,12 @@ return [
         'anthropic_api_key' => env('ANTHROPIC_API_KEY', ''),
         'claude_model'      => env('EEE_CLAUDE_MODEL', 'claude-sonnet-4-6'),
 
-        // Google Gemini.
+        // Google Gemini. The default must be a model that still exists: the gemini-2.0
+        // family is retired, and a retired default means every call 404s — which the
+        // driver treats as a soft failure, so the hourly job "succeeds" classifying
+        // nothing on any host that has not set EEE_GEMINI_MODEL.
         'gemini_api_key'  => env('GOOGLE_GEMINI_API_KEY', ''),
-        'gemini_model'    => env('EEE_GEMINI_MODEL', 'gemini-2.0-flash'),
+        'gemini_model'    => env('EEE_GEMINI_MODEL', 'gemini-3.5-flash-lite'),
 
         // OpenAI.
         'openai_api_key'  => env('OPENAI_API_KEY', ''),
@@ -1384,5 +1592,58 @@ return [
         'publish_brands'    => env('EEE_PUBLISH_BRANDS', false),
         'publish_category'  => env('EEE_PUBLISH_CATEGORY', true),
         'publish_condition' => env('EEE_PUBLISH_CONDITION', true),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Item Desirability
+    |--------------------------------------------------------------------------
+    |
+    | Scoring of OFFER posts by expected demand for the item type, from the
+    | offline-built artifact in item_desirability (see desirability:import-artifact).
+    | The kNN settings govern cold-start scoring of never-seen titles via the
+    | embedding sidecar; thresholds are calibrated by the analysis, not tunable
+    | folklore - change them only alongside an artifact rebuild.
+    |
+    */
+    'desirability' => [
+        'model_version'  => env('DESIRABILITY_MODEL_VERSION', 'desir-2026-08'),
+        // Same sidecar the batch container already has wired for moderation checks.
+        'sidecar_url'    => env('EMBEDDING_SIDECAR_URL', ''),
+        // Cold-start kNN over the artifact's reference embeddings (query-space,
+        // the sidecar's own space on both sides).
+        'knn_k'          => env('DESIRABILITY_KNN_K', 10),
+        'knn_min_cos'    => env('DESIRABILITY_KNN_MIN_COS', 0.80),
+        'knn_strong_cos' => env('DESIRABILITY_KNN_STRONG_COS', 0.90),
+        'knn_gamma'      => env('DESIRABILITY_KNN_GAMMA', 8),
+        // Bucket bounds for INFERRED (kNN) scores only; exact matches carry the
+        // posterior-derived bucket computed at artifact build time.
+        'bucket_low_max'  => env('DESIRABILITY_BUCKET_LOW_MAX', 0.6),
+        'bucket_high_min' => env('DESIRABILITY_BUCKET_HIGH_MIN', 1.6),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Electricals page
+    |--------------------------------------------------------------------------
+    |
+    | Grouping for the item lists on /electricals. Item names are folded to a
+    | canonical type so brands and spellings of the same thing count once, and a
+    | rare item is dropped when it is really a version of a common one.
+    |
+    | The near-identity threshold is high on purpose. Measured on live titles,
+    | similarity scores "fridge freezer" against "freezer" at 0.93 and "cd
+    | player" against "dvd player" at 0.85, so anything looser stops meaning
+    | "the same item with an extra word" and starts meaning "a related thing".
+    |
+    */
+    'electricals' => [
+        // Same sidecar as everything else; empty means the word test runs alone.
+        'sidecar_url'                => env('EMBEDDING_SIDECAR_URL', ''),
+        'variant_identical_cos'      => env('ELECTRICALS_VARIANT_IDENTICAL_COS', 0.90),
+        // How much commoner a rival has to be before a rare item counts as a
+        // version of it, and the floor below which nothing counts as common.
+        'variant_popularity_ratio'   => env('ELECTRICALS_VARIANT_POPULARITY_RATIO', 3),
+        'variant_min_popular_count'  => env('ELECTRICALS_VARIANT_MIN_POPULAR_COUNT', 10),
     ],
 ];

@@ -12,6 +12,7 @@ import {
   timeago,
 } from '~/composables/useTimeFormat'
 import { milesAway } from '~/composables/useDistance'
+import { roadDistance, roadMilesRounded } from '~/composables/useDriveDistance'
 import { buildKeywordRegex } from '~/composables/useKeywordRegex'
 
 /**
@@ -170,7 +171,29 @@ export function useMessageDisplay(messageId) {
     return t === 'just now' ? t : t ? `${t} ago` : ''
   })
 
+  // Road drive distance from the reach engine; null until (and unless) the
+  // engine answers, in which case it takes precedence over crow-flies. The
+  // message fetch ships roadmins/roadmiles computed server-side in the same
+  // batched call that blurred the coordinates - use those first and only fall
+  // back to the client-side batched lookup for older server responses.
+  const roadDist = computed(() => {
+    if (message.value?.roadmins != null) {
+      return { mins: message.value.roadmins, miles: message.value.roadmiles }
+    }
+    if (!me.value?.lat || !message.value?.lat) {
+      return null
+    }
+    return roadDistance(message.value.lat, message.value.lng).value
+  })
+
   const distanceText = computed(() => {
+    const road = roadDist.value
+    if (road?.miles != null) {
+      const mi = roadMilesRounded(road.miles)
+      // '~': road distance is computed over privacy-blurred locations, so it
+      // is honest to present it as approximate.
+      return mi < 1 ? '<1mi' : `~${Math.round(mi)}mi`
+    }
     const server = serverDistanceMiles.value
     if (server != null) {
       return server < 1 ? '<1mi' : `${Math.round(server)}mi`
@@ -191,6 +214,17 @@ export function useMessageDisplay(messageId) {
   })
 
   const distanceTextExpanded = computed(() => {
+    const road = roadDist.value
+    if (road?.miles != null) {
+      const mi = roadMilesRounded(road.miles)
+      if (mi < 1) {
+        return 'less than a mile by road'
+      }
+      const rounded = Math.round(mi)
+      return rounded === 1
+        ? 'about 1 mile by road'
+        : `about ${rounded} miles by road`
+    }
     const server = serverDistanceMiles.value
     if (server != null) {
       if (server < 1) {
@@ -213,6 +247,19 @@ export function useMessageDisplay(messageId) {
     }
     const rounded = Math.round(miles)
     return rounded === 1 ? '1 mile' : `${rounded} miles`
+  })
+
+  // Mouseover explanation for the distance badge: says what the number IS
+  // (road vs straight-line, and that it is approximate over blurred
+  // locations), not just that it exists.
+  const distanceTooltip = computed(() => {
+    if (roadDist.value?.miles != null) {
+      return 'Roughly how far this is from your home by road. Distances are approximate because locations are blurred for privacy'
+    }
+    if (distanceText.value == null) {
+      return null
+    }
+    return 'Roughly how far this is from your home, in a straight line. Distances are approximate because locations are blurred for privacy'
   })
 
   const replyCount = computed(() => {
@@ -278,6 +325,7 @@ export function useMessageDisplay(messageId) {
     fullTimeAgo,
     distanceText,
     distanceTextExpanded,
+    distanceTooltip,
     isPinned,
     replyCount,
     replyTooltip,
