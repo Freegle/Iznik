@@ -614,7 +614,13 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 		ID       uint64
 		Tnuserid *uint64
 	}
-	db.Table("users").Select("id, tnuserid").Where("id = ?", uid).Limit(1).Scan(&target)
+	res := db.Table("users").Select("id, tnuserid").Where("id = ?", uid).Limit(1).Scan(&target)
+
+	if res.Error != nil {
+		// A failed read is an outage, not an unknown member.
+		stdlog.Printf("Link login: user lookup for %d failed: %v", uid, res.Error)
+		return fiber.NewError(fiber.StatusServiceUnavailable, "Please try again")
+	}
 
 	if target.ID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
