@@ -27,14 +27,18 @@ class HostHealthCheck extends AbstractOutcomeCheck
 {
     /**
      * One ssh round-trip gathers everything. Markers keep the parse
-     * independent of shell noise, and the monit block is fenced so its lines
-     * can't be confused with the scalar findings. `monit summary -B` is batch
-     * (plain-text) format — no box-drawing characters to parse around.
+     * independent of shell noise, and the monit blocks are fenced so their
+     * lines can't be confused with the scalar findings. `monit summary -B` is
+     * batch (plain-text) format — no box-drawing characters to parse around.
+     * `monit status -B` follows it because the summary does not say why a
+     * service is "Not monitored": a service in monit's manual mode is one a
+     * person switched off on purpose, and only the status output carries the
+     * mode.
      */
     public const PROBE = <<<'SH'
 echo "REBOOT:$([ -f /var/run/reboot-required ] && echo yes || echo no)"
 echo "SECURITY:$(apt-get upgrade -s 2>/dev/null | grep -c '^Inst.*[Ss]ecurit')"
-if command -v monit >/dev/null 2>&1; then echo "MONIT_BEGIN"; monit summary -B 2>&1; echo "MONIT_END"; else echo "MONIT_ABSENT"; fi
+if command -v monit >/dev/null 2>&1; then echo "MONIT_BEGIN"; monit summary -B 2>&1; echo "MONIT_END"; echo "MONIT_STATUS_BEGIN"; monit status -B 2>/dev/null; echo "MONIT_STATUS_END"; else echo "MONIT_ABSENT"; fi
 SH;
 
     /**
@@ -55,12 +59,22 @@ SH;
      * "Not monitored" (V1 treated it as a warning too), "Initializing" (first
      * cycle after a monit restart) and "Resource limit matched" (service up,
      * resource rule breached). Anything matching neither list is an error.
+     *
+     * One exception: "Not monitored" on a service whose monitoring mode is
+     * `manual` is the state a person put it in (a retired service whose
+     * configuration is kept in place), not a fault, so it is reported as held
+     * rather than as a warning.
      */
     private const MONIT_WARNING = [
         'Resource limit matched',
         'Not monitored',
         'Initializing',
     ];
+
+    private const MONIT_MODE_MANUAL = 'manual';
+
+    /** Services found "Not monitored" in manual mode on the last run. @var list<string> */
+    private array $held = [];
 
     private readonly string $host;
 
@@ -101,7 +115,11 @@ SH;
             return OutcomeResult::breach($this->slug, implode('; ', $warnings), 'warning');
         }
 
-        return OutcomeResult::ok($this->slug, "{$this->host} healthy (no reboot needed, no pending security updates)");
+        $held = $this->held === []
+            ? ''
+            : '; monit holds ' . implode(', ', $this->held) . ' in manual mode';
+
+        return OutcomeResult::ok($this->slug, "{$this->host} healthy (no reboot needed, no pending security updates{$held})");
     }
 
     /**
@@ -125,7 +143,10 @@ SH;
         }
 
         if (preg_match('/^MONIT_BEGIN$(.*?)^MONIT_END$/ms', $output, $m)) {
-            [$monitErrors, $monitWarnings] = $this->interpretMonit($m[1]);
+            $modes = preg_match('/^MONIT_STATUS_BEGIN$(.*?)^MONIT_STATUS_END$/ms', $output, $s)
+                ? $this->monitoringModes($s[1])
+                : [];
+            [$monitErrors, $monitWarnings] = $this->interpretMonit($m[1], $modes);
             $errors = array_merge($errors, $monitErrors);
             $warnings = array_merge($warnings, $monitWarnings);
         }
@@ -136,17 +157,42 @@ SH;
     }
 
     /**
+     * Service name → monitoring mode (active, passive, manual) from
+     * `monit status -B`, whose output is one block per service headed by
+     * `<Type> '<name>'` with a `monitoring mode <mode>` line inside it.
+     *
+     * @return array<string, string>
+     */
+    private function monitoringModes(string $statusOutput): array
+    {
+        $modes = [];
+        $service = null;
+
+        foreach (preg_split('/\R/', $statusOutput) as $line) {
+            if (preg_match("/^\\S.*?'([^']+)'\\s*$/", $line, $m)) {
+                $service = $m[1];
+            } elseif ($service !== null && preg_match('/^\s*monitoring mode\s+(\S+)/', $line, $m)) {
+                $modes[$service] = strtolower($m[1]);
+            }
+        }
+
+        return $modes;
+    }
+
+    /**
      * Classify each service line of `monit summary -B` output. V1 pattern-
      * matched each line against known-good statuses and alarmed on the rest;
      * we do the same but with an explicit warning tier for states that don't
      * mean the service is down.
      *
+     * @param  array<string, string>  $modes  service name → monitoring mode
      * @return array{0: list<string>, 1: list<string>} [errors, warnings]
      */
-    private function interpretMonit(string $monitOutput): array
+    private function interpretMonit(string $monitOutput, array $modes = []): array
     {
         $errors = [];
         $warnings = [];
+        $this->held = [];
         $sawDaemonHeader = false;
 
         foreach (preg_split('/\R/', $monitOutput) as $line) {
@@ -158,6 +204,12 @@ SH;
 
             if (str_starts_with($line, 'Monit ')) {
                 $sawDaemonHeader = true;
+                continue;
+            }
+
+            $service = preg_split('/\s{2,}/', $line)[0];
+            if (str_contains($line, 'Not monitored') && ($modes[$service] ?? null) === self::MONIT_MODE_MANUAL) {
+                $this->held[] = $service;
                 continue;
             }
 

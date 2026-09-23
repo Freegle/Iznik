@@ -44,6 +44,7 @@ class HostHealthCheckTest extends TestCase
         string $reboot = 'no',
         int $security = 0,
         ?array $monitLines = ['freegle-host                     OK                          System'],
+        ?array $modes = null,
     ): string {
         $out = "REBOOT:{$reboot}\n";
         $out .= "SECURITY:{$security}\n";
@@ -58,6 +59,21 @@ class HostHealthCheckTest extends TestCase
                 $out .= " {$line}\n";
             }
             $out .= "MONIT_END\n";
+
+            if ($modes !== null) {
+                // `monit status -B`: one block per service, headed by the type
+                // and quoted name, with the mode a few lines in.
+                $out .= "MONIT_STATUS_BEGIN\n";
+                $out .= "Monit 5.31.0 uptime: 1d 2h 3m\n\n";
+                foreach ($modes as $service => $mode) {
+                    $out .= "Remote Host '{$service}'\n";
+                    $out .= "  status                       Not monitored\n";
+                    $out .= "  monitoring status            Not monitored\n";
+                    $out .= "  monitoring mode              {$mode}\n";
+                    $out .= "  data collected               Tue, 22 Sep 2026 07:55:34\n\n";
+                }
+                $out .= "MONIT_STATUS_END\n";
+            }
         }
 
         return $out;
@@ -118,6 +134,56 @@ class HostHealthCheckTest extends TestCase
         $this->assertSame('warning', $result->severity);
         $this->assertStringContainsString('iznik-server-go', $result->message);
         $this->assertStringContainsString('Not monitored', $result->message);
+    }
+
+    public function test_the_probe_asks_monit_for_each_services_mode(): void
+    {
+        $this->assertStringContainsString('monit status -B', HostHealthCheck::PROBE);
+        $this->assertStringContainsString('MONIT_STATUS_BEGIN', HostHealthCheck::PROBE);
+    }
+
+    public function test_not_monitored_in_manual_mode_is_held_on_purpose_not_a_warning(): void
+    {
+        // A retired service whose check is kept in place under `mode manual`:
+        // somebody switched it off, and the host is healthy.
+        $result = $this->evaluate($this->probeOutput(
+            monitLines: [
+                'freegle-host                     OK                          System',
+                'iznik-server-go                  Not monitored               Remote Host',
+                'mysqld                           Not monitored               Process',
+            ],
+            modes: ['iznik-server-go' => 'manual', 'mysqld' => 'manual', 'redis-server' => 'active'],
+        ));
+
+        $this->assertTrue($result->isOk(), $result->message);
+        $this->assertStringContainsString('holds iznik-server-go, mysqld in manual mode', $result->message);
+    }
+
+    public function test_not_monitored_in_active_mode_is_still_a_warning(): void
+    {
+        // Active mode means monit should be watching it; "Not monitored" is
+        // then a `monit stop` nobody followed up, exactly V1's warning.
+        $result = $this->evaluate($this->probeOutput(
+            monitLines: ['iznik-server-go                  Not monitored               Remote Host'],
+            modes: ['iznik-server-go' => 'active'],
+        ));
+
+        $this->assertTrue($result->isBreach());
+        $this->assertSame('warning', $result->severity);
+        $this->assertStringContainsString('iznik-server-go', $result->message);
+    }
+
+    public function test_manual_mode_excuses_only_not_monitored(): void
+    {
+        // A manual-mode service that monit IS watching and finds broken is as
+        // broken as any other.
+        $result = $this->evaluate($this->probeOutput(
+            monitLines: ['iznik-server-go                  Does not exist              Remote Host'],
+            modes: ['iznik-server-go' => 'manual'],
+        ));
+
+        $this->assertTrue($result->isBreach());
+        $this->assertSame('error', $result->severity);
     }
 
     public function test_transient_monit_states_are_warnings_not_errors(): void

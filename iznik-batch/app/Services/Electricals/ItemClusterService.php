@@ -279,7 +279,7 @@ class ItemClusterService
             }
 
             $this->canonicalCache[$name] = [
-                'canonical' => $this->dropSizeAndPanelWords($canonical),
+                'canonical' => $this->dropSizeAndPanelWords($this->dropProductNames($canonical)),
                 'brand'     => $result['brand'] ?? null,
                 'counted'   => ($result['qty'] ?? null) !== null || ! empty($result['is_multiple']),
             ];
@@ -311,6 +311,31 @@ class ItemClusterService
         // Colour, which is never the item.
         'colour', 'color', 'black', 'white', 'silver',
     ];
+
+    /**
+     * Finish the debranding the page promises.
+     *
+     * The catalogue holds product names such as "bravia" and "trinitron" but does not
+     * strip them, because for "iPad" or "Kindle" the product name is the whole item and
+     * removing it would leave nothing. Here there is a test for that: take it out only
+     * when a word remains. So "bravia tv" becomes "tv", and "kindle" stays "kindle".
+     */
+    private function dropProductNames(string $canonical): string
+    {
+        foreach ($this->canonical->productNamePatterns() as $pattern) {
+            $stripped = self::squish((string) preg_replace($pattern, ' ', $canonical));
+            if ($stripped !== '' && $stripped !== $canonical) {
+                $canonical = $stripped;
+            }
+        }
+
+        return $canonical;
+    }
+
+    private static function squish(string $s): string
+    {
+        return trim((string) preg_replace('~\s+~u', ' ', $s));
+    }
 
     private function dropSizeAndPanelWords(string $canonical): string
     {

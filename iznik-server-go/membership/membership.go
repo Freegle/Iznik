@@ -594,6 +594,36 @@ func GetMemberships(c *fiber.Ctx) error {
 			Joins("LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid")
 	}
 
+	// Same query, with the membership access path pinned to the group index.
+	//
+	// Only the name/email search uses this. That search is a leading-wildcard LIKE,
+	// so no index can answer it and every candidate membership has to be looked at.
+	// Left to itself the optimiser sees ORDER BY m.id with a small LIMIT and walks
+	// the primary key backwards, betting it will fill the page before it has gone
+	// far. For a common term it wins; for a rare one - which is what a moderator
+	// looking for one person types - there is nothing to find and it walks the
+	// whole table. Measured on production: a two-hit search of one community took
+	// 13.0s that way against 0.9s driven from the group index, and a search that
+	// matched nobody took 13.7s.
+	//
+	// The bet got worse on 2026-08-20, when the search branches moved from
+	// ORDER BY m.added to ORDER BY m.id so that the pagination cursor (m.id < ?)
+	// and the ordering agreed. That was right and stays: the cursor must keep
+	// working, so the ordering is not what changes here, the access path is.
+	//
+	// FORCE INDEX names an index, so it is load-bearing in a way a plain query is
+	// not: if this index is ever renamed or dropped, every name search 500s rather
+	// than merely slowing down. The membership search tests run this SQL for that
+	// reason. The index is created by iznik-batch migration
+	// 2026_08_17_000001_widen_memberships_groupid_index_with_emailfrequency.
+	// (Discourse 10179)
+	searchTx := func() *gorm.DB {
+		return db.Table("memberships m FORCE INDEX (memberships_groupid_collection_emailfrequency)").
+			Select(selectCols).
+			Joins("JOIN users u ON u.id = m.userid").
+			Joins("LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid")
+	}
+
 	// The WHERE for each branch below is built as a single string and
 	// passed to ONE Where() call: GORM's clause.Where wraps any fragment
 	// containing "AND"/"OR" in an extra paren pair once there is more than
@@ -652,7 +682,11 @@ func GetMemberships(c *fiber.Ctx) error {
 				whereSQL += " AND m.id < ?"
 				whereArgs = append(whereArgs, contextID)
 			}
-			baseTx().Joins("LEFT JOIN users_emails ue ON ue.userid = m.userid").
+			// searchTx, not baseTx: see the comment on searchTx above. The numeric
+			// branch deliberately keeps baseTx - it matches on m.userid, which that
+			// column's own index answers in about a millisecond, and pinning the
+			// group index there would turn that into a scan of the whole community.
+			searchTx().Joins("LEFT JOIN users_emails ue ON ue.userid = m.userid").
 				Where(whereSQL, whereArgs...).
 				Group("m.id").Order("m.id DESC").Limit(limit).Scan(&members)
 		}

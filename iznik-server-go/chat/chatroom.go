@@ -1405,6 +1405,8 @@ func getSnippet(msgtype string, chatmsg string, refmsgtype string) string {
 		ret = "Promise cancelled"
 	case utils.CHAT_MESSAGE_IMAGE:
 		ret = "Image"
+	case utils.CHAT_MESSAGE_INTERESTED:
+		ret = reportSnippet(chatmsg)
 	default:
 		{
 			// We don't want to land in the middle of an encoded emoji otherwise it will display
@@ -1415,6 +1417,43 @@ func getSnippet(msgtype string, chatmsg string, refmsgtype string) string {
 				ret = ret[:100]
 			}
 		}
+	}
+
+	return ret
+}
+
+// reportAdditionalDetailsMarker precedes a reporter's own comment in the
+// boilerplate MessageReportModal.vue's report() builds. It's a fixed literal
+// from our own client code, not user input, so matching against it is safe.
+const reportAdditionalDetailsMarker = "Additional details: \""
+
+// reportSnippet surfaces a reporter's own comment ahead of the report
+// boilerplate that precedes it (subject line, message URL, reason), which is
+// otherwise long enough on its own to push the comment past the snippet's
+// truncation and leave mods seeing only the report, never why it was made
+// (Discourse #10182/68810). CHAT_MESSAGE_INTERESTED also covers plain
+// "Interested" replies, which carry no such boilerplate, so those fall
+// through to the same truncation the default case uses.
+func reportSnippet(chatmsg string) string {
+	if idx := strings.Index(chatmsg, reportAdditionalDetailsMarker); idx != -1 {
+		details := chatmsg[idx+len(reportAdditionalDetailsMarker):]
+		details = strings.TrimSuffix(strings.TrimSpace(details), "\"")
+
+		if details != "" {
+			ret := splitEmoji(details)
+
+			if len(ret) > 100 {
+				ret = ret[:100]
+			}
+
+			return "Reported: " + ret
+		}
+	}
+
+	ret := splitEmoji(chatmsg)
+
+	if len(ret) > 100 {
+		ret = ret[:100]
 	}
 
 	return ret

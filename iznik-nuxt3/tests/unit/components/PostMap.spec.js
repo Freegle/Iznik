@@ -1185,6 +1185,36 @@ describe('PostMap', () => {
       return markers.find((m) => m.props('cssClass') === 'fadedMarker')
     }
 
+    // The debounced re-fit (PostMap.vue: watch -> setTimeout(fitToShownMarkers, 200)) used to be
+    // reached only by luck. Nothing here waited for that timer, so whether its body ran before the
+    // file finished was wall-clock timing, and this file's covered-line count moved by six between
+    // two runs of the SAME code. That is enough on its own to fail a Coveralls comparison on a
+    // branch that changed nothing near the map, which is how it was found.
+    //
+    // Waiting past the debounce is deterministic rather than hopeful: our timer is scheduled after
+    // the component's and for longer, so the component's always fires first.
+    it('re-fits the map to the shown markers once the debounce settles', async () => {
+      const wrapper = await mountNearbyWithMessages(
+        [
+          { id: 1, lat: 52.0, lng: -1.0, distance: 1, groupid: 1 },
+          { id: 2, lat: 52.1, lng: -1.1, distance: 2, groupid: 1 },
+        ],
+        { selectedMaxDistance: 5 }
+      )
+      const map = wrapper.findComponent({ name: 'LMap' })
+
+      await new Promise((resolve) => setTimeout(resolve, 260))
+      await flushPromises()
+
+      // Distinguishable from the initial framing on initialBounds, which passes the bounds alone;
+      // only the re-fit passes padding.
+      const refit = map.vm.leafletObject.fitBounds.mock.calls.find(
+        (c) => c[1] && Array.isArray(c[1].padding)
+      )
+      expect(refit).toBeTruthy()
+      expect(refit[1].padding).toEqual([40, 40])
+    })
+
     it('passes only within-distance posts as markers to the primary ClusterMarker', async () => {
       const wrapper = await mountNearbyWithMessages(
         [

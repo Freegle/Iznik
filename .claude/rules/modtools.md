@@ -27,6 +27,50 @@ When triaging any of these, get the timing from production logs before reading c
 these was root-caused from logs and the live database, and in one case an earlier diagnosis from
 code alone was simply wrong.
 
+## Member search only ever covers the searcher's own communities
+
+Every member search - by name, by email, by id, with a community chosen or with
+"-- Please choose --" - is scoped to the communities the searcher moderates. A member who
+has only joined communities they do not moderate is invisible to them, and the search
+correctly returns nothing. Rippling makes this common: a post reaches a community from
+somebody who is not on it, so the moderator handling the report has no way to see the
+account.
+
+This reads as a broken search, and it has been reported as one. Two moderators on the same
+thread concluded the search had stopped working across communities, when it had never
+looked outside their own. Support access is what crosses that line; there is no moderator
+route to it and there should not be.
+
+Before treating "the search finds nobody" as a bug, check which communities the member is
+actually on and which the searcher moderates. Both are one query away.
+
+## A member id typed with its "#" used to search for nothing at all
+
+The members list shows a member's id after a hash icon, so moderators read it as "#123" and
+type it back that way. The search term goes into the URL, where a "#" starts a fragment, so
+the term never became a route parameter: the page fell back to its "choose a community"
+prompt and ran no search whatsoever. No error, and it looks exactly like the search being
+ignored. The term is now stripped of a leading "#" and encoded, which also fixes names
+containing a "/".
+
+Any search term that travels as a path segment needs the same treatment.
+
+## A rare name is the slow search, a common one is fast
+
+The name search is a leading-wildcard LIKE, so no index answers it and the optimiser is
+free to choose how it walks the memberships. Given a small LIMIT ordered by membership id
+it walks the primary key backwards, betting on filling the page early. A common term does
+fill it - an email domain search comes back in tens of milliseconds. A rare one, which is
+what somebody looking for one person types, never does, so it walks the whole table.
+
+Measured on production: one community, two matches, 13.0s; the same query driven from the
+group index, 0.9s; a term matching nobody, 13.7s. The access path is now pinned with
+FORCE INDEX, which makes the index name load-bearing - rename or drop it and name search
+500s rather than slowing down.
+
+The ordering is not the lever and must not be "fixed" back: searches order by membership id
+because the pagination cursor is a membership id, and they were made to agree deliberately.
+
 ## Queued per group, addressed per person
 
 Push notifications are queued **per group**, but the payload is built **per user**: it is the
@@ -97,3 +141,30 @@ banned.
 
 - `.claude/rules/rippling.md` - one post, many group rows.
 - `docs/moderators/` - what moderators are told these screens do.
+
+## The roster date is not when anything happened
+
+`chat_roster.date` is rewritten to now by **every** roster call: mark-as-read, Away or Offline
+presence, and Closed all bump it, not just the status change you are looking for. A Blocked row
+dated today may have been blocked months ago and merely opened today. Counting "blocks made
+today" from it overstated a day by a third.
+
+The moment a member pressed Block is in the API request log, not the table:
+`{api_version="v2"} |= "/apiv2/chatrooms" |= "\"status\":\"Blocked\""` in Loki, one per distinct
+member and room. The same applies to any "when did they do X" question answered from a roster
+watermark: `lastmsgseen` and friends move forward on ordinary viewing.
+
+## The sender's address is not in the database
+
+`chat_roster.lastip` is written only by the roster-status call (`chatroom.go`, the Blocked /
+Online / mark-as-read path). A member, or a script, that only sends messages never touches it,
+so for those senders every roster row is NULL, `logs_events` has nothing, and
+`messages.fromip` only covers posts. A "which addresses did these accounts use" query returns
+an empty set with no error.
+
+The record is the apiv2 request log in Loki: `{app="freegle",source="api"}`, JSON fields `ip`,
+`user_id`, `endpoint`, `session_id` and `request_id`. The `api_headers` stream, kept seven
+days, has the request headers under `request_headers` and joins on `request_id`. Pull with
+`query_range`, `direction=forward`, at most 5000 lines per call; a line filter over the whole
+retention is slow and a paged pull across the busy hours will time out silently, so bound each
+call to a day or an hour.
