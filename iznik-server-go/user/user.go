@@ -3017,13 +3017,32 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 
 	// ── SECTION A: emails, memberships ──────────────────────────────────────────
 
-	// Email merge: move id1's emails to id2.
-	// If id2 already has a preferred email, demote id1's preferred before moving.
+	// Email merge: move id1's emails to id2. id2's own dominant email must
+	// survive the merge (UI: "the second user's preferred email will be the
+	// preferred email of the merged user"), so id1's preferred flag is always
+	// demoted first. If id2 had no preferred=1 row of its own - e.g. it was
+	// never (re)set - promote id2's best candidate so id1's email cannot
+	// become dominant merely by inheriting an unset flag.
+	if err := tx.Table("users_emails").Where("userid = ? AND preferred = 1", id1).Update("preferred", gorm.Expr("0")).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to demote id1 preferred email")
+	}
 	var id2HasPreferred int64
 	tx.Table("users_emails").Where("userid = ? AND preferred = 1", id2).Count(&id2HasPreferred)
-	if id2HasPreferred > 0 {
-		if err := tx.Table("users_emails").Where("userid = ? AND preferred = 1", id1).Update("preferred", gorm.Expr("0")).Error; err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "Failed to demote id1 preferred email")
+	if id2HasPreferred == 0 {
+		var bestEmailID uint64
+		tx.Table("users_emails").Select("id").Where("userid = ?", id2).
+			Order("preferred DESC, id ASC").Limit(1).Scan(&bestEmailID)
+		if bestEmailID == 0 {
+			// id2 has no email of its own (only reachable via merge-by-id).
+			// Fall back to id1's best so the merged account isn't left with
+			// zero preferred emails.
+			tx.Table("users_emails").Select("id").Where("userid = ?", id1).
+				Order("preferred DESC, id ASC").Limit(1).Scan(&bestEmailID)
+		}
+		if bestEmailID > 0 {
+			if err := tx.Table("users_emails").Where("id = ?", bestEmailID).Update("preferred", gorm.Expr("1")).Error; err != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, "Failed to promote preferred email")
+			}
 		}
 	}
 	if err := tx.Table("users_emails").Where("userid = ?", id1).Update("userid", id2).Error; err != nil {

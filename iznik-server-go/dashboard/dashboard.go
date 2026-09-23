@@ -790,18 +790,36 @@ func getModeratorsActive(groupIDs []uint64) []map[string]interface{} {
 		Having("lastactive IS NOT NULL").
 		Scan(&mods)
 
-	result := make([]map[string]interface{}, 0, len(mods))
+	// One row per person, most recent first. The query is one row per membership, so a
+	// moderator of several communities came back once per community, each with that
+	// community's own time, in whatever order the scan returned; the page then showed the
+	// first ten of those. Collapsing here keeps the per-membership subquery above, which the
+	// lastapproved index answers with one seek each, and sorts a few hundred rows in memory
+	// rather than asking the database to filesort a derived column.
+	latest := make(map[uint64]string, len(mods))
+	order := make([]uint64, 0, len(mods))
 	for _, m := range mods {
+		if m.Lastactive == nil {
+			continue
+		}
+		if prev, seen := latest[m.Userid]; !seen {
+			latest[m.Userid] = *m.Lastactive
+			order = append(order, m.Userid)
+		} else if *m.Lastactive > prev {
+			latest[m.Userid] = *m.Lastactive
+		}
+	}
+	sort.SliceStable(order, func(i, j int) bool { return latest[order[i]] > latest[order[j]] })
+
+	result := make([]map[string]interface{}, 0, len(order))
+	for _, userid := range order {
 		var displayname string
-		db.Table("users").Select("COALESCE(fullname, firstname, lastname, 'Unknown')").Where("id = ?", m.Userid).Scan(&displayname)
-		entry := map[string]interface{}{
-			"id":          m.Userid,
+		db.Table("users").Select("COALESCE(fullname, firstname, lastname, 'Unknown')").Where("id = ?", userid).Scan(&displayname)
+		result = append(result, map[string]interface{}{
+			"id":          userid,
 			"displayname": displayname,
-		}
-		if m.Lastactive != nil {
-			entry["lastactive"] = *m.Lastactive
-		}
-		result = append(result, entry)
+			"lastactive":  latest[userid],
+		})
 	}
 	return result
 }

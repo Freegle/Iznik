@@ -12,6 +12,8 @@ use App\Mail\Session\MergeOfferMail;
 use App\Mail\Session\UnsubscribeConfirmMail;
 use App\Mail\Session\VerifyEmailMail;
 use App\Mail\Message\ModStdMessageMail;
+use App\Services\BlockedKeywordBackfillService;
+use App\Services\ContentCheckService;
 use App\Services\PushNotificationService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -3050,4 +3052,94 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         Mail::assertSent(ModStdMessageMail::class);
     }
 
+
+    // --- concern_keyword_backfill ---
+    //
+    // The Go API queues this when a Freegle-wide block keyword is created, so the
+    // keyword is applied to the chat messages and posts of the last 24 hours that
+    // arrived before it existed.
+
+    public function test_concern_keyword_backfill_applies_a_new_block_keyword_to_recent_chat_and_posts(): void
+    {
+        $this->mock(PushNotificationService::class);
+        $service = new BlockedKeywordBackfillService(new ContentCheckService());
+        $service->pauseMicros = 0;
+        $this->app->instance(BlockedKeywordBackfillService::class, $service);
+
+        $word = 'testblockword' . uniqid();
+        $keywordId = DB::table('concern_keywords')->insertGetId([
+            'keyword' => $word, 'category' => 'scam', 'action' => 'block',
+            'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,
+        ]);
+
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $chat = $this->createTestChatMessage($room, $sender, ['message' => "Confirm at {$word} now"]);
+
+        $group = $this->createTestGroup();
+        $post = $this->createTestMessage($sender, $group, ['textbody' => "Claim it at {$word}"]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'concern_keyword_backfill',
+            'data' => json_encode(['keyword_id' => $keywordId]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])
+            ->assertSuccessful();
+
+        $this->assertEquals(1, DB::table('chat_messages')->where('id', $chat->id)->value('reviewrejected'));
+        $this->assertNotNull(DB::table('messages')->where('id', $post->id)->value('deleted'));
+        $this->assertNotNull(
+            DB::table('background_tasks')->where('task_type', 'concern_keyword_backfill')->value('processed_at')
+        );
+    }
+
+    public function test_concern_keyword_backfill_ignores_a_flag_keyword(): void
+    {
+        $this->mock(PushNotificationService::class);
+
+        $word = 'testflagword' . uniqid();
+        $keywordId = DB::table('concern_keywords')->insertGetId([
+            'keyword' => $word, 'category' => 'review', 'action' => 'flag',
+            'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,
+        ]);
+
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $chat = $this->createTestChatMessage($room, $sender, ['message' => "Hello {$word}"]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'concern_keyword_backfill',
+            'data' => json_encode(['keyword_id' => $keywordId]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])
+            ->assertSuccessful();
+
+        $this->assertEquals(0, DB::table('chat_messages')->where('id', $chat->id)->value('reviewrejected'),
+            'a flag keyword holds new content only; it must not touch delivered messages');
+        $this->assertNotNull(DB::table('background_tasks')->first()->processed_at);
+    }
+
+    public function test_concern_keyword_backfill_requires_keyword_id(): void
+    {
+        $this->mock(PushNotificationService::class);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'concern_keyword_backfill',
+            'data' => json_encode([]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])
+            ->assertSuccessful();
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNull($task->processed_at);
+        $this->assertStringContainsString('requires keyword_id', $task->error_message);
+    }
 }

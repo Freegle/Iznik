@@ -1,12 +1,14 @@
 ---
-last_reviewed: 2026-09-20
+last_reviewed: 2026-09-22
 owner: Freegle dev team
 ---
 
 # Restarting a database node, and rejoining it to the cluster
 
-The database is a three-node Percona XtraDB Cluster (Galera). Each node keeps its own copy
-of the data and rejoins the others after a restart by itself. The service wrapper that
+The database is a Percona XtraDB Cluster (Galera) of two data nodes and an arbitrator. Each
+data node keeps its own copy of the data and rejoins the other after a restart by itself. The
+arbitrator (`garbd`, on the third machine) holds no data and only votes, so one data node can
+be down without the cluster losing quorum. The service wrapper that
 systemd runs, `/usr/bin/mysql-systemd`, does the position recovery and the state transfer
 for you. Almost every manual step beyond `systemctl stop` and `systemctl start` makes the
 rejoin slower, not faster.
@@ -59,7 +61,7 @@ TLS certificates, and it deletes `grastate.dat`, which trips the reboot gate abo
 ## Planned reboot of one node
 
 1. On the load-balancer side nothing is needed: HAProxy sends API traffic to one active
-   node with the other two as backups, and Galera routes around a missing node.
+   node with the others as backups, and Galera routes around a missing node.
 2. Drain the API on the node first, so clients are not stuck to a node that is about to go
    (`monit stop iznik-server-go`, or follow the deploy drain in the developer docs).
 3. `systemctl stop mysql`. Wait for it to return; a busy node can take a minute or two to
@@ -71,7 +73,14 @@ TLS certificates, and it deletes `grastate.dat`, which trips the reboot gate abo
    SST". Until "ready for connections" appears, `mysql` cannot connect; that is the transfer
    in progress, not a hang.
 6. Confirm with `mysql -e "SHOW STATUS LIKE 'wsrep_local_state_comment'"` (Synced) and
-   `wsrep_cluster_size`, then `monit start iznik-server-go`.
+   `wsrep_cluster_size`, then `systemctl start monit`, which starts the API, spatial and
+   routing servers it manages.
+
+Monit is deliberately **not** enabled at boot on the data nodes. When it was, it started and
+restarted the services it manages against a node that was still resyncing, and made the
+rejoin worse. So after a reboot nothing monit manages runs until a person has seen `Synced`
+and started monit by hand. The arbitrator machine is the exception: nothing resyncs there,
+and `garbd` needs watching from boot, so monit is enabled at boot on it alone.
 
 If the node was down longer than the write-set cache covers, step 5 is an SST and takes 10
 to 18 minutes. Let it run. Killing the joiner during an SST is what produces the stale pid
@@ -127,3 +136,69 @@ directories have been removed.
   `move`.
 - `journalctl --list-boots` for reboot times, and `grastate.dat` and `gvwstate.dat` for the
   node's saved position and last primary component.
+
+## Bringing the arbitrator machine back as a full member
+
+db1 runs only the arbitrator. Everything else it used to run is still installed and
+configured there, stopped; bringing it back is a matter of resources and order, not of
+setting anything up again.
+
+**Still on the machine, unchanged**: Percona with its configuration; the API, spatial and
+routing checkouts, binaries and `.env` files; their monit checks in `conf.d`, which monit has
+been told to leave alone; the OSM extract and the spatial indexes under `/data`; the log
+shipper; its entries in the load balancer, which health-check down. **Removed**: the MySQL
+data directory, the reach artefacts under the routing data directory, build caches and old
+deploy backups, and 8 GB of swap. **Changed**: `mysql` is masked at boot, `garb` is enabled, monit is enabled at boot on this
+machine alone (see the planned-reboot section), the six retired checks carry `mode manual` so
+monit never starts them, which the ModTools host check reads as held on purpose
+rather than as a warning, and the deploy script's node list on the Docker host names only the
+data nodes.
+
+**Before starting anything:**
+
+1. **Disk.** The data directory needs the whole database (about 170 GB in September 2026,
+   growing) plus the write-set cache and headroom, so the disk must be at least what the data
+   nodes have before Percona starts. If the machine was shrunk, grow the disk first, then
+   `growpart /dev/sda 2` and `resize2fs /dev/sda2`; growing is online, only shrinking was not.
+2. **Size.** A data node needs the buffer pool RAM and CPU the others have (8 vCPU and 24 GB
+   when it was retired). Resize before the state transfer, not after.
+3. **Timing.** The state transfer takes 10 to 18 minutes and desyncs the donor, so pick a quiet
+   hour outside the backup drain window and tell whoever is on call.
+
+**In this order:**
+
+1. `systemctl stop garb && systemctl disable garb`. The arbitrator and `mysqld` both listen
+   on the Galera port. The cluster is two nodes from here until `mysqld` has joined, so do not
+   restart db2 or db3 in between.
+2. `systemctl unmask mysql && systemctl enable --now mysql`. The empty data directory means an
+   SST from a donor; watch `wsrep_local_state_comment` on db1 reach `Synced` and the donor
+   return to `Synced`, as above.
+3. For every retired check from here on, first delete its `mode manual` line in
+   `/etc/monit/conf.d/` (that line is what keeps monit from starting it) and `monit reload`,
+   then `monit monitor <name>`. Start with `mysqld`, `mysql` and `mysql_processes` in
+   `mysql.conf`.
+4. Routing. Rebuild the reach artefacts from the extract it still has:
+   `cd /var/www/iznik-routing-go && . ./.env && ./iznik-routing-go reach build`. If the map
+   was refreshed on the data nodes since, copy their extract into `/data` first
+   ([refreshing the map](../domains-services-and-runbooks.md#refreshing-the-map)). Then
+   `monit monitor iznik-routing-go`; monit starts it, and the graph build means `/health`
+   answers after about five minutes.
+5. Spatial. `monit monitor iznik-spatial-go`. It reopens the indexes under `/data` and
+   refreshes them from the local database; an index whose schema moved rebuilds itself.
+6. API. `monit monitor iznik-server-go`, then `curl -s http://127.0.0.1:8192/api/group`. Its
+   `.env` still points writes and reads at the data nodes, which is right.
+7. Deploy. Add `db1-internal` back to `DEPLOY_NODES` in `scripts/deploy-prod.env` on the
+   Docker host and run a deploy: the binaries on db1 are frozen at the last deploy before it was
+   retired, and the deploy's monit invariant then proves every service is watched again.
+8. Load balancer: nothing to do. It never stopped listing db1, and the health checks bring it
+   up as a backup on their own.
+9. Swap, if wanted: recreate `/swapfile2` at its old 10 GB; the `fstab` entry is unchanged.
+
+**Check**: `wsrep_cluster_size` 3 and `wsrep_cluster_weight` 3 on any node with three
+addresses in `wsrep_incoming_addresses`; `monit summary` on db1 all `OK`; the API through the
+load balancer still 200.
+
+To go back to arbitrator-only, reverse it: put `mode manual` back on the six checks and
+`monit unmonitor` each (not `monit stop`: its stop program calls `service mysql stop`, which a
+masked unit refuses, and the check stays monitored), stop and mask `mysql`, empty the data
+directory, enable and start `garb`, and take db1 out of the deploy node list.
