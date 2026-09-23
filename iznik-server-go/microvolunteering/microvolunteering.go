@@ -720,20 +720,23 @@ func PostResponse(c *fiber.Ctx) error {
 				"score_negative": gorm.Expr("0"),
 			})
 
-			// If rejection, check if we have quorum to send for review
+			// If rejection, check if we have quorum to act.
 			if response == "Reject" {
-				var rejectCount int64
-				db.Table("microactions").
-					Where("msgid = ? AND result = 'Reject' AND comments IS NOT NULL AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')", req.Msgid).
-					Count(&rejectCount)
-
-				if rejectCount >= int64(ApprovalQuorum) {
-					// Quorum reached — pull the post back to Pending on ALL the
-					// groups it is live on (home + rippled-out copies), so every
-					// affected community's moderators review it, not only the group
-					// where this vote happened, then freeze the ripple.
-					SendForReviewAllGroups(db, req.Msgid, "Members think there is something wrong with this message.", nil, nil)
-					FreezeReachIfOriginPending(db, req.Msgid)
+				if distinctRejectCount(db, req.Msgid) >= int64(ApprovalQuorum) {
+					if modmessaging.PostIsUnaddressed(db, req.Msgid) {
+						// Same reasoning as the report route in RecordReportVerdict:
+						// an unaddressed post has no community whose moderators could
+						// work a Pending queue, so pending it would strand it live in
+						// browse forever. At quorum it comes off the platform instead.
+						modmessaging.RemoveUnaddressedPost(db, req.Msgid)
+					} else {
+						// Quorum reached — pull the post back to Pending on ALL the
+						// groups it is live on (home + rippled-out copies), so every
+						// affected community's moderators review it, not only the group
+						// where this vote happened, then freeze the ripple.
+						SendForReviewAllGroups(db, req.Msgid, "Members think there is something wrong with this message.", nil, nil)
+						FreezeReachIfOriginPending(db, req.Msgid)
+					}
 				}
 			}
 		}
@@ -1037,6 +1040,20 @@ func reporterIsModOf(db *gorm.DB, reporterID uint64, groupid uint64) bool {
 	return c > 0
 }
 
+// distinctRejectCount counts the PEOPLE who have said "shouldn't be here" about a post,
+// across both routes into the quorum: the report button and the in-app CheckMessage task.
+// microactions carries a unique key on (userid, msgid) (`userid_2`), so one person's repeat
+// verdict updates their single row rather than adding a vote - COUNT(DISTINCT userid) says
+// that out loud and stays correct if that key ever changes.
+func distinctRejectCount(db *gorm.DB, msgid uint64) int64 {
+	var c int64
+	db.Table("microactions").
+		Select("COUNT(DISTINCT userid)").
+		Where("msgid = ? AND result = 'Reject' AND comments IS NOT NULL AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')", msgid).
+		Scan(&c)
+	return c
+}
+
 // RecordReportVerdict treats a report of a post (the User2Mod chat message the website
 // report flow sends, targeted at `groupid`) as a microvolunteering "Reject" verdict, so
 // website reports feed the SAME review quorum as in-app CheckMessage checks:
@@ -1104,11 +1121,7 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 	} else {
 		// Aggregate quorum (all distinct Reject verdicts, reports or in-app checks)
 		// pulls the post to Pending on every community it is on.
-		var rejectCount int64
-		db.Table("microactions").
-			Where("msgid = ? AND result = 'Reject' AND comments IS NOT NULL AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')", msgid).
-			Count(&rejectCount)
-		if rejectCount >= int64(ApprovalQuorum) {
+		if distinctRejectCount(db, msgid) >= int64(ApprovalQuorum) {
 			SendForReviewAllGroups(db, msgid, reason, nil, nil)
 		}
 	}
