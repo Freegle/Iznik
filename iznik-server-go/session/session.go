@@ -610,10 +610,13 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 
 	// Verify the user exists. Deleted users can still log in so they see the
 	// "restore your account" banner.
-	var exists uint64
-	db.Table("users").Select("id").Where("id = ?", uid).Limit(1).Scan(&exists)
+	var target struct {
+		ID       uint64
+		Tnuserid *uint64
+	}
+	db.Table("users").Select("id, tnuserid").Where("id = ?", uid).Limit(1).Scan(&target)
 
-	if exists == 0 {
+	if target.ID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"ret":    2,
 			"status": "Unknown user.",
@@ -626,6 +629,19 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 		Limit(1).Scan(&storedKey)
 
 	if storedKey == "" || subtle.ConstantTimeCompare([]byte(storedKey), []byte(key)) != 1 {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"ret":    3,
+			"status": "Invalid key.",
+		})
+	}
+
+	// A member who came through TrashNothing never logs in here: their actions
+	// arrive through the partner API. A valid link key presented for one of
+	// them is a harvested or forwarded link, not the member, so refuse it with
+	// the same answer as a wrong key and leave a record of where it came from.
+	if target.Tnuserid != nil {
+		stdlog.Printf("SECURITY: link login refused for partner member %d from %s", uid, c.IP())
+
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"ret":    3,
 			"status": "Invalid key.",
