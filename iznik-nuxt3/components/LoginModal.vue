@@ -879,16 +879,29 @@ function googleButtonDrawn() {
   return Boolean(child && child.getBoundingClientRect().width > 0)
 }
 
-function reportGoogleButtonMissing() {
+function reportGoogleButtonMissing(attempts) {
   if (googleFailureReported) {
     return
   }
 
   googleFailureReported = true
+
+  // Whatever went wrong is inside Google's own code, so record the few facts
+  // that say which half of it failed. The member who reported this could not
+  // be reproduced afterwards on any browser, connection speed or cache state
+  // we could think of, and a report saying only "it happened again" would
+  // leave the next one just as unanswerable.
   Sentry.captureException(new Error('Google sign-in button did not draw'), {
     tags: {
       social_login_provider: 'google',
       social_login_platform: 'web',
+    },
+    extra: {
+      scriptLoaded: Boolean(window?.google?.accounts?.id),
+      containerPresent: Boolean(document.getElementById('googleLoginButton')),
+      attempts,
+      waitedMs: Date.now() - googleDrawStarted,
+      signUp: signUp.value,
     },
   })
 }
@@ -929,7 +942,7 @@ function drawGoogleButton(attempt) {
       drawGoogleButton(next)
     } else {
       googleRenderFailed.value = true
-      reportGoogleButtonMissing()
+      reportGoogleButtonMissing(next)
     }
   }, GOOGLE_DRAW_CHECK_MS)
 }
