@@ -329,7 +329,7 @@ async function scopedRemovalConfirmed() {
 // path: an unresolvable standard message falls through to the compose modal (fail
 // closed; the fail-open handling of an unknown action is what closed PR #1071). The
 // server suppresses the message either way, so falling through cannot reach the poster.
-async function scopedRemovalKind() {
+async function scopedRemovalKind(stdmsgOnce) {
   if (props.reject) {
     return 'reject'
   }
@@ -339,7 +339,7 @@ async function scopedRemovalKind() {
   }
 
   if (props.stdmsgid) {
-    const stdmsg = await stdmsgStore.fetch(props.stdmsgid)
+    const stdmsg = await stdmsgOnce()
 
     if (stdmsg?.action === 'Reject') {
       return 'reject'
@@ -402,12 +402,24 @@ async function guardHold(fn) {
 }
 
 async function click(callback) {
+  // The standard message behind this button, resolved at most ONCE per click. Both the
+  // scoped-removal decision below and the no-message check further down read its action;
+  // fetching separately let the two read different answers, and "DEFINITIVELY 'Reject'"
+  // only means anything if both read the same one.
+  let stdmsgPending = null
+  const stdmsgOnce = () => {
+    if (!stdmsgPending) {
+      stdmsgPending = stdmsgStore.fetch(props.stdmsgid)
+    }
+    return stdmsgPending
+  }
+
   // On a rippled-in copy every removal - the Reject and Delete buttons, and any standard
   // message that removes - scopes to this group and says nothing to the freegler
   // (Discourse 9862/16-17, 10102). Confirm that plainly instead of composing a message
   // the server would refuse to send.
   if (!props.isHomeGroup) {
-    const kind = await scopedRemovalKind()
+    const kind = await scopedRemovalKind(stdmsgOnce)
 
     if (kind) {
       scopedRemoval.value = kind
@@ -456,7 +468,7 @@ async function click(callback) {
       // take this DESTRUCTIVE scoped path when the action is DEFINITIVELY 'Reject':
       // if the standard message can't be resolved we fall through to the normal
       // compose modal (fail closed; cf. the fail-open flaw that closed PR #1071).
-      const stdmsg = await stdmsgStore.fetch(props.stdmsgid)
+      const stdmsg = await stdmsgOnce()
       if (stdmsg?.action === 'Reject') {
         showRejectNoMsgModal.value = true
         if (callback) callback()
@@ -470,7 +482,7 @@ async function click(callback) {
       stdmsgAction.value = 'Leave'
     } else if (props.stdmsgid) {
       // We have a standard message.  Fetch it into the store.
-      await stdmsgStore.fetch(props.stdmsgid)
+      await stdmsgOnce()
       stdmsgId.value = props.stdmsgid
     }
 
