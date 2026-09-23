@@ -55,13 +55,19 @@
       @hidden="showRejectNoMsgModal = false"
     >
       <template #default>
-        <p>
+        <p v-if="noMemberMessage">
+          This came from Trash Nothing and the person who posted it hasn't
+          joined Freegle, so there's nobody to send a message to. Rejecting just
+          takes it off <strong>{{ groupName || 'your community' }}</strong
+          >.
+        </p>
+        <p v-else>
           This post first appeared on another community and rippled in to yours.
           Taking it off here just stops it appearing on
           <strong>{{ groupName || 'your community' }}</strong> - it stays on the
           community where it was first posted.
         </p>
-        <p class="mb-0">
+        <p v-if="!noMemberMessage" class="mb-0">
           The freegler won't be told, because they don't need to know unless
           it's taken off their home community. So there's no message to send.
         </p>
@@ -175,6 +181,15 @@ const props = defineProps({
     required: false,
     default: true,
   },
+  // Set when the poster must not be written to at all - a TN post whose poster never
+  // joined Freegle. Takes the same silent path as a rippled-in Reject: remove the post,
+  // compose nothing. Separate from isHomeGroup because these posts ARE on their home
+  // group, so Delete and Delete as Spam must stay on offer.
+  noMemberMessage: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
 })
 
 const messageStore = useMessageStore()
@@ -255,6 +270,13 @@ const heldByOnThisGroup = computed(() => {
   return g?.heldby || null
 })
 
+// Whether a Reject here should quietly remove the post rather than compose a message to
+// the freegler: either it is a rippled-in copy (their home community's decision is the one
+// they hear about) or the poster never joined Freegle and cannot be written to at all.
+const sendsNoMemberMessage = computed(
+  () => !props.isHomeGroup || props.noMemberMessage
+)
+
 const confirmButton = computed(() => {
   // We confirm any actions on held messages, except where we have a separate confirm.
   return heldByOnThisGroup.value && !props.spam && !props.delete
@@ -307,7 +329,7 @@ async function scopedRemovalConfirmed() {
 // path: an unresolvable standard message falls through to the compose modal (fail
 // closed; the fail-open handling of an unknown action is what closed PR #1071). The
 // server suppresses the message either way, so falling through cannot reach the poster.
-async function scopedRemovalKind() {
+async function scopedRemovalKind(stdmsgOnce) {
   if (props.reject) {
     return 'reject'
   }
@@ -317,7 +339,7 @@ async function scopedRemovalKind() {
   }
 
   if (props.stdmsgid) {
-    const stdmsg = await stdmsgStore.fetch(props.stdmsgid)
+    const stdmsg = await stdmsgOnce()
 
     if (stdmsg?.action === 'Reject') {
       return 'reject'
@@ -380,12 +402,24 @@ async function guardHold(fn) {
 }
 
 async function click(callback) {
+  // The standard message behind this button, resolved at most ONCE per click. Both the
+  // scoped-removal decision below and the no-message check further down read its action;
+  // fetching separately let the two read different answers, and "DEFINITIVELY 'Reject'"
+  // only means anything if both read the same one.
+  let stdmsgPending = null
+  const stdmsgOnce = () => {
+    if (!stdmsgPending) {
+      stdmsgPending = stdmsgStore.fetch(props.stdmsgid)
+    }
+    return stdmsgPending
+  }
+
   // On a rippled-in copy every removal - the Reject and Delete buttons, and any standard
   // message that removes - scopes to this group and says nothing to the freegler
   // (Discourse 9862/16-17, 10102). Confirm that plainly instead of composing a message
   // the server would refuse to send.
   if (!props.isHomeGroup) {
-    const kind = await scopedRemovalKind()
+    const kind = await scopedRemovalKind(stdmsgOnce)
 
     if (kind) {
       scopedRemoval.value = kind
@@ -419,13 +453,36 @@ async function click(callback) {
     stdmsgId.value = null
     stdmsgAction.value = null
 
+    if (props.reject && sendsNoMemberMessage.value) {
+      // Reject with nothing sent: confirm a no-message removal instead of composing one.
+      showRejectNoMsgModal.value = true
+      if (callback) callback()
+      return
+    }
+
+    if (props.stdmsgid && sendsNoMemberMessage.value) {
+      // A standard message whose action is Reject, where the member is not to be
+      // written to, must behave exactly like the Reject button above: scope the
+      // removal to this group with NO message to the member, and show the same
+      // confirmation (Discourse 9862/16-17). We only
+      // take this DESTRUCTIVE scoped path when the action is DEFINITIVELY 'Reject':
+      // if the standard message can't be resolved we fall through to the normal
+      // compose modal (fail closed; cf. the fail-open flaw that closed PR #1071).
+      const stdmsg = await stdmsgOnce()
+      if (stdmsg?.action === 'Reject') {
+        showRejectNoMsgModal.value = true
+        if (callback) callback()
+        return
+      }
+    }
+
     if (props.reject) {
       stdmsgAction.value = 'Reject'
     } else if (props.leave) {
       stdmsgAction.value = 'Leave'
     } else if (props.stdmsgid) {
       // We have a standard message.  Fetch it into the store.
-      await stdmsgStore.fetch(props.stdmsgid)
+      await stdmsgOnce()
       stdmsgId.value = props.stdmsgid
     }
 
