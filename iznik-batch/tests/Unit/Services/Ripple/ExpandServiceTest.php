@@ -2942,6 +2942,124 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
+     * A post moved back to Pending on its home group stays in messages_spatial until the
+     * index job next runs (up to five minutes). The ripple must never start from that stale
+     * row: seen live on 121999685, where a Back to pending 12 seconds after approval was
+     * followed by approved copies on 13 neighbouring groups.
+     */
+    public function test_pending_home_post_still_in_spatial_never_starts_rippling(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // still in messages_spatial
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['collection' => MessageGroup::COLLECTION_PENDING]);
+        $groupB = $this->seedCoveringGroup();
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['rippled_in'], 'a post pending at home is never rippled in');
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->first(),
+            'no copy on a neighbouring group while the home copy is pending'
+        );
+        $this->assertSame(0, (int) DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'no reach is started for a post that is not approved at home');
+    }
+
+    /**
+     * A post already rippling whose home copy is no longer approved reaches no new group,
+     * whatever state its reach row is in.
+     */
+    public function test_rippling_post_pending_at_home_reaches_no_new_group(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $this->service()->process(false, 500);
+        $this->assertSame('expanding', DB::table('rippling_reach')->where('msgid', $msgid)->value('status'));
+
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['collection' => MessageGroup::COLLECTION_PENDING]);
+        $groupB = $this->seedCoveringGroup();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'arrival' => now()->subHours(4),
+            'next_expansion_at' => now()->subMinute(),
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->first(),
+            'a post pending at home is not rippled into a group its reach now covers'
+        );
+    }
+
+    /**
+     * Back to pending can freeze a reach while ripple:expand is part-way through advancing
+     * it. The advance must not write the status back over the freeze, or the next run's
+     * retraction pulls the copies that were kept Pending for each group's moderators.
+     */
+    public function test_advance_does_not_overwrite_a_freeze_made_mid_run(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->seedTargetGroupCoveringReach();
+        $this->fakeSlimRouting([[$originGid], [$originGid, $groupB->id]], 3);
+        $this->service()->process(false, 500);
+
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'arrival' => now()->subHours(4),
+            'next_expansion_at' => now()->subMinute(),
+        ]);
+
+        // The catchment fetch runs between planning the advance and applying it: freeze
+        // there, exactly as a moderator's Back to pending would.
+        $catchment = ['catchment' => [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]],
+        ]];
+        $this->fakeSpatialHttp(['*catchment*' => function () use ($msgid, $catchment) {
+            DB::table('messages_groups')->where('msgid', $msgid)->update(['collection' => MessageGroup::COLLECTION_PENDING]);
+            DB::table('rippling_reach')->where('msgid', $msgid)->update(['status' => 'held', 'next_expansion_at' => null]);
+
+            return Http::response($catchment, 200);
+        }]);
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame('held', DB::table('rippling_reach')->where('msgid', $msgid)->value('status'),
+            'a freeze made mid-run survives the advance');
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'the frozen post is not rippled into the newly reached group'
+        );
+    }
+
+    /**
+     * A copy the system removed stays removed: re-approving the post at home ripples it
+     * only into groups that have never had it.
+     */
+    public function test_reapproved_post_does_not_ripple_back_into_a_group_it_was_removed_from(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->seedCoveringGroup();
+        $this->service()->process(false, 500);
+        $this->assertNotNull(DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->first(),
+            'precondition: rippled into B');
+
+        // Removed from B, then the reach is started afresh after re-approval.
+        DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->update(['deleted' => 1]);
+        DB::table('rippling_reach')->where('msgid', $msgid)->delete();
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame(1, (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->value('deleted'),
+            'a removed copy is not brought back');
+        $this->assertSame(1, (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->count());
+    }
+
+    /**
      * BUG FIX: the exact reported failure. A post with a terminal outcome (here Received) that is
      * STILL in messages_spatial (messages:update-spatial-index lags the outcome) must never be
      * rippled into a covering group. The outcome is checked directly against messages_outcomes, not

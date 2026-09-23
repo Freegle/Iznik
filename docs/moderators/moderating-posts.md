@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-15
+last_reviewed: 2026-09-23
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -175,6 +175,11 @@ network-wide:
   own copy.
 - **A moderator reporting**, or moving a post **Back to Pending** in ModTools, counts on
   its own - no quorum needed - and pulls the post to Pending everywhere it has reached.
+
+A copy moved **Back to Pending** waits for a moderator of that community. Nothing approves it
+automatically: not the content check, not the auto-approval for posts that rippled in, and not
+the post being approved again on its home community. Approve or reject it as you would any
+other pending post.
 
 In all these cases the copies are **kept**, each community decides independently, and
 re-approving a copy does **not** re-notify members or re-ripple from scratch. Rejecting a

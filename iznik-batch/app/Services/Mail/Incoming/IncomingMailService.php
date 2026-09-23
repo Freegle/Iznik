@@ -2827,6 +2827,7 @@ class IncomingMailService
                 // Message is approved - update collection to Approved
                 MessageGroup::where('msgid', $messageId)
                     ->where('groupid', $group->id)
+                    ->where('needs_moderator', 0)
                     ->update([
                         'collection' => MessageGroup::COLLECTION_APPROVED,
                         'approvedat' => now(),

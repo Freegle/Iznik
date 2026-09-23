@@ -300,10 +300,11 @@ class ContentCheckService
                     try {
                         $reasons = $this->checkMessage((int) $row->msgid, (int) $row->groupid);
 
-                        // A moderator is holding this copy: record what the check found so
-                        // they get the reasons, but never promote or block it - that would
-                        // take the post out from under them (9816/9815).
-                        if ($row->heldby !== null) {
+                        // A moderator is holding this copy, or sent the post back to pending
+                        // for its moderators to decide: record what the check found so they
+                        // get the reasons, but never promote or block it - that would take the
+                        // post out from under them (9816/9815, 122011064).
+                        if ($row->heldby !== null || (int) ($row->needs_moderator ?? 0) === 1) {
                             $this->recordCheckOnly($row, $reasons, $dryRun, $stats, 'held');
                             continue;
                         }
@@ -433,7 +434,7 @@ class ContentCheckService
         $base = fn () => DB::table('messages_groups as mg')
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
             ->join('users as u', 'u.id', '=', 'm.fromuser')
-            ->select('mg.msgid', 'mg.groupid', 'mg.collection', 'mg.heldby', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'), DB::raw('m.lat as lat'))
+            ->select('mg.msgid', 'mg.groupid', 'mg.collection', 'mg.heldby', 'mg.needs_moderator', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'), DB::raw('m.lat as lat'))
             // Either never checked, or checked and then edited. The edit stamps
             // messages.editedat rather than clearing the check stamp, because the
             // stamp is also what lets a moderator see the post at all - clearing it
