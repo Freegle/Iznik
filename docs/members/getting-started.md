@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-22
+last_reviewed: 2026-09-23
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/index.vue
@@ -41,6 +41,11 @@ of them does not appear. The login box will tell you when Google sign in has not
 Reloading the page usually brings it back. If it does not, and you have only ever signed in
 with Google, use the "forgotten password" link: that sets a password on the same account,
 and you can still use Google later.
+
+Google sign in needs Functional cookies, and Facebook sign in needs Advertisement cookies. If
+your cookie choices turn them off, their buttons show greyed out with a padlock, and the login
+box says so. Choose **Change cookie settings** there, or answer the cookie banner, to turn
+them back on.
 
 ## Finding and joining your local community
 

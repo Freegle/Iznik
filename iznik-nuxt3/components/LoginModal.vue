@@ -50,6 +50,20 @@
     <div class="signin-container">
       <div class="signin__section--social">
         <b-button
+          v-if="facebookNeedsCookies"
+          class="social-button social-button--facebook social-button--cookie-off"
+          title="Turned off by your cookie choices"
+          @click="openCookieChoices"
+        >
+          <b-img
+            src="/signinbuttons/facebook-logo.png"
+            class="social-button__image"
+          />
+          <span class="p-2 text--medium fw-bold">Continue with Facebook</span>
+          <v-icon icon="lock" class="social-button__lock" />
+        </b-button>
+        <b-button
+          v-else
           class="social-button social-button--facebook"
           :disabled="facebookDisabled"
           @click="loginFacebook"
@@ -85,12 +99,41 @@
           />
           <span class="p-2 text--medium fw-bold">Continue with Google</span>
         </b-button>
+        <b-button
+          v-else-if="googleNeedsCookies"
+          class="social-button social-button--google-app social-button--cookie-off"
+          title="Turned off by your cookie choices"
+          @click="openCookieChoices"
+        >
+          <b-img
+            src="/signinbuttons/google-logo.svg"
+            class="social-button__image"
+          />
+          <span class="p-2 text--medium fw-bold">Continue with Google</span>
+          <v-icon icon="lock" class="social-button__lock" />
+        </b-button>
         <div
-          v-else
+          v-if="!isApp"
+          v-show="!googleNeedsCookies"
           id="googleLoginButton"
           ref="googleLoginButton"
           class="social-button social-button--google clickme"
         />
+        <p v-if="cookieBlockedProviders" class="cookie-off-note">
+          <v-icon icon="lock" class="me-1" />
+          <span v-if="cookiesAnswered">
+            {{ cookieBlockedProviders }} sign in
+            {{ cookieBlockedProviders.includes(' and ') ? 'are' : 'is' }}
+            turned off by your cookie choices.
+            <a href="#" @click.prevent="openCookieChoices"
+              >Change cookie settings</a
+            >
+          </span>
+          <span v-else>
+            To sign in with {{ cookieBlockedProviders }}, please respond to the
+            cookie banner below.
+          </span>
+        </p>
         <notice-message v-if="socialblocked" variant="warning" class="mt-2">
           Social sign in blocked - check your ad blocker settings.
         </notice-message>
@@ -265,6 +308,12 @@ const nativeLoginError = ref(null)
 const socialLoginError = ref(null)
 const initialisedSocialLogin = ref(false)
 const googleRenderFailed = ref(false)
+// Our cookie tool holds back Google's sign-in script until a member allows
+// Functional cookies, and Facebook's until they allow Advertisement cookies.
+// Without that there is no button to draw, and the member needs telling why.
+const googleNeedsCookies = ref(false)
+const facebookNeedsCookies = ref(false)
+const cookiesAnswered = ref(false)
 const nativeBump = ref(1)
 const timerElapsed = ref(false)
 const buttonClicked = ref(false)
@@ -291,11 +340,21 @@ const isiOS = ref(mobileStore.isiOS) // APP
 
 const facebookDisabled = computed(() => {
   if (isApp.value) return false
-  return bump.value && typeof window.FB === 'undefined'
+  return (
+    bump.value && !facebookNeedsCookies.value && typeof window.FB === 'undefined'
+  )
 })
 
 const googleDisabled = computed(() => {
-  return bump.value && googleRenderFailed.value
+  return bump.value && googleRenderFailed.value && !googleNeedsCookies.value
+})
+
+const cookieBlockedProviders = computed(() => {
+  if (isApp.value) return null
+  const names = []
+  if (googleNeedsCookies.value) names.push('Google')
+  if (facebookNeedsCookies.value) names.push('Facebook')
+  return names.length ? names.join(' and ') : null
 })
 
 const appleDisabled = computed(() => {
@@ -331,13 +390,17 @@ const googleAddress = computed(() => {
 
 // Only point at the Google button while there is a Google button to point at.
 const referToGoogleButton = computed(() => {
-  return googleAddress.value && !googleRenderFailed.value
+  return (
+    googleAddress.value && !googleRenderFailed.value && !googleNeedsCookies.value
+  )
 })
 
 // A Google account may never have had a password, so "try the password box"
 // is not an answer. Forgot password sets one.
 const googleUnavailableForGmail = computed(() => {
-  return googleAddress.value && googleRenderFailed.value
+  return (
+    googleAddress.value && googleRenderFailed.value && !googleNeedsCookies.value
+  )
 })
 
 const fullNameError = computed(() => {
@@ -360,6 +423,8 @@ const passwordError = computed(() => {
 
 // Lifecycle hooks
 onMounted(() => {
+  document.addEventListener('cookieyes_consent_update', onCookieConsentChanged)
+
   // Set marketing consent to true if it doesn't have a value yet
   if (
     miscStore.marketingConsent === null ||
@@ -879,8 +944,35 @@ function googleButtonDrawn() {
   return Boolean(child && child.getBoundingClientRect().width > 0)
 }
 
+// No cookie tool (the app, local development) means nothing holds them back.
+function readCookieConsent() {
+  const consent = window?.getCkyConsent?.()
+  googleNeedsCookies.value = Boolean(consent && !consent.categories?.functional)
+  facebookNeedsCookies.value = Boolean(
+    consent && !consent.categories?.advertisement
+  )
+  cookiesAnswered.value = Boolean(consent?.isUserActionCompleted)
+}
+
+function openCookieChoices() {
+  window?.revisitCkyConsent?.()
+}
+
+// Allowing the cookies releases the script, so draw Google's button again.
+function onCookieConsentChanged() {
+  const googleWasBlocked = googleNeedsCookies.value
+  readCookieConsent()
+
+  if (googleWasBlocked && !googleNeedsCookies.value && showModal.value) {
+    googleRenderFailed.value = false
+    googleDrawStarted = Date.now()
+    drawGoogleButton(0)
+  }
+}
+
 function reportGoogleButtonMissing(attempts) {
-  if (googleFailureReported) {
+  if (googleFailureReported || googleNeedsCookies.value) {
+    // Missing for want of cookie consent is expected, and the member is told why.
     return
   }
 
@@ -960,6 +1052,8 @@ function installGoogleSDK() {
       installGoogleSDK()
     }
   }
+
+  readCookieConsent()
 
   // Either way, check we end up with a button. A script that never arrives
   // needs telling the member just as much as one that draws nothing.
@@ -1124,6 +1218,11 @@ watch(
 
 // Lifecycle hooks
 onBeforeUnmount(() => {
+  document.removeEventListener(
+    'cookieyes_consent_update',
+    onCookieConsentChanged
+  )
+
   if (bumpTimer) {
     clearTimeout(bumpTimer)
     bumpTimer = null
@@ -1261,6 +1360,7 @@ $color-apple: #000000;
 }
 
 .social-button--facebook {
+  width: 100%;
   border: 1px solid $color-facebook !important;
   background-color: $color-facebook !important;
   color: $color-white !important;
@@ -1287,6 +1387,30 @@ $color-apple: #000000;
   border: 1px solid $color-gray--light;
   background-color: $color-white;
   color: var(--color-gray-700);
+}
+
+// Greyed rather than hidden, so the member can see what is missing. Clicking
+// it opens the cookie choices that turned it off.
+.social-button--cookie-off {
+  position: relative;
+  width: 100%;
+  opacity: 0.45;
+  filter: grayscale(1);
+
+  &:hover {
+    opacity: 0.6;
+  }
+}
+
+.social-button__lock {
+  margin-left: auto;
+  margin-right: 0.75rem;
+}
+
+.cookie-off-note {
+  font-size: 0.85rem;
+  color: var(--color-gray-700);
+  margin: 0 0 0.5rem;
 }
 
 :deep(.social-button--google > div) {
