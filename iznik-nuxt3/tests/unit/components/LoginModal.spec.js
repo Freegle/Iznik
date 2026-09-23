@@ -1092,4 +1092,200 @@ describe('LoginModal', () => {
       expect(wrapper.text()).toContain('affiliated with Freegle')
     })
   })
+  // Google draws this button itself, inside our empty div. When that draw
+  // fails the div stays empty, and until September 2026 nothing noticed: a
+  // member saw a gap where the button should be, plus a tip telling them to
+  // use the button that wasn't there, and support only heard about it because
+  // he wrote in.
+  describe('Google sign-in button that fails to appear', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+      mockLoggedInEver.value = true
+      mockForceLogin.value = true
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    function renderButtonThatWorks() {
+      global.window.google.accounts.id.renderButton = vi.fn((el) => {
+        const child = document.createElement('div')
+        child.getBoundingClientRect = () => ({ width: 180, height: 40 })
+        el.appendChild(child)
+      })
+    }
+
+    async function openWithGmail() {
+      const wrapper = createWrapper()
+      await vi.advanceTimersByTimeAsync(0)
+      await wrapper.find('.email-validator').setValue('someone@gmail.com')
+      await vi.advanceTimersByTimeAsync(0)
+      return wrapper
+    }
+
+    it('retries the draw before giving up', async () => {
+      await openWithGmail()
+      const calls =
+        global.window.google.accounts.id.renderButton.mock.calls.length
+
+      await vi.advanceTimersByTimeAsync(10000)
+
+      expect(
+        global.window.google.accounts.id.renderButton.mock.calls.length
+      ).toBeGreaterThan(calls)
+    })
+
+    it('tells a Gmail member how to get in instead of pointing at a button that is not there', async () => {
+      const wrapper = await openWithGmail()
+
+      await vi.advanceTimersByTimeAsync(10000)
+
+      expect(wrapper.text()).toContain("Google sign in isn't loading")
+      expect(wrapper.text()).not.toContain('above instead')
+    })
+
+    it('reports the failure, so it does not need a support ticket to find', async () => {
+      await openWithGmail()
+
+      await vi.advanceTimersByTimeAsync(10000)
+
+      const reported = Sentry.captureException.mock.calls.find(
+        (c) => c[1]?.tags?.social_login_provider === 'google'
+      )
+      expect(reported).toBeTruthy()
+    })
+
+    it("waits, without complaining, while Google's script is on its way", async () => {
+      // A first-time visitor gets that script held back until the browser is
+      // idle, so it is often still coming when the modal opens.
+      delete global.window.google
+      const wrapper = await openWithGmail()
+
+      await vi.advanceTimersByTimeAsync(10000)
+
+      expect(wrapper.text()).not.toContain("Google sign in isn't loading")
+      expect(
+        Sentry.captureException.mock.calls.find(
+          (c) => c[1]?.tags?.social_login_provider === 'google'
+        )
+      ).toBeFalsy()
+    })
+
+    it('gives up once the script is plainly not coming', async () => {
+      delete global.window.google
+      const wrapper = await openWithGmail()
+
+      await vi.advanceTimersByTimeAsync(20000)
+
+      expect(wrapper.text()).toContain("Google sign in isn't loading")
+    })
+
+    it('does not send a new member to Forgot password, which sign up has not got', async () => {
+      mockLoggedInEver.value = false
+      const wrapper = await openWithGmail()
+
+      await vi.advanceTimersByTimeAsync(20000)
+
+      expect(wrapper.text()).toContain("Google sign in isn't loading")
+      expect(wrapper.text()).not.toContain('Forgot password')
+    })
+
+    it('stops, without reporting, when the member closes the modal', async () => {
+      // A forced login cannot be dismissed, so open this one the ordinary way.
+      mockForceLogin.value = false
+      const wrapper = createWrapper()
+      await vi.advanceTimersByTimeAsync(0)
+      wrapper.vm.show()
+      await vi.advanceTimersByTimeAsync(0)
+      await wrapper.find('.email-validator').setValue('someone@gmail.com')
+      await vi.advanceTimersByTimeAsync(0)
+
+      wrapper.vm.hide()
+      await vi.advanceTimersByTimeAsync(10000)
+
+      expect(
+        Sentry.captureException.mock.calls.find(
+          (c) => c[1]?.tags?.social_login_provider === 'google'
+        )
+      ).toBeFalsy()
+    })
+
+    it('keeps the tip when the button does appear', async () => {
+      renderButtonThatWorks()
+      const wrapper = await openWithGmail()
+
+      await vi.advanceTimersByTimeAsync(10000)
+
+      expect(wrapper.text()).toContain('above instead')
+      expect(wrapper.text()).not.toContain("Google sign in isn't loading")
+      // A redraw wipes the div first, so a button that worked must be left alone.
+      expect(
+        global.window.google.accounts.id.renderButton
+      ).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  // "You usually use X" was written at the moment a login was attempted, not
+  // when one worked, so a member who tried the password form because the
+  // Google button was missing was then told that password was what he usually
+  // used. He wrote in to say it was wrong; he was right.
+  describe('which login method we say they usually use', () => {
+    beforeEach(() => {
+      mockLoggedInEver.value = true
+      mockForceLogin.value = true
+    })
+
+    it('is not changed by an attempt that fails validation', async () => {
+      mockLoginType.value = 'Google'
+      const wrapper = createWrapper()
+      await flushPromises()
+
+      await wrapper.find('.email-validator').setValue('someone@gmail.com')
+      await flushPromises()
+      await wrapper.find('form').trigger('submit', {
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Please fill out the form.')
+      expect(wrapper.vm.loginType).toBe('Google')
+    })
+
+    it('is not changed by a login the server rejects', async () => {
+      mockLoginType.value = 'Google'
+      mockLogin.mockRejectedValue(new LoginError(400, 'Invalid credentials'))
+      const wrapper = createWrapper()
+      await flushPromises()
+
+      await wrapper.find('.email-validator').setValue('someone@gmail.com')
+      await wrapper.find('.password-entry').setValue('wrongpassword')
+      await flushPromises()
+      await wrapper.find('form').trigger('submit', {
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      })
+      await flushPromises()
+
+      expect(wrapper.vm.loginType).toBe('Google')
+    })
+
+    it('records email/password once the login works', async () => {
+      mockLoginType.value = null
+      const wrapper = createWrapper()
+      await flushPromises()
+
+      await wrapper.find('.email-validator').setValue('someone@gmail.com')
+      await wrapper.find('.password-entry').setValue('rightpassword')
+      await flushPromises()
+      await wrapper.find('form').trigger('submit', {
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      })
+      await flushPromises()
+
+      expect(wrapper.vm.loginType).toBe('email/password')
+    })
+  })
 })
