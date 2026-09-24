@@ -6,7 +6,6 @@ use App\Models\Message;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\TrashNothing\Sync\PostSyncer;
-use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 /**
@@ -97,19 +96,19 @@ class TnApiLokiParityTest extends TestCase
     }
 
     /**
-     * Runs ONE TN post through BOTH real ingestion paths and diffs the two Loki
-     * entries they produce.
+     * Runs the same post content through BOTH real ingestion paths and diffs the
+     * two Loki entries they produce.
      *
-     * This is the test the whole section exists for. The other tests here check
-     * the API entry against a hand-built email entry, which only proves the two
-     * SCHEMAS agree; this one proves the two PATHS agree — same post in, same
-     * routing outcome and same context out.
+     * The other tests here check the API entry against a hand-built email entry,
+     * which only proves the two SCHEMAS agree; this one proves the two PATHS
+     * agree — same post in, same routing outcome and same context out. The
+     * ModTools incoming-mail dashboard reads both streams with one mapping, so
+     * they must keep the same shape.
      *
-     * The email side runs IncomingMailService::route() for real and then emits
-     * the Loki entry exactly as IncomingMailController::receive() does. The test
-     * plays the controller's role rather than modifying it: the email path is
-     * frozen, and EmailReplaySyncer (the parity tool's email side) deliberately
-     * does not emit these entries — see plans/tn-api-post-ingestion.md I.6.
+     * TN posts are no longer ingested by email, so the email side is an ordinary
+     * member's emailed post of the same content. It runs
+     * IncomingMailService::route() for real and then emits the Loki entry
+     * exactly as IncomingMailController::receive() does.
      *
      * Both sides are pointed at the SAME user and group, so a difference in the
      * compared fields is a real divergence rather than test-fixture noise.
@@ -119,30 +118,28 @@ class TnApiLokiParityTest extends TestCase
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
         $user = $this->createMappedUser();
         $userEmail = $this->createTestUserEmail($user, ['preferred' => 1]);
-        // MODERATED, not DEFAULT, deliberately: both paths now pend a DEFAULT poster
+        // MODERATED, not DEFAULT, deliberately: both paths pend a DEFAULT poster
         // too (neither auto-approves on arrival — the content-check job promotes
         // them), so either status would agree, but MODERATED pins the outcome on the
         // posting status alone, leaving this test's Loki comparison independent of
-        // what the content check would later do with the fixture's content. Same
-        // reasoning as EmailApiParityTest::seedParityUser().
+        // what the content check would later do with the fixture's content.
         $this->createMembership($user, $group, ['ourPostingStatus' => 'MODERATED']);
 
-        // The two paths deliberately synthesize the SAME messages.messageid for a
-        // given TN post_id (see EmailReplaySyncer::parseCsvRow), and the API
-        // path's idempotency check keys on tnpostid — so running both against
-        // one post_id in a single database makes the second path see the first
-        // path's row and skip as a duplicate. Each side therefore gets its own
-        // post_id for the SAME post content. Nothing being compared below
-        // depends on the id: the routing decision and its context come from the
-        // content, group and user, which are identical for both.
-        $emailPostId = 'tn-bothpaths-email-'.uniqid();
         $apiPostId = 'tn-bothpaths-api-'.uniqid();
         $title = 'Old wooden bookshelf';
         $subject = 'OFFER: '.$title;
 
-        // --- email path: parse a TN post email, route it, emit as the controller does
+        // --- email path: parse a member's post email, route it, emit as the controller does
         $envelopeTo = $group->nameshort.'@'.config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
-        $raw = $this->buildTnPostEmail($userEmail->email, $envelopeTo, $subject, $emailPostId);
+        $raw = implode("\r\n", [
+            'From: '.$userEmail->email,
+            'To: '.$envelopeTo,
+            'Subject: '.$subject,
+            'Date: '.now()->format('D, d M Y H:i:s O'),
+            'Message-ID: <bothpaths-'.uniqid().'@example.com>',
+            'MIME-Version: 1.0',
+            'Content-Type: text/plain; charset=utf-8',
+        ])."\r\n\r\nGood condition, free to collect.";
 
         $parser = app(\App\Services\Mail\Incoming\MailParserService::class);
         $mailService = app(\App\Services\Mail\Incoming\IncomingMailService::class);
@@ -226,71 +223,6 @@ class TnApiLokiParityTest extends TestCase
         $this->assertIsInt($api['message']['message_id']);
         $this->assertSame($apiPostId, $api['message']['tn_post_id']);
         $this->assertArrayNotHasKey('tn_post_id', $email['message']);
-    }
-
-    /**
-     * A TN group-post email, headers matching EmailReplaySyncer::buildRawEmail().
-     *
-     * X-Trash-Nothing-Secret must be PRESENT (even empty) or
-     * IncomingMailService::shouldSkipSpamCheck()'s unconfigured-secret fallback
-     * never fires and the post routes as spam instead.
-     */
-    /**
-     * The spatial index is a separate store and can hand back a location id that is
-     * no longer in `locations`. The API path already ingests without a location in
-     * that case. The email path wrote the stale id to users.lastlocation, failed the
-     * foreign key inside createGroupPostMessage, and lost the whole post - and with
-     * it the numeric message id the parity test above relies on.
-     */
-    public function test_email_path_ingests_the_post_when_the_spatial_index_returns_a_stale_location(): void
-    {
-        $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
-        $user = $this->createMappedUser();
-        $userEmail = $this->createTestUserEmail($user, ['preferred' => 1]);
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'MODERATED']);
-        $lastLocationBefore = $user->fresh()->lastlocation;
-
-        $staleId = 999999999;
-        $this->assertDatabaseMissing('locations', ['id' => $staleId]);
-        Http::fake([
-            '*/v1/postcodes/knn*' => Http::response(['results' => [['id' => $staleId]]]),
-        ]);
-
-        $postId = 'tn-stale-loc-'.uniqid();
-        $envelopeTo = $group->nameshort.'@'.config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
-        $raw = $this->buildTnPostEmail($userEmail->email, $envelopeTo, 'OFFER: Old wooden bookshelf', $postId);
-
-        $parser = app(\App\Services\Mail\Incoming\MailParserService::class);
-        $mailService = app(\App\Services\Mail\Incoming\IncomingMailService::class);
-        $result = $mailService->route($parser->parse($raw, $userEmail->email, $envelopeTo));
-
-        $this->assertSame(RoutingResult::PENDING, $result);
-        $this->assertSame(1, Message::where('tnpostid', $postId)->count(), 'the post is created without a location');
-        $this->assertIsInt($mailService->getLastRoutingContext()['message_id'] ?? null, 'its numeric id reaches the routing context');
-        $this->assertSame($lastLocationBefore, $user->fresh()->lastlocation, 'a stale location is never written to the user');
-    }
-
-    private function buildTnPostEmail(string $from, string $to, string $subject, string $postId): string
-    {
-        $headers = [
-            'From' => $from,
-            'To' => $to,
-            'Subject' => $subject,
-            'Date' => now()->format('D, d M Y H:i:s O'),
-            'Message-ID' => '<'.$postId.'@tn.trashnothing.com>',
-            'X-Trash-Nothing-Secret' => (string) config('freegle.mail.trashnothing_secret', ''),
-            'X-Trash-Nothing-Post-Id' => $postId,
-            'X-Trash-Nothing-Post-Coordinates' => '55.9533,-3.1883',
-            'MIME-Version' => '1.0',
-            'Content-Type' => 'text/plain; charset=utf-8',
-        ];
-
-        $lines = [];
-        foreach ($headers as $name => $value) {
-            $lines[] = "{$name}: {$value}";
-        }
-
-        return implode("\r\n", $lines)."\r\n\r\nGood condition, free to collect.";
     }
 
     public function test_emits_exactly_one_entry_per_ingested_post(): void

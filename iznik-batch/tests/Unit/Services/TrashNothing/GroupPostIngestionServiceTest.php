@@ -9,6 +9,7 @@ use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
@@ -341,6 +342,43 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertNotNull($mg, 'Expected a messages_groups row');
         $this->assertSame(MessageGroup::COLLECTION_PENDING, $mg->collection);
         $this->assertTrue($mg->mod_messaging_allowed, 'mod_messaging_allowed should default to true when not passed');
+    }
+
+    /**
+     * A stale spatial-index entry must cost the post its location, not the post.
+     *
+     * The spatial server keeps its own R-tree, built from MySQL on its own schedule, so
+     * it can hand back the id of a `locations` row that no longer exists.
+     * users.lastlocation is a foreign key, so writing that id throws inside
+     * createMessage and takes the whole post down with it.
+     */
+    public function test_live_ingests_without_a_location_when_the_spatial_index_is_stale(): void
+    {
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'MODERATED']);
+
+        $staleId = 999999999;
+        $this->assertDatabaseMissing('locations', ['id' => $staleId]);
+        Http::fake([
+            '*/v1/postcodes/knn*' => Http::response(['results' => [['id' => $staleId]]]),
+        ]);
+
+        $postId = 'tn-stale-loc-' . uniqid();
+        $post   = $this->makePost([
+            'post_id'   => $postId,
+            'user_id'   => $user->id,
+            'latitude'  => 55.9533,
+            'longitude' => -3.1883,
+        ]);
+        $result = $this->makeService(dryRun: false)->ingest($post, $group);
+
+        $this->assertSame('pending', $result);
+        $message = Message::where('tnpostid', $postId)->first();
+        $this->assertNotNull($message, 'The post was lost rather than ingested without a location');
+        $this->assertNull($message->locationid);
+        $this->assertSame($locationId, (int) $user->fresh()->lastlocation, 'A stale location is never written to the user');
     }
 
     public function test_live_persists_mod_messaging_disallowed_when_specified(): void

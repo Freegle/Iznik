@@ -2382,53 +2382,75 @@ class IncomingMailServiceTest extends TestCase
     // Trash Nothing Routing Tests
     // ========================================
 
-    public function test_routes_trash_nothing_post(): void
+    /**
+     * TN posts are ingested from the TN API (tn:sync), not from the partner email
+     * TN still sends for each one. A TN post that reaches route() is dropped and
+     * creates nothing, even from an approved member of the group.
+     */
+    public function test_drops_trash_nothing_post_identified_by_post_id_header(): void
     {
         $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tnmember')]);
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        $userEmail = $user->emails->first()->email;
+        $groupAddr = $group->nameshort.'@groups.ilovefreegle.org';
 
-        $email = $this->loadEmailFixture('tn_post');
-        // Modify fixture to target our test group
-        $email = str_replace(
-            'testgroup@groups.ilovefreegle.org',
-            $group->nameshort.'@groups.ilovefreegle.org',
-            $email
-        );
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $groupAddr,
+            'Subject' => 'OFFER: Dining Table (London)',
+            'X-Trash-Nothing-Post-Id' => 'tn-email-dropped-1',
+        ], 'Free dining table, collection only.');
 
-        $parsed = $this->parser->parse(
-            $email,
-            'user@trashnothing.com',
-            $group->nameshort.'@groups.ilovefreegle.org'
-        );
+        $result = $this->service->route($this->parser->parse($email, $userEmail, $groupAddr));
 
-        $result = $this->service->route($parsed);
-
-        // TN posts from authenticated source should route to appropriate collection
-        // This test verifies TN secret header is respected
-        $this->assertNotEquals(RoutingResult::INCOMING_SPAM, $result);
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+        $context = $this->service->getLastRoutingContext();
+        $this->assertEquals('TN group post - ingested via the TN API', $context['routing_reason']);
+        $this->assertEquals('tn-email-dropped-1', $context['tn_post_id']);
+        $this->assertFalse(DB::table('messages')->where('fromuser', $user->id)->exists());
+        $this->assertFalse(DB::table('messages')->where('tnpostid', 'tn-email-dropped-1')->exists());
     }
 
-    public function test_skips_spam_check_for_trash_nothing_with_secret(): void
+    public function test_drops_trash_nothing_post_identified_by_secret_header(): void
     {
         $group = $this->createTestGroup();
+        $groupAddr = $group->nameshort.'@groups.ilovefreegle.org';
 
-        // Create email with TN secret header but spam-like content
-        $email = $this->createMinimalEmail([
-            'From' => 'user@trashnothing.com',
-            'To' => $group->nameshort.'@groups.ilovefreegle.org',
-            'Subject' => 'OFFER: Make money (Bristol)',
-            'X-Trash-Nothing-Secret' => 'valid-secret-here',
-        ], 'Content that might otherwise trigger spam filters.');
+        $email = str_replace('testgroup@groups.ilovefreegle.org', $groupAddr, $this->loadEmailFixture('tn_post'));
 
-        $parsed = $this->parser->parse(
-            $email,
-            'user@trashnothing.com',
-            $group->nameshort.'@groups.ilovefreegle.org'
+        $result = $this->service->route($this->parser->parse($email, 'user@trashnothing.com', $groupAddr));
+
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+        $this->assertEquals(
+            'TN group post - ingested via the TN API',
+            $this->service->getLastRoutingContext()['routing_reason']
         );
+    }
 
-        // If secret is valid, spam check should be skipped
-        $result = $this->service->route($parsed);
+    /**
+     * Only group posts are affected: TN mail to a group's volunteers address
+     * (Phase 4) is still delivered, since the parser reports a targetGroupName
+     * for it too.
+     */
+    public function test_trash_nothing_mail_to_volunteers_is_still_routed(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tnvol')]);
+        $this->createMembership($user, $group);
+        $userEmail = $user->emails->first()->email;
+        $volunteersAddr = $group->nameshort.'-volunteers@groups.ilovefreegle.org';
 
-        $this->assertNotEquals(RoutingResult::INCOMING_SPAM, $result);
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $volunteersAddr,
+            'Subject' => 'Question about my post',
+            'X-Trash-Nothing-Post-Id' => 'tn-email-volunteers-1',
+        ], 'Hello, a question for the volunteers.');
+
+        $result = $this->service->route($this->parser->parse($email, $userEmail, $volunteersAddr));
+
+        $this->assertEquals(RoutingResult::TO_VOLUNTEERS, $result);
     }
 
     // ========================================
@@ -4128,162 +4150,6 @@ class IncomingMailServiceTest extends TestCase
 
         // Cleanup
         DB::table('locations')->where('id', $locationId)->delete();
-    }
-
-    // ========================================
-    // TN Image Scraping Tests
-    // ========================================
-
-    public function test_scrape_tn_image_urls_returns_empty_for_null_body(): void
-    {
-        $urls = $this->service->scrapeTnImageUrls(null);
-        $this->assertEmpty($urls);
-    }
-
-    public function test_scrape_tn_image_urls_returns_empty_for_body_without_tn_links(): void
-    {
-        $body = "Hello, I have a sofa to give away.\nPlease contact me.";
-        $urls = $this->service->scrapeTnImageUrls($body);
-        $this->assertEmpty($urls);
-    }
-
-    public function test_scrape_tn_image_urls_finds_tn_pics_links(): void
-    {
-        // Note: This will actually try to fetch the TN page, which may fail in tests.
-        // We're testing the regex extraction, not the HTTP fetch.
-        $body = "I have items to give away.\n\nCheck out the pictures:\nhttps://trashnothing.com/pics/abc123\n\nContact me if interested.";
-
-        // The method will find the URL even if the HTTP fetch fails
-        // We mock the HTTP response to test properly
-        \Illuminate\Support\Facades\Http::fake([
-            'trashnothing.com/pics/*' => \Illuminate\Support\Facades\Http::response('<html><body><a href="https://img.trashnothing.com/image.jpg"><img src="https://img.trashnothing.com/thumb.jpg"/></a></body></html>', 200),
-        ]);
-
-        $urls = $this->service->scrapeTnImageUrls($body);
-        $this->assertContains('https://img.trashnothing.com/image.jpg', $urls);
-    }
-
-    public function test_scrape_tn_image_urls_finds_multiple_links(): void
-    {
-        $body = "Multiple pics:\nhttps://trashnothing.com/pics/abc123\nhttps://trashnothing.com/pics/def456";
-
-        \Illuminate\Support\Facades\Http::fake([
-            'trashnothing.com/pics/abc123' => \Illuminate\Support\Facades\Http::response('<html><body><a href="https://img.trashnothing.com/img1.jpg"><img src="https://img.trashnothing.com/thumb1.jpg"/></a></body></html>', 200),
-            'trashnothing.com/pics/def456' => \Illuminate\Support\Facades\Http::response('<html><body><a href="https://photos.trashnothing.com/img2.jpg"><img src="https://photos.trashnothing.com/thumb2.jpg"/></a></body></html>', 200),
-        ]);
-
-        $urls = $this->service->scrapeTnImageUrls($body);
-        $this->assertCount(2, $urls);
-        $this->assertContains('https://img.trashnothing.com/img1.jpg', $urls);
-        $this->assertContains('https://photos.trashnothing.com/img2.jpg', $urls);
-    }
-
-    public function test_strip_tn_pic_links_returns_null_for_null_body(): void
-    {
-        $result = $this->service->stripTnPicLinks(null);
-        $this->assertNull($result);
-    }
-
-    public function test_strip_tn_pic_links_removes_check_out_pictures_block(): void
-    {
-        $body = "I have a sofa.\n\nCheck out the pictures:\nhttps://trashnothing.com/pics/abc123\n\nContact me.";
-        $result = $this->service->stripTnPicLinks($body);
-
-        $this->assertStringNotContainsString('Check out the pictures', $result);
-        $this->assertStringNotContainsString('trashnothing.com/pics', $result);
-        $this->assertStringContainsString('I have a sofa.', $result);
-        $this->assertStringContainsString('Contact me.', $result);
-    }
-
-    public function test_strip_tn_pic_links_preserves_body_without_tn_links(): void
-    {
-        $body = "Hello, I have items to give away.\nPlease contact me.";
-        $result = $this->service->stripTnPicLinks($body);
-        $this->assertEquals($body, $result);
-    }
-
-    public function test_create_tn_image_attachments_with_mocked_tus(): void
-    {
-        // Create a test user and group
-        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tn-test')]);
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
-        // Create a test message
-        $messageId = DB::table('messages')->insertGetId([
-            'date' => now(),
-            'source' => 'Email',
-            'fromuser' => $user->id,
-            'subject' => 'OFFER: Test item',
-            'textbody' => 'Test message',
-            'tnpostid' => 'test123',
-            'arrival' => now(),
-        ]);
-
-        // Mock HTTP for image download
-        \Illuminate\Support\Facades\Http::fake([
-            'img.trashnothing.com/*' => \Illuminate\Support\Facades\Http::response(
-                // 1x1 red PNG (valid image)
-                base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=='),
-                200,
-                ['Content-Type' => 'image/png']
-            ),
-            // Mock TUS server
-            config('freegle.tus_uploader') => \Illuminate\Support\Facades\Http::sequence()
-                ->push('', 201, ['Location' => config('freegle.tus_uploader').'/test-upload-id'])
-                ->push('', 200)
-                ->push('', 204),
-            config('freegle.tus_uploader').'/test-upload-id' => \Illuminate\Support\Facades\Http::response('', 200),
-        ]);
-
-        $imageUrls = ['https://img.trashnothing.com/test-image.jpg'];
-        $created = $this->service->createTnImageAttachments($messageId, $imageUrls);
-
-        // Due to mocking complexity, we just verify the method runs without error
-        // Full integration testing would require a real TUS server
-        $this->assertIsInt($created);
-
-        // Cleanup
-        DB::table('messages_attachments')->where('msgid', $messageId)->delete();
-        DB::table('messages')->where('id', $messageId)->delete();
-    }
-
-    public function test_group_post_strips_tn_links_from_textbody(): void
-    {
-        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tn-strip')]);
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $userEmail = $user->emails->first()->email;
-
-        // Mock HTTP responses
-        \Illuminate\Support\Facades\Http::fake([
-            'trashnothing.com/pics/*' => \Illuminate\Support\Facades\Http::response('<html><body></body></html>', 200),
-        ]);
-
-        $body = "I have a dining table to give away. Collection from my house.\n\nCheck out the pictures:\nhttps://trashnothing.com/pics/test123\n\nThanks for looking.";
-
-        $email = $this->createMinimalEmail([
-            'From' => $userEmail,
-            'To' => "{$group->nameshort}@groups.ilovefreegle.org",
-            'Subject' => 'OFFER: Dining Table',
-            'X-Trash-Nothing-Post-ID' => 'tn-test-456',
-        ], $body);
-
-        $parsed = $this->parser->parse($email, $userEmail, "{$group->nameshort}@groups.ilovefreegle.org");
-        $result = $this->service->route($parsed);
-
-        // Accept PENDING, APPROVED, or INCOMING_SPAM (spam detection may trigger on test data)
-        // The main purpose of this test is to verify TN link stripping when message IS created
-        $this->assertContains($result, [RoutingResult::PENDING, RoutingResult::APPROVED, RoutingResult::INCOMING_SPAM]);
-
-        // Check the message was created with cleaned textbody (only if not spam)
-        $context = $this->service->getLastRoutingContext();
-        if (isset($context['message_id']) && $result !== RoutingResult::INCOMING_SPAM) {
-            $message = DB::table('messages')->where('id', $context['message_id'])->first();
-            $this->assertNotNull($message);
-            $this->assertStringNotContainsString('trashnothing.com/pics', $message->textbody);
-            $this->assertStringContainsString('I have a dining table', $message->textbody);
-        }
     }
 
     // ========================================

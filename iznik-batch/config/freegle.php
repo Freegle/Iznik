@@ -257,8 +257,6 @@ return [
         'moderator_email' => env('FREEGLE_MODERATOR_EMAIL', 'modbot@users.ilovefreegle.org'),
         // Trash Nothing domain for incoming mail detection
         'trashnothing_domain' => env('FREEGLE_TRASHNOTHING_DOMAIN', 'trashnothing.com'),
-        // Trash Nothing shared secret for mail authentication (skips spam check)
-        'trashnothing_secret' => env('FREEGLE_TRASHNOTHING_SECRET', ''),
 
         // Deferral-aware suppression (mail:deferrals:scan).
         //

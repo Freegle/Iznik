@@ -15,7 +15,6 @@ use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\ItemService;
 use App\Services\Ripple\RippleReplyService;
-use App\Services\SpatialQueryService;
 use App\Services\UnsubscribeService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -175,8 +174,13 @@ class IncomingMailService
             return $this->handleVolunteersMessage($email);
         }
 
-        // Phase 5: Check for group posts
+        // Phase 5: Check for group posts. TN posts are ingested from the TN API
+        // (tn:sync), never from their partner emails, which still arrive.
         if ($email->targetGroupName !== null) {
+            if ($this->isTrashNothingPost($email)) {
+                return $this->dropTrashNothingPost($email);
+            }
+
             return $this->handleGroupPost($email);
         }
 
@@ -2606,12 +2610,38 @@ class IncomingMailService
     }
 
     /**
-     * Handle group posts.
+     * True for a group post that came from TrashNothing: it carries TN's post id
+     * header, or it is authenticated or enveloped as TN mail.
+     */
+    private function isTrashNothingPost(ParsedEmail $email): bool
+    {
+        return $email->getTrashNothingPostId() !== null || $email->isFromTrashNothing();
+    }
+
+    /**
+     * Drop a TN post that arrived by email.
      *
-     * MIRRORED BY HAND in GroupPostIngestionService (the TN API ingestion
-     * path). If you change anything here, decide whether the change applies
-     * there too — EmailPathMirrorDriftTest fails on any edit to this method
-     * precisely so that decision gets made rather than skipped.
+     * TN still sends one partner email per group per post, so this is expected
+     * traffic, not a fault: the post itself is ingested by tn:sync from the TN
+     * API, and tn:verify-email-coverage checks that every post emailed here was.
+     * Callers normally skip these before routing (TnEmailRoutingGate); this is
+     * the backstop for anything that reaches route() anyway.
+     */
+    private function dropTrashNothingPost(ParsedEmail $email): RoutingResult
+    {
+        Log::info('TN group post by email - ingested via the TN API instead', [
+            'group' => $email->targetGroupName,
+            'tn_post_id' => $email->getTrashNothingPostId(),
+            'subject' => $email->subject,
+        ]);
+
+        return $this->dropped('TN group post - ingested via the TN API', [
+            'tn_post_id' => $email->getTrashNothingPostId(),
+        ]);
+    }
+
+    /**
+     * Handle group posts from anyone other than TrashNothing (see route()).
      */
     private function handleGroupPost(ParsedEmail $email): RoutingResult
     {
@@ -2620,18 +2650,12 @@ class IncomingMailService
             'subject' => $email->subject,
         ]);
 
-        $postId = $email->getTrashNothingPostId();
-        $tnType = strtolower((string) Message::determineType($email->subject));
-
-        // Find the group before logging so we can emit the numeric group ID to match the API path.
         $group = $this->findGroup($email->targetGroupName);
-        Log::info('TN-SYNC-TRACE [POST] post_id=' . $postId . ' type=' . $tnType . ' group_id=' . ($group?->id ?? $email->targetGroupName) . ' date=' . ($email->date?->format('Y-m-d\TH:i:s\Z')) . ' title=' . substr((string) $email->subject, 0, 60));
 
         if ($group === null) {
             Log::warning('Post to unknown group', [
                 'group' => $email->targetGroupName,
             ]);
-            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=unknown-group group_id=' . $email->targetGroupName . ' post_id=' . $postId);
 
             return $this->dropped("Post to unknown group");
         }
@@ -2642,14 +2666,11 @@ class IncomingMailService
             Log::info('Post from unknown user - dropping', [
                 'from' => $email->fromAddress,
             ]);
-            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=unknown-user post_id=' . $postId);
-            Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=skipped');
 
             return $this->dropped("Post from unknown user");
         }
 
         // Update user's last access
-        Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastaccess=now()');
         DB::table('users')
             ->where('id', $user->id)
             ->update(['lastaccess' => now()]);
@@ -2665,8 +2686,6 @@ class IncomingMailService
                 'user_id' => $user->id,
                 'group_id' => $group->id,
             ]);
-            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=non-member tnpostid=' . $postId . ' user_id=' . $user->id . ' group_id=' . $group->id);
-            Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=skipped');
 
             return $this->dropped("Post from non-member");
         }
@@ -2676,13 +2695,9 @@ class IncomingMailService
             Log::info('TAKEN/RECEIVED post swallowed', [
                 'subject' => $email->subject,
             ]);
-            Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=swallowed-taken-received');
 
             return RoutingResult::TO_SYSTEM;
         }
-
-        // Check if Trash Nothing post with valid secret (skip spam check)
-        $skipSpamCheck = $this->shouldSkipSpamCheck($email);
 
         // Set context early - we know the group and user at this point
         $this->lastRoutingContext = [
@@ -2691,53 +2706,47 @@ class IncomingMailService
             'user_id' => $user->id,
         ];
 
-        // Check for spam if not TN
-        if (! $skipSpamCheck) {
-            [$isSpam, $spamType, $spamReason] = $this->checkForSpam($email);
-            if ($isSpam) {
-                // Create the message with spam info and route to pending for moderator review
-                $messageId = $this->createGroupPostMessage($email, $user, $group, $spamType, $spamReason);
+        // Check for spam
+        [$isSpam, $spamType, $spamReason] = $this->checkForSpam($email);
+        if ($isSpam) {
+            // Create the message with spam info and route to pending for moderator review
+            $messageId = $this->createGroupPostMessage($email, $user, $group, $spamType, $spamReason);
 
-                if ($messageId !== null) {
-                    $this->lastRoutingContext['message_id'] = $messageId;
-                    $this->lastRoutingContext['spam_type'] = $spamType;
-                    $this->lastRoutingContext['spam_reason'] = $spamReason;
+            if ($messageId !== null) {
+                $this->lastRoutingContext['message_id'] = $messageId;
+                $this->lastRoutingContext['spam_type'] = $spamType;
+                $this->lastRoutingContext['spam_reason'] = $spamReason;
 
-                    // #23: Log spam classification to logs table (matches legacy MailRouter)
-                    Log::info('TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Message,subtype=ClassifiedSpam,msgid=' . $messageId . ',groupid=' . $group->id);
-                    DB::table('logs')->insert([
-                        'timestamp' => now(),
-                        'type' => 'Message',
-                        'subtype' => 'ClassifiedSpam',
-                        'msgid' => $messageId,
-                        'text' => $spamReason,
-                        'groupid' => $group->id,
-                    ]);
+                // #23: Log spam classification to logs table (matches legacy MailRouter)
+                DB::table('logs')->insert([
+                    'timestamp' => now(),
+                    'type' => 'Message',
+                    'subtype' => 'ClassifiedSpam',
+                    'msgid' => $messageId,
+                    'text' => $spamReason,
+                    'groupid' => $group->id,
+                ]);
 
-                    // #12: Record posting in messages_postings even for spam
-                    Log::info('TN-SYNC-TRACE [WRITE] table=messages_postings op=insert set=msgid=' . $messageId . ',groupid=' . $group->id . ',repost=0,autorepost=0');
-                    DB::table('messages_postings')->insert([
-                        'msgid' => $messageId,
-                        'groupid' => $group->id,
-                        'repost' => 0,
-                        'autorepost' => 0,
-                        'date' => now(),
-                    ]);
+                // #12: Record posting in messages_postings even for spam
+                DB::table('messages_postings')->insert([
+                    'msgid' => $messageId,
+                    'groupid' => $group->id,
+                    'repost' => 0,
+                    'autorepost' => 0,
+                    'date' => now(),
+                ]);
 
-                    // #15: Notify group moderators of new pending spam
-                    $this->notifyGroupMods($group->id);
+                // #15: Notify group moderators of new pending spam
+                $this->notifyGroupMods($group->id);
 
-                    Log::info('Spam message created for moderator review', [
-                        'message_id' => $messageId,
-                        'spam_type' => $spamType,
-                        'spam_reason' => $spamReason,
-                    ]);
-                }
-
-                Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=spam');
-
-                return RoutingResult::INCOMING_SPAM;
+                Log::info('Spam message created for moderator review', [
+                    'message_id' => $messageId,
+                    'spam_type' => $spamType,
+                    'spam_reason' => $spamReason,
+                ]);
             }
+
+            return RoutingResult::INCOMING_SPAM;
         }
 
         // Check posting status (column is camelCase: ourPostingStatus)
@@ -2816,9 +2825,6 @@ class IncomingMailService
 
         // For DROPPED messages, don't create a record
         if ($routingResult === RoutingResult::DROPPED) {
-            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=prohibited tnpostid=' . $postId . ' user_id=' . $user->id);
-            Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=dropped');
-
             return RoutingResult::DROPPED;
         }
 
@@ -2829,7 +2835,6 @@ class IncomingMailService
             $this->lastRoutingContext['message_id'] = $messageId;
 
             // #12: Record posting in messages_postings (for repost logic)
-            Log::info('TN-SYNC-TRACE [WRITE] table=messages_postings op=insert set=msgid=' . $messageId . ',groupid=' . $group->id . ',repost=0,autorepost=0');
             DB::table('messages_postings')->insert([
                 'msgid' => $messageId,
                 'groupid' => $group->id,
@@ -2843,14 +2848,10 @@ class IncomingMailService
             // above). The APPROVED branch is retained for completeness / any future
             // caller; unmoderated members take the awaiting-content-check path below.
             //
-            // Every update here is scoped to THIS group's row. A TrashNothing cross-post
-            // arrives as one email per group, minutes apart, and all of them attach to
-            // the same message; keyed on the message alone, routing the second email
-            // set the first group's copy back to Pending after the content check had
-            // already promoted it (Discourse 10142).
+            // Every update here is scoped to THIS group's row, so routing one group's
+            // copy never moves another group's (Discourse 10142).
             if ($routingResult === RoutingResult::APPROVED) {
                 // Message is approved - update collection to Approved
-                Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Approved,approvedat=now()');
                 MessageGroup::where('msgid', $messageId)
                     ->where('groupid', $group->id)
                     ->update([
@@ -2865,14 +2866,12 @@ class IncomingMailService
                     'message_id' => $messageId,
                     'group_id' => $group->id,
                 ]);
-                Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=approved');
             } elseif ($awaitingContentCheck) {
                 // Unmoderated member: start Pending and let the content-check job
                 // promote it (clean) or hold and notify mods (flagged). We do NOT
                 // notify mods or add to the spatial index here - that is the
                 // content-check job's responsibility, so clean posts create no mod
                 // work and flagged posts never go live unchecked.
-                Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Pending reason=' . ($pendingReason ?? 'posting-status'));
                 MessageGroup::where('msgid', $messageId)
                     ->where('groupid', $group->id)
                     ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
@@ -2881,12 +2880,10 @@ class IncomingMailService
                     'message_id' => $messageId,
                     'group_id' => $group->id,
                 ]);
-                Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=pending');
             } else {
                 // Message is pending for a moderator reason (moderated user/group,
                 // worry words, unmapped user, Big Switch) - collection is already
                 // Incoming, update to Pending and notify mods now.
-                Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Pending reason=' . ($pendingReason ?? 'posting-status'));
                 MessageGroup::where('msgid', $messageId)
                     ->where('groupid', $group->id)
                     ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
@@ -2899,7 +2896,6 @@ class IncomingMailService
                     'group_id' => $group->id,
                     'reason' => $pendingReason ?? 'posting status',
                 ]);
-                Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=pending');
             }
         }
 
@@ -2911,9 +2907,6 @@ class IncomingMailService
      *
      * This stores the message in the database with appropriate collection status.
      * For spam messages, sets spamtype/spamreason and collection=Pending for moderator review.
-     *
-     * MIRRORED BY HAND in GroupPostIngestionService::createMessage() (the TN API
-     * ingestion path) — see the note on handleGroupPost() above.
      *
      * @param  ParsedEmail  $email  The parsed email
      * @param  User  $user  The sender user
@@ -2934,53 +2927,25 @@ class IncomingMailService
             // Determine message type from subject using keyword matching
             $type = Message::determineType($email->subject);
 
-            // A TrashNothing item cross-posted to N groups arrives as N separate emails, one
-            // per group, all carrying the same X-Trash-Nothing-Post-Id. It is one item, so it
-            // is one message: the first email creates it, and each later one attaches its
-            // group to that message. That gives one messages row with N messages_groups rows,
-            // the same shape as a Freegle-native cross-post, which is what the feed, the
-            // badge counts and search all expect - they key on msgid.
-            $tnPostId = $this->normaliseTnPostId($email->getTrashNothingPostId());
-
-            if ($tnPostId !== null) {
-                $existingId = $this->findLiveTnMessage($tnPostId);
-
-                if ($existingId !== null) {
-                    return $this->attachGroupToTnMessage($existingId, $email, $user, $group, $type, $spamType);
-                }
-            }
-
             // Generate a unique message ID if not present
             $messageId = $email->messageId ?? (microtime(true) . '@' . config('freegle.mail.user_domain', 'users.ilovefreegle.org'));
             // Append group ID to make message ID unique per group
             $messageId = $messageId . '-' . $group->id;
 
-            // Determine lat/lng - prefer TN coordinates header, then subject location, then user location
+            // Determine lat/lng - prefer subject location, then user location
             $lat = null;
             $lng = null;
             $locationId = null;
 
-            // 1. Try TN coordinates header
-            $tnCoords = $email->getTrashNothingCoordinates();
-            if ($tnCoords) {
-                $parts = explode(',', $tnCoords);
-                if (count($parts) >= 2) {
-                    $lat = (float) trim($parts[0]);
-                    $lng = (float) trim($parts[1]);
-                }
+            // 1. Try to extract location from subject (e.g., "OFFER: Sofa (Edinburgh)")
+            $subjectLocation = $this->extractLocationFromSubject($email->subject, $group->id);
+            if ($subjectLocation) {
+                $lat = $subjectLocation['lat'];
+                $lng = $subjectLocation['lng'];
+                $locationId = $subjectLocation['id'];
             }
 
-            // 2. Try to extract location from subject (e.g., "OFFER: Sofa (Edinburgh)")
-            if ($lat === null || $lng === null) {
-                $subjectLocation = $this->extractLocationFromSubject($email->subject, $group->id);
-                if ($subjectLocation) {
-                    $lat = $subjectLocation['lat'];
-                    $lng = $subjectLocation['lng'];
-                    $locationId = $subjectLocation['id'];
-                }
-            }
-
-            // 3. Fall back to user's location if still no coordinates
+            // 2. Fall back to user's location if still no coordinates
             if ($lat === null || $lng === null) {
                 [$lat, $lng] = $user->getLatLng();
                 // If user has lastlocation, use that as locationid
@@ -2989,50 +2954,14 @@ class IncomingMailService
                 }
             }
 
-            // Find the closest postcode location to get locationid (if not already set)
-            if ($lat !== null && $lng !== null && $locationId === null) {
-                $locationId = $this->findClosestPostcodeId($lat, $lng);
-            }
-
-            // The id came from the spatial index, which is a separate store and can
-            // outlive the row it points at - a purged or renumbered location leaves a
-            // stale entry behind. users.lastlocation is a foreign key, so writing an id
-            // that is no longer in `locations` throws, and because that happens inside
-            // this method the whole post is lost rather than just its location. A post
-            // with no location is still worth having, so verify before trusting it.
-            // The API path (GroupPostIngestionService) makes the same check.
-            if ($locationId !== null && !DB::table('locations')->where('id', $locationId)->exists()) {
-                Log::info('TN-SYNC-TRACE [LOCATION-STALE] spatial index returned locationid=' . $locationId
-                    . ' which is not in locations; ingesting without a location');
-                $locationId = null;
-            }
-
             // Update user's lastlocation if we found a location
             if ($locationId && $user->id) {
-                Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastlocation=' . $locationId);
                 DB::table('users')
                     ->where('id', $user->id)
                     ->update(['lastlocation' => $locationId]);
             }
 
-            // Scrape TN image URLs before processing textbody
-            $tnImageUrls = $this->scrapeTnImageUrls($email->textBody);
-
-            // Strip TN pic links from textbody
-            $cleanedTextBody = $this->stripTnPicLinks($email->textBody);
-
             // Create the message record
-            Log::info('TN-SYNC-TRACE [WRITE] table=messages op=insert set=' . json_encode([
-                'messageid' => $messageId,
-                'tnpostid' => $email->getTrashNothingPostId(),
-                'groupid' => $group->id,
-                'fromuser' => $user->id,
-                'type' => $type,
-                'subject' => $email->subject,
-                'lat' => $lat,
-                'lng' => $lng,
-                'locationid' => $locationId,
-            ]));
             $message = Message::create([
                 'date' => now(),
                 'source' => Message::SOURCE_EMAIL ?? 'Email',
@@ -3052,8 +2981,7 @@ class IncomingMailService
                 'subject' => $email->subject,
                 'suggestedsubject' => $email->subject, // TODO: implement subject suggestion
                 'messageid' => $messageId,
-                'tnpostid' => $tnPostId,
-                'textbody' => $cleanedTextBody,
+                'textbody' => $email->textBody,
                 'type' => $type,
                 'lat' => $lat,
                 'lng' => $lng,
@@ -3068,37 +2996,12 @@ class IncomingMailService
                 return null;
             }
 
-            // Two emails for one post id arriving together can both pass the lookup above
-            // and both create. Each insert autocommits, so id order is commit order: the
-            // higher id was written after the lower one was already committed and therefore
-            // sees it here. That one stands down, leaving a single message - no lock needed,
-            // and it holds across cluster nodes because it only reads committed rows.
-            if ($tnPostId !== null) {
-                $earlierId = $this->findLiveTnMessage($tnPostId);
-
-                if ($earlierId !== null && $earlierId !== (int) $message->id) {
-                    DB::table('messages')->where('id', $message->id)->update([
-                        'deleted' => now(),
-                        'tnpostid' => null,
-                        'messageid' => null,
-                    ]);
-
-                    Log::info('TN cross-post lost create race; attaching to earlier message', [
-                        'discarded' => $message->id,
-                        'canonical' => $earlierId,
-                    ]);
-
-                    return $this->attachGroupToTnMessage($earlierId, $email, $user, $group, $type, $spamType);
-                }
-            }
-
             // Create the messages_groups entry
             // Spam messages go to Pending for moderator review
             $collection = $spamType !== null
                 ? MessageGroup::COLLECTION_PENDING
                 : MessageGroup::COLLECTION_INCOMING;
 
-            Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=insert set=msgid=' . $message->id . ',groupid=' . $group->id . ',msgtype=' . $type . ',collection=' . $collection);
             MessageGroup::create([
                 'msgid' => $message->id,
                 'groupid' => $group->id,
@@ -3110,11 +3013,10 @@ class IncomingMailService
             // Record the item from a well-formed "TYPE: item (location)" subject,
             // exactly as V1 Message::save() did. The messages_items link is what
             // the Weight stat's INNER JOIN relies on — without it, items given
-            // away via email (e.g. TrashNothing posts) contribute zero weight.
+            // away via email contribute zero weight.
             $this->itemService->recordFromSubject($message->id, $email->subject ?? '');
 
             // Add to message history for spam checking
-            Log::info('TN-SYNC-TRACE [WRITE] table=messages_history op=insert set=msgid=' . $message->id . ',groupid=' . $group->id . ',fromuser=' . $user->id);
             DB::table('messages_history')->insert([
                 'groupid' => $group->id,
                 'source' => Message::SOURCE_EMAIL ?? 'Email',
@@ -3131,7 +3033,6 @@ class IncomingMailService
             ]);
 
             // Log receipt — matches Go API logMessageReceived() and V1 Message::submit().
-            Log::info('TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Message,subtype=Received,msgid=' . $message->id . ',groupid=' . $group->id);
             DB::table('logs')->insert([
                 'timestamp' => now(),
                 'type' => 'Message',
@@ -3145,34 +3046,11 @@ class IncomingMailService
             // Note: messages_spatial is added when message is APPROVED, not at creation.
             // The spatial index is populated during the approval step.
 
-            // Process TN images: download, upload to tusd, create attachments
-            if (! empty($tnImageUrls)) {
-                $this->createTnImageAttachments($message->id, $tnImageUrls);
-            }
-
             return $message->id;
 
         } catch (\Exception $e) {
             // Check for duplicate message ID (can happen if message is resent)
             if (str_contains($e->getMessage(), 'Duplicate entry')) {
-                // If we lost a race for the same TN post, attach this group to the winner
-                // rather than dropping it, and do not leave our half-made row as a copy.
-                if (isset($tnPostId) && $tnPostId !== null) {
-                    $existingId = $this->findLiveTnMessage($tnPostId);
-
-                    if ($existingId !== null) {
-                        if ($message !== null && $message->id && (int) $message->id !== $existingId) {
-                            DB::table('messages')->where('id', $message->id)->update([
-                                'deleted' => now(),
-                                'tnpostid' => null,
-                                'messageid' => null,
-                            ]);
-                        }
-
-                        return $this->attachGroupToTnMessage($existingId, $email, $user, $group, $type, $spamType);
-                    }
-                }
-
                 Log::info('Duplicate message ID, likely resent message', [
                     'message_id' => $email->messageId,
                 ]);
@@ -3196,133 +3074,6 @@ class IncomingMailService
     }
 
     /**
-     * A TrashNothing post id, trimmed, or null when absent or blank.
-     */
-    private function normaliseTnPostId(?string $tnPostId): ?string
-    {
-        if ($tnPostId === null) {
-            return null;
-        }
-
-        $trimmed = trim($tnPostId);
-
-        return $trimmed === '' ? null : $trimmed;
-    }
-
-    /**
-     * The live Freegle message for a TrashNothing post id, if we already hold one.
-     * Lowest id wins, so concurrent arrivals converge on the same message.
-     */
-    private function findLiveTnMessage(string $tnPostId): ?int
-    {
-        $id = DB::table('messages')
-            ->where('tnpostid', $tnPostId)
-            ->whereNull('deleted')
-            ->orderBy('id')
-            ->value('id');
-
-        return $id === null ? null : (int) $id;
-    }
-
-    /**
-     * Record a further group on a TrashNothing message we already hold.
-     *
-     * Only the per-GROUP side effects of createGroupPostMessage belong here: the
-     * messages_groups row, the spam-check history row and the receipt log. The
-     * per-MESSAGE work - the messages_items link, the TN image attachments - belongs to
-     * the message, not to each group on it, and repeating it would double-count the item
-     * in the weight stats and re-upload the photos.
-     */
-    private function attachGroupToTnMessage(
-        int $msgid,
-        ParsedEmail $email,
-        User $user,
-        Group $group,
-        string $type,
-        ?string $spamType = null
-    ): ?int {
-        try {
-            $collection = $spamType !== null
-                ? MessageGroup::COLLECTION_PENDING
-                : MessageGroup::COLLECTION_INCOMING;
-
-            // INSERT IGNORE: a redelivery of the same email for the same group must be a
-            // no-op, not an error. (msgid, groupid) is unique on messages_groups.
-            DB::statement(
-                'INSERT IGNORE INTO messages_groups (msgid, groupid, msgtype, collection, arrival) VALUES (?, ?, ?, ?, ?)',
-                [$msgid, $group->id, $type, $collection, now()]
-            );
-
-            $messageId = ($email->messageId ?? (microtime(true).'@'.config('freegle.mail.user_domain', 'users.ilovefreegle.org'))).'-'.$group->id;
-
-            // insertOrIgnore for the same reason as the row above: (msgid, groupid) is
-            // unique here too, so a second delivery of the same email for a group already
-            // on this message threw 1062 one line after the INSERT IGNORE that was meant
-            // to make exactly that case harmless. Skipping the rest is right - the first
-            // delivery did it - but arriving there by exception meant it was logged as an
-            // error every time, 8, 13 and 7 times on 2026-09-11, 09-12 and 09-13. A
-            // collision here can only mean the group is already recorded against this
-            // message, because the attach path runs only when the message exists and the
-            // creating email wrote its own group's history row.
-            $historyWritten = DB::table('messages_history')->insertOrIgnore([
-                'groupid' => $group->id,
-                'source' => Message::SOURCE_EMAIL ?? 'Email',
-                'fromuser' => $user->id,
-                'envelopefrom' => $email->envelopeFrom,
-                'envelopeto' => $email->envelopeTo,
-                'fromname' => $email->fromName,
-                'fromaddr' => $email->fromAddress,
-                'fromip' => $email->senderIp,
-                'subject' => $email->subject,
-                'prunedsubject' => $this->pruneSubject($email->subject),
-                'messageid' => $messageId,
-                'msgid' => $msgid,
-            ]);
-
-            if ($historyWritten === 0) {
-                // Already attached by an earlier delivery of this same email, which wrote
-                // the receipt log and routed the copy. Return null, as the failure path
-                // did: null tells the caller there is no fresh attach to follow up, and
-                // that follow-up must not run twice - messages_postings carries no unique
-                // key on (msgid, groupid), so a second pass would record the item as
-                // posted twice and feed the repost logic a phantom. The difference is
-                // that this is now a no-op saying so, not an exception logged as an error.
-                Log::info('TN cross-post group was already attached, nothing to do', [
-                    'msgid' => $msgid,
-                    'groupid' => $group->id,
-                ]);
-
-                return null;
-            }
-
-            DB::table('logs')->insert([
-                'timestamp' => now(),
-                'type' => 'Message',
-                'subtype' => 'Received',
-                'groupid' => $group->id,
-                'user' => $user->id,
-                'msgid' => $msgid,
-                'text' => $messageId,
-            ]);
-
-            Log::info('TN cross-post attached to existing message', [
-                'msgid' => $msgid,
-                'groupid' => $group->id,
-            ]);
-
-            return $msgid;
-        } catch (\Exception $e) {
-            Log::error('Failed to attach TN cross-post group to existing message', [
-                'msgid' => $msgid,
-                'groupid' => $group->id,
-                'error' => $e->getMessage(),
-            ]);
-
-            return null;
-        }
-    }
-
-    /**
      * Prune subject for history comparison (remove location, normalize).
      */
     private function pruneSubject(?string $subject): ?string
@@ -3337,30 +3088,6 @@ class IncomingMailService
         $pruned = preg_replace('/^(OFFER|WANTED|TAKEN|RECEIVED)\s*:\s*/i', '', $pruned);
 
         return trim($pruned);
-    }
-
-    /**
-     * Check if spam check should be skipped (e.g., for TN with valid secret).
-     */
-    private function shouldSkipSpamCheck(ParsedEmail $email): bool
-    {
-        if (! $email->isFromTrashNothing()) {
-            return false;
-        }
-
-        $secret = $email->getTrashNothingSecret();
-        if ($secret === null) {
-            return false;
-        }
-
-        // Validate secret against config
-        $configSecret = config('freegle.mail.trashnothing_secret');
-        if (empty($configSecret)) {
-            // If no secret configured, accept any TN email with a secret header
-            return true;
-        }
-
-        return $secret === $configSecret;
     }
 
     /**
@@ -3386,8 +3113,6 @@ class IncomingMailService
         }
 
         // Also run SpamAssassin if available
-        // Note: checkForSpam() is only called when shouldSkipSpamCheck() is false,
-        // so SpamAssassin always runs here.
         [$score, $isSpam] = $this->spamCheck->checkSpamAssassin(
             $email->rawMessage,
             $email->subject ?? ''
@@ -3981,23 +3706,6 @@ class IncomingMailService
     }
 
     /**
-     * Find the closest postcode location ID for given coordinates.
-     *
-     * Uses spatial index to efficiently find the nearest postcode.
-     * Uses an expanding spatial search to find the nearest postcode.
-     *
-     * @param  float  $lat  Latitude
-     * @param  float  $lng  Longitude
-     * @return int|null The location ID of the closest postcode, or null if not found
-     */
-    private function findClosestPostcodeId(float $lat, float $lng): ?int
-    {
-        $ids = (new SpatialQueryService())->nearestIds('postcodes', $lat, $lng, 1);
-
-        return $ids[0] ?? null;
-    }
-
-    /**
      * Extract location from subject line.
      *
      * Parses subjects like "OFFER: Sofa (Edinburgh)" to extract "Edinburgh"
@@ -4098,234 +3806,6 @@ class IncomingMailService
         }
 
         return [$type, $item, $location];
-    }
-
-    /**
-     * Scrape TN (Trash Nothing) image URLs from text body.
-     *
-     * TN sends image links in the format https://trashnothing.com/pics/...
-     * which link to pages containing the actual high-res image URLs.
-     *
-     * @param  string|null  $textBody  Message text body
-     * @return array Array of image URLs to download
-     */
-    public function scrapeTnImageUrls(?string $textBody): array
-    {
-        if (! $textBody) {
-            return [];
-        }
-
-        $imageUrls = [];
-
-        // Find TN pic page URLs
-        if (preg_match_all('/(https:\/\/trashnothing\.com\/pics\/.*)$/m', $textBody, $matches)) {
-            $pageUrls = [];
-            foreach ($matches[1] as $url) {
-                $pageUrls[] = trim($url);
-            }
-            $pageUrls = array_unique($pageUrls);
-
-            foreach ($pageUrls as $pageUrl) {
-                // Fetch the TN pics page to extract actual image URLs
-                $extractedUrls = $this->extractTnImageUrlsFromPage($pageUrl);
-                $imageUrls = array_merge($imageUrls, $extractedUrls);
-            }
-        }
-
-        return array_unique($imageUrls);
-    }
-
-    /**
-     * Extract image URLs from a TN pics page.
-     *
-     * TN page structure has changed over time:
-     * - Old: img inside anchor tag (parent href has high-res)
-     * - New: anchor with high-res href separate from img tag
-     *
-     * We prioritize finding anchor hrefs with TN image URLs as they
-     * typically have higher resolution than img src attributes.
-     *
-     * @param  string  $pageUrl  TN pics page URL
-     * @return array Array of image URLs
-     */
-    private function extractTnImageUrlsFromPage(string $pageUrl): array
-    {
-        $imageUrls = [];
-
-        try {
-            $response = \Illuminate\Support\Facades\Http::timeout(120)->get($pageUrl);
-
-            if (! $response->successful()) {
-                Log::warning('Failed to fetch TN pics page', [
-                    'url' => $pageUrl,
-                    'status' => $response->status(),
-                ]);
-
-                return [];
-            }
-
-            $html = $response->body();
-            if (trim($html) === '') {
-                // loadHTML('') throws ValueError on PHP 8 - the @ silences
-                // warnings, not thrown Errors (same trap as the link-preview
-                // cron, fixed together 2026-08-17).
-                return [];
-            }
-            $doc = new \DOMDocument;
-            @$doc->loadHTML($html);
-
-            // Strategy 1: Look for anchor tags with TN image URLs (high-res)
-            $anchors = $doc->getElementsByTagName('a');
-            foreach ($anchors as $anchor) {
-                $href = $anchor->getAttribute('href');
-                if ($this->isTnImageUrl($href)) {
-                    $imageUrls[] = $href;
-                }
-            }
-
-            // Strategy 2: Fall back to img src if no anchors found
-            if (empty($imageUrls)) {
-                $imgs = $doc->getElementsByTagName('img');
-                foreach ($imgs as $img) {
-                    $src = $img->getAttribute('src');
-                    if ($this->isTnImageUrl($src)) {
-                        $imageUrls[] = $src;
-                    }
-                }
-            }
-        } catch (\Exception $e) {
-            Log::error('Exception fetching TN pics page', [
-                'url' => $pageUrl,
-                'error' => $e->getMessage(),
-            ]);
-        }
-
-        return array_unique($imageUrls);
-    }
-
-    /**
-     * Check if a URL is a TN image URL.
-     */
-    private function isTnImageUrl(?string $url): bool
-    {
-        if (! $url || strpos($url, 'https://') !== 0) {
-            return false;
-        }
-
-        return strpos($url, 'trashnothing.com/img/') !== false ||
-               strpos($url, 'img.trashnothing.com') !== false ||
-               strpos($url, '/tn-photos/') !== false ||
-               strpos($url, 'photos.trashnothing.com') !== false;
-    }
-
-    /**
-     * Strip TN pic links from text body.
-     *
-     * Removes the "Check out the pictures..." text and TN pic URLs.
-     *
-     * @param  string|null  $textBody  Message text body
-     * @return string|null Cleaned text body
-     */
-    public function stripTnPicLinks(?string $textBody): ?string
-    {
-        if (! $textBody) {
-            return $textBody;
-        }
-
-        // Remove "Check out the pictures..." block with TN URLs
-        return preg_replace(
-            '/Check out the pictures[\s\S]*?https:\/\/trashnothing[\s\S]*?pics\/[a-zA-Z0-9]*/',
-            '',
-            $textBody
-        );
-    }
-
-    /**
-     * Download and upload TN images to tusd, creating attachment records.
-     *
-     * @param  int  $messageId  The message ID to attach images to
-     * @param  array  $imageUrls  Array of image URLs to download
-     * @return int Number of attachments created
-     */
-    public function createTnImageAttachments(int $messageId, array $imageUrls): int
-    {
-        Log::info('TN-SYNC-TRACE [WRITE] table=message_attachments op=insert set=msgid=' . $messageId . ' count=' . count($imageUrls));
-        $tusService = app(\App\Services\TusService::class);
-        $created = 0;
-        $isFirst = true;
-
-        foreach ($imageUrls as $url) {
-            try {
-                // Download the image
-                $response = \Illuminate\Support\Facades\Http::timeout(120)->get($url);
-
-                if (! $response->successful()) {
-                    Log::warning('Failed to download TN image', [
-                        'url' => $url,
-                        'status' => $response->status(),
-                    ]);
-
-                    continue;
-                }
-
-                $imageData = $response->body();
-                $contentType = $response->header('Content-Type') ?? 'image/jpeg';
-
-                // Compute perceptual hash for deduplication
-                $hash = $this->computeImageHash($imageData);
-
-                // Check if we already have this image (by hash)
-                $existing = \App\Models\MessageAttachment::where('msgid', $messageId)
-                    ->where('hash', $hash)
-                    ->first();
-
-                if ($existing) {
-                    Log::debug('Skipping duplicate TN image', [
-                        'message_id' => $messageId,
-                        'hash' => $hash,
-                    ]);
-
-                    continue;
-                }
-
-                // Upload to tusd
-                $tusUrl = $tusService->upload($imageData, $contentType);
-
-                if (! $tusUrl) {
-                    Log::warning('Failed to upload TN image to tusd', [
-                        'url' => $url,
-                    ]);
-
-                    continue;
-                }
-
-                $externalUid = \App\Services\TusService::urlToExternalUid($tusUrl);
-
-                // Create attachment record
-                \App\Models\MessageAttachment::create([
-                    'msgid' => $messageId,
-                    'externaluid' => $externalUid,
-                    'hash' => $hash,
-                    'primary' => $isFirst,
-                ]);
-
-                $created++;
-                $isFirst = false;
-
-                Log::debug('Created TN image attachment', [
-                    'message_id' => $messageId,
-                    'url' => $url,
-                    'externaluid' => $externalUid,
-                ]);
-            } catch (\Exception $e) {
-                Log::error('Exception processing TN image', [
-                    'url' => $url,
-                    'error' => $e->getMessage(),
-                ]);
-            }
-        }
-
-        return $created;
     }
 
     /**
