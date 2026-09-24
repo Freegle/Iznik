@@ -19,20 +19,16 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Ingests a TN API post into the database, mirroring the logic of
- * IncomingMailService::handleGroupPost + ::createGroupPostMessage.
+ * Ingests a TN API post into the database. This is the only way TN posts are
+ * ingested: the partner emails TN also sends are dropped by
+ * IncomingMailService::route().
  *
- * The email path (IncomingMailService) is never touched. Logic here is
- * duplicated — not extracted — until parity is proven.
- *
- * Because the two are tied together only by hand, a fix made to one and not
- * the other is invisible. Tests\Unit\Services\TrashNothing\EmailPathMirrorDriftTest
- * pins a digest of both mirrored email-path methods and fails the moment
- * either changes, so the mirror is at least LOOKED at on every such edit.
- * tn:parity-check remains the thorough check of whether it is right.
+ * Much of the logic began as a copy of IncomingMailService::handleGroupPost()
+ * and ::createGroupPostMessage(), which still handle posts emailed by anyone
+ * else. The two are no longer kept in step.
  *
  * With $dryRun = true, no DB writes occur. Every would-be write emits a
- * TN-SYNC-TRACE [WRITE] log line for diffing against the email path.
+ * TN-SYNC-TRACE [WRITE] log line instead.
  */
 class GroupPostIngestionService
 {
@@ -544,10 +540,8 @@ class GroupPostIngestionService
             $messageId = $message?->id ?? 0;
 
             // messages_groups entry — starts as Incoming; collection updated after routing.
-            // NB: this trace line is diffed byte-for-byte against the email path in
-            // EmailApiParityTest, so mod_messaging_allowed (an API-only field with no
-            // email-path equivalent) is deliberately NOT included here — see the
-            // separate TN-SYNC-TRACE [POST-META] line in PostSyncer for that.
+            // mod_messaging_allowed is traced separately, on the TN-SYNC-TRACE
+            // [POST-META] line in PostSyncer.
             Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=insert set=msgid=' . $messageId . ',groupid=' . $group->id . ',msgtype=' . $type . ',collection=Incoming');
             if (!$this->dryRun) {
                 MessageGroup::create([
@@ -695,26 +689,16 @@ class GroupPostIngestionService
      * deleted, or null if we have never ingested it here. Lowest id wins, so
      * the answer is stable if an older duplicate somehow survives.
      *
-     * DELETED MESSAGES DELIBERATELY STILL COUNT, which is why this is not the
-     * email path's findLiveTnMessage() (IncomingMailService.php:3135) with a
-     * different name. The two ask different questions:
+     * DELETED MESSAGES DELIBERATELY STILL COUNT. This asks "have we ingested
+     * this post for this group before?" — an idempotency guard, which a deleted
+     * message answers yes to just as firmly as a live one. Filtering deleted out
+     * here would mean the next run whose window still covers the post RE-CREATES
+     * it, resurrecting something a moderator, the member or a user purge
+     * deliberately removed, and doing so again on every overlapping run.
      *
-     *  - findLiveTnMessage() asks "is there a live message I can hang another
-     *    group off?", so it must skip deleted ones — attaching a messages_groups
-     *    row to a deleted message would put the group's copy on something no
-     *    member can see.
-     *  - this asks "have we ingested this post for this group before?" — an
-     *    idempotency guard, which a deleted message answers yes to just as
-     *    firmly as a live one. Filtering deleted out here would mean the next
-     *    run whose window still covers the post RE-CREATES it, resurrecting
-     *    something a moderator, the member or a user purge deliberately removed,
-     *    and doing so again on every overlapping run.
-     *
-     * The two places that soft-delete a TN message as a *duplicate* rather than
-     * as a decision — the email path's lost-create-race branch
-     * (IncomingMailService.php:2999) and TnMergeCrosspostsCommand — both null
-     * tnpostid in the same update, so they never match here and never block a
-     * later ingest.
+     * TnMergeCrosspostsCommand, which soft-deletes a TN message as a *duplicate*
+     * rather than as a decision, nulls tnpostid in the same update, so such a
+     * row never matches here and never blocks a later ingest.
      *
      * Re-ingesting a post whose message was deliberately deleted is therefore an
      * explicit human action, not a side effect of a window overlap: clear the
@@ -801,7 +785,7 @@ class GroupPostIngestionService
     }
 
     /**
-     * Duplicate of IncomingMailService::findClosestPostcodeId.
+     * The nearest postcode location to a point, from the spatial index.
      */
     private function findClosestPostcodeId(float $lat, float $lng): ?int
     {
@@ -860,16 +844,12 @@ class GroupPostIngestionService
 
     /**
      * Download TN API photo URLs and create MessageAttachment records.
-     * Replaces scrapeTnImageUrls + createTnImageAttachments from email path —
-     * photos are delivered directly by the API, no HTML scraping needed.
+     * Photos are delivered directly by the API, so no HTML scraping is needed.
      */
     private function createImageAttachments(int $messageId, array $photos): int
     {
-        // Emitted unconditionally, with the INTENDED count, exactly as the
-        // email path's createTnImageAttachments() does — otherwise a live
-        // parity run shows the email path writing attachments and the API path
-        // apparently writing none, which reads as a regression rather than as
-        // a hole in the trace.
+        // Emitted unconditionally, with the INTENDED count, so a dry run still
+        // shows what would have been attached.
         Log::info('TN-SYNC-TRACE [WRITE] table=message_attachments op=insert set=msgid=' . $messageId . ' count=' . count($photos) . ($this->dryRun ? ' (dry-run, not fetching)' : ''));
 
         if ($this->dryRun) {

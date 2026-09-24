@@ -33,8 +33,7 @@ class PostSyncer
      * defensively in case TN ever returns it as one.
      *
      * Lives here, next to lookupPostById() which produces the values it is
-     * compared against, so tn:parity-check (Layer 1 reclassification) and
-     * tn:verify-email-coverage (section S.4) share one definition.
+     * compared against, for tn:verify-email-coverage (section S.4).
      */
     public const RESOLVED_OUTCOMES = ['satisfied', 'withdrawn', 'deleted'];
 
@@ -240,9 +239,9 @@ class PostSyncer
             Log::info('TN-SYNC-TRACE [POST-SKIP] reason=not-in-any-group-bounds lat=' . $lat . ' lng=' . $lng . ' post_id=' . $postId);
             // The closest analogue to the email path's "Post to unknown group"
             // (case 1), and the single most important entry in this whole
-            // stream: this is the coverage-regression case Layer 1 of
-            // tn:parity-check exists to catch, and it was previously invisible
-            // outside the trace logs.
+            // stream: this is the coverage-regression case
+            // tn:verify-email-coverage exists to catch, and it was previously
+            // invisible outside the trace logs.
             $this->logRoutedPost($postId, $subject, null, RoutingResult::DROPPED, [
                 'routing_reason' => self::REASON_NOT_IN_ANY_GROUP_BOUNDS,
             ]);
@@ -350,7 +349,7 @@ class PostSyncer
             $context['backfill'] = true;
         }
 
-        $entry = $this->loki->logIngestedPost(
+        $this->loki->logIngestedPost(
             // No SMTP envelope on this path; mirrors the null/synthesized values
             // createMessage() writes to messages.envelopefrom/fromaddr.
             envelopeFrom: '',
@@ -366,17 +365,11 @@ class PostSyncer
             routingOutcome: $outcome->value,
             context: $context,
         );
-
-        // The entry itself, keyed by post_id, for ParityComparer's Loki layer —
-        // the API-side counterpart of EmailReplaySyncer's identical line.
-        if ($entry !== null) {
-            Log::info('TN-SYNC-TRACE [LOKI] post_id=' . $postId . ' entry=' . json_encode($entry));
-        }
     }
 
     /**
      * Looks up a single post by ID directly (GET /posts/{id}), bypassing the
-     * date-range listing. Used by TNParityCheckCommand to distinguish a
+     * date-range listing. Used by tn:verify-email-coverage to distinguish a
      * genuine Layer 1 miss (post exists, in-window, unresolved outcome, but
      * /posts/all never returned it — a real bug) from false-positive causes
      * confirmed in production: TN mutating a post's `date` on repost/edit —

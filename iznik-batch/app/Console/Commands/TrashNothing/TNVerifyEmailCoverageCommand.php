@@ -17,12 +17,10 @@ use Illuminate\Support\Facades\Cache;
  * Verifies that every TN post which arrived by email was also ingested via the
  * TN API, and optionally backfills the ones that weren't.
  *
- * The post-cutover successor to tn:parity-check. Once the email path stops
- * routing, tn:parity-check's Layers 3 and 5 have nothing to compare — both
- * compare what each path WROTE, and only one path writes now. What survives is
- * Layer 1, coverage, which is what this command does: the incoming email
- * archive becomes an inventory of what TN sent us, and the check is whether
- * each of those post ids reached `messages`.
+ * TN posts are ingested only from the API; the partner emails TN still sends
+ * are archived but not ingested. That makes the incoming email archive an
+ * independent inventory of what TN sent us, and the check is whether each of
+ * those post ids reached `messages`.
  *
  * See plans/tn-api-post-ingestion.md section S. The subtlety is all in
  * CoverageVerifier — several classes of post are absent by design, crossposts

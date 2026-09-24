@@ -11,9 +11,9 @@ use Carbon\CarbonImmutable;
  * Decides, for each TN post email in an archive inventory, whether the API path
  * ingested it — and if not, whether its absence is expected or a real gap.
  *
- * Extracted from the command for the same reason ParityComparer was (section
- * Q): the classification is where all the subtlety lives, and it should be
- * unit-testable without a CLI or a live API in the way.
+ * Extracted from the command because the classification is where all the
+ * subtlety lives, and it should be unit-testable without a CLI or a live API
+ * in the way.
  *
  * The naive check — "is there a messages row with this tnpostid?" — produces
  * constant false alarms, because several classes of post are absent BY DESIGN.
@@ -33,8 +33,8 @@ use Carbon\CarbonImmutable;
  *    a lookup happens: the archived email's coordinates header is only ever
  *    allowed to confirm out-of-area, never to assume it — see
  *    headerPlacesNowhere().
- *  - DELETED / RESOLVED / BUMPED. Handled exactly as tn:parity-check's Layer 1
- *    reclassification handles them.
+ *  - DELETED / RESOLVED / BUMPED. TN-side changes after the email was sent,
+ *    read off the live post (see lookupPostById()).
  *
  * Anything left over is a genuine coverage gap: TN emailed us a placeable
  * source post that is still live, and it is not in the database.

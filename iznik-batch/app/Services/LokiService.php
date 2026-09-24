@@ -146,10 +146,8 @@ class LokiService
      * Log an incoming email routing event.
      *
      * @return array|null  The entry written, or null when Loki is disabled.
-     *                     Returned (rather than void) so a caller can trace
-     *                     what it emitted — tn:parity-check diffs the two
-     *                     paths' entries against each other. Callers that
-     *                     ignore the return value are unaffected.
+     *                     Returned (rather than void) so a caller can inspect
+     *                     what it emitted.
      */
     public function logIncomingEmail(
         string $envelopeFrom,
