@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-15
+last_reviewed: 2026-09-24
 owner: Freegle dev team
 covers:
   - docs/developers/reference/architecture.md
@@ -118,9 +118,9 @@ and per-group membership and roles are the ones you will meet first.
   A third, easily mistaken one: which posts ripple is decided by the data, not by a feature
   flag. A post sits out only while its community has rippling switched off, or while another
   live message still carries its TrashNothing post id - one item held as several messages,
-  which would otherwise reach the same people once per copy. `FREEGLE_TN_INGEST_POSTS_VIA_API`
-  governs how TrashNothing posts arrive, and stopped new such sets being created; it releases
-  nothing already in the database, and the expander never reads it. Sections 4a and 4b.
+  which would otherwise reach the same people once per copy. Ingesting TrashNothing posts
+  from their API stopped new such sets being created, but released nothing already in the
+  database. Sections 4a and 4b.
 
   Agreeing on the answer is not sufficient: how a surface ASKS costs as much as what it
   concludes. The lane rings WERE 37,000-vertex polygons stored as JSON, so the read question

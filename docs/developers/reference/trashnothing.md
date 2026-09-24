@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-21
+last_reviewed: 2026-09-24
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -132,7 +132,17 @@ so duplicates created from now on are still merged and the reviewed backlog wait
 
 ### Message Delivery (Email-Based)
 
-TN sends messages to Freegle via email with special headers:
+TN posts are **ingested from the TN API only** (next section). TN still sends a
+partner email for every post, to each group it was sent to, but
+`IncomingMailService::route()` drops any group post that is TN's - one carrying
+`X-Trash-Nothing-Post-Id`, or authenticated or enveloped as TN mail - with the
+routing reason `TN group post - ingested via the TN API`. Posts emailed to a group
+by anyone else are still ingested as before.
+
+TN chat replies, subscribe mail and mail to a group's volunteers still arrive and
+are handled by email.
+
+TN mail carries these headers:
 
 | Header | Purpose |
 |--------|---------|
@@ -149,25 +159,19 @@ The `sourceheader` field stores the message origin:
 
 ### Post Ingestion via API, and the email cutover
 
-Posts are moving from the email path above to the TN public API. `tn:sync`
-(`TNSyncCommand`) drives `PostSyncer` → `GroupPostIngestionService`. The email
-path (`IncomingMailService`) is deliberately frozen and untouched.
+`tn:sync` (`TNSyncCommand`) drives `PostSyncer` → `GroupPostIngestionService`.
+This is the only way TN posts are ingested: the email-path code for them has been
+removed, and there is no switch for it. Alongside it:
 
-**`FREEGLE_TN_INGEST_POSTS_VIA_API` is the single switch for the whole cutover.**
-It is one flag rather than a staged pair because neither half is safe alone: the
-API on with email still routing double-writes every post, and email off with the
-API off drops TN posts entirely. Pre-cutover comparison uses `tn:sync --dry-run`
-and `tn:parity-check`, neither of which needs the email path switched off. On, it:
-
-| Effect | Where |
+| Piece | Where |
 |---|---|
-| `tn:sync` ingests posts from the TN API | `TNSyncCommand` |
-| The email path stops **routing** TN group posts (it still **archives** them) | `TnEmailRoutingGate`, called by `IncomingMailController` / `IncomingMailCommand` |
-| `tn:verify-email-coverage` starts running hourly | `routes/console.php`, and the command's own guard |
-| The `tn:sync (posts)` scheduled-outcome check goes live | `ScheduledOutcomeRegistry` |
+| TN post emails are skipped before routing (they are still **archived**) | `TnEmailRoutingGate`, called by `IncomingMailController` / `IncomingMailCommand` |
+| `tn:verify-email-coverage` runs hourly against that archive | `routes/console.php` |
+| The `tn:sync (posts)` scheduled-outcome check alerts if no TN post arrives for 6h | `ScheduledOutcomeRegistry` |
 
-Five differences from the email path are intentional, not bugs, and all matter
-when reading any coverage report:
+TN posts ingested by email before the cutover are still in the database, and
+differ from API-ingested ones in five ways. All are intentional, and all matter
+when reading any coverage report or comparing old posts with new:
 
 - **Group placement is by coordinates**, via `Location::groupsNear()` on the
   post's own lat/lng — never TN's `group_id`, which is TN's internal ID and
@@ -176,35 +180,29 @@ when reading any coverage report:
   id and emails each one, so the email path creates N messages for an item
   crossposted to N groups. The API path ingests only the source post (empty
   `group_id`) and discards the copies, letting Freegle's own rippling do the
-  cross-posting — see `GroupPostIngestionService::REASON_CROSSPOST`. Note the
-  flag does **not** reach into rippling to say so: `ExpandService` never reads
-  it, and holds back only a message whose post id another live message still
+  cross-posting — see `GroupPostIngestionService::REASON_CROSSPOST`. Rippling
+  holds back only a message whose post id another live message still
   carries ([rippling-algorithm.md §4b](rippling-algorithm.md)). So an
   API-ingested post that lands beside unmerged email-era copies of the same item
-  sits out until `tn:merge-crossposts` collapses the set, flag or no flag —
-  during the cutover, watch `tn_duplicate_sat_out` in the `ripple:expand
-  complete` stats, and run the merge (by hand on the batch host, as below) when
-  it climbs.
+  sits out until `tn:merge-crossposts` collapses the set - watch
+  `tn_duplicate_sat_out` in the `ripple:expand complete` stats, and run the
+  merge (by hand on the batch host, as below) when it climbs.
 - **The subject's type prefix is normalized.** The email path keeps whatever
   prefix TN put in the email subject, which is what the member typed — `OFFERED:`
   is common. The API path always synthesizes `strtoupper(type) . ': '` from TN's
   own `type` field, so the same post reads `OFFER:`. Both resolve to the same
   `Message::determineType()`, so this is a naming convention rather than a
-  content difference, and `ParityComparer` canonicalizes it before comparing
-  subjects — otherwise every such post fails parity twice (same-group content
-  and Loki entry) and buries the real mismatches.
+  content difference.
 - **Deletion is final.** The API path's idempotency guard
   (`GroupPostIngestionService::existingMessageForGroup()`) counts a *deleted*
-  message as already ingested, unlike the email path's `findLiveTnMessage()`,
-  which skips deleted ones. Deleting is a decision — a moderator, the member, or
+  message as already ingested. Deleting is a decision — a moderator, the member, or
   a user purge — and every overlapping sync window re-fetches the post, so
   ignoring `deleted` here would resurrect it repeatedly. The skip is reported in
   Loki with `existing_deleted` set, so it is distinguishable from a plain
   idempotent skip. To deliberately re-ingest one, clear its `tnpostid` (and
   `messageid`) on the deleted row and re-run the sync for that window — which is
-  exactly what the two paths that soft-delete a TN message as a *duplicate*
-  (the email path's lost-create-race branch and `TnMergeCrosspostsCommand`)
-  already do.
+  exactly what `TnMergeCrosspostsCommand` already does when it soft-deletes a
+  TN message as a *duplicate*.
 - **`sourceheader` is `TN-API`**, not the email path's `TN-Web` / `TN-Facebook` /
   `TN-Mobile` (the API returns no posting-client field). Only the `TN-` prefix is
   load-bearing, and it has to be there: `LoveJunkInvoiceService` splits the monthly
@@ -212,8 +210,8 @@ when reading any coverage report:
   source by it, and `ProcessBackgroundTasksCommand` uses it to skip creating
   freebie alerts for TN posts, which TN syndicates itself.
 
-**Routing matches the email path**, including approval. A post from an unmoderated
-poster (`ourPostingStatus` `DEFAULT`/`UNMODERATED`, which is also the fallback used
+**Routing matches the email path** for posts emailed by anyone else, including
+approval. A post from an unmoderated poster (`ourPostingStatus` `DEFAULT`/`UNMODERATED`, which is also the fallback used
 when the poster isn't a member of the group its coordinates resolved to) is *not*
 approved on arrival: it lands Pending, and `messages:contentcheck` promotes it
 within a minute if clean, or holds it for a moderator if a concern keyword or
@@ -227,40 +225,16 @@ would sit in the mod queue with nothing able to promote them.
 **A stale spatial-index location costs the post its location, not the post.** The
 spatial server keeps its own R-tree, rebuilt from MySQL on its own schedule, so its
 nearest-postcode answer can name a `locations` row that has since been purged or
-renumbered. `users.lastlocation` is a foreign key, and both paths write it *inside*
-message creation, so an id that is no longer in `locations` throws there and takes
+renumbered. `users.lastlocation` is a foreign key, written *inside* message
+creation, so an id that is no longer in `locations` throws there and takes
 the whole post down rather than just its location - it routes Pending and creates no
-`messages` row at all. `GroupPostIngestionService` and
-`IncomingMailService::createGroupPostMessage()` therefore both check the id exists
-before trusting it, and log `TN-SYNC-TRACE [LOCATION-STALE]` when it does not.
+`messages` row at all. `GroupPostIngestionService` therefore checks the id exists
+before trusting it, and logs `TN-SYNC-TRACE [LOCATION-STALE]` when it does not.
 
 Photos come from the API's own `photos[].images` array rather than being scraped
 out of the post body. TN documents that array as ordered *smallest to largest*
 (`PublicApi/docs/Model/Photo.md`), so `GroupPostIngestionService::bestPhotoUrl()`
-takes the **last** entry — taking the first ingested a thumbnail where the email
-path got the full-size image.
-
-`tn:parity-check` reclassifies two families of TN-side mutation rather than
-failing on them, because nothing on the Freegle side can prevent either: a post
-whose `date` was bumped out of the query window, and a post whose **title** TN
-edited after the partner email was sent (the email path records the subject at
-send time, the API path records the title as it stands now). Both are detected
-the same way — `expiration` is pinned at original-publish + 90 days while `date`
-moves on a repost or edit, so `expiration - date != 90 days` means TN mutated the
-post. The title check is deliberately narrow: it applies only where the subject
-is the *sole* disagreement on every layer, since a subject difference is also
-what a genuine truncation or encoding bug would look like.
-
-**Run it against a database that has the groups.** The email side is driven by
-TN's post-log CSV, whose `To` is `<nameshort>@groups.ilovefreegle.org` — the
-group's Freegle `nameshort`, not TN's numeric `group_id` (that appears only in
-the API path's post JSON). `IncomingMailService` resolves it by `nameshort` and
-drops the post as "Post to unknown group" if there is no such row, before
-writing anything, so on a disposable parity database cloned without those groups
-every post vanishes and Layers 3-5 compare zero pairs — a PASS that checked
-nothing. `ParityComparer::parseUnknownGroupDrops()` counts those drops per
-group, the report lists them, and `tn:parity-check` fails outright when they
-account for the whole email side.
+takes the **last** entry — taking the first ingested a thumbnail.
 
 ### Posts nobody chose: unaddressed TN posts
 
@@ -326,9 +300,9 @@ moderators, who are the ones with no relationship to the poster.
 
 ### Verifying nothing is dropped after the cutover
 
-Once the email path stops routing, `tn:parity-check` no longer works: it compares
-what each path *wrote*, and only one path writes. `tn:verify-email-coverage`
-replaces it, checking coverage only.
+The API is the only path that ingests TN posts, so the partner emails TN still
+sends are an independent record of what it posted. `tn:verify-email-coverage`
+checks that each of them reached `messages`.
 
 | Piece | Role |
 |---|---|
@@ -580,8 +554,7 @@ messages.tnpostid      VARCHAR(80)  -- TN post identifier
 
 ## Cross-posts and reposts
 
-TN lets a member send one item to several Freegle groups. That arrives as **one inbound
-email per group**, each carrying the same `X-Trash-Nothing-Post-Id`. A **repost** - the
+TN lets a member send one item to several Freegle groups. A **repost** - the
 member offering the same thing again days later - is a different thing: TN allocates it a
 **new** post id, so the two cannot be told apart by id.
 
@@ -589,39 +562,30 @@ The two are handled at different layers, deliberately.
 
 | Case | Same `tnpostid`? | Handled where | Result |
 |------|------------------|---------------|--------|
-| Cross-post: one item, N groups, N emails | Yes | Ingestion, `IncomingMailService::createGroupPostMessage` | One `messages` row with N `messages_groups` rows |
+| Cross-post: one item, N groups | - | Ingestion, `GroupPostIngestionService::REASON_CROSSPOST` | One `messages` row on one group; Freegle rippling reaches the rest |
 | Repost: same item offered again later | No - new id each time | `UnifiedDigestService` content key | One digest card, and one immediate mail, for the set; both remain live posts on the site |
 
 ### Cross-posts: one message, many groups
 
-The first email for a post id creates the message as usual. A later email carrying a post
-id we already hold does **not** create a second message - `attachGroupToTnMessage()` adds
-a `messages_groups` row to the existing one, along with that group's own
-`messages_history` and `logs` rows. Per-message work (the `messages_items` link, the TN
-image attachments) is not repeated.
-
-This makes a TN cross-post structurally identical to a Freegle-native one, which matters
-because everything downstream already collapses on `msgid` - `isochrone/message.go` uses
+The TN API returns the source post (empty `group_id`) and a per-group copy for each group
+it was sent to. `GroupPostIngestionService` ingests only the source post, on the group its
+coordinates place it in, and discards the copies; Freegle's own rippling then does the
+cross-posting. So a TN cross-post is one message, like a Freegle-native post, which matters
+because everything downstream collapses on `msgid` - `isochrone/message.go` uses
 `DISTINCT ms.msgid` for the browse feed and `COUNT(DISTINCT ms.msgid)` for the navbar
 badge. No read-side special-casing is needed, and none should be added.
 
-Two emails for one post id arriving together can both pass the lookup and both create a
-message. No lock is used to prevent that. Each insert autocommits, so id order is commit
-order: whichever row got the higher id was written after the lower one had committed, and
-sees it on the check straight after its own insert. That one is soft-deleted and its group
-attached to the winner, so a single message is left. This holds across cluster nodes
-because it only reads committed rows - unlike `GET_LOCK`, which Galera does not
-replicate and which would only appear to work while writes happen to be pinned to one
-node.
+The email-era history explains the duplicates still in the database. TN's partner email
+arrives once per group, each carrying the same `X-Trash-Nothing-Post-Id`. The email path at
+first created a message per email, so one item became N messages sharing only a post id -
+each with its own `messages_spatial` and `rippling_reach` rows, and so shown once per copy
+to anyone whose reach or membership covered more than one of the groups (Discourse
+9808/689). It later attached each further email's group to the first message instead,
+before TN post emails stopped being ingested at all.
 
 There is deliberately no unique index on `messages.tnpostid`. It cannot be added while
-duplicates remain, and there are a great many: ~656k sets covering ~1.87M live messages,
-up to 30 copies each.
-
-Before this, each email created its own message, so one item became N messages sharing
-only a post id - each with its own `messages_spatial` and `rippling_reach` rows, and so
-shown once per copy to anyone whose reach or membership covered more than one of the
-groups (Discourse 9808/689).
+those duplicates remain, and there are a great many: ~656k sets covering ~1.87M live
+messages, up to 30 copies each.
 
 ### Reposts: content, not id
 
@@ -800,13 +764,12 @@ duplicate that slips through is no longer member-visible.
 ```
 TrashNothing User Posts Message
             ↓
-Email sent to Freegle with TN headers
-            ↓
-MailRouter processes email
-  - Extract TN headers
+tn:sync fetches it from the TN API (PostSyncer)
+  - Place it on a group by its coordinates
   - Find/create user with tnuserid
-  - Scrape TN photos
-  - Store message with sourceheader="TN-*"
+  - Fetch photos from the API
+  - Store message with sourceheader="TN-API"
+  (TN's partner email for the post is archived, not ingested)
             ↓
 Message appears on Freegle (website/app)
             ↓

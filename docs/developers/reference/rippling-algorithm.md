@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-14
+last_reviewed: 2026-09-24
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -745,16 +745,15 @@ once per copy. Enforced in `rippleIntoNewGroups`.
 be a standing exclusion on every TN post while TN posts arrived by email - TN cross-posted an
 item itself, emailing a separate copy per group, so rippling on top of that spread one item
 much further than either system intended. What replaced it is the rule above, which asks what
-the database holds rather than which era we are in. `FREEGLE_TN_INGEST_POSTS_VIA_API` is what
+the database holds rather than which era we are in. Ingesting TN posts from the TN API
 stopped new such sets being created (the API path takes only TN's *source* post and discards
 the per-group copies -
 [`GroupPostIngestionService::REASON_CROSSPOST`](../../../iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php)),
-but `ExpandService` never reads it, and flipping it releases nothing on its own.
+but that released nothing already in the database.
 
-That distinction matters during the cutover, where the two eras coexist: an API-ingested
-message can land beside unmerged email-era copies of the same item, and it then sits out
-like any other member of such a set - the flag being on does not release it. **Collapsing the
-set does**: once `php artisan tn:merge-crossposts` has merged it onto one message there is no
+The two eras coexist: an API-ingested message can land beside unmerged email-era copies of
+the same item, and it then sits out like any other member of such a set. **Collapsing the
+set releases it**: once `php artisan tn:merge-crossposts` has merged it onto one message there is no
 other live message to match, and the post ripples like any other. So the exclusion is
 self-limiting rather than permanent, but it is only as short-lived as the merge backlog - and
 the merge is run by hand on the batch host, not scheduled.

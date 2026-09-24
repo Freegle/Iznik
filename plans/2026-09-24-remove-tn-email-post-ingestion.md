@@ -6,6 +6,23 @@ cutover, stopped the email path **at the callers** (`TnEmailRoutingGate`), leavi
 deletes the frozen code and the scaffolding that only existed to run both paths side by
 side.
 
+## Status (2026-09-24)
+
+**Scope revised: non-TN email posts stay.** It is not yet known whether anyone besides
+TN still posts by email, so `handleGroupPost()` is kept for everyone else and only the
+TN-specific code was removed. D1 (below) is still open; D2 is done for TN posts only.
+
+| # | Step | Status |
+|---|---|---|
+| 1 | `route()` Phase 5 drops TN posts (`isTrashNothingPost()` = post-id header or `isFromTrashNothing()`) via `dropTrashNothingPost()`, `info` log, reason `TN group post - ingested via the TN API` | ✅ |
+| 1 | TN branches removed from `handleGroupPost()` / `createGroupPostMessage()`: TN-SYNC-TRACE lines, TN-secret spam-check skip, TN coordinates, cross-post attach/race handling, `tnpostid`, TN photo scraping, spatial-index postcode lookup + stale check (only reachable from TN coordinates) | ✅ |
+| 1 | Helpers deleted: `shouldSkipSpamCheck`, `normaliseTnPostId`, `findLiveTnMessage`, `attachGroupToTnMessage`, `findClosestPostcodeId`, `scrapeTnImageUrls`, `extractTnImageUrlsFromPage`, `isTnImageUrl`, `stripTnPicLinks`, `createTnImageAttachments`; config `mail.trashnothing_secret` | ✅ |
+| 2 | Deleted: `EmailReplaySyncer`, `ParityComparer`, `PostLogCsvFetcher`, `tn:parity-check`, `tn:replay-emails`, their tests and fixtures, `EmailPathMirrorDriftTest`, `TnCrosspostSingleMessageTest`, `LocationIdTest`; PostSyncer's parity-only `[LOKI]` trace | ✅ |
+| 2 | `TnApiLokiParityTest` both-paths test now compares against a non-TN email post; API-path stale-location test moved to `GroupPostIngestionServiceTest` | ✅ |
+| 3 | `TnEmailRoutingGate` kept (flag-gated) and docblock updated | ✅ |
+| 4 | Retire `FREEGLE_TN_INGEST_POSTS_VIA_API`: tn:sync always syncs posts, the gate always skips TN posts, tn:verify-email-coverage always scheduled (guard and `--force` removed), tn:sync (posts) outcome check always on | ✅ |
+| 6 | `trashnothing.md` updated | ✅ |
+
 ## Preconditions (do not start until all hold)
 
 1. `FREEGLE_TN_INGEST_POSTS_VIA_API=true` in production, and has been for long enough
