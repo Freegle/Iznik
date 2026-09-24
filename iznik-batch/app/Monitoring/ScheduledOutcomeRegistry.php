@@ -146,8 +146,7 @@ class ScheduledOutcomeRegistry
                 fn ($q) => $q->whereNotNull('tnpostid'),
             ))
                 ->describedAs('TrashNothing posts still being ingested from the TN API')
-                ->inCategory('cursor-staleness')
-                ->enabledWhen(fn () => (bool) config('freegle.trashnothing.ingest_posts_via_api')),
+                ->inCategory('cursor-staleness'),
             // The check above asks only "did ANY daily digest go out today?", floor 1. That is
             // a liveness check, and a liveness check cannot see a collapse. On 2026-09-15..17
             // the daily run fell to a thirteenth of its throughput and ran around the clock -

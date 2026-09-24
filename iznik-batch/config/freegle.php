@@ -385,30 +385,6 @@ return [
         'api_key' => env('FREEGLE_TN_API_KEY', ''),
         'api_base_url' => env('FREEGLE_TN_API_BASE_URL', 'https://trashnothing.com/fd/api'),
         'sync_date_file' => env('FREEGLE_TN_SYNC_DATE_FILE', '/etc/tn_sync_last_date.txt'),
-        // MASTER CUTOVER SWITCH for TN group posts. Default false (disabled) so the
-        // email path stays authoritative until parity is confirmed. Flipping it to
-        // true moves the whole post pipeline over in one step:
-        //
-        //   - tn:sync runs PostSyncer, so posts are ingested from the TN API
-        //     (TNSyncCommand).
-        //   - The email path STOPS routing TN group posts — they are still archived,
-        //     which is what makes the archive an independent witness
-        //     (TnEmailRoutingGate; callers IncomingMailController/IncomingMailCommand).
-        //   - tn:verify-email-coverage starts running hourly, checking the archive
-        //     against what the API path ingested (routes/console.php).
-        //   - TN posts become eligible for rippling, because the API path ingests only
-        //     the source post and discards TN's per-group copies, so the post now lives
-        //     on ONE group and Freegle's own rippling does the cross-posting
-        //     (Ripple\ExpandService::rippleIntoNewGroups).
-        //   - The tn:sync (posts) scheduled-outcome check becomes live
-        //     (ScheduledOutcomeRegistry).
-        //
-        // Deliberately ONE flag rather than the staged pair the plan first envisaged:
-        // API-on-with-email-still-routing double-writes the same post, and
-        // email-off-with-API-off drops TN posts entirely. Neither half is safe alone,
-        // and pre-cutover comparison is done with `tn:sync --dry-run` / tn:parity-check
-        // instead, neither of which needs the email path switched off.
-        'ingest_posts_via_api' => env('FREEGLE_TN_INGEST_POSTS_VIA_API', false),
 
         // Minimum gap between ANY two Trash Nothing API requests, in
         // microseconds. TN allows 2 requests/second and rate-limits per API
@@ -1468,7 +1444,7 @@ return [
         // tn:sync — alert if no TrashNothing post has been ingested into
         // `messages` (tnpostid set) within this many hours. TN is a high-volume
         // feed, so a gap this long means TN is down or our ingestion is failing
-        // every cycle. Only evaluated when FREEGLE_TN_INGEST_POSTS_VIA_API is on.
+        // every cycle.
         'tn_posts_max_age_hours' => (int) env('FREEGLE_MONITORING_TN_POSTS_MAX_AGE_HOURS', 6),
         // Minimum TN posts expected within that window.
         'tn_posts_min_expected' => (int) env('FREEGLE_MONITORING_TN_POSTS_MIN', 1),

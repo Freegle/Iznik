@@ -10,9 +10,10 @@ use App\Services\Mail\Incoming\ParsedEmail;
  *
  * This is the "switch off the email path" half of plans/tn-api-post-ingestion.md
  * section S. It lives in the *callers* of IncomingMailService (the controller and
- * the CLI command), never inside the service itself, for the same reason section
- * I gives for emitting Loki there: IncomingMailService is frozen, and the caller
- * is the correct seam for a decision about whether to route at all.
+ * the CLI command), which are the seam for a decision about whether to route at
+ * all. route() itself also drops TN group posts (IncomingMailService::
+ * dropTrashNothingPost()), since their email ingestion was removed; this gate
+ * saves the routing work and stamps OUTCOME_SKIPPED on the archive.
  *
  * Both callers archive the raw email BEFORE routing (IncomingMailController::
  * receive(), IncomingMailCommand::handle()), so skipping routing does not stop
@@ -70,26 +71,17 @@ class TnEmailRoutingGate
     public const OUTCOME_SKIPPED = 'SkippedTnApi';
 
     /**
-     * True when this email is a TN group post AND the cutover flag is set.
-     *
-     * The flag is the same one that turns the API path on
-     * (FREEGLE_TN_INGEST_POSTS_VIA_API): switching the email path off is one half
-     * of a single cutover, and either half alone is wrong — email-off with the API
-     * off drops TN posts entirely, API-on with email still routing double-writes
-     * them.
+     * True when the callers should archive this email but not route it: it is a
+     * TN group post, which only the TN API path ingests.
      */
     public function shouldSkipRouting(ParsedEmail $email): bool
     {
-        if (! config('freegle.trashnothing.ingest_posts_via_api', false)) {
-            return false;
-        }
-
         return $this->isTrashNothingGroupPost($email);
     }
 
     /**
-     * The narrow predicate itself, flag-independent so it can be reasoned about
-     * (and tested) without config in the way.
+     * The narrow predicate itself, also used by ArchiveInventoryService to pick
+     * TN posts out of the archive.
      */
     public function isTrashNothingGroupPost(ParsedEmail $email): bool
     {

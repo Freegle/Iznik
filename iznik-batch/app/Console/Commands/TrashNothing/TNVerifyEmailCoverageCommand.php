@@ -39,8 +39,7 @@ class TNVerifyEmailCoverageCommand extends Command
                             {--window-hours= : Window length (default: config)}
                             {--auto-ingest : Backfill genuine misses regardless of the config default}
                             {--report-only : Never backfill, whatever the config says}
-                            {--archive-dir= : Read a different archive directory (testing)}
-                            {--force : Run even though the email path is still routing TN posts}';
+                            {--archive-dir= : Read a different archive directory (testing)}';
 
     protected $description = 'Check TN posts that arrived by email were ingested via the API, and backfill any that were not.';
 
@@ -61,10 +60,6 @@ class TNVerifyEmailCoverageCommand extends Command
         CoverageVerifier $verifier,
         LokiService $loki,
     ): int {
-        if (! $this->guardEmailPathIsOff()) {
-            return Command::FAILURE;
-        }
-
         [$from, $to] = $this->resolveWindow();
         $this->line('Window: ' . $from->toIso8601String() . ' .. ' . $to->toIso8601String());
 
@@ -106,35 +101,6 @@ class TNVerifyEmailCoverageCommand extends Command
         $this->logRun($loki, $from, $to, $stats, $result, $backfill);
 
         return $this->exitCode($backfill);
-    }
-
-    /**
-     * Coverage is only meaningful once the email path has stopped writing.
-     *
-     * Both paths stamp messages.tnpostid, so while the email path is still
-     * routing, a "covered" post proves nothing about the API path — the email
-     * path may have created that row. Running anyway would report a clean bill
-     * of health that means nothing, which is worse than not running.
-     *
-     * FREEGLE_TN_INGEST_POSTS_VIA_API is the single cutover switch: on, the API
-     * path ingests and TnEmailRoutingGate stops the email path routing TN posts,
-     * which is exactly the condition this check needs.
-     */
-    private function guardEmailPathIsOff(): bool
-    {
-        if (config('freegle.trashnothing.ingest_posts_via_api', false)) {
-            return true;
-        }
-
-        if ($this->option('force')) {
-            $this->warn('--force: the email path is still routing TN posts, so "covered" does not prove the API path ingested anything. Results are indicative only.');
-
-            return true;
-        }
-
-        $this->error('Refusing to run: FREEGLE_TN_INGEST_POSTS_VIA_API is off, so the email path is still routing TN posts and creating messages with tnpostid set, and coverage cannot be attributed to the API path. Use --force to run anyway.');
-
-        return false;
     }
 
     /**

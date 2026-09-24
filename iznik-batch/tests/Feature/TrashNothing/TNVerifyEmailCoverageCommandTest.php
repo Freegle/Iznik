@@ -29,7 +29,6 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
         $this->archiveDir = storage_path('incoming-archive/test-verify-' . uniqid('', true));
         mkdir($this->archiveDir, 0755, true);
 
-        config(['freegle.trashnothing.ingest_posts_via_api' => true]);
         config(['freegle.trashnothing.verify_coverage.auto_ingest' => true]);
         config(['freegle.trashnothing.verify_coverage.auto_ingest_max' => 20]);
         config(['freegle.trashnothing.verify_coverage.max_age_hours' => 72]);
@@ -160,25 +159,6 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
             '--from'        => $from->format('Y-m-d\TH:i:s\Z'),
             '--to'          => $to->format('Y-m-d\TH:i:s\Z'),
         ], $extra));
-    }
-
-    public function test_refuses_to_run_while_the_email_path_is_still_routing(): void
-    {
-        // Both paths stamp messages.tnpostid, so "covered" would prove nothing.
-        config(['freegle.trashnothing.ingest_posts_via_api' => false]);
-
-        $this->artisan('tn:verify-email-coverage', ['--archive-dir' => $this->archiveDir])
-            ->assertExitCode(1);
-    }
-
-    public function test_force_overrides_the_guard(): void
-    {
-        config(['freegle.trashnothing.ingest_posts_via_api' => false]);
-
-        $this->artisan('tn:verify-email-coverage', [
-            '--archive-dir' => $this->archiveDir,
-            '--force'       => true,
-        ])->assertExitCode(0);
     }
 
     public function test_an_empty_window_passes_without_calling_the_api(): void

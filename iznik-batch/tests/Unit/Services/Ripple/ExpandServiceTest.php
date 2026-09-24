@@ -1966,10 +1966,7 @@ class ExpandServiceTest extends TestCase
      * message sharing its post id with another live one sits out - see
      * test_a_tn_message_with_a_live_duplicate_does_not_ripple_into_new_groups.
      *
-     * Deliberately sets no flag: rippling does not read
-     * freegle.trashnothing.ingest_posts_via_api at all, so this must hold whichever way the
-     * cutover switch is set - test_an_api_era_tn_post_with_an_unmerged_email_era_copy_sits_out
-     * is the other half.
+     * test_an_api_era_tn_post_with_an_unmerged_email_era_copy_sits_out is the other half.
      */
     public function test_a_tn_post_with_no_live_duplicate_ripples_like_any_other(): void
     {
@@ -2002,13 +1999,11 @@ class ExpandServiceTest extends TestCase
      * copies of that same item are still in the database until tn:merge-crossposts collapses
      * them, and an API-ingested message landing beside one is still a set.
      *
-     * So it sits out, with the cutover flag ON. Nothing about rippling is gated on that flag,
-     * and the set - not the flag - is what has to be dealt with. Counted in the run stats so
-     * the hold-back is visible rather than silent.
+     * So it sits out: the set is what has to be dealt with. Counted in the run stats so the
+     * hold-back is visible rather than silent.
      */
     public function test_an_api_era_tn_post_with_an_unmerged_email_era_copy_sits_out(): void
     {
-        config(['freegle.trashnothing.ingest_posts_via_api' => true]);
         $this->fakeRouting(3);
         $msgid = $this->seedSpatialPost(now()->subMinutes(30));
 

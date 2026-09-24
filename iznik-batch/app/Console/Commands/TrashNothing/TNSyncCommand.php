@@ -125,16 +125,11 @@ class TNSyncCommand extends Command
                 // Merge duplicate TN users.
                 $duplicatesMerged = $this->mergeDuplicateTNUsers((bool) $this->option('full-duplicate-scan'));
 
-                // Sync posts (API-based path, off by default — flip FREEGLE_TN_INGEST_POSTS_VIA_API=true to enable).
-                $postsProcessed = 0;
-                if (config('freegle.trashnothing.ingest_posts_via_api') || $this->localTesting) {
-                    $postSyncer = new PostSyncer($this->dryRun, $this->localTesting, $this->apiKey, $this->apiBaseUrl, $this->loki);
-                    [$postsProcessed, $postsMaxDate] = $postSyncer->sync($from, $to);
-                    if ($postsMaxDate && (!$maxChangeDate || $postsMaxDate > $maxChangeDate)) {
-                        $maxChangeDate = $postsMaxDate;
-                    }
-                } else {
-                    Log::info('TN-SYNC-TRACE [POSTS-SKIP] reason=feature-flag-off');
+                // Sync posts. The TN API is the only way TN posts are ingested.
+                $postSyncer = new PostSyncer($this->dryRun, $this->localTesting, $this->apiKey, $this->apiBaseUrl, $this->loki);
+                [$postsProcessed, $postsMaxDate] = $postSyncer->sync($from, $to);
+                if ($postsMaxDate && (!$maxChangeDate || $postsMaxDate > $maxChangeDate)) {
+                    $maxChangeDate = $postsMaxDate;
                 }
 
                 // Store the max change date for next sync.

@@ -657,16 +657,9 @@ Schedule::command('tn:sync')
 // Hourly, matching the default one-hour window so consecutive runs tile the
 // timeline. Runs ~8h behind real time; the archive's 48h retention
 // (mail:cleanup-archive) is the hard upper bound on that lag.
-//
-// Only meaningful once the email path has stopped writing — until then both
-// paths stamp messages.tnpostid and "covered" proves nothing, which is why the
-// command refuses to run without --force and the schedule is gated the same way.
-// FREEGLE_TN_INGEST_POSTS_VIA_API is that switch: on, the API path ingests and
-// TnEmailRoutingGate stops the email path routing TN posts.
 Schedule::command('tn:verify-email-coverage')
     ->hourly()
     ->withoutOverlapping(120)
-    ->when(fn () => (bool) config('freegle.trashnothing.ingest_posts_via_api', false))
     ->sendOutputTo(cronLog('tn:verify-email-coverage'))
     ->runInBackground();
 
