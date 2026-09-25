@@ -405,6 +405,9 @@ just accessories)?'" The brief is `.claude-agent-status/briefs/ai-judgement.md`;
   Prompt caching on the questions. A `judgement:eval` command measures accuracy on a fixture
   set; it is not a test, so the suite never needs a key.
 
+### How much simpler, and where the fixes went
+`plans/active/2026-09-25-simplicity-and-maintainability.md` holds the measurements and the scripts that produce them.
+
 ### What used to be human
 `docs/developers/reference/retired-human-loops.md` lists every task a person used to do, what
 replaced it, how, the risk and the mitigation. It is written from the code and updated with it.
