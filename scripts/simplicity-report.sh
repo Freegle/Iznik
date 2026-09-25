@@ -66,9 +66,15 @@ echo "| Member-site pages | $(git ls-tree -r --name-only "$BASE" -- iznik-nuxt3/
 echo "| ModTools pages | $(git ls-tree -r --name-only "$BASE" -- iznik-nuxt3/modtools/pages | grep -c '\.vue$') | $(find iznik-nuxt3/modtools/pages -name '*.vue' 2>/dev/null | wc -l) |"
 echo "| ModTools components | $(git ls-tree -r --name-only "$BASE" -- iznik-nuxt3/modtools/components | grep -c '\.vue$') | $(find iznik-nuxt3/modtools/components -name '*.vue' 2>/dev/null | wc -l) |"
 echo "| Batch scheduled services | $(git ls-tree -r --name-only "$BASE" -- iznik-batch/app/Services | grep -c 'Service\.php$') | $(find iznik-batch/app/Services -name '*Service.php' | wc -l) |"
-mig=iznik-batch/database/migrations/2026_09_20_000001_remove_group_model.php
-if [ -f "$mig" ]; then
-  echo "| Database tables dropped | | $(awk '/DROP_TABLES = \[/,/\];/' "$mig" | grep -oE "'[a-z_]+'" | wc -l) |"
-  echo "| Database columns dropped | | $(awk '/DROP_COLUMNS = \[/,/\];/' "$mig" | grep -oE "\['[a-z_]+', '[a-z_]+'\]" | wc -l) |"
-fi
 echo "| Files still mentioning the group model (code, not tests) | | $(grep -rlE 'messages_groups|\bmemberships\b|groupid|MessageGroups|myGroups|useGroupStore' iznik-server-go iznik-batch/app iznik-nuxt3/components iznik-nuxt3/pages iznik-nuxt3/composables iznik-nuxt3/stores iznik-nuxt3/api iznik-nuxt3/modtools --include='*.go' --include='*.php' --include='*.vue' --include='*.js' 2>/dev/null | grep -vE '_test\.go|/tests/' | wc -l) |"
+# Database: share of tables, rows and bytes removed. Needs an information_schema export
+# (TABLE_NAME, TABLE_ROWS, DATA_LENGTH+INDEX_LENGTH per base table) at $TABLES_TSV; the live
+# one is read-only and lives outside the repository.
+TABLES_TSV="${TABLES_TSV:-.claude-agent-status/data/live-tables.tsv}"
+if [ -f "$TABLES_TSV" ]; then
+  echo; echo "Database (from $TABLES_TSV):"; echo
+  node scripts/dropped-tables-share.mjs "$TABLES_TSV"
+else
+  mig=iznik-batch/database/migrations/2026_09_20_000001_remove_group_model.php
+  echo "| Database tables dropped | | $(awk '/DROP_TABLES = \[/,/\];/' "$mig" | grep -oE "'[a-z_]+'" | wc -l) (set TABLES_TSV for shares) |"
+fi
