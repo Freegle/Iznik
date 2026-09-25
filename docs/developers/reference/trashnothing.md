@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-21
+last_reviewed: 2026-09-25
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -152,6 +152,18 @@ The `sourceheader` field stores the message origin:
 Posts are moving from the email path above to the TN public API. `tn:sync`
 (`TNSyncCommand`) drives `PostSyncer` → `GroupPostIngestionService`. The email
 path (`IncomingMailService`) is deliberately frozen and untouched.
+
+The posts sync talks to a different TrashNothing API from the rest of `tn:sync`, and
+it needs its own key. `FREEGLE_TN_API_KEY` is the partner key for the `/fd/api`
+endpoints (ratings, user changes), sent as `?key=`. The posts sync reads the public
+developer API at `trashnothing.com/api/v1.4`, sent as `?api_key=`, which only accepts
+a key issued at `trashnothing.com/app/developer`: that is `FREEGLE_TN_PUBLIC_API_KEY`
+(`freegle.trashnothing.public_api_key`). Neither key is accepted by the other API. The
+public key falls back to the partner key only so a development environment with one
+key still runs; on production the fallback means every posts call answers
+`401 Invalid api_key parameter`, which the `tn:sync (posts)` scheduled-outcome check
+reports. TN must also enable `freegle_group_ids` on posts for the specific developer
+key in use, or every post arrives with moderator messaging disallowed.
 
 **`FREEGLE_TN_INGEST_POSTS_VIA_API` is the single switch for the whole cutover.**
 It is one flag rather than a staged pair because neither half is safe alone: the

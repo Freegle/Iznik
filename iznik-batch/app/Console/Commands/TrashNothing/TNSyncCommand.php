@@ -51,6 +51,8 @@ class TNSyncCommand extends Command
     private bool $localTesting;
 
     private string $apiKey;
+    /** Developer key for the public posts API; see config freegle.trashnothing.public_api_key. */
+    private string $publicApiKey;
     private string $apiBaseUrl;
     private string $dateFile;
     private LokiService $loki;
@@ -86,6 +88,7 @@ class TNSyncCommand extends Command
         }
 
         $this->apiKey = (string) config('freegle.trashnothing.api_key', '');
+        $this->publicApiKey = (string) config('freegle.trashnothing.public_api_key', $this->apiKey);
         $this->apiBaseUrl = (string) config('freegle.trashnothing.api_base_url', '');
         $this->dateFile = (string) config('freegle.trashnothing.sync_date_file', '');
 
@@ -128,7 +131,7 @@ class TNSyncCommand extends Command
                 // Sync posts (API-based path, off by default — flip FREEGLE_TN_INGEST_POSTS_VIA_API=true to enable).
                 $postsProcessed = 0;
                 if (config('freegle.trashnothing.ingest_posts_via_api') || $this->localTesting) {
-                    $postSyncer = new PostSyncer($this->dryRun, $this->localTesting, $this->apiKey, $this->apiBaseUrl, $this->loki);
+                    $postSyncer = new PostSyncer($this->dryRun, $this->localTesting, $this->publicApiKey, $this->apiBaseUrl, $this->loki);
                     [$postsProcessed, $postsMaxDate] = $postSyncer->sync($from, $to);
                     if ($postsMaxDate && (!$maxChangeDate || $postsMaxDate > $maxChangeDate)) {
                         $maxChangeDate = $postsMaxDate;

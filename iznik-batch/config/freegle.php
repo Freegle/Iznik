@@ -384,7 +384,16 @@ return [
     ],
 
     'trashnothing' => [
+        // Two TrashNothing APIs, two keys. api_key is the PARTNER key for the
+        // /fd/api endpoints (ratings, user-changes; sent as ?key=). The posts
+        // sync reads the PUBLIC developer API (trashnothing.com/api/v1.4, sent
+        // as ?api_key=), which accepts only a key issued at
+        // trashnothing.com/app/developer: the partner key gets "Invalid api_key
+        // parameter", and the partner endpoints reject a developer key in turn.
+        // public_api_key falls back to api_key only so a dev environment with a
+        // single key still runs; production needs both set.
         'api_key' => env('FREEGLE_TN_API_KEY', ''),
+        'public_api_key' => env('FREEGLE_TN_PUBLIC_API_KEY', env('FREEGLE_TN_API_KEY', '')),
         'api_base_url' => env('FREEGLE_TN_API_BASE_URL', 'https://trashnothing.com/fd/api'),
         'sync_date_file' => env('FREEGLE_TN_SYNC_DATE_FILE', '/etc/tn_sync_last_date.txt'),
         // MASTER CUTOVER SWITCH for TN group posts. Default false (disabled) so the
