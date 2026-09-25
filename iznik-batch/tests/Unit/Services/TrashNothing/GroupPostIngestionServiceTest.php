@@ -398,7 +398,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $postId = 'tn-awaiting-check-' . uniqid();
         $post   = $this->makePost([
             'post_id'   => $postId,
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
         ]);
@@ -502,7 +502,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $postId = 'tn-rfc-' . uniqid();
         $post   = $this->makePost([
             'post_id'  => $postId,
-            'user_id'  => $user->id,
+            'user_id'  => $user->tnuserid,
             'title'    => 'Bicycle',
             'content'  => 'Blue bike, collect from porch.',
         ]);
@@ -701,7 +701,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $postId = 'tn-repost-' . uniqid();
         $post   = $this->makePost([
             'post_id'   => $postId,
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'title'     => 'Old wooden bookshelf',
             'latitude'  => 55.9534,
             'longitude' => -3.1882,
@@ -735,7 +735,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $post   = $this->makePost([
             'post_id'   => $postId,
             'group_id'  => '8444', // TN's per-group copy — a crosspost.
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
         ]);
@@ -757,7 +757,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $post   = $this->makePost([
             'post_id'   => $postId,
             'group_id'  => null,
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
         ]);
@@ -781,7 +781,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $post   = $this->makePost([
             'post_id'   => $postId,
             'group_id'  => '',
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
         ]);
@@ -805,7 +805,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $postId = 'tn-deleted-dup-' . uniqid();
         $post   = $this->makePost([
             'post_id'   => $postId,
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
         ]);
@@ -835,7 +835,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $postId = 'tn-merged-away-' . uniqid();
         $post   = $this->makePost([
             'post_id'   => $postId,
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
         ]);
@@ -868,7 +868,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $postId = 'tn-same-postid-' . uniqid();
         $post   = $this->makePost([
             'post_id'   => $postId,
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'title'     => 'Old wooden bookshelf',
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
