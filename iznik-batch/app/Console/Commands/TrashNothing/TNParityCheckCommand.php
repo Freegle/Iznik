@@ -119,10 +119,12 @@ class TNParityCheckCommand extends Command
         $this->line('Running API path…');
 
         $apiKey     = (string) config('freegle.trashnothing.api_key', '');
+        // The posts API takes the public developer key, not the partner key.
+        $publicApiKey = (string) config('freegle.trashnothing.public_api_key', $apiKey);
         $apiBaseUrl = (string) config('freegle.trashnothing.api_base_url', '');
         // Doesn't use dryRun because we're already using DB transaction rollback.
         // Needs to actually write to the DB for testing, e.g. to create stub users.
-        $apiSyncer  = new PostSyncer(false, $localTesting, $apiKey, $apiBaseUrl, $loki);
+        $apiSyncer  = new PostSyncer(false, $localTesting, $publicApiKey, $apiBaseUrl, $loki);
 
         $apiLines = $this->captureTraceLogs(function () use ($apiSyncer, $from, $to) {
             $apiSyncer->sync($from, $to);

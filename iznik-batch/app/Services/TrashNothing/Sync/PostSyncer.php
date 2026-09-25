@@ -147,9 +147,10 @@ class PostSyncer
                 page: $page,
             );
         } catch (ApiException $e) {
+            // The client's message quotes the request URL, key included.
             Log::error('TN sync: posts API failed on page ' . $page, [
                 'status' => $e->getCode(),
-                'error'  => $e->getMessage(),
+                'error'  => self::redactApiKey($e->getMessage()),
             ]);
             // Aborts the whole sync (see sync()'s `break 2`). Without this a
             // failed run is indistinguishable in Loki from a window that simply
@@ -470,6 +471,16 @@ class PostSyncer
     private function throttle(): void
     {
         $this->rateLimiter->await();
+    }
+
+    /**
+     * Strips the api_key value from anything about to be logged. Guzzle quotes
+     * the full request URL in its exception message, so without this a failed
+     * call writes the developer key into the batch log and Loki.
+     */
+    public static function redactApiKey(string $text): string
+    {
+        return preg_replace('/(api_key=)[^&\s`\'"]+/', '$1<redacted>', $text) ?? $text;
     }
 
     private function buildApiClient(): PostsApi
