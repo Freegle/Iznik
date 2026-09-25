@@ -758,6 +758,8 @@ class EmailApiParityTest extends TestCase
     {
         DB::table('users')->insert([
             'id'           => $id,
+            // The fixture posts carry $id as TN's user_id; the API path resolves it via tnuserid.
+            'tnuserid'     => $id,
             'fullname'     => 'TN Parity Test User ' . $id,
             'systemrole'   => 'User',
             'added'        => now(),

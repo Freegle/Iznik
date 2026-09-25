@@ -334,10 +334,10 @@ class EmailReplaySyncer
      * creates a stub if no matching `users_emails` row exists; never touches
      * an existing user.
      *
-     * Unlike the API path's stub (which uses TN's own numeric fd_user_id, so
-     * repeat runs and the API-side stub converge on the same row), this has
-     * no such ID to key on — the partner CSV only carries an email address —
-     * so it always gets a fresh auto-increment id. That means an overlapping
+     * Unlike the API path (which resolves TN's user id through users.tnuserid
+     * and creates nothing), this has no id to key on — the partner CSV only
+     * carries an email address — so it always gets a fresh auto-increment
+     * id. That means an overlapping
      * post's `fromuser` can legitimately differ between the two paths when
      * both had to stub-create the poster; see the `fromuser` exclusion note
      * in ParityComparer::diffMessageFields().
