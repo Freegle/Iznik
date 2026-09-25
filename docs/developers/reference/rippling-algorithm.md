@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-14
+last_reviewed: 2026-09-23
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -825,6 +825,13 @@ all is in no community, and defaults to no email rather than to the daily digest
 member has done the one thing that most clearly says they want none.
 
 ## 5a. Frozen reaches (`status = 'held'`)
+
+A freeze cannot be the only thing that stops an unapproved post going out: it does nothing to a
+post whose reach row does not exist yet, and `messages_spatial` keeps a post for up to five
+minutes after it leaves Approved. So `initialiseNew` only starts a reach, and
+`rippleIntoNewGroups` only writes a copy, when the post has a live Approved copy on a group it
+was posted to directly. `advanceDue` writes its status with `status <> 'held'`, so a freeze made
+while a run is in flight survives it.
 
 `FreezeReachIfOriginPending` (`iznik-server-go/microvolunteering`) sets `status='held'` when a
 post's origin copy stops being live-Approved, typically Back to Pending. It is the only writer,

@@ -9129,6 +9129,28 @@ func TestPostMessageBackToPendingPullsAllGroups(t *testing.T) {
 			msgID, gid, modID).Scan(&holdLogs)
 		assert.Equal(t, int64(1), holdLogs, "group %d should carry exactly one Hold log for the back to pending", gid)
 	}
+
+	// Every copy pulled back waits for a moderator: the flag stops the content check and
+	// auto-approve putting it back live (122011064, 121796333).
+	for _, gid := range []uint64{groupA, groupB} {
+		var needs int
+		db.Raw("SELECT needs_moderator FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, gid).Scan(&needs)
+		assert.Equal(t, 1, needs, "group %d copy should need a moderator after back to pending", gid)
+	}
+
+	// A moderator approving a copy clears its flag, and only that copy's.
+	approveBody, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Approve", "groupid": groupB})
+	req3 := httptest.NewRequest("POST", url2, bytes.NewBuffer(approveBody))
+	req3.Header.Set("Content-Type", "application/json")
+	resp3, err3 := getApp().Test(req3)
+	assert.NoError(t, err3)
+	assert.Equal(t, 200, resp3.StatusCode)
+
+	var needsA, needsB int
+	db.Raw("SELECT needs_moderator FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&needsA)
+	db.Raw("SELECT needs_moderator FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&needsB)
+	assert.Equal(t, 1, needsA, "group A still waits for its own moderator")
+	assert.Equal(t, 0, needsB, "approving group B clears its flag")
 }
 
 func TestPostMessageHoldPerGroupLogsCorrectGroup(t *testing.T) {

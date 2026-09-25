@@ -2853,6 +2853,7 @@ class IncomingMailService
                 Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Approved,approvedat=now()');
                 MessageGroup::where('msgid', $messageId)
                     ->where('groupid', $group->id)
+                    ->where('needs_moderator', 0)
                     ->update([
                         'collection' => MessageGroup::COLLECTION_APPROVED,
                         'approvedat' => now(),

@@ -1168,7 +1168,12 @@ class ExpandService
                     MIN(ms.arrival) AS arrival
              FROM messages_spatial ms
              LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid
-             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . $satSql . $optOutSql . '
+             WHERE mr.msgid IS NULL
+               AND EXISTS (
+                   SELECT 1 FROM messages_groups o
+                    WHERE o.msgid = ms.msgid AND o.rippled_in = 0
+                      AND o.deleted = 0 AND o.collection = \'Approved\'
+               )' . $scopeSql . $cutoffSql . $satSql . $optOutSql . '
              GROUP BY ms.msgid
              LIMIT ?',
             $params
@@ -1580,7 +1585,7 @@ class ExpandService
                     $satStop = (int) config('freegle.ripple.reply_saturation_stop', 5);
                     if ($satStop > 0 && $this->distinctReplierCount((int) $row->msgid) >= $satStop) {
                         if (!$dryRun) {
-                            DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                            DB::table('rippling_reach')->where('msgid', $row->msgid)->where('status', '<>', 'held')->update([
                                 'status' => 'done',
                                 'next_expansion_at' => null,
                                 'updated_at' => now(),
@@ -1599,7 +1604,7 @@ class ExpandService
                     // keeps rippling into new groups for a tick or two after the outcome is recorded.
                     if ($this->hasTerminalOutcome((int) $row->msgid)) {
                         if (!$dryRun) {
-                            DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                            DB::table('rippling_reach')->where('msgid', $row->msgid)->where('status', '<>', 'held')->update([
                                 'status' => 'done',
                                 'next_expansion_at' => null,
                                 'updated_at' => now(),
@@ -1630,7 +1635,7 @@ class ExpandService
                         // Not actually due for a new tick yet — reschedule and move on.
                         if (!$dryRun) {
                             $next = $this->reach->nextExpansionAfter($arrival, (int) $row->tick, $total);
-                            DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                            DB::table('rippling_reach')->where('msgid', $row->msgid)->where('status', '<>', 'held')->update([
                                 'next_expansion_at' => $next,
                                 'status' => $next === null ? 'done' : 'expanding',
                                 'updated_at' => now(),
@@ -1736,7 +1741,7 @@ class ExpandService
                          SET updated_at = NOW()' . $gridSet . $set . ',
                              reachable_group_ids = COALESCE(?, reachable_group_ids),
                              tick = ?, next_expansion_at = ?, status = ?
-                         WHERE msgid = ?';
+                         WHERE msgid = ? AND status <> \'held\'';
                     $advanceTail = [$this->tickReachableIdsJson($entry), $target, $next, $status, $row->msgid];
                     $advanceStore = function (string $wkt) use ($advanceSql, $advanceTail, $retired): void {
                         if ($retired) {
@@ -1891,6 +1896,14 @@ class ExpandService
             // here without advanceDue's outcome-stop having run. messages_outcomes is the source of
             // truth; messages_spatial lags the outcome (see hasTerminalOutcome).
             if ($this->hasTerminalOutcome($msgid)) {
+                return;
+            }
+
+            // Only a post that is live and Approved on its home group ripples. messages_spatial
+            // keeps a post for up to five minutes after it is moved back to Pending, and a
+            // freeze is a no-op on a post whose reach has not been created yet, so neither
+            // can be trusted to stop an unapproved post going out (121999685).
+            if (!$this->originIsApproved($msgid)) {
                 return;
             }
 
@@ -3042,6 +3055,20 @@ class ExpandService
             "SELECT COUNT(DISTINCT userid) AS n FROM chat_messages WHERE refmsgid = ? AND type = 'Interested'",
             [$msgid]
         )->n ?? 0);
+    }
+
+    /**
+     * True when the post has a live Approved copy on a group it was posted to directly (not
+     * rippled into). Same test as FreezeReachIfOriginPending in iznik-server-go.
+     */
+    private function originIsApproved(int $msgid): bool
+    {
+        return DB::table('messages_groups')
+            ->where('msgid', $msgid)
+            ->where('rippled_in', 0)
+            ->where('deleted', 0)
+            ->where('collection', \App\Models\MessageGroup::COLLECTION_APPROVED)
+            ->exists();
     }
 
     /**
