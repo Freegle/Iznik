@@ -604,6 +604,9 @@ services:
       # reaches the real geeks list; edge/prod sets SUPPORT_SMTP_* to a relay.
       - GEEKS_EMAIL=${GEEKS_EMAIL:-geeks@ilovefreegle.org}
       - SUPPORT_REFERRAL_FROM=${SUPPORT_REFERRAL_FROM:-support@ilovefreegle.org}
+      # Reply-To on a referral: the support mailbox, shared with the batch config's
+      # FREEGLE_SUPPORT_ADDR so there is one knob for "where support mail goes".
+      - SUPPORT_ADDR=${FREEGLE_SUPPORT_ADDR:-support@ilovefreegle.org}
       - SUPPORT_SMTP_HOST=${SUPPORT_SMTP_HOST:-mailpit}
       - SUPPORT_SMTP_PORT=${SUPPORT_SMTP_PORT:-1025}
       - SUPPORT_SMTP_USER=${SUPPORT_SMTP_USER:-}

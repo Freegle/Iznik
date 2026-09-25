@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-06
+last_reviewed: 2026-09-23
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -189,8 +189,9 @@ investigation over by email, so nobody has to retype the story.
 the member, the device summary, every message, the running totals and the volunteer's
 **referral text** — which is required, because a transcript with no statement of what the
 volunteer wants doing about it is not a referral. It emails `GEEKS_EMAIL`
-(`geeks@ilovefreegle.org`) with **Reply-To set to the referring volunteer**, so a reply
-goes back to the person who actually saw the problem.
+(`geeks@ilovefreegle.org`) with **Reply-To set to `SUPPORT_ADDR`** (`support@ilovefreegle.org`),
+so a reply lands in the support mailbox where the whole support team sees it, rather than
+in one volunteer's personal inbox. The referring volunteer is named in the email body.
 
 Every referral gets a short reference — `SR-XXXXX`, generated **server-side** so the client
 cannot choose or reuse one. It appears in the subject line, the email body, an
