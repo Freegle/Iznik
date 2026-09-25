@@ -178,12 +178,25 @@ third step cannot be undone, which is one more reason this is an experiment.
 
 ## How much simpler is the software?
 
-The point of the exercise is to measure this, not to assert it. The branch carries a script
-that compares the code before and after: how many lines, how many functions, how many places
-the code has to make a decision, how many web addresses the servers answer, how many pages and
-screens, how many tables and columns in the database. The final numbers go in the pull request
-when the work is complete; the early figures show every part of the system shrinking, with the
-volunteer tools shrinking most.
+The point of the exercise is to measure this, not to assert it. Two scripts on the branch do
+the measuring and can be re-run by anyone.
+
+The first compares the code before and after: how many lines, how many functions, how many
+places the code has to make a decision, how many web addresses the servers answer, how many
+pages and screens. With the work still in progress, every part of the system is smaller: the
+volunteers' tool by about a third, the servers and the batch jobs by about a tenth. The
+database loses 17 of its 259 tables and 34 columns from others. That is a small share of the
+bytes, because most of the database is likes, chat and mail logs, but it includes the table
+with one row for every community every post ever reached, which nearly every moderation query
+had to join.
+
+The second looks at the past year of changes to the code and asks where the bug fixes went.
+The code that reads per-community settings is one seventh of the total but drew one third of
+the fixes: nearly five times the fix rate of the rest. Everything that touches communities is
+half the code and three quarters of the fixes. Of the six problems that needed fixing more
+than once, five were in that half. That is a correlation, not a proof: the busiest code is
+also where communities live. But it is the part of Freegle that has cost the most to keep
+working, and it is the part this experiment removes.
 
 ## The risks, honestly
 
