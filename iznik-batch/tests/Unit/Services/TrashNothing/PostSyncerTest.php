@@ -310,4 +310,49 @@ class PostSyncerTest extends TestCase
 
         $this->callProcessPost($syncer, $posts[0]);
     }
+
+    /**
+     * Guzzle quotes the full request URL, key included, in ApiException's
+     * message. The 401 seen on 2026-09-25 wrote the key into the batch log.
+     */
+    public function test_redact_api_key_strips_the_key_from_a_quoted_request_url(): void
+    {
+        $message = '[401] Client error: `GET https://trashnothing.com/api/v1.4/posts/all'
+            . '?types=offer%2Cwanted&per_page=50&page=1&api_key=SECRETVALUE123` resulted in a `401 Unauthorized` response';
+
+        $out = PostSyncer::redactApiKey($message);
+
+        $this->assertStringNotContainsString('SECRETVALUE123', $out);
+        $this->assertStringContainsString('&api_key=<redacted>` resulted in', $out);
+        $this->assertStringContainsString('per_page=50&page=1&', $out, 'other parameters are kept');
+    }
+
+    public function test_redact_api_key_leaves_text_without_a_key_alone(): void
+    {
+        $message = '[500] Server error: `GET https://trashnothing.com/api/v1.4/posts/all?page=1` resulted in a `500` response';
+
+        $this->assertSame($message, PostSyncer::redactApiKey($message));
+    }
+
+    /**
+     * The syncer must send the key it was constructed with, as the api_key
+     * query parameter the public API documents. TNSyncCommand passes the
+     * public developer key here, not the partner key.
+     */
+    public function test_api_client_is_built_with_the_key_it_was_given(): void
+    {
+        $syncer = new PostSyncer(
+            dryRun: true,
+            localTesting: false,
+            apiKey: 'developer-key',
+            apiBaseUrl: 'https://example.invalid',
+            loki: app(LokiService::class),
+        );
+
+        $build = new \ReflectionMethod(PostSyncer::class, 'buildApiClient');
+        $client = $build->invoke($syncer);
+
+        $this->assertSame('developer-key', $client->getConfig()->getApiKey('api_key'));
+        $this->assertNull($client->getConfig()->getApiKeyPrefix('api_key'), 'sent bare, no Bearer prefix');
+    }
 }
