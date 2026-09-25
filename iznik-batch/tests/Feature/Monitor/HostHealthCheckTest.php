@@ -66,10 +66,20 @@ class HostHealthCheckTest extends TestCase
                 $out .= "MONIT_STATUS_BEGIN\n";
                 $out .= "Monit 5.31.0 uptime: 1d 2h 3m\n\n";
                 foreach ($modes as $service => $mode) {
+                    // A plain string is the mode line as a monit before 5.26
+                    // printed it. An array spells out mode and on-reboot the
+                    // way monit 5.26+ prints them, where `mode manual` in the
+                    // config comes out as `active` plus `on reboot laststate`.
+                    [$modeLine, $onReboot] = is_array($mode)
+                        ? [$mode['mode'] ?? 'active', $mode['onreboot'] ?? 'start']
+                        : [$mode, null];
                     $out .= "Remote Host '{$service}'\n";
                     $out .= "  status                       Not monitored\n";
                     $out .= "  monitoring status            Not monitored\n";
-                    $out .= "  monitoring mode              {$mode}\n";
+                    $out .= "  monitoring mode              {$modeLine}\n";
+                    if ($onReboot !== null) {
+                        $out .= "  on reboot                    {$onReboot}\n";
+                    }
                     $out .= "  data collected               Tue, 22 Sep 2026 07:55:34\n\n";
                 }
                 $out .= "MONIT_STATUS_END\n";
@@ -144,8 +154,9 @@ class HostHealthCheckTest extends TestCase
 
     public function test_not_monitored_in_manual_mode_is_held_on_purpose_not_a_warning(): void
     {
-        // A retired service whose check is kept in place under `mode manual`:
-        // somebody switched it off, and the host is healthy.
+        // A retired service whose check is kept in place under `mode manual`,
+        // as a monit before 5.26 reports it: somebody switched it off, and the
+        // host is healthy.
         $result = $this->evaluate($this->probeOutput(
             monitLines: [
                 'freegle-host                     OK                          System',
@@ -156,7 +167,44 @@ class HostHealthCheckTest extends TestCase
         ));
 
         $this->assertTrue($result->isOk(), $result->message);
-        $this->assertStringContainsString('holds iznik-server-go, mysqld in manual mode', $result->message);
+        $this->assertStringContainsString('holds iznik-server-go, mysqld retired on purpose', $result->message);
+    }
+
+    public function test_not_monitored_with_on_reboot_laststate_is_held_as_monit_5_26_reports_it(): void
+    {
+        // The same `mode manual` config on monit 5.26+ (5.31 on the database
+        // nodes): the mode line says active, and only `on reboot laststate`
+        // carries the fact that a person parked it.
+        $result = $this->evaluate($this->probeOutput(
+            monitLines: [
+                'freegle-host                     OK                          System',
+                'mysqld                           Not monitored               Process',
+                'iznik-server-go                  Not monitored               Remote Host',
+            ],
+            modes: [
+                'mysqld' => ['mode' => 'active', 'onreboot' => 'laststate'],
+                'iznik-server-go' => ['mode' => 'active', 'onreboot' => 'laststate'],
+                'garbd' => ['mode' => 'active', 'onreboot' => 'start'],
+            ],
+        ));
+
+        $this->assertTrue($result->isOk(), $result->message);
+        $this->assertStringContainsString('holds mysqld, iznik-server-go retired on purpose', $result->message);
+    }
+
+    public function test_not_monitored_with_on_reboot_start_is_drift_and_a_warning(): void
+    {
+        // Monit 5.26+ output for a check nobody parked: an apt upgrade changed
+        // the binary and the checksum template unmonitored it. That is the
+        // safety net gone, and stays a warning.
+        $result = $this->evaluate($this->probeOutput(
+            monitLines: ['nginx_bin                        Not monitored               File'],
+            modes: ['nginx_bin' => ['mode' => 'active', 'onreboot' => 'start']],
+        ));
+
+        $this->assertTrue($result->isBreach());
+        $this->assertSame('warning', $result->severity);
+        $this->assertStringContainsString('nginx_bin', $result->message);
     }
 
     public function test_not_monitored_in_active_mode_is_still_a_warning(): void
