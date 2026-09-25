@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
+import { mount } from '@vue/test-utils'
+import MessageSummary from '~/components/MessageSummary.vue'
 
 const mockMiscStore = {
   breakpoint: 'md',
@@ -9,18 +11,25 @@ vi.mock('~/stores/misc', () => ({
   useMiscStore: () => mockMiscStore,
 }))
 
+// Mutable so individual tests can vary promised/promisedtoyou; useMessageDisplay()
+// re-reads it on every mount, so mutating before mount is enough - no reactivity needed.
+const { mockMessage } = vi.hoisted(() => ({
+  mockMessage: {
+    id: 123,
+    type: 'Offer',
+    subject: 'Offer: Test item (Location)',
+    textbody: 'Test description',
+    attachments: [{ id: 1, path: '/photo.jpg' }],
+    successful: false,
+    promised: false,
+    promisedtoyou: false,
+    area: 'Test Area',
+  },
+}))
+
 vi.mock('~/composables/useMessageDisplay', () => ({
   useMessageDisplay: () => ({
-    message: ref({
-      id: 123,
-      type: 'Offer',
-      subject: 'Offer: Test item (Location)',
-      textbody: 'Test description',
-      attachments: [{ id: 1, path: '/photo.jpg' }],
-      successful: false,
-      promised: false,
-      area: 'Test Area',
-    }),
+    message: ref(mockMessage),
     strippedSubject: ref('Test item'),
     subjectItemName: ref('Test item'),
     subjectLocation: ref('Location'),
@@ -28,8 +37,11 @@ vi.mock('~/composables/useMessageDisplay', () => ({
     attachmentCount: ref(1),
     timeAgo: ref('2h'),
     timeAgoExpanded: ref('2 hours ago'),
+    fullTimeAgo: ref('2 hours ago'),
     distanceText: ref('5mi'),
     distanceTextExpanded: ref('5 miles away'),
+    distanceTooltip: ref('5 miles away'),
+    isPinned: ref(false),
     isOffer: ref(true),
     isWanted: ref(false),
     successfulText: ref('TAKEN'),
@@ -48,10 +60,61 @@ vi.mock('~/composables/useClientLog', () => ({
   action: vi.fn(),
 }))
 
+// MessageSummary's own photo/tag components aren't in the global stub list in
+// setup.ts, so mounting it for real needs its own stubs, same as
+// ModMessageSummary.spec.js does for its siblings.
+function mountMessageSummary(props = {}) {
+  return mount(MessageSummary, {
+    props: { id: 123, ...props },
+    global: {
+      stubs: {
+        'b-img': {
+          template: '<img />',
+          props: ['src', 'alt', 'lazy', 'width', 'height'],
+        },
+        OurUploadedImage: {
+          template: '<div class="our-uploaded-image" />',
+          props: [
+            'src',
+            'modifiers',
+            'alt',
+            'width',
+            'fit',
+            'sizes',
+            'preload',
+          ],
+        },
+        ProxyImage: {
+          template: '<div class="proxy-image" />',
+          props: [
+            'className',
+            'alt',
+            'src',
+            'width',
+            'fit',
+            'sizes',
+            'preload',
+          ],
+        },
+        MessagePhotoPlaceholder: {
+          template: '<div class="message-photo-placeholder" />',
+          props: ['placeholderClass', 'icon'],
+        },
+        MessageTag: {
+          template: '<div class="message-tag" />',
+          props: ['id', 'inline'],
+        },
+      },
+    },
+  })
+}
+
 describe('MessageSummary', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockMiscStore.breakpoint = 'md'
+    mockMessage.promised = false
+    mockMessage.promisedtoyou = false
   })
 
   describe('expected props', () => {
@@ -107,9 +170,21 @@ describe('MessageSummary', () => {
       expect(true).toBe(true)
     })
 
-    it('applies promisedfade class for promised to others', () => {
-      // :class="{ promisedfade: showPromised && message.promised && !message.promisedtoyou }"
-      expect(true).toBe(true)
+    it('applies promisedfade class when promised to someone else', () => {
+      mockMessage.promised = true
+      mockMessage.promisedtoyou = false
+      const wrapper = mountMessageSummary()
+      expect(wrapper.classes()).toContain('promisedfade')
+    })
+
+    // Regression test for https://discourse.ilovefreegle.org/t/10189/1 : the Go API sends
+    // promisedtoyou, not the fictional promisedtome the class binding used to read, so a
+    // viewer the item IS promised to used to see the faded "promised to someone else" state.
+    it('does not apply promisedfade class when promised to you', () => {
+      mockMessage.promised = true
+      mockMessage.promisedtoyou = true
+      const wrapper = mountMessageSummary()
+      expect(wrapper.classes()).not.toContain('promisedfade')
     })
 
     it('applies mobile-landscape class', () => {
