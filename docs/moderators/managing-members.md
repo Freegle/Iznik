@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-22
+last_reviewed: 2026-09-25
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -181,15 +181,15 @@ banned whom and why. Notes are how the team keeps a shared memory of a member.
 - Or open **Chats** (`/chats`), which lists your conversations with members and with other
   moderators, with a chat pane and search.
 
-### Trash Nothing members who haven't opted in to Freegle
+### Trash Nothing members who didn't choose your community
 
 Some members exist here only because posts of theirs came in from Trash Nothing and we
-matched them to a community from where they are - they never chose Freegle at all. Those
+matched them to a community from where they are - they never chose your community. Those
 members carry a warning on their member row saying so, and the **Chat**, **Mail** and
 standard-message buttons are not offered, because there is no relationship to use and no
 way for them to reply to you. You can still remove or ban them.
 
-If the same person also posts to Freegle properly, the warning disappears on its own and
+If the same person also posts to a community they've chosen, the warning disappears on its own and
 they become an ordinary member you can contact as usual.
 
 ## Banning and removing

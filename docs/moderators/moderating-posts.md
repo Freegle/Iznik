@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-23
+last_reviewed: 2026-09-25
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -206,7 +206,7 @@ all - we match them to a community from where they are. Those posts carry a warn
 so, worded for where the post has got to: on one waiting in **Pending** it says approve or
 delete is the whole of it, and on one already **live** it says what happens if members
 report it. They behave differently from an ordinary post, because the person behind them
-has not joined Freegle and never agreed to hear from you:
+didn't choose your community and never agreed to hear from you:
 
 - You can **approve** or **delete** them as normal, and hold and release them.
 - You **cannot edit** them, send a **Blank Reply**, or use any **standard message** - those
@@ -220,9 +220,9 @@ off Freegle automatically instead. It is a soft delete, so Support can still see
 it back.
 
 The same applies to the person on the **members page**: they show a warning saying they are
-a Trash Nothing user who hasn't opted in to Freegle, and the Chat, Mail and standard-message
-buttons are not offered. If they later post to Freegle properly, all of this goes away by
-itself and they become an ordinary member.
+a Trash Nothing user who didn't choose the community, and the Chat, Mail and standard-message
+buttons are not offered. If they later post to a community they've chosen, all of this goes
+away by itself and they become an ordinary member.
 
 Ordinary freeglers are unaffected - they can still reply to the post, and the reply reaches
 the poster on Trash Nothing as usual.
