@@ -506,6 +506,45 @@ func TestWiderReviewExcludesHeldMessages(t *testing.T) {
 	}
 }
 
+// A moderator who reaches a message only via the wider-review arm (they are
+// not a member of the message's own group, so the base query never returns
+// it) must not lose the message from their queue the moment they hold it
+// themselves. Held-by-someone-else still hides it (see
+// TestWiderReviewExcludesHeldMessages above); held-by-the-viewer must not.
+// Discourse 10171/54 and 10171/59: a chat still shown "Held by Michael" to
+// mods reached via the base query had already vanished from Michael's own
+// queue, because the wider-review arm excluded ANY held row rather than
+// rows held by someone other than the viewer.
+func TestWiderReviewShowsSelfHeldMessages(t *testing.T) {
+	modToken, modID, _, _, chatMsgID := setupWiderReviewData(t)
+	db := database.DBConn
+
+	// The mod holds their own wider-review message.
+	db.Exec("INSERT INTO chat_messages_held (msgid, userid) VALUES (?, ?)", chatMsgID, modID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chatmessages?jwt=%s&limit=1000", modToken), nil)
+	resp, _ := getApp().Test(req, -1)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	msgs := result["chatmessages"].([]interface{})
+	var mine map[string]interface{}
+	for _, m := range msgs {
+		msg := m.(map[string]interface{})
+		if uint64(msg["id"].(float64)) == chatMsgID {
+			mine = msg
+		}
+	}
+	if assert.NotNil(t, mine, "a mod must still see a wider-review message they hold themselves") {
+		held, ok := mine["held"].(map[string]interface{})
+		if assert.True(t, ok, "held info should be present") {
+			assert.Equal(t, float64(modID), held["id"], "held by the viewer themselves")
+		}
+	}
+}
+
 func TestWiderReviewExcludesUserReported(t *testing.T) {
 	modToken, _, _, _, chatMsgID := setupWiderReviewData(t)
 	db := database.DBConn

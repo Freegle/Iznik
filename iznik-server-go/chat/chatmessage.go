@@ -1586,7 +1586,15 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			"LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id " +
 			"LEFT JOIN chat_messages_byemail cme ON cme.chatmsgid = cm.id " +
 			"WHERE JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 " +
-			"AND cmh.id IS NULL " +
+			// A hold by the viewing moderator themselves must not hide the
+			// message from their own queue - only a DIFFERENT moderator's hold
+			// does that. Without the "OR cmh.userid = ?" carve-out, a mod whose
+			// only access to a message is this wider-review arm (not a member
+			// of the message's own group, so absent from baseQuery) loses all
+			// visibility to it the instant they hold it, while mods reached via
+			// baseQuery (which never excludes held rows) still see it flagged
+			// "held by" them (Discourse 10171/54, 10171/59).
+			"AND (cmh.id IS NULL OR cmh.userid = ?) " +
 			"AND (cm.reportreason IS NULL OR cm.reportreason != 'User') " +
 			"AND NOT EXISTS (SELECT 1 FROM memberships m_check WHERE m_check.userid = " + recipientExpr + " AND m_check.groupid IN (?))" + ctxq
 
@@ -1622,6 +1630,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			utils.CHAT_TYPE_USER2MOD, groupIDs,
 			utils.CHAT_TYPE_USER2USER, groupIDs,
 			utils.CHAT_TYPE_USER2USER, groupIDs,
+			myid,
 			groupIDs,
 			limit)
 		tx1ff296c8656c.Statement.BuildClauses = []string{"SELECT"}
