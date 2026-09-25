@@ -386,10 +386,12 @@ class GroupPostIngestionService
         if ($routingResult === 'approved') {
             Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Approved,approvedat=now()');
             if (!$this->dryRun) {
-                MessageGroup::where('msgid', $messageId)->update([
-                    'collection' => MessageGroup::COLLECTION_APPROVED,
-                    'approvedat' => now(),
-                ]);
+                MessageGroup::where('msgid', $messageId)
+                    ->where('needs_moderator', 0)
+                    ->update([
+                        'collection' => MessageGroup::COLLECTION_APPROVED,
+                        'approvedat' => now(),
+                    ]);
                 $this->addToSpatialIndex($messageId, $group->id);
             }
             $this->loki->logEvent('tn-sync', 'post-create', ['tn_post_id' => $postId, 'msg_id' => $messageId, 'collection' => 'Approved']);

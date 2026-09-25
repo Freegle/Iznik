@@ -61,7 +61,11 @@ class EmailPathMirrorDriftTest extends TestCase
         //
         // This branch's own edit to the method is TN-SYNC-TRACE logging, which the API
         // path already emits.
-        'handleGroupPost'         => '168d4bc883c039c3e536e5d2a6e9e060a4109e48323c4c3a70e86d20c63e3971',
+        //
+        // Re-pinned on 25 September: the approval update now skips a copy marked
+        // messages_groups.needs_moderator, which only a moderator's Approve clears.
+        // The API mirror's approval update carries the same guard.
+        'handleGroupPost'         => '07115bf56134dc646344a62cd4029de824d681589ea68dd0d362c16fb34f9025',
         // Re-pinned on 21 September: createGroupPostMessage now checks that the
         // location id the spatial index hands back still exists in `locations`
         // before writing it to users.lastlocation, and ingests without a location
