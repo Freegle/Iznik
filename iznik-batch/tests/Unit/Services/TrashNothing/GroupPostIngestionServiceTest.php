@@ -4,6 +4,7 @@ namespace Tests\Unit\Services\TrashNothing;
 
 use App\Models\Message;
 use App\Models\MessageGroup;
+use App\Models\User;
 use App\Services\ItemService;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
