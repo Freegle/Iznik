@@ -14,6 +14,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/firstreply"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/modmessaging"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -398,6 +399,15 @@ func PutChatRoom(c *fiber.Ctx) error {
 		chatUserID := myid
 		modOpeningMembersChat := req.Userid > 0 && req.Userid != myid && auth.IsModOfGroup(myid, req.Groupid)
 		if modOpeningMembersChat {
+			// A member who only exists here because TN posts of theirs were placed on a
+			// Freegle group they never chose has agreed to nothing with this community's
+			// moderators, so they cannot be opened a chat to. ModTools hides the Chat
+			// button for them; this is what makes that hold. Someone who has ALSO posted
+			// normally is a real member and is unaffected.
+			if modmessaging.UserIsUnaddressedOnly(db, req.Userid) {
+				return fiber.NewError(fiber.StatusForbidden, "This member hasn't joined Freegle, so they can't be contacted")
+			}
+
 			chatUserID = req.Userid
 		}
 

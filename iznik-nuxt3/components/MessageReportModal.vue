@@ -16,10 +16,15 @@
           <div class="preview-subject">{{ message?.subject }}</div>
         </div>
 
-        <p class="report-explanation">
+        <p v-if="modMessagingAllowed" class="report-explanation">
           If something's wrong with this post, please let us know. Your report
           will be sent to local volunteers who will review it and take
           appropriate action.
+        </p>
+        <p v-else class="report-explanation">
+          This post came from Trash Nothing and isn't looked after by a local
+          Freegle volunteer team, so there's nobody to pass your report to. If
+          two people report it, we'll take it off Freegle automatically.
         </p>
 
         <div class="report-reasons">
@@ -100,9 +105,13 @@
       <div v-else class="report-success">
         <v-icon icon="check-circle" class="success-icon" />
         <h5>Report submitted</h5>
-        <p>
+        <p v-if="modMessagingAllowed">
           Thank you for helping keep Freegle safe. Our volunteers will review
           this post and take appropriate action.
+        </p>
+        <p v-else>
+          Thank you for helping keep Freegle safe. If someone else reports this
+          post too, it'll be removed automatically.
         </p>
         <p v-if="failedGroups.length" class="report-partial text-warning">
           We couldn't reach the volunteers for: {{ failedGroups.join(', ') }}.
@@ -179,6 +188,12 @@ const reportGroupId = computed(() => {
   return shared.length > 0 ? shared[0].groupid : message.value.groups[0].groupid
 })
 
+// False for a TN post placed on a Freegle community its poster never chose: nobody here
+// has any standing to moderate it, so the report must not go to a volunteer team.
+const modMessagingAllowed = computed(
+  () => message.value?.mod_messaging_allowed !== false
+)
+
 // Moderators (and above) can report a post to more than one community's mod
 // team, since a post can be on several groups once it has rippled out.
 const isMod = computed(() => {
@@ -214,7 +229,10 @@ const reportableGroups = computed(() => {
 // Only show the multi-community selector to mods, and only when there is a
 // real choice to make (the post is on more than one community).
 const showGroupSelector = computed(
-  () => isMod.value && reportableGroups.value.length > 1
+  () =>
+    isMod.value &&
+    modMessagingAllowed.value &&
+    reportableGroups.value.length > 1
 )
 
 const allSelected = computed({
@@ -285,6 +303,26 @@ async function report() {
   if (additionalDetails.value?.trim()) {
     reportMessage +=
       '\n\nAdditional details: "' + additionalDetails.value.trim() + '"'
+  }
+
+  // A post whose poster never joined Freegle has no volunteer team to tell - reporting it
+  // is a vote to take it down, counted server-side, and deliberately reaches no moderator
+  // at all. See modmessaging in the Go API.
+  if (!modMessagingAllowed.value) {
+    try {
+      await messageStore.report(
+        props.id,
+        parseInt(reportGroupId.value),
+        reportMessage
+      )
+      submitted.value = true
+    } catch (error) {
+      console.error('Failed to submit report', error)
+      submitError.value = true
+    }
+
+    submitting.value = false
+    return
   }
 
   // Mods can widen the report to several communities; everyone else reports to
