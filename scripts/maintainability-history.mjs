@@ -14,25 +14,29 @@ const CODE_PATHS = ['iznik-server-go', 'iznik-batch/app', 'iznik-batch/routes', 
 const isCode = (f) => /\.(go|php|vue|js|ts|mjs)$/.test(f) && !/_test\.go$|\/tests?\/|\.spec\.|\.test\.|swagger\/docs|api\/index\.js$/.test(f)
 const SETTINGS = /groups?\.settings|->settings\b|\bsettings\.(reposts|duplicates|spammers|map|keywords|chaseups|autoapprove|moderated|closed|relevant|newsletter|communityevents|volunteering|engagement|includearea|includepc|showchat|businesscards|allowedits|joiners|mentored|nearbygroups|region|welcomemail|rules)|\brules\.(alcohol|animals|weapons|firearms|medications|tickets|tobacco|vaping|porn|restrict|fullymoderated|limit|carseats|knives|gas|copyright|declare|allowloans|chinese|contact|pond|waste|other)|ourPostingStatus|\bModSettings|getSetting\(|group\.settings|groupSettings|\$group->settings|JSON_EXTRACT\(settings/
 const MODEL = /\bgroupid\b|\bmemberships\b|messages_groups|MessageGroup|myGroups|useGroupStore|\bgroups\b\./
-const FIX = /\b(fix|fixes|fixed|fixing|bug|broken|regression|wrong|incorrect|fail|fails|failing|not working|crash|error|repair|restore|missing)\b|discourse|sentry|#\d{4,5}/i
+// The trailing "(#1234)" on a squash-merged subject is the pull-request number, not an issue; strip it first.
+const stripPR = (subj) => subj.replace(/\s*\(#\d+\)\s*$/, '')
+const FIX = /^(fix|hotfix|bugfix)\b|\bfix(es|ed|ing)?\b|\bbug\b|\bbroken\b|\bregression\b|\bwrong(ly)?\b|\bincorrect(ly)?\b|\bcrash(es|ed|ing)?\b|\bnot working\b|\bfailing\b|\bdiscourse\b|\bsentry\b|#\d{4,5}\b/i
+// Files whose path says they are the moderation-and-membership workflow, whatever their contents.
+const WORKFLOW = /membership|ModMember|ModMessage|ModSettings|ModGroup|ModSpammer|ModChat|pending|approve|ContentCheck|AutoApprove|AutoRepost|ChaseUp|ModNotif|Membership|MessageGroup|\/group\/|\/groups?\.|modconfig|StdMessage|stdMessage|worry|Worry|rippling|Ripple/i
 
 // 1. Files at BASE, classified
 const baseFiles = git(`ls-tree -r --name-only ${BASE} -- ${CODE_PATHS.join(' ')}`).split('\n').filter(isCode)
-const loc = { all: 0, settings: 0, model: 0 }
+const loc = { all: 0, settings: 0, model: 0, workflow: 0 }
 const fileClass = new Map() // file -> {settings, model, loc}
 for (const f of baseFiles) {
   let body = ''
   try { body = git(`show ${BASE}:${JSON.stringify(f)}`) } catch { continue }
   const lines = body.split('\n').filter(l => l.trim()).length
-  const s = SETTINGS.test(body), m = s || MODEL.test(body)
-  fileClass.set(f, { settings: s, model: m, loc: lines })
-  loc.all += lines; if (s) loc.settings += lines; if (m) loc.model += lines
+  const s = SETTINGS.test(body), m = s || MODEL.test(body), w = WORKFLOW.test(f)
+  fileClass.set(f, { settings: s, model: m, workflow: w, loc: lines })
+  loc.all += lines; if (s) loc.settings += lines; if (m) loc.model += lines; if (w) loc.workflow += lines
 }
 
 // 2. Commits in the window touching code
 const log = git(`log ${BASE} --since=${SINCE} --no-merges --date=short --format='%H|%ad|%s' -- ${CODE_PATHS.join(' ')}`)
 const commits = log.split('\n').filter(Boolean).map(l => { const [h, d, ...s] = l.split('|'); return { h, d, s: s.join('|') } })
-const stats = { commits: 0, fixes: 0, fixSettings: 0, fixModel: 0, fixNeither: 0, allSettings: 0, allModel: 0 }
+const stats = { commits: 0, fixes: 0, fixSettings: 0, fixSettingsFile: 0, fixModel: 0, fixWorkflow: 0, fixNeither: 0, allSettings: 0, allModel: 0 }
 const perFile = new Map() // file -> fixes
 const byIssue = new Map() // discourse id -> [{h,d,s,settings,model}]
 const perYear = {}
@@ -49,13 +53,16 @@ for (const c of commits) {
   const touchesModel = touchesSettings || files.some(f => fileClass.get(f)?.model)
   if (touchesSettings) stats.allSettings++
   if (touchesModel) stats.allModel++
-  const isFix = FIX.test(c.s)
+  const subj = stripPR(c.s)
+  const isFix = FIX.test(subj)
   if (!isFix) continue
   stats.fixes++; perYear[y].fixes++
   if (touchesSettings) { stats.fixSettings++; perYear[y].fixSettings++ }
+  if (files.some(f => fileClass.get(f)?.settings)) stats.fixSettingsFile++
+  if (files.some(f => fileClass.get(f)?.workflow)) stats.fixWorkflow++
   if (touchesModel) { stats.fixModel++; perYear[y].fixModel++ } else stats.fixNeither++
   for (const f of files) perFile.set(f, (perFile.get(f) || 0) + 1)
-  const ids = [...c.s.matchAll(/(?:discourse[^\d]{0,25}|#)(\d{4,5})\b/gi)].map(m => m[1])
+  const ids = [...subj.matchAll(/(?:discourse[^\d]{0,25}|#)(\d{4,5})\b/gi)].map(m => m[1])
   for (const id of new Set(ids)) { byIssue.set(id, byIssue.get(id) || []); byIssue.get(id).push({ ...c, settings: touchesSettings, model: touchesModel }) }
 }
 
@@ -66,7 +73,9 @@ console.log(`Base ${BASE}, non-merge commits since ${SINCE} that touch code (not
 console.log(`## Share of the code versus share of the fixes\n`)
 console.log(`| Area | Lines at base | Share of code | Fix commits touching it | Share of fixes | Fixes per 1,000 lines |`)
 console.log(`|---|---|---|---|---|---|`)
-console.log(`| Code that reads community settings or rules | ${loc.settings} | ${pct(loc.settings, loc.all)} | ${stats.fixSettings} | ${pct(stats.fixSettings, stats.fixes)} | ${per1k(stats.fixSettings, loc.settings)} |`)
+console.log(`| Files that read community settings or rules | ${loc.settings} | ${pct(loc.settings, loc.all)} | ${stats.fixSettingsFile} | ${pct(stats.fixSettingsFile, stats.fixes)} | ${per1k(stats.fixSettingsFile, loc.settings)} |`)
+console.log(`| ...of which the changed lines themselves mention a setting or rule | | | ${stats.fixSettings} | ${pct(stats.fixSettings, stats.fixes)} | |`)
+console.log(`| Moderation and membership workflow files (by path: membership, pending, approve, content check, auto-repost, chase-ups, mod screens, rippling) | ${loc.workflow} | ${pct(loc.workflow, loc.all)} | ${stats.fixWorkflow} | ${pct(stats.fixWorkflow, stats.fixes)} | ${per1k(stats.fixWorkflow, loc.workflow)} |`)
 console.log(`| Code that touches the community model at all (includes the row above) | ${loc.model} | ${pct(loc.model, loc.all)} | ${stats.fixModel} | ${pct(stats.fixModel, stats.fixes)} | ${per1k(stats.fixModel, loc.model)} |`)
 console.log(`| Everything else | ${loc.all - loc.model} | ${pct(loc.all - loc.model, loc.all)} | ${stats.fixNeither} | ${pct(stats.fixNeither, stats.fixes)} | ${per1k(stats.fixNeither, loc.all - loc.model)} |`)
 console.log(`| All code | ${loc.all} | 100% | ${stats.fixes} | 100% | ${per1k(stats.fixes, loc.all)} |`)
@@ -93,7 +102,7 @@ for (const [f, n] of [...perFile.entries()].sort((a, b) => b[1] - a[1]).slice(0,
   const c = fileClass.get(f); console.log(`| ${f} | ${n} | ${c?.loc ?? ''} | ${c?.model ? 'yes' : ''} | ${c?.settings ? 'yes' : ''} |`)
 }
 console.log(`\n## Caveats\n`)
-console.log(`- "Fix" is read from the commit subject, so refactors that mention "fix" count and silent fixes do not.`)
+console.log(`- "Fix" is read from the commit subject (a fix/bug/broken/regression/wrong/crash word, or a Discourse or Sentry reference, with the trailing pull-request number ignored), so refactors that say "fix" count and silent fixes do not.`)
 console.log(`- A commit touches settings code when a changed line mentions a community setting or rule; it touches the community model when any changed file mentioned groupid, memberships or messages_groups at the base. Big files attract fixes for reasons other than community configuration.`)
 console.log(`- The window is this repository's history only; earlier history in the separate repositories is not counted.`)
 console.log(`- Correlation, not cause: the community model is where the most-used code lives too.`)
