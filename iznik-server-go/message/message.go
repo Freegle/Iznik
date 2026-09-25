@@ -3439,7 +3439,7 @@ func handleReply(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// messages for these posts; this is the guard behind that, and it matters because app
 	// bundles are baked into the APK and can be months out of date.
 	if modmessaging.PostIsUnaddressed(db, req.ID) {
-		return fiber.NewError(fiber.StatusForbidden, "This poster hasn't joined Freegle, so they can't be messaged")
+		return fiber.NewError(fiber.StatusForbidden, "This poster didn't choose this community, so they can't be messaged")
 	}
 
 	subject := ""
@@ -4174,7 +4174,7 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	// delete stay available (see modmessaging); editing does not. The poster's own edits,
 	// which arrive from TN as the owner, are untouched.
 	if isMod && !isOwner && modmessaging.PostIsUnaddressed(db, req.ID) {
-		return fiber.NewError(fiber.StatusForbidden, "This post can't be edited - the poster hasn't joined Freegle")
+		return fiber.NewError(fiber.StatusForbidden, "This post can't be edited - the poster didn't choose this community")
 	}
 
 	// Get old values for edit tracking.

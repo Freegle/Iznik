@@ -405,7 +405,7 @@ func PutChatRoom(c *fiber.Ctx) error {
 			// button for them; this is what makes that hold. Someone who has ALSO posted
 			// normally is a real member and is unaffected.
 			if modmessaging.UserIsUnaddressedOnly(db, req.Userid) {
-				return fiber.NewError(fiber.StatusForbidden, "This member hasn't joined Freegle, so they can't be contacted")
+				return fiber.NewError(fiber.StatusForbidden, "This member didn't choose this community, so they can't be contacted")
 			}
 
 			chatUserID = req.Userid

@@ -973,10 +973,10 @@ describe('ModMember', () => {
   })
 
   // Someone whose only presence on Freegle is TN posts matched to communities they never
-  // chose has not opted in, so a moderator has no way to reach them and needs telling why
+  // chose, so a moderator has no way to reach them and needs telling why
   // the usual buttons are missing. A "mixed" poster is a real member and is unaffected -
   // see modmessaging in the Go API.
-  describe('a Trash Nothing member who has not opted in to Freegle', () => {
+  describe('a Trash Nothing member who did not choose the community', () => {
     it('offers a chat and shows no warning for an ordinary member', () => {
       const wrapper = mountComponent({
         member: createMember({ mod_messaging_allowed: true }),
@@ -1004,7 +1004,8 @@ describe('ModMember', () => {
 
       expect(warning.exists()).toBe(true)
       expect(warning.text()).toContain('Trash Nothing')
-      expect(warning.text()).toContain("hasn't opted in")
+      expect(warning.text()).toContain('not chosen by them')
+      expect(warning.text()).not.toContain('opted in')
       expect(warning.text()).toContain("can't be contacted")
     })
 

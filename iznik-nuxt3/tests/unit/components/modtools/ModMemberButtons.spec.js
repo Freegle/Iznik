@@ -648,7 +648,7 @@ describe('ModMemberButtons', () => {
   // chose has agreed to nothing with these volunteers, so everything that writes to them
   // is withdrawn. ModMember carries the notice explaining why. A "mixed" poster is a real
   // member and is unaffected - see modmessaging in the Go API.
-  describe('a member who has not opted in to Freegle', () => {
+  describe('a member who did not choose the community', () => {
     const stdmsgs = [
       {
         id: 1,

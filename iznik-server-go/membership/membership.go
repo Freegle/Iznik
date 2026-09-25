@@ -185,7 +185,7 @@ func PostMemberships(c *fiber.Ctx) error {
 		// no modmail relationship to use. ModTools hides Mail and the standard messages for
 		// them (with a notice saying why); this is the guard behind that.
 		if modmessaging.UserIsUnaddressedOnly(db, req.Userid) {
-			return fiber.NewError(fiber.StatusForbidden, "This member hasn't joined Freegle, so they can't be contacted")
+			return fiber.NewError(fiber.StatusForbidden, "This member didn't choose this community, so they can't be contacted")
 		}
 
 		//
