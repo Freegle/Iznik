@@ -6,8 +6,7 @@
     data-test="tn-unaddressed-warning"
   >
     <span v-if="!live" data-test="tn-unaddressed-pending">
-      This came from Trash Nothing. The person who posted it hasn't joined
-      Freegle and didn't choose
+      This came from Trash Nothing. The person who posted it didn't choose
       <strong>{{ groupName || 'this community' }}</strong> - we matched it here
       from where they are. So it's <strong>approve or delete</strong> on what
       you can see: you can't edit it, and there's no way to ask them for a photo
@@ -16,8 +15,8 @@
     <span v-else data-test="tn-unaddressed-approved">
       This came from Trash Nothing and is live on
       <strong>{{ groupName || 'this community' }}</strong
-      >. The person who posted it hasn't joined Freegle and didn't choose this
-      community - we matched it here from where they are. You can
+      >. The person who posted it didn't choose this community - we matched it
+      here from where they are. You can
       <strong>delete</strong> it if it shouldn't be here, but you can't edit it
       or message them. If members report it, it comes off Freegle automatically
       rather than back to you.

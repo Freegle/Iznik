@@ -324,7 +324,7 @@ What changes as a result:
   anyway.
 - **The member is flagged on the members page.** The memberships payload carries
   `mod_messaging_allowed` per member (batched in `enrichMembers`), and `ModMember.vue`
-  shows a notice saying this is a Trash Nothing user who has not opted in to Freegle and
+  shows a notice saying this is a Trash Nothing user who did not choose the community and
   cannot be contacted.
 - **The post is flagged in the mod queue.** `ModMessageTnNotice.vue` explains the same
   thing about the post, in two variants keyed on whether the copy being administered is

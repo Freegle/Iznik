@@ -41,7 +41,9 @@ describe('ModMessageTnNotice', () => {
 
       expect(notice.exists()).toBe(true)
       expect(notice.text()).toContain('Trash Nothing')
-      expect(notice.text()).toContain("hasn't joined")
+      expect(notice.text()).toContain("didn't choose")
+      // They are members by TrashNothing's permission, so never 'joined'.
+      expect(notice.text()).not.toContain('joined Freegle')
       expect(notice.text()).toContain('approve or delete')
       expect(notice.text()).toContain("can't edit it")
     })
