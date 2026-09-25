@@ -3,6 +3,8 @@ paths:
   - "iznik-batch/app/Services/Ripple/**"
   - "iznik-batch/app/Console/Commands/Ripple/**"
   - "iznik-server-go/rippling/**"
+  - "iznik-batch/app/Services/ContentCheckService.php"
+  - "iznik-batch/app/Services/AutoApproveService.php"
 ---
 
 # Traps when working on rippling
@@ -42,6 +44,31 @@ once no undeleted group rows remain anywhere.
 Editing is the opposite: an edit mutates the single shared `messages` row, so it appears on
 every group at once. That is a genuinely different mechanism rather than an inconsistency, and
 it is worth saying plainly to moderators who notice the asymmetry.
+
+## Back to pending pulls every copy, and automation must not put them back
+
+A moderator's Back to pending on any one group pulls the post back to Pending on **every**
+group it is on, the home copy included (`handleBackToPending`, `SendForReviewAllGroups`). Only
+the acting moderator's copy is held. Every copy pulled back is marked
+`messages_groups.needs_moderator`, and only a moderator's Approve clears it. The content check
+and auto-approve both skip a flagged copy.
+
+Before that flag existed, the content check re-approved every unheld copy a minute after the
+next edit, with no log entry, so a moderator's decision was quietly undone everywhere but on
+their own group (122011064, 121985402). Any new automatic approval path must honour the flag.
+
+## Nothing ripples unless its home copy is approved
+
+`messages_spatial` keeps a post for up to five minutes after it is moved back to Pending, and
+the freeze (`FreezeReachIfOriginPending`) does nothing to a post whose reach has not been
+created yet. On 121999685 a Back to pending 12 seconds after approval was followed by approved
+copies on 13 neighbouring groups, deleted again a minute later. So `initialiseNew` and
+`rippleIntoNewGroups` check the home copy itself, and `advanceDue` never writes a status over a
+freeze made while it was running.
+
+A copy that has been removed, by a moderator or by retraction, leaves a row behind, and that
+row stops the post rippling into the group again even when it is re-approved. That is
+deliberate.
 
 ## A missing reach row means retention, not failure
 

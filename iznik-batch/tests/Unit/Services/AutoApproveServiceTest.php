@@ -448,6 +448,35 @@ class AutoApproveServiceTest extends TestCase
     }
 
     /**
+     * A copy a moderator's Back to pending pulled back waits for a moderator, even once the
+     * post is approved again on its home group. The 6 Sept Barnet copy of 121796333 was
+     * auto-approved an hour after a Hertford moderator sent the post back to pending.
+     */
+    public function test_does_not_auto_approve_a_copy_sent_back_for_a_moderator(): void
+    {
+        $user = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $nearbyGroup = $this->createTestGroup();
+        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, $originGroup);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
+            'msgtype' => 'Offer', 'rippled_in' => 1, 'needs_moderator' => 1,
+        ]);
+
+        $this->service->process();
+
+        $this->assertSame(MessageGroup::COLLECTION_PENDING, DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->value('collection'),
+            'a copy sent back for a moderator is never auto-approved');
+    }
+
+    /**
      * A rippled-in post (messages_groups.rippled_in = 1) already Approved on its origin
      * group is fast-tracked on nearby groups after the short veto window — even though the
      * poster is NOT a member of the nearby group (the membership gate would block it, and

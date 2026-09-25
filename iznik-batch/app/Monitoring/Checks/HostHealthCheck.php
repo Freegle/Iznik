@@ -60,10 +60,16 @@ SH;
      * cycle after a monit restart) and "Resource limit matched" (service up,
      * resource rule breached). Anything matching neither list is an error.
      *
-     * One exception: "Not monitored" on a service whose monitoring mode is
-     * `manual` is the state a person put it in (a retired service whose
-     * configuration is kept in place), not a fault, so it is reported as held
-     * rather than as a warning.
+     * One exception: "Not monitored" on a service a person parked on purpose
+     * (a retired service whose configuration is kept in place) is not a fault,
+     * so it is reported as held rather than as a warning. Monit shows that in
+     * one of two ways. Before 5.26 the check was written `mode manual` and
+     * the status output said `monitoring mode manual`. From 5.26 `mode
+     * manual` is deprecated and silently mapped to `onreboot laststate`:
+     * the status output then says `monitoring mode active` and `on reboot
+     * laststate`, and only that second line tells a parked service apart
+     * from one that drifted out of monitoring (whose `on reboot` is
+     * `start`). Both spellings are read.
      */
     private const MONIT_WARNING = [
         'Resource limit matched',
@@ -73,7 +79,9 @@ SH;
 
     private const MONIT_MODE_MANUAL = 'manual';
 
-    /** Services found "Not monitored" in manual mode on the last run. @var list<string> */
+    private const MONIT_ONREBOOT_LASTSTATE = 'laststate';
+
+    /** Services found "Not monitored" and parked on purpose on the last run. @var list<string> */
     private array $held = [];
 
     private readonly string $host;
@@ -117,7 +125,7 @@ SH;
 
         $held = $this->held === []
             ? ''
-            : '; monit holds ' . implode(', ', $this->held) . ' in manual mode';
+            : '; monit holds ' . implode(', ', $this->held) . ' retired on purpose';
 
         return OutcomeResult::ok($this->slug, "{$this->host} healthy (no reboot needed, no pending security updates{$held})");
     }
@@ -157,11 +165,12 @@ SH;
     }
 
     /**
-     * Service name → monitoring mode (active, passive, manual) from
-     * `monit status -B`, whose output is one block per service headed by
-     * `<Type> '<name>'` with a `monitoring mode <mode>` line inside it.
+     * Service name → its monitoring mode (active, passive, manual) and its
+     * on-reboot setting (start, nostart, laststate) from `monit status -B`,
+     * whose output is one block per service headed by `<Type> '<name>'` with
+     * `monitoring mode <mode>` and `on reboot <setting>` lines inside it.
      *
-     * @return array<string, string>
+     * @return array<string, array{mode?: string, onreboot?: string}>
      */
     private function monitoringModes(string $statusOutput): array
     {
@@ -172,11 +181,25 @@ SH;
             if (preg_match("/^\\S.*?'([^']+)'\\s*$/", $line, $m)) {
                 $service = $m[1];
             } elseif ($service !== null && preg_match('/^\s*monitoring mode\s+(\S+)/', $line, $m)) {
-                $modes[$service] = strtolower($m[1]);
+                $modes[$service]['mode'] = strtolower($m[1]);
+            } elseif ($service !== null && preg_match('/^\s*on reboot\s+(\S+)/', $line, $m)) {
+                $modes[$service]['onreboot'] = strtolower($m[1]);
             }
         }
 
         return $modes;
+    }
+
+    /**
+     * Parked on purpose: `mode manual` as an old monit reports it, or what a
+     * monit from 5.26 on turns that into, `on reboot laststate`.
+     *
+     * @param  array{mode?: string, onreboot?: string}|null  $settings
+     */
+    private function isHeld(?array $settings): bool
+    {
+        return ($settings['mode'] ?? null) === self::MONIT_MODE_MANUAL
+            || ($settings['onreboot'] ?? null) === self::MONIT_ONREBOOT_LASTSTATE;
     }
 
     /**
@@ -185,7 +208,7 @@ SH;
      * we do the same but with an explicit warning tier for states that don't
      * mean the service is down.
      *
-     * @param  array<string, string>  $modes  service name → monitoring mode
+     * @param  array<string, array{mode?: string, onreboot?: string}>  $modes  service name → mode and on-reboot setting
      * @return array{0: list<string>, 1: list<string>} [errors, warnings]
      */
     private function interpretMonit(string $monitOutput, array $modes = []): array
@@ -208,7 +231,7 @@ SH;
             }
 
             $service = preg_split('/\s{2,}/', $line)[0];
-            if (str_contains($line, 'Not monitored') && ($modes[$service] ?? null) === self::MONIT_MODE_MANUAL) {
+            if (str_contains($line, 'Not monitored') && $this->isHeld($modes[$service] ?? null)) {
                 $this->held[] = $service;
                 continue;
             }

@@ -97,6 +97,22 @@ class MicrovolunteeringNotifyService
               -- be offered up for \"please review\" - the hold only ever
               -- belonged to the group it was placed on.
               AND messages_groups.heldby IS NULL
+              -- Only a copy a member can still vote on. A copy retracted from a
+              -- group keeps its arrival time, and the vote is refused for a group
+              -- whose copy is gone, so asking there only produced a 403 (SR-DYS36).
+              AND messages_groups.deleted = 0
+              AND messages_groups.collection IN ('Pending', 'Approved')
+              -- Nor a post that is finished: its latest outcome is Taken, Received
+              -- or Withdrawn (a later Repost makes it live again).
+              AND NOT EXISTS (
+                  SELECT 1 FROM messages_outcomes mo
+                   WHERE mo.msgid = messages.id
+                     AND mo.outcome IN ('Taken', 'Received', 'Withdrawn')
+                     AND NOT EXISTS (
+                         SELECT 1 FROM messages_outcomes later
+                          WHERE later.msgid = mo.msgid AND later.id > mo.id
+                     )
+              )
               AND groups.microvolunteering = 1
         ");
 

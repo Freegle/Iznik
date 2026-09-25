@@ -159,6 +159,54 @@ class ScheduledOutcomeRegistryTest extends TestCase
     }
 
     /**
+     * The TN post-ingestion check is gated on the API-ingestion flag, so the
+     * smoke test skips it. With the flag off it must contribute nothing; with it
+     * on it must query messages.tnpostid/arrival against the real schema and
+     * distinguish "a TN post arrived inside the window" from "nothing at all".
+     */
+    public function test_tn_posts_check_is_gated_on_flag_and_queries_messages(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 6, 12, 14, 0, 0));
+        config(['freegle.trashnothing.ingest_posts_via_api' => false]);
+        config(['freegle.monitoring.tn_posts_max_age_hours' => 6]);
+
+        $check = $this->check('tn:sync (posts)');
+        $this->assertTrue(
+            $check->evaluate(Carbon::now())->isSkipped(),
+            'TN post check must be inert while API ingestion is off'
+        );
+
+        config(['freegle.trashnothing.ingest_posts_via_api' => true]);
+        DB::table('messages')->whereNotNull('tnpostid')->delete();
+
+        // No TN post at all in the window -> breach (proves the query ran).
+        $this->assertTrue($this->check('tn:sync (posts)')->evaluate(Carbon::now())->isBreach());
+
+        $user = $this->createTestUser();
+        $insertTnPost = function (Carbon $arrival) use ($user): void {
+            DB::table('messages')->insert([
+                'fromuser' => $user->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: A TN post',
+                'textbody' => 'A TN post. Collection only.',
+                'message'  => 'A TN post. Collection only.',
+                'arrival'  => $arrival,
+                'date'     => $arrival,
+                'source'   => 'Email',
+                'tnpostid' => 'tn-' . $arrival->timestamp,
+            ]);
+        };
+
+        // A TN post older than the window is not enough.
+        $insertTnPost(Carbon::now()->subHours(9));
+        $this->assertTrue($this->check('tn:sync (posts)')->evaluate(Carbon::now())->isBreach());
+
+        // One inside the window -> ok.
+        $insertTnPost(Carbon::now()->subHour());
+        $this->assertTrue($this->check('tn:sync (posts)')->evaluate(Carbon::now())->isOk());
+    }
+
+    /**
      * The contentcheck worker deliberately skips held-by-a-mod rows
      * (->whereNull('mg.heldby')): a held post is pulled back for review and is
      * never auto-checked until the mod releases it, so it can sit indefinitely

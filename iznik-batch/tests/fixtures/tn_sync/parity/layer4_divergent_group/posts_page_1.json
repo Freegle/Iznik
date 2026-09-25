@@ -1,0 +1,22 @@
+{
+  "num_pages": 1,
+  "posts": [
+    {
+      "post_id": "tn-parity-l4-1",
+      "group_id": null,
+      "user_id": 88020006,
+      "title": "Divergent Widget",
+      "content": "A widget placed on different groups by each path.",
+      "date": "2026-07-10T10:00:00Z",
+      "type": "offer",
+      "outcome": null,
+      "latitude": -40.0000,
+      "longitude": 150.0000,
+      "footer": null,
+      "photos": [],
+      "expiration": null,
+      "reselling": false,
+      "url": "https://trashnothing.com/post/tn-parity-l4-1"
+    }
+  ]
+}

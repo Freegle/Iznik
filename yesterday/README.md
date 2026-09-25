@@ -426,7 +426,17 @@ This starts:
 
 #### User Management
 
-All user management is done via the CLI tool on the server:
+User management is done on the server, either via the CLI tool or via the
+gateway's admin API. Both write the same file (`yesterday/data/2fa/2fa-users.json`).
+
+> **⚠️ After any CLI change, run `docker restart yesterday-2fa`.**
+> The gateway reads the users file once at startup and never re-reads it, and it
+> rewrites the whole file from its in-memory copy on every login. So a CLI change
+> made against a running gateway will not take effect *and* will be silently
+> overwritten the next time anyone logs in successfully. The admin API below does
+> not have this problem — it updates the running gateway directly.
+
+**Via the CLI (shows a scannable QR code in the terminal):**
 
 ```bash
 cd /var/www/FreegleDocker/yesterday/2fa-gateway
@@ -454,7 +464,42 @@ node user-manager.js delete bob
 
 # Show help
 node user-manager.js help
+
+# Apply the change to the running gateway
+docker restart yesterday-2fa
 ```
+
+**Via the admin API (applies immediately, no restart):**
+
+The gateway listens on `127.0.0.1:8084`, so these must be run on the VM itself.
+`YESTERDAY_ADMIN_KEY` comes from `/var/www/FreegleDocker/.env`.
+
+```bash
+source /var/www/FreegleDocker/.env
+
+# List all users
+curl -s http://localhost:8084/admin/users -H "x-admin-key: $YESTERDAY_ADMIN_KEY"
+
+# Add a user (permission defaults to Support; anything other than
+# Support/Admin silently falls back to Support)
+curl -s -X POST http://localhost:8084/admin/users \
+  -H "x-admin-key: $YESTERDAY_ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d '{"username":"alice","password":"SecurePassword123","permission":"Support"}'
+
+# Reset a password / change permission
+curl -s -X PATCH http://localhost:8084/admin/users/alice \
+  -H "x-admin-key: $YESTERDAY_ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d '{"password":"NewPassword789","permission":"Admin"}'
+
+# Delete a user
+curl -s -X DELETE http://localhost:8084/admin/users/alice \
+  -H "x-admin-key: $YESTERDAY_ADMIN_KEY"
+```
+
+The add response returns `secret` (base32) and `qr_code_url` (an `otpauth://`
+URI) — pass these to the user over a secure channel, since the TOTP secret is
+only ever shown at creation time. If a user loses their authenticator, delete
+and re-add them.
 
 When adding a user, the tool will:
 1. Generate a TOTP secret
@@ -502,6 +547,7 @@ node user-manager.js reset geeks <new-password>
 node user-manager.js permission geeks Admin
 node user-manager.js reset chair <new-password>
 node user-manager.js permission chair Admin
+docker restart yesterday-2fa
 ```
 
 ### 9. Access the Restored System

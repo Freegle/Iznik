@@ -28,6 +28,7 @@ import (
 	flog "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/modmessaging"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
@@ -280,6 +281,14 @@ type Message struct {
 	Postings         []MessagePosting `json:"postings,omitempty" gorm:"-"`
 	Tnpostid         *string          `json:"tnpostid"`
 	Expiresat        *time.Time       `json:"expiresat,omitempty" gorm:"-"`
+	// ModMessagingAllowed is false for a TN post placed on a Freegle community the poster
+	// never chose (its origin messages_groups row has mod_messaging_allowed = 0). ModTools
+	// then offers Approve and Delete but not Edit, Blank Reply or any standard message,
+	// because there is nobody on the other end who agreed to hear from that community.
+	// True for every ordinary post. Message-level rather than per-group: the poster either
+	// asked to be on Freegle or did not, so a moderator looking at a rippled-in copy gets
+	// the origin row's answer too.
+	ModMessagingAllowed bool `json:"mod_messaging_allowed" gorm:"-"`
 	// ReplyEligible: rippling-out (#2). nil/omitted = eligible (the post isn't rippling,
 	// i.e. has no rippling_reach row, or eligibility wasn't computed). false = the post
 	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
@@ -601,7 +610,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// issue because these messages were posted with the intention of being public. It also
 				// allows shared links to work even before moderation approval.
 				db.Table("messages_groups").
-					Select("groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in").
+					Select("groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in, mod_messaging_allowed").
 					Where("msgid = ? AND deleted = 0", id).Scan(&messageGroups)
 
 				// Moderator-only "quicker to get to" P/Q note, kept in its own rippling_proximity
@@ -749,6 +758,11 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				Scan(&messagePostings)
 
 			message.MessageGroups = messageGroups
+
+			// Read off the origin row (rippled_in = 0). A rippled copy is inserted by the
+			// engine without the column and takes the table default, so testing every row
+			// would read a rippled copy of an unaddressed post as addressed.
+			message.ModMessagingAllowed = modMessagingAllowed(messageGroups)
 
 			// Holds are carried per-group on messageGroups (groups[].heldby); that is the
 			// truth, and what up-to-date clients read. The message-level Heldby below is a
@@ -2631,6 +2645,7 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		Updates(map[string]interface{}{
 			"collection": utils.COLLECTION_APPROVED, "approvedby": myid,
 			"approvedat": gorm.Expr("NOW()"), "arrival": gorm.Expr("NOW()"),
+			"needs_moderator": 0,
 		}); result.Error != nil {
 		log.Printf("Failed to approve message %d: %v", req.ID, result.Error)
 	}
@@ -3218,7 +3233,14 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// every other group whose copy is pulled back (rippled copies elsewhere) gets a Hold
 	// log from SendForReviewAllGroups, so its moderators can see why the post is back in
 	// their queue and who did it (Discourse 10102).
-	microvolunteering.SendForReviewAllGroups(db, req.ID, "A moderator moved this post back to pending for review.", &myid, authorizedGroups)
+	flipped := microvolunteering.SendForReviewAllGroups(db, req.ID, "A moderator moved this post back to pending for review.", &myid, authorizedGroups)
+
+	// Every copy pulled back, and the copy this moderator acted on, now waits for a
+	// moderator of its own group: needs_moderator stops the content check and auto-approve
+	// putting it back live. Only a moderator's Approve clears it.
+	db.Table("messages_groups").
+		Where("msgid = ? AND groupid IN ? AND collection = ?", req.ID, append(flipped, authorizedGroups...), utils.COLLECTION_PENDING).
+		Update("needs_moderator", 1)
 
 	// Freeze the ripple once the origin is Pending: the copies persist for per-group
 	// moderation and a later re-approval brings a copy back without re-rippling or
@@ -3410,6 +3432,14 @@ func handleReply(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	ctx := getMessageModContext(db, myid, req.ID)
 	if ctx == nil {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
+	}
+
+	// The whole point of an unaddressed TN post is that its poster has not agreed to hear
+	// from this community's moderators. ModTools hides Blank Reply and the standard
+	// messages for these posts; this is the guard behind that, and it matters because app
+	// bundles are baked into the APK and can be months out of date.
+	if modmessaging.PostIsUnaddressed(db, req.ID) {
+		return fiber.NewError(fiber.StatusForbidden, "This poster hasn't joined Freegle, so they can't be messaged")
 	}
 
 	subject := ""
@@ -4136,6 +4166,15 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 
 	if !isOwner && !isMod {
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to modify this message")
+	}
+
+	// An unaddressed TN post is not a post its host community owns: the poster never chose
+	// that community and cannot be told the wording was changed, so a moderator rewriting
+	// it would be putting words in the mouth of someone with no way to object. Approve and
+	// delete stay available (see modmessaging); editing does not. The poster's own edits,
+	// which arrive from TN as the owner, are untouched.
+	if isMod && !isOwner && modmessaging.PostIsUnaddressed(db, req.ID) {
+		return fiber.NewError(fiber.StatusForbidden, "This post can't be edited - the poster hasn't joined Freegle")
 	}
 
 	// Get old values for edit tracking.
@@ -5792,9 +5831,54 @@ func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest
 		return handleBulkInterestState(c, myid, req)
 	case "BulkEditLink":
 		return handleBulkEditLink(c, myid, req)
+	case "Report":
+		return handleReport(c, myid, req)
 	default:
 		return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
 	}
+}
+
+// handleReport records a member's report of an UNADDRESSED TN post.
+//
+// Every other post is reported the way it always has been - a User2Mod chat message to the
+// community's moderators, which CreateChatMessage turns into a review verdict. An
+// unaddressed post has no community that could act on such a message, so there is nobody to
+// send it to; the verdict is recorded directly here instead, and a quorum of two distinct
+// reporters removes the post (microvolunteering.RecordReportVerdict).
+//
+// Restricted to unaddressed posts on purpose: this must not become a way to report an
+// ordinary post without its moderators ever hearing about it.
+func handleReport(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
+	db := database.DBConn
+
+	// POST /message does not require a login (View is anonymous), and the quorum counts
+	// distinct people, so an anonymous report has nothing to count. Say so rather than
+	// recording nothing and answering Success.
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	if req.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "id is required")
+	}
+
+	if !modmessaging.PostIsUnaddressed(db, req.ID) {
+		return fiber.NewError(fiber.StatusBadRequest, "Report this post to its community's moderators")
+	}
+
+	groupid := uint64(0)
+	if req.Groupid != nil {
+		groupid = *req.Groupid
+	}
+
+	comments := ""
+	if req.Message != nil {
+		comments = *req.Message
+	}
+
+	microvolunteering.RecordReportVerdict(db, myid, req.ID, groupid, comments)
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
 // handlePromise records a promise of an item to a user.

@@ -483,6 +483,52 @@ class ContentCheckTest extends TestCase
         $this->assertSame('Approved', $locColl, 'located Offer is auto-promoted as normal');
     }
 
+    public function test_edited_copy_sent_back_for_a_moderator_is_not_auto_promoted(): void
+    {
+        // A moderator's Back to pending marks every copy it pulls back needs_moderator. The
+        // next edit makes the content check look at those copies again; a clean post from an
+        // unmoderated poster must still wait for a moderator, not go straight back live with
+        // no log entry (122011064: six copies re-approved a minute after an edit). An
+        // identical copy that was never sent back is promoted as normal.
+        $group = $this->createTestGroup();
+        $other = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        $this->createMembership($user, $other, ['ourPostingStatus' => 'DEFAULT']);
+
+        $mid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Bookshelf (SW1A)',
+            'textbody' => 'A bookshelf. Collection only.',
+            'message'  => 'A bookshelf. Collection only.',
+            'arrival'  => now()->subHour(),
+            'date'     => now()->subHour(),
+            'editedat' => now(),
+            'source'   => 'Platform',
+            'lat'      => 51.50,
+            'lng'      => -0.13,
+        ]);
+        foreach ([[$group->id, 1], [$other->id, 0]] as [$gid, $needs]) {
+            DB::table('messages_groups')->insert([
+                'msgid'                   => $mid,
+                'groupid'                 => $gid,
+                'collection'              => 'Pending',
+                'arrival'                 => now()->subHour(),
+                'deleted'                 => 0,
+                'needs_moderator'         => $needs,
+                'contentcheck_checked_at' => now()->subMinutes(30),
+            ]);
+        }
+
+        $this->service->processUnprocessed();
+
+        $this->assertSame('Pending', DB::table('messages_groups')->where('msgid', $mid)->where('groupid', $group->id)->value('collection'),
+            'a copy sent back for a moderator stays Pending after an edit');
+        $this->assertSame('Approved', DB::table('messages_groups')->where('msgid', $mid)->where('groupid', $other->id)->value('collection'),
+            'the same post on a copy that was not sent back is promoted as normal');
+    }
+
     public function test_allowed_category_keywords_are_not_flagged(): void
     {
         // 'allowed' is a category (whitelist) in concern_keywords, not an action.
