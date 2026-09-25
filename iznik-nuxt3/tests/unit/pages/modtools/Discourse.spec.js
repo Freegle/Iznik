@@ -58,19 +58,27 @@ describe('Discourse Page', () => {
   })
 
   afterEach(() => {
+    mounted.splice(0).forEach((w) => w.unmount())
     window.location = originalLocation
     delete globalThis.__testUseRoute
     vi.restoreAllMocks()
   })
 
+  // Every mount is torn down after its test. The page watches the shared
+  // myid ref, so a component left mounted by an earlier test would wake up
+  // when a later test logs in, write a cookie of its own and redirect.
+  const mounted = []
+
   function mountComponent() {
-    return mount(Discourse, {
+    const wrapper = mount(Discourse, {
       global: {
         stubs: {
           'b-img': { template: '<img />' },
         },
       },
     })
+    mounted.push(wrapper)
+    return wrapper
   }
 
   async function mountLoggedInWithChallenge() {
