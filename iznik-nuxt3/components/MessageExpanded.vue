@@ -415,7 +415,7 @@
               >
                 <v-icon icon="handshake" />
                 {{
-                  message.promisedtome ? 'Promised to you' : 'Already promised'
+                  message.promisedtoyou ? 'Promised to you' : 'Already promised'
                 }}
               </div>
               <NoticeMessage
@@ -514,7 +514,7 @@
           class="promised-notice mb-2"
         >
           <v-icon icon="handshake" />
-          {{ message.promisedtome ? 'Promised to you' : 'Already promised' }}
+          {{ message.promisedtoyou ? 'Promised to you' : 'Already promised' }}
         </div>
         <NoticeMessage
           v-if="reachBlocked && replyable && !replied && !message.successful"

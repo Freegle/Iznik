@@ -108,7 +108,7 @@ describe('MessageSummary', () => {
     })
 
     it('applies promisedfade class for promised to others', () => {
-      // :class="{ promisedfade: showPromised && message.promised && !message.promisedtome }"
+      // :class="{ promisedfade: showPromised && message.promised && !message.promisedtoyou }"
       expect(true).toBe(true)
     })
 
