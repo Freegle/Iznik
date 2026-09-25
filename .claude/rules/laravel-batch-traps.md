@@ -152,6 +152,14 @@ illustrated" that #1556's title claims. Quote a rate here, not an absolute.
 
 If you want a query to cover pending posts, do not reach the spatial index for them.
 
+## A retracted rippled copy still looks Approved
+
+Rippling removes a copy from a group by setting `messages_groups.deleted = 1`. The row keeps
+`collection = 'Approved'` and its arrival time. Any query over `messages_groups` that filters on
+collection or arrival but not `deleted = 0` treats that copy as live. The microvolunteering
+notifier did, and asked members to review posts that were no longer on their communities; every
+vote was then refused with a 403 (SR-DYS36). The same applies in Go.
+
 ## See also
 
 - `.claude/rules/go-api-traps.md` - the same class of silent wrong answer on the Go side.
