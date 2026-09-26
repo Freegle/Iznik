@@ -219,11 +219,14 @@ vi.mock('~/modtools/composables/useChatMT', () => {
   }
 })
 
-// Mock Nuxt app
+// Mock Nuxt app. The referral mock is hoisted so tests can make it succeed or fail.
+const { mockReferToSupport } = vi.hoisted(() => ({
+  mockReferToSupport: vi.fn().mockResolvedValue(),
+}))
 vi.mock('#app', () => ({
   useNuxtApp: () => ({
     $api: {
-      chat: { referToSupport: vi.fn().mockResolvedValue() },
+      chat: { referToSupport: mockReferToSupport },
       bandit: { shown: vi.fn().mockResolvedValue() },
     },
   }),
@@ -616,5 +619,37 @@ describe('ModChatFooter', () => {
         expect(newMessage).toBe(expected)
       }
     )
+  })
+
+  describe('Refer to Support', () => {
+    // Before, the click fired the request and showed nothing, so a refused
+    // referral (Discourse 10199) looked exactly like a sent one.
+    beforeEach(() => {
+      mockReferToSupport.mockReset()
+    })
+
+    it('tells the moderator when the referral has gone to Support', async () => {
+      mockReferToSupport.mockResolvedValue()
+      const wrapper = await mountComponent({ id: 456 })
+
+      await wrapper.vm.referToSupport()
+      await flushPromises()
+
+      expect(mockReferToSupport).toHaveBeenCalledWith(456)
+      expect(wrapper.find('[data-test="refer-sent"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="refer-failed"]').exists()).toBe(false)
+    })
+
+    it('says so when the referral is refused, and where to turn instead', async () => {
+      mockReferToSupport.mockRejectedValue(new Error('403'))
+      const wrapper = await mountComponent({ id: 456 })
+
+      await wrapper.vm.referToSupport()
+      await flushPromises()
+
+      expect(wrapper.find('[data-test="refer-failed"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="refer-failed"]').text()).toContain('support@ilovefreegle.org')
+      expect(wrapper.find('[data-test="refer-sent"]').exists()).toBe(false)
+    })
   })
 })

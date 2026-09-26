@@ -393,6 +393,24 @@
       @hidden="showNudgeWarningModal = false"
     />
     <MicroVolunteering v-if="showMicrovolunteering" />
+    <NoticeMessage
+      v-if="referResult === 'sent'"
+      variant="info"
+      class="mt-1"
+      data-test="refer-sent"
+    >
+      Referred to Support. They will look at the chat and get back to you by
+      email.
+    </NoticeMessage>
+    <NoticeMessage
+      v-else-if="referResult === 'failed'"
+      variant="danger"
+      class="mt-1"
+      data-test="refer-failed"
+    >
+      Sorry, that didn't work. Please email support@ilovefreegle.org with a link
+      to this chat instead.
+    </NoticeMessage>
     <ConfirmModal
       v-if="showConfirmModal"
       title="Refer this chat to Support?"
@@ -881,8 +899,17 @@ const typing = async () => {
 const spamReport = () => {
   showSpamModal.value = true
 }
-const referToSupport = () => {
-  $api.chat.referToSupport(props.id)
+// 'sent' or 'failed' after a referral, so the moderator knows whether Support will see it.
+// Nothing was shown before, and a refused request looked exactly like a sent one.
+const referResult = ref(null)
+const referToSupport = async () => {
+  referResult.value = null
+  try {
+    await $api.chat.referToSupport(props.id)
+    referResult.value = 'sent'
+  } catch (e) {
+    referResult.value = 'failed'
+  }
 }
 const confirmReferToSupport = () => {
   showConfirmModal.value = true
