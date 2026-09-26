@@ -13,6 +13,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/queue"
@@ -254,14 +255,31 @@ func TestCrossPost_FullReadSurface(t *testing.T) {
 	// Posted + approved on group A (helper adds messages_groups/spatial/index for A).
 	msgID := CreateTestMessage(t, posterID, groupA, subject, lat, lng)
 
-	// Cross-post to group B: approved messages_groups + per-group word index. Under the
-	// one-row spatial model messages_spatial keeps a single row per message (UNIQUE(msgid));
-	// the cross-post's group membership lives in messages_groups, which browse/search join through.
+	// Cross-post to group B. Under the one-row spatial model messages_spatial keeps
+	// a single row per message (UNIQUE(msgid)); the cross-post's group membership
+	// lives in messages_groups, which browse/search join through.
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
-	indexMessageWords(t, db, msgID, groupB, subject)
+
+	// Seed the embedding store so the pure-vector search can find the post. The
+	// store holds one entry per message keyed to its single spatial group (A) —
+	// search is spatial-reach based, so the post is found via group A's area, not
+	// via its group-B cross-post membership.
+	embedding.ResetQueryCache()
+	crossVec := makeTestVec(1.0)
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: msgID, Groupid: groupA, Msgtype: "Offer", Lat: lat, Lng: lng,
+			Subject: subject, Arrival: time.Now(), SubjectVec: crossVec},
+	})
+	crossSidecar := mockSidecarReturning(t, crossVec[:])
+	embedding.SetSidecarURL(crossSidecar.URL)
+	t.Cleanup(func() {
+		embedding.Global.SetEntries(nil)
+		embedding.SetSidecarURL("")
+		embedding.ResetQueryCache()
+		crossSidecar.Close()
+	})
 
 	defer func() {
-		db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
@@ -306,11 +324,12 @@ func TestCrossPost_FullReadSurface(t *testing.T) {
 	}
 	assert.Equal(t, 1, browseCount, "cross-post should appear once in mygroups browse")
 
-	// 4. Search must find the cross-post when filtering by EITHER group — this is the
-	//    crux of the per-group spatial fix: before it, only one group had a spatial row,
-	//    so a search filtered to the OTHER group returned nothing. The endpoint dedups by
-	//    msgid (across its exact + starts-with passes and across per-group spatial rows),
-	//    so the message must be returned exactly once each time.
+	// 4. Search is spatial-reach based (Edward, 2026-07): a post is found via the
+	//    area of its single spatial group, not on every group it was cross-posted
+	//    or rippled into. The store holds one entry keyed to group A (the spatial
+	//    group), so a search filtered to group A finds it exactly once, and a
+	//    search filtered to group B (a non-spatial cross-post membership) does not.
+	//    This replaces the retired keyword index's per-(msgid,groupid) behaviour.
 	searchCount := func(groupid uint64) int {
 		u := fmt.Sprintf("/api/message/search/%s?groupids=%d&jwt=%s", searchWord, groupid, viewerToken)
 		r, e := getApp().Test(httptest.NewRequest("GET", u, nil))
@@ -326,8 +345,8 @@ func TestCrossPost_FullReadSurface(t *testing.T) {
 		}
 		return c
 	}
-	assert.Equal(t, 1, searchCount(groupA), "cross-post must be searchable on group A exactly once")
-	assert.Equal(t, 1, searchCount(groupB), "cross-post must be searchable on group B exactly once (via the messages_groups join)")
+	assert.Equal(t, 1, searchCount(groupA), "cross-post is searchable on its spatial group A exactly once")
+	assert.Equal(t, 0, searchCount(groupB), "cross-post is NOT searchable on the non-spatial group B (spatial-reach search)")
 }
 
 // TestCrossPost_SingleGroupBrowse verifies a message cross-posted to group B still appears in

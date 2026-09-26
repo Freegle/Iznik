@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Services\PollinationsService;
 use App\Services\TusService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use PHPUnit\Framework\Attributes\DataProvider;
 use ReflectionClass;
 use Tests\TestCase;
@@ -69,6 +70,23 @@ class PollinationsServiceTest extends TestCase
         return $data;
     }
 
+    /**
+     * Minimal valid JPEG bytes for a solid-colour 2x2 image, built via GD so
+     * the test has no binary fixture file to maintain.
+     */
+    private function solidImageJpeg(int $r, int $g, int $b): string
+    {
+        $img = imagecreatetruecolor(2, 2);
+        $color = imagecolorallocate($img, $r, $g, $b);
+        imagefill($img, 0, 0, $color);
+        ob_start();
+        imagejpeg($img, null, 100);
+        $data = ob_get_clean();
+        imagedestroy($img);
+
+        return $data;
+    }
+
     // =========================================================================
     // Prompt / URL builders — pure functions
     // =========================================================================
@@ -91,12 +109,29 @@ class PollinationsServiceTest extends TestCase
         $this->assertStringContainsString('UK audience', $prompt);
     }
 
+    public function test_build_message_prompt_embeds_item_name(): void
+    {
+        $prompt = $this->service->buildMessagePrompt('a red bicycle');
+
+        $this->assertStringContainsString('a red bicycle', $prompt);
+        $this->assertStringContainsString('dark green background', $prompt);
+        $this->assertStringContainsString('single object only.', $prompt);
+    }
+
     #[DataProvider('promptStrippingProvider')]
     public function test_build_job_prompt_strips_control_markers(string $input, string $expectedClean): void
     {
         $prompt = $this->service->buildJobPrompt($input);
         $this->assertStringContainsString("single isolated {$expectedClean} centered on plain dark green background", $prompt);
         $this->assertStringContainsString('Square format', $prompt);
+    }
+
+    public function test_build_job_prompt_embeds_object_name(): void
+    {
+        $prompt = $this->service->buildJobPrompt('a blue kettle');
+
+        $this->assertStringContainsString('a blue kettle', $prompt);
+        $this->assertStringContainsString('Square format.', $prompt);
     }
 
     public function test_build_image_url_encodes_prompt_and_dimensions(): void
@@ -109,6 +144,20 @@ class PollinationsServiceTest extends TestCase
         $this->assertStringContainsString('height=480', $url);
         $this->assertStringContainsString('nologo=true&model=flux', $url);
         $this->assertMatchesRegularExpression('/seed=\d+/', $url);
+    }
+
+    public function test_build_image_url_varies_seed_between_calls(): void
+    {
+        // Not a strict guarantee (rand() could coincide), but with a 1..999999
+        // range across two calls a collision is astronomically unlikely and
+        // this is what actually distinguishes otherwise-identical requests.
+        $url1 = $this->service->buildImageUrl('same prompt', 100, 100);
+        $url2 = $this->service->buildImageUrl('same prompt', 100, 100);
+
+        preg_match('/seed=(\d+)/', $url1, $m1);
+        preg_match('/seed=(\d+)/', $url2, $m2);
+
+        $this->assertNotSame($m1[1], $m2[1]);
     }
 
     // =========================================================================
@@ -154,6 +203,31 @@ class PollinationsServiceTest extends TestCase
         $this->assertTrue($this->service->shouldSkipItem('flaky item'));
     }
 
+    public function test_record_failure_logs_only_once_threshold_is_reached(): void
+    {
+        Log::shouldReceive('info')
+            ->once()
+            ->withArgs(function (string $message) {
+                return str_contains($message, "'threshold-item'")
+                    && str_contains($message, 'failed 3 times');
+            });
+
+        $this->service->recordFailure('threshold-item');
+        $this->service->recordFailure('threshold-item');
+        $this->service->recordFailure('threshold-item');
+    }
+
+    public function test_record_failure_tracks_separate_items_independently(): void
+    {
+        $this->service->recordFailure('item-a');
+        $this->service->recordFailure('item-a');
+        $this->service->recordFailure('item-a');
+
+        // item-b has never failed, so it must not be affected by item-a's count.
+        $this->assertFalse($this->service->shouldSkipItem('item-b'));
+        $this->assertTrue($this->service->shouldSkipItem('item-a'));
+    }
+
     public function test_expired_failure_entries_are_not_counted(): void
     {
         // Write a failure cache entry whose timestamp is outside the 1-day expiry.
@@ -193,6 +267,18 @@ class PollinationsServiceTest extends TestCase
         $this->assertDatabaseHas('ai_images', ['name' => 'my-item', 'externaluid' => 'freegletusd-xyz999']);
     }
 
+    public function test_cache_image_inserts_new_row(): void
+    {
+        $name = 'widget-'.uniqid();
+
+        $this->service->cacheImage($name, 'freegletusd-abc123', 'hash1');
+
+        $row = DB::table('ai_images')->where('name', $name)->first();
+        $this->assertNotNull($row);
+        $this->assertSame('freegletusd-abc123', $row->externaluid);
+        $this->assertSame('hash1', $row->imagehash);
+    }
+
     // =========================================================================
     // applyDuotoneGreen — real GD image manipulation
     // =========================================================================
@@ -209,6 +295,49 @@ class PollinationsServiceTest extends TestCase
     public function test_apply_duotone_green_returns_false_for_invalid_image_data(): void
     {
         $this->assertFalse($this->service->applyDuotoneGreen('not an image, just garbage bytes'));
+    }
+
+    public function test_apply_duotone_green_maps_black_towards_dark_green(): void
+    {
+        $black = $this->solidImageJpeg(0, 0, 0);
+
+        $result = $this->service->applyDuotoneGreen($black);
+
+        $this->assertIsString($result);
+        $img = imagecreatefromstring($result);
+        $this->assertNotFalse($img);
+        $rgb = imagecolorat($img, 0, 0);
+        $r = ($rgb >> 16) & 0xFF;
+        $g = ($rgb >> 8) & 0xFF;
+        $b = $rgb & 0xFF;
+        imagedestroy($img);
+
+        // Black (gray=0, t=0) maps to (13, 51, 17) exactly; allow slack for
+        // JPEG recompression at quality 90.
+        $this->assertEqualsWithDelta(13, $r, 15);
+        $this->assertEqualsWithDelta(51, $g, 15);
+        $this->assertEqualsWithDelta(17, $b, 15);
+    }
+
+    public function test_apply_duotone_green_maps_white_towards_white(): void
+    {
+        $white = $this->solidImageJpeg(255, 255, 255);
+
+        $result = $this->service->applyDuotoneGreen($white);
+
+        $this->assertIsString($result);
+        $img = imagecreatefromstring($result);
+        $this->assertNotFalse($img);
+        $rgb = imagecolorat($img, 0, 0);
+        $r = ($rgb >> 16) & 0xFF;
+        $g = ($rgb >> 8) & 0xFF;
+        $b = $rgb & 0xFF;
+        imagedestroy($img);
+
+        // White (gray=255, t=1) maps to (255, 255, 255) exactly.
+        $this->assertEqualsWithDelta(255, $r, 5);
+        $this->assertEqualsWithDelta(255, $g, 5);
+        $this->assertEqualsWithDelta(255, $b, 5);
     }
 
     // =========================================================================
