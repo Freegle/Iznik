@@ -1829,6 +1829,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 				held["name"] = h.Name
 				held["email"] = h.Email
 			}
+			held["holderlostaccess"] = !holderStillReviews(db, m.HeldBy, m.RoomChattype, m.RoomGroupid, m.Userid, m.RoomUser1, m.RoomUser2)
 			msg["held"] = held
 		}
 
@@ -1879,6 +1880,48 @@ func fetchReviewMessage(db *gorm.DB, msgID uint64) *reviewMessage {
 		return nil
 	}
 	return &msg
+}
+
+// holderStillReviews says whether a hold's holder would still get the message in their own
+// review queue, by the same rules as getReviewQueue's base query. A holder can lose that when
+// the membership that put it there goes, for instance a spammer being removed from the
+// holder's group. Only the holder is offered Release, so without this nobody could clear
+// the hold (Discourse 10171/54).
+func holderStillReviews(db *gorm.DB, holder uint64, chattype string, roomGroupid, sender, user1, user2 uint64) bool {
+	var groupIDs []uint64
+	db.Table("memberships").Select("groupid").
+		Where("userid = ? AND role IN (?, ?)", holder, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Scan(&groupIDs)
+	if len(groupIDs) == 0 {
+		return false
+	}
+
+	if chattype == utils.CHAT_TYPE_USER2MOD {
+		for _, g := range groupIDs {
+			if g == roomGroupid {
+				return true
+			}
+		}
+		return false
+	}
+
+	recipient := user1
+	if sender == user1 {
+		recipient = user2
+	}
+
+	var recipientOnHolderGroup, recipientMemberships, senderOnHolderGroup int64
+	db.Table("memberships").Where("userid = ? AND groupid IN (?)", recipient, groupIDs).Count(&recipientOnHolderGroup)
+	if recipientOnHolderGroup > 0 {
+		return true
+	}
+	db.Table("memberships").Where("userid = ?", recipient).Count(&recipientMemberships)
+	if recipientMemberships > 0 {
+		return false
+	}
+	db.Table("memberships").Where("userid = ? AND groupid IN (?)", sender, groupIDs).Count(&senderOnHolderGroup)
+
+	return senderOnHolderGroup > 0
 }
 
 // checkHoldConflict returns true if the message is held by a different moderator.

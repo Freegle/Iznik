@@ -12,11 +12,15 @@ const mockHoldChat = vi.fn().mockResolvedValue({})
 const mockReleaseChat = vi.fn().mockResolvedValue({})
 const mockRedactChat = vi.fn().mockResolvedValue({})
 
-vi.mock('~/composables/useMe', () => ({
-  useMe: () => ({
-    me: { id: 999, displayname: 'Mod User', email: 'mod@example.com' },
-  }),
-}))
+// A ref, as the real useMe returns, so script code reading me.value works too.
+vi.mock('~/composables/useMe', async () => {
+  const { ref } = await import('vue')
+  return {
+    useMe: () => ({
+      me: ref({ id: 999, displayname: 'Mod User', email: 'mod@example.com' }),
+    }),
+  }
+})
 
 vi.mock('~/modtools/composables/useModMe', () => ({
   useModMe: () => ({
@@ -276,6 +280,25 @@ describe('ModChatReview', () => {
         .findAll('button')
         .find((b) => b.text().includes('Release'))
       expect(releaseButton).toBeUndefined()
+    })
+
+    // Discourse 10171/54: the holder stopped moderating any group the message is
+    // reviewed through, so they cannot see it to release it. Anyone else may.
+    it('offers Release to others when the holder has lost access to the message', () => {
+      const wrapper = mountComponent({
+        held: { ...heldByOther, holderlostaccess: true },
+      })
+      expect(wrapper.text()).toContain('no longer moderate')
+      expect(
+        wrapper.findAll('button').find((b) => b.text().includes('Release'))
+      ).toBeDefined()
+
+      const stillHeld = mountComponent({
+        held: { ...heldByOther, holderlostaccess: false },
+      })
+      expect(
+        stillHeld.findAll('button').find((b) => b.text().includes('Release'))
+      ).toBeUndefined()
     })
 
     // Discourse #9879/1: unlike pending-post review (ModMessageButtons.vue

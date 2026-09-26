@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-25
+last_reviewed: 2026-09-26
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -7,6 +7,7 @@ covers:
   - iznik-nuxt3/modtools/pages/spammers.vue
   - iznik-nuxt3/modtools/components/ModMember*.vue
   - iznik-nuxt3/modtools/components/ModRelatedMember.vue
+  - iznik-nuxt3/modtools/components/ModChatReview.vue
   - iznik-nuxt3/modtools/components/ModSupportUser.vue
   - iznik-batch/app/Services/ChatProcessService.php
   - iznik-batch/app/Console/Commands/User/DetectRelatedAccountsCommand.php
@@ -131,6 +132,12 @@ Reporting a genuine spammer helps every community, not just yours.
 flagged for **worry words** (money, phone numbers, email addresses, bad language) or by a
 community's "quicker chat review" setting. You can approve a message, or add a moderator
 note that both people in the chat can see. "Delete All" clears the queue.
+
+**Hold** claims a message so that only you can act on it until you release it. Held
+messages never appear in wider chat review. A hold can outlive the holder's access: if
+the member who put the message in their queue leaves their community (a spammer being
+removed, for example), the holder can no longer see it. The message then says so, and
+any moderator who can see it may release it.
 
 Some chats are held because a post has not yet rippled out to the member who replied.
 Those release automatically; you do not need to do anything. See

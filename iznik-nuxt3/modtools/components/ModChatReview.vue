@@ -69,8 +69,14 @@
                 message.held.name
               }}</ExternalLink>
             </strong>
-            {{ timeago(message.held.timestamp) }}. Please check with them if you
-            think it should be released.
+            {{ timeago(message.held.timestamp) }}.
+            <template v-if="message.held.holderlostaccess">
+              They no longer moderate any community this chat is reviewed on, so
+              they can't see it to release it. You can release it.
+            </template>
+            <template v-else>
+              Please check with them if you think it should be released.
+            </template>
           </span>
         </NoticeMessage>
         <!-- Rippling reply-hold. Four outcomes a mod must be able to tell apart; before this
@@ -242,7 +248,7 @@
           <template v-if="!message.widerchatreview && isActiveMod">
             <ModChatViewButton :id="message.chatid" :pov="chatPov" />
             <b-button
-              v-if="message.held && me.id === message.held.id"
+              v-if="canRelease"
               variant="warning"
               class="me-2 mb-1"
               @click="release"
@@ -550,6 +556,14 @@ function postGroupNames(message) {
 function reload() {
   emit('reload')
 }
+
+// The holder, or anyone once the holder can no longer see the message to release it.
+const canRelease = computed(
+  () =>
+    !!message.value?.held &&
+    (me.value?.id === message.value.held.id ||
+      !!message.value.held.holderlostaccess)
+)
 
 async function release() {
   await chatStore.releaseChat(props.messageid)

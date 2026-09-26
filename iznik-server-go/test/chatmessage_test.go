@@ -506,6 +506,74 @@ func TestWiderReviewExcludesHeldMessages(t *testing.T) {
 	}
 }
 
+// reviewQueueHeld returns the "held" object for msgID in the viewer's review queue, and
+// whether the message was in the queue at all.
+func reviewQueueHeld(t *testing.T, token string, msgID uint64) (map[string]interface{}, bool) {
+	t.Helper()
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chatmessages?jwt=%s&limit=1000", token), nil)
+	resp, _ := getApp().Test(req, -1)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	for _, m := range result["chatmessages"].([]interface{}) {
+		msg := m.(map[string]interface{})
+		if uint64(msg["id"].(float64)) == msgID {
+			held, _ := msg["held"].(map[string]interface{})
+			return held, true
+		}
+	}
+
+	return nil, false
+}
+
+func TestReviewQueueFlagsHoldWhoseHolderLostAccess(t *testing.T) {
+	// Discourse 10171/54: a moderator held a chat as a moderator of the spammer's group, the
+	// spammer was then removed from it, and the message moved to other groups' queues showing
+	// "Held by" someone who could no longer see it. Only the holder can release, so nobody could.
+	db := database.DBConn
+	prefix := uniquePrefix("HoldLostAccess")
+
+	holderGroup := CreateTestGroup(t, prefix+"_holdergrp")
+	reviewerGroup := CreateTestGroup(t, prefix+"_reviewergrp")
+
+	holderID := CreateTestUser(t, prefix+"_holder", "Moderator")
+	CreateTestMembership(t, holderID, holderGroup, "Moderator")
+	reviewerID := CreateTestUser(t, prefix+"_reviewer", "Moderator")
+	CreateTestMembership(t, reviewerID, reviewerGroup, "Moderator")
+
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	CreateTestMembership(t, senderID, reviewerGroup, "Member")
+	recipientID := CreateTestUser(t, prefix+"_recipient", "User")
+
+	chatID := CreateTestChatRoom(t, senderID, &recipientID, nil, "User2User")
+	var msgID uint64
+	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingsuccessful) "+
+		"VALUES (?, ?, 'Held then orphaned', NOW(), 1, 1)", chatID, senderID)
+	db.Raw("SELECT id FROM chat_messages WHERE chatid = ? ORDER BY id DESC LIMIT 1", chatID).Scan(&msgID)
+
+	// The recipient has been removed from the holder's group, so the message now reaches
+	// review only through the sender's group, which the holder does not moderate.
+	db.Exec("INSERT INTO chat_messages_held (msgid, userid) VALUES (?, ?)", msgID, holderID)
+	_, reviewerToken := CreateTestSession(t, reviewerID)
+
+	held, found := reviewQueueHeld(t, reviewerToken, msgID)
+	assert.True(t, found, "message should be in the reviewer's queue")
+	assert.NotNil(t, held)
+	assert.Equal(t, true, held["holderlostaccess"], "holder no longer moderates any group the message is reviewed through")
+
+	// Control: a holder who does still moderate the message's group keeps an ordinary hold.
+	db.Exec("DELETE FROM chat_messages_held WHERE msgid = ?", msgID)
+	otherModID := CreateTestUser(t, prefix+"_othermod", "Moderator")
+	CreateTestMembership(t, otherModID, reviewerGroup, "Moderator")
+	db.Exec("INSERT INTO chat_messages_held (msgid, userid) VALUES (?, ?)", msgID, otherModID)
+
+	held, found = reviewQueueHeld(t, reviewerToken, msgID)
+	assert.True(t, found)
+	assert.NotNil(t, held)
+	assert.Equal(t, false, held["holderlostaccess"], "holder still moderates the sender's group")
+}
+
 func TestWiderReviewExcludesUserReported(t *testing.T) {
 	modToken, _, _, _, chatMsgID := setupWiderReviewData(t)
 	db := database.DBConn
