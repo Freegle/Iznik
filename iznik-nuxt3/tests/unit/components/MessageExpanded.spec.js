@@ -726,6 +726,22 @@ describe('MessageExpanded', () => {
         expect(wrapper.text()).not.toContain('as soon as it does')
       })
 
+      // Discourse 10091/3: a post that will never reach them said it "hasn't reached
+      // your area yet", promising an arrival that is never coming.
+      it('does not say "yet" when the reach will never cover them', async () => {
+        mockFromme.value = false
+        mockMessage.value.replyeligible = false
+        mockMessage.value.reachesyouat = new Date(
+          Date.now() + 3 * 60 * 60 * 1000
+        ).toISOString()
+        mockMessage.value.reachesyoufully = false
+        const wrapper = await createWrapper({ replyable: true })
+
+        const text = wrapper.text().replace(/\s+/g, ' ')
+        expect(text).toContain("won't ripple as far as your area")
+        expect(text).not.toContain("hasn't reached your area yet")
+      })
+
       it('falls back to the open-ended wording when there is no estimate', async () => {
         mockFromme.value = false
         mockMessage.value.replyeligible = false

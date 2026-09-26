@@ -431,7 +431,6 @@
                   straight away.
                 </span>
                 <span v-else-if="reachNotice" data-testid="reach-blocked-eta">
-                  This hasn't reached your area yet, but go ahead and reply.
                   {{ reachNotice }}
                 </span>
                 <span v-else>
@@ -526,7 +525,6 @@
             but go ahead and reply. We'll pass it on to the owner straight away.
           </span>
           <span v-else-if="reachNotice" data-testid="reach-blocked-eta">
-            This hasn't reached your area yet, but go ahead and reply.
             {{ reachNotice }}
           </span>
           <span v-else>

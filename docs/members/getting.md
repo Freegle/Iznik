@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-12
+last_reviewed: 2026-09-26
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/ask/**
@@ -34,7 +34,7 @@ If a post has not quite reached your area yet (this can happen if you have widen
 view beyond "Nearby"), you can still reply. Freegle holds your message for a while so that
 people closer to the item get first go, then passes it on. Before you send, the site tells
 you when: either when the post is due to reach your area, or, if it is never going to
-spread quite that far, when it stops spreading and your reply goes anyway. It shows as
+spread that far, that it won't reach you and when your reply goes anyway. It shows as
 "waiting to send" until it has gone.
 
 ## Posting a WANTED

@@ -63,7 +63,7 @@ describe('reachArrivalWording', () => {
 describe('reachNoticeSentence', () => {
   it('talks about the post arriving when a tick will actually cover them', () => {
     expect(reachNoticeSentence(inHours(3), true, NOW)).toBe(
-      "It's due to reach you in about 3 hours, and we'll pass your reply on then."
+      "This hasn't reached your area yet, but go ahead and reply. It's due to reach you in about 3 hours, and we'll pass your reply on then."
     )
   })
 
@@ -71,7 +71,15 @@ describe('reachNoticeSentence', () => {
     // The common case: no tick's drive-time budget ever reaches them, so what they are
     // waiting for is the reach finishing, not arriving.
     expect(reachNoticeSentence(inHours(24 * 3), false, NOW)).toBe(
-      "People closer to it get first go, so we'll pass yours on by Saturday at the latest."
+      "This won't ripple as far as your area, but you can still reply. People closer to it get first go, so we'll pass yours on by Saturday at the latest."
+    )
+  })
+
+  it('never says "yet" when the reach will never cover them', () => {
+    // Discourse 10091/3: a post 130 miles away said it "hasn't reached your area yet",
+    // which promises an arrival that is never coming.
+    expect(reachNoticeSentence(inHours(24 * 3), false, NOW)).not.toMatch(
+      /\byet\b/
     )
   })
 

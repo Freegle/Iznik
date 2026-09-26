@@ -73,7 +73,7 @@ export function reachArrivalWording(at, now = new Date()) {
 }
 
 /**
- * The sentence shown under the Reply button when the post hasn't rippled to you yet.
+ * The notice shown under the Reply button when the post hasn't rippled to you.
  *
  * Built here rather than in each template because three components show it and the two
  * cases say different things: one is about the post arriving, the other about the reply
@@ -94,7 +94,11 @@ export function reachNoticeSentence(at, fully, now = new Date()) {
   // releases it sooner, and a reach also ends early when the post gathers enough repliers
   // or is taken. Stating it flatly would understate by days, and would go stale the moment
   // the buffer policy changed.
+  //
+  // The opening differs too. "Hasn't reached your area yet" promises an arrival, which is
+  // only true when a tick will cover them; for a post that never will, it misled a member
+  // 130 miles away into waiting for it (Discourse 10091/3).
   return fully
-    ? `It's due to reach you ${words}, and we'll pass your reply on then.`
-    : `People closer to it get first go, so we'll pass yours on ${words} at the latest.`
+    ? `This hasn't reached your area yet, but go ahead and reply. It's due to reach you ${words}, and we'll pass your reply on then.`
+    : `This won't ripple as far as your area, but you can still reply. People closer to it get first go, so we'll pass yours on ${words} at the latest.`
 }

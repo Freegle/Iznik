@@ -719,9 +719,11 @@ describe('ChatReplyPane', () => {
       })
       const wrapper = await createWrapper()
 
-      expect(wrapper.text().replace(/\s+/g, ' ')).toContain(
-        "we'll pass yours on in about 3 hours"
-      )
+      const text = wrapper.text().replace(/\s+/g, ' ')
+      expect(text).toContain("we'll pass yours on in about 3 hours")
+      // It is never going to reach them, so it must not say it has not reached them "yet".
+      expect(text).toContain("won't ripple as far as your area")
+      expect(text).not.toContain("hasn't reached your area yet")
     })
 
     it('says the reach has finished, not that it is still on its way, when the API says so', async () => {
