@@ -1102,6 +1102,78 @@ class ExpandService
         return $stats;
     }
 
+    /**
+     * When each reposted post first went live, for posts whose reach should carry on across a
+     * member's own repost.
+     *
+     * The repost turns the post back into a draft, which removes every copy and then the reach
+     * row, so there is nothing left to resume from; the post's log is the only record of how
+     * long it has been live. Walked in order, a "run" of the post starts at its first Received
+     * and continues through reposts that come within repost_keeps_reach_days of it last being
+     * live (Received, Approved, Autoapproved or Autoreposted). A longer gap starts a new run.
+     * The run starts at its first approval, or at its first Received on a community that does
+     * not moderate and so logs no approval.
+     *
+     * @param  int[]  $msgids
+     * @return array<int, Carbon> msgid => start, only for posts reposted within the current run
+     */
+    private function repostCarriedArrivals(array $msgids): array
+    {
+        $days = (int) config('freegle.ripple.repost_keeps_reach_days', 7);
+        if ($days <= 0 || empty($msgids)) {
+            return [];
+        }
+
+        $events = DB::table('logs')
+            ->whereIn('msgid', $msgids)
+            ->where('type', 'Message')
+            ->whereIn('subtype', ['Received', 'Approved', 'Autoapproved', 'Autoreposted', 'Repost'])
+            ->orderBy('msgid')
+            ->orderBy('timestamp')
+            ->orderBy('id')
+            ->get(['msgid', 'subtype', 'timestamp'])
+            ->groupBy('msgid');
+
+        $carried = [];
+        foreach ($events as $msgid => $list) {
+            $received = null;
+            $approved = null;
+            $lastLive = null;
+            $repostedInRun = false;
+
+            foreach ($list as $e) {
+                $at = Carbon::parse($e->timestamp);
+                if ($e->subtype === 'Repost') {
+                    if ($lastLive === null || $lastLive->lt($at->copy()->subDays($days))) {
+                        // Not live for too long: this repost begins a new run.
+                        $received = null;
+                        $approved = null;
+                        $repostedInRun = false;
+                    } else {
+                        $repostedInRun = true;
+                    }
+                    continue;
+                }
+
+                $lastLive = $at;
+                if ($e->subtype === 'Received') {
+                    $received ??= $at;
+                } elseif (!$repostedInRun && in_array($e->subtype, ['Approved', 'Autoapproved'], true)) {
+                    // Only the approval that first put the run live; a re-approval after a
+                    // repost is exactly the restart this undoes.
+                    $approved ??= $at;
+                }
+            }
+
+            $start = $approved ?? $received;
+            if ($repostedInRun && $start !== null) {
+                $carried[(int) $msgid] = $start;
+            }
+        }
+
+        return $carried;
+    }
+
     private function initialiseNew(bool $dryRun, int $limit, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
     {
         // Go-live flood guard: only posts that arrived on or after the configured
@@ -1178,6 +1250,16 @@ class ExpandService
              LIMIT ?',
             $params
         );
+
+        // A member's own repost is re-approved as if new, so without this its reach would start
+        // again at tick 1 and hide it from people it had already reached.
+        $carried = $this->repostCarriedArrivals(array_map(fn ($r) => (int) $r->msgid, $rows));
+        foreach ($rows as $row) {
+            $start = $carried[(int) $row->msgid] ?? null;
+            if ($start !== null && $row->arrival !== null && $start->lt(Carbon::parse($row->arrival))) {
+                $row->arrival = $start->format('Y-m-d H:i:s');
+            }
+        }
 
         // ── Phase 1: compute reach schedules CONCURRENTLY, deduped by blurred origin ──
         //

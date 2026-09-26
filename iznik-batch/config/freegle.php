@@ -916,6 +916,10 @@ return [
         // rippling) and per tick (a post that becomes saturated stops fanning out). 0 disables.
         // 5 = the figure from the Discourse rippling thread.
         'reply_saturation_stop' => (int) env('RIPPLE_REPLY_SATURATION_STOP', 5),
+        // A member's own repost drops the reach row; its replacement starts from when the post
+        // first went live, not from the re-approval, provided the post had been live within this
+        // many days before the repost. After a longer gap the reach starts afresh. 0 disables.
+        'repost_keeps_reach_days' => (int) env('RIPPLE_REPOST_KEEPS_REACH_DAYS', 7),
         // Hours a rippled-in (messages_groups.rippled_in=1) post, already Approved on its
         // origin group, waits before it is approved onto the rippled-in group (it was already
         // vetted on origin). Default 0 = approve AT ripple-in time, so it never even flickers

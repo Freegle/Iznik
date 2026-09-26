@@ -221,17 +221,23 @@ type Message struct {
 	// thing once a post has been reposted or has rippled: this browse view was ordering by
 	// Arrival while the card showed a group arrival, so a 20-day-old post displaying "5 days"
 	// sat above a 3-hour-old one.
-	VisibleSince       time.Time           `json:"visibleSince"`
-	Date               time.Time           `json:"date"`
-	Fromuser           uint64              `json:"fromuser"`
-	Subject            string              `json:"subject"`
-	Type               string              `json:"type"`
-	Textbody           string              `json:"textbody"`
-	Lat                float64             `json:"lat"`
-	Lng                float64             `json:"lng"`
-	Unseen             bool                `json:"unseen"`
-	Availablenow       uint                `json:"availablenow"`
-	Availableinitially uint                `json:"availableinitially"`
+	VisibleSince       time.Time `json:"visibleSince"`
+	Date               time.Time `json:"date"`
+	Fromuser           uint64    `json:"fromuser"`
+	Subject            string    `json:"subject"`
+	Type               string    `json:"type"`
+	Textbody           string    `json:"textbody"`
+	Lat                float64   `json:"lat"`
+	Lng                float64   `json:"lng"`
+	Unseen             bool      `json:"unseen"`
+	Availablenow       uint      `json:"availablenow"`
+	Availableinitially uint      `json:"availableinitially"`
+	// Partgone is true once somebody has been recorded as having taken some of a
+	// multi-item post. It is a fact about takers, not arithmetic on the two counts
+	// above: an ordinary poster is no longer asked how many each person took, so
+	// availablenow stops tracking reality the moment the first person is recorded.
+	// Bulk offers still count items out one by one and use the numbers instead.
+	Partgone           bool                `json:"partgone" gorm:"-"`
 	MessageGroups      []MessageGroup      `gorm:"-" json:"groups"`
 	MessageAttachments []MessageAttachment `gorm:"-" json:"attachments"`
 	MessageOutcomes    []MessageOutcome    `gorm:"-" json:"outcomes"`
@@ -1042,6 +1048,12 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				canSeeInterest := message.Fromuser == myid || isGroupMod
 				message.BulkItems = LoadBulkItems(db, message.ID, myid, canSeeInterest, message.MessageAttachments)
 				message.Bulkcount = len(message.BulkItems)
+
+				// Part gone: somebody has taken some. Read from the takers rather than
+				// from availablenow, which an ordinary post no longer maintains.
+				var takers int64
+				db.Table("messages_by").Where("msgid = ?", message.ID).Count(&takers)
+				message.Partgone = takers > 0
 				if message.Bulkcount > 0 {
 					message.Bulkslots = LoadBulkSlots(db, message.ID)
 					// Access instructions are private — only the offerer/mod sees them.
@@ -6280,8 +6292,15 @@ func handleAddBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to modify this message")
 	}
 
-	count := 1
-	if req.Count != nil {
+	// A request with no count is an ordinary post saying "this person took some".
+	// Nobody is asked how many any more, so there is no number to apply: record the
+	// taker and leave availablenow alone. Inventing one (the old default of 1) made
+	// the remaining count drift away from reality one taker at a time, invisibly,
+	// because the badge stopped showing it. Bulk offers always send a count and are
+	// unaffected.
+	counted := req.Count != nil
+	count := 0
+	if counted {
 		count = *req.Count
 	}
 
@@ -6306,19 +6325,26 @@ func handleAddBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	existingCount := existing.Count
 
 	if existingID > 0 {
-		// Restore old count before updating.
-		// Identical golden to
-		// 228b6b678e0c (handleRemoveBy); converted together per gate (h).
-		db.Table("messages").Where("id = ?", req.ID).
-			Update("availablenow", gorm.Expr("LEAST(availableinitially, availablenow + ?)", existingCount))
-		db.Table("messages_by").Where("id = ?", existingID).Update("count", count)
+		if counted {
+			// Restore old count before updating.
+			// Identical golden to
+			// 228b6b678e0c (handleRemoveBy); converted together per gate (h).
+			db.Table("messages").Where("id = ?", req.ID).
+				Update("availablenow", gorm.Expr("LEAST(availableinitially, availablenow + ?)", existingCount))
+			db.Table("messages_by").Where("id = ?", existingID).Update("count", count)
+		}
+		// Uncounted and already recorded: nothing to say. Leaving any earlier count
+		// alone matters for posts that were part-taken under the old flow, where the
+		// number was entered deliberately and rewriting it to 0 would lose it.
 	} else {
 		db.Table("messages_by").Create(map[string]interface{}{"userid": userid, "msgid": req.ID, "count": count})
 	}
 
-	// Reduce available count.
-	db.Table("messages").Where("id = ?", req.ID).
-		Update("availablenow", gorm.Expr("GREATEST(LEAST(availableinitially, availablenow - ?), 0)", count))
+	if counted {
+		// Reduce available count.
+		db.Table("messages").Where("id = ?", req.ID).
+			Update("availablenow", gorm.Expr("GREATEST(LEAST(availableinitially, availablenow - ?), 0)", count))
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

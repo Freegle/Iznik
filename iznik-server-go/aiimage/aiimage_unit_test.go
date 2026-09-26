@@ -404,3 +404,14 @@ func TestBuildImagePrompt_StripsAdultBiasWord(t *testing.T) {
 	assert.NotContains(t, prompt, "Adult")
 	assert.NotContains(t, prompt, "adult")
 }
+
+func TestBuildImagePrompt_StripsAudienceQualifier(t *testing.T) {
+	// Regression test for Discourse topic 9630/62: a WANTED post for "cycle for women" got
+	// back a distorted, unrecognisable shape rather than a plain bicycle - the same class of
+	// defect as "Adult bike" above: the "single isolated X" prompt template wants a bare
+	// noun, and "for women" reaches it unstripped as if it were part of the object.
+	prompt := buildImagePrompt("cycle for women")
+	assert.Contains(t, prompt, "single isolated cycle centered")
+	assert.NotContains(t, prompt, "women")
+	assert.NotContains(t, prompt, "for women")
+}
