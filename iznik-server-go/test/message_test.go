@@ -4521,6 +4521,79 @@ func TestPostMessageAddBy(t *testing.T) {
 	assert.Equal(t, 3, availNow)
 }
 
+// An ordinary post no longer asks how many each person took, so AddBy arrives with no
+// count. Recording a taker must not invent one: the old default of 1 decremented
+// availablenow per taker, which drifted away from reality one person at a time and was
+// invisible because the badge stopped showing the number.
+func TestPostMessageAddByWithoutCountLeavesTheNumberAlone(t *testing.T) {
+	prefix := uniquePrefix("msgw_addby_nocount")
+	db := database.DBConn
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	db.Exec("UPDATE messages SET availableinitially = 5, availablenow = 5 WHERE id = ?", msgID)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "AddBy",
+		"userid": takerID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var availNow int
+	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&availNow)
+	assert.Equal(t, 5, availNow, "an uncounted taker must not change the number left")
+
+	var rows int
+	db.Raw("SELECT COUNT(*) FROM messages_by WHERE msgid = ? AND userid = ?", msgID, takerID).Scan(&rows)
+	assert.Equal(t, 1, rows, "the taker is still recorded")
+}
+
+// A post part-taken under the old flow carries a count somebody entered deliberately.
+// Recording that person again without a count must not rewrite it to nothing.
+func TestPostMessageAddByWithoutCountKeepsAnEarlierCount(t *testing.T) {
+	prefix := uniquePrefix("msgw_addby_keep")
+	db := database.DBConn
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	db.Exec("UPDATE messages SET availableinitially = 5, availablenow = 3 WHERE id = ?", msgID)
+	db.Exec("INSERT INTO messages_by (userid, msgid, count) VALUES (?, ?, 2)", takerID, msgID)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "AddBy",
+		"userid": takerID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var byCount int
+	db.Raw("SELECT count FROM messages_by WHERE msgid = ? AND userid = ?", msgID, takerID).Scan(&byCount)
+	assert.Equal(t, 2, byCount, "a count entered under the old flow is left as it was")
+
+	var availNow int
+	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&availNow)
+	assert.Equal(t, 3, availNow, "and the number left is untouched")
+}
+
 func TestPostMessageAddByUpdate(t *testing.T) {
 	prefix := uniquePrefix("msgw_addby_upd")
 	db := database.DBConn

@@ -91,6 +91,17 @@ If nobody took it and you no longer want to offer it, choose **Withdraw** instea
 post is marked withdrawn on every community it has reached, including any copy still
 waiting for a moderator's look on a neighbouring community.
 
+### If you offered more than one
+
+Say who took some, then tell us whether that is everything:
+
+- **That's everything gone** closes the post, and asks how it went.
+- **There's still some left** leaves your post up. Other people see it as "Part gone,
+  some still available", and you can come back and add the next person later.
+
+You are never asked how many each person took. If you find you have more to give away
+than you posted, change the number on the post itself with **Edit**.
+
 ## Reminders and auto-reposting
 
 If your item is still available after a while, Freegle reminds you before it

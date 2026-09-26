@@ -228,15 +228,14 @@
             <div class="title-row">
               <span class="title-subject"
                 >{{ subjectItemName }}
-                <b-badge
-                  v-if="message.availablenow > 1"
-                  variant="info"
-                  class="ms-1"
-                  style="font-size: 0.55em; vertical-align: middle"
-                >
-                  {{ message.availablenow }} available
-                </b-badge></span
-              >
+                <MessageAvailability
+                  :availablenow="message.availablenow"
+                  :partgone="message.partgone"
+                  :availableinitially="message.availableinitially"
+                  :bulkcount="message.bulkcount"
+                  badge-class="ms-1"
+                  badge-style="font-size: 0.55em; vertical-align: middle"
+              /></span>
             </div>
             <div class="location-row">
               <div v-if="subjectLocation" class="title-location">
@@ -652,6 +651,7 @@
 </template>
 
 <script setup>
+import MessageAvailability from './MessageAvailability'
 import {
   ref,
   computed,
