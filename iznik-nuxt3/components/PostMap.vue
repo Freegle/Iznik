@@ -591,7 +591,23 @@ function fitToShownMarkers() {
     .map((m) => [m.lat, m.lng])
   if (!latlngs.length) return
   try {
-    mapObject.value.fitBounds(new window.L.LatLngBounds(latlngs), {
+    const bounds = new window.L.LatLngBounds(latlngs)
+
+    if (props.showIsochrones && !props.search) {
+      // Nearby (reach) view: the reach feed is worked out server-side and can
+      // legitimately include far-flung, rippled posts, so fitting the viewport to
+      // every shown marker can zoom out to fit the widest outlier - as far as the
+      // whole of England - instead of the local area the member came here to see.
+      // Skip the re-fit rather than let the map be dragged out to whatever the
+      // reach data happens to span; the same margin already used for maxZoom above
+      // caps how far out we'll go.
+      const targetZoom = mapObject.value.getBoundsZoom(bounds, false, [40, 40])
+      if (targetZoom < props.postZoom - 3) {
+        return
+      }
+    }
+
+    mapObject.value.fitBounds(bounds, {
       padding: [40, 40],
       maxZoom: props.postZoom + 3,
     })

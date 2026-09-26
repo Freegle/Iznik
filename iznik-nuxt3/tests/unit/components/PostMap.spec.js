@@ -275,6 +275,9 @@ describe('PostMap', () => {
                 }),
                 getZoom: vi.fn().mockReturnValue(10),
                 getCenter: vi.fn().mockReturnValue({ lat: 52.5, lng: -1 }),
+                // Local cluster by default (e.g. a few miles apart); tests for a
+                // country-spanning reach feed override this to a low zoom.
+                getBoundsZoom: vi.fn().mockReturnValue(12),
                 fitBounds: vi.fn(),
                 flyTo: vi.fn(),
                 flyToBounds: vi.fn(),
@@ -1213,6 +1216,37 @@ describe('PostMap', () => {
       )
       expect(refit).toBeTruthy()
       expect(refit[1].padding).toEqual([40, 40])
+    })
+
+    // Bug 10091/2: on the Nearby (reach) view, the reach feed can legitimately span the
+    // whole country (rippled posts far from the member). Re-fitting the viewport to every
+    // shown marker then zooms the map out to fit the widest outlier - as far as "the whole
+    // of England" - even though the member only ever asked to see what's nearby. Skip the
+    // re-fit for this view when it would zoom out further than a normal local browse.
+    it('does not zoom out to fit a country-spanning reach feed on the Nearby view', async () => {
+      const wrapper = await mountNearbyWithMessages(
+        [
+          { id: 1, lat: 50.4, lng: -4.1, distance: 1, groupid: 1 }, // Cornwall
+          { id: 2, lat: 57.5, lng: -4.2, distance: 300, groupid: 1 }, // Scottish Highlands
+        ],
+        // Real Nearby views use the default postZoom of 10 (no caller overrides it) - set
+        // it explicitly here rather than inheriting the helper's postZoom: 0, which exists
+        // only to make showMessages ignore the mocked zoom ref and would otherwise defeat
+        // the fix's zoom-out floor below.
+        { selectedMaxDistance: 400, postZoom: 10 }
+      )
+      const map = wrapper.findComponent({ name: 'LMap' })
+      // Fitting these two markers would zoom out to a whole-country view.
+      map.vm.leafletObject.getBoundsZoom.mockReturnValue(4)
+      map.vm.leafletObject.fitBounds.mockClear()
+
+      await new Promise((resolve) => setTimeout(resolve, 260))
+      await flushPromises()
+
+      const refit = map.vm.leafletObject.fitBounds.mock.calls.find(
+        (c) => c[1] && Array.isArray(c[1].padding)
+      )
+      expect(refit).toBeFalsy()
     })
 
     it('passes only within-distance posts as markers to the primary ClusterMarker', async () => {
