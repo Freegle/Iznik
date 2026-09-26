@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-23
+last_reviewed: 2026-09-26
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -798,6 +798,17 @@ For each due post, `ripple:expand`:
   Best-effort - a routing server without the engine is a quiet no-op, every reader still
   answers from the stored cells, and `ripple:backfill-reach-labels` retries later (with
   `--all` after a partition rebuild, which renumbers the region ids the labels refer to).
+  The reach's `arrival` is the post's earliest live `messages_spatial.arrival`, and the
+  starting tick is whatever that much elapsed time earns, so an older post starts wide.
+  **A member's own repost** is the exception: turning the post back into a draft
+  (`handleRejectToDraft`) removes every copy, so `removeStaleAndRetract` drops the reach row
+  and re-approval arrives here as a new post. `repostCarriedArrivals` reads the post's
+  `logs` instead and dates the reach from when the post first went live (its first
+  Approved/Autoapproved, else its first Received on a community that logs no approval), so it
+  resumes at the tick it had earned and people it had reached are not told "not yet"
+  (Discourse 9808/827). That holds only while the post was live within
+  `repost_keeps_reach_days` (7) before each repost; after a longer gap it starts afresh.
+  Autoreposts never need this: they keep the row and its stamp.
 - **`advanceDue`** advances to the next hazard tick: one catchment call materialises that
   tick's polygon, and the stored per-tick reached-group ids drive the ripple-in - no
   schedule recomputation. The target is normally elapsed time alone, but
@@ -1301,6 +1312,8 @@ about travel time, so the reach wins wherever we have it.
   `max_minutes`) - how long an out-of-reach reply waits (§7a). Off reverts to release on
   coverage or backstop alone.
 - `reply_saturation_stop` (5), `hazard_hours`, `rippled_in_pending_hours` (0).
+- `repost_keeps_reach_days` (`RIPPLE_REPOST_KEEPS_REACH_DAYS`, 7) - how recently a post must
+  have been live for a member's repost to resume its reach rather than restart it (§5). 0 disables.
 - `RIPPLE_HIDE_PENDING` (apiv2 env, on by default) - hide a post that has no
   `rippling_reach` row yet for its first ten minutes. Set to `0` to show every post at once.
 

@@ -602,6 +602,75 @@ class ExpandServiceTest extends TestCase
         $this->assertNull($row->next_expansion_at);
     }
 
+    private function logMessageEvent(int $msgid, string $subtype, Carbon $at): void
+    {
+        DB::table('logs')->insert([
+            'timestamp' => $at,
+            'type' => 'Message',
+            'subtype' => $subtype,
+            'msgid' => $msgid,
+        ]);
+    }
+
+    public function test_repost_of_a_live_post_keeps_its_original_reach_start(): void
+    {
+        // A member's own repost turns the post back into a draft, which drops every copy and,
+        // a minute later, the reach row. Re-approval re-initialises it; the reach should carry
+        // on from when the post was first approved rather than start again at tick 1, or
+        // people it had already reached are told "not yet" (Discourse 9808/827).
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(10)); // re-approved 10 minutes ago
+        $firstApproved = now()->subHours(20);
+        $this->logMessageEvent($msgid, 'Approved', $firstApproved);
+        $this->logMessageEvent($msgid, 'Autoreposted', now()->subHours(2));
+        $this->logMessageEvent($msgid, 'Repost', now()->subMinutes(20));
+        $this->logMessageEvent($msgid, 'Approved', now()->subMinutes(10));
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row);
+        $this->assertSame(3, (int) $row->tick, '20h since first approval is past the final 6h step');
+        $this->assertSame('done', $row->status);
+        $this->assertSame($firstApproved->format('Y-m-d H:i:s'), Carbon::parse($row->arrival)->format('Y-m-d H:i:s'));
+    }
+
+    public function test_repost_on_an_unmoderated_community_keeps_its_original_reach_start(): void
+    {
+        // A community that does not moderate logs no approval, only the post being received.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(10));
+        $firstReceived = now()->subHours(20);
+        $this->logMessageEvent($msgid, 'Received', $firstReceived);
+        $this->logMessageEvent($msgid, 'Repost', now()->subMinutes(10));
+        $this->logMessageEvent($msgid, 'Received', now()->subMinutes(10));
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row);
+        $this->assertSame(3, (int) $row->tick);
+        $this->assertSame($firstReceived->format('Y-m-d H:i:s'), Carbon::parse($row->arrival)->format('Y-m-d H:i:s'));
+    }
+
+    public function test_repost_after_a_long_gap_starts_reach_afresh(): void
+    {
+        // Reposted weeks after it was last live: the people nearby have not seen it for a
+        // long time, so it spreads from the start again like a new post.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(10));
+        $this->logMessageEvent($msgid, 'Approved', now()->subDays(30));
+        $this->logMessageEvent($msgid, 'Repost', now()->subMinutes(20));
+        $this->logMessageEvent($msgid, 'Approved', now()->subMinutes(10));
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row);
+        $this->assertSame(1, (int) $row->tick);
+        $this->assertSame('expanding', $row->status);
+    }
+
     public function test_advances_due_reach_to_current_tick(): void
     {
         $msgid = $this->seedSpatialPost(now()->subHours(7));
