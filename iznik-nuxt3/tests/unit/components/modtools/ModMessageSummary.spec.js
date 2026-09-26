@@ -33,7 +33,7 @@ describe('ModMessageSummary', () => {
     sampleimage: '/sample.jpg',
     successful: false,
     promised: false,
-    promisedtome: false,
+    promisedtoyou: false,
     unseen: false,
     ...overrides,
   })
@@ -221,7 +221,7 @@ describe('ModMessageSummary', () => {
         { showPromised: true, replyable: true },
         createTestMessage({
           promised: true,
-          promisedtome: false,
+          promisedtoyou: false,
           successful: false,
         })
       )
@@ -233,7 +233,7 @@ describe('ModMessageSummary', () => {
         { showPromised: true, replyable: true },
         createTestMessage({
           promised: true,
-          promisedtome: true,
+          promisedtoyou: true,
           successful: false,
         })
       )

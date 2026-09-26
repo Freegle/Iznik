@@ -293,20 +293,6 @@ services:
     deploy:
       replicas: 0
 
-  # MCP containers disabled on Yesterday - port 8084 conflicts with 2FA gateway
-  # and MCP functionality is not needed for the Yesterday backup/restore system
-  mcp-query-sanitizer:
-    deploy:
-      replicas: 0
-
-  mcp-pseudonymizer:
-    deploy:
-      replicas: 0
-
-  mcp-interface:
-    deploy:
-      replicas: 0
-
 volumes:
   freegle_db:
     # LVM fast-switch: the datadir lives on the XFS thin LV mounted at

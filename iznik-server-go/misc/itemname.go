@@ -42,6 +42,26 @@ var biasQualifierPattern = regexp.MustCompile(`(?i)\badults?\s+(?:sized?|only)\b
 
 var biasWordPattern = regexp.MustCompile(`(?i)\badults?\b[!?.,]*`)
 
+// audienceQualifierPattern matches a target-audience qualifier at the END of a name - "cycle
+// for women", "Bike for men" (Discourse topic 9630/62: "cycle for women" came back a
+// distorted, unrecognisable shape, the same class of defect as "adult" above: the prompt
+// template wants a bare noun, and a qualifier that reaches it unstripped throws it off).
+//
+// Unlike biasWordPattern this is anchored to the end rather than stripped anywhere, because
+// "girl"/"boy"/"man"/"woman" commonly sit inside a compound name that is not a qualifier at
+// all - production has "Raffle/Tombola Prizes For Girl Guide Fundraiser", where "For Girl" is
+// followed by "Guide Fundraiser", not the end of the string. A trailing "for women" has no
+// such reading, so the whole phrase is removed as one unit; an optional wrapping "(...)" is
+// eaten too, so "Road bike (for men)" loses the parenthesis along with the qualifier.
+//
+// Applied AFTER the bias qualifier/word removal below, not before: "bike for adult men" has
+// "adult" sitting between "for" and "men", so the pattern cannot match until "adult" is gone
+// and "for men" is exposed at the end. Applying it first leaves that case as "bike for men".
+//
+// Deliberately narrow: "boys and girls", and trailing age descriptors like "for girl 2-3
+// years", are left alone. Both are common in production and neither is safe to guess at.
+var audienceQualifierPattern = regexp.MustCompile(`(?i)[\s(]*\bfor\s+(?:an?\s+)?(?:women|woman|men|man|boys?|girls?)\b[\s!?.,)]*$`)
+
 // Debris left behind once a bias word is lifted out of the middle of a name: a conjunction or
 // preposition with nothing left on one side of it ("Adult and kids" -> "and kids", "A bike for
 // adult" -> "A bike for"), and the empty separator left by "hangers - adult size - will split".
@@ -87,9 +107,10 @@ func StripCourtesy(name string) string {
 	biasBefore := cleaned
 	cleaned = biasQualifierPattern.ReplaceAllString(cleaned, " ")
 	cleaned = biasWordPattern.ReplaceAllString(cleaned, " ")
+	cleaned = audienceQualifierPattern.ReplaceAllString(cleaned, "")
 
-	// Only tidy when a bias word actually came out, so names that never contained one keep
-	// going through exactly the path they did before.
+	// Only tidy when a bias word or trailing audience qualifier actually came out, so names
+	// that never contained one keep going through exactly the path they did before.
 	if cleaned != biasBefore {
 		cleaned = emptySeparatorPattern.ReplaceAllString(cleaned, " - ")
 		cleaned = strandedLeadPattern.ReplaceAllString(cleaned, "")

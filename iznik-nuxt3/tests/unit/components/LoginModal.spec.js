@@ -1226,6 +1226,108 @@ describe('LoginModal', () => {
     })
   })
 
+  // Our cookie tool holds Google's sign-in script back until a member allows
+  // Functional cookies, and Facebook's until they allow Advertisement cookies.
+  // The Google button then never drew, with nothing to say why (September
+  // 2026, measured on the live site).
+  describe('sign in buttons turned off by cookie choices', () => {
+    function consent(categories, answered) {
+      global.window.getCkyConsent = () => ({
+        categories: { necessary: true, ...categories },
+        isUserActionCompleted: answered,
+      })
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      mockLoggedInEver.value = true
+      mockForceLogin.value = true
+      delete global.window.google
+      delete global.window.FB
+      global.window.revisitCkyConsent = vi.fn()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+      delete global.window.getCkyConsent
+      delete global.window.revisitCkyConsent
+    })
+
+    it('asks a member who has not answered the banner to answer it', async () => {
+      consent({ functional: false, advertisement: false }, false)
+      const w = createWrapper()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(w.text()).toContain(
+        'To sign in with Google and Facebook, please respond to the cookie banner below.'
+      )
+      expect(w.findAll('.social-button--cookie-off')).toHaveLength(2)
+    })
+
+    it('tells a member who said no why, and offers to change it', async () => {
+      consent({ functional: false, advertisement: true }, true)
+      const w = createWrapper()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(w.text()).toContain(
+        'Google sign in is turned off by your cookie choices.'
+      )
+      expect(w.text()).not.toContain('Facebook sign in is turned off')
+      await w.find('.cookie-off-note a').trigger('click')
+      expect(global.window.revisitCkyConsent).toHaveBeenCalled()
+    })
+
+    it('opens the cookie choices from the greyed button', async () => {
+      consent({ functional: false, advertisement: false }, true)
+      const w = createWrapper()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(w.text()).toContain(
+        'Google and Facebook sign in are turned off by your cookie choices.'
+      )
+      await w.find('.social-button--cookie-off').trigger('click')
+      expect(global.window.revisitCkyConsent).toHaveBeenCalled()
+    })
+
+    it('does not report a button missing for want of consent', async () => {
+      consent({ functional: false, advertisement: false }, false)
+      const w = createWrapper()
+      await vi.advanceTimersByTimeAsync(20000)
+
+      expect(w.text()).not.toContain("Google sign in isn't loading")
+      expect(
+        Sentry.captureException.mock.calls.find(
+          (c) => c[1]?.tags?.social_login_provider === 'google'
+        )
+      ).toBeFalsy()
+    })
+
+    it('draws the Google button once the member allows the cookies', async () => {
+      consent({ functional: false, advertisement: false }, false)
+      const w = createWrapper()
+      await vi.advanceTimersByTimeAsync(0)
+
+      consent({ functional: true, advertisement: false }, true)
+      global.window.google = {
+        accounts: { id: { initialize: vi.fn(), renderButton: vi.fn() } },
+      }
+      document.dispatchEvent(new Event('cookieyes_consent_update'))
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(global.window.google.accounts.id.renderButton).toHaveBeenCalled()
+      expect(w.text()).not.toContain('Google and Facebook')
+      expect(w.text()).toContain('Facebook sign in is turned off')
+    })
+
+    it('shows nothing extra when there is no cookie tool', async () => {
+      const w = createWrapper()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(w.find('.cookie-off-note').exists()).toBe(false)
+      expect(w.find('.social-button--cookie-off').exists()).toBe(false)
+    })
+  })
+
   // "You usually use X" was written at the moment a login was attempted, not
   // when one worked, so a member who tried the password form because the
   // Google button was missing was then told that password was what he usually

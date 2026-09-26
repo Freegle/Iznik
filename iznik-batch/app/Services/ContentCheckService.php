@@ -300,10 +300,11 @@ class ContentCheckService
                     try {
                         $reasons = $this->checkMessage((int) $row->msgid, (int) $row->groupid);
 
-                        // A moderator is holding this copy: record what the check found so
-                        // they get the reasons, but never promote or block it - that would
-                        // take the post out from under them (9816/9815).
-                        if ($row->heldby !== null) {
+                        // A moderator is holding this copy, or sent the post back to pending
+                        // for its moderators to decide: record what the check found so they
+                        // get the reasons, but never promote or block it - that would take the
+                        // post out from under them (9816/9815, 122011064).
+                        if ($row->heldby !== null || (int) ($row->needs_moderator ?? 0) === 1) {
                             $this->recordCheckOnly($row, $reasons, $dryRun, $stats, 'held');
                             continue;
                         }
@@ -433,7 +434,7 @@ class ContentCheckService
         $base = fn () => DB::table('messages_groups as mg')
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
             ->join('users as u', 'u.id', '=', 'm.fromuser')
-            ->select('mg.msgid', 'mg.groupid', 'mg.collection', 'mg.heldby', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'), DB::raw('m.lat as lat'))
+            ->select('mg.msgid', 'mg.groupid', 'mg.collection', 'mg.heldby', 'mg.needs_moderator', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'), DB::raw('m.lat as lat'))
             // Either never checked, or checked and then edited. The edit stamps
             // messages.editedat rather than clearing the check stamp, because the
             // stamp is also what lets a moderator see the post at all - clearing it
@@ -601,10 +602,25 @@ class ContentCheckService
             return true;
         }
 
-        $status = DB::table('memberships')
+        $membership = DB::table('memberships')
             ->where('userid', $fromuser)
             ->where('groupid', $groupid)
-            ->value('ourPostingStatus');
+            ->first(['ourPostingStatus']);
+
+        if ($membership === null) {
+            // No membership row at all. On every Freegle-native path a post only exists
+            // because a member posted to their own group, so a missing membership is
+            // unexpected and stays moderated. A TrashNothing API post is different by
+            // design: GroupPostIngestionService places it on the group its coordinates
+            // resolve to (Location::groupsNear()), not one the poster chose, so the
+            // poster frequently isn't a member and ingestion falls back to the same
+            // 'DEFAULT' a brand-new member gets. Calling that moderated would strand
+            // every non-member TN post in the mod queue, because these posts now arrive
+            // Pending awaiting this check and nothing else would ever promote them.
+            return !$this->isTrashNothingPost($msgid);
+        }
+
+        $status = $membership->ourPostingStatus;
 
         if ($status === null || $status === '' || strtoupper($status) === 'MODERATED') {
             return true;
@@ -614,6 +630,16 @@ class ContentCheckService
         }
 
         return false;
+    }
+
+    /**
+     * True if the message came from the TrashNothing API ingestion path
+     * (GroupPostIngestionService stamps messages.tnpostid). Only consulted when the
+     * poster has no membership on the group - see isUserModerated().
+     */
+    private function isTrashNothingPost(int $msgid): bool
+    {
+        return DB::table('messages')->where('id', $msgid)->value('tnpostid') !== null;
     }
 
     /**

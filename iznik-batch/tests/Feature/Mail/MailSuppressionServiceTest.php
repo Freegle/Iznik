@@ -113,6 +113,7 @@ class MailSuppressionServiceTest extends TestCase
         // every run. Counting each pass is what put one member at 10,777 held
         // "mails" in 106 minutes on prod. The message id is the identity: seeing
         // it again is the same mail, not another one.
+        $user = $this->createTestUser();
         $this->suppress('domain', 'yahoo.co.uk');
         $this->service->flushCache();
 
@@ -127,6 +128,7 @@ class MailSuppressionServiceTest extends TestCase
 
     public function test_a_new_mail_still_counts(): void
     {
+        $user = $this->createTestUser();
         $this->suppress('domain', 'yahoo.co.uk');
         $this->service->flushCache();
 
@@ -143,6 +145,7 @@ class MailSuppressionServiceTest extends TestCase
     {
         // Once-per-run mailers have no per-mail id and do not need one: each call
         // really is a separate mail withheld.
+        $user = $this->createTestUser();
         $this->suppress('domain', 'yahoo.co.uk');
         $this->service->flushCache();
 

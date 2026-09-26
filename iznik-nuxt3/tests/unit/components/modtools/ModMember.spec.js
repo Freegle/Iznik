@@ -972,6 +972,52 @@ describe('ModMember', () => {
     })
   })
 
+  // Someone whose only presence on Freegle is TN posts matched to communities they never
+  // chose, so a moderator has no way to reach them and needs telling why
+  // the usual buttons are missing. A "mixed" poster is a real member and is unaffected -
+  // see modmessaging in the Go API.
+  describe('a Trash Nothing member who did not choose the community', () => {
+    it('offers a chat and shows no warning for an ordinary member', () => {
+      const wrapper = mountComponent({
+        member: createMember({ mod_messaging_allowed: true }),
+      })
+
+      expect(wrapper.find('.chat-button').exists()).toBe(true)
+      expect(
+        wrapper.find('[data-test="tn-unaddressed-member-warning"]').exists()
+      ).toBe(false)
+    })
+
+    it('treats a member with no flag at all as ordinary', () => {
+      const wrapper = mountComponent()
+
+      expect(wrapper.find('.chat-button').exists()).toBe(true)
+    })
+
+    it('warns that they cannot be contacted, and says who they are', () => {
+      const wrapper = mountComponent({
+        member: createMember({ mod_messaging_allowed: false }),
+      })
+      const warning = wrapper.find(
+        '[data-test="tn-unaddressed-member-warning"]'
+      )
+
+      expect(warning.exists()).toBe(true)
+      expect(warning.text()).toContain('Trash Nothing')
+      expect(warning.text()).toContain('not chosen by them')
+      expect(warning.text()).not.toContain('opted in')
+      expect(warning.text()).toContain("can't be contacted")
+    })
+
+    it('offers no chat button', () => {
+      const wrapper = mountComponent({
+        member: createMember({ mod_messaging_allowed: false }),
+      })
+
+      expect(wrapper.find('.chat-button').exists()).toBe(false)
+    })
+  })
+
   // A membership that exists only because rippling auto-joined the poster is not a
   // relationship with this community, so its volunteers have no chat to start
   // (Discourse 10102).

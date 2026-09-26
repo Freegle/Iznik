@@ -195,6 +195,18 @@ test('buildReferralMjml carries everything that was on the screen', () => {
   assert.ok(!m.includes('$'), 'no money anywhere in the email')
 })
 
+test('a reply goes to the support address, never to the referring volunteer', () => {
+  const withReplyTo = { ...REFERRAL, replyTo: 'support@ilovefreegle.org' }
+  const m = buildReferralMjml(withReplyTo, NOW)
+  assert.ok(m.includes('Reply to this email to reach support@ilovefreegle.org'))
+  assert.ok(!m.includes('reach jeni@example.org'), 'the volunteer is not offered as the reply target')
+  // The volunteer is still named, so the geeks know who saw the problem.
+  assert.ok(m.includes('Referred to geeks by Jeni'))
+  const t = buildReferralText(withReplyTo)
+  assert.ok(t.includes('Reply to: support@ilovefreegle.org'))
+  assert.ok(t.includes('Referred by: Jeni <jeni@example.org>'))
+})
+
 test('buildReferralMjml uses the helper bubble colours for each side', () => {
   const m = buildReferralMjml(REFERRAL, NOW)
   assert.ok(m.includes('border="2px solid #28a745"'), 'volunteer bubble is green')

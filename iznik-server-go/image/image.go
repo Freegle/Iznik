@@ -331,13 +331,15 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid imgtype")
 	}
 
-	// SECURITY: rotating mutates an existing image row. Resolve the row's parent entity and
-	// require the caller to own it (or be a system moderator); otherwise anyone could rotate
+	// SECURITY: rotating mutates an existing image row. Once the row belongs to a parent
+	// entity the caller must own it (or be a system moderator); otherwise anyone could rotate
 	// (deface) any user's avatar, post photo, group image, etc. by iterating image ids.
+	//
+	// A row with no parent yet is a photo on a post still being written: the give flow uploads
+	// photos first and links them when the draft is submitted. Rotating it is allowed on the
+	// same terms as uploading it (doCreate), since until it is linked it is shown nowhere.
+	// Refusing it lost every rotation made while posting.
 	myid := auth.WhoAmI(c)
-	if myid == 0 {
-		return fiber.NewError(fiber.StatusUnauthorized, "Authentication required to rotate an image")
-	}
 	db := database.DBConn
 	var rotateParentID uint64
 	// cfg.IDColumn/
@@ -346,8 +348,19 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 	// ormharness (shapes.json / TestTier3Shapes_6f9c3996f035, removed in
 	// d22ba1d6c).
 	db.Table("`"+cfg.Table+"`").Select("`"+cfg.IDColumn+"`").Where("id = ?", req.ID).Scan(&rotateParentID)
-	if !ownsImageParent(myid, imgType, rotateParentID) {
-		return fiber.NewError(fiber.StatusForbidden, "Cannot rotate an image you do not own")
+	var exists int64
+	db.Table("`"+cfg.Table+"`").Where("id = ?", req.ID).Count(&exists)
+	if exists == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Image not found")
+	}
+	unattached := rotateParentID == 0 && imgType != "User"
+	if !unattached {
+		if myid == 0 {
+			return fiber.NewError(fiber.StatusUnauthorized, "Authentication required to rotate an image")
+		}
+		if !ownsImageParent(myid, imgType, rotateParentID) {
+			return fiber.NewError(fiber.StatusForbidden, "Cannot rotate an image you do not own")
+		}
 	}
 
 	modsJSON := `{"rotate":` + strconv.Itoa(*req.Rotate) + `}`

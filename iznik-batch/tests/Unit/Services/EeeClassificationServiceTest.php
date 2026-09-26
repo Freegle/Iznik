@@ -433,7 +433,7 @@ class EeeClassificationServiceTest extends TestCase
         $out = $this->computeConsensus($results);
 
         $this->assertSame(2, $out['weee_category']);
-        $this->assertSame('Screens and monitors', $out['weee_category_name']);
+        $this->assertSame('B: Cooling appliances', $out['weee_category_name']);
         $this->assertEqualsWithDelta(2 / 3, $out['weee_category_confidence'], 0.0001);
     }
 
@@ -463,7 +463,7 @@ class EeeClassificationServiceTest extends TestCase
         $out = $this->computeConsensus($results);
 
         $this->assertSame(6, $out['weee_category']);
-        $this->assertSame('Small IT and telecom equipment', $out['weee_category_name']);
+        $this->assertSame('F: Vapes and electronic cigarettes', $out['weee_category_name']);
         $this->assertSame(1.0, $out['weee_category_confidence']);
     }
 

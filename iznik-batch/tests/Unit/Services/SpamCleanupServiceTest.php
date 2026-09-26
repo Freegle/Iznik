@@ -236,6 +236,69 @@ class SpamCleanupServiceTest extends TestCase
     }
 
     // ===================================================================
+    // rejectReviewChatMessagesToSpammers
+    // ===================================================================
+
+    public function test_removes_review_messages_sent_to_a_spammer_and_their_holds(): void
+    {
+        // A member's message to a spammer waiting in Chat Review. Removing the spammer from
+        // their groups moves it out of the queue of whoever held it, and nobody else could
+        // release it (Discourse 10171/54). There is no one worth delivering it to.
+        $spammer = \App\Models\User::find($this->makeSpammer());
+        $member = $this->createTestUser();
+        $mod = $this->createTestUser();
+        $room = $this->createTestChatRoom($member, $spammer);
+        $msg = $this->createTestChatMessage($room, $member, [
+            'reviewrequired' => 1,
+            'reviewrejected' => 0,
+        ]);
+        DB::table('chat_messages_held')->insert(['msgid' => $msg->id, 'userid' => $mod->id]);
+
+        $removed = $this->service->rejectReviewChatMessagesToSpammers();
+
+        $this->assertSame(1, $removed);
+        $row = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $row->reviewrejected);
+        $this->assertEquals(0, $row->reviewrequired);
+        $this->assertFalse(DB::table('chat_messages_held')->where('msgid', $msg->id)->exists());
+    }
+
+    public function test_leaves_review_messages_to_non_spammers_and_delivered_messages_to_spammers(): void
+    {
+        $spammer = \App\Models\User::find($this->makeSpammer());
+        $member = $this->createTestUser();
+        $other = $this->createTestUser();
+
+        $toOther = $this->createTestChatMessage($this->createTestChatRoom($member, $other), $member, [
+            'reviewrequired' => 1,
+            'reviewrejected' => 0,
+        ]);
+        $delivered = $this->createTestChatMessage($this->createTestChatRoom($member, $spammer), $member, [
+            'reviewrequired' => 0,
+            'reviewrejected' => 0,
+        ]);
+
+        $this->service->rejectReviewChatMessagesToSpammers();
+
+        $this->assertEquals(1, DB::table('chat_messages')->where('id', $toOther->id)->value('reviewrequired'));
+        $this->assertEquals(0, DB::table('chat_messages')->where('id', $delivered->id)->value('reviewrejected'));
+    }
+
+    public function test_remove_spam_members_includes_review_messages_to_spammers(): void
+    {
+        $spammer = \App\Models\User::find($this->makeSpammer());
+        $member = $this->createTestUser();
+        $this->createTestChatMessage($this->createTestChatRoom($member, $spammer), $member, [
+            'reviewrequired' => 1,
+            'reviewrejected' => 0,
+        ]);
+
+        $stats = $this->service->removeSpamMembers();
+
+        $this->assertSame(1, $stats['chat_messages_to_spammers']);
+    }
+
+    // ===================================================================
     // deleteSpamNewsfeedItems
     // ===================================================================
 

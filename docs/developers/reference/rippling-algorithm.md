@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-14
+last_reviewed: 2026-09-26
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -696,18 +696,6 @@ so the animation you watch is the targeting decision at each step, not a geometr
 approximation of it. On by default; `RIPPLE_REACHABLE_GATE=false` is the killswitch, reverting
 targeting and retraction to the polygon-overlap test.
 
-### 4b. Posts that sit out: an item still held as several messages
-
-A post whose TrashNothing post id is also held by another live message does not ripple into
-new groups. Such a set is one physical item existing as more than one Freegle message, and
-each would otherwise ripple on its own account, so the item would reach people once per
-copy. Enforced in `rippleIntoNewGroups`.
-
-This is self-limiting rather than a standing exclusion: once
-`php artisan tn:merge-crossposts` has collapsed the set onto one message there is no other
-live message to match, and the post ripples like any other. Ingestion no longer creates such
-sets - see [TrashNothing](trashnothing.md#cross-posts-and-reposts).
-
 ### 4a. Communities that never ripple: phantom and training
 
 Some communities exist to hold moderator practice posts rather than real items, and their
@@ -746,6 +734,37 @@ only ever covered ripple-in, and only communities named that way - `FreeglePlayg
 its practice posts at a real Edinburgh postcode, so before this change a practice post there
 crossposted into the live Lothians communities.
 
+### 4b. Posts that sit out: an item still held as several messages
+
+A post whose TrashNothing post id is also held by another **live** (not deleted) message does
+not ripple into new groups. Such a set is one physical item existing as more than one Freegle
+message, and each would otherwise ripple on its own account, so the item would reach people
+once per copy. Enforced in `rippleIntoNewGroups`.
+
+**There is no blanket TN exclusion any more, and no feature flag on what is left.** It used to
+be a standing exclusion on every TN post while TN posts arrived by email - TN cross-posted an
+item itself, emailing a separate copy per group, so rippling on top of that spread one item
+much further than either system intended. What replaced it is the rule above, which asks what
+the database holds rather than which era we are in. `FREEGLE_TN_INGEST_POSTS_VIA_API` is what
+stopped new such sets being created (the API path takes only TN's *source* post and discards
+the per-group copies -
+[`GroupPostIngestionService::REASON_CROSSPOST`](../../../iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php)),
+but `ExpandService` never reads it, and flipping it releases nothing on its own.
+
+That distinction matters during the cutover, where the two eras coexist: an API-ingested
+message can land beside unmerged email-era copies of the same item, and it then sits out
+like any other member of such a set - the flag being on does not release it. **Collapsing the
+set does**: once `php artisan tn:merge-crossposts` has merged it onto one message there is no
+other live message to match, and the post ripples like any other. So the exclusion is
+self-limiting rather than permanent, but it is only as short-lived as the merge backlog - and
+the merge is run by hand on the batch host, not scheduled.
+
+Because a post sitting out is otherwise invisible, each one is counted as
+`tn_duplicate_sat_out` in the run stats, which `ripple:expand complete` logs. A cutover window
+where posts are being held back at volume shows up there; the remedy is to run
+`tn:merge-crossposts`, not to touch the flag. See
+[trashnothing.md](trashnothing.md#cross-posts-and-reposts).
+
 ### Rejected targeting approaches
 
 - **Polygon overlap** (`ST_Intersects(group polygon, reach polygon)`). Inherits every raster
@@ -779,6 +798,17 @@ For each due post, `ripple:expand`:
   Best-effort - a routing server without the engine is a quiet no-op, every reader still
   answers from the stored cells, and `ripple:backfill-reach-labels` retries later (with
   `--all` after a partition rebuild, which renumbers the region ids the labels refer to).
+  The reach's `arrival` is the post's earliest live `messages_spatial.arrival`, and the
+  starting tick is whatever that much elapsed time earns, so an older post starts wide.
+  **A member's own repost** is the exception: turning the post back into a draft
+  (`handleRejectToDraft`) removes every copy, so `removeStaleAndRetract` drops the reach row
+  and re-approval arrives here as a new post. `repostCarriedArrivals` reads the post's
+  `logs` instead and dates the reach from when the post first went live (its first
+  Approved/Autoapproved, else its first Received on a community that logs no approval), so it
+  resumes at the tick it had earned and people it had reached are not told "not yet"
+  (Discourse 9808/827). That holds only while the post was live within
+  `repost_keeps_reach_days` (7) before each repost; after a longer gap it starts afresh.
+  Autoreposts never need this: they keep the row and its stamp.
 - **`advanceDue`** advances to the next hazard tick: one catchment call materialises that
   tick's polygon, and the stored per-tick reached-group ids drive the ripple-in - no
   schedule recomputation. The target is normally elapsed time alone, but
@@ -806,6 +836,13 @@ all is in no community, and defaults to no email rather than to the daily digest
 member has done the one thing that most clearly says they want none.
 
 ## 5a. Frozen reaches (`status = 'held'`)
+
+A freeze cannot be the only thing that stops an unapproved post going out: it does nothing to a
+post whose reach row does not exist yet, and `messages_spatial` keeps a post for up to five
+minutes after it leaves Approved. So `initialiseNew` only starts a reach, and
+`rippleIntoNewGroups` only writes a copy, when the post has a live Approved copy on a group it
+was posted to directly. `advanceDue` writes its status with `status <> 'held'`, so a freeze made
+while a run is in flight survives it.
 
 `FreezeReachIfOriginPending` (`iznik-server-go/microvolunteering`) sets `status='held'` when a
 post's origin copy stops being live-Approved, typically Back to Pending. It is the only writer,
@@ -1275,6 +1312,8 @@ about travel time, so the reach wins wherever we have it.
   `max_minutes`) - how long an out-of-reach reply waits (§7a). Off reverts to release on
   coverage or backstop alone.
 - `reply_saturation_stop` (5), `hazard_hours`, `rippled_in_pending_hours` (0).
+- `repost_keeps_reach_days` (`RIPPLE_REPOST_KEEPS_REACH_DAYS`, 7) - how recently a post must
+  have been live for a member's repost to resume its reach rather than restart it (§5). 0 disables.
 - `RIPPLE_HIDE_PENDING` (apiv2 env, on by default) - hide a post that has no
   `rippling_reach` row yet for its first ten minutes. Set to `0` to show every post at once.
 

@@ -215,6 +215,10 @@ describe('ChatMessageAddress', () => {
   })
 
   describe('map', () => {
+    // vi.waitFor gives up after 1s by default, and under a full-suite run the
+    // fetch and re-render have taken longer than that.
+    const WAIT_FOR_MAP = { timeout: 5000 }
+
     // Leaflet grabs the wheel event by default, so without scrollWheelZoom
     // disabled, scrolling the conversation with the pointer over the map zooms
     // the map out instead of scrolling it, leaving it stuck at world view.
@@ -228,7 +232,7 @@ describe('ChatMessageAddress', () => {
       // the element itself rather than counting ticks.
       await vi.waitFor(() => {
         expect(wrapper.find('.l-map').exists()).toBe(true)
-      })
+      }, WAIT_FOR_MAP)
       expect(wrapper.find('.l-map').attributes('data-scrollwheelzoom')).toBe(
         'false'
       )
@@ -240,7 +244,7 @@ describe('ChatMessageAddress', () => {
       const wrapper = createWrapper()
       await vi.waitFor(() => {
         expect(wrapper.find('.l-map').exists()).toBe(true)
-      })
+      }, WAIT_FOR_MAP)
       expect(wrapper.find('.l-map').attributes('data-scrollwheelzoom')).toBe(
         'false'
       )

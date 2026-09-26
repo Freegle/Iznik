@@ -339,6 +339,14 @@ comes round.
 The poster's mail is the exception to that. They still get one "Will Repost" reminder and
 one chase-up per cycle for the item as a whole, not one per community, as above.
 
+A member reposting their own item from My Posts works differently underneath: the item
+goes back through Pending, and its copies on other communities are removed while it waits.
+Once it is approved again it picks up where it left off rather than starting from its home
+community again. The ripple is timed from when the item first went live, so it comes
+straight back to the reach it had, and nobody it had already reached is told "not yet".
+That holds as long as the item had been live in the week before the repost. An item
+reposted after being gone for longer starts rippling from scratch, like a new post.
+
 An item that has not rippled yet is not shut out by having been reposted: rippling picks
 up items that have not yet started, and reposting does not disqualify one. Equally, a
 repost cannot force an item to ripple. If the community has rippling turned off, or the
@@ -515,9 +523,11 @@ otherwise each copy would carry the same item further on its own account. Once t
 copies have been merged into a single post, it ripples normally. A TrashNothing item
 posted to one community ripples straight away, exactly like a member's post.
 
-TrashNothing ingestion is moving to taking a single post per item, which will make this
-exception rarer and rarer. On your own community, TrashNothing posts behave exactly as
-they always have, and replies to them follow the same reach rules as everything else.
+TrashNothing posts now arrive as a single post per item, placed on the community whose
+area contains the item, so new items never start out as several copies and ripple straight
+away. The exception only still applies to older items that already exist as several copies,
+until those are merged. On your own community, TrashNothing posts behave exactly as they
+always have, and replies to them follow the same reach rules as everything else.
 
 ---
 

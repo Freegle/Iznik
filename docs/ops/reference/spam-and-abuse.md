@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-21
+last_reviewed: 2026-09-26
 owner: Freegle ops
 covers:
   - conf/rspamd
@@ -93,6 +93,10 @@ receiving community's **own** keywords and worry words are asked. A match makes 
 community's copy Pending with the reasons recorded in
 `messages_groups.contentcheck_reasons`, and auto-approve leaves such a copy for a human
 rather than releasing it when the veto window runs out.
+
+The checks never approve a copy a moderator has held, or one marked
+`messages_groups.needs_moderator` because a moderator sent the post back to pending. They
+record what they found and leave the decision to that community's moderators.
 
 Reference data lives in its own tables, each with a moderator-facing editor in ModTools:
 
@@ -203,8 +207,11 @@ counts per keyword and sample ids without changing anything. Matching goes throu
   a spammer. That second half matters: the damage from chat spam is done at the moment it
   is read, so telling the recipient is part of the fix.
 - **`SpamCleanupService`** - once an account is confirmed as a spammer, removes the trail:
-  memberships, messages, chat messages, newsfeed items, notifications and sessions. Every
-  method supports `--dry-run`; use it first.
+  memberships, messages, chat messages, newsfeed items, notifications and sessions. It also
+  rejects messages sent *to* the spammer that are still waiting in Chat Review, and drops any
+  hold on them: there is nobody worth delivering them to, and once the spammer leaves their
+  groups the message can move out of the queue of the moderator who held it. Every method
+  supports `--dry-run`; use it first.
 
 ## Human moderation
 

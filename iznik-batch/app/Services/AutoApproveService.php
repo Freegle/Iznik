@@ -81,6 +81,8 @@ class AutoApproveService
             )
             ->where('messages_groups.collection', MessageGroup::COLLECTION_PENDING)
             ->whereNull('messages_groups.heldby')
+            // A copy a moderator sent back to pending waits for a moderator.
+            ->where('messages_groups.needs_moderator', 0)
             ->where('messages_groups.deleted', 0)
             ->whereNull('messages.deleted')
             // Never auto-approve a message that is in the Spam collection on ANY

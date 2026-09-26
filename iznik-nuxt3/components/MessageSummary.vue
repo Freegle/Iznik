@@ -6,7 +6,7 @@
       offer: isOffer,
       wanted: isWanted,
       freegled: message.successful && showFreegled,
-      promisedfade: showPromised && message.promised && !message.promisedtome,
+      promisedfade: showPromised && message.promised && !message.promisedtoyou,
       'mobile-landscape': isMobileLandscape,
     }"
     @click="expand"

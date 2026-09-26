@@ -1,11 +1,12 @@
 ---
-last_reviewed: 2026-09-23
+last_reviewed: 2026-09-26
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
   - iznik-nuxt3/pages/myposts.vue
   - iznik-nuxt3/pages/mypost/**
   - iznik-nuxt3/components/MyMessage.vue
+  - iznik-nuxt3/components/PhotoUploader.vue
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-post-flow.spec.js
   - iznik-nuxt3/tests/e2e/test-bulk-offer-flow.spec.js
@@ -25,6 +26,9 @@ reply, you pick someone, and they collect. This guide walks through the whole th
 2. **Describe the item.** Give it a clear name (for example "Child's blue bicycle") and a
    short description. You can add one or more **photos**. On the app you can take a photo
    there and then, and Freegle can suggest a name from the picture.
+   Tap a photo in the strip underneath to see it large, and the rotate button turns it
+   the right way up. The first photo is the main one; drag a photo onto the big one to make
+   it the main photo.
 3. **Say where it is.** Enter your postcode. Freegle works out the local community for
    you from the postcode, so there is no group to choose. If no community covers that
    postcode, you will see a note asking you to get in touch.
