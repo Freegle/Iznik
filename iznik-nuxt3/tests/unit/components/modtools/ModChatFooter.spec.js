@@ -632,7 +632,7 @@ describe('ModChatFooter', () => {
       mockReferToSupport.mockResolvedValue()
       const wrapper = await mountComponent({ id: 456 })
 
-      await wrapper.vm.referToSupport()
+      await wrapper.findComponent(ModChatFooter).vm.referToSupport()
       await flushPromises()
 
       expect(mockReferToSupport).toHaveBeenCalledWith(456)
@@ -644,7 +644,7 @@ describe('ModChatFooter', () => {
       mockReferToSupport.mockRejectedValue(new Error('403'))
       const wrapper = await mountComponent({ id: 456 })
 
-      await wrapper.vm.referToSupport()
+      await wrapper.findComponent(ModChatFooter).vm.referToSupport()
       await flushPromises()
 
       expect(wrapper.find('[data-test="refer-failed"]').exists()).toBe(true)
