@@ -46,6 +46,26 @@ final class ItemName
     private const BIAS_WORD = '/\badults?\b[!?.,]*/i';
 
     /**
+     * A target-audience qualifier at the END of a name: "cycle for women", "Bike for men"
+     * (Discourse topic 9630/62: "cycle for women" came back a distorted, unrecognisable
+     * shape, the same class of defect as BIAS_WORD above - the "single isolated X" prompt
+     * template wants a bare noun, and a qualifier that reaches it unstripped throws it off).
+     *
+     * Unlike BIAS_WORD this is anchored to the end rather than stripped anywhere, because
+     * "girl"/"boy"/"man"/"woman" commonly sit inside a compound name that is not a qualifier
+     * at all - production has "Raffle/Tombola Prizes For Girl Guide Fundraiser", where "For
+     * Girl" is followed by "Guide Fundraiser", not the end of the string. A trailing "for
+     * women" has no such reading, so the whole phrase is removed as one unit; an optional
+     * wrapping "(...)" is eaten too, so "Road bike (for men)" loses the parenthesis along
+     * with the qualifier.
+     *
+     * Deliberately narrow: "boys and girls", and trailing age descriptors like "for girl 2-3
+     * years", are left alone. Both are common in production and neither is safe to guess at.
+     * Mirrors misc.audienceQualifierPattern in iznik-server-go.
+     */
+    private const AUDIENCE_QUALIFIER = '/[\s(]*\bfor\s+(?:an?\s+)?(?:women|woman|men|man|boys?|girls?)\b[\s!?.,)]*$/i';
+
+    /**
      * Debris left behind once a bias word is lifted out of the middle of a name: a
      * conjunction or preposition with nothing left on one side of it ("Adult and kids" ->
      * "and kids", "A bike for adult" -> "A bike for"), and the empty separator left by
@@ -71,6 +91,7 @@ final class ItemName
     {
         $cleaned = preg_replace(self::TRAILING_THANKS, '', $name) ?? $name;
         $cleaned = preg_replace(self::COURTESY, ' ', $cleaned) ?? $cleaned;
+        $cleaned = preg_replace(self::AUDIENCE_QUALIFIER, '', $cleaned) ?? $cleaned;
         $biasBefore = $cleaned;
         $cleaned = preg_replace(self::BIAS_QUALIFIER, ' ', $cleaned) ?? $cleaned;
         $cleaned = preg_replace(self::BIAS_WORD, ' ', $cleaned) ?? $cleaned;
