@@ -3,6 +3,7 @@ package chat
 import (
 	"encoding/json"
 	"fmt"
+	stdlog "log"
 	"os"
 	"regexp"
 	"strconv"
@@ -1718,21 +1719,35 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64)
 		return fiber.NewError(fiber.StatusBadRequest, "Chat ID required")
 	}
 
-	// Verify user is a member of this chat.
-	var room ChatRoom
-	db.Table("chat_rooms").Select("id, chattype, user1, user2, groupid").Where("id = ?", chatid).Scan(&room)
+	var room struct {
+		ID      uint64 `gorm:"column:id"`
+		User1   uint64 `gorm:"column:user1"`
+		User2   uint64 `gorm:"column:user2"`
+		Groupid uint64 `gorm:"column:groupid"`
+	}
+	db.Table("chat_rooms").Select("id, user1, user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", chatid).Scan(&room)
 	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
 	}
-	if room.User1 != myid && room.User2 != myid {
-		return fiber.NewError(fiber.StatusForbidden, "Not a member of this chat")
+
+	// Anyone who may see the chat may refer it: its participants, the moderators of its
+	// community, and moderators reviewing a chat between their members. The button lives
+	// in ModTools on a member-to-mods chat, where the moderator is never a participant -
+	// a participants-only check refused every moderator with a 403 (Discourse 10199).
+	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
+		return fiber.NewError(fiber.StatusForbidden, "You can't see this chat")
 	}
 
-	// Queue sending a support referral email.
-	db.Table("background_tasks").Create(map[string]interface{}{
+	// Queue sending a support referral email. The batch sends it; if the queue write
+	// fails the moderator must hear about it rather than be told it worked.
+	result := db.Table("background_tasks").Create(map[string]interface{}{
 		"task_type": "refer_to_support",
 		"data":      gorm.Expr("JSON_OBJECT('chatid', ?, 'userid', ?)", chatid, myid),
 	})
+	if result.Error != nil {
+		stdlog.Printf("[ReferToSupport] queue write failed for chat %d by %d: %v", chatid, myid, result.Error)
+		return fiber.NewError(fiber.StatusInternalServerError, "Couldn't refer this chat, please try again")
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
