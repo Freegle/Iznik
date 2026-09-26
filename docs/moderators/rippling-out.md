@@ -339,6 +339,14 @@ comes round.
 The poster's mail is the exception to that. They still get one "Will Repost" reminder and
 one chase-up per cycle for the item as a whole, not one per community, as above.
 
+A member reposting their own item from My Posts works differently underneath: the item
+goes back through Pending, and its copies on other communities are removed while it waits.
+Once it is approved again it picks up where it left off rather than starting from its home
+community again. The ripple is timed from when the item first went live, so it comes
+straight back to the reach it had, and nobody it had already reached is told "not yet".
+That holds as long as the item had been live in the week before the repost. An item
+reposted after being gone for longer starts rippling from scratch, like a new post.
+
 An item that has not rippled yet is not shut out by having been reposted: rippling picks
 up items that have not yet started, and reposting does not disqualify one. Equally, a
 repost cannot force an item to ripple. If the community has rippling turned off, or the
