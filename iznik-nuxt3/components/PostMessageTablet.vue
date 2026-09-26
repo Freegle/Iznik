@@ -100,7 +100,14 @@ composeStore.setType({
   type: props.type,
 })
 
-const ret = composeStore.attachments(props.id).filter((a) => 'id' in a)
+// Keep any attachment that has actually been uploaded: a Phase-5 photo carries an
+// inline tusd uid (ouruid/externaluid) and has NO numeric id, an AI illustration has
+// ouruid, and legacy attachments have a numeric id. Only drop mid-upload placeholders
+// (tempId-only). The old `'id' in a` test silently dropped Phase-5 photos, which the
+// deep watch below then wiped from the store on remount (e.g. back-navigation).
+const ret = composeStore
+  .attachments(props.id)
+  .filter((a) => a.ouruid || a.externaluid || a.id != null)
 const currentAtts = ref([])
 
 watch(

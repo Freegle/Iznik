@@ -79,6 +79,17 @@ export default class MessageAPI extends BaseAPI {
     return this.$getv2('/modtools/messages', params)
   }
 
+  // Mark auto-published posts (Checked/Trusted oversight queues) as reviewed by a
+  // moderator. Pass {groupid, filter} to clear a whole bucket, or {groupid, ids}.
+  markChecked(params) {
+    return this.$postv2('/modtools/messages/markchecked', params)
+  }
+
+  // SysAdmin moderation analytics for a date range ({start, end}).
+  moderationStats(params) {
+    return this.$getv2('/modtools/moderationstats', params)
+  }
+
   update(event) {
     return this.$postv2('/message', event)
   }
@@ -122,6 +133,14 @@ export default class MessageAPI extends BaseAPI {
     // can't be mistaken for a message field.
     const { onbehalfof, ...body } = data
     return this.$putv2('/message' + onBehalfOfQuery(onbehalfof), body)
+  }
+
+  // Single-call compose: create + attach (inline) + join + post in one request.
+  // data: { type, item, textbody, groupid, locationid, availablenow, deadline,
+  //         deliverypossible, email, attachments:[{externaluid, externalmods}] }
+  // Returns { id, groupid, jwt?, persistent?, newuser?, newpassword? }.
+  submit(data, logError = true) {
+    return this.$putv2('/message/submit', data, logError)
   }
 
   intend(id, outcome) {
