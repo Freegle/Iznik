@@ -82,7 +82,7 @@ describe('ChatMessageText', () => {
     vi.clearAllMocks()
   })
 
-  function createWrapper(props = {}) {
+  function createWrapper(props = {}, stubOverrides = {}) {
     return mount(ChatMessageText, {
       props: {
         chatid: 123,
@@ -113,6 +113,7 @@ describe('ChatMessageText', () => {
             template: '<div class="l-marker"></div>',
             props: ['latLng', 'interactive'],
           },
+          ...stubOverrides,
         },
       },
     })
@@ -148,6 +149,33 @@ describe('ChatMessageText', () => {
     expect(wrapper.find('.l-map').attributes('data-scrollwheelzoom')).toBe(
       'false'
     )
+  })
+
+  describe('map failure', () => {
+    // A bad/edge postcode can send Leaflet invalid coordinates, throwing
+    // inside l-map's own mount (Sentry 7683112976: "_northEast.lat" on an
+    // invalid LatLngBounds). The map is a bonus on top of the message text,
+    // so that failure must not take the text down with it.
+    const throwingLMap = {
+      'l-map': {
+        template: '<div class="l-map"><slot /></div>',
+        props: ['zoom', 'maxZoom', 'center', 'style', 'options'],
+        mounted() {
+          throw new Error('Bounds are not valid.')
+        },
+      },
+    }
+
+    it('still shows the message text when the map fails to render', async () => {
+      const wrapper = createWrapper({}, throwingLMap)
+      expect(wrapper.text()).toContain('Hello there!')
+
+      wrapper.vm.lat = 53.8321
+      wrapper.vm.lng = -2.6191
+      await nextTick()
+
+      expect(wrapper.text()).toContain('Hello there!')
+    })
   })
 
   it('highlights emails only when highlightEmails prop is true', () => {

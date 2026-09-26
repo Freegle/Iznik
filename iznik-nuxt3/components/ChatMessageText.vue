@@ -96,7 +96,7 @@
           </span>
         </template>
       </div>
-      <div v-if="lat || lng">
+      <div v-if="(lat || lng) && !mapFailed">
         <l-map
           ref="map"
           :zoom="16"
@@ -123,6 +123,7 @@ import {
   linkifyAndHighlightEmails,
 } from '~/composables/useLinkify'
 import { ref, computed, onMounted } from '#imports'
+import { onErrorCaptured } from 'vue'
 import ProfileImage from '~/components/ProfileImage'
 import { MAX_MAP_ZOOM, POSTCODE_REGEX } from '~/constants'
 import { attribution, osmtile, INLINE_MAP_OPTIONS } from '~/composables/useMap'
@@ -167,6 +168,16 @@ const {
 // Data properties
 const lat = ref(null)
 const lng = ref(null)
+
+// A bad/edge postcode can send Leaflet invalid coordinates (Sentry 7683112976:
+// TypeError on _northEast.lat), which throws inside l-map's own mount. The
+// map is a bonus on top of the message text, so that failure must not hide
+// the text - drop the map instead of leaving the whole message blank.
+const mapFailed = ref(false)
+onErrorCaptured(() => {
+  mapFailed.value = true
+  return false
+})
 
 // Computed properties
 const maxZoom = computed(() => MAX_MAP_ZOOM)
