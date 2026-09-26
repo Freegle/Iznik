@@ -100,10 +100,10 @@ Banner restyling, any use of Claude, categorising cookies (the classifier does i
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 1 | `CookieYesTokenStore` + `CookieYesOAuth`, test-first with `Http::fake` | ⬜ | register, auth URL, exchange, refresh, rotation, revoked token |
-| 2 | `CookieYesMcpClient`, test-first | ⬜ | JSON + SSE bodies, session id, JSON-RPC error, 401 |
-| 3 | `cookieyes:authorize` + `cookieyes:call` | ⬜ | |
-| 4 | Trial run on dev: authorise, record real responses as fixtures | ⬜ | needs the account owner to log in once |
+| 1 | `CookieYesTokenStore` + `CookieYesOAuth`, test-first with `Http::fake` | ✅ | register, auth URL, exchange, refresh, rotation, revoked token |
+| 2 | `CookieYesMcpClient`, test-first | ✅ | JSON + SSE bodies, session id, JSON-RPC error, 401 |
+| 3 | `cookieyes:authorize` + `cookieyes:call` | ✅ | |
+| 4 | Trial run on dev: authorise, record real responses as fixtures | 🔄 | needs the account owner to log in once |
 | 5 | `CookieYesWatchdogService` checks against the fixtures | ⬜ | finalise pass/fail rules |
 | 6 | `cookieyes:check`, `HousekeeperService::recordRun`, schedule, failure email | ⬜ | |
 | 7 | Extension: remove the CookieYes task | ⬜ | separate repo/PR |
