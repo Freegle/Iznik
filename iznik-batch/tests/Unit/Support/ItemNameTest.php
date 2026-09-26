@@ -100,6 +100,13 @@ class ItemNameTest extends TestCase
                 'Clothes for girls age 10-12 and boys age 6-7',
                 'Clothes for girls age 10-12 and boys age 6-7',
             ],
+
+            // A trailing audience qualifier only exposed once "adult" is stripped out from
+            // between "for" and the audience word - the qualifier pattern has to run after
+            // the bias-word removal, not before, or "bike for adult men" is left as "bike
+            // for men".
+            'audience qualifier exposed by adult removal' => ['bike for adult men', 'bike'],
+            'audience qualifier exposed by adult removal, singular' => ['Coat for adult woman', 'Coat'],
         ];
     }
 

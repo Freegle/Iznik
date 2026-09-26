@@ -54,6 +54,10 @@ var biasWordPattern = regexp.MustCompile(`(?i)\badults?\b[!?.,]*`)
 // such reading, so the whole phrase is removed as one unit; an optional wrapping "(...)" is
 // eaten too, so "Road bike (for men)" loses the parenthesis along with the qualifier.
 //
+// Applied AFTER the bias qualifier/word removal below, not before: "bike for adult men" has
+// "adult" sitting between "for" and "men", so the pattern cannot match until "adult" is gone
+// and "for men" is exposed at the end. Applying it first leaves that case as "bike for men".
+//
 // Deliberately narrow: "boys and girls", and trailing age descriptors like "for girl 2-3
 // years", are left alone. Both are common in production and neither is safe to guess at.
 var audienceQualifierPattern = regexp.MustCompile(`(?i)[\s(]*\bfor\s+(?:an?\s+)?(?:women|woman|men|man|boys?|girls?)\b[\s!?.,)]*$`)
@@ -100,13 +104,13 @@ func fixArticle(name string) string {
 func StripCourtesy(name string) string {
 	cleaned := trailingThanksPattern.ReplaceAllString(name, "")
 	cleaned = courtesyPattern.ReplaceAllString(cleaned, " ")
-	cleaned = audienceQualifierPattern.ReplaceAllString(cleaned, "")
 	biasBefore := cleaned
 	cleaned = biasQualifierPattern.ReplaceAllString(cleaned, " ")
 	cleaned = biasWordPattern.ReplaceAllString(cleaned, " ")
+	cleaned = audienceQualifierPattern.ReplaceAllString(cleaned, "")
 
-	// Only tidy when a bias word actually came out, so names that never contained one keep
-	// going through exactly the path they did before.
+	// Only tidy when a bias word or trailing audience qualifier actually came out, so names
+	// that never contained one keep going through exactly the path they did before.
 	if cleaned != biasBefore {
 		cleaned = emptySeparatorPattern.ReplaceAllString(cleaned, " - ")
 		cleaned = strandedLeadPattern.ReplaceAllString(cleaned, "")

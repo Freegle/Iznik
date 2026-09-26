@@ -59,6 +59,11 @@ final class ItemName
      * wrapping "(...)" is eaten too, so "Road bike (for men)" loses the parenthesis along
      * with the qualifier.
      *
+     * Applied AFTER BIAS_QUALIFIER/BIAS_WORD below, not before: "bike for adult men" has
+     * "adult" sitting between "for" and "men", so the pattern cannot match until "adult" is
+     * gone and "for men" is exposed at the end. Applying it first leaves that case as "bike
+     * for men".
+     *
      * Deliberately narrow: "boys and girls", and trailing age descriptors like "for girl 2-3
      * years", are left alone. Both are common in production and neither is safe to guess at.
      * Mirrors misc.audienceQualifierPattern in iznik-server-go.
@@ -91,13 +96,13 @@ final class ItemName
     {
         $cleaned = preg_replace(self::TRAILING_THANKS, '', $name) ?? $name;
         $cleaned = preg_replace(self::COURTESY, ' ', $cleaned) ?? $cleaned;
-        $cleaned = preg_replace(self::AUDIENCE_QUALIFIER, '', $cleaned) ?? $cleaned;
         $biasBefore = $cleaned;
         $cleaned = preg_replace(self::BIAS_QUALIFIER, ' ', $cleaned) ?? $cleaned;
         $cleaned = preg_replace(self::BIAS_WORD, ' ', $cleaned) ?? $cleaned;
+        $cleaned = preg_replace(self::AUDIENCE_QUALIFIER, '', $cleaned) ?? $cleaned;
 
-        // Only tidy when a bias word actually came out, so names that never contained one
-        // keep going through exactly the path they did before.
+        // Only tidy when a bias word or trailing audience qualifier actually came out, so
+        // names that never contained one keep going through exactly the path they did before.
         if ($cleaned !== $biasBefore) {
             $cleaned = preg_replace(self::EMPTY_SEPARATOR, ' - ', $cleaned) ?? $cleaned;
             $cleaned = preg_replace(self::STRANDED_LEAD, '', $cleaned) ?? $cleaned;
