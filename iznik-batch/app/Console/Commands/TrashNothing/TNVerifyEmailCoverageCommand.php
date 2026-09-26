@@ -195,7 +195,9 @@ class TNVerifyEmailCoverageCommand extends Command
         return app()->makeWith(PostSyncer::class, [
             'dryRun'       => false,
             'localTesting' => false,
-            'apiKey'       => (string) config('freegle.trashnothing.api_key', ''),
+            // The single-post lookups hit the public posts API, which takes the developer
+            // key, not the partner key (see config freegle.trashnothing.public_api_key).
+            'apiKey'       => (string) config('freegle.trashnothing.public_api_key', config('freegle.trashnothing.api_key', '')),
             'apiBaseUrl'   => (string) config('freegle.trashnothing.api_base_url', ''),
             'loki'         => $loki,
         ]);
