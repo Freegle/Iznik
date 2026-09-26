@@ -247,19 +247,6 @@ func GetUserByEmail(c *fiber.Ctx) error {
 	})
 }
 
-// resolveDisplayPostingStatus resolves the ourPostingStatus a moderator sees for a
-// membership. A blank status (NULL/empty) means no moderator ever set one — that is not
-// itself a moderation decision, so it reads as DEFAULT ("follow group default"), never
-// MODERATED. Rippled memberships (rippled = 1) are left unset: nobody chose them, so even
-// DEFAULT would misrepresent them as a per-group posting status (Discourse 10115).
-func resolveDisplayPostingStatus(rippled int, status *string) *string {
-	if rippled == 0 && (status == nil || *status == "") {
-		v := utils.POSTING_STATUS_DEFAULT
-		return &v
-	}
-	return status
-}
-
 func GetUser(c *fiber.Ctx) error {
 	modtools := c.Query("modtools") == "true"
 
@@ -1463,17 +1450,19 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 
 	wg.Wait()
 
-	// Resolve a blank ourPostingStatus for display. DEFAULT stays as DEFAULT — it's an
-	// explicit status meaning "follow group default". A blank/NULL status means no
-	// moderator ever set one, which is not itself a moderation decision, so it also
-	// resolves to DEFAULT rather than MODERATED — otherwise a member nobody has ever
-	// flagged shows a "This member is Moderated" notice (Discourse 10024/8). Rippled
-	// memberships (rippled = 1) are left unset entirely: no moderator chose them, so
-	// even DEFAULT would misrepresent them as a per-group posting status (Discourse 10115).
+	// Resolve NULL ourPostingStatus → MODERATED.
+	// DEFAULT stays as DEFAULT — it's an explicit status meaning "follow group default".
+	// A membership rippling created for the poster (rippled = 1) is left unset: no
+	// moderator chose that membership, so a blank status there is not a moderation
+	// decision, and reading it as MODERATED put a "This member is Moderated" notice on
+	// every rippled-in copy (Discourse 10115).
 	if modtools {
 		for i := range memberships {
 			m := &memberships[i]
-			m.OurPostingStatus = resolveDisplayPostingStatus(m.Rippled, m.OurPostingStatus)
+			if m.Rippled == 0 && (m.OurPostingStatus == nil || *m.OurPostingStatus == "") {
+				v := utils.POSTING_STATUS_MODERATED
+				m.OurPostingStatus = &v
+			}
 		}
 	} else {
 		// Non-modtools: strip posting status (mod-only field).
@@ -3028,13 +3017,32 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 
 	// ── SECTION A: emails, memberships ──────────────────────────────────────────
 
-	// Email merge: move id1's emails to id2.
-	// If id2 already has a preferred email, demote id1's preferred before moving.
+	// Email merge: move id1's emails to id2. id2's own dominant email must
+	// survive the merge (UI: "the second user's preferred email will be the
+	// preferred email of the merged user"), so id1's preferred flag is always
+	// demoted first. If id2 had no preferred=1 row of its own - e.g. it was
+	// never (re)set - promote id2's best candidate so id1's email cannot
+	// become dominant merely by inheriting an unset flag.
+	if err := tx.Table("users_emails").Where("userid = ? AND preferred = 1", id1).Update("preferred", gorm.Expr("0")).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to demote id1 preferred email")
+	}
 	var id2HasPreferred int64
 	tx.Table("users_emails").Where("userid = ? AND preferred = 1", id2).Count(&id2HasPreferred)
-	if id2HasPreferred > 0 {
-		if err := tx.Table("users_emails").Where("userid = ? AND preferred = 1", id1).Update("preferred", gorm.Expr("0")).Error; err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "Failed to demote id1 preferred email")
+	if id2HasPreferred == 0 {
+		var bestEmailID uint64
+		tx.Table("users_emails").Select("id").Where("userid = ?", id2).
+			Order("preferred DESC, id ASC").Limit(1).Scan(&bestEmailID)
+		if bestEmailID == 0 {
+			// id2 has no email of its own (only reachable via merge-by-id).
+			// Fall back to id1's best so the merged account isn't left with
+			// zero preferred emails.
+			tx.Table("users_emails").Select("id").Where("userid = ?", id1).
+				Order("preferred DESC, id ASC").Limit(1).Scan(&bestEmailID)
+		}
+		if bestEmailID > 0 {
+			if err := tx.Table("users_emails").Where("id = ?", bestEmailID).Update("preferred", gorm.Expr("1")).Error; err != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, "Failed to promote preferred email")
+			}
 		}
 	}
 	if err := tx.Table("users_emails").Where("userid = ?", id1).Update("userid", id2).Error; err != nil {

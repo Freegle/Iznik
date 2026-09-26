@@ -1511,6 +1511,46 @@ describe('ModMessage', () => {
       await wrapper.vm.$nextTick()
       expect(wrapper.text()).not.toContain('posts need approval')
     })
+
+    // Discourse #10024 post 8: a mod moved a post back to Pending on a group that
+    // moderates everyone. The member's own status is blank, which is deliberately
+    // displayed as MODERATED (a prior fix attempt tried to change that display and was
+    // rejected - the display is correct), but the notice wording claimed a per-member
+    // decision that was never made. The group setting, not the member, is why the post
+    // is held, so that is what the notice must say.
+    it('shows the group-moderated notice, not the member-moderated one, when the group moderates everyone', async () => {
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'Test User',
+        memberships: [{ id: 789, groupid: 789, ourpostingstatus: 'MODERATED' }],
+      })
+      mockMyModGroups[0].settings.moderated = true
+      try {
+        const wrapper = mountComponent({ summary: false })
+        await wrapper.vm.$nextTick()
+        const text = wrapper.text()
+        expect(text).toContain('This group moderates all posts')
+        expect(text).not.toContain('This member is')
+      } finally {
+        delete mockMyModGroups[0].settings.moderated
+      }
+    })
+
+    it('shows the group-moderated notice for a group that is closed, even with a DEFAULT member', async () => {
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'Test User',
+        memberships: [{ id: 789, groupid: 789, ourpostingstatus: 'DEFAULT' }],
+      })
+      mockMyModGroups[0].settings.closed = true
+      try {
+        const wrapper = mountComponent({ summary: false })
+        await wrapper.vm.$nextTick()
+        expect(wrapper.text()).toContain('This group moderates all posts')
+      } finally {
+        delete mockMyModGroups[0].settings.closed
+      }
+    })
   })
 
   describe('ModMessageWorry', () => {

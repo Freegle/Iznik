@@ -402,8 +402,22 @@
             >
               {{ contextGroup.spamreason }}
             </NoticeMessage>
+            <!-- Group-wide moderation takes priority over the member notice below: it holds
+                 EVERY post to this group regardless of the member's own setting, so telling a
+                 moderator "this member is Moderated" is wrong (and confusing) for a member who
+                 was never individually flagged, e.g. one a moderator moved back to Pending on
+                 a fully-moderated group (Discourse #10024). -->
             <NoticeMessage
-              v-if="
+              v-if="pending && groupModeratesAll"
+              variant="info"
+              class="mb-2"
+            >
+              This <strong>group</strong> moderates all posts — this one needs
+              approval before going live, whatever the member's own posting
+              setting.
+            </NoticeMessage>
+            <NoticeMessage
+              v-else-if="
                 pending &&
                 membership &&
                 membership.ourpostingstatus === 'MODERATED'
@@ -1058,10 +1072,17 @@ const explainedElsewhere = computed(() => {
   // stale - it would claim we don't know where a post with a visible postcode is.
   const covered = ['NoLocation']
 
-  // Only claim this one when the notice above is actually rendering. The member's
-  // memberships may simply not have loaded, and a post held purely by a setting
-  // with nothing saying so is what Discourse #9987 was about.
-  if (pending.value && membership.value?.ourpostingstatus === 'MODERATED') {
+  // Only claim one of these when the corresponding notice above is actually rendering -
+  // same v-if/v-else-if precedence as the template, so the stored reason is never
+  // suppressed by a live notice that didn't actually fire. The member's memberships may
+  // simply not have loaded, and a post held purely by a setting with nothing saying so is
+  // what Discourse #9987 was about.
+  if (pending.value && groupModeratesAll.value) {
+    covered.push('GroupModerated')
+  } else if (
+    pending.value &&
+    membership.value?.ourpostingstatus === 'MODERATED'
+  ) {
     covered.push('MemberModerated')
   }
 
@@ -1181,6 +1202,16 @@ const group = computed(() => {
   // the wrong place (Discourse 9808/305).
   if (!currentGroupid.value) return null
   return myModGroups.value.find((g) => isCurrentGroup(g.id)) || null
+})
+
+// Does this group hold every post regardless of the poster's own setting? Mirrors the
+// group-first precedent already used server-side (message.go's reviewRequired /
+// postingWouldBeModerated): a group's settings.moderated or settings.closed flag overrides
+// whatever the individual member's posting status says.
+const groupModeratesAll = computed(() => {
+  return Boolean(
+    group.value?.settings?.moderated || group.value?.settings?.closed
+  )
 })
 
 const position = computed(() => {
