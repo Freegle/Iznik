@@ -327,6 +327,8 @@ class TNParityCheckCommandTest extends TestCase
     {
         DB::table('users')->insert([
             'id' => $id,
+            // The fixture posts carry $id as TN's user_id; the API path resolves it via tnuserid.
+            'tnuserid' => $id,
             'fullname' => 'TN Parity Command User '.$id,
             'systemrole' => 'User',
             'added' => now(),

@@ -181,6 +181,13 @@ and `tn:parity-check`, neither of which needs the email path switched off. On, i
 Five differences from the email path are intentional, not bugs, and all matter
 when reading any coverage report:
 
+- **The poster is resolved through `users.tnuserid`.** The API's `user_id` is TN's own
+  id, never a Freegle id, and `users.tnuserid` (unique, written by the partner
+  membership-add flow) is the only mapping. A TN user Freegle has never met is skipped
+  (`post-skip-unknown-user`): the API gives no name and no address for them, so nothing
+  could deliver a reply, and nothing is invented for them - no stub account, no
+  synthetic address. Treating the number as a Freegle id would hand the post to whichever
+  unrelated account holds it.
 - **Group placement is by coordinates**, via `Location::groupsNear()` on the
   post's own lat/lng — never TN's `group_id`, which is TN's internal ID and
   drifts from Freegle's boundaries.

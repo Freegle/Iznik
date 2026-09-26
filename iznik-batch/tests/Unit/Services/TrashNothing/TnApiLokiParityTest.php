@@ -45,6 +45,15 @@ class TnApiLokiParityTest extends TestCase
         parent::tearDown();
     }
 
+    /**
+     * A Freegle user TN knows: the post payload carries TN's own user id, and the
+     * ingestion resolves it through users.tnuserid.
+     */
+    private function createTnUser(array $attributes = []): \App\Models\User
+    {
+        return $this->createTestUser(array_merge(['tnuserid' => random_int(900000000, 999999999)], $attributes));
+    }
+
     private function makeSyncer(bool $dryRun = false): PostSyncer
     {
         return new PostSyncer(
@@ -76,7 +85,7 @@ class TnApiLokiParityTest extends TestCase
             'lng' => -3.1883,
         ]);
 
-        return $this->createTestUser(['lastlocation' => $locationId]);
+        return $this->createTnUser(['lastlocation' => $locationId]);
     }
 
     private function makePost(array $overrides = []): array
@@ -164,7 +173,7 @@ class TnApiLokiParityTest extends TestCase
         // --- API path: the same post, through the real syncer
         $this->processPost($this->makeSyncer(), $this->makePost([
             'post_id' => $apiPostId,
-            'user_id' => $user->id,
+            'user_id' => $user->tnuserid,
             'title' => $title,
             'latitude' => 55.9533,
             'longitude' => -3.1883,
@@ -296,13 +305,13 @@ class TnApiLokiParityTest extends TestCase
     public function test_emits_exactly_one_entry_per_ingested_post(): void
     {
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
-        $user = $this->createTestUser(['lastlocation' => null]);
+        $user = $this->createTnUser(['lastlocation' => null]);
         $this->createMembership($user, $group);
 
         $postId = 'tn-loki-one-'.uniqid();
         $this->processPost($this->makeSyncer(), $this->makePost([
             'post_id' => $postId,
-            'user_id' => $user->id,
+            'user_id' => $user->tnuserid,
             'latitude' => 55.9533,
             'longitude' => -3.1883,
         ]));
@@ -324,13 +333,13 @@ class TnApiLokiParityTest extends TestCase
         // how the email side is correlated (section I.5a). It must win over the
         // synthesized RFC822 id, exactly as the email path's context does.
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
-        $user = $this->createTestUser(['lastlocation' => null]);
+        $user = $this->createTnUser(['lastlocation' => null]);
         $this->createMembership($user, $group);
 
         $postId = 'tn-loki-msgid-'.uniqid();
         $this->processPost($this->makeSyncer(), $this->makePost([
             'post_id' => $postId,
-            'user_id' => $user->id,
+            'user_id' => $user->tnuserid,
             'latitude' => 55.9533,
             'longitude' => -3.1883,
         ]));
@@ -344,13 +353,13 @@ class TnApiLokiParityTest extends TestCase
     public function test_falls_back_to_the_synthesized_message_id_when_no_message_was_created(): void
     {
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
-        $user = $this->createTestUser();
+        $user = $this->createTnUser();
         $this->createMembership($user, $group);
 
         $postId = 'tn-loki-nomsg-'.uniqid();
         $this->processPost($this->makeSyncer(), $this->makePost([
             'post_id' => $postId,
-            'user_id' => $user->id,
+            'user_id' => $user->tnuserid,
             'group_id' => '8444',  // Crosspost: discarded, no message created.
             'latitude' => 55.9533,
             'longitude' => -3.1883,
@@ -370,11 +379,11 @@ class TnApiLokiParityTest extends TestCase
         // during a parallel run is the whole point — but they must be
         // distinguishable from real ingestion.
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
-        $user = $this->createTestUser(['lastlocation' => null]);
+        $user = $this->createTnUser(['lastlocation' => null]);
         $this->createMembership($user, $group);
 
         $this->processPost($this->makeSyncer(dryRun: true), $this->makePost([
-            'user_id' => $user->id,
+            'user_id' => $user->tnuserid,
             'latitude' => 55.9533,
             'longitude' => -3.1883,
         ]));
@@ -386,7 +395,7 @@ class TnApiLokiParityTest extends TestCase
     {
         config(['freegle.loki.enabled' => false]);
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
-        $user = $this->createTestUser(['lastlocation' => null]);
+        $user = $this->createTnUser(['lastlocation' => null]);
         $this->createMembership($user, $group);
 
         $syncer = new PostSyncer(
@@ -398,7 +407,7 @@ class TnApiLokiParityTest extends TestCase
         );
 
         $this->processPost($syncer, $this->makePost([
-            'user_id' => $user->id,
+            'user_id' => $user->tnuserid,
             'latitude' => 55.9533,
             'longitude' => -3.1883,
         ]));

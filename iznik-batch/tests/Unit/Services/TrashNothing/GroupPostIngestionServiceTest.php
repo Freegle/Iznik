@@ -4,6 +4,7 @@ namespace Tests\Unit\Services\TrashNothing;
 
 use App\Models\Message;
 use App\Models\MessageGroup;
+use App\Models\User;
 use App\Services\ItemService;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
@@ -29,6 +30,15 @@ class GroupPostIngestionServiceTest extends TestCase
         parent::setUp();
         $this->loki = app(LokiService::class);
         $this->itemService = app(ItemService::class);
+    }
+
+    /**
+     * A Freegle user TN knows: the post payload carries TN's own user id, and the
+     * service resolves it through users.tnuserid.
+     */
+    private function createTnUser(array $attributes = []): User
+    {
+        return $this->createTestUser(array_merge(['tnuserid' => random_int(900000000, 999999999)], $attributes));
     }
 
     private function makeService(bool $dryRun = true): GroupPostIngestionService
@@ -84,47 +94,50 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertSame('skipped', $result);
     }
 
-    public function test_skips_when_user_not_found_in_dry_run(): void
+    public function test_skips_a_post_from_a_tn_user_freegle_does_not_know(): void
     {
-        // In dry-run mode no DB writes occur, so a missing user cannot be created
-        // and the post must be skipped rather than crash.
-        $group = $this->createTestGroup();
-        $post  = $this->makePost(['user_id' => 999999999]);
-
-        $result = $this->makeService(dryRun: true)->ingest($post, $group);
-
-        $this->assertSame('skipped', $result);
-        $this->assertFalse(DB::table('users')->where('id', 999999999)->exists(), 'Dry-run must not create a user row');
-    }
-
-    public function test_creates_stub_user_and_ingests_post_when_user_unknown(): void
-    {
-        // Pick an ID that won't collide with any auto-incremented user created in this test.
-        $fdUserId = 98765432;
-        $this->assertFalse(DB::table('users')->where('id', $fdUserId)->exists(), 'Pre-condition: user must not exist');
-
-        $group  = $this->createTestGroup();
-        $postId = 'tn-stub-user-' . uniqid();
-        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $fdUserId]);
+        // TN's user_id is TN's own id. With no users.tnuserid match there is no name
+        // and no address for the poster, so the post is skipped in live mode too, and
+        // nothing is invented: no user, no address, no membership, no message.
+        $group   = $this->createTestGroup();
+        $tnId    = 999999999;
+        $postId  = 'tn-unknown-' . uniqid();
+        $before  = DB::table('users')->count();
+        $post    = $this->makePost(['post_id' => $postId, 'user_id' => $tnId]);
 
         $result = $this->makeService(dryRun: false)->ingest($post, $group);
 
-        // Stub user was created with the correct Freegle id.
-        $this->assertTrue(DB::table('users')->where('id', $fdUserId)->exists(), 'Stub user row must be created');
-        $this->assertTrue(
-            DB::table('users_emails')->where('userid', $fdUserId)->where('email', "tn{$fdUserId}@user.trashnothing.com")->exists(),
-            'Synthetic email must be created for stub user',
-        );
+        $this->assertSame('skipped', $result);
+        $this->assertSame($before, DB::table('users')->count(), 'No stub user may be created');
+        $this->assertFalse(DB::table('users')->where('id', $tnId)->exists(), 'The TN id must never become a Freegle id');
+        $this->assertFalse(DB::table('users_emails')->where('email', "tn{$tnId}@user.trashnothing.com")->exists());
+        $this->assertSame(0, Message::where('tnpostid', $postId)->count());
+    }
 
-        // Membership was created so the post could pass the membership check.
-        $this->assertTrue(
-            DB::table('memberships')->where('userid', $fdUserId)->where('groupid', $group->id)->where('collection', 'Approved')->exists(),
-            'Stub membership must be created',
-        );
+    public function test_resolves_the_poster_by_tn_user_id_and_never_by_freegle_id(): void
+    {
+        // The collision seen on 2026-09-25: a Freegle account whose id happens to equal
+        // the TN user's id must not be given the post. The user with that tnuserid must.
+        $tnId    = 987654321;
+        DB::table('users')->insert([
+            'id'         => $tnId,
+            'fullname'   => 'Decoy who merely holds the number',
+            'systemrole' => 'User',
+            'added'      => now(),
+        ]);
+        $this->assertTrue(DB::table('users')->where('id', $tnId)->exists(), 'Pre-condition: a Freegle account holds the TN id');
+        $poster  = $this->createTestUser(['tnuserid' => $tnId]);
+        $group   = $this->createTestGroup();
+        $postId  = 'tn-collision-' . uniqid();
+        $post    = $this->makePost(['post_id' => $postId, 'user_id' => $tnId]);
 
-        // Post was ingested (not skipped).
-        $this->assertNotSame('skipped', $result, 'Post must not be skipped when stub user is created');
-        $this->assertSame(1, Message::where('tnpostid', $postId)->count(), 'Message row must be created');
+        $result = $this->makeService(dryRun: false)->ingest($post, $group);
+
+        $this->assertNotSame('skipped', $result);
+        $message = Message::where('tnpostid', $postId)->first();
+        $this->assertNotNull($message);
+        $this->assertSame($poster->id, (int) $message->fromuser, 'Attributed to the tnuserid match');
+        $this->assertNotSame($tnId, (int) $message->fromuser, 'Never to the account that merely holds the same number');
     }
 
     public function test_preserves_the_tn_post_date_from_an_iso_string(): void
@@ -133,11 +146,11 @@ class GroupPostIngestionServiceTest extends TestCase
         // JSON) carry the date as an ISO-8601 string rather than a DateTime.
         // It must still land in messages.date, not be replaced by now().
         $group  = $this->createTestGroup();
-        $user   = $this->createTestUser();
+        $user   = $this->createTnUser();
         $postId = 'tn-date-string-' . uniqid();
         $post   = $this->makePost([
             'post_id' => $postId,
-            'user_id' => $user->id,
+            'user_id' => $user->tnuserid,
             'date'    => '2026-07-07T12:00:00Z',
         ]);
 
@@ -151,11 +164,11 @@ class GroupPostIngestionServiceTest extends TestCase
     public function test_preserves_the_tn_post_date_from_a_datetime(): void
     {
         $group  = $this->createTestGroup();
-        $user   = $this->createTestUser();
+        $user   = $this->createTnUser();
         $postId = 'tn-date-object-' . uniqid();
         $post   = $this->makePost([
             'post_id' => $postId,
-            'user_id' => $user->id,
+            'user_id' => $user->tnuserid,
             'date'    => new \DateTime('2026-07-07T12:00:00Z'),
         ]);
 
@@ -169,11 +182,11 @@ class GroupPostIngestionServiceTest extends TestCase
     public function test_falls_back_to_now_when_the_post_date_is_unusable(): void
     {
         $group  = $this->createTestGroup();
-        $user   = $this->createTestUser();
+        $user   = $this->createTnUser();
         $postId = 'tn-date-bad-' . uniqid();
         $post   = $this->makePost([
             'post_id' => $postId,
-            'user_id' => $user->id,
+            'user_id' => $user->tnuserid,
             'date'    => 'not a date',
         ]);
 
@@ -184,15 +197,15 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertEqualsWithDelta(now()->timestamp, strtotime((string) $message->date), 60);
     }
 
-    public function test_stub_user_creation_is_idempotent_on_second_ingest(): void
+    public function test_second_ingest_of_the_same_post_is_a_duplicate(): void
     {
         // If the same post arrives again (overlap window), the second call must detect
-        // the duplicate and not try to re-insert the user or membership.
-        $fdUserId = 98765433;
-        $group    = $this->createTestGroup();
-        $postId   = 'tn-stub-idem-' . uniqid();
-        $post     = $this->makePost(['post_id' => $postId, 'user_id' => $fdUserId]);
-        $svc      = $this->makeService(dryRun: false);
+        // the duplicate rather than write a second message.
+        $user   = $this->createTnUser();
+        $group  = $this->createTestGroup();
+        $postId = 'tn-idem-' . uniqid();
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]);
+        $svc    = $this->makeService(dryRun: false);
 
         $first  = $svc->ingest($post, $group);
         $second = $svc->ingest($post, $group);
@@ -200,12 +213,6 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertNotSame('skipped', $first);
         $this->assertSame('duplicate', $second);
         $this->assertSame(1, Message::where('tnpostid', $postId)->count());
-        $this->assertSame(1, DB::table('users')->where('id', $fdUserId)->count(), 'User must not be duplicated');
-        $this->assertSame(
-            1,
-            DB::table('memberships')->where('userid', $fdUserId)->where('groupid', $group->id)->count(),
-            'Membership must not be duplicated',
-        );
     }
 
     public function test_creates_post_for_non_member_of_resolved_group(): void
@@ -220,12 +227,12 @@ class GroupPostIngestionServiceTest extends TestCase
         // fallback for a TN post whose poster has no membership, so nothing
         // strands it there.
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         // Deliberately no membership created.
 
         $postId = 'tn-non-member-' . uniqid();
-        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]);
         $result = $this->makeService(dryRun: false)->ingest($post, $group);
 
         $this->assertSame('pending', $result);
@@ -240,7 +247,7 @@ class GroupPostIngestionServiceTest extends TestCase
 
     public function test_returns_duplicate_when_post_already_ingested(): void
     {
-        $user  = $this->createTestUser();
+        $user  = $this->createTnUser();
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
@@ -262,7 +269,7 @@ class GroupPostIngestionServiceTest extends TestCase
             'arrival'    => now(),
         ]);
 
-        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]);
         $result = $this->makeService()->ingest($post, $group);
 
         $this->assertSame('duplicate', $result);
@@ -274,11 +281,11 @@ class GroupPostIngestionServiceTest extends TestCase
 
     public function test_dry_run_returns_pending_for_unmapped_user(): void
     {
-        $user  = $this->createTestUser(); // lastlocation defaults to null
+        $user  = $this->createTnUser(); // lastlocation defaults to null
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
-        $post   = $this->makePost(['user_id' => $user->id]);
+        $post   = $this->makePost(['user_id' => $user->tnuserid]);
         $result = $this->makeService(dryRun: true)->ingest($post, $group);
 
         $this->assertSame('pending', $result);
@@ -287,7 +294,7 @@ class GroupPostIngestionServiceTest extends TestCase
     public function test_dry_run_emits_write_trace_log_and_makes_no_db_writes(): void
     {
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
@@ -298,7 +305,7 @@ class GroupPostIngestionServiceTest extends TestCase
             }
         });
 
-        $post   = $this->makePost(['user_id' => $user->id]);
+        $post   = $this->makePost(['user_id' => $user->tnuserid]);
         $result = $this->makeService(dryRun: true)->ingest($post, $group);
 
         // In dry-run the routing result is still computed correctly.
@@ -319,12 +326,12 @@ class GroupPostIngestionServiceTest extends TestCase
     public function test_live_creates_message_and_messages_groups_rows(): void
     {
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
         $postId = 'tn-live-' . uniqid();
-        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]);
         $result = $this->makeService(dryRun: false)->ingest($post, $group);
 
         // An unmoderated poster starts Pending for the content check — see
@@ -346,12 +353,12 @@ class GroupPostIngestionServiceTest extends TestCase
     public function test_live_persists_mod_messaging_disallowed_when_specified(): void
     {
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
         $postId = 'tn-live-nomodmsg-' . uniqid();
-        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]);
         $result = $this->makeService(dryRun: false)->ingest($post, $group, modMessagingAllowed: false);
 
         $this->assertSame('pending', $result);
@@ -377,7 +384,7 @@ class GroupPostIngestionServiceTest extends TestCase
     public function test_unmoderated_poster_starts_pending_for_the_content_check(): void
     {
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'UNMODERATED']);
 
@@ -391,7 +398,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $postId = 'tn-awaiting-check-' . uniqid();
         $post   = $this->makePost([
             'post_id'   => $postId,
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
         ]);
@@ -417,12 +424,12 @@ class GroupPostIngestionServiceTest extends TestCase
     public function test_live_creates_pending_message_when_group_is_moderated(): void
     {
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup(['settings' => json_encode(['moderated' => true])]);
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
         $postId = 'tn-live-mod-' . uniqid();
-        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]);
         $result = $this->makeService(dryRun: false)->ingest($post, $group);
 
         $this->assertSame('pending', $result);
@@ -438,12 +445,12 @@ class GroupPostIngestionServiceTest extends TestCase
     public function test_live_is_idempotent_on_second_ingest(): void
     {
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
         $postId = 'tn-idem-' . uniqid();
-        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]);
         $svc    = $this->makeService(dryRun: false);
 
         $first  = $svc->ingest($post, $group);
@@ -459,12 +466,12 @@ class GroupPostIngestionServiceTest extends TestCase
     public function test_overlap_window_does_not_duplicate_posts(): void
     {
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
         $postId = 'tn-overlap-' . uniqid();
-        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]);
         $svc    = $this->makeService(dryRun: false);
 
         // Simulates the first sync window: post is created.
@@ -488,14 +495,14 @@ class GroupPostIngestionServiceTest extends TestCase
     public function test_live_synthesizes_rfc822_blob_in_messages_message(): void
     {
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
         $postId = 'tn-rfc-' . uniqid();
         $post   = $this->makePost([
             'post_id'  => $postId,
-            'user_id'  => $user->id,
+            'user_id'  => $user->tnuserid,
             'title'    => 'Bicycle',
             'content'  => 'Blue bike, collect from porch.',
         ]);
@@ -520,12 +527,12 @@ class GroupPostIngestionServiceTest extends TestCase
     public function test_live_stamps_a_tn_sourceheader(): void
     {
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
         $postId = 'tn-src-' . uniqid();
-        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]);
 
         $this->makeService(dryRun: false)->ingest($post, $group);
 
@@ -577,13 +584,13 @@ class GroupPostIngestionServiceTest extends TestCase
         ]);
 
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
         $post = $this->makePost([
             'post_id' => 'tn-worry-' . uniqid(),
-            'user_id' => $user->id,
+            'user_id' => $user->tnuserid,
             'title'   => 'Sofa, cash on collection',
             'content' => 'Collection only, please bring a van.',
         ]);
@@ -604,13 +611,13 @@ class GroupPostIngestionServiceTest extends TestCase
         ]);
 
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
         $post = $this->makePost([
             'post_id' => 'tn-worry-legacy-' . uniqid(),
-            'user_id' => $user->id,
+            'user_id' => $user->tnuserid,
             'title'   => 'Free puppy',
             'content' => 'Adorable puppy needs a good home.',
         ]);
@@ -650,13 +657,13 @@ class GroupPostIngestionServiceTest extends TestCase
         ]);
 
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
         $post = $this->makePost([
             'post_id' => 'tn-worry-allowed-' . uniqid(),
-            'user_id' => $user->id,
+            'user_id' => $user->tnuserid,
             'title'   => 'Sofa near Cashes Green (Stroud)',
             'content' => 'Collection only, please bring a van.',
         ]);
@@ -677,7 +684,7 @@ class GroupPostIngestionServiceTest extends TestCase
     public function test_repost_creates_a_second_message_rather_than_bumping_the_original(): void
     {
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
@@ -694,7 +701,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $postId = 'tn-repost-' . uniqid();
         $post   = $this->makePost([
             'post_id'   => $postId,
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'title'     => 'Old wooden bookshelf',
             'latitude'  => 55.9534,
             'longitude' => -3.1882,
@@ -720,7 +727,7 @@ class GroupPostIngestionServiceTest extends TestCase
     public function test_post_with_a_tn_group_id_is_discarded_as_a_crosspost(): void
     {
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
@@ -728,7 +735,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $post   = $this->makePost([
             'post_id'   => $postId,
             'group_id'  => '8444', // TN's per-group copy — a crosspost.
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
         ]);
@@ -742,7 +749,7 @@ class GroupPostIngestionServiceTest extends TestCase
     public function test_source_post_without_a_group_id_is_ingested(): void
     {
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
@@ -750,7 +757,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $post   = $this->makePost([
             'post_id'   => $postId,
             'group_id'  => null,
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
         ]);
@@ -766,7 +773,7 @@ class GroupPostIngestionServiceTest extends TestCase
         // TN has been seen returning '' rather than null for "no group"; that is
         // still a source post, not a copy, and must not be silently discarded.
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
@@ -774,7 +781,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $post   = $this->makePost([
             'post_id'   => $postId,
             'group_id'  => '',
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
         ]);
@@ -791,14 +798,14 @@ class GroupPostIngestionServiceTest extends TestCase
         // filter on messages.deleted the way the email path's
         // findLiveTnMessage() does. See existingMessageForGroup().
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
         $postId = 'tn-deleted-dup-' . uniqid();
         $post   = $this->makePost([
             'post_id'   => $postId,
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
         ]);
@@ -821,14 +828,14 @@ class GroupPostIngestionServiceTest extends TestCase
         // TnMergeCrosspostsCommand — null tnpostid in the same update. That is
         // what keeps them out of the guard, so the post can still be ingested.
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
         $postId = 'tn-merged-away-' . uniqid();
         $post   = $this->makePost([
             'post_id'   => $postId,
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
         ]);
@@ -854,14 +861,14 @@ class GroupPostIngestionServiceTest extends TestCase
         // The one de-duplication that remains: (tnpostid, groupid) idempotency,
         // so an overlapping sync window doesn't ingest the same TN post twice.
         $locationId = $this->createTestLocation();
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
         $postId = 'tn-same-postid-' . uniqid();
         $post   = $this->makePost([
             'post_id'   => $postId,
-            'user_id'   => $user->id,
+            'user_id'   => $user->tnuserid,
             'title'     => 'Old wooden bookshelf',
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
@@ -886,12 +893,12 @@ class GroupPostIngestionServiceTest extends TestCase
     public function test_ingested_post_sets_full_routing_context(): void
     {
         $locationId = $this->createTestLocation();
-        $user = $this->createTestUser(['lastlocation' => $locationId]);
+        $user = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
         $postId = 'tn-ctx-ingested-'.uniqid();
-        $post = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+        $post = $this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]);
         $service = $this->makeService(dryRun: false);
 
         $this->assertSame('pending', $service->ingest($post, $group));
@@ -914,11 +921,11 @@ class GroupPostIngestionServiceTest extends TestCase
         // The email path computes the same reason and keeps it out of its Loki
         // context (case 9), so including it here would read as a difference
         // between the paths where none exists.
-        $user = $this->createTestUser(['lastlocation' => null]);  // unmapped -> pending
+        $user = $this->createTnUser(['lastlocation' => null]);  // unmapped -> pending
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
-        $post = $this->makePost(['post_id' => 'tn-ctx-pending-'.uniqid(), 'user_id' => $user->id]);
+        $post = $this->makePost(['post_id' => 'tn-ctx-pending-'.uniqid(), 'user_id' => $user->tnuserid]);
         $service = $this->makeService(dryRun: false);
 
         $this->assertSame('pending', $service->ingest($post, $group));
@@ -928,7 +935,7 @@ class GroupPostIngestionServiceTest extends TestCase
 
     public function test_duplicate_sets_a_duplicate_reason_and_nothing_else(): void
     {
-        $user = $this->createTestUser();
+        $user = $this->createTnUser();
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
@@ -949,7 +956,7 @@ class GroupPostIngestionServiceTest extends TestCase
             'arrival' => now(),
         ]);
 
-        $post = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+        $post = $this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]);
         $service = $this->makeService();
 
         $this->assertSame('duplicate', $service->ingest($post, $group));
@@ -981,11 +988,11 @@ class GroupPostIngestionServiceTest extends TestCase
         // Mirrors email-path case 6, which returns DROPPED without going through
         // dropped() and so carries group/user context and no routing_reason.
         $locationId = $this->createTestLocation();
-        $user = $this->createTestUser(['lastlocation' => $locationId]);
+        $user = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'PROHIBITED']);
 
-        $post = $this->makePost(['post_id' => 'tn-ctx-prohibited-'.uniqid(), 'user_id' => $user->id]);
+        $post = $this->makePost(['post_id' => 'tn-ctx-prohibited-'.uniqid(), 'user_id' => $user->tnuserid]);
         $service = $this->makeService(dryRun: false);
 
         $this->assertSame('dropped', $service->ingest($post, $group));
@@ -1003,13 +1010,13 @@ class GroupPostIngestionServiceTest extends TestCase
         // the email path ingests one message per group copy. That volume
         // difference is intended, so it must be explained in the stream rather
         // than looking like posts going missing.
-        $user = $this->createTestUser();
+        $user = $this->createTnUser();
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
         $post = $this->makePost([
             'post_id' => 'tn-ctx-crosspost-'.uniqid(),
-            'user_id' => $user->id,
+            'user_id' => $user->tnuserid,
             'group_id' => '8444',  // TN's per-group copy.
         ]);
         $service = $this->makeService(dryRun: false);
@@ -1027,18 +1034,18 @@ class GroupPostIngestionServiceTest extends TestCase
         // Mirrors IncomingMailService::route() clearing the context at entry:
         // without it, a drop would inherit the previous post's group/user.
         $locationId = $this->createTestLocation();
-        $user = $this->createTestUser(['lastlocation' => $locationId]);
+        $user = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
         $service = $this->makeService(dryRun: false);
 
-        $service->ingest($this->makePost(['post_id' => 'tn-ctx-first-'.uniqid(), 'user_id' => $user->id]), $group);
+        $service->ingest($this->makePost(['post_id' => 'tn-ctx-first-'.uniqid(), 'user_id' => $user->tnuserid]), $group);
         $this->assertArrayHasKey('message_id', $service->getLastRoutingContext());
 
         // A crosspost drops before any group/user context is set.
         $service->ingest($this->makePost([
             'post_id' => 'tn-ctx-second-'.uniqid(),
-            'user_id' => $user->id,
+            'user_id' => $user->tnuserid,
             'group_id' => '8444',
         ]), $group);
 
@@ -1057,7 +1064,7 @@ class GroupPostIngestionServiceTest extends TestCase
         // first-time post. This is what closed the old "what subtype should
         // `reposted` use?" question.
         $locationId = $this->createTestLocation();
-        $user = $this->createTestUser(['lastlocation' => $locationId]);
+        $user = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
@@ -1082,7 +1089,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $postId = 'tn-ctx-repost-'.uniqid();
         $post = $this->makePost([
             'post_id' => $postId,
-            'user_id' => $user->id,
+            'user_id' => $user->tnuserid,
             'title' => 'Electric sander',
             'type' => 'offer',
             'latitude' => 55.9533,
