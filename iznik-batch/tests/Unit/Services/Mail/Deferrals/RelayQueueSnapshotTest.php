@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services\Mail\Deferrals;
 
 use App\Services\Mail\Deferrals\RelayQueueSnapshot;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class RelayQueueSnapshotTest extends TestCase
@@ -84,9 +85,7 @@ class RelayQueueSnapshotTest extends TestCase
         $this->assertSame(100, $snapshot->perMailbox);
     }
 
-    /**
-     * @dataProvider perMailboxReasons
-     */
+    #[DataProvider('perMailboxReasons')]
     public function test_recognises_per_mailbox_wording(string $reason): void
     {
         $this->assertTrue(RelayQueueSnapshot::isPerMailbox($reason), $reason);
@@ -106,9 +105,7 @@ class RelayQueueSnapshotTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider providerLevelReasons
-     */
+    #[DataProvider('providerLevelReasons')]
     public function test_does_not_mistake_provider_problems_for_full_mailboxes(string $reason): void
     {
         $this->assertFalse(RelayQueueSnapshot::isPerMailbox($reason), $reason);

@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Models\Message;
 use App\Services\StatsGenerationService;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -159,9 +160,7 @@ class StatsRegenerateWeightServiceTest extends TestCase
 
     // ── avgWeight fallback ─────────────────────────────────────────────────
 
-    /**
-     * @dataProvider nullOrZeroWeightProvider
-     */
+    #[DataProvider('nullOrZeroWeightProvider')]
     public function test_null_or_zero_item_weight_falls_back_to_average(
         ?float $itemWeight,
     ): void {
@@ -273,9 +272,7 @@ class StatsRegenerateWeightServiceTest extends TestCase
 
     // ── Date range ─────────────────────────────────────────────────────────
 
-    /**
-     * @dataProvider dateRangeProvider
-     */
+    #[DataProvider('dateRangeProvider')]
     public function test_date_range_processes_expected_number_of_dates(
         string $from,
         string $to,
