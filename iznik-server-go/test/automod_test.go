@@ -106,11 +106,11 @@ func TestAutomodFeedback(t *testing.T) {
 }
 
 func TestAutomodAgreement(t *testing.T) {
-	groupID, msgID, _, modToken, _ := automodFixture(t, "automod_agreement")
+	groupID, msgID, modID, modToken, _ := automodFixture(t, "automod_agreement")
 	t.Setenv("FREEGLE_AUTOMOD_SHADOW_GROUPS", fmt.Sprintf("%d", groupID))
 
 	// The chart held it; a human then approved it: a disagreement.
-	database.DBConn.Exec("UPDATE messages_groups SET collection='Approved', approvedby=1 WHERE msgid=?", msgID)
+	assert.NoError(t, database.DBConn.Exec("UPDATE messages_groups SET collection='Approved', approvedby=? WHERE msgid=?", modID, msgID).Error)
 	assert.Equal(t, 200, postAutomodFeedback(t, modToken, msgID, groupID, "LOAN"))
 
 	resp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/automod/agreement?days=7&jwt=%s", modToken), nil))
