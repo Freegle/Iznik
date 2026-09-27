@@ -170,7 +170,7 @@ class CookieYesOAuthTest extends TestCase
         $this->oauth->beginLogin();
         $state = $this->store->pending()['state'];
 
-        $this->travel(16)->minutes();
+        $this->travel(25)->hours();
 
         $this->expectException(CookieYesException::class);
         $this->expectExceptionMessage('expired');

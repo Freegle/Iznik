@@ -26,7 +26,9 @@ class CookieYesOAuth
 
     public const SCOPE = 'mcp:read mcp:write offline_access';
 
-    private const PENDING_TTL_MINUTES = 15;
+    // Long enough for a person to get round to it. The code CookieYes hands back
+    // is single-use and short-lived on its side, and useless without the verifier.
+    private const PENDING_TTL_HOURS = 24;
 
     // Refresh this long before the access token actually expires.
     private const EXPIRY_MARGIN_SECONDS = 60;
@@ -108,7 +110,7 @@ class CookieYesOAuth
             throw new CookieYesException('No CookieYes login is in progress. Start one with php artisan cookieyes:authorize');
         }
 
-        if (now()->timestamp - (int) $pending['created_at'] > self::PENDING_TTL_MINUTES * 60) {
+        if (now()->timestamp - (int) $pending['created_at'] > self::PENDING_TTL_HOURS * 3600) {
             $this->store->forgetPending();
             throw new CookieYesException('The CookieYes login expired before it was completed. Start again with php artisan cookieyes:authorize');
         }

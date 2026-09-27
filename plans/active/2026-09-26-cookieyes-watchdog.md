@@ -29,7 +29,7 @@ For every domain in the CookieYes account:
 2. If the latest scan is older than 30 days, trigger a new one. This stays within the plan's
    per-domain monthly scan allowance, and does nothing when CookieYes's own scheduled scans are
    already keeping it fresh.
-3. **Pass** = banner live, no uncategorised cookies, latest scan under 45 days old. Anything
+3. **Pass** = banner live, GDPR enabled, no uncategorised cookies, latest scan under 45 days old. Anything
    else is a **fail** with a one-line reason.
 
 Results are written to the `housekeeper_tasks` row `cookieyes` (enabled, not a placeholder,
@@ -57,7 +57,7 @@ refresh tokens on every use** and by default expires one unused for 30 days. So:
 One-time login, non-interactive so it works over `docker exec` without a TTY:
 
 1. `cookieyes:authorize` registers a client (first time only), generates the PKCE verifier and
-   state, stores them as a pending login (expires after 15 minutes) and prints the login URL.
+   state, stores them as a pending login (expires after 24 hours) and prints the login URL.
    The redirect URI is `http://localhost:8765/callback`; nothing listens there.
 2. The account owner opens the URL, logs in and clicks Allow. The browser lands on a page that
    fails to load; its address contains the code.
@@ -103,9 +103,9 @@ Banner restyling, any use of Claude, categorising cookies (the classifier does i
 | 1 | `CookieYesTokenStore` + `CookieYesOAuth`, test-first with `Http::fake` | ✅ | register, auth URL, exchange, refresh, rotation, revoked token |
 | 2 | `CookieYesMcpClient`, test-first | ✅ | JSON + SSE bodies, session id, JSON-RPC error, 401 |
 | 3 | `cookieyes:authorize` + `cookieyes:call` | ✅ | |
-| 4 | Trial run on dev: authorise, record real responses as fixtures | 🔄 | needs the account owner to log in once |
-| 5 | `CookieYesWatchdogService` checks against the fixtures | ⬜ | finalise pass/fail rules |
-| 6 | `cookieyes:check`, `HousekeeperService::recordRun`, schedule, failure email | ⬜ | |
-| 7 | Extension: remove the CookieYes task | ⬜ | separate repo/PR |
-| 8 | Docs: developer reference page + ops note for the one-time authorise | ⬜ | |
-| 9 | Full Laravel suite, review, PR | ⬜ | |
+| 4 | Trial run on dev: authorise, record real responses as fixtures | ✅ | 27 Sep: one site (ilovefreegle.org), 6 uncategorised from the 20 Sep scan |
+| 5 | `CookieYesWatchdogService` checks against the fixtures | ✅ | + GDPR-enabled check |
+| 6 | `cookieyes:check`, `HousekeeperService::recordRun`, schedule, failure email | ✅ | Monday 10:30 UTC; ran for real on dev |
+| 7 | Extension: remove the CookieYes task | ✅ | freegle-housekeeper branch remove-cookieyes-task; purges stored creds |
+| 8 | Docs: developer reference page + ops note for the one-time authorise | ✅ | |
+| 9 | Full Laravel suite, review, PR | 🔄 | |

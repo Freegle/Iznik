@@ -436,6 +436,16 @@ Schedule::command('charity:notify-signups')
     ->sendOutputTo(cronLog('charity:notify-signups'))
     ->runInBackground();
 
+// CookieYes watchdog — banner live, GDPR on, every cookie categorised, scan recent;
+// starts a scan when the last is a month old. Result in housekeeper_tasks (the ModTools
+// housekeeping badge), failures emailed to geeks. Needs a one-off `cookieyes:authorize`
+// per environment; until then every run fails and says so.
+Schedule::command('cookieyes:check')
+    ->weeklyOn(1, '10:30')
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('cookieyes:check'))
+    ->runInBackground();
+
 // Moderator work notifications — tells mods about pending messages, events, etc.
 // Only runs 08:00–21:00; deduplicates against last sent summary.
 // V1: cron/mod_notifs.php (hourly)

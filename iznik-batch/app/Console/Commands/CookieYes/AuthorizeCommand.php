@@ -30,7 +30,7 @@ class AuthorizeCommand extends Command
                 $this->line($url);
                 $this->newLine();
                 $this->line('2. The browser will then fail to load a localhost page. That is expected.');
-                $this->line('   Copy the whole address from its address bar and run, within 15 minutes:');
+                $this->line('   Copy the whole address from its address bar and run, within 24 hours:');
                 $this->newLine();
                 $this->line('   php artisan cookieyes:authorize --callback="<that address>"');
 
