@@ -10,6 +10,8 @@ Our problem isn't that we have nowhere to keep tickets. It's that most reports a
 - **The research gives clear answers to the questions we've been stuck on.** Work out as much as you can before asking. Ask only about what is still unclear. Ask everything in one message. Stop asking after a set point. Judge urgency against written guidance with worked examples.
 - **We already have most of the pieces, in two systems that don't talk to each other.** Both can already look things up in the live database and logs. The monitor FSM watches Discourse and Sentry, checks the database and logs, asks reporters for what only they know, and opens fixes. The ModTools AI Support Helper lets a volunteer look into one member.
 
+- **But the FSM is not safe to leave running on its own.** Today it needs close, frequent checking by Edward: approving its drafts, catching wrong "fixed" decisions, and noticing when it has quietly stopped. Nothing in this design should assume it can run unattended until that changes.
+
 **Recommendation:** build it ourselves. Keep one shared list of support cases in the main Freegle database, fed by both existing systems and by email and the app. Treat volunteers and members differently, because they report in very different ways. Our volume is about 110 Discourse reports and 20 escalated support emails a month, so the AI cost is small; the real cost is our time. The plan is in steps, and each one is useful even if we stop there. People are asked when they add something, but nothing waits for them for ever.
 
 ## What the paid products offer
@@ -85,7 +87,7 @@ So Jira would give us somewhere tidy to keep tickets, which is the part we alrea
 
 ## What we already have
 
-**The monitor FSM** runs by itself. It watches Discourse and Sentry, keeps its records in a file on the machine it runs on, opens fixes as pull requests, and posts on Discourse.
+**The monitor FSM** runs as a loop, but it is not fit to run unattended. It needs heavy oversight from Edward: approving its drafts and answers, reviewing the pull requests it opens, catching wrong decisions, and restarting it when it stops without saying so. Everything below describes what it does when someone is watching it. It watches Discourse and Sentry, keeps its records in a file on the machine it runs on, opens fixes as pull requests, and posts on Discourse.
 - **Volume:** between April and September 2026 it recorded 663 reports, about 110 a month once it was fully running.
 - **Who reports:** the 663 came from only 69 people. The forum is for volunteers, so these are moderators reporting for their members. That matters more to the design than anything else.
 - **Outcomes:** 316 marked fixed, 121 off-topic, 93 feature requests, 44 put off, and the rest waiting in various states.
@@ -222,6 +224,8 @@ Automatic linking is fine here because it's easy to undo, and it is what lets se
 
 ### Changes to the two systems we have
 
+**The FSM should not be given more to do unattended until it has earned it.** Today it depends on Edward watching it closely. Taking on member email, more channels or automatic linking would add to that load, not reduce it. So each step below that widens what it does comes after a step that reduces the checking it needs: the test against old reports, the May rules in code, the hourly "what I did" report, and time limits. The measure is how often Edward has to step in, and that number should fall before the FSM takes on anything new.
+
 **The FSM** keeps doing what it does now: watching, fixing and reviewing its own fixes. It changes in four ways:
 - It saves cases to the shared database.
 - It asks with the checklist above, and follows the time limits instead of holding a report until someone answers.
@@ -247,6 +251,7 @@ When a fix for a known fault goes live, everyone who reported that fault hears a
 - Every time a person overrules the AI, that case becomes another test.
 
 What we watch:
+- how often Edward has to step in (the main one, while the FSM still needs close oversight),
 - how often people overrule it,
 - how often cases reopen,
 - how many questions it takes to get what we need,
