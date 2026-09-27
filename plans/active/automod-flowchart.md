@@ -176,3 +176,10 @@ hold it, and `restrictdistance` is about removing members, not posts. The chart 
 on a post's origin copy (`rippled_in = 0`), so a rippled-in copy is never judged against
 the receiving community's area either. The 5 "out of area" rejections in the sample are
 the old habit, not something to automate.
+
+Chart version 2 on the same 225 posts (Claude, community rules applied): 30 held, 26 of
+them rejected by a moderator (87% precise), catching 26 of 105 rejections against 16 for
+version 1. VAGUE_TEXT alone adds 9. The four holds a moderator approved: a bare "Samsung"
+(vague), a bunny offered on a community whose animal rule is unset, cat food flagged as a
+concern, and one ambiguous "selling". The DUPLICATE fact is not in these numbers: it needs
+the database at decision time, so it is measured in shadow mode, not offline.
