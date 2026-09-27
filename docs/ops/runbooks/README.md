@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-20
+last_reviewed: 2026-09-27
 owner: Freegle dev team
 ---
 
@@ -99,6 +99,16 @@ weekly checks and monthly scans stop until someone logs in again.
   the address the browser landed on.
 - To verify, run `php artisan cookieyes:check`, which should record a result for the
   `cookieyes` task on the ModTools Sysadmin housekeeping list.
+
+## A spam wave is going out: lockdown
+
+The lockdown switch stops anything members write from reaching anyone else while Freegle
+stays up. Any Support user presses it from the Lockdown tab in Support tools, or on the
+batch host with `lockdown:on`. Nothing lifts on its own; lifting is a sequence of switches.
+
+- Full steps: **[lockdown.md](lockdown.md)**.
+- Check the "Taking effect" list after pressing: every batch job should tick within
+  seconds, and "Sent since the press" should stay at 0.
 
 ## Adding a runbook
 

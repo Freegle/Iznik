@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-26
+last_reviewed: 2026-09-27
 owner: Freegle ops
 covers:
   - conf/rspamd
@@ -235,6 +235,15 @@ production moderation data, and the result was negative for the thing that matte
 See [`llm-modbot/RESULTS.md`](../../../llm-modbot/RESULTS.md) before proposing this again.
 The useful reading is that AI helps with formatting and spelling, and does not help with
 judgement.
+
+## Lockdown
+
+When a wave outruns the layers above, any Support user can press the lockdown switch.
+Members can still post, reply and chat, and it all looks sent, but it reaches nobody until
+a person lifts it; no member email or push goes out; moderators keep only the basic
+Approve button; downloads stop. It is lifted surface by surface, and nothing held is
+released without a person deciding. Pressing, checking it has taken effect, and lifting
+are in the [lockdown runbook](../runbooks/lockdown.md).
 
 ## Operational notes
 
