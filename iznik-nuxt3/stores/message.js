@@ -24,6 +24,10 @@ export const useMessageStore = defineStore('message', {
     list: {},
     byUserList: {},
 
+    // ModTools Check queue: posts a moderator pulled back to Pending from there. They stay
+    // in the Check list, now showing as Pending, so the moderator acts on them in place.
+    pulledBack: {},
+
     // Count of unseen items
     count: 0,
 
@@ -891,7 +895,8 @@ export const useMessageStore = defineStore('message', {
         ids: [id],
         reject: true,
       })
-      this.remove({ id })
+      this.pulledBack[id] = true
+      await this.refreshOrRemoveFromMTList(id)
     },
     async approve(id, groupid, subject, stdmsgid, body) {
       const msg = this.byId(id)

@@ -16,7 +16,7 @@ type MarkCheckedRequest struct {
 	Groupid uint64   `json:"groupid"`          // 0 = all of the mod's groups
 	Filter  string   `json:"filter"`           // "checked" (used when no ids given)
 	IDs     []uint64 `json:"ids,omitempty"`    // specific messages, else mark the whole bucket
-	Reject  bool     `json:"reject,omitempty"` // true = pull the specified posts back to Pending (held) instead of marking checked
+	Reject  bool     `json:"reject,omitempty"` // true = pull the specified posts back to Pending, held, for a decision
 }
 
 // MarkChecked records that a moderator has reviewed auto-published posts. These
@@ -59,7 +59,9 @@ func MarkChecked(c *fiber.Ctx) error {
 	}
 
 	// Reject: pull the specified auto-published posts back out of the live feed for a
-	// proper moderation decision. Setting collection=Pending removes them from
+	// proper moderation decision. ModTools then shows each one as an ordinary Pending card,
+	// held by this moderator, who approves, edits or rejects it as normal; that later action
+	// writes its own log. Setting collection=Pending removes them from
 	// messages_spatial (so rippling stops drawing them), and heldby blocks the
 	// auto-approve cron from immediately re-publishing them. Targeted only — there is
 	// no bulk "reject the whole bucket" (that would be far too blunt). rippled_in = 0:
@@ -89,12 +91,13 @@ func MarkChecked(c *fiber.Ctx) error {
 			utils.COLLECTION_PENDING, myid, req.IDs, groupIDs, utils.COLLECTION_APPROVED)
 
 		for _, h := range hit {
-			// The Rejected log row is load-bearing, not just audit: the moderation-stats
-			// "rejected" analytic counts these, and AutoApproveCleanService's danger-signal
-			// veto (recent negative moderation logs) is what stops this member's NEXT post
-			// from auto-publishing.
-			db.Exec("INSERT INTO logs (timestamp, type, subtype, msgid, groupid, user, byuser) "+
-				"VALUES (NOW(), 'Message', 'Rejected', ?, ?, ?, ?)",
+			// Logged as a Hold, not a Rejected: nothing is decided yet. The moderation-stats
+			// "later actioned" analytic counts it as an auto-published post a moderator had
+			// to act on. If the moderator then rejects it, that Reject writes the Rejected
+			// log, which is what vetoes this member's next post from auto-publishing; if they
+			// approve it, the member is not penalised.
+			db.Exec("INSERT INTO logs (timestamp, type, subtype, msgid, groupid, user, byuser, text) "+
+				"VALUES (NOW(), 'Message', 'Hold', ?, ?, ?, ?, 'Pulled back from Check')",
 				h.Msgid, h.Groupid, h.Fromuser, myid)
 
 			// Halt rippling immediately rather than waiting for the spatial prune +

@@ -14,6 +14,11 @@ vi.mock('~/composables/useHelpBox', () => ({
   }),
 }))
 
+const mockInTrial = ref(true)
+vi.mock('~/modtools/composables/useAutoapproveTrial', () => ({
+  useAutoapproveTrial: () => ({ inTrial: mockInTrial }),
+}))
+
 const stubs = {
   NoticeMessage: {
     template: '<div class="notice-message"><slot /></div>',
@@ -28,6 +33,7 @@ describe('ModHelpPending', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockShowHelp.value = true
+    mockInTrial.value = true
   })
 
   it('explains the pending queue and the 10-minute guarantee when shown', () => {
@@ -47,5 +53,12 @@ describe('ModHelpPending', () => {
     const wrapper = mount(ModHelpPending, { global: { stubs } })
     await wrapper.find('button').trigger('click')
     expect(mockToggleHelp).toHaveBeenCalled()
+  })
+
+  it('shows nothing, not even the Help link, outside the trial', () => {
+    mockInTrial.value = false
+    const wrapper = mount(ModHelpPending, { global: { stubs } })
+    expect(wrapper.find('.notice-message').exists()).toBe(false)
+    expect(wrapper.find('button').exists()).toBe(false)
   })
 })

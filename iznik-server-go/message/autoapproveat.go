@@ -12,11 +12,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// cleanPathEnabledFor mirrors the PHP rollout gate (AutoApproveCleanService::enabledGroupIds):
-// FREEGLE_AUTOAPPROVE_ENABLED truthy enables the 20-minute clean path everywhere; otherwise
-// only the groups listed in FREEGLE_AUTOAPPROVE_TRIAL_GROUPS (comma-separated ids) take part.
-// When the clean path is off for a group, the countdown falls back to the 48h estimate — a
-// countdown that will never fire must not be shown to moderators.
 // autoapproveDelayMinutes is how long a clean post waits before it publishes itself. It is
 // the same for every community and mirrors the batch's freegle.autoapprove.delay_minutes
 // (FREEGLE_AUTOAPPROVE_DELAY_MINUTES, default 20).
@@ -35,21 +30,6 @@ func autoapproveQualityCheckPercent() int {
 		return n
 	}
 	return 0
-}
-
-func cleanPathEnabledFor(gid uint64) bool {
-	v := os.Getenv("FREEGLE_AUTOAPPROVE_ENABLED")
-	if v == "true" || v == "1" {
-		return true
-	}
-
-	for _, part := range strings.Split(os.Getenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS"), ",") {
-		if id, err := strconv.ParseUint(strings.TrimSpace(part), 10, 64); err == nil && id == gid {
-			return true
-		}
-	}
-
-	return false
 }
 
 // dangerLogDays mirrors AutoApproveCleanService::dangerLogDays() - how far back a
@@ -177,7 +157,9 @@ func computeAutoapproveat(db *gorm.DB, message *Message, groups []MessageGroup, 
 	var pendingIdx []int
 	var gids []uint64
 	for i := range groups {
-		if groups[i].Collection == utils.COLLECTION_PENDING && groups[i].Heldby == nil {
+		// Outside the trial there is no countdown at all, so a community not taking part sees
+		// Pending as it did before post-moderation.
+		if groups[i].Collection == utils.COLLECTION_PENDING && groups[i].Heldby == nil && utils.AutoapproveTrialGroup(groups[i].Groupid) {
 			pendingIdx = append(pendingIdx, i)
 			gids = append(gids, groups[i].Groupid)
 		}
@@ -287,7 +269,7 @@ func computeAutoapproveat(db *gorm.DB, message *Message, groups []MessageGroup, 
 		// belongs to AutoApproveService (the clean path structurally never sees it), and a
 		// row with a spam reason is excluded even when it is not in the Spam collection. A
 		// countdown for either would promise an auto-approval that cannot happen.
-		onCleanPath := cleanPathEnabledFor(mg.Groupid) &&
+		onCleanPath := utils.AutoapproveTrialGroup(mg.Groupid) &&
 			groupAllows &&
 			row.OurPostingStatus == nil &&
 			mg.ContentcheckCheckedAt != nil &&
