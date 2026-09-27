@@ -47,7 +47,7 @@ export async function evaluate(posts, { backends, router, chartPath } = {}) {
     const text = postText(post);
 
     for (const [nodeId, state] of textNodes) {
-      const node = (nodes[nodeId] ||= { question: state.check.question, answers: {}, agree: 0, asked: 0, labelled: 0, correct: {} });
+      const node = (nodes[nodeId] ||= { question: state.check.question, answers: {}, agree: 0, asked: 0, labelled: 0, correct: {}, confusion: {} });
       const answers = {};
       for (const name of backends) {
         try {
@@ -68,6 +68,11 @@ export async function evaluate(posts, { backends, router, chartPath } = {}) {
         node.labelled++;
         for (const name of backends) {
           node.correct[name] = (node.correct[name] || 0) + (answers[name] === gold ? 1 : 0);
+          // Against the label: yes/yes agreed, yes where the label says no, and missed yeses.
+          const c = (node.confusion[name] ||= { tp: 0, fp: 0, fn: 0 });
+          if (answers[name] === 'yes' && gold === 'yes') c.tp++;
+          else if (answers[name] === 'yes' && gold === 'no') c.fp++;
+          else if (answers[name] !== 'yes' && gold === 'yes') c.fn++;
         }
       }
     }
@@ -97,7 +102,8 @@ export function formatReport(report) {
     const per = report.backends
       .map((b) => {
         const a = n.answers[b] || {};
-        const acc = n.labelled ? ` acc ${pct(n.correct[b] || 0, n.labelled)}` : '';
+        const c = n.confusion?.[b];
+        const acc = n.labelled ? ` acc ${pct(n.correct[b] || 0, n.labelled)}` + (c ? ` yes-agree ${c.tp} extra ${c.fp} missed ${c.fn}` : '') : '';
         return `${b} ${a.yes || 0}/${a.no || 0}/${a.error || 0}${acc}`;
       })
       .join(' | ');
