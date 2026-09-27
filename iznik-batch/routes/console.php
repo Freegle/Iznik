@@ -442,6 +442,7 @@ Schedule::command('charity:notify-signups')
 // per environment; until then every run fails and says so.
 Schedule::command('cookieyes:check')
     ->weeklyOn(1, '10:30')
+    ->when(fn () => config('freegle.cookieyes.enabled', true))
     ->withoutOverlapping(60)
     ->sendOutputTo(cronLog('cookieyes:check'))
     ->runInBackground();

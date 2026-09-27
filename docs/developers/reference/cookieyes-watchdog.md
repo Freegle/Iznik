@@ -94,5 +94,6 @@ long, or `APP_KEY` changed), the check fails and its summary says to run
 
 ## Settings
 
-`freegle.cookieyes` in `iznik-batch/config/freegle.php`: `base_url`, and
+`freegle.cookieyes` in `iznik-batch/config/freegle.php`: `enabled` (`COOKIEYES_ENABLED`, on by
+default; off stops the schedule), `base_url`, and
 `rescan_after_days` / `stale_after_days`, which default to 30 and 45.

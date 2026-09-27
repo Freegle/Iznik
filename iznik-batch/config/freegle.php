@@ -1526,6 +1526,8 @@ return [
     // OAuth. The login itself is stored in the `config` table by
     // cookieyes:authorize, not here. See docs/developers/reference/cookieyes-watchdog.md.
     'cookieyes' => [
+        // Off stops the weekly schedule, for a deployment with no CookieYes account.
+        'enabled' => (bool) env('COOKIEYES_ENABLED', true),
         'base_url' => env('COOKIEYES_BASE_URL', 'https://app.cookieyes.com'),
         // Trigger a new scan once the latest is this old.
         'rescan_after_days' => (int) env('COOKIEYES_RESCAN_AFTER_DAYS', 30),
