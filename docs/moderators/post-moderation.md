@@ -415,12 +415,14 @@ flowchart of plain questions, the same for every community, kept centrally:
    where the community restricts them; not English; the content check's vague-post
    finding; and whether this is a duplicate of the member's own open post or a repost
    sooner than the community allows.
-2. Questions about the words of the post, answered by an AI model: is it too vague to
-   tell what is offered or wanted; is it about something other than an item; is it
-   selling or asking for money; a loan or a request to borrow; asking for something in
-   exchange; animals; weapons, firearms, knives; medicines or supplements; alcohol,
-   tobacco, vaping; tickets; gas cylinders; and, where a concern word appears, whether it
-   is really about the concern.
+2. Questions about the words of the post, answered by an AI model and worded from
+   Freegle's own rules: does it name the items wanted (not "anything" or just
+   "furniture"); is it about something other than an item; does it ask for or offer money
+   in any form, including a "donation" or delivery costs; a loan or a request to borrow;
+   something in exchange; animals; weapons, firearms, knives; prescription medicine,
+   non-prescription medicine or supplements, animal medicine; contact lenses and lens
+   solution; alcohol, tobacco, vaping; tickets and vouchers; gas cylinders; and, where a
+   concern word appears, whether it is really about the concern.
 3. Your community's own rules decide the item questions: if your community allows loans,
    animals or alcohol, those questions are skipped and never hold a post.
 
@@ -435,11 +437,16 @@ It runs in two modes, set centrally per community for the trial:
 - **Approve-only**: a post it approves goes live after the 20-minute wait, as described
   above. A post it holds waits for you, with the reason shown.
 
-Measured on 225 real posts from the last 30 days, 105 of which a moderator rejected: the
-questions about the words held 30 posts, 26 of which a moderator had rejected. Most
-rejections turn on things the words of a post cannot show (a duplicate, or a reason the
-moderator did not record), which is why the facts come first and why approve-only waits
-for shadow numbers from real communities.
+How well it does was measured against real decisions, treating neither the model nor the
+moderator as always right. On 802 posts from the last six months, the questions about the
+words held about two thirds of the posts moderators had rejected as vague, selling or
+borrowing, and most of those rejected for animals, medicines or not being an item. They
+held 3 of 200 posts moderators had approved. Many of the "vague" rejections they did not
+hold name a specific item ("Washing machine", "Bike", "Tent"): by Freegle's rule of naming
+the item those are not vague, and some communities are stricter than that. Most other
+rejections turn on things the words of a post cannot show, such as a duplicate or a
+reason the moderator did not record. That is why the facts come first, and why a
+community runs in shadow before approve-only.
 
 ## What changes for members, and what they notice
 
