@@ -71,8 +71,8 @@ async function handleReview(req, res, reviewer) {
     sendJson(res, 400, { error: 'facts must be an object' });
     return;
   }
-  if (backend !== undefined && !["claude", "nli", "fake"].includes(backend)) {
-    sendJson(res, 400, { error: "backend must be claude, nli or fake" });
+  if (backend !== undefined && !["claude", "jev", "nli", "fake"].includes(backend)) {
+    sendJson(res, 400, { error: "backend must be claude, jev, nli or fake" });
     return;
   }
   if (rules !== undefined && !isPlainObject(rules)) {

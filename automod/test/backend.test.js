@@ -89,3 +89,27 @@ test('claude answers every chart question in one call per post', async () => {
   assert.equal(calls, 1);
   assert.ok(result.path.filter((s) => s.model.startsWith('claude:')).length > 5);
 });
+
+test('jev asks every chart question in one request and reads each probability of yes', async () => {
+  const { JevBackend } = await import('../src/backend.js');
+  const jev = new JevBackend({ apiKey: 'test', baseUrl: 'http://jev.invalid' });
+  jev.setQuestions(['Is it selling?', 'Is it a loan?']);
+  const seen = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url, body: JSON.parse(init.body) });
+    return { ok: true, json: async () => ({ answers: { q0: { noul: 0.1 }, q1: { noul: 0.93 } } }) };
+  };
+  try {
+    const a = await jev.ask('Is it a loan?', 'Subject: WANTED: ladder');
+    const b = await jev.ask('Is it selling?', 'Subject: WANTED: ladder');
+    assert.equal(a.p, 0.93);
+    assert.equal(b.p, 0.1);
+    assert.equal(a.model, 'jev:jev-latest');
+    assert.equal(seen.length, 1, 'one request per post');
+    assert.equal(seen[0].url, 'http://jev.invalid/v1/systemone');
+    assert.equal(seen[0].body.questions.q1.type, 'noul');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
