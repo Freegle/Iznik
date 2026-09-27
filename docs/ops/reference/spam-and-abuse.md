@@ -245,6 +245,13 @@ See [`llm-modbot/RESULTS.md`](../../../llm-modbot/RESULTS.md) before proposing t
 The useful reading is that AI helps with formatting and spelling, and does not help with
 judgement.
 
+What is being tried instead does not ask a model to approve or reject. Automated review
+([../../moderators/post-moderation.md](../../moderators/post-moderation.md), design and
+measurements in `plans/active/automod-flowchart.md`) is a flowchart: facts outside the
+text (member history, duplicates) are answered from the database, and a model answers only
+narrow questions about the words ("is it selling?"). It only ever holds or approves, runs in
+shadow first, and records every step so moderators can mark a wrong one.
+
 ## Operational notes
 
 - Spam filtering is not the same problem as **deliverability**. If members are not

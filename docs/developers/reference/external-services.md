@@ -49,6 +49,7 @@ Visible, annoying, not fatal.
 | **Google Cloud Vision** | Checks uploaded photos for unsuitable images |
 | **Google Perspective** | Scores text for abuse, feeding moderation |
 | **Google Gemini** | The AI features (support helper, classification experiments) |
+| **Anthropic (Claude)** | Answers automated review's questions about the words of a post, one call per post, only on trial communities (`automod/`, `ANTHROPIC_API_KEY`). Down, every post it would have reviewed is held for a moderator |
 | **Firebase Cloud Messaging** | Push notifications to the apps (`GOOGLE_PUSH_KEY`) |
 | **MaxMind** | Turns an IP address into a rough location, used in anti-abuse |
 | **Playwire** | Advert delivery ([ads.md](ads.md)) |
