@@ -47,6 +47,12 @@ type MessageGroup struct {
 	// for a manual quality check. Scanned for the autoapproveat estimate; not serialised.
 	QualitySample int `json:"-" gorm:"column:quality_sample"`
 
+	// NeedsModerator is set on a copy a moderator's Back to pending pulled back, and
+	// cleared when a moderator approves that copy. While set, no automatic path (content
+	// check, auto-approve) may approve the copy - scanned for the autoapproveat estimate;
+	// not serialised.
+	NeedsModerator bool `json:"-" gorm:"column:needs_moderator"`
+
 	// AutoapproveHoldUntil is the server-side extend-only hold set when the Pending
 	// queue is viewed (see ListMessagesMT). Scanned but not serialised — the frontend
 	// uses the computed Autoapproveat below.
@@ -61,6 +67,25 @@ type MessageGroup struct {
 	// it false unless TN told us the poster consented for this group (see
 	// PostSyncer::processPost / GroupPostIngestionService in iznik-batch).
 	ModMessagingAllowed bool `json:"mod_messaging_allowed"`
+
+	// Automod is the flowchart's stored decision for this group, inlined only for a
+	// moderator of this specific group on an automod group (see utils.AutomodGroup and
+	// populateAutomodDecisions in autoapproveat.go). nil for everyone else, and for a
+	// group with no messages_automod row yet (not run, or not on an automod path).
+	Automod *AutomodDecision `json:"automod,omitempty" gorm:"-"`
+}
+
+// AutomodDecision is the automod flowchart's stored decision for one (msgid, groupid),
+// mirroring messages_automod. Path is the node-by-node record (question, answer,
+// confidence, evidence per node) the ModAutomodModal renders.
+type AutomodDecision struct {
+	Verdict string          `json:"verdict"`
+	Reason  *string         `json:"reason,omitempty"`
+	End     string          `json:"end"`
+	Mode    string          `json:"mode"`
+	Version string          `json:"version"`
+	Path    json.RawMessage `json:"path"`
+	Created time.Time       `json:"created"`
 }
 
 // modMessagingAllowed reduces a post's group rows to the one message-level answer the

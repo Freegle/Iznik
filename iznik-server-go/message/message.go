@@ -603,7 +603,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// issue because these messages were posted with the intention of being public. It also
 				// allows shared links to work even before moderation approval.
 				db.Table("messages_groups").
-					Select("groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in, quality_sample, autoapprove_hold_until, mod_messaging_allowed").
+					Select("groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in, quality_sample, autoapprove_hold_until, mod_messaging_allowed, needs_moderator").
 					Where("msgid = ? AND deleted = 0", id).Scan(&messageGroups)
 
 				// Moderator-only "quicker to get to" P/Q note, kept in its own rippling_proximity
@@ -747,6 +747,12 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			// AutoApproveCleanService/AutoApproveService — see message/autoapproveat.go.
 			if isGroupMod && myid > 0 {
 				computeAutoapproveat(db, &message, messageGroups, id)
+			}
+
+			// Inline each group's stored automod decision (messages_groups[].automod) for a
+			// moderator of that specific group on an automod group - see populateAutomodDecisions.
+			if myid > 0 {
+				populateAutomodDecisions(db, myid, message.ID, messageGroups)
 			}
 
 			// Postings (history of which groups this message was on) are public information,

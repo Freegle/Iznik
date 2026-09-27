@@ -6129,6 +6129,8 @@ func TestListMessagesMT_FilterChecked(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
+	// The Check queue exists only on communities in the post-moderation trial.
+	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d", groupID))
 	nullPoster := CreateTestUser(t, prefix+"_null", "User")
 	defaultPoster := CreateTestUser(t, prefix+"_default", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
@@ -6174,6 +6176,16 @@ func TestListMessagesMT_FilterChecked(t *testing.T) {
 	assert.False(t, foundMod, "mod-approved post should not appear under checked")
 	assert.False(t, foundAlready, "a post already marked checked should not appear under checked")
 
+	// Outside the trial the same community has no Check queue at all.
+	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", "")
+	resp, err = getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Approved&filter=checked&jwt=%s", groupID, modToken), nil))
+	assert.NoError(t, err)
+	var outside map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&outside)
+	outsideMsgs, _ := outside["messages"].([]interface{})
+	assert.Empty(t, outsideMsgs, "a community outside the trial has an empty Check queue")
+
 	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?, ?, ?)", checkedMsg, trustedMsg, modApprovedMsg, alreadyCheckedMsg)
 	db.Exec("DELETE FROM messages WHERE id IN (?, ?, ?, ?)", checkedMsg, trustedMsg, modApprovedMsg, alreadyCheckedMsg)
 }
@@ -6185,6 +6197,8 @@ func TestListMessagesMT_MarkChecked(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
+	// The Check queue exists only on communities in the post-moderation trial.
+	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d", groupID))
 	nullPoster := CreateTestUser(t, prefix+"_null", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	CreateTestMembership(t, nullPoster, groupID, "Member")
