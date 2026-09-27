@@ -3,6 +3,7 @@ last_reviewed: 2026-09-20
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/index.vue
+  - iznik-nuxt3/tests/e2e/docs-screenshots.mjs
   - iznik-nuxt3/modtools/layouts/**
   - iznik-nuxt3/modtools/composables/useMe.js
   - iznik-nuxt3/modtools/pages/teams.vue
@@ -27,6 +28,8 @@ separate application from the main Freegle site, but you log in with the same ac
   for help; that is what the `/login` page handles.
 
 ## The home page
+
+![The ModTools home page](assets/home.png)
 
 The home page is your daily starting point. It is built from nine lists, each showing
 what Freegle already did and, where there is one, the one thing a moderator can add:

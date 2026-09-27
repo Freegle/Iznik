@@ -66,13 +66,6 @@ const SHOTS = [
   },
   {
     audience: 'members',
-    name: 'explore',
-    auth: 'none',
-    app: 'member',
-    path: '/explore',
-  },
-  {
-    audience: 'members',
     name: 'browse',
     auth: 'member',
     app: 'member',
@@ -116,17 +109,12 @@ const SHOTS = [
   // Moderators
   {
     audience: 'moderators',
-    name: 'dashboard',
+    // The ModTools home page: nine lists of what the system did today and what a
+    // volunteer could add. There is no dashboard, no queue and no community picker.
+    name: 'home',
     auth: 'mod',
     app: 'mod',
     path: '/',
-  },
-  {
-    audience: 'moderators',
-    name: 'pending',
-    auth: 'mod',
-    app: 'mod',
-    path: '/messages/pending',
   },
   {
     audience: 'moderators',
@@ -134,13 +122,6 @@ const SHOTS = [
     auth: 'mod',
     app: 'mod',
     path: '/members/approved',
-  },
-  {
-    audience: 'moderators',
-    name: 'settings',
-    auth: 'mod',
-    app: 'mod',
-    path: '/settings',
   },
 ]
 
