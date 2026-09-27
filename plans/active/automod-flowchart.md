@@ -205,3 +205,44 @@ this evidence. Shadow mode is where the numbers to decide per question come from
 `evaluate.js --backends=claude,jev` over posts exported from shadow communities.
 `TYPESAFE_API_KEY` enables it; `TYPESAFE_BASE_URL` points it at a local compatible server
 for the rung below.
+
+## Three judges, no ground truth (27 September 2026)
+
+Edward: moderators are fallible too, so nobody is ground truth. 802 posts from production
+(read-only): 602 a moderator rejected with a text reason in the last 180 days (336 vague, 71
+money, 57 not an item, 51 borrow or swap, 41 medicine, 40 animals, 6 other) and 200 a
+moderator approved. Chart version 4, whose questions carry Freegle's own rule wording.
+Claude (Opus, through the CLI) and Jev answered every question.
+
+`automod/scripts/agreement.mjs` fits a latent-class model per question group with the three
+as judges. Taken at face value it says Jev is far better than Claude on borrow/swap (98%
+against 59%) and not-an-item. Reading the posts says otherwise: Jev answers "is something
+wrong with this post" more than the question asked. Its borrow/swap yeses include frogspawn,
+a man with a van, fancy rats and rail vouchers; its not-an-item yeses are vague Wanteds.
+Moderators' templates are coarse in the same way ("Borrow/Swap/Sell/Kind" on a plain
+Wanted), so Jev and moderators make correlated errors and the model's independence
+assumption credits them for it. Per-group agreement is the wrong measure here.
+
+Whole posts, held for any text reason, community rules applied:
+
+| moderator's reason | posts | Claude holds | Jev holds | either holds |
+|---|---|---|---|---|
+| vague | 336 | 214 (64%) | 195 (58%) | 219 (65%) |
+| borrow/swap | 51 | 29 (57%) | 30 (59%) | 32 (63%) |
+| money | 71 | 44 (62%) | 33 (46%) | 45 (63%) |
+| not an item | 57 | 49 (86%) | 47 (82%) | 49 (86%) |
+| animals | 40 | 35 (88%) | 35 (88%) | 36 (90%) |
+| medicine | 41 | 34 (83%) | 32 (78%) | 34 (83%) |
+| approved | 200 | 3 (2%) | 1 (1%) | 3 (2%) |
+
+Claude holds at least as many as Jev everywhere, and holding when either says yes adds at
+most five posts a group. Claude stays the backend; Jev stays available for comparison.
+
+The vague rejections neither model holds (122) are mostly specific requests: "Washing
+machine", "Bike", "Cupboard", "Double bed and TV", "Tent". By Freegle's written rule (name
+the items) they are not vague. The templates used ("Vague Wanted - Follow Up, Not
+Clarified") point to a local practice of asking for sizes or colours and rejecting when
+the member does not reply, which is about the member, not the words. So on vagueness the
+models are nearer the written rule than the moderators. This is also why approve-only needs
+shadow numbers per community first: some communities are stricter than the national rule,
+and automated review will not reproduce that.
