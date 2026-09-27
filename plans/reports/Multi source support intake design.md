@@ -8,7 +8,7 @@ Our problem isn't that we have nowhere to keep tickets. It's that most reports a
 - **Jira would give us a tidy place to keep tickets, which we half have already.** Jira itself is now free for charities. Its helpdesk version is not, and it can't talk to Discourse, look up members, or ask reporters questions.
 - **Free, self-hosted helpdesks cost nothing to license but don't solve the hard part.** We would still have to write the Discourse link ourselves. None of them can look a member up in our database while it works. And we'd have another system to run.
 - **The research gives clear answers to the questions we've been stuck on.** Work out as much as you can before asking. Ask only about what is still unclear. Ask everything in one message. Stop asking after a set point. Judge urgency against written guidance with worked examples.
-- **We already have most of the pieces, in two systems that don't talk to each other.** The monitor FSM watches Discourse and Sentry, asks reporters for missing details and opens fixes. The ModTools AI Support Helper can find a member and read their account, logs and errors.
+- **We already have most of the pieces, in two systems that don't talk to each other.** Both can already look things up in the live database and logs. The monitor FSM watches Discourse and Sentry, checks the database and logs, asks reporters for what only they know, and opens fixes. The ModTools AI Support Helper lets a volunteer look into one member.
 
 **Recommendation:** build it ourselves. Keep one shared list of support cases in the main Freegle database, fed by both existing systems and by email and the app. Treat volunteers and members differently, because they report in very different ways. Our volume is about 110 Discourse reports and 20 escalated support emails a month, so the AI cost is small; the real cost is our time. The plan is in steps, and each one is useful even if we stop there. People are asked when they add something, but nothing waits for them for ever.
 
@@ -89,11 +89,14 @@ So Jira would give us somewhere tidy to keep tickets, which is the part we alrea
 - **Volume:** between April and September 2026 it recorded 663 reports, about 110 a month once it was fully running.
 - **Who reports:** the 663 came from only 69 people. The forum is for volunteers, so these are moderators reporting for their members. That matters more to the design than anything else.
 - **Outcomes:** 316 marked fixed, 121 off-topic, 93 feature requests, 44 put off, and the rest waiting in various states.
+- **It looks things up before asking.** It can read the production database (read-only) and production logs in Loki. Its instructions say to check those before guessing, and to ask the reporter only for what only they know (which member, which group, which post, what they saw, when), at most three things in one message.
+- **But those lookups run through a connection from the machine it runs on.** When that connection is down, it records the diagnosis as unchecked and puts the bug off.
+- **Once it asks, it holds the report until there is an answer,** with no time limit. A reporter who never replies leaves the report waiting for ever.
 - **What it can post:** it may ask a reporter for missing details without approval, and post "possible fix applied, please retest" once a fix is live. Anything that says how Freegle works waits for a person to approve it first. That split is right, and the design keeps it.
 - **Its records mix two things.** One field holds both what kind of report it is and how far along it is. So a simple question like "which feature requests are still open?" can't be answered.
 - **Its Sentry records are empty.**
 
-**The AI Support Helper** in ModTools helps a support volunteer look into one member. It finds the member first, then reads their account, logs and errors from the last 90 days. That is exactly the "look it up instead of asking" ability the FSM lacks. When it can't help, "refer to geeks" sends an email with a reference number, and nothing is saved anywhere we could search later. Members' "contact support" link just opens an email.
+**The AI Support Helper** in ModTools helps a support volunteer look into one member. It finds the member first, then reads their account, logs and errors from the last 90 days. When it can't help, "refer to geeks" sends an email with a reference number, and nothing is saved anywhere we could search later. Members' "contact support" link just opens an email.
 
 **Plans we wrote but never built.**
 - A July 2026 plan tested the Helper against 364 real reports. It found that looking into one member, the only thing the Helper was built for, is a minority of what comes in. Bug reports are the biggest share, and questions about how Freegle works are another.
@@ -149,7 +152,7 @@ The FSM's 663 existing reports move across as cases, so we keep the history and 
 
 ### How we find out what's missing
 
-**Work it out first, then ask.** The AI writes the fullest draft it can from the message, the reporter's account, the account it's about, the logs around that time, and any Sentry errors. It notes which details it looked up. Then it asks only about what is still missing or contradictory.
+**Work it out first, then ask.** The FSM already does this for bugs; the change is to do it for every kind of case, and to add time limits. The AI writes the fullest draft it can from the message, the reporter's account, the account it's about, the logs around that time, and any Sentry errors. It notes which details it looked up. Then it asks only about what is still missing or contradictory.
 
 What we need depends on the kind of report:
 
@@ -220,8 +223,8 @@ Automatic linking is fine here because it's easy to undo, and it is what lets se
 
 **The FSM** keeps doing what it does now: watching, fixing and reviewing its own fixes. It changes in four ways:
 - It saves cases to the shared database.
-- It can use the Helper's member lookup, so it can work out "which member" itself.
-- It asks with the checklist above.
+- It asks with the checklist above, and follows the time limits instead of holding a report until someone answers.
+- A dropped connection to the database or logs raises an alert, instead of quietly turning into put-off bugs.
 - The seven rules from the May review that are still only advice become code.
 
 It also reports every hour what it actually did ("checked 40 topics, asked 3 questions, opened 1 fix"). Then a silent failure shows up within an hour instead of whenever someone notices.
@@ -262,14 +265,14 @@ At about 130 cases a month, the AI should cost a few pounds to a few tens of pou
 | 0 | Test against the 663 old reports; hourly "what I did" report from the FSM | we can measure every later change, and silent failures stop |
 | 1 | Cases in the main database; move the old reports across; store kind and progress separately | one searchable record, not stuck on one machine |
 | 2 | The May review rules and the urgency levels written into code | fewer wrong "fixed" decisions; urgency with reasons |
-| 3 | Work-it-out-first questions, reminders and time limits; FSM uses the Helper's member lookup | fewer, better questions; every case reaches an outcome |
+| 3 | Work-it-out-first questions, reminders and time limits; alert when the FSM loses its database or log connection | fewer, better questions; every case reaches an outcome |
 | 4 | Linking reports to shared faults; urgency raised by more reports or more errors | one fix per fault; spreading problems noticed early |
 | 5 | Email and in-app reports; "refer to geeks" opens a case; Helper sorts what it gets | members' support joins the same system |
 | 6 | Everyone told when their fault is fixed; weekly fixed post; Cases page in ModTools | people hear back without anyone having to remember |
 
 ## In one paragraph
 
-We haven't been missing a ticket system. Reports arrive incomplete, from two very different kinds of reporter, often about someone else. One of our systems can ask for details but can't look anything up. The other can look everything up, but only for one kind of request. The research is clear on what works:
+We haven't been missing a ticket system. Reports arrive incomplete, from two very different kinds of reporter, often about someone else. Both our systems can look things up in the live database and logs, but they keep separate records, neither puts a time limit on waiting, and the Helper only handles one kind of request. The research is clear on what works:
 - Work out what you can before asking.
 - Ask everything in one message.
 - Stop asking after a set point and carry on.
