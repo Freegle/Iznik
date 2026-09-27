@@ -478,21 +478,27 @@ describe('driver.ts — PARSE_ONLY stops before fixing states', () => {
   // PARSE_ONLY=1 is meant to end after WORK_ROUTER. On 2026-08-06 a PARSE_ONLY
   // run went on to enter PARALLEL_FIX_BUGS and launch three real fix delegates,
   // because the guard only inspected currentState while WORK_ROUTER's action
-  // had returned _transition PARALLEL_FIX_BUGS.
-  it('considers transitions the step proposed, not just currentState', () => {
-    const idx = driverTs.indexOf('const proposedNext')
-    expect(idx).toBeGreaterThan(-1)
-    const block = driverTs.slice(idx, idx + 500)
-    expect(block).toContain('_transition')
-    expect(block).toContain('candidateStates')
+  // had returned _transition PARALLEL_FIX_BUGS. On 2026-09-12 it happened again
+  // by another route: WORK_ROUTER is a tool node, and the tool fast-path
+  // transitions and `continue`s before the post-step guard ever runs, so the
+  // NEXT step started in PARALLEL_FIX_BUGS and launched five fix delegates.
+  // The decision itself is unit-tested in parse-only.test.ts; these checks pin
+  // where the driver asks it.
+  it('decides with the shared parse-only module, in both places', () => {
+    expect(driverTs).toContain("from './parse-only.js'")
+    expect(driverTs.match(/parseOnlyDecision\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2)
   })
 
-  it('stops on any candidate state outside the analysis set', () => {
-    expect(driverTs).toContain('const offender = candidateStates.find(s => !ANALYSIS_STATES.has(s))')
+  it('asks BEFORE a step runs, on the current state, ahead of the tool-node fast-path', () => {
+    const preStep = driverTs.indexOf('parseOnlyDecision([current.currentState])')
+    const toolFastPath = driverTs.indexOf('TOOL NODE FAST-PATH')
+    expect(preStep).toBeGreaterThan(-1)
+    expect(toolFastPath).toBeGreaterThan(-1)
+    expect(preStep).toBeLessThan(toolFastPath)
   })
 
-  it('still bypasses FIX_MASTER_CI rather than stopping on it', () => {
-    expect(driverTs).toContain("candidateStates.includes('FIX_MASTER_CI')")
+  it('still considers transitions the step proposed after an LLM step', () => {
+    expect(driverTs).toContain('proposedTransitions(result.actionsExecuted)')
   })
 })
 
@@ -513,5 +519,59 @@ describe('PARALLEL_ANALYZE_AND_FIX prompt — Discourse auth header', () => {
 
   it('warns at the key-fetch step that the pair is rejected', () => {
     expect(prompt).toContain('REJECTED with HTTP 403')
+  })
+})
+
+// ── Answering moderators' questions ──────────────────────────────────────
+
+describe('question answering is wired into the parallel batch', () => {
+  it('gathers the unanswered questions alongside the active topics', () => {
+    expect(workflow.states.CHECK_CI.readActions).toContain('list_unanswered_questions')
+  })
+
+  it('dispatches one task per unanswered question', () => {
+    const prompt: string = workflow.states.PARALLEL_ANALYZE_AND_FIX.prompt
+    expect(prompt).toContain('context._action_list_unanswered_questions.questions')
+    expect(prompt).toContain("id: 'question-<topic>-<post>'")
+    expect(prompt).toContain('ANSWERS=[')
+  })
+
+  it('tells the answering delegate to research rather than guess, and never to post', () => {
+    const prompt: string = workflow.states.PARALLEL_ANALYZE_AND_FIX.prompt
+    expect(prompt).toContain('do NOT post anything to Discourse')
+    expect(prompt).toContain('do not answer from memory')
+    expect(prompt).toContain('needsHuman')
+  })
+
+  it('collates the answers and queues them for approval', () => {
+    const prompt: string = workflow.states.COLLATE_RESULTS.prompt
+    expect(prompt).toContain("id starts with 'question-'")
+    expect(prompt).toContain('persist_question_answers')
+    expect(workflow.states.COLLATE_RESULTS.writeActions).toContain('persist_question_answers')
+  })
+
+  it('registers both question actions', () => {
+    expect(actionsTs).toContain("name: 'list_unanswered_questions'")
+    expect(actionsTs).toContain("name: 'persist_question_answers'")
+  })
+})
+
+// ── Reports that are too vague to act on ─────────────────────────────────
+
+describe('triage supplies what the specificity check needs', () => {
+  const prompt: string = workflow.states.PARALLEL_ANALYZE_AND_FIX.prompt
+
+  it('asks for a screenshot flag, read before the HTML is stripped', () => {
+    expect(prompt).toContain('has_screenshot')
+    expect(prompt).toContain('BEFORE you strip it')
+  })
+
+  it('asks for the member and group the post names, and forbids guessing them', () => {
+    expect(prompt).toContain('identifiers')
+    expect(prompt).toContain('NEVER guess')
+  })
+
+  it('tells triage not to judge specificity itself', () => {
+    expect(prompt).toContain('NOT SPECIFIC ENOUGH')
   })
 })

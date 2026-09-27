@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-03
+last_reviewed: 2026-09-05
 owner: Freegle dev team
 covers:
   - README.md
@@ -23,8 +23,10 @@ Measured on a working dev machine (August 2026), rounded up for headroom:
   default allocation is not enough.
 - **Disk**: allow **~100 GB free** for a first build (images plus volumes plus build
   cache). This grows over time: build cache and superseded image layers accumulate, and
-  each worktree adds its own volumes. Reclaim space with `docker builder prune` and
-  `docker system df` to see where it has gone.
+  each worktree adds its own volumes. Run `./freegle worktree prune` to remove worktrees
+  whose PR has been merged or closed, and to drop the containers of any worktree left idle
+  for a week. Then `docker builder prune` for the build cache, and `docker system df` to
+  see where the rest has gone.
 - The heaviest single containers are the two spatial servers (~3 GiB RAM each) and the
   embedding sidecar (~1.5 GiB); the Nuxt dev containers are ~1 GiB each.
 
@@ -89,6 +91,7 @@ ports and database. Use the `./freegle` CLI, never `git worktree add` directly:
 ./freegle worktree create feature-x   # isolated stack on offset ports
 ./freegle status                       # list worktrees and their URLs
 ./freegle worktree remove feature-x    # tear it down
+./freegle worktree prune               # tidy up merged and idle ones (--dry-run first)
 ```
 
 The full guide, including the strict isolation rules (never bridge a worktree to the main

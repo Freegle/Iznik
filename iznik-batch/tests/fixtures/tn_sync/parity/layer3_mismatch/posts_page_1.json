@@ -1,0 +1,22 @@
+{
+  "num_pages": 1,
+  "posts": [
+    {
+      "post_id": "tn-parity-l3-1",
+      "group_id": null,
+      "user_id": 88020005,
+      "title": "Widget API Version",
+      "content": "A widget described differently on each path.",
+      "date": "2026-07-10T10:00:00Z",
+      "type": "offer",
+      "outcome": null,
+      "latitude": 23.0000,
+      "longitude": 23.0000,
+      "footer": null,
+      "photos": [],
+      "expiration": null,
+      "reselling": false,
+      "url": "https://trashnothing.com/post/tn-parity-l3-1"
+    }
+  ]
+}

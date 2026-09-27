@@ -214,6 +214,66 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Only posts a member can still vote on
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * 121778084 was withdrawn on 5 September and a Bromley member was asked to
+     * review it the next morning; the vote was refused with a 403 (SR-DYS36).
+     */
+    public function test_a_withdrawn_post_notifies_nobody(): void
+    {
+        $groupId  = $this->createGroup();
+        $fromUser = $this->createUser('Basic');
+        $reviewer = $this->createUser('Basic');
+        $this->addMembership($fromUser, $groupId);
+        $this->addMembership($reviewer, $groupId);
+
+        $msgId = $this->createMessage($groupId, $fromUser, 'Approved');
+        DB::table('messages_outcomes')->insert(['msgid' => $msgId, 'outcome' => 'Withdrawn', 'timestamp' => now()]);
+
+        $stats = (new MicrovolunteeringNotifyService())->notifyForMessages();
+
+        $this->assertSame(0, $stats['users_notified']);
+        $this->assertSame(0, DB::table('users_notifications')->where('touser', $reviewer)->count());
+    }
+
+    /**
+     * A rippled copy retracted from a group keeps its arrival time, so without this
+     * the group's members were asked about a post that is no longer on it.
+     */
+    public function test_a_copy_removed_from_a_group_notifies_nobody_there(): void
+    {
+        $groupId  = $this->createGroup();
+        $fromUser = $this->createUser('Basic');
+        $reviewer = $this->createUser('Basic');
+        $this->addMembership($fromUser, $groupId);
+        $this->addMembership($reviewer, $groupId);
+
+        $msgId = $this->createMessage($groupId, $fromUser, 'Approved');
+        DB::table('messages_groups')->where('msgid', $msgId)->update(['deleted' => 1]);
+
+        $stats = (new MicrovolunteeringNotifyService())->notifyForMessages();
+
+        $this->assertSame(0, $stats['users_notified']);
+    }
+
+    public function test_a_rejected_copy_notifies_nobody(): void
+    {
+        $groupId  = $this->createGroup();
+        $fromUser = $this->createUser('Basic');
+        $reviewer = $this->createUser('Basic');
+        $this->addMembership($fromUser, $groupId);
+        $this->addMembership($reviewer, $groupId);
+
+        $this->createMessage($groupId, $fromUser, 'Rejected');
+
+        $stats = (new MicrovolunteeringNotifyService())->notifyForMessages();
+
+        $this->assertSame(0, $stats['users_notified']);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // CANDIDATES_PER_MESSAGE cap (array_rand branch)
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -457,5 +517,82 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
             'id'   => $notifId,
             'seen' => 1,
         ]);
+    }
+
+    /**
+     * The candidate query must not correlate users_notifications to the message at all.
+     *
+     * It used to, as a LEFT JOIN on `url LIKE CONCAT('/microvolunteering/message/',
+     * messages.id)`. A value computed per row cannot use the url index, so it scanned;
+     * rewriting it as `=` made the index eligible and made things far worse, because a url
+     * ref lookup is costed at the whole table while that index reports cardinality 1, so
+     * every one of ~40k outer rows was range-checked and rejected. It never completed once
+     * and the five-minute schedule stacked 18 copies against production on 2026-09-13.
+     *
+     * Constants are the fix: an IN list of complete urls is a ref lookup per value.
+     * Measured on production, 17.03s for the joined form against 1.00s for this one, with
+     * a result set identical row for row.
+     */
+    public function test_the_candidate_query_does_not_correlate_notifications_per_row(): void
+    {
+        $groupId  = $this->createGroup();
+        $fromUser = $this->createUser('Basic');
+        $this->addMembership($fromUser, $groupId);
+        $this->createMessage($groupId, $fromUser, 'Pending');
+
+        $joined = [];
+        $constantLookup = [];
+        DB::listen(function ($query) use (&$joined, &$constantLookup) {
+            if (stripos($query->sql, 'LEFT JOIN users_notifications') !== false) {
+                $joined[] = $query->sql;
+            }
+
+            if (stripos($query->sql, 'from users_notifications') !== false
+                && stripos($query->sql, 'url in (') !== false) {
+                $constantLookup[] = $query->sql;
+            }
+        });
+
+        (new MicrovolunteeringNotifyService())->notifyForMessages();
+
+        $this->assertEmpty(
+            $joined,
+            'the candidate query must not join users_notifications: a per-row correlation on url cannot use its index'
+        );
+        $this->assertNotEmpty(
+            $constantLookup,
+            'the already-notified exclusion must be a constant url lookup'
+        );
+        $this->assertDoesNotMatchRegularExpression(
+            "/url\s*(=|LIKE)\s*CONCAT\(/i",
+            $constantLookup[0],
+            'the exclusion lookup must pass whole urls, not build them per row'
+        );
+    }
+
+    /**
+     * Behaviour guard for the same change: a message that already has its own Exhort
+     * notification must stay out of the candidate set.
+     */
+    public function test_message_with_its_own_notification_is_not_considered_again(): void
+    {
+        $groupId  = $this->createGroup();
+        $fromUser = $this->createUser('Basic');
+        $reviewer = $this->createUser('Moderate');
+        $this->addMembership($fromUser, $groupId);
+        $this->addMembership($reviewer, $groupId);
+
+        $msgId = $this->createMessage($groupId, $fromUser, 'Pending');
+
+        DB::table('users_notifications')->insert([
+            'touser'    => $reviewer,
+            'type'      => 'Exhort',
+            'url'       => '/microvolunteering/message/' . $msgId,
+            'timestamp' => now(),
+        ]);
+
+        $stats = (new MicrovolunteeringNotifyService())->notifyForMessages();
+
+        $this->assertSame(0, $stats['messages_considered'], 'a message already exhorted must not be offered again');
     }
 }

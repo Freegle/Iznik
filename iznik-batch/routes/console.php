@@ -32,6 +32,25 @@ if (!function_exists('cronLog')) {
 \App\Console\SchedulerMutex::apply(app(\Illuminate\Console\Scheduling\Schedule::class));
 
 // =============================================================================
+// DEPLOYMENT SWITCHES (see docs/developers/reference/deployment-switches.md)
+// =============================================================================
+// Another deployment of this codebase adds its own jobs in an overlay file that
+// Freegle does not ship, and can choose to run ONLY those. Both default to how
+// Freegle runs today: no overlay, the full schedule below.
+$scheduleOverlay = (string) config('freegle.schedule.overlay', '');
+if ($scheduleOverlay !== '') {
+    if (! str_starts_with($scheduleOverlay, '/')) {
+        $scheduleOverlay = base_path($scheduleOverlay);
+    }
+    if (is_file($scheduleOverlay)) {
+        require $scheduleOverlay;
+    }
+}
+if (config('freegle.schedule.profile', 'full') === 'overlay-only') {
+    return;
+}
+
+// =============================================================================
 // ACTIVE SCHEDULED COMMANDS
 // =============================================================================
 
@@ -281,6 +300,21 @@ Schedule::command('electricals:stats')
     ->sendOutputTo(cronLog('electricals:stats'))
     ->runInBackground();
 
+// Score newly-approved OFFERs for item desirability.
+//
+// A quiet no-op (single EXISTS query) until an operator imports an artifact with
+// desirability:import-artifact, so scheduling it is free on hosts without one.
+// Hourly like eee:classify-new and for the same reason: it tracks a high-water
+// mark over the approval clock, and ~65 distinct OFFERs arrive an hour, so
+// --limit=2000 only matters when catching up after an outage. Most posts score
+// with a single indexed lookup; only never-seen titles touch the embedding
+// sidecar (soft dependency - scoring falls back to 'default' without it).
+Schedule::command('desirability:score-new --limit=2000')
+    ->hourly()
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('desirability:score-new'))
+    ->runInBackground();
+
 // Recompute items.popularity from messages_items.
 //
 // ItemService maintains this forwards now, but a weekly reconciliation keeps it honest:
@@ -292,6 +326,16 @@ Schedule::command('items:backfill-popularity')
     ->weeklyOn(0, '03:40')
     ->withoutOverlapping(240)
     ->sendOutputTo(cronLog('items:backfill-popularity'))
+    ->runInBackground();
+
+// Link accounts that gave the same mobile number or street address in chat, so they show up
+// in ModTools Related Members. Daily rather than hourly: nothing here is urgent, and a
+// duplicate account that has sat unnoticed for years does not need spotting within the hour.
+// The scan window overlaps the gap between runs so a slow day never drops anything.
+Schedule::command('users:detect-related --days=3')
+    ->dailyAt('04:40')
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('users:detect-related'))
     ->runInBackground();
 
 // Auto-approve pending messages after 48 hours.
@@ -404,6 +448,17 @@ Schedule::command('charity:notify-signups')
     ->sendOutputTo(cronLog('charity:notify-signups'))
     ->runInBackground();
 
+// CookieYes watchdog — banner live, GDPR on, every cookie categorised, scan recent;
+// starts a scan when the last is a month old. Result in housekeeper_tasks (the ModTools
+// housekeeping badge), failures emailed to geeks. Needs a one-off `cookieyes:authorize`
+// per environment; until then every run fails and says so.
+Schedule::command('cookieyes:check')
+    ->weeklyOn(1, '10:30')
+    ->when(fn () => config('freegle.cookieyes.enabled', true))
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('cookieyes:check'))
+    ->runInBackground();
+
 // Moderator work notifications — tells mods about pending messages, events, etc.
 // Only runs 08:00–21:00; deduplicates against last sent summary.
 // V1: cron/mod_notifs.php (hourly)
@@ -512,7 +567,7 @@ Schedule::command('purge:logs')
 // Daily syntactic email validation (last 30 days only).
 // V1: cron/email_validate.php
 Schedule::command('emails:validate')
-    ->dailyAt('04:30')
+    ->dailyAt('04:50')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('emails:validate'))
     ->runInBackground();
@@ -578,10 +633,10 @@ Schedule::command('chats:update-expected')
     ->runInBackground();
 
 // The nightly backstop: re-check every waiting message, catching anything the two
-// triggers above cannot see. 04:30 sits in the quiet gap after the purge/stats cluster
-// and clear of db1's 04:00-04:17 backup window.
+// triggers above cannot see. 04:50 sits in the quiet gap after the purge/stats cluster
+// and clear of the backup drain window (BackupDrainWindowTest keeps it there).
 Schedule::command('chats:update-expected --full')
-    ->dailyAt('04:30')
+    ->dailyAt('04:50')
     ->withoutOverlapping(60)
     ->sendOutputTo(cronLog('chats:update-expected-full'))
     ->runInBackground();
@@ -616,6 +671,26 @@ Schedule::command('chats:process-spam')
 Schedule::command('tn:sync')
     ->everyMinute()
     ->withoutOverlapping(15)
+    ->runInBackground();
+
+// Check that TN posts which arrived by email were also ingested via the API,
+// using the incoming email archive as an independent inventory. See
+// plans/tn-api-post-ingestion.md section S.
+//
+// Hourly, matching the default one-hour window so consecutive runs tile the
+// timeline. Runs ~8h behind real time; the archive's 48h retention
+// (mail:cleanup-archive) is the hard upper bound on that lag.
+//
+// Only meaningful once the email path has stopped writing — until then both
+// paths stamp messages.tnpostid and "covered" proves nothing, which is why the
+// command refuses to run without --force and the schedule is gated the same way.
+// FREEGLE_TN_INGEST_POSTS_VIA_API is that switch: on, the API path ingests and
+// TnEmailRoutingGate stops the email path routing TN posts.
+Schedule::command('tn:verify-email-coverage')
+    ->hourly()
+    ->withoutOverlapping(120)
+    ->when(fn () => (bool) config('freegle.trashnothing.ingest_posts_via_api', false))
+    ->sendOutputTo(cronLog('tn:verify-email-coverage'))
     ->runInBackground();
 
 // =============================================================================
@@ -764,6 +839,31 @@ Schedule::call(function () {
     } else {
         \Illuminate\Support\Facades\Log::info('Email delivery looks normal across domains');
     }
+
+    // Carryover health, measured right after the window that writes it.
+    //
+    // users_digests.carryover holds the posts a member's last digest could not fit under
+    // DIGEST_POST_CAP; the next run offers them again, below that run's new posts. Every id
+    // on it is also a DIGEST_LOAD_CAP slot a new post does not get, so the list is bounded
+    // three ways (age, already-seen, size) in UnifiedDigestService::carryoverFrom(). Those
+    // bounds are the thing this line exists to check: if the mean or the max climbs run over
+    // run, they are not holding and members are being fed their backlog instead of today's
+    // posts. A steady mean well under the cap is what healthy looks like. No threshold and
+    // no alert - there is no measured normal to compare against yet, and inventing one from
+    // a single day's figure would be worse than reading the trend.
+    $carryover = \Illuminate\Support\Facades\DB::table('users_digests')
+        ->where('mode', 'daily')
+        ->whereNotNull('carryover')
+        ->selectRaw('COUNT(*) AS members, ROUND(AVG(JSON_LENGTH(carryover)), 1) AS mean_len, MAX(JSON_LENGTH(carryover)) AS max_len')
+        ->first();
+
+    \Illuminate\Support\Facades\Log::info('Daily digest carryover', [
+        'members_carrying' => (int) ($carryover->members ?? 0),
+        'mean_posts_carried' => (float) ($carryover->mean_len ?? 0),
+        'max_posts_carried' => (int) ($carryover->max_len ?? 0),
+        'cap' => \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP,
+        'max_age_days' => \App\Services\UnifiedDigestService::CARRYOVER_MAX_AGE_DAYS,
+    ]);
 })
     ->name('mail:digest:daily-lag-check')
     ->timezone(config('freegle.timezone'))
@@ -836,6 +936,16 @@ foreach (range(0, $reachMailShardCount - 1) as $reachShard) {
         ->sendOutputTo(cronLog("mail:digest:unified.reach.shard{$reachShard}"))
         ->runInBackground();
 }
+
+// The daily backstop for reach mail's member queue: re-queue anyone whose join or postcode
+// change since yesterday was not followed by reach mail, so a hook that is missed or wrong
+// costs a day rather than the mail. Two indexed queries over the last day; the reach pass's
+// drain does the containment work.
+Schedule::command('ripple:reconcile-reach-members')
+    ->dailyAt('05:23')
+    ->withoutOverlapping(360)
+    ->sendOutputTo(cronLog('ripple:reconcile-reach-members'))
+    ->runInBackground();
 
 // Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')
@@ -947,9 +1057,25 @@ if (config('freegle.mail.deferrals.enabled')) {
         ->runInBackground();
 }
 
+// Read the relay's maillog into logs_emails, so we can tell a member whether
+// we actually sent them something. Replaces V1's eximlogs.php, which ran from
+// root's crontab on the relay itself. Same ten-minute cadence, because that is
+// what the offset and the slice cap were sized against - about 5MB a run.
+//
+// Gated on config so it is not scheduled where the relay is unreachable (dev,
+// CI). No ->sentryMonitor() for the same reason as the deferral scan: it uses
+// withoutOverlapping(), and a skipped run would page as a missed check-in.
+if (config('freegle.mail.relay_logs.enabled') && config('freegle.mail.relay_logs.host') !== '') {
+    Schedule::command('mail:relay-logs:ingest')
+        ->everyTenMinutes()
+        ->withoutOverlapping(20)
+        ->sendOutputTo(cronLog('mail:relay-logs:ingest'))
+        ->runInBackground();
+}
+
 // Clean up old sent emails - run daily.
 Schedule::command('mail:spool:process --cleanup --cleanup-days=7')
-    ->dailyAt('04:00')
+    ->dailyAt('04:40')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('mail:spool:process'))
     ->runInBackground();
@@ -1120,13 +1246,8 @@ Schedule::command('users:update-approx-locs')
     ->sendOutputTo(cronLog('users:update-approx-locs'))
     ->runInBackground();
 
-// Remove search index entries for messages older than 30 days.
-// V1: cron/message_deindex.php (daily at 01:00)
-Schedule::command('messages:deindex')
-    ->dailyAt('01:00')
-    ->withoutOverlapping(360)
-    ->sendOutputTo(cronLog('messages:deindex'))
-    ->runInBackground();
+// (Retired) The keyword search index (messages_index) is no longer maintained;
+// search is served from vector embeddings, so there is nothing to deindex.
 
 // Score microvolunteering actions and promote accurate users to Moderate trust.
 // V1: cron/microactions_score.php (daily at 23:00)
@@ -1272,13 +1393,15 @@ Schedule::command('integrations:sync-whatjobs')
 // Early-morning sync ahead of the 07:00 UK daily digest. The every-3h UTC
 // schedule above starts at 09:00 UTC, so the morning digest would otherwise
 // ship jobs last synced ~21:00 the night before (9-10h stale -> closed
-// postings -> clicks don't convert to billable). Run at 05:00 UK so the sync
-// (and the post-swap KNN rebuild it triggers) completes before the digest.
-// Pinned to the local zone so it tracks BST/GMT with the digest; shares the
-// command mutex with the run above via withoutOverlapping.
+// postings -> clicks don't convert to billable). Runs at 04:40 UTC, on the
+// same clock as the backup drain window (03:50-04:35 UTC), so it starts just
+// after batch work resumes in both BST and GMT: 05:40 or 04:40 London, and
+// the run takes about 15 minutes, well before the digest. It used to be pinned
+// to 05:00 London, which is 04:00 UTC in summer, inside the window, and the
+// drain skipped it. Shares the command mutex with the run above via
+// withoutOverlapping.
 Schedule::command('integrations:sync-whatjobs')
-    ->timezone(config('freegle.timezone'))
-    ->dailyAt('05:00')
+    ->dailyAt('04:40')
     ->withoutOverlapping(240)
     ->sendOutputTo(cronLog('integrations:sync-whatjobs'))
     ->runInBackground();
@@ -1485,15 +1608,42 @@ Schedule::command('embeddings:searches')
     ->sendOutputTo(cronLog('embeddings:searches'))
     ->runInBackground();
 
+// (Retired) The keyword search index (messages_index) is no longer maintained;
+// search is served from vector embeddings (embeddings:generate above).
+
 // =============================================================================
 // NOT YET ENABLED - pending review / sign-off
-// Index unindexed messages for search.
-// V1: cron/message_unindexed.php (every 30 min)
-Schedule::command('messages:update-index')
-    ->everyThirtyMinutes()
-    ->withoutOverlapping(60)
-    ->sendOutputTo(cronLog('messages:update-index'))
-    ->runInBackground();
+// Remove confirmed spammers from groups.
+// V1: cron/check_spammers.php
+// Schedule::command('users:remove-spammers')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('users:remove-spammers'))
+//     ->runInBackground();
+
+// Process chat spam messages.
+// V1: cron/chat_spam.php
+// Schedule::command('chats:process-spam')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('chats:process-spam'))
+//     ->runInBackground();
+
+// Send mod notifications.
+// V1: cron/mod_notifs.php
+// Schedule::command('mail:mod-notifs')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('mail:mod-notifs'))
+//     ->runInBackground();
+
+// Update GiftAid donations.
+// V1: cron/donations_giftaid.php
+// Schedule::command('donations:update-giftaid')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('donations:update-giftaid'))
+//     ->runInBackground();
 
 // Volunteering opportunity maintenance — daily. Asks owners of dateless
 // opportunities approaching expiry whether they are still active (renewal
@@ -1722,3 +1872,24 @@ Schedule::command('partnerships:reminders')
     ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('partnerships:reminders'))
     ->runInBackground();
+
+// Nightly physical database backup. OFF unless BACKUP_DB_ENABLED is set; until then the
+// shell script on the database node is still what runs. Scheduled inside the drain window
+// on purpose: BackupDrain never holds "backup:" commands off.
+//
+// Nothing ELSE that fires once a day may sit inside that window (03:50-04:35 by default):
+// the drain skips a due job, it does not delay it, so a dailyAt() in the window never
+// runs. BackupDrainWindowTest fails the build if one is added.
+Schedule::command('backup:database')
+    ->dailyAt('04:00')
+    ->when(fn () => config('freegle.backup.database.enabled', false))
+    ->withoutOverlapping(480)
+    ->sendOutputTo(cronLog('backup:database'))
+    ->runInBackground();
+
+// =============================================================================
+// BACKUP DRAIN (see App\Console\BackupDrain)
+// =============================================================================
+// Last, so it covers every command defined above and a new job cannot be forgotten.
+// Off unless BACKUP_DRAIN_ENABLED is set; the window is re-checked on each tick.
+\App\Console\BackupDrain::apply(app(\Illuminate\Console\Scheduling\Schedule::class));

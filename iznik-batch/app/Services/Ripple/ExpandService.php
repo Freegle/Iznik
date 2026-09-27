@@ -25,6 +25,11 @@ use Illuminate\Support\Facades\Log;
 class ExpandService
 {
     /**
+     * Where the leave-check keeps its place in `logs`. See pullRippledPostsFromLeftGroups.
+     */
+    private const LEAVE_CHECK_WATERMARK_KEY = 'ripple_leave_check_last_log_id';
+
+    /**
      * The wall-clock moment this run must stop taking new rows, or null when
      * unboxed. Set per process() call from freegle.ripple.expand_time_box_seconds;
      * see the comment there for why runs are bounded (the single-instance lock's
@@ -232,6 +237,7 @@ class ExpandService
             'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0, 'mailed' => 0,
             'memberships_added' => 0, 'pulled_on_leave' => 0,
             'pulled_on_removal' => 0, 'memberships_removed' => 0, 'timeboxed' => 0, 'reach_capped' => 0,
+            'tn_duplicate_sat_out' => 0,
         ];
 
         // Time-box the run BELOW the command's single-instance lock TTL (3600s in
@@ -1100,6 +1106,78 @@ class ExpandService
         return $stats;
     }
 
+    /**
+     * When each reposted post first went live, for posts whose reach should carry on across a
+     * member's own repost.
+     *
+     * The repost turns the post back into a draft, which removes every copy and then the reach
+     * row, so there is nothing left to resume from; the post's log is the only record of how
+     * long it has been live. Walked in order, a "run" of the post starts at its first Received
+     * and continues through reposts that come within repost_keeps_reach_days of it last being
+     * live (Received, Approved, Autoapproved or Autoreposted). A longer gap starts a new run.
+     * The run starts at its first approval, or at its first Received on a community that does
+     * not moderate and so logs no approval.
+     *
+     * @param  int[]  $msgids
+     * @return array<int, Carbon> msgid => start, only for posts reposted within the current run
+     */
+    private function repostCarriedArrivals(array $msgids): array
+    {
+        $days = (int) config('freegle.ripple.repost_keeps_reach_days', 7);
+        if ($days <= 0 || empty($msgids)) {
+            return [];
+        }
+
+        $events = DB::table('logs')
+            ->whereIn('msgid', $msgids)
+            ->where('type', 'Message')
+            ->whereIn('subtype', ['Received', 'Approved', 'Autoapproved', 'Autoreposted', 'Repost'])
+            ->orderBy('msgid')
+            ->orderBy('timestamp')
+            ->orderBy('id')
+            ->get(['msgid', 'subtype', 'timestamp'])
+            ->groupBy('msgid');
+
+        $carried = [];
+        foreach ($events as $msgid => $list) {
+            $received = null;
+            $approved = null;
+            $lastLive = null;
+            $repostedInRun = false;
+
+            foreach ($list as $e) {
+                $at = Carbon::parse($e->timestamp);
+                if ($e->subtype === 'Repost') {
+                    if ($lastLive === null || $lastLive->lt($at->copy()->subDays($days))) {
+                        // Not live for too long: this repost begins a new run.
+                        $received = null;
+                        $approved = null;
+                        $repostedInRun = false;
+                    } else {
+                        $repostedInRun = true;
+                    }
+                    continue;
+                }
+
+                $lastLive = $at;
+                if ($e->subtype === 'Received') {
+                    $received ??= $at;
+                } elseif (!$repostedInRun && in_array($e->subtype, ['Approved', 'Autoapproved'], true)) {
+                    // Only the approval that first put the run live; a re-approval after a
+                    // repost is exactly the restart this undoes.
+                    $approved ??= $at;
+                }
+            }
+
+            $start = $approved ?? $received;
+            if ($repostedInRun && $start !== null) {
+                $carried[(int) $msgid] = $start;
+            }
+        }
+
+        return $carried;
+    }
+
     private function initialiseNew(bool $dryRun, int $limit, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
     {
         // Go-live flood guard: only posts that arrived on or after the configured
@@ -1184,11 +1262,26 @@ class ExpandService
                     MIN(ms.arrival) AS arrival
              FROM messages_spatial ms
              LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid
-             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . $satSql . $holdSql . $optOutSql . '
+             WHERE mr.msgid IS NULL
+               AND EXISTS (
+                   SELECT 1 FROM messages_groups o
+                    WHERE o.msgid = ms.msgid AND o.rippled_in = 0
+                      AND o.deleted = 0 AND o.collection = \'Approved\'
+               )' . $scopeSql . $cutoffSql . $satSql . $holdSql . $optOutSql . '
              GROUP BY ms.msgid
              LIMIT ?',
             $params
         );
+
+        // A member's own repost is re-approved as if new, so without this its reach would start
+        // again at tick 1 and hide it from people it had already reached.
+        $carried = $this->repostCarriedArrivals(array_map(fn ($r) => (int) $r->msgid, $rows));
+        foreach ($rows as $row) {
+            $start = $carried[(int) $row->msgid] ?? null;
+            if ($start !== null && $row->arrival !== null && $start->lt(Carbon::parse($row->arrival))) {
+                $row->arrival = $start->format('Y-m-d H:i:s');
+            }
+        }
 
         // ── Phase 1: compute reach schedules CONCURRENTLY, deduped by blurred origin ──
         //
@@ -1596,7 +1689,7 @@ class ExpandService
                     $satStop = (int) config('freegle.ripple.reply_saturation_stop', 5);
                     if ($satStop > 0 && $this->distinctReplierCount((int) $row->msgid) >= $satStop) {
                         if (!$dryRun) {
-                            DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                            DB::table('rippling_reach')->where('msgid', $row->msgid)->where('status', '<>', 'held')->update([
                                 'status' => 'done',
                                 'next_expansion_at' => null,
                                 'updated_at' => now(),
@@ -1615,7 +1708,7 @@ class ExpandService
                     // keeps rippling into new groups for a tick or two after the outcome is recorded.
                     if ($this->hasTerminalOutcome((int) $row->msgid)) {
                         if (!$dryRun) {
-                            DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                            DB::table('rippling_reach')->where('msgid', $row->msgid)->where('status', '<>', 'held')->update([
                                 'status' => 'done',
                                 'next_expansion_at' => null,
                                 'updated_at' => now(),
@@ -1646,7 +1739,7 @@ class ExpandService
                         // Not actually due for a new tick yet — reschedule and move on.
                         if (!$dryRun) {
                             $next = $this->reach->nextExpansionAfter($arrival, (int) $row->tick, $total);
-                            DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                            DB::table('rippling_reach')->where('msgid', $row->msgid)->where('status', '<>', 'held')->update([
                                 'next_expansion_at' => $next,
                                 'status' => $next === null ? 'done' : 'expanding',
                                 'updated_at' => now(),
@@ -1785,7 +1878,7 @@ class ExpandService
                          SET updated_at = NOW()' . $gridSet . $set . ',
                              reachable_group_ids = COALESCE(?, reachable_group_ids),
                              tick = ?, next_expansion_at = ?, status = ?
-                         WHERE msgid = ?';
+                         WHERE msgid = ? AND status <> \'held\'';
                     $advanceTail = [$this->tickReachableIdsJson($entry), $target, $next, $status, $row->msgid];
                     $advanceStore = function (string $wkt) use ($advanceSql, $advanceTail, $retired): void {
                         if ($retired) {
@@ -1857,6 +1950,51 @@ class ExpandService
     private function reachableGateEnabled(): bool
     {
         return (bool) config('freegle.ripple.reachable_gate', false);
+    }
+
+    /**
+     * The groups this member has opted out of rippling by leaving a ripple-join.
+     *
+     * "Most recent join wins": a group blocks rippling only when the member's LATEST
+     * Group/Joined log for it is a ripple-join (text='Rippled') and a Group/Left follows it.
+     * A group they last joined manually and then left does NOT block - they treated it as an
+     * ordinary group, so an ordinary leave is not a statement about rippling.
+     *
+     * Deliberately ONE indexed read of this member's own log rows, bucketed in PHP. Asked as a
+     * correlated NOT EXISTS per candidate group it becomes three nested probes of a 22M-row
+     * table, and the two inner ones have no usable composite index - `logs` carries `user`,
+     * `groupid` and `(type,subtype)` separately, so MySQL falls back to deciding per row
+     * whether an index helps. That plan has now stalled the pipeline twice: 4-minute stalls in
+     * addPosterMembershipToRippledGroups (2026-08-31, BATCH-83) and a 1,022-second query in
+     * rippleIntoNewGroups. Both call this instead. Do not inline it back.
+     *
+     * @return int[] groupids, ascending, deduplicated
+     */
+    private function rippleOptOutGroupIds(int $userid): array
+    {
+        $blocked = [];
+        $latestJoinText = [];
+
+        // Ordered by id, so the stream replays the member's history oldest-first and the last
+        // verdict written for a group is the one that stands.
+        foreach (DB::select(
+            "SELECT groupid, subtype, text FROM logs
+             WHERE user = ? AND type = 'Group' AND subtype IN ('Joined', 'Left')
+             ORDER BY id",
+            [$userid]
+        ) as $l) {
+            if ($l->subtype === 'Joined') {
+                $latestJoinText[$l->groupid] = $l->text;
+                // Any later join (manual or rippled) supersedes an earlier block:
+                // "most recent join wins".
+                unset($blocked[$l->groupid]);
+            } elseif (($latestJoinText[$l->groupid] ?? null) === 'Rippled') {
+                // A Left whose most recent prior Joined was a ripple-join.
+                $blocked[$l->groupid] = true;
+            }
+        }
+
+        return array_map('intval', array_keys($blocked));
     }
 
     /**
@@ -2058,6 +2196,18 @@ class ExpandService
         // ripple:opt-out), and the only one that also covers ripple-OUT (see initialiseNew).
         $inOptOut = $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN);
 
+        // Groups this poster has already opted out of by leaving a ripple-join, worked out
+        // in PHP from ONE indexed pass over their own Group Joined/Left logs. As a
+        // correlated NOT EXISTS here it was three nested `logs` probes per candidate group,
+        // two of which MySQL re-planned per row ("Range checked for each record") across
+        // 22.4M rows: one such query was measured running for 1,022 seconds, holding a core
+        // of a saturated db2 for the whole time. addPosterMembershipToRippledGroups shares
+        // the same rippleOptOutGroupIds().
+        $leftAfterRipple = $this->rippleOptOutGroupIds($fromuser);
+        $leftAfterRippleSql = $leftAfterRipple === []
+            ? ''
+            : 'AND g.id NOT IN (' . implode(',', $leftAfterRipple) . ')';
+
         // Resolve the target groups with a plain, NON-LOCKING snapshot SELECT first, then
         // insert each membership row on its own. The previous single INSERT ... SELECT took
         // shared next-key locks on EVERY source row it read - the groups scan, the
@@ -2096,30 +2246,7 @@ class ExpandService
                    WHERE rr.msgid = ?
                      AND JSON_CONTAINS(COALESCE(rr.rejected_groups, JSON_ARRAY()), CAST(g.id AS JSON))
                )
-               AND NOT EXISTS (
-                   -- Suppress re-rippling only when the poster's MOST RECENT Group/Joined log
-                   -- for this group is a ripple-join (text='Rippled') AND they then LEFT it -
-                   -- i.e. the membership they last opted out of was a rippled one. Most recent
-                   -- join wins: the NOT EXISTS lj2 makes lj the latest Joined, so a later
-                   -- manual/ordinary join (then leave) means they treated it as a normal group
-                   -- and rippling is NOT blocked; ll.id > lj.id requires the leave to follow
-                   -- that ripple-join. Sites B/C apply the identical rule.
-                   SELECT 1 FROM logs lj
-                   WHERE lj.user = ? AND lj.groupid = g.id
-                     AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled'
-                     AND NOT EXISTS (
-                         SELECT 1 FROM logs lj2
-                         WHERE lj2.user = lj.user AND lj2.groupid = lj.groupid
-                           AND lj2.type = 'Group' AND lj2.subtype = 'Joined'
-                           AND lj2.id > lj.id
-                     )
-                     AND EXISTS (
-                         SELECT 1 FROM logs ll
-                         WHERE ll.user = lj.user AND ll.groupid = lj.groupid
-                           AND ll.type = 'Group' AND ll.subtype = 'Left'
-                           AND ll.id > lj.id
-                     )
-               )
+               {$leftAfterRippleSql}
                AND NOT EXISTS (
                    -- A ban is an explicit mod ejection: it withdraws the poster's live posts
                    -- and (modern ban) deletes their membership while recording a users_banned
@@ -2146,9 +2273,10 @@ class ExpandService
                )",
             // One binding per placeholder, in query order: the reach shape, the
             // msgid twice (already on the group; turned away by the group), then the
-            // poster four times (rippled-then-left, users_banned, Banned membership,
-            // PROHIBITED posting status).
-            [$reachWkt, $msgid, $msgid, $fromuser, $fromuser, $fromuser, $fromuser]
+            // poster three times (users_banned, Banned membership, PROHIBITED posting
+            // status). The ripple opt-out is spliced in as a group-id list above, so it
+            // has no placeholder.
+            [$reachWkt, $msgid, $msgid, $fromuser, $fromuser, $fromuser]
         );
     }
 
@@ -2195,12 +2323,28 @@ class ExpandService
                 return;
             }
 
+            // Only a post that is live and Approved on its home group ripples. messages_spatial
+            // keeps a post for up to five minutes after it is moved back to Pending, and a
+            // freeze is a no-op on a post whose reach has not been created yet, so neither
+            // can be trusted to stop an unapproved post going out (121999685).
+            if (!$this->originIsApproved($msgid)) {
+                return;
+            }
+
             // A TrashNothing item cross-posted to several groups is one message, so it
             // ripples like any other. Copies predating that are still in the database and
             // would each ripple on their own account, reaching people once per copy, so a
             // message sharing its post id with another live one sits out until
             // tn:merge-crossposts has collapsed the set. Self-limiting: once a set is
             // merged there is nothing to match and this never fires again.
+            //
+            // Note this is decided by what the database holds, NOT by
+            // freegle.trashnothing.ingest_posts_via_api: during the cutover an API-ingested
+            // message can land beside unmerged email-era copies of the same item and sits out
+            // exactly like any other member of such a set - flipping the flag does not release
+            // it, collapsing the set does. Counted as tn_duplicate_sat_out so a cutover window
+            // where that is happening at volume shows up in `ripple:expand complete` rather
+            // than being invisible; the fix is to run tn:merge-crossposts, not to change this.
             $sharesTnPostId = DB::table('messages')
                 ->join('messages as other', function ($join) {
                     $join->on('other.tnpostid', '=', 'messages.tnpostid')
@@ -2213,6 +2357,7 @@ class ExpandService
                 ->exists();
 
             if ($sharesTnPostId) {
+                $stats['tn_duplicate_sat_out'] = ($stats['tn_duplicate_sat_out'] ?? 0) + 1;
                 return;
             }
 
@@ -2287,14 +2432,19 @@ class ExpandService
             foreach ($targetGroups as $g) {
                 // The group's own rules are asked first: a breach holds the copy with its
                 // reasons recorded. Otherwise the copy lands where the origin's vetting put it.
+                // contentcheck_checked_at is deliberately left NULL here (unlike the recordCheckOnly()
+                // "never fight a mod" path): checkGroupOwnRules() only re-checks this group's own
+                // keywords, so stamping it would permanently exclude the row from processUnprocessed()'s
+                // periodic full checkMessage() pipeline - silently skipping money/phone/PII/URL/spam
+                // checks for every rippled-in post held this way (Discourse 10063/4).
                 $breaches = $this->contentCheck->checkGroupOwnRules($subject, $textbody, (int) $g->id);
 
                 if (!empty($breaches)) {
                     $inserted = DB::affectingStatement(
                         "INSERT IGNORE INTO messages_groups
                             (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in,
-                             contentcheck_checked_at, contentcheck_reasons)
-                         VALUES (?, ?, 'Pending', NULL, NOW(), 0, ?, 1, NOW(), ?)",
+                             contentcheck_reasons)
+                         VALUES (?, ?, 'Pending', NULL, NOW(), 0, ?, 1, ?)",
                         [$msgid, $g->id, $msg->type, json_encode($breaches)]
                     );
 
@@ -2341,7 +2491,10 @@ class ExpandService
      * collection Approved), marked rippled=1. Email settings come from the poster's home/origin
      * group membership, except immediate (-1) is downgraded to daily (24) so an unrequested
      * membership never starts a flood of immediate mail (a no-email 0 or daily 24 home setting is
-     * preserved). Existing memberships - including a Banned row - are left untouched (INSERT IGNORE
+     * preserved). A poster who has left every group on the post falls back to any membership they
+     * still hold (organic before ripple-created), and one who holds none at all is in no community,
+     * so defaults to no email rather than to the daily digest. Existing memberships - including a
+ * Banned row - are left untouched (INSERT IGNORE
      * + NOT EXISTS), and a group whose most recent join was a ripple-join the poster then LEFT is
      * never re-joined ("most recent join wins"; an ordinary last membership they left does not block
      * rippling).
@@ -2359,8 +2512,7 @@ class ExpandService
             }
 
             // Email settings = the poster's settings on their home group: the earliest-arrival
-            // group on this message where they're already a member. Fall back to the same
-            // defaults addMembership uses if (unexpectedly) no such membership exists.
+            // group on this message where they're already a member.
             $home = DB::selectOne(
                 'SELECT m.emailfrequency, m.eventsallowed, m.volunteeringallowed
                  FROM messages_groups mg
@@ -2370,16 +2522,39 @@ class ExpandService
                  LIMIT 1',
                 [$posterId, $msgid]
             );
-            // Email frequency: preserve the poster's home-group setting, but DOWNGRADE ONLY
-            // immediate (-1) to daily (24). A rippled-into group is a lower-priority, unrequested
-            // membership, so we never start a flood of immediate emails from it - but we also never
-            // silently start emailing a no-email (0) member, nor change a daily (24) member. Events
-            // and volunteering are copied verbatim: they are one-email-per-user roundups with their
-            // own cadence guard, so leaving them at the home setting adds no extra emails.
-            $homeFreq = $home->emailfrequency ?? 24;
-            $emailfrequency = ((int) $homeFreq === -1) ? 24 : $homeFreq;
-            $eventsallowed = $home->eventsallowed ?? 1;
-            $volunteeringallowed = $home->volunteeringallowed ?? 1;
+            // No row means they have left every group this post is on. They may still be a member
+            // elsewhere, and that setting is a choice they made, so it beats any default. An organic
+            // membership (rippled = 0) is preferred over a ripple-created one, which only ever held a
+            // previous ripple's guess - otherwise a wrong default propagates itself forward every time
+            // another post ripples.
+            if (!$home) {
+                $home = DB::selectOne(
+                    'SELECT emailfrequency, eventsallowed, volunteeringallowed
+                     FROM memberships WHERE userid = ?
+                     ORDER BY rippled ASC, added DESC
+                     LIMIT 1',
+                    [$posterId]
+                );
+            }
+            // Email frequency: preserve the poster's setting, but DOWNGRADE ONLY immediate (-1) to
+            // daily (24). A rippled-into group is a lower-priority, unrequested membership, so we never
+            // start a flood of immediate emails from it - but we also never silently start emailing a
+            // no-email (0) member, nor change a daily (24) member. Events and volunteering are copied
+            // verbatim: they are one-email-per-user roundups with their own cadence guard, so leaving
+            // them at the member's setting adds no extra emails. eventsallowed is nullable and a NULL
+            // there has always meant on, so the ?? default belongs to the column, not to the member.
+            if ($home) {
+                $emailfrequency = ((int) $home->emailfrequency === -1) ? 24 : $home->emailfrequency;
+                $eventsallowed = $home->eventsallowed ?? 1;
+                $volunteeringallowed = $home->volunteeringallowed ?? 1;
+            } else {
+                // No membership anywhere: they are in no community at all. Defaulting that to daily
+                // would re-subscribe the member who has done the one thing that most clearly asks for
+                // none, so an auto-join for them starts silent.
+                $emailfrequency = 0;
+                $eventsallowed = 0;
+                $volunteeringallowed = 0;
+            }
 
             // Groups this post has rippled into where the poster has no membership row yet AND
             // which the poster has not "rippled in then left". Only a group whose MOST RECENT
@@ -2395,27 +2570,10 @@ class ExpandService
             // poster's ENTIRE log history per probe; a poster with a long history
             // stalled the serial expand pipeline for minutes per post (2026-08-31:
             // 4-minute stalls, engine idle, zero advances, Sentry BATCH-83 window).
-            $blocked = [];
-            $latestJoinText = [];
-            foreach (DB::select(
-                "SELECT groupid, subtype, text FROM logs
-                 WHERE user = ? AND type = 'Group' AND subtype IN ('Joined', 'Left')
-                 ORDER BY id",
-                [$posterId]
-            ) as $l) {
-                if ($l->subtype === 'Joined') {
-                    $latestJoinText[$l->groupid] = $l->text;
-                    // Any later join (manual or rippled) supersedes an earlier block:
-                    // "most recent join wins".
-                    unset($blocked[$l->groupid]);
-                } elseif (($latestJoinText[$l->groupid] ?? null) === 'Rippled') {
-                    // A Left whose most recent prior Joined was a ripple-join.
-                    $blocked[$l->groupid] = true;
-                }
-            }
-            $notBlockedSql = empty($blocked)
+            $blocked = $this->rippleOptOutGroupIds((int) $posterId);
+            $notBlockedSql = $blocked === []
                 ? ''
-                : 'AND mg.groupid NOT IN (' . implode(',', array_map('intval', array_keys($blocked))) . ')';
+                : 'AND mg.groupid NOT IN (' . implode(',', $blocked) . ')';
 
             $targets = DB::select(
                 "SELECT mg.groupid
@@ -2447,6 +2605,9 @@ class ExpandService
                 if ($added > 0) {
                     $addedThisCall++;
                     $stats['memberships_added'] = ($stats['memberships_added'] ?? 0) + 1;
+                    // A rippled-in membership is a join like any other for reach mail: the
+                    // poster may now be inside the reach of other posts on this group.
+                    ReachMemberQueueService::enqueue((int) $posterId, ReachMemberQueueService::REASON_JOINED);
                     // memberships_history with rippled=1: abuse detection still runs (processingrequired=1),
                     // but MembershipsProcessingService reads rippled to SUPPRESS the per-group welcome -
                     // a single bundled intro email (RippleIntroMail) is sent below instead.
@@ -2558,16 +2719,32 @@ class ExpandService
             // shape scanned all rippled_in=1 rows (10k+ and growing daily) and ran the
             // nested logs subquery per row — O(all rippled copies ever), which crept past
             // 80s and hung every tick once the experiment had rippled enough. Leaves are
-            // the trigger and are rare, so we start from the (index-supported, via
-            // logs.timestamp_2) recent Left logs and only touch a rippled copy when its
-            // poster actually left that group. Cost is now bounded by leave volume, not by
-            // the rippled-copy population. This per-tick run only needs to cover leaves
-            // since the last successful run (seconds ago); a 2-day window is a generous
-            // safety margin covering brief stalls while keeping the scan fast (~3s vs the
-            // unbounded original's 80s+, which hung every tick). Idempotent — a copy
-            // already pulled (deleted=1) is simply skipped.
+            // the trigger and are rare, so we start from the recent Left logs and only touch
+            // a rippled copy when its poster actually left that group. Cost is bounded by
+            // leave volume, not by the rippled-copy population. Idempotent — a copy already
+            // pulled (deleted=1) is simply skipped.
+            //
+            // Two bounds, doing different jobs:
+            //
+            //   ll.id > watermark   is the scan bound. Without it every tick re-examined the
+            //                       whole window - ~1,200 log rows, each driving the two
+            //                       nested EXISTS below against a 42.6M-row table, to act on
+            //                       about one an hour.
+            //   ll.timestamp >= ?   is the STALL BACKSTOP, and stays at two days. It is what
+            //                       bounds a cold start (watermark 0 reads only the window,
+            //                       exactly as before), and what recovers leaves missed while
+            //                       the job was stopped. Narrowing it would not save anything
+            //                       the watermark has not already saved, and would strand
+            //                       rippled copies outright after any stall longer than the
+            //                       window: nothing else revisits a copy whose poster left.
+            $watermark = $this->getLeaveCheckWatermark();
+
+            // Read the high-water mark BEFORE the query so leaves arriving mid-run land above
+            // it and are picked up next tick rather than skipped.
+            $highWater = (int) (DB::table('logs')->max('id') ?? 0);
+
             $scopeSql = '';
-            $params = [now()->subDays(2)->toDateTimeString()];
+            $params = [now()->subDays(2)->toDateTimeString(), $watermark];
             if ($onlyMsgid !== null) {
                 $scopeSql = ' AND mg.msgid = ?';
                 $params[] = $onlyMsgid;
@@ -2578,7 +2755,8 @@ class ExpandService
                  FROM logs ll
                  JOIN messages_groups mg ON mg.groupid = ll.groupid AND mg.rippled_in = 1 AND mg.deleted = 0
                  JOIN messages m ON m.id = mg.msgid AND m.fromuser = ll.user
-                 WHERE ll.type = 'Group' AND ll.subtype = 'Left' AND ll.timestamp >= ?" . $scopeSql . "
+                 WHERE ll.type = 'Group' AND ll.subtype = 'Left' AND ll.timestamp >= ?
+                   AND ll.id > ?" . $scopeSql . "
                    AND EXISTS (
                        SELECT 1 FROM logs lj
                        WHERE lj.user = ll.user AND lj.groupid = ll.groupid
@@ -2594,7 +2772,15 @@ class ExpandService
                 $params
             );
 
+            // A scoped run examined a single post, so it has not covered the leaves it
+            // filtered out - moving the shared mark would make the next global tick skip them.
+            $mayAdvance = $onlyMsgid === null && ! $dryRun;
+
             if (empty($rows)) {
+                if ($mayAdvance) {
+                    $this->setLeaveCheckWatermark($highWater);
+                }
+
                 return;
             }
 
@@ -2623,10 +2809,30 @@ class ExpandService
                     $stats['pulled_on_leave']++;
                 }
             }
+
+            // Only after the pulls have been written, so a throw mid-loop leaves the mark
+            // where it was and the next tick redoes the batch.
+            if ($mayAdvance) {
+                $this->setLeaveCheckWatermark($highWater);
+            }
         } catch (\Throwable $e) {
             $stats['errors']++;
             Log::warning("ripple: pull-on-leave failed: {$e->getMessage()}");
         }
+    }
+
+    private function getLeaveCheckWatermark(): int
+    {
+        return (int) (DB::table('config')->where('key', self::LEAVE_CHECK_WATERMARK_KEY)->value('value') ?? 0);
+    }
+
+    private function setLeaveCheckWatermark(int $id): void
+    {
+        DB::table('config')->upsert(
+            ['key' => self::LEAVE_CHECK_WATERMARK_KEY, 'value' => (string) $id],
+            ['key'],
+            ['value']
+        );
     }
 
     /**
@@ -3203,6 +3409,20 @@ class ExpandService
             "SELECT COUNT(DISTINCT userid) AS n FROM chat_messages WHERE refmsgid = ? AND type = 'Interested'",
             [$msgid]
         )->n ?? 0);
+    }
+
+    /**
+     * True when the post has a live Approved copy on a group it was posted to directly (not
+     * rippled into). Same test as FreezeReachIfOriginPending in iznik-server-go.
+     */
+    private function originIsApproved(int $msgid): bool
+    {
+        return DB::table('messages_groups')
+            ->where('msgid', $msgid)
+            ->where('rippled_in', 0)
+            ->where('deleted', 0)
+            ->where('collection', \App\Models\MessageGroup::COLLECTION_APPROVED)
+            ->exists();
     }
 
     /**

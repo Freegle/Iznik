@@ -68,6 +68,7 @@ function createWrapper(props = {}) {
       stubs: {
         ClientOnly: { template: '<div><slot /></div>' },
         JobsDaSlot: {
+          name: 'JobsDaSlot',
           template: '<div class="jobs-da-slot" />',
           emits: ['rendered', 'borednow'],
         },
@@ -315,26 +316,73 @@ describe('an unfilled slot must collapse, not reserve space', () => {
 })
 
 describe('the fallback banner and its one legitimate home', () => {
-  it('app without cookies, not a supporter: shows the donate banner', async () => {
+  it('app without cookies, not a supporter: mounts the jobs slot, with the donate banner until it has jobs', async () => {
+    // The app cannot run a real ad, but job listings need no cookie consent, so the slot
+    // carries them exactly as on the web. JobsDaSlot reports false on mount (its list
+    // arrives asynchronously), so the banner fills the band until the jobs land - the
+    // band is never blank. jobs defaults true, so this is the default shape.
     setRuntimeConfig({ ISAPP: true, USE_COOKIES: false })
     const wrapper = createWrapper()
     await flushPromises()
 
     expect(wrapper.vm.fallbackAdVisible).toBe(true)
+    expect(wrapper.find(JOBS).exists()).toBe(true)
     expect(wrapper.find(DONATE_BANNER).exists()).toBe(true)
     expect(lastRendered(wrapper)).toBe(true)
   })
 
-  it('never puts the jobs slot in that fallback, which is what left the band blank', async () => {
-    // Edward's app report: the fallback mounted JobsDaSlot, whose own list was empty, so
-    // the band was reserved and showed nothing. jobs defaults true, so this was the
-    // default shape rather than an edge case.
+  it('hands the band to the jobs once the slot reports it drew some, and back to the banner if they go', async () => {
+    // d46acf9cd (2026-08-13) removed the jobs slot from here to cure a blank band, and the
+    // app then showed only the banner - reported from the app with dozens of listings a
+    // mile or two away. The band had been blank because the jobs list never loaded in
+    // the app (fixed alongside), not because jobs do not belong here. The slot says what
+    // it drew, so banner and jobs can never both be missing.
     setRuntimeConfig({ ISAPP: true, USE_COOKIES: false })
     const wrapper = createWrapper({ jobs: true })
     await flushPromises()
 
+    const jobsSlot = wrapper.findComponent({ name: 'JobsDaSlot' })
+    expect(jobsSlot.exists()).toBe(true)
+
+    jobsSlot.vm.$emit('rendered', true)
+    await flushPromises()
+    expect(wrapper.find(JOBS).exists()).toBe(true)
+    expect(wrapper.find(DONATE_BANNER).exists()).toBe(false)
+    // The caller keeps the band reserved throughout: the slot never told it "nothing".
+    expect(wrapper.emitted('rendered').every(([r]) => r === true)).toBe(true)
+
+    jobsSlot.vm.$emit('rendered', false)
+    await flushPromises()
+    expect(wrapper.find(JOBS).exists()).toBe(true)
+    expect(wrapper.find(DONATE_BANNER).exists()).toBe(true)
+  })
+
+  it('keeps the jobs up in the app: there is no other network to get bored into', async () => {
+    // On the web JobsDaSlot's borednow hands the slot to the ad network after ~31s and
+    // flags the session so later slots skip jobs. In the app the only alternative is the
+    // banner, so the hand-off is not wired and the flag stays clear.
+    setRuntimeConfig({ ISAPP: true, USE_COOKIES: false })
+    const wrapper = createWrapper({ jobs: true })
+    await flushPromises()
+
+    const jobsSlot = wrapper.findComponent({ name: 'JobsDaSlot' })
+    jobsSlot.vm.$emit('rendered', true)
+    jobsSlot.vm.$emit('borednow')
+    await flushPromises()
+
+    expect(mockMiscStore.boredWithJobs).toBe(false)
+    expect(wrapper.find(JOBS).exists()).toBe(true)
+    expect(wrapper.find(DONATE_BANNER).exists()).toBe(false)
+  })
+
+  it('a slot without job ads in the app shows the banner alone', async () => {
+    setRuntimeConfig({ ISAPP: true, USE_COOKIES: false })
+    const wrapper = createWrapper({ jobs: false })
+    await flushPromises()
+
     expect(wrapper.find(JOBS).exists()).toBe(false)
     expect(wrapper.find(DONATE_BANNER).exists()).toBe(true)
+    expect(lastRendered(wrapper)).toBe(true)
   })
 
   it('leaves video ads alone in the app, since a banner cannot stand in for one', async () => {

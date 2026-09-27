@@ -292,6 +292,139 @@ class UnifiedDigestTest extends TestCase
         $this->assertStringStartsWith("What's New ({$cap} posts)", $envelope->subject);
     }
 
+    public function test_own_post_survives_body_cap_even_when_ranked_last(): void
+    {
+        // Discourse 10029/17: on a bank-holiday-busy day, enough rippled-in
+        // posts pushed the recipient's own post past DIGEST_POST_CAP and it
+        // was silently absent from the digest entirely. The cap exists to
+        // stop Gmail clipping the body, not to hide a member's own post from
+        // their own digest, so it must always be reserved a slot — even when
+        // (as here) it's the very last post in the collection, i.e. exactly
+        // where a plain take($cap) would cut it.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $fillerMessage = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (London)']);
+
+        $posts = collect(array_fill(0, $cap, [
+            'message' => $fillerMessage,
+            'postedToGroups' => [$group->id],
+        ]));
+
+        // The recipient's own post, appended last — past the cap.
+        $ownMessage = $this->createTestMessage($user, $group, [
+            'subject' => 'OFFER: RecipientsOwnUniqueSofa (London)',
+        ]);
+        $posts->push(['message' => $ownMessage, 'postedToGroups' => [$group->id]]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $html = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled digest HTML should not be empty');
+        $this->assertStringContainsString(
+            'RecipientsOwnUniqueSofa',
+            $html,
+            "The recipient's own post must survive DIGEST_POST_CAP truncation even when it sorts past the cap"
+        );
+        // Reserving the own post must not stretch the cap: one filler gave way to it.
+        $this->assertSame($cap, $this->countCards($spooled['text'] ?? ''));
+        $this->assertStringContainsString("We've limited this to {$cap} posts", $spooled['text'] ?? '');
+    }
+
+    public function test_cap_holds_when_own_posts_alone_exceed_it(): void
+    {
+        // A member with more live posts of their own than the cap (a reseller, or
+        // someone whose posts rippled into many groups) must still get a digest
+        // that fits: the first $cap own posts and none of the others. Before this
+        // the reservation kept every own post and the email grew past the cap,
+        // which is the Gmail-clipping failure the cap exists to prevent.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $posts = collect();
+        for ($i = 1; $i <= $cap + 3; $i++) {
+            $own = $this->createTestMessage($user, $group, ['subject' => "OFFER: OwnItem{$i}Zq (London)"]);
+            $posts->push(['message' => $own, 'postedToGroups' => [$group->id]]);
+        }
+        for ($i = 1; $i <= 2; $i++) {
+            $other = $this->createTestMessage($poster, $group, ['subject' => "OFFER: OtherItem{$i}Zq (London)"]);
+            $posts->push(['message' => $other, 'postedToGroups' => [$group->id]]);
+        }
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $text = $spooled['text'] ?? '';
+
+        $this->assertSame($cap, $this->countCards($text));
+        $this->assertStringContainsString('OwnItem1Zq', $text);
+        $this->assertStringContainsString("OwnItem{$cap}Zq", $text);
+        $this->assertStringNotContainsString('OwnItem' . ($cap + 1) . 'Zq', $text);
+        $this->assertStringNotContainsString('OtherItem1Zq', $text);
+        $this->assertStringContainsString("We've limited this to {$cap} posts", $text);
+    }
+
+    public function test_dropped_post_ids_and_tracking_describe_what_the_email_shows(): void
+    {
+        // The service stores droppedPostIds() on the member's digest tracker and offers
+        // those posts again next run, so the list must be exactly what the cap cut. The
+        // tracking record must describe the cards actually shown, not the eligible set.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $posts = collect();
+        for ($i = 1; $i <= $cap + 3; $i++) {
+            $filler = $this->createTestMessage($poster, $group, ['subject' => "OFFER: Filler{$i}Zq (London)"]);
+            $posts->push(['message' => $filler, 'postedToGroups' => [$group->id]]);
+        }
+        $ownMessage = $this->createTestMessage($user, $group, ['subject' => 'OFFER: OwnLastZq (London)']);
+        $posts->push(['message' => $ownMessage, 'postedToGroups' => [$group->id]]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $dropped = $mail->droppedPostIds();
+        $this->assertCount(4, $dropped, 'cap + 4 eligible posts, cap shown, so four left out');
+        $this->assertNotContains($ownMessage->id, $dropped);
+
+        $meta = $mail->getTracking()->metadata;
+        $this->assertSame($cap, $meta['post_count']);
+        $this->assertCount($cap, $meta['post_msgids']);
+        $this->assertContains($ownMessage->id, $meta['post_msgids']);
+        foreach ($dropped as $id) {
+            $this->assertNotContains($id, $meta['post_msgids']);
+        }
+
+        // The subject still describes the whole eligible set: over the cap, no count.
+        $this->assertStringStartsWith("What's New", $mail->envelope()->subject);
+        $this->assertStringNotContainsString('(' . ($cap + 4) . ' posts)', $mail->envelope()->subject);
+    }
+
+    /**
+     * Number of post cards in the plain-text part: one "OFFER:"/"WANTED:" line per card.
+     * The "In this digest" summary lists subjects with a leading "- ", so it is not counted.
+     */
+    private function countCards(string $text): int
+    {
+        return preg_match_all('/^(OFFER|WANTED): /m', $text);
+    }
+
     public function test_tracked_urls_contain_post_positions(): void
     {
         $user = $this->createTestUser();
@@ -339,6 +472,176 @@ class UnifiedDigestTest extends TestCase
         ]);
 
         return new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+    }
+
+    // ── AMP reply controls ───────────────────────────────────────────────────
+    //
+    // In Gmail the daily digest's Reply used to open a reply drawer inside the
+    // email (a shared amp-sidebar). On some phones that drawer showed as a
+    // blank screen (support ref SR-FV6KC, Gmail Android app), and only ~67
+    // members a week got a reply through it. Reply is now the same tracked
+    // website link the HTML part uses. The single-post immediate digest keeps
+    // its inline reply form, which works on phones.
+
+    /**
+     * A daily digest for a Gmail recipient carrying $otherPosts posts by
+     * another member and, when asked, one of the recipient's own - built, so
+     * the AMP part is rendered.
+     *
+     * @return array{0: UnifiedDigest, 1: int} the mailable and the recipient's
+     *   own message id (0 when there is none)
+     */
+    private function dailyDigestForGmailRecipient(int $otherPosts, bool $withOwnPost = false): array
+    {
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $user = $this->createTestUser(['email_preferred' => 'recipient@gmail.com']);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $posts = collect();
+        for ($i = 1; $i <= $otherPosts; $i++) {
+            $message = $this->createTestMessage($poster, $group, [
+                'subject' => "OFFER: Chair {$i} (London)",
+            ]);
+            $posts->push(['message' => $message, 'postedToGroups' => [$group->id]]);
+        }
+
+        $ownId = 0;
+        if ($withOwnPost) {
+            $own = $this->createTestMessage($user, $group, [
+                'subject' => 'OFFER: My own lamp (London)',
+            ]);
+            $ownId = (int) $own->id;
+            $posts->push(['message' => $own, 'postedToGroups' => [$group->id]]);
+        }
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $mail->build();
+
+        return [$mail, $ownId];
+    }
+
+    /** The rendered AMP part of a built digest ($ampHtml is protected). */
+    private function ampPartOf(UnifiedDigest $mail): string
+    {
+        $ref = new \ReflectionProperty($mail, 'ampHtml');
+        $ref->setAccessible(true);
+
+        return (string) $ref->getValue($mail);
+    }
+
+    /**
+     * The per-post data the AMP view was rendered from, keyed by message id -
+     * read back from the view data the mailable kept, so the URLs are the
+     * ones actually in the markup (not a fresh token from a second pass).
+     *
+     * @return array<int, array>
+     */
+    private function ampPostsOf(UnifiedDigest $mail): array
+    {
+        $ref = new \ReflectionProperty($mail, 'ampData');
+        $ref->setAccessible(true);
+        $byId = [];
+        foreach ($ref->getValue($mail)['posts'] as $post) {
+            $byId[(int) $post['message']->id] = $post;
+        }
+
+        return $byId;
+    }
+
+    public function test_daily_amp_card_reply_is_a_link_to_the_post_on_the_website(): void
+    {
+        [$mail] = $this->dailyDigestForGmailRecipient(3);
+        $amp = $this->ampPartOf($mail);
+        $posts = $this->ampPostsOf($mail);
+
+        $this->assertCount(3, $posts);
+        foreach ($posts as $post) {
+            $this->assertMatchesRegularExpression(
+                '#<a href="' . preg_quote(e($post['fallbackReplyUrl']), '#') . '" class="reply-btn(?: wanted)?">Reply</a>#',
+                $amp,
+                "the card's Reply is an anchor to that post's website reply link"
+            );
+        }
+        $this->assertSame(
+            3,
+            preg_match_all('#class="reply-btn(?: wanted)?">Reply</a>#', $amp),
+            'one Reply link per card, no more'
+        );
+    }
+
+    public function test_daily_amp_part_has_no_in_email_reply_drawer(): void
+    {
+        [$mail] = $this->dailyDigestForGmailRecipient(2);
+        $amp = $this->ampPartOf($mail);
+
+        $this->assertStringContainsString('class="reply-btn', $amp, 'the cards rendered');
+        foreach ([
+            '<amp-sidebar',
+            '<amp-state',
+            'AMP.setState',
+            'custom-element="amp-bind"',
+            'custom-element="amp-sidebar"',
+        ] as $drawer) {
+            $this->assertStringNotContainsString(
+                $drawer,
+                $amp,
+                "the AMP part no longer carries the in-email reply drawer ({$drawer})"
+            );
+        }
+    }
+
+    public function test_daily_amp_card_for_the_recipients_own_post_has_no_reply_control(): void
+    {
+        [$mail, $ownId] = $this->dailyDigestForGmailRecipient(2, true);
+        $amp = $this->ampPartOf($mail);
+        $posts = $this->ampPostsOf($mail);
+
+        $this->assertTrue($posts[$ownId]['isOwnPost']);
+        $this->assertStringNotContainsString(
+            'href="' . e($posts[$ownId]['fallbackReplyUrl']) . '" class="reply-btn',
+            $amp,
+            'you cannot reply to your own post'
+        );
+        $this->assertSame(
+            2,
+            preg_match_all('#class="reply-btn(?: wanted)?">Reply</a>#', $amp),
+            "only the other members' posts carry Reply"
+        );
+    }
+
+    public function test_immediate_amp_part_keeps_its_inline_reply_form(): void
+    {
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $user = $this->createTestUser(['email_preferred' => 'recipient@gmail.com']);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sofa (London)',
+        ]);
+
+        $mail = new UnifiedDigest(
+            $user,
+            collect([['message' => $message, 'postedToGroups' => [$group->id]]]),
+            UnifiedDigestService::MODE_IMMEDIATE
+        );
+        $mail->build();
+        $amp = $this->ampPartOf($mail);
+        $post = $this->ampPostsOf($mail)[(int) $message->id];
+
+        $this->assertStringContainsString('<amp-accordion class="reply-acc">', $amp);
+        $this->assertStringContainsString(
+            '<form method="post" action-xhr="' . e($post['ampReplyUrl']) . '">',
+            $amp,
+            'the single-post immediate digest still replies from inside the email'
+        );
+        $this->assertStringNotContainsString('<amp-sidebar', $amp);
     }
 
     public function test_has_amp_column_set_for_amp_supported_recipient(): void
@@ -459,11 +762,6 @@ class UnifiedDigestTest extends TestCase
             'unsubscribeUrl' => 'https://example.com/unsubscribe?t=1',
             'userSite' => 'https://example.com',
             'siteName' => 'Freegle',
-            // AMP-only state the unified blade references (production builds
-            // these in UnifiedDigest when assembling the AMP variant).
-            'ampPostMeta' => [],
-            'ampApiUrl' => 'https://api.example.com/amp',
-            'ampUserId' => 42,
         ];
     }
 

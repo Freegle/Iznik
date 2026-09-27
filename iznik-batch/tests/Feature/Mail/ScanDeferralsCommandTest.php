@@ -83,6 +83,23 @@ class ScanDeferralsCommandTest extends TestCase
     }
 
     /**
+     * Is this script the one that actually DELETES?
+     *
+     * Matched on postsuper plus the `-d -` that reads ids from stdin, rather
+     * than on the two being adjacent: the command names the postfix instance
+     * between them (`postsuper -c /etc/postfix-warm -d -`). A matcher that
+     * assumed adjacency would go on passing every negative assertion below
+     * while silently no longer catching a real deletion.
+     *
+     * The capability check mentions postsuper too (`sudo -n -l postsuper`) and
+     * must not match.
+     */
+    private function isDeleteScript(string $script): bool
+    {
+        return str_contains($script, 'postsuper') && str_contains($script, '-d -');
+    }
+
+    /**
      * How many ids the purge script hands to postsuper.
      *
      * The script is `printf "%s\n" ID ID ... | postsuper -d - 2>&1`, so split
@@ -91,14 +108,17 @@ class ScanDeferralsCommandTest extends TestCase
      */
     private function queueIdsIn(string $script): int
     {
-        $parts = explode('"', $script);
-        $ids = $parts[2] ?? '';
-
-        if (($pipe = strstr($ids, '|', true)) !== false) {
-            $ids = $pipe;
+        // The ids sit between the printf format and the pipe:
+        //   ... printf "%s\n" ID ID ID | $SUDO postsuper -c '<dir>' -d - 2>&1
+        // Anchor on the format string rather than counting quote-delimited
+        // fields: the script has a `SUDO=""` preamble and a quoted instance
+        // path, so a positional split lands on neither the ids nor anything
+        // that looks like them, and silently reports zero.
+        if (preg_match('/printf\s+"%s\\n"\s+(.*?)\s*\|/s', $script, $m) !== 1) {
+            return 0;
         }
 
-        return count(preg_split('/\s+/', trim($ids), -1, PREG_SPLIT_NO_EMPTY));
+        return count(preg_split('/\s+/', trim($m[1]), -1, PREG_SPLIT_NO_EMPTY));
     }
 
     private function relayReturns(string $queue, string $delivered = ''): void
@@ -249,9 +269,8 @@ class ScanDeferralsCommandTest extends TestCase
         $this->artisan('mail:deferrals:scan --purge --force')->assertFailed();
 
         foreach ($this->scripts as $script) {
-            $this->assertStringNotContainsString(
-                'postsuper -d',
-                $script,
+            $this->assertFalse(
+                $this->isDeleteScript($script),
                 'must not attempt a deletion it has already been told it cannot do'
             );
         }
@@ -278,13 +297,10 @@ class ScanDeferralsCommandTest extends TestCase
 
         $this->artisan('mail:deferrals:scan --purge --force')->assertSuccessful();
 
-        // Match the DELETE specifically. The capability check runs first and
-        // mentions postsuper too (`sudo -n -l postsuper`), so a bare
-        // "postsuper" filter picks that up and asserts against the wrong
-        // script.
+        // Match the DELETE specifically - see isDeleteScript().
         $purges = array_values(array_filter(
             $this->scripts,
-            fn ($s) => str_contains($s, 'postsuper -d')
+            fn ($s) => $this->isDeleteScript($s)
         ));
 
         $this->assertNotEmpty($purges, 'purge --force should have asked the relay to delete');

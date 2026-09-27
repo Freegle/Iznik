@@ -156,12 +156,7 @@
               :only-groupid="currentGroupid"
             />
             <div
-              v-if="
-                homegroup &&
-                groupid &&
-                groupid !== homegroupids[0] &&
-                !alreadyOnHomeGroup
-              "
+              v-if="homegroup && !alreadyOnHomeGroup"
               class="small text-danger"
             >
               Possibly should be on {{ homegroup }}
@@ -229,6 +224,11 @@
                 </a>
               </span>
             </NoticeMessage>
+            <ModMessageTnNotice
+              :mod-messaging-allowed="modMessagingAllowed"
+              :live="contextCopyIsLive"
+              :group-name="currentGroupName"
+            />
             <ModMessageDuplicate
               v-for="(duplicate, index) in duplicates"
               :key="'duplicate-' + duplicate.id + '-' + index"
@@ -266,7 +266,11 @@
             </span>
             <div v-if="expanded" class="d-flex">
               <div class="d-flex flex-column align-content-end">
-                <b-button v-if="!editing" variant="white" @click="startEdit">
+                <b-button
+                  v-if="!editing && modMessagingAllowed"
+                  variant="white"
+                  @click="startEdit"
+                >
                   <v-icon icon="pen" /><span class="d-none d-sm-inline">
                     Edit</span
                   >
@@ -767,6 +771,7 @@
           :cantpost="membership && membership.ourpostingstatus === 'PROHIBITED'"
           :is-home-group="isHomeGroup"
           :oversight="oversight"
+          :mod-messaging-allowed="modMessagingAllowed"
         />
         <b-button
           v-if="editing"
@@ -841,6 +846,7 @@ import { useModGroupStore } from '@/stores/modgroup'
 import { twem } from '~/composables/useTwem'
 import {
   isRippledInToContextGroup as isRippledIn,
+  isHomeGroupRow,
   earliestArrivalGroupId,
   homeGroupId,
 } from '~/composables/rippleStatus'
@@ -995,17 +1001,6 @@ const homegroupids = ref([])
 const historyGroups = reactive({})
 const editmessage = ref(false)
 
-const groupid = computed(() => {
-  // Use contextual groupid prop if provided (multi-group support),
-  // otherwise fall back to first group.
-  if (props.contextGroupid) return props.contextGroupid
-
-  if (message.value && message.value.groups && message.value.groups.length) {
-    return message.value.groups[0].groupid
-  }
-  return 0
-})
-
 // The group this copy is being administered on. In a specific group's queue that's the
 // explicit context group; in the all-communities view we pick the group I moderate that
 // most needs attention - a Pending one first, then the most-recent arrival - so a Reject
@@ -1057,9 +1052,20 @@ const currentGroupid = computed(() => {
     if (home != null) return home
     return parseInt(pool[0].groupid)
   }
-  const gid = parseInt(groupid.value)
-  return gid || null
+  // I moderate none of this post's groups (the Support page, or a post shown outside my
+  // queues). Anchor to the origin group, not to whichever row the API returned first.
+  const home = homeGroupId(message.value?.groups)
+  if (home != null) return home
+  // Last resort, when the post carries no origin marker at all: the first row. This is the
+  // only place that reads groups[0]; every other lookup goes through currentGroupid.
+  const first = message.value?.groups?.[0]?.groupid
+  return first ? parseInt(first) : null
 })
+
+// One predicate for "this row belongs to the group being administered", so the lookups
+// below cannot drift in how they compare ids. Rows arrive as numbers from the Go API
+// today; a stringified id from any other source must match just the same.
+const isCurrentGroup = (id) => parseInt(id) === currentGroupid.value
 
 // Get the group info for the group being administered (multi-group support).
 const contextGroup = computed(() => {
@@ -1120,11 +1126,10 @@ const otherGroups = computed(() => {
 })
 
 // Suppress the "Possibly should be on <homegroup>" hint when the post is ALREADY on that
-// group - e.g. it's the origin/first-posted group, or the post has rippled onto it. The
-// template's `groupid !== homegroupids[0]` only covers the case where the home group is the
-// group currently being administered; a post on its home group but viewed under a different
-// group's context (common once a post ripples onto several groups) would otherwise be told
-// it "should be on" a group it's already a member of.
+// group - e.g. it's the origin/first-posted group, or the post has rippled onto it. A post
+// on its home group but viewed under a different group's context (common once a post
+// ripples onto several groups) would otherwise be told it "should be on" a group it's
+// already a member of.
 const alreadyOnHomeGroup = computed(() => {
   const homeId = homegroupids.value?.[0]
   if (!homeId) return false
@@ -1147,12 +1152,14 @@ const currentGroupName = computed(() => {
   return gid ? groupStore.get(parseInt(gid))?.namedisplay : null
 })
 
-// Whether the copy being administered is the post's home/origin group. Delete and Delete
-// as Spam (which remove the post itself) are only offered here, not on a rippled-in copy.
-const isHomeGroup = computed(() => {
-  const origin = originGroupid.value
-  return origin == null || currentGroupid.value === origin
-})
+// Whether the copy being administered is one the member posted DIRECTLY (rippled_in = 0),
+// as opposed to one rippling created. Per row, not "the single earliest group": a
+// TrashNothing cross-post has several direct copies and every one of them is home
+// (Discourse 10115). Delete and Delete as Spam (which remove the post itself) are only
+// offered here, not on a rippled-in copy, and only a home copy's removal tells the poster.
+const isHomeGroup = computed(() =>
+  isHomeGroupRow(message.value?.groups, currentGroupid.value)
+)
 
 // Rippling-out: only OFFER/WANTED posts ripple, so only offer the reach map for those.
 // The modal itself explains when a post isn't rippling yet.
@@ -1172,6 +1179,24 @@ const reachArrival = computed(() => {
   }
   return message.value?.date || null
 })
+
+// False for a TN post whose poster never chose this - or any - Freegle community
+// (messages_groups.mod_messaging_allowed = 0 on its origin row). They have agreed to
+// nothing with the volunteers here, so the actions that talk to them or put words in their
+// mouth are withdrawn: Edit, Blank Reply, standard messages and chat. Approve and Delete
+// stay. Server-enforced too - see the Go modmessaging package.
+const modMessagingAllowed = computed(
+  () => message.value?.mod_messaging_allowed !== false
+)
+
+// Whether the copy being administered is live on the community. Only Approved is;
+// Pending and Spam are both still awaiting a decision. Read off contextGroup rather
+// than the message-wide `pending`, because the notice above speaks about THIS copy -
+// a post can be live on one community while still pending on another, and telling a
+// moderator their pending copy "is live" would be wrong.
+const contextCopyIsLive = computed(
+  () => contextGroup.value?.collection === 'Approved'
+)
 
 // Rippling-out (#6): the post originated on another group and has rippled in to the
 // group this copy is being administered on, so it is "starting to become available" to
@@ -1203,9 +1228,8 @@ const group = computed(() => {
   // groupid/groups[0]. For a rippled post the first/unordered group may be the origin
   // group, which would draw the wrong community's boundary on the map and centre it on
   // the wrong place (Discourse 9808/305).
-  const gid = currentGroupid.value
-  if (!gid) return null
-  return myModGroups.value.find((g) => parseInt(g.id) === gid) || null
+  if (!currentGroupid.value) return null
+  return myModGroups.value.find((g) => isCurrentGroup(g.id)) || null
 })
 
 const position = computed(() => {
@@ -1318,8 +1342,13 @@ const heldbyName = computed(() => {
 const membership = computed(() => {
   let ret = null
 
-  if (groupid.value && fromUser.value?.memberships) {
-    ret = fromUser.value.memberships.find((g) => g.groupid === groupid.value)
+  // Anchor to the group actually being administered, not groups[0] (messages_groups
+  // has no ORDER BY, so a crosspost's direct and rippled-in copies can sort either way)
+  // - same fix already applied to `group`, `configid` and `editgroup` in this file
+  // (Discourse 9808/303, 9808/305, 9862/15). Otherwise the per-member posting-status
+  // notice, mail settings, and cantpost gating can all reflect the wrong group's copy.
+  if (currentGroupid.value && fromUser.value?.memberships) {
+    ret = fromUser.value.memberships.find((g) => isCurrentGroup(g.groupid))
   }
 
   return ret
@@ -1338,9 +1367,7 @@ const configid = computed(() => {
   // ($groupname etc.) come from a different group's config than the one shown
   // as "moderating for" and used to send/sign the reply (Discourse 9862/15).
   if (currentGroupid.value && authStore.groups) {
-    const sessionGroup = authStore.groups.find(
-      (g) => parseInt(g.groupid) === parseInt(currentGroupid.value)
-    )
+    const sessionGroup = authStore.groups.find((g) => isCurrentGroup(g.groupid))
     if (sessionGroup?.configid) {
       id = sessionGroup.configid
     }
@@ -1630,18 +1657,17 @@ function imageRemoved(id) {
   return ret
 }
 
+// One row per group: the copy being administered (currentGroupid) decides, not any other
+// group's copy that is still waiting. Reading any row made an Approved copy render as
+// Pending while a neighbour's rippled copy was still in its veto window (Discourse 10102).
+// With no group in context, fall back to any row, as before.
 function hasCollection(coll) {
-  let ret = false
-
-  if (message.value?.groups) {
-    message.value.groups.forEach((grp) => {
-      if (grp.collection === coll) {
-        ret = true
-      }
-    })
-  }
-
-  return ret
+  const groups = message.value?.groups || []
+  const scoped =
+    currentGroupid.value != null
+      ? groups.filter((grp) => isCurrentGroup(grp.groupid))
+      : groups
+  return scoped.some((grp) => grp.collection === coll)
 }
 
 function postcodeSelect(pc) {

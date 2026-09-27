@@ -54,11 +54,11 @@ func main() {
 				code = e.Code
 			}
 
-			// Log server errors and 400s so we can diagnose them.
-			if code >= 500 {
-				fmt.Printf("SERVER ERROR %d %s %s: %v\n", code, ctx.Method(), ctx.OriginalURL(), err)
-			} else if code == 400 {
-				fmt.Printf("BAD REQUEST %d %s %s: %v\n", code, ctx.Method(), ctx.OriginalURL(), err)
+			// Log server errors, dropped connections and 400s so we can
+			// diagnose them. A dropped connection is labelled as such rather
+			// than as a 502 we served - see misc.ErrorLogLabel.
+			if label := misc.ErrorLogLabel(err, code); label != "" {
+				fmt.Printf("%s %d %s %s: %v\n", label, code, ctx.Method(), ctx.OriginalURL(), err)
 			}
 
 			return ctx.Status(code).JSON(fiber.Map{

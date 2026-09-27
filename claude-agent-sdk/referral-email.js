@@ -23,6 +23,10 @@ const {
 // escapes the machine until it is deliberately configured otherwise.
 const GEEKS_EMAIL = process.env.GEEKS_EMAIL || 'geeks@ilovefreegle.org'
 const REFERRAL_FROM = process.env.SUPPORT_REFERRAL_FROM || 'support@ilovefreegle.org'
+// Where a reply to a referral goes: the support mailbox, not the volunteer who
+// referred it. The geeks' answer then lands where the whole support team can
+// see it and act on it, and it is not lost in one person's personal inbox.
+const SUPPORT_ADDR = process.env.SUPPORT_ADDR || 'support@ilovefreegle.org'
 const SMTP_HOST = process.env.SUPPORT_SMTP_HOST || process.env.SMTP_HOST || 'mailpit'
 const SMTP_PORT = Number(process.env.SUPPORT_SMTP_PORT || process.env.SMTP_PORT || 1025)
 const SMTP_USER = process.env.SUPPORT_SMTP_USER || process.env.SMTP_USER || ''
@@ -79,16 +83,16 @@ function transport() {
 }
 
 /**
- * Send the referral to geeks@. Reply-To is the referring volunteer, so a reply
- * goes back to the person who actually saw the problem rather than to a
- * no-reply address.
+ * Send the referral to geeks@. Reply-To is the support address, so a reply
+ * reaches the support team through the support mailbox. The referring
+ * volunteer is named in the email body, not in the headers.
  *
  * @returns {Promise<{to:string, subject:string, messageId:string}>}
  */
 async function sendReferral(referral, opts = {}) {
   const to = opts.to || GEEKS_EMAIL
-  const { subject, html, text } = renderReferralEmail(referral)
-  const replyTo = (referral.referredBy && referral.referredBy.email) || undefined
+  const replyTo = SUPPORT_ADDR
+  const { subject, html, text } = renderReferralEmail({ ...referral, replyTo })
 
   const info = await transport().sendMail({
     from: REFERRAL_FROM,
@@ -110,6 +114,7 @@ module.exports = {
   newReferralRef,
   GEEKS_EMAIL,
   REFERRAL_FROM,
+  SUPPORT_ADDR,
   SMTP_HOST,
   SMTP_PORT,
 }

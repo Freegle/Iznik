@@ -39,7 +39,6 @@
             @hidden="showBanMember = false"
           />
           <ModMergeButton class="ms-2" />
-          <ModMemberExportButton class="ms-2" :groupid="groupid" />
         </div>
         <ModMemberSearchbox :search="search" @search="startsearch" />
       </div>
@@ -65,7 +64,18 @@
           </template>
           <template #complete>
             <notice-message v-if="!members?.length">
-              There are no members to show at the moment.
+              <span v-if="term && !groupid">
+                Nobody matching that was found on the communities you moderate.
+                A freegler who has only ever joined a community you don't
+                moderate won't show up here - ask someone with Support access to
+                look them up.
+              </span>
+              <span v-else-if="term">
+                Nobody matching that was found on this community. Choose
+                <em>-- Please choose --</em> above to search all the communities
+                you moderate.
+              </span>
+              <span v-else>There are no members to show at the moment.</span>
             </notice-message>
           </template>
         </infinite-loading>
@@ -240,14 +250,25 @@ function banMember() {
 }
 
 function startsearch(searchTerm) {
-  searchTerm = searchTerm.trim()
+  // The members list shows a member's id after a hash icon, so moderators read it
+  // as "#45065290" and type the hash back in. Left in place it starts a URL
+  // fragment, so the term never becomes a route parameter and the page searches
+  // for nothing at all - it just redraws the "choose a community" prompt, which
+  // looks like the search being ignored. Anything else the term contains has to
+  // be encoded for the same reason: a name like "Derek/Bill" would otherwise
+  // split into two path segments and be lost. (Discourse 10179)
+  searchTerm = searchTerm.replace(/^#/, '').trim()
   search.value = searchTerm
   context.value = null
   memberStore.clear()
   const router = useRouter()
   let newpath = '/members/approved/'
   if (searchTerm) {
-    newpath = '/members/approved/' + groupid.value + '/' + searchTerm
+    newpath =
+      '/members/approved/' +
+      groupid.value +
+      '/' +
+      encodeURIComponent(searchTerm)
   } else if (groupid.value) {
     newpath = '/members/approved/' + groupid.value
   }

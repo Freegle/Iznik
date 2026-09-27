@@ -721,6 +721,15 @@ function searched() {
 @import 'bootstrap/scss/variables';
 @import 'bootstrap/scss/mixins/_breakpoints';
 @import 'assets/css/_color-vars.scss';
+@import 'assets/css/navbar.scss';
+
+/* The bottom navigation bar is fixed and slides back into view when scrolling
+   stops, so the list needs its own room at the end or the bar covers the last
+   post (Discourse 9808/805). Same padding the chitchat, stories and settings
+   pages already carry. */
+.rest {
+  padding-bottom: $page-bottom-padding;
+}
 
 .postcode {
   position: absolute;

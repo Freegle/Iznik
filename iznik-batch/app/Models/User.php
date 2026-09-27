@@ -499,7 +499,7 @@ class User extends Model implements Auditable
                         'email' => $email,
                         'preferred' => $primary,
                         'canon' => $canon,
-                        'backwards' => strrev(strtolower($email)),
+                        'backwards' => strrev($canon),
                     ]);
                     $rc = $newEmail->id;
                 } else {

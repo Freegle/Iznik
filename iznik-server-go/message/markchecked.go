@@ -86,7 +86,9 @@ func MarkChecked(c *fiber.Ctx) error {
 			"WHERE mg.msgid IN ? AND mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND mg.rippled_in = 0",
 			req.IDs, groupIDs, utils.COLLECTION_APPROVED).Scan(&hit)
 
-		r := db.Exec("UPDATE messages_groups SET collection = ?, heldby = ?, checkedat = NULL "+
+		// needs_moderator keeps the copy for a moderator even if the hold is later released:
+		// the content check and both auto-approvers skip it.
+		r := db.Exec("UPDATE messages_groups SET collection = ?, heldby = ?, checkedat = NULL, needs_moderator = 1 "+
 			"WHERE msgid IN ? AND groupid IN ? AND collection = ? AND deleted = 0 AND rippled_in = 0",
 			utils.COLLECTION_PENDING, myid, req.IDs, groupIDs, utils.COLLECTION_APPROVED)
 

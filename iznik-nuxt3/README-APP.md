@@ -184,6 +184,10 @@ Mobile-specific Stripe implementation:
    - Handle app links from external sources
    - One-click unsubscribe links
    - Push notification routing
+   - Tracked email links (`/e/d/r/...`): the universal-link association hands
+     the app the tracker's URL, not its destination, so `stores/mobile.js`
+     `resolveTrackedLink()` asks the API (`?format=json`, which also records
+     the click) and routes to the answer, falling back to `/`
 
 2. **Native Share**
    - Share posts using native share sheet
@@ -328,6 +332,14 @@ Several components have mobile-specific behavior:
 - **Google AdSense**: Modified for HTTPS enforcement
 - **Sentry**: Error reporting with device context
 - **Ad Behavior**: Some ads disabled or modified for mobile
+- **Ad slots in the app**: there is no cookie consent in the app, so no ad network runs.
+  Every slot (`components/ExternalDa.vue`, the app-without-cookies branch of
+  `visibilityChanged`) shows the WhatJobs listings instead (`JobsDaSlot`, which needs no
+  consent), with the donate banner filling the slot while there are no listings for the
+  member's location. There is no 31-second switch to another network, and supporters
+  (recent donors) see neither. Taking the jobs slot out of that branch is what left the
+  app showing only the donate banner from 2026-08-13 to 2026-09-13; a blank band means
+  the jobs slot reported nothing, and the fix belongs in what it reports.
 
 ### Status Bar
 

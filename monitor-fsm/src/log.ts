@@ -27,8 +27,14 @@
 //   screen scrolls away.
 import { appendFileSync, mkdirSync } from 'node:fs'
 
-export const DEBUG_LOG_PATH = '/tmp/freegle-monitor/debug.log'
-try { mkdirSync('/tmp/freegle-monitor', { recursive: true }) } catch {}
+// Tests exercise the same out()/outWarn() calls as a live lap, including the
+// deliberate failure paths, so writing them to the live log puts lines like
+// "FAILED to post reply for bug 9001.3" in the record of a real run. Vitest sets
+// VITEST, so a test run goes to its own file and an audit of debug.log is all
+// real laps.
+const LOG_DIR = process.env.VITEST ? '/tmp/freegle-monitor/test' : '/tmp/freegle-monitor'
+export const DEBUG_LOG_PATH = `${LOG_DIR}/debug.log`
+try { mkdirSync(LOG_DIR, { recursive: true }) } catch {}
 
 function stamp(): string {
   return new Date().toISOString().slice(11, 19)

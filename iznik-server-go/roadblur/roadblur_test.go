@@ -111,3 +111,25 @@ func TestRoadBlurFallsBackToCircular(t *testing.T) {
 		t.Fatalf("recovery should retry road-aware: calls=%d point %f,%f", calls, la, ln)
 	}
 }
+
+// The one breaker rule every routing client shares: only a server-side fault
+// opens it. 501 (no engine here), 503 (this request could not be answered) and
+// any 4xx (this request's fault) leave it closed - opening it on those is how
+// an engine-less environment came to refuse every badge after each feed load.
+func TestMarkRoutingFailureForOpensOnlyOnServerFaults(t *testing.T) {
+	for _, status := range []int{400, 404, 501, 503} {
+		routingDownUntil.Store(0)
+		MarkRoutingFailureFor(status)
+		if !RoutingHealthy() {
+			t.Errorf("HTTP %d must not open the breaker", status)
+		}
+	}
+	for _, status := range []int{500, 502, 504} {
+		routingDownUntil.Store(0)
+		MarkRoutingFailureFor(status)
+		if RoutingHealthy() {
+			t.Errorf("HTTP %d must open the breaker", status)
+		}
+	}
+	routingDownUntil.Store(0)
+}

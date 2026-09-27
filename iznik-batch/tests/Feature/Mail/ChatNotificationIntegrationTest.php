@@ -141,7 +141,15 @@ class ChatNotificationIntegrationTest extends TestCase
 
         $this->assertNotNull($receivedMessage);
         $subject = $this->mailpit->getSubject($receivedMessage);
-        $this->assertStringContainsString("sent you a message", $subject);
+        // This chat holds one TYPE_DEFAULT message and no TYPE_INTERESTED one, so the
+        // subject takes ChatNotification's fallback rather than the "Regarding: <item>"
+        // form, which needs an interested message to name.
+        //
+        // The expectation here was "sent you a message", which no longer appears anywhere
+        // in the code: 7a8279857 deliberately moved subject generation onto iznik-server's
+        // getChatEmailSubject() logic and added this fallback. Nothing caught the stale
+        // assertion because this suite was not in the default set CI runs.
+        $this->assertStringContainsString("You have a new message", $subject);
     }
 
     public function test_chat_notification_passes_spam_checks(): void
@@ -272,6 +280,13 @@ class ChatNotificationIntegrationTest extends TestCase
         Mail::to($user->email_preferred)->send($mail);
 
         $receivedMessage = $this->mailpit->assertMessageSentTo($user->email_preferred);
+
+        // Both spam assertions below are conditional on a score coming back, and no
+        // spam checker answers in CI, so without this the test asserts nothing at all
+        // there. phpunit.xml sets failOnRisky, so an assertion-free test fails the run.
+        // Delivery is worth asserting on its own account, and the sibling
+        // test_chat_notification_passes_spam_checks already does it.
+        $this->assertNotNull($receivedMessage, "Message should have been sent");
 
         $spamReport = $this->mailpit->getSpamReport($receivedMessage);
 

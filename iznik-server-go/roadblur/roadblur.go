@@ -61,6 +61,20 @@ func MarkRoutingFailure() {
 	routingDownUntil.Store(time.Now().Add(routingCooldown).UnixNano())
 }
 
+// MarkRoutingFailureFor applies the ONE rule every routing client shares for a
+// non-200 answer: only a server-side fault may open the breaker. 501 = this
+// server has no reach engine (dev, CI, a node before the artifacts deploy) -
+// a permanent, answered shape, not an outage; 503 = a configured engine could
+// not answer THIS request, and the server that said so is up; any 4xx = this
+// request's fault. None of those says routing is down, and opening the
+// breaker on them is how an engine-less environment came to refuse every
+// unread badge for 30 seconds after each feed load (2026-09-05).
+func MarkRoutingFailureFor(status int) {
+	if status >= 500 && status != http.StatusNotImplemented && status != http.StatusServiceUnavailable {
+		MarkRoutingFailure()
+	}
+}
+
 const blurCacheCap = 200000
 
 var (
@@ -121,7 +135,7 @@ func fetchBlurBatch(routingURL string, dist float64, pts []blurPoint) [][2]float
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		MarkRoutingFailure()
+		MarkRoutingFailureFor(resp.StatusCode)
 		return nil
 	}
 	var parsed struct {

@@ -123,8 +123,11 @@ func TestReachEndpointsUnconfigured(t *testing.T) {
 	app := newApp(g, "", false)
 	req := httptest.NewRequest("GET", "/v1/reach-labels?lat=51&lng=-2&minutes=10", nil)
 	resp, err := app.Test(req, 10000)
-	if err != nil || resp.StatusCode != 503 {
-		t.Fatalf("expected 503 when unconfigured, got err=%v status=%v", err, resp.StatusCode)
+	// 501, not 503: no engine at all is a permanent shape the callers fail
+	// open on (and never trip their shared breaker for); 503 is a configured
+	// engine's transient failure.
+	if err != nil || resp.StatusCode != 501 {
+		t.Fatalf("expected 501 when unconfigured, got err=%v status=%v", err, resp.StatusCode)
 	}
 }
 

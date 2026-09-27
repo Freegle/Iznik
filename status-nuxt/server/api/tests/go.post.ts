@@ -48,11 +48,42 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 503, message })
   }
 
+  // A healthy spatial-knn is not the same as one that can answer. Its reach dataset is
+  // loaded from REACH_DIR, which is empty by default ("empty = off" in docker-compose),
+  // and until it is ready the finder replies {"error":"dataset not ready"}. The nearby
+  // endpoints then return 503 on purpose (isochrone/message.go: answering 0 would repaint
+  // "You're up to date" over a real badge), and the tests that exercise the non-degraded
+  // reach path fail. That is seven red tests on a clean tree, with nothing in their output
+  // to say why - which is exactly what this endpoint's container check exists to prevent.
+  // The run still goes ahead, because the rest of the suite is unaffected and refusing it
+  // would leave nothing testable on a machine that has never had reach data.
+  const reachWarning = (() => {
+    try {
+      const out = execSync(
+        `docker exec ${prefix}-apiv2 sh -c 'curl -s -m 5 "$SPATIAL_KNN_URL/v1/reachoverflow/containing?lat=53&lng=-2&srid=3857"' 2>/dev/null`,
+        { encoding: 'utf8', timeout: 15000 },
+      )
+      if (/dataset not ready/i.test(out)) {
+        return [
+          'NOTE: spatial-knn is up but its reach dataset is not loaded (REACH_DIR is unset,',
+          'and docker-compose says empty = off). Any test that exercises the non-degraded',
+          'reach path fails here for that reason rather than because the code is wrong: the',
+          'nearby endpoints answer 503 on purpose when the reach evaluation cannot be made.',
+          'The degraded-path tests still run, and CI has the dataset, so CI covers the rest.',
+          '',
+        ].join('\n')
+      }
+    } catch {
+      // A probe that cannot run tells us nothing; say nothing rather than guess.
+    }
+    return ''
+  })()
+
   // Initialize test status
   setTestState('go', {
     status: 'running',
     message: 'Setting up Go test database...',
-    logs: '',
+    logs: reachWarning,
     progress: { completed: 0, total: 0, passed: 0, failed: 0, current: '' },
     failedTests: [],
     startTime: Date.now(),

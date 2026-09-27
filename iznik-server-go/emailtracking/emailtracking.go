@@ -197,6 +197,26 @@ func Pixel(c *fiber.Ctx) error {
 // @Param p query string false "Position identifier"
 // @Param a query string false "Action type (e.g., unsubscribe, cta)"
 // @Success 302 {string} string "Redirect"
+// sendDestination answers a tracked click: a 302 for a mail client or browser,
+// or the destination as JSON when the caller asks with ?format=json.
+//
+// The app asks for JSON. On iOS the universal-link association hands EVERY
+// site path to the app, so tapping a tracked link in an email opens the app
+// with the tracker's own URL - /e/d/r/... - which is not a page the app has.
+// It used to push that straight into its router, land on the error page, and
+// leave the member on their home page; one member, sent there by a chat
+// notification's Reply button, typed her reply to the poster into ChitChat
+// (2026-08-17). The app cannot follow a cross-origin 302 to learn where the
+// link went, so it resolves the link here instead: the click is recorded
+// exactly as it is for a browser (it was silently lost before, because the
+// tap never reached the server), and the app routes itself to the answer.
+func sendDestination(c *fiber.Ctx, destination string) error {
+	if c.Query("format") == "json" {
+		return c.JSON(fiber.Map{"url": destination})
+	}
+	return c.Redirect(destination)
+}
+
 func Click(c *fiber.Ctx) error {
 	db := database.DBConn
 	trackingID := c.Params("id")
@@ -205,7 +225,7 @@ func Click(c *fiber.Ctx) error {
 	urlEncoded := c.Query("url", "")
 	urlBytes, err := base64.StdEncoding.DecodeString(urlEncoded)
 	if err != nil {
-		return c.Redirect("/")
+		return sendDestination(c, "/")
 	}
 	rawURL := string(urlBytes)
 	destinationURL := RepairDoubledSiteURL(rawURL)
@@ -225,14 +245,14 @@ func Click(c *fiber.Ctx) error {
 		(!isValidRedirectURL(destinationURL) &&
 			!hasValidLinkSignature(rawURL, c.Query("sig")) &&
 			!isCommunityNewsItemURL(db, destinationURL)) {
-		return c.Redirect("/")
+		return sendDestination(c, "/")
 	}
 
 	// Get tracking record
 	var tracking EmailTracking
 	result := db.Where("tracking_id = ?", trackingID).First(&tracking)
 	if result.Error != nil {
-		return c.Redirect(destinationURL)
+		return sendDestination(c, destinationURL)
 	}
 
 	position := c.Query("p", "")
@@ -280,7 +300,7 @@ func Click(c *fiber.Ctx) error {
 	}
 	db.Create(&click)
 
-	return c.Redirect(destinationURL)
+	return sendDestination(c, destinationURL)
 }
 
 // Image tracks an image load for scroll depth estimation
@@ -762,8 +782,14 @@ func UserEmails(c *fiber.Ctx) error {
 		var userLookup struct {
 			UserID uint64 `gorm:"column:userid"`
 		}
-		// First try users_emails table (for users with multiple emails)
-		result := db.Table("users_emails").Select("userid").Where("email = ? AND backwards IS NULL", email).Limit(1).Scan(&userLookup)
+		// First try users_emails table (for users with multiple emails).
+		//
+		// This used to carry "AND backwards IS NULL", which made it miss almost every
+		// real address: only 140,057 of 4,476,456 rows have a null there, and 136,047 of
+		// those are Freegle's own @users.ilovefreegle.org proxy addresses. A member
+		// looked up by their own address fell through to the users.email fallback
+		// instead. V1 has no such condition anywhere.
+		result := db.Table("users_emails").Select("userid").Where("email = ?", email).Limit(1).Scan(&userLookup)
 		if result.Error != nil || userLookup.UserID == 0 {
 			// Fallback to users table (for new users whose email is only in users.email)
 			var userFallback struct {

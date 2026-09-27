@@ -604,6 +604,9 @@ services:
       # reaches the real geeks list; edge/prod sets SUPPORT_SMTP_* to a relay.
       - GEEKS_EMAIL=${GEEKS_EMAIL:-geeks@ilovefreegle.org}
       - SUPPORT_REFERRAL_FROM=${SUPPORT_REFERRAL_FROM:-support@ilovefreegle.org}
+      # Reply-To on a referral: the support mailbox, shared with the batch config's
+      # FREEGLE_SUPPORT_ADDR so there is one knob for "where support mail goes".
+      - SUPPORT_ADDR=${FREEGLE_SUPPORT_ADDR:-support@ilovefreegle.org}
       - SUPPORT_SMTP_HOST=${SUPPORT_SMTP_HOST:-mailpit}
       - SUPPORT_SMTP_PORT=${SUPPORT_SMTP_PORT:-1025}
       - SUPPORT_SMTP_USER=${SUPPORT_SMTP_USER:-}
@@ -787,10 +790,6 @@ services:
       - DONATION_TARGET=${DONATION_TARGET:-}
       - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
-      # Rollback lever for the vector-search default: set to "keyword" to revert
-      # all callers (no searchmode param) to the legacy keyword cascade. Default
-      # (unset) = vector-hybrid search. Removed once keyword search is retired.
-      - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
       # Native ONNX pool: set both vars to bypass the HTTP sidecar for queries.
       # Model cache volume is shared with embedding-sidecar so no re-download needed.
       - EMBEDDING_ONNX_MODEL_PATH=${EMBEDDING_ONNX_MODEL_PATH:-}
@@ -1699,6 +1698,13 @@ services:
       - FREEGLE_MOD_SITE=http://modtools-dev-local.localhost:${PORT_MODTOOLS_DEV_LOCAL:-3003}
       - FREEGLE_API_BASE_URL=http://localhost:${PORT_APIV2:-8193}
       - FREEGLE_DELIVERY_URL=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
+      # Dev batch uploads photos to the LOCAL tusd, like apiv2 does. Without
+      # this the config default (uploads.ilovefreegle.org) applies, so any dev
+      # job that attaches an image — tn:sync, tn:parity-check replaying real TN
+      # posts — writes to the production upload store, and pays a WAN round
+      # trip per photo. batch-prod sets the production value explicitly.
+      - TUS_UPLOADER=http://tusd:8080/tus
+      - UPLOADS=http://tusd:8080/tus/
       # Community News: research credential (metered key OR a `claude setup-token`
       # subscription token, which wins when set) + global kill switch.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -1711,10 +1717,6 @@ services:
       - LOKI_URL=http://loki:3100
       - MJML_URL=http://mjml/
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
-      # Rollback lever for the vector-search default: set to "keyword" to revert
-      # all callers (no searchmode param) to the legacy keyword cascade. Default
-      # (unset) = vector-hybrid search. Removed once keyword search is retired.
-      - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
       - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/avatar
       - SPATIAL_KNN_URL=http://spatial-knn:8194
       - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter,Reengage,CommunityNews
@@ -1887,6 +1889,12 @@ services:
       - LOKI_JSON_PATH=/var/log/freegle
       # MJML (local container)
       - MJML_URL=http://mjml/
+      # Embedding sidecar (local container, same one the dev batch uses).
+      # Without this the electricals variant clustering falls back to its word
+      # test alone and desirability cold-start scoring cannot reach the model,
+      # because both read EMBEDDING_SIDECAR_URL and default to empty. The dev
+      # `batch` block above has always set it; this one never did.
+      - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
       # Avatar generation (Go API)
       - FREEGLE_AVATAR_SERVER_URL=https://api.ilovefreegle.org/avatar
       # AMP Email

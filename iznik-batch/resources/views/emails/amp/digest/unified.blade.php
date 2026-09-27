@@ -5,13 +5,6 @@
   <script async src="https://cdn.ampproject.org/v0.js"></script>
   <script async custom-element="amp-form" src="https://cdn.ampproject.org/v0/amp-form-0.1.js"></script>
   <script async custom-element="amp-accordion" src="https://cdn.ampproject.org/v0/amp-accordion-0.1.js"></script>
-  {{-- amp-bind drives the shared reply panel: per-post tap buttons write the
-       selected msgid into <amp-state id="r">, and the sidebar's hidden inputs
-       read title/token/expiry for that msgid out of <amp-state id="d"> via
-       [value] binding. amp-sidebar is the AMP4EMAIL-supported modal/drawer
-       (amp-lightbox + position:fixed are both forbidden in AMP4EMAIL). --}}
-  <script async custom-element="amp-bind" src="https://cdn.ampproject.org/v0/amp-bind-0.1.js"></script>
-  <script async custom-element="amp-sidebar" src="https://cdn.ampproject.org/v0/amp-sidebar-0.1.js"></script>
   <script async custom-template="amp-mustache" src="https://cdn.ampproject.org/v0/amp-mustache-0.2.js"></script>
   <style amp4email-boilerplate>body{visibility:hidden}</style>
   <style amp-custom>
@@ -294,8 +287,8 @@
       margin-right: 12px;
     }
 
-    /* Per-card Reply button — opens the shared reply panel at the bottom.
-       Same visual weight as the accordion's reply-toggle had. */
+    /* Per-card Reply link to the post on the website, styled as the button
+       it replaced. Same visual weight as the accordion's reply-toggle had. */
     .reply-btn {
       display: inline-block;
       background-color: #338808;
@@ -310,25 +303,6 @@
     }
     .reply-btn.wanted {
       background-color: #00A1CB;
-    }
-
-    /* Shared reply panel (the one <amp-sidebar>). AMP4Email forbids
-       position:fixed; amp-sidebar handles the off-canvas drawer positioning
-       itself, so we only style its inner padding/width here. side="right"
-       slides it in from the right edge. */
-    .reply-panel {
-      width: 320px;
-      max-width: 90vw;
-      padding: 20px;
-      background-color: #ffffff;
-    }
-    .reply-panel-head {
-      font-size: 15px;
-      color: #333333;
-      margin: 0 0 12px 0;
-    }
-    .reply-panel-head strong {
-      color: #212529;
     }
 
     /* Per-post Reply accordion. Lives inside the right grid cell, anchored
@@ -648,50 +622,6 @@
   </style>
 </head>
 <body>
-  {{-- Shared reply-panel state. <amp-state id="d"> is the per-message map
-       { msgid: {t:title, k:token, e:expiry} } emitted once at the top of the
-       body — each post's tiny tap button only writes the selected msgid into
-       <amp-state id="r"> ({m:0} = nothing selected yet), and the single shared
-       <amp-sidebar> reply form reads d[r.m] for the title/token/expiry. This
-       is what keeps a 70-post AMP digest under Gmail's ~102 KB cap: ONE form
-       with a constant action-xhr + per-post ~80-byte buttons, instead of one
-       <amp-form> per post (which previously overflowed the cap and forced the
-       HTML fallback). [action-xhr]/[href] binding and amp-lightbox are all
-       forbidden in AMP4EMAIL, so the msgid/token ride in hidden inputs whose
-       [value] is amp-bound (input [value] binding IS allowlisted). --}}
-  <amp-state id="d">
-    <script type="application/json">{!! json_encode($ampPostMeta, JSON_UNESCAPED_SLASHES) !!}</script>
-  </amp-state>
-  <amp-state id="r">
-    <script type="application/json">{"m":0}</script>
-  </amp-state>
-
-  {{-- The one shared reply "lightbox". AMP4EMAIL has no amp-lightbox and
-       forbids position:fixed, so amp-sidebar (the supported modal/drawer) is
-       the reply panel. It shows what you're replying to by binding the item
-       title with [text]="d[r.m].t". The form's action-xhr is CONSTANT (no
-       per-post URL) — the msgid/token/expiry are carried in hidden inputs
-       bound with [value], which the validator allows. --}}
-  <amp-sidebar id="replyPanel" class="reply-panel" layout="nodisplay" side="right">
-    <p class="reply-panel-head">Reply to <strong [text]="d[r.m].t"></strong></p>
-    {{-- on submit-success, close the drawer so the reader is returned to the
-         post list (AMP4Email has no JS/back; amp-sidebar.close is the
-         supported "return to list" action). The inline "Reply sent!" confirm
-         folds away with it, so returning-to-the-list IS the success signal. --}}
-    <form method="post" action-xhr="{{ $ampApiUrl }}/digest/reply"
-          on="submit-success:replyPanel.close">
-      <input type="hidden" name="mid" [value]="r.m">
-      <input type="hidden" name="rt" [value]="d[r.m].k">
-      <input type="hidden" name="exp" [value]="d[r.m].e">
-      <input type="hidden" name="uid" value="{{ $ampUserId }}">
-      <textarea class="reply-textarea" name="message" placeholder="Reply..." required></textarea>
-      <button type="submit" class="reply-submit">Send</button>
-      <div submitting><div class="form-status"><div class="submitting-msg">Sending…</div></div></div>
-      <div submit-success template="rsuccess"></div>
-      <div submit-error template="rerror"></div>
-    </form>
-  </amp-sidebar>
-
   <div class="container">
     {{-- Header: logo + thumbnail nav. Mirrors the MJML version. AMP4Email
          disallows fragment-only hrefs (and tightens CSS to a small
@@ -770,11 +700,10 @@
     @endif
 
 
-    {{-- Shared amp-mustache success/error templates, referenced by id from
-         the single shared reply form (the <amp-sidebar> above) and from the
-         immediate single-post hero form below. Defining them once — rather
-         than inlining the same markup in each form's submit-success /
-         submit-error wrappers — keeps the AMP body small. --}}
+    {{-- amp-mustache success/error templates for the immediate single-post
+         hero form below, referenced by id from its submit-success /
+         submit-error wrappers. The multi-post cards have no in-email form:
+         their Reply is a link to the website (see _card.blade.php). --}}
     {{-- @{{message}} is Blade's escape for amp-mustache: Blade preserves the
          literal {{message}} so the amp runtime can interpolate the success/
          error response body at form-submit time. Without the @, Blade tries

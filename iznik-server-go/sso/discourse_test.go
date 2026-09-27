@@ -260,7 +260,7 @@ func TestDiscourseSSO_ValidSig_IncompleteCookieData(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestValidateDiscourseSession_InvalidJSON(t *testing.T) {
-	_, err := validateDiscourseSession("}{not json")
+	_, _, err := validateDiscourseSession("}{not json")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid cookie JSON")
 }
@@ -347,26 +347,26 @@ func TestDiscourseSSO_MultipleNonceValues_ExtractsFirst(t *testing.T) {
 // ----- validateDiscourseSession — pre-DB validation ----------------------
 
 func TestValidateDiscourseSession_InvalidJSON_ReturnsError(t *testing.T) {
-	_, err := validateDiscourseSession("{not valid json}")
+	_, _, err := validateDiscourseSession("{not valid json}")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid cookie JSON")
 }
 
 func TestValidateDiscourseSession_ZeroID(t *testing.T) {
-	_, err := validateDiscourseSession(`{"id":0,"series":"abc","token":"def"}`)
+	_, _, err := validateDiscourseSession(`{"id":0,"series":"abc","token":"def"}`)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "incomplete cookie data")
 }
 
 func TestValidateDiscourseSession_EmptyToken(t *testing.T) {
-	_, err := validateDiscourseSession(`{"id":42,"series":"abc","token":""}`)
+	_, _, err := validateDiscourseSession(`{"id":42,"series":"abc","token":""}`)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "incomplete cookie data")
 }
 
 func TestValidateDiscourseSession_AllFieldsMissing(t *testing.T) {
 	// Empty JSON object — all fields are zero values.
-	_, err := validateDiscourseSession(`{}`)
+	_, _, err := validateDiscourseSession(`{}`)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "incomplete cookie data")
 }
@@ -413,7 +413,7 @@ func TestValidateDiscourseSession_MissingFields(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := validateDiscourseSession(tc.cookie)
+			_, _, err := validateDiscourseSession(tc.cookie)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "incomplete cookie data")
 		})
@@ -425,7 +425,7 @@ func TestValidateDiscourseSession_ValidJSONCompleteFields_TriesDB(t *testing.T) 
 	// and hits database.DBConn. Without a DB this panics. Skip if no DB.
 	// This test documents that the pre-DB path is not an exit point here.
 	t.Skip("requires database — verifies that pre-DB checks pass; DB path not reachable in unit tests")
-	_, _ = validateDiscourseSession(`{"id":1,"series":"abc","token":"xyz"}`)
+	_, _, _ = validateDiscourseSession(`{"id":1,"series":"abc","token":"xyz"}`)
 }
 
 // ----- os.Setenv safety — restore original value after tests that mutate env -----

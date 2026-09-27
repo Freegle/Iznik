@@ -223,12 +223,6 @@ class AmpersandEncodingTest extends TestCase
             $post['fallbackReplyUrl'] = $post['messageUrl'];
             return $post;
         });
-        $data['ampPostMeta'] = [
-            1 => ['t' => 'Bread & Butter', 'k' => 'tok', 'e' => 9999999999],
-        ];
-        $data['ampApiUrl']  = 'https://api.example.com/amp';
-        $data['ampUserId']  = 1;
-
         $html = view('emails.amp.digest.unified', $data)->render();
 
         $this->assertStringContainsString('Bread &amp; Butter', $html,

@@ -112,8 +112,20 @@ type SearchResult struct {
 	// server filtered and ordered by. Nil when not fetched or the engine had no answer.
 	Roadmins  *float64 `json:"roadmins,omitempty" gorm:"-"`
 	Roadmiles *float64 `json:"roadmiles,omitempty" gorm:"-"`
+	// Posted and VisibleSince are the two dates every browse summary carries
+	// (MessageSummary): when the post was written, and the oldest live group arrival - the
+	// ONE clock the client's "Newest posted" sort and each card's age badge read. Search
+	// results are sorted by the same client code as the feed, and without these they sorted
+	// by Arrival (the ripple-bumped spatial arrival) against cards dated from the full
+	// record. Stamped by the Search handler on every result (message.whenVisible).
+	Posted       time.Time `json:"posted,omitempty" gorm:"-"`
+	VisibleSince time.Time `json:"visibleSince,omitempty" gorm:"-"`
 }
 
+// GetWords tokenises a search string into lower-cased, stopword-filtered words.
+// Used for the vector search's lexical-match tier (the query terms and the
+// keyword boost). The old keyword-index query functions that also lived here
+// were removed when the keyword index was retired.
 func GetWords(search string) []string {
 	common := [...]string{
 		"the", "old", "new", "please", "thanks", "with", "offer", "taken", "wanted", "received", "attachment", "offered", "and",
@@ -152,15 +164,6 @@ func GetWords(search string) []string {
 	return filtered
 }
 
-func processResults(tag string, results []SearchResult) []SearchResult {
-	for i := range results {
-		results[i].Matchedon.Type = tag
-		results[i].Matchedon.Word = results[i].Word
-	}
-
-	return results
-}
-
 func groupFilter(groupids []uint64) string {
 	ret := ""
 
@@ -176,29 +179,6 @@ func groupFilter(groupids []uint64) string {
 	}
 
 	return ret
-}
-
-// msgidFilter restricts a keyword-search query to an explicit msgid universe - for a
-// browse-scoped Nearby search, the member's reach feed (see nearbyFeedMsgIDs). Applying it
-// INSIDE the query matters: each search arm caps its results (LIMIT/top-K), so filtering
-// afterwards would let out-of-feed posts crowd in-feed posts out of the capped candidate
-// set. Empty = no restriction. The ids come from our own queries, never user input, so the
-// IN list is built directly (same pattern as groupFilter).
-func msgidFilter(msgids []uint64) string {
-	if len(msgids) == 0 {
-		return ""
-	}
-
-	var sb strings.Builder
-	sb.WriteString(" AND messages_spatial.msgid IN (")
-	for i, id := range msgids {
-		if i > 0 {
-			sb.WriteByte(',')
-		}
-		sb.WriteString(strconv.FormatUint(id, 10))
-	}
-	sb.WriteString(") ")
-	return sb.String()
 }
 
 // nearbyFeedMsgIDs returns the msgids of the posts that make up the member's Nearby browse
@@ -342,263 +322,6 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 	return ids
 }
 
-func typeFilter(msgtype string) string {
-	var ret string
-
-	switch msgtype {
-	case utils.OFFER:
-		ret = " AND messages_spatial.msgtype = '" + utils.OFFER + "' "
-	case utils.WANTED:
-		ret = " AND messages_spatial.msgtype = '" + utils.WANTED + "' "
-	default:
-		ret = ""
-	}
-
-	return ret
-}
-
-func boxFilter(nelatf float32, nelngf float32, swlatf float32, swlngf float32) string {
-	var ret string
-
-	// Add in some padding.  This copes with blurring and also shows some fairly nearby results which might not be
-	// on the map.
-	if nelatf != 0 && nelngf != 0 && swlatf != 0 && swlngf != 0 {
-		nelat := strconv.FormatFloat(float64(nelatf+0.02), 'f', -1, 32)
-		nelng := strconv.FormatFloat(float64(nelngf+0.02), 'f', -1, 32)
-		swlat := strconv.FormatFloat(float64(swlatf-0.02), 'f', -1, 32)
-		swlng := strconv.FormatFloat(float64(swlngf-0.02), 'f', -1, 32)
-		srid := strconv.FormatInt(utils.SRID, 10)
-		ret = " ST_Contains(ST_SRID(POLYGON(LINESTRING(" +
-			"POINT(" + swlng + ", " + swlat + "), " +
-			"POINT(" + swlng + ", " + nelat + "), " +
-			"POINT(" + nelng + ", " + nelat + "), " +
-			"POINT(" + nelng + ", " + swlat + "), " +
-			"POINT(" + swlng + ", " + swlat + "))), " + srid + "), point) "
-	}
-
-	return ret
-}
-
-// buildGetWordsExactQuery is a pure SQL-builder: no database needed - see
-// message_list.go's buildMTUnionAllMsgIDQuery for the established
-// convention this follows. Extracted from GetWordsExact (a pure
-// behaviour-preserving refactor) so the per-word bind count (n =
-// len(words), unbounded - a search query can contain any number of terms)
-// can be proven correct for any n via
-// the retired ormharness (search_tier9_test.go, removed in d22ba1d6c) rather
-// than sampled at one or two word counts - see keep-raw site 849c08b687c3
-// and plans/active/orm-keepraw-adversarial-review.md §4.
-func buildGetWordsExactQuery(words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) (string, []interface{}) {
-	bf := boxFilter(nelat, nelng, swlat, swlng)
-
-	if len(bf) > 0 {
-		bf = bf + " AND "
-	}
-
-	sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch, messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
-		"INNER JOIN words ON messages_index.wordid = words.id " +
-		"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
-		"WHERE " +
-		bf +
-		"word IN ("
-
-	args := []interface{}{}
-
-	for i, w := range words {
-		if i > 0 {
-			sql += ","
-		}
-
-		sql += "? "
-		args = append(args, w)
-	}
-
-	sql += ") " +
-		groupFilter(groupids) +
-		msgidFilter(msgids) +
-		typeFilter(msgtype) +
-		"GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?;"
-
-	args = append(args, limit)
-
-	return sql, args
-}
-
-func GetWordsExact(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
-	var res []SearchResult
-
-	// Empty words would render "word IN ()", which is invalid SQL (Error
-	// 1064 in production whenever a search reduced to zero indexed words).
-	// GetWordsTypo/Starts/Sounds all carry this same guard; Exact was the
-	// one sibling missing it.
-	if len(words) > 0 {
-		sql, args := buildGetWordsExactQuery(words, limit, groupids, msgids, msgtype, nelat, nelng, swlat, swlng)
-
-		// keep-raw: site 849c08b687c3 - unbounded per-word bind count in a
-		// hand-built word-IN shape; see buildGetWordsExactQuery.
-		db.Raw(sql, args...).Scan(&res)
-	}
-
-	return processResults("Exact", res)
-}
-
-// buildGetWordsTypoQuery is a pure SQL-builder - see buildGetWordsExactQuery
-// above for the convention and the reason (keep-raw site 97b0cc9dd792): the
-// per-word bind count (n = len(words), unbounded) is proven for any n via
-// the retired ormharness (search_tier9_test.go, removed in d22ba1d6c). Extracted
-// from GetWordsTypo, a pure behaviour-preserving refactor.
-func buildGetWordsTypoQuery(words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) (string, []interface{}) {
-	bf := boxFilter(nelat, nelng, swlat, swlng)
-
-	if len(bf) > 0 {
-		bf = bf + " AND "
-	}
-
-	sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch, messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
-		"INNER JOIN words ON messages_index.wordid = words.id " +
-		"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
-		"WHERE (" + bf
-
-	args := []interface{}{}
-
-	for i, word := range words {
-		if i > 0 {
-			sql += " OR "
-		}
-
-		prefix := word[0:1] + "%"
-
-		sql += "(word LIKE ? AND damlevlim(word, ?, ?) < 2) "
-		args = append(args, prefix, word, len(word))
-	}
-
-	sql += ")" + groupFilter(groupids) +
-		msgidFilter(msgids) +
-		typeFilter(msgtype) +
-		" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?"
-
-	args = append(args, limit)
-
-	return sql, args
-}
-
-func GetWordsTypo(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
-	var res []SearchResult
-
-	if len(words) > 0 {
-		sql, args := buildGetWordsTypoQuery(words, limit, groupids, msgids, msgtype, nelat, nelng, swlat, swlng)
-		db.Raw(sql, args...).Scan(&res)
-	}
-
-	return processResults("Typo", res)
-}
-
-// buildGetWordsStartsQuery is a pure SQL-builder - see
-// buildGetWordsExactQuery above for the convention and the reason (keep-raw
-// site 7b1697ea1d18): the per-word bind count (n = len(words), unbounded) is
-// proven for any n by the retired ormharness (removed in d22ba1d6c)
-// (search_tier9_test.go). Extracted from GetWordsStarts, a pure
-// behaviour-preserving refactor.
-func buildGetWordsStartsQuery(words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) (string, []interface{}) {
-	sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch,  messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
-		"INNER JOIN words ON messages_index.wordid = words.id " +
-		"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
-		"WHERE "
-
-	bf := boxFilter(nelat, nelng, swlat, swlng)
-
-	if len(bf) > 0 {
-		sql += "(" + bf + ") AND "
-	}
-
-	sql += " ("
-
-	args := []interface{}{}
-
-	for i, word := range words {
-		if i > 0 {
-			sql += " OR "
-		}
-
-		prefix := word + "%"
-
-		sql += "word LIKE ? "
-		args = append(args, prefix)
-	}
-
-	sql += ") " + groupFilter(groupids) +
-		msgidFilter(msgids) +
-		typeFilter(msgtype) +
-		" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?"
-
-	args = append(args, limit)
-
-	return sql, args
-}
-
-func GetWordsStarts(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
-	var res []SearchResult
-
-	if len(words) > 0 {
-		sql, args := buildGetWordsStartsQuery(words, limit, groupids, msgids, msgtype, nelat, nelng, swlat, swlng)
-		db.Raw(sql, args...).Scan(&res)
-	}
-
-	return processResults("StartsWith", res)
-}
-
-// buildGetWordsSoundsQuery is a pure SQL-builder - see
-// buildGetWordsExactQuery above for the convention and the reason (keep-raw
-// site feb5e1180e5a): the per-word bind count (n = len(words), unbounded) is
-// proven for any n by the retired ormharness (removed in d22ba1d6c)
-// (search_tier9_test.go). Extracted from GetWordsSounds, a pure
-// behaviour-preserving refactor.
-func buildGetWordsSoundsQuery(words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) (string, []interface{}) {
-	sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch,  messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
-		"INNER JOIN words ON messages_index.wordid = words.id " +
-		"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
-		"WHERE "
-
-	bf := boxFilter(nelat, nelng, swlat, swlng)
-
-	if len(bf) > 0 {
-		sql += "(" + bf + ") AND "
-	}
-
-	sql += " ("
-
-	args := []interface{}{}
-
-	for i, word := range words {
-		if i > 0 {
-			sql += " OR "
-		}
-
-		sql += "soundex = SUBSTRING(SOUNDEX(?), 1, 10) "
-		args = append(args, word)
-	}
-
-	sql += ") " + groupFilter(groupids) +
-		msgidFilter(msgids) +
-		typeFilter(msgtype) +
-		" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?"
-
-	args = append(args, limit)
-
-	return sql, args
-}
-
-func GetWordsSounds(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
-	var res []SearchResult
-
-	if len(words) > 0 {
-		sql, args := buildGetWordsSoundsQuery(words, limit, groupids, msgids, msgtype, nelat, nelng, swlat, swlng)
-		db.Raw(sql, args...).Scan(&res)
-	}
-
-	return processResults("SoundsLike", res)
-}
-
 // SearchByMsgID returns the message with the given id as a single-element search
 // result, restricted to the supplied groups (nil groupids = no restriction, as
 // used for admin/support). Returns nil if the message does not exist or is not in
@@ -664,7 +387,7 @@ func searchReachArmIDs(db *gorm.DB, lng, lat float64) []uint64 {
 		for i, id := range in {
 			ids[i] = uint64(id)
 		}
-		verdicts, discovered := rippling.LabelVerdictsWithDiscover(lat, lng, ids)
+		verdicts, discovered, _ := rippling.LabelVerdictsWithDiscover(lat, lng, ids)
 		in = rippling.DropLabelOut(in, verdicts)
 		for _, id := range discovered {
 			in = append(in, int64(id))
@@ -712,4 +435,40 @@ func searchReachArmIDs(db *gorm.DB, lng, lat float64) []uint64 {
 	}
 	reachIDs = append(reachIDs, rippling.RescueUndecided(lat, lng, undecided)...)
 	return reachIDs
+}
+
+// dropRippledIn keeps only the results one of the given groups holds as its OWN post:
+// a messages_groups row with rippled_in = 0 on that group. It is the search arm of the
+// Approved Messages "Only this group's own posts (hide rippled-in)" filter
+// (?originonly=true), whose listing arm is the mg.rippled_in = 0 clause in
+// message_list.go. No groups means nothing to scope to, so nothing is dropped.
+func dropRippledIn(db *gorm.DB, results []SearchResult, groupids []uint64) []SearchResult {
+	if len(results) == 0 || len(groupids) == 0 {
+		return results
+	}
+
+	ids := make([]uint64, 0, len(results))
+	for _, r := range results {
+		ids = append(ids, r.Msgid)
+	}
+
+	var own []uint64
+	db.Table("messages_groups").
+		Select("DISTINCT msgid").
+		Where("msgid IN ? AND groupid IN ? AND rippled_in = 0 AND deleted = 0", ids, groupids).
+		Scan(&own)
+
+	keep := make(map[uint64]bool, len(own))
+	for _, id := range own {
+		keep[id] = true
+	}
+
+	kept := results[:0]
+	for _, r := range results {
+		if keep[r.Msgid] {
+			kept = append(kept, r)
+		}
+	}
+
+	return kept
 }

@@ -40,6 +40,7 @@ class SpamCleanupService
             'memberships'   => $this->removeSpamMemberships($dryRun),
             'messages'      => $this->deleteSpamMessages($dryRun),
             'chat_messages' => $this->rejectSpamChatMessages($dryRun),
+            'chat_messages_to_spammers' => $this->rejectReviewChatMessagesToSpammers($dryRun),
             'newsfeed'      => $this->deleteSpamNewsfeedItems($dryRun),
             'notifications' => $this->deleteSpamNotifications($dryRun),
             'expected'      => $this->deleteSpamExpectedRecords($dryRun),
@@ -187,6 +188,50 @@ class SpamCleanupService
                 'UPDATE chat_messages SET reviewrejected = 1, reviewrequired = 0 WHERE id = ?',
                 [$row->id],
             );
+        }
+
+        return $updated;
+    }
+
+    /**
+     * Reject chat messages still waiting in Chat Review that were sent TO a known spammer,
+     * and drop any moderator hold on them.
+     *
+     * There is nobody worth delivering them to. Left alone they sit in review for ever, and
+     * once the spammer's memberships are removed the message leaves the queue of whoever
+     * held it, so nobody can release the hold (Discourse 10171/54).
+     */
+    public function rejectReviewChatMessagesToSpammers(bool $dryRun = false): int
+    {
+        $spammers = fn ($q) => $q->select('userid')->from('spam_users')
+            ->where('collection', self::SPAMMER_COLLECTION);
+
+        $idsQuery = DB::table('chat_messages')
+            ->join('chat_rooms', 'chat_rooms.id', '=', 'chat_messages.chatid')
+            ->where('chat_rooms.chattype', 'User2User')
+            ->where('chat_messages.reviewrequired', 1)
+            ->where('chat_messages.reviewrejected', 0)
+            ->where(function ($q) use ($spammers) {
+                // The recipient is whichever participant did not send it.
+                $q->where(function ($q) use ($spammers) {
+                    $q->whereColumn('chat_messages.userid', 'chat_rooms.user1')
+                        ->whereIn('chat_rooms.user2', $spammers);
+                })->orWhere(function ($q) use ($spammers) {
+                    $q->whereColumn('chat_messages.userid', 'chat_rooms.user2')
+                        ->whereIn('chat_rooms.user1', $spammers);
+                });
+            });
+
+        if ($dryRun) {
+            return (int) $idsQuery->count();
+        }
+
+        // Per-PK updates, for the same lock-window reason as rejectSpamChatMessages.
+        $updated = 0;
+        foreach ($idsQuery->pluck('chat_messages.id') as $id) {
+            $updated += DB::table('chat_messages')->where('id', $id)
+                ->update(['reviewrejected' => 1, 'reviewrequired' => 0]);
+            DB::table('chat_messages_held')->where('msgid', $id)->delete();
         }
 
         return $updated;

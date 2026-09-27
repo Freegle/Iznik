@@ -903,11 +903,6 @@ LOCK TABLES `search_history` WRITE;
 /*!40000 ALTER TABLE `search_history` ENABLE KEYS */;
 UNLOCK TABLES;
 
-LOCK TABLES `search_terms` WRITE;
-/*!40000 ALTER TABLE `search_terms` DISABLE KEYS */;
-/*!40000 ALTER TABLE `search_terms` ENABLE KEYS */;
-UNLOCK TABLES;
-
 LOCK TABLES `sessions` WRITE;
 /*!40000 ALTER TABLE `sessions` DISABLE KEYS */;
 /*!40000 ALTER TABLE `sessions` ENABLE KEYS */;

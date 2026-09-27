@@ -26,7 +26,12 @@
           <div v-if="loggedIn" class="mobile-body">
             <div v-if="groupCount" class="mobile-section">
               <p class="mobile-section__label">Leave a specific community:</p>
-              <GroupSelect v-model="groupid" size="lg" class="mb-2" />
+              <GroupSelect
+                v-model="groupid"
+                size="lg"
+                class="mb-2"
+                memberonly
+              />
               <SpinButton
                 v-if="groupid"
                 variant="primary"
@@ -152,7 +157,7 @@
               <div v-if="groupCount" class="mt-2">
                 <p>You can leave individual communities:</p>
                 <div class="mb-2">
-                  <GroupSelect v-model="groupid" size="lg" />
+                  <GroupSelect v-model="groupid" size="lg" memberonly />
                   <SpinButton
                     v-if="groupid"
                     variant="primary"

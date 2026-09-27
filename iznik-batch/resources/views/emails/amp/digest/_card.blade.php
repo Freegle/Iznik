@@ -88,16 +88,16 @@
     @endif
     @endif
     @if($showReply && empty($post['isOwnPost']))
-    {{-- Per-post Reply trigger. Instead of a whole <amp-form> per post (one
-         form × 70 posts blows past Gmail's ~102 KB AMP cap → AMP rejected,
-         HTML fallback), this is a tiny tap button (~80 bytes) that selects
-         this message into <amp-state id="r"> and opens the ONE shared reply
-         panel (<amp-sidebar id="replyPanel"> in unified.blade.php). The
-         sidebar's hidden inputs read the title/token/expiry for this msgid
-         out of <amp-state id="d"> via [value] amp-bind. Suppressed for the
-         recipient's own posts (you can't reply to yourself). --}}
-    <button class="reply-btn{{ $post['type'] === 'Offer' ? '' : ' wanted' }}"
-            on="tap:AMP.setState({r:{m:{{ $post['message']->id }}}}),replyPanel.open">Reply</button>
+    {{-- Reply is a link to the post on the website: the same tracked link the
+         HTML part uses, which lands on /message/{id}?reply=1 with the reply
+         box open and records the click position. It used to open a reply
+         drawer inside the email (a shared amp-sidebar), which came up as a
+         blank screen in the Gmail phone apps on some handsets (support ref
+         SR-FV6KC) and carried only ~67 replies a week. The single-post
+         immediate digest keeps its inline form, which works on phones.
+         Styled exactly as the button was. Suppressed for the recipient's own
+         posts (you can't reply to yourself). --}}
+    <a href="{{ $post['fallbackReplyUrl'] }}" class="reply-btn{{ $post['type'] === 'Offer' ? '' : ' wanted' }}">Reply</a>
     @endif
   </div>
 </div>

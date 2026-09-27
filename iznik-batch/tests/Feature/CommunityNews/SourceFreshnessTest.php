@@ -146,6 +146,53 @@ class SourceFreshnessTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // Redirects. Refusing to follow one costs us the page; following it off the
+    // host would hand an attacker-supplied URL a second target. So: same host
+    // only, re-checked against the SSRF guard.
+
+    public function test_same_host_redirect_is_followed(): void
+    {
+        Http::fake([
+            'example.org/story' => Http::response('', 301, ['Location' => 'https://example.org/story-canonical']),
+            'example.org/story-canonical' => Http::response($this->page('article', '2014-08-14T14:57:00Z'), 200),
+        ]);
+
+        $this->assertNotNull($this->svc()->staleReason('https://example.org/story', '2026-08-31'));
+    }
+
+    public function test_relative_redirect_is_followed(): void
+    {
+        // wolverhamptonart.org.uk answers with a bare "/whats-on".
+        Http::fake([
+            'example.org/old' => Http::response('', 301, ['Location' => '/whats-on']),
+            'example.org/whats-on' => Http::response($this->page('article', '2014-08-14T14:57:00Z'), 200),
+        ]);
+
+        $this->assertNotNull($this->svc()->staleReason('https://example.org/old', '2026-08-31'));
+    }
+
+    public function test_cross_host_redirect_is_not_followed(): void
+    {
+        Http::fake([
+            'example.org/*' => Http::response('', 301, ['Location' => 'http://169.254.169.254/latest/meta-data/']),
+            '*' => Http::response($this->page('article', '2014-08-14T14:57:00Z'), 200),
+        ]);
+
+        $this->assertNull($this->svc()->staleReason('https://example.org/story', '2026-08-31'));
+
+        Http::assertNotSent(fn ($r) => str_contains($r->url(), '169.254.169.254'));
+    }
+
+    public function test_a_redirect_loop_terminates(): void
+    {
+        Http::fake([
+            'example.org/*' => Http::response('', 301, ['Location' => 'https://example.org/round']),
+        ]);
+
+        $this->assertNull($this->svc()->staleReason('https://example.org/round', '2026-08-31'));
+    }
+
+    // -------------------------------------------------------------------------
     // The poster image
 
     private function imagePage(): string

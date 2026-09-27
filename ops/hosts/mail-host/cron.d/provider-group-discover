@@ -1,0 +1,3 @@
+# Re-derives which provider group is blocking the primary IP, by MX grouping.
+# Hourly: membership changes rarely, and each run does a handful of DNS lookups.
+17 * * * * root /usr/local/sbin/provider-group-discover.sh 360 >/dev/null 2>&1

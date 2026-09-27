@@ -16,6 +16,31 @@ describe('matchDirectMasterFixCommits', () => {
     ])
   })
 
+  // Discourse topic ids passed 10000 in September 2026. A matcher that only knew 9xxx
+  // credited none of that day's fixes on topics 10102, 10142 and 10148, so no reporter
+  // was told; every reply had to be linked by hand.
+  it('matches five-digit topics, explicit and topic-only', () => {
+    const m = matchDirectMasterFixCommits(
+      [
+        { sha: 'eee5555', subj: 'fix(mail): one group per email', body: 'Discourse 10142.' },
+        { sha: 'fff6666', subj: 'fix(moderation): rippled copy (10102/7)', body: '' },
+      ],
+      [{ topic: 10142, post: 1 }, { topic: 10102, post: 7 }, { topic: 10102, post: 11 }],
+    )
+    expect(m).toEqual([
+      { topic: 10142, post: 1, sha: 'eee5555', subj: 'fix(mail): one group per email' },
+      { topic: 10102, post: 7, sha: 'fff6666', subj: 'fix(moderation): rippled copy (10102/7)' },
+    ])
+  })
+
+  it('does not read a date as a topic/post reference', () => {
+    const m = matchDirectMasterFixCommits(
+      [{ sha: 'abc0001', subj: 'fix(x): dated 2026/09 change', body: '' }],
+      [{ topic: 2026, post: 9 }],
+    )
+    expect(m).toEqual([])
+  })
+
   it('matches a topic-only structured ref when the topic has exactly one unfixed bug', () => {
     const m = matchDirectMasterFixCommits(
       [{ sha: 'bbb2222', subj: 'fix(modtools): ghost edit counts (9839)', body: '' }],

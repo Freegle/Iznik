@@ -610,10 +610,19 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 
 	// Verify the user exists. Deleted users can still log in so they see the
 	// "restore your account" banner.
-	var exists uint64
-	db.Table("users").Select("id").Where("id = ?", uid).Limit(1).Scan(&exists)
+	var target struct {
+		ID       uint64
+		Tnuserid *uint64
+	}
+	res := db.Table("users").Select("id, tnuserid").Where("id = ?", uid).Limit(1).Scan(&target)
 
-	if exists == 0 {
+	if res.Error != nil {
+		// A failed read is an outage, not an unknown member.
+		stdlog.Printf("Link login: user lookup for %d failed: %v", uid, res.Error)
+		return fiber.NewError(fiber.StatusServiceUnavailable, "Please try again")
+	}
+
+	if target.ID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"ret":    2,
 			"status": "Unknown user.",
@@ -626,6 +635,19 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 		Limit(1).Scan(&storedKey)
 
 	if storedKey == "" || subtle.ConstantTimeCompare([]byte(storedKey), []byte(key)) != 1 {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"ret":    3,
+			"status": "Invalid key.",
+		})
+	}
+
+	// A member who came through TrashNothing never logs in here: their actions
+	// arrive through the partner API. A valid link key presented for one of
+	// them is a harvested or forwarded link, not the member, so refuse it with
+	// the same answer as a wrong key and leave a record of where it came from.
+	if target.Tnuserid != nil {
+		stdlog.Printf("SECURITY: link login refused for partner member %d from %s", uid, c.IP())
+
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"ret":    3,
 			"status": "Invalid key.",
@@ -956,16 +978,17 @@ func GetSession(c *fiber.Ctx) error {
 	}
 
 	type MembershipRow struct {
-		Groupid                  uint64  `json:"groupid"`
-		Role                     string  `json:"role"`
-		Emailfrequency           int     `json:"emailfrequency"`
-		Eventsallowed            int     `json:"eventsallowed"`
-		Volunteeringallowed      int     `json:"volunteeringallowed"`
-		Microvolunteeringallowed int     `json:"microvolunteeringallowed"`
-		Configid                 *uint64 `json:"configid"`
-		Active                   int     `json:"active"` // 1=active mod, 0=backup mod
-		Type                     string  `json:"-"`      // Used server-side for moderator detection, not returned to client
-		Settings                 *string `json:"-"`      // Per-group membership settings JSON, used to determine active/inactive
+		Groupid                  uint64    `json:"groupid"`
+		Role                     string    `json:"role"`
+		Emailfrequency           int       `json:"emailfrequency"`
+		Eventsallowed            int       `json:"eventsallowed"`
+		Volunteeringallowed      int       `json:"volunteeringallowed"`
+		Microvolunteeringallowed int       `json:"microvolunteeringallowed"`
+		Configid                 *uint64   `json:"configid"`
+		Added                    time.Time `json:"added"`  // When they joined - the feed folds a community's header up after the first week
+		Active                   int       `json:"active"` // 1=active mod, 0=backup mod
+		Type                     string    `json:"-"`      // Used server-side for moderator detection, not returned to client
+		Settings                 *string   `json:"-"`      // Per-group membership settings JSON, used to determine active/inactive
 		// Set for a group a moderator moderates that is in the post-moderation trial, so
 		// ModTools shows the Check queue only where it exists.
 		Autoapprovetrial bool `json:"autoapprovetrial,omitempty" gorm:"-"`
@@ -1038,7 +1061,7 @@ func GetSession(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 		db.Table("memberships m").
-			Select("m.groupid, m.role, m.emailfrequency, m.eventsallowed, m.volunteeringallowed, m.configid, g.type, m.settings, g.microvolunteering AS microvolunteeringallowed").
+			Select("m.groupid, m.role, m.emailfrequency, m.eventsallowed, m.volunteeringallowed, m.configid, m.added, g.type, m.settings, g.microvolunteering AS microvolunteeringallowed").
 			Joins("JOIN `groups` g ON g.id = m.groupid").
 			Where("m.userid = ? AND m.collection = ?", myid, utils.COLLECTION_APPROVED).
 			Order("LOWER(CASE WHEN g.namefull IS NOT NULL THEN g.namefull ELSE g.nameshort END)").

@@ -7,6 +7,8 @@ use App\Models\CommunityNewsItem;
 use App\Models\Group;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Groups the communitynews-enabled Freegle groups into "areas" anchored on the
@@ -30,6 +32,68 @@ class CommunityNewsAreaService
 {
     /** Earth radius in miles (mean). */
     private const EARTH_MILES = 3958.7559;
+
+    /**
+     * The places an area actually covers, biggest first.
+     *
+     * The area's NAME is only ever one town, and often not even one inside it:
+     * measured 2026-09-05, 298 of the 496 live groups with a polygon (60%)
+     * contain no curated town, so they anchor to whatever is nearest outside -
+     * Oswestry Freegle's area is named "Wrecsam", 12.7 miles away and in
+     * another country. Research written against that name alone is research
+     * about the wrong place, and for a wide group (Fife runs Dunfermline to
+     * St Andrews) it is about one corner of it.
+     *
+     * So ask the gazetteer instead: every place whose point falls inside one of
+     * the area's groups, biggest first. Median 6 per area, p90 14, hence the
+     * cap - a prompt listing forty villages buys nothing and crowds out the
+     * instructions.
+     *
+     * Anchoring and naming deliberately still come from `towns`. Nothing here
+     * changes which areas exist, so no area is created, destroyed or re-stamped
+     * by this, and the ChitChat and email cadences carry on untouched.
+     *
+     * @return array<int, string>
+     */
+    public function placesCovered(CommunityNewsArea $area, ?int $cap = null): array
+    {
+        $cap = $cap ?? (int) config('freegle.communitynews.places_per_area', 8);
+        $ids = array_map('intval', $area->groupids ?? []);
+        if (empty($ids) || $cap < 1) {
+            return [];
+        }
+
+        // The research job runs hourly, so it can land between this code
+        // deploying and the migration running. Degrade to the area name rather
+        // than fataling - but say so, because a guard like this that stays
+        // quiet is how a missing table survives for months.
+        if (!Schema::hasTable('places')) {
+            Log::warning('CommunityNews: no places table, so areas cover only their anchor town');
+
+            return [];
+        }
+
+        $names = DB::table('places')
+            ->crossJoin('groups')
+            ->whereIn('groups.id', $ids)
+            ->whereNotNull('groups.polyindex')
+            ->whereRaw('ST_Contains(groups.polyindex, places.position)')
+            ->groupBy('places.id', 'places.name', 'places.population')
+            ->orderByDesc('places.population')
+            ->limit($cap)
+            ->pluck('places.name')
+            ->all();
+
+        // The area is named after somewhere for a reason; keep it in the list
+        // even when it sits just outside every polygon, or the prompt would
+        // disown the name on the email.
+        if ($area->name !== '' && !in_array($area->name, $names, true)) {
+            array_unshift($names, $area->name);
+            $names = array_slice($names, 0, $cap);
+        }
+
+        return $names;
+    }
 
     /**
      * Recompute areas from the current enabled-group set and upsert them.

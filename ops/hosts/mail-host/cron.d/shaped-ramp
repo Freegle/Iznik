@@ -1,0 +1,3 @@
+# Paces the shaped transport and ramps it back up while shaped domains accept.
+# 5-minutely: it only changes anything when adaptive-shaper has flagged someone.
+*/5 * * * * root /usr/local/sbin/shaped-ramp.sh >/dev/null 2>&1

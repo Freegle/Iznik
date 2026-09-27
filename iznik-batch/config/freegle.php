@@ -21,13 +21,6 @@ return [
     // track UK wall-clock pin to this zone so Laravel resolves BST/GMT.
     'timezone' => env('FREEGLE_TIMEZONE', 'Europe/London'),
 
-    'digest' => [
-        // Score multiplier for a daily-digest post the recipient has already had a
-        // chance to see (an in-app view, or an opened/clicked digest that contained
-        // it). Below 1 sinks seen posts beneath fresh ones without hard-dropping them.
-        'seen_penalty' => (float) env('FREEGLE_DIGEST_SEEN_PENALTY', 0.15),
-    ],
-
     'api' => [
         'base_url' => env('FREEGLE_API_BASE_URL', 'https://api.ilovefreegle.org'),
         'v2_url' => env('FREEGLE_API_V2_URL', 'https://api.ilovefreegle.org/apiv2'),
@@ -103,6 +96,83 @@ return [
         'paypal_url' => env('FREEGLE_DONATE_PAYPAL_URL', 'https://freegle.in/paypal1510'),
     ],
 
+    // Deployment switches. Each one defaults to how Freegle behaves today, so
+    // leaving them unset changes nothing; another deployment built on this
+    // codebase sets them instead of carrying its own edits to shared files.
+    // See docs/developers/reference/deployment-switches.md.
+    'auth' => [
+        // Passwordless sign-in. When true, the "forgot password" request sends a
+        // sign-in link email (App\Mail\Session\LoginLinkMail) that lands on
+        // login_link_path with ?u=&k=, which the web app consumes to sign the
+        // member in - instead of the "set a new password" email.
+        'passwordless' => filter_var(env('FREEGLE_PASSWORDLESS_LOGIN', false), FILTER_VALIDATE_BOOLEAN),
+        'login_link_path' => env('FREEGLE_LOGIN_LINK_PATH', '/'),
+    ],
+    'schedule' => [
+        // 'full' (default) runs everything in routes/console.php. 'overlay-only'
+        // runs nothing from that file except what the overlay below schedules,
+        // for deployments that want a small hand-picked set of jobs. Any other
+        // value behaves as 'full', so a typo can never silently stop the schedule.
+        'profile' => env('FREEGLE_SCHEDULE_PROFILE', 'full'),
+        // Optional extra schedule file, loaded if it exists (path relative to the
+        // app root unless absolute). Freegle ships no such file; a deployment
+        // adds its own jobs there instead of editing routes/console.php.
+        'overlay' => env('FREEGLE_SCHEDULE_OVERLAY', 'routes/console.deployment.php'),
+    ],
+
+    'backup' => [
+        // Batch work is held off while the nightly database backup runs, because the
+        // backup desyncs a node and that node is the one serving bulk reads under the
+        // two-node topology. See App\Console\BackupDrain.
+        //
+        // OFF by default: this does nothing until BACKUP_DRAIN_ENABLED is set on the
+        // batch host. A malformed start time or a duration of zero also leaves it off,
+        // so a typo can never hold the whole schedule back.
+        'drain' => [
+            'enabled' => (bool) env('BACKUP_DRAIN_ENABLED', false),
+            // HH:MM in the app timezone. Set this EARLIER than the backup's own cron so
+            // jobs already running have time to finish: that gap is the drain, the rest
+            // of the window is the delay.
+            'start' => env('BACKUP_DRAIN_START', '03:50'),
+            // Long enough to cover the pre-roll plus the backup, with headroom. The
+            // backup itself measured about 18 minutes on 18 September 2026.
+            'minutes' => (int) env('BACKUP_DRAIN_MINUTES', 45),
+            // Artisan command names that run anyway, matched without their arguments.
+            // Keep this short: anything here is competing with the backup.
+            'always_run' => array_values(array_filter(array_map(
+                'trim',
+                explode(',', (string) env('BACKUP_DRAIN_ALWAYS_RUN', ''))
+            ))),
+        ],
+
+        // Taking the nightly physical backup. OFF by default: until this is switched on,
+        // the shell script on the database node remains the thing that runs, and this
+        // command refuses to do anything.
+        'database' => [
+            'enabled' => (bool) env('BACKUP_DB_ENABLED', false),
+            // The node being backed up. xtrabackup copies a local data directory, so the
+            // whole pipeline runs there and only control flow crosses ssh.
+            'host' => env('BACKUP_DB_HOST', ''),
+            // The key AppServiceProvider hands this command's ssh runner. docker-compose mounts
+            // the monitoring key at this path; the backup needs the same root shell on the
+            // node (xtrabackup reads the data directory, mysql sets wsrep_desync), so it is
+            // the default rather than a path nothing mounts.
+            'ssh_key' => env('BACKUP_DB_SSH_KEY', '/etc/monitoring-ssh-key'),
+            // The backup measured about 18 minutes; allow generously for a bad night. The
+            // monitoring runner's 30 seconds would kill it partway.
+            'ssh_timeout_seconds' => (int) env('BACKUP_DB_SSH_TIMEOUT', 7200),
+            'xtrabackup' => env('BACKUP_DB_XTRABACKUP', '/usr/bin/xtrabackup'),
+            // xtrabackup's scratch directory on the node. Streaming writes nothing of size
+            // there, but the shell script always gave one and the default would otherwise be
+            // a directory under the ssh user's home.
+            'target_dir' => env('BACKUP_DB_TARGET_DIR', '/backup'),
+            'gsutil' => env('BACKUP_DB_GSUTIL', '/usr/lib/google-cloud-sdk/platform/gsutil/gsutil'),
+            'bucket' => env('BACKUP_DB_BUCKET', 'gs://freegle_backup_uk'),
+            'compress_threads' => (int) env('BACKUP_DB_COMPRESS_THREADS', 4),
+            'alert_email' => env('BACKUP_DB_ALERT_EMAIL', 'geek-alerts@ilovefreegle.org'),
+        ],
+    ],
+
     'branding' => [
         'name' => env('FREEGLE_SITE_NAME', 'Freegle'),
         'logo_url' => env('FREEGLE_LOGO_URL', 'https://www.ilovefreegle.org/icon.png'),
@@ -144,6 +214,11 @@ return [
         // Email types: Welcome, ChatNotification, etc.
         // If empty, NO emails will be sent (fail-safe default).
         'enabled_types' => env('FREEGLE_MAIL_ENABLED_TYPES', ''),
+        // Open/click tracking (the email_tracking row, tracked links, the pixel).
+        // Off, every mailable's tracked*() helpers hand back the plain destination
+        // URL and no email_tracking row is written - for deployments whose API
+        // does not serve the tracking redirect/pixel endpoints.
+        'tracking_enabled' => filter_var(env('FREEGLE_MAIL_TRACKING_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         // GeekAlerts email for system alerts and failure notifications.
         'geek_alerts_addr' => env('FREEGLE_GEEK_ALERTS_ADDR', 'geek-alerts@ilovefreegle.org'),
         // Geeks address for system emails (FROM address for reports etc).
@@ -246,6 +321,60 @@ return [
             // than silently stop mailing a provider for ever.
             'stale_after_hours' => (int) env('FREEGLE_MAIL_DEFERRALS_STALE_HOURS', 24),
         ],
+
+        // What the delayed view shows about the queue itself, as opposed to
+        // which providers are refusing us. Mail waiting behind our own rate
+        // limits is not a fault and raises no alarm anywhere, so without this
+        // a backlog hours deep is invisible.
+        'relay_queue' => [
+            // Two ways in, because depth and age catch different failures:
+            // a domain qualifies on either.
+            'min_queued' => (int) env('FREEGLE_MAIL_RELAY_QUEUE_MIN', 25),
+            'min_age_minutes' => (int) env('FREEGLE_MAIL_RELAY_QUEUE_MIN_AGE', 120),
+            // An estate-wide episode names thousands of domains and nobody
+            // reads the hundredth.
+            'max_rows' => (int) env('FREEGLE_MAIL_RELAY_QUEUE_MAX_ROWS', 500),
+        ],
+
+        // Reading the relay's maillog into logs_emails, so a member can be
+        // told whether we actually sent them something. Replaces V1's
+        // scripts/cron/eximlogs.php, which ran from root's crontab on the
+        // relay itself.
+        'relay_logs' => [
+            'enabled' => (bool) env('FREEGLE_MAIL_RELAY_LOGS_ENABLED', true),
+
+            // ssh target, same shape and same restricted account as the
+            // deferral probe - it needs only to read a file the `adm` group
+            // can already read. Topology lives ONLY in the environment.
+            // Empty = disabled (dev/CI).
+            'host' => env('FREEGLE_MAIL_RELAY_LOGS_HOST', env('FREEGLE_MAIL_DEFERRALS_HOST', '')),
+
+            // Same restricted key as the deferral probe: this only reads a log
+            // file the relay account can already read.
+            'ssh_key' => env('FREEGLE_MAIL_RELAY_LOGS_SSH_KEY', env('FREEGLE_MAIL_DEFERRALS_SSH_KEY', '/etc/mail-deferrals-ssh-key')),
+            'ssh_timeout_seconds' => (int) env('FREEGLE_MAIL_RELAY_LOGS_SSH_TIMEOUT', 120),
+
+            'path' => env('FREEGLE_MAIL_RELAY_LOGS_PATH', '/var/log/mail.log'),
+
+            // We keep a byte offset and fetch only what was appended, which is
+            // about 5MB a run. The cap is for the case where the offset is
+            // lost: without it the first run afterwards would pull the whole
+            // multi-gigabyte log through ssh and into PHP's memory, every run,
+            // for ever. Skipping ahead loses some history, which is the better
+            // of the two failures.
+            // A ten-minute slice is about 5MB, so this is generous headroom
+            // rather than a target. It has to cross ssh and be held in memory,
+            // so it is not sized in tens of megabytes.
+            'max_slice_bytes' => (int) env('FREEGLE_MAIL_RELAY_LOGS_MAX_SLICE_BYTES', 16 * 1024 * 1024),
+
+            // The relay hands paced providers to a second postfix instance
+            // over a loopback hop. That hop logs exactly like a delivery, so
+            // it must not be recorded as one. Two independent signals, so that
+            // one going stale on its own cannot quietly turn hops back into
+            // "sent". Keep in step with scripts/bulk2/ip-warmup.sh.
+            'handover_port' => (int) env('FREEGLE_MAIL_RELAY_LOGS_HANDOVER_PORT', 10026),
+            'handover_transport' => env('FREEGLE_MAIL_RELAY_LOGS_HANDOVER_TRANSPORT', 'relaywarm'),
+        ],
     ],
 
     'mod_welfare' => [
@@ -255,9 +384,92 @@ return [
     ],
 
     'trashnothing' => [
+        // Two TrashNothing APIs, two keys. api_key is the PARTNER key for the
+        // /fd/api endpoints (ratings, user-changes; sent as ?key=). The posts
+        // sync reads the PUBLIC developer API (trashnothing.com/api/v1.4, sent
+        // as ?api_key=), which accepts only a key issued at
+        // trashnothing.com/app/developer: the partner key gets "Invalid api_key
+        // parameter", and the partner endpoints reject a developer key in turn.
+        // public_api_key falls back to api_key only so a dev environment with a
+        // single key still runs; production needs both set.
         'api_key' => env('FREEGLE_TN_API_KEY', ''),
+        'public_api_key' => env('FREEGLE_TN_PUBLIC_API_KEY', env('FREEGLE_TN_API_KEY', '')),
         'api_base_url' => env('FREEGLE_TN_API_BASE_URL', 'https://trashnothing.com/fd/api'),
         'sync_date_file' => env('FREEGLE_TN_SYNC_DATE_FILE', '/etc/tn_sync_last_date.txt'),
+        // MASTER CUTOVER SWITCH for TN group posts. Default false (disabled) so the
+        // email path stays authoritative until parity is confirmed. Flipping it to
+        // true moves the whole post pipeline over in one step:
+        //
+        //   - tn:sync runs PostSyncer, so posts are ingested from the TN API
+        //     (TNSyncCommand).
+        //   - The email path STOPS routing TN group posts — they are still archived,
+        //     which is what makes the archive an independent witness
+        //     (TnEmailRoutingGate; callers IncomingMailController/IncomingMailCommand).
+        //   - tn:verify-email-coverage starts running hourly, checking the archive
+        //     against what the API path ingested (routes/console.php).
+        //   - TN posts become eligible for rippling, because the API path ingests only
+        //     the source post and discards TN's per-group copies, so the post now lives
+        //     on ONE group and Freegle's own rippling does the cross-posting
+        //     (Ripple\ExpandService::rippleIntoNewGroups).
+        //   - The tn:sync (posts) scheduled-outcome check becomes live
+        //     (ScheduledOutcomeRegistry).
+        //
+        // Deliberately ONE flag rather than the staged pair the plan first envisaged:
+        // API-on-with-email-still-routing double-writes the same post, and
+        // email-off-with-API-off drops TN posts entirely. Neither half is safe alone,
+        // and pre-cutover comparison is done with `tn:sync --dry-run` / tn:parity-check
+        // instead, neither of which needs the email path switched off.
+        'ingest_posts_via_api' => env('FREEGLE_TN_INGEST_POSTS_VIA_API', false),
+
+        // Minimum gap between ANY two Trash Nothing API requests, in
+        // microseconds. TN allows 2 requests/second and rate-limits per API
+        // key, so this is enforced once for the whole run by
+        // TrashNothingRateLimiter rather than per endpoint. Set to 0 to
+        // disable (the test suite does, via phpunit.xml — Http::fake() never
+        // reaches TN, and 750ms per faked request would add minutes).
+        'min_request_interval_us' => (int) env('FREEGLE_TN_MIN_REQUEST_INTERVAL_US', 750000),
+
+        // Post-cutover coverage verification — tn:verify-email-coverage.
+        // See plans/tn-api-post-ingestion.md section S.
+        'verify_coverage' => [
+            // How far behind real time the verification window runs. Bounded
+            // above by the incoming-archive retention (mail:cleanup-archive,
+            // 48h): lag + window + headroom for a missed run must stay well
+            // inside it, or files are deleted before they are ever checked.
+            'lag_hours' => (int) env('FREEGLE_TN_VERIFY_LAG_HOURS', 8),
+
+            // Window length. Matches the schedule interval so consecutive runs
+            // tile the timeline with no gap.
+            'window_hours' => (int) env('FREEGLE_TN_VERIFY_WINDOW_HOURS', 1),
+
+            // Backward overlap, so a post landing on a window boundary is never
+            // lost between two runs. Re-checking an already-covered post is
+            // free and idempotent, so this errs generous — same reasoning as
+            // the sync's own overlap (section B).
+            'overlap_minutes' => (int) env('FREEGLE_TN_VERIFY_OVERLAP_MINUTES', 15),
+
+            // Write genuinely-missing posts back via the API path (section
+            // S.5). Defaults FALSE deliberately: ship the verifier
+            // report-only until the observed miss population matches what
+            // section S.4 predicts, then enable writes.
+            'auto_ingest' => env('FREEGLE_TN_VERIFY_AUTO_INGEST', false),
+
+            // Rail 4. Above this many genuine misses in one run, ingest
+            // NOTHING and alert instead: a mass miss means the sync is broken,
+            // and quietly backfilling hundreds of hours-late posts is worse
+            // than paging a human.
+            'auto_ingest_max' => (int) env('FREEGLE_TN_VERIFY_AUTO_INGEST_MAX', 20),
+
+            // Rail 5. Refuse to backfill a post whose TN date is older than
+            // this — a very stale post surfacing suddenly is more likely a data
+            // problem than a real miss.
+            'max_age_hours' => (int) env('FREEGLE_TN_VERIFY_MAX_AGE_HOURS', 72),
+        ],
+
+        // Merge the duplicate TN accounts the old address filter could not see. Off
+        // until the backlog has been reviewed with "tn:sync --report-duplicates": it is
+        // ~96 pairs of live members and merging a pair deletes one of them.
+        'merge_legacy_duplicates' => env('FREEGLE_TN_MERGE_LEGACY_DUPLICATES', false),
     ],
 
     // Discourse forum REST API (V1 discourse_not_signed_up.php).
@@ -375,6 +587,17 @@ return [
         // The scheduled `mail:digest:unified --mode=daily` is inert until this
         // is set; an explicit `--user=` bypasses the gate for manual sampling.
         'daily_allowlist' => env('FREEGLE_DIGEST_DAILY_ALLOWLIST', ''),
+
+        // Score multiplier for a daily-digest post the recipient has already had a
+        // chance to see (an in-app view, or an opened/clicked digest that contained
+        // it). Below 1 sinks seen posts beneath fresh ones without hard-dropping them.
+        //
+        // Lived in a SECOND 'digest' key earlier in this file until 2026-08-14. PHP
+        // keeps only the last duplicate, so that block was discarded wholesale and
+        // FREEGLE_DIGEST_SEEN_PENALTY did nothing at all — UnifiedDigestService only
+        // behaved because config()'s own default (the same 0.15) covered the gap.
+        // Keep every digest setting in this one array.
+        'seen_penalty' => (float) env('FREEGLE_DIGEST_SEEN_PENALTY', 0.15),
     ],
 
     // Firebase Cloud Messaging for push notifications
@@ -495,6 +718,12 @@ return [
         // town within this many miles (the town names the area — the searchable
         // unit); beyond it the group stands alone as its own area.
         'area_cluster_miles' => (float) env('COMMUNITY_NEWS_AREA_MILES', 20),
+
+        // How many of an area's places to name in the research prompt, biggest
+        // first. Areas hold a median of 6 and a p90 of 14, so this covers most
+        // of them whole; past that the list crowds out the instructions without
+        // telling the model anything it will use.
+        'places_per_area' => (int) env('COMMUNITY_NEWS_PLACES_PER_AREA', 8),
 
         // How many nuggets the researcher aims to produce per area.
         'items_per_area' => (int) env('COMMUNITY_NEWS_ITEMS_PER_AREA', 6),
@@ -702,6 +931,10 @@ return [
         // to the mods referencing the post, or a microvolunteer Reject) pauses further spread
         // until a moderator look (approvedby/checkedat) clears it. 0 disables just the cap.
         'clean_views_per_group' => (int) env('RIPPLE_CLEAN_VIEWS_PER_GROUP', 5),
+        // A member's own repost drops the reach row; its replacement starts from when the post
+        // first went live, not from the re-approval, provided the post had been live within this
+        // many days before the repost. After a longer gap the reach starts afresh. 0 disables.
+        'repost_keeps_reach_days' => (int) env('RIPPLE_REPOST_KEEPS_REACH_DAYS', 7),
         // Hours a rippled-in (messages_groups.rippled_in=1) post, already Approved on its
         // origin group, waits before it is approved onto the rippled-in group (it was already
         // vetted on origin). Default 0 = approve AT ripple-in time, so it never even flickers
@@ -1297,6 +1530,14 @@ return [
         // Number of such stale-pending tasks tolerated before breaching.
         'background_tasks_backlog_threshold' => (int) env('FREEGLE_MONITORING_BG_TASKS_BACKLOG', 0),
 
+        // tn:sync — alert if no TrashNothing post has been ingested into
+        // `messages` (tnpostid set) within this many hours. TN is a high-volume
+        // feed, so a gap this long means TN is down or our ingestion is failing
+        // every cycle. Only evaluated when FREEGLE_TN_INGEST_POSTS_VIA_API is on.
+        'tn_posts_max_age_hours' => (int) env('FREEGLE_MONITORING_TN_POSTS_MAX_AGE_HOURS', 6),
+        // Minimum TN posts expected within that window.
+        'tn_posts_min_expected' => (int) env('FREEGLE_MONITORING_TN_POSTS_MIN', 1),
+
         // spam:refresh-mobile-cidrs — alert if the monthly UK-mobile CIDR
         // refresh hasn't written a row within this many days.
         'mobile_cidrs_max_age_days' => (int) env('FREEGLE_MONITORING_MOBILE_CIDRS_MAX_AGE_DAYS', 40),
@@ -1329,6 +1570,19 @@ return [
         // data:update-cpi (monthly) — alert if its config timestamp is older
         // than this many days.
         'cpi_max_age_days' => (int) env('FREEGLE_MONITORING_CPI_MAX_AGE_DAYS', 40),
+    ],
+
+    // CookieYes watchdog (cookieyes:check): talks to CookieYes's MCP server over
+    // OAuth. The login itself is stored in the `config` table by
+    // cookieyes:authorize, not here. See docs/developers/reference/cookieyes-watchdog.md.
+    'cookieyes' => [
+        // Off stops the weekly schedule, for a deployment with no CookieYes account.
+        'enabled' => (bool) env('COOKIEYES_ENABLED', true),
+        'base_url' => env('COOKIEYES_BASE_URL', 'https://app.cookieyes.com'),
+        // Trigger a new scan once the latest is this old.
+        'rescan_after_days' => (int) env('COOKIEYES_RESCAN_AFTER_DAYS', 30),
+        // Fail the check once the latest scan is this old.
+        'stale_after_days' => (int) env('COOKIEYES_STALE_AFTER_DAYS', 45),
     ],
 
     'lovejunk' => [
@@ -1414,6 +1668,34 @@ return [
         'publish_brands'    => env('EEE_PUBLISH_BRANDS', false),
         'publish_category'  => env('EEE_PUBLISH_CATEGORY', true),
         'publish_condition' => env('EEE_PUBLISH_CONDITION', true),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Item Desirability
+    |--------------------------------------------------------------------------
+    |
+    | Scoring of OFFER posts by expected demand for the item type, from the
+    | offline-built artifact in item_desirability (see desirability:import-artifact).
+    | The kNN settings govern cold-start scoring of never-seen titles via the
+    | embedding sidecar; thresholds are calibrated by the analysis, not tunable
+    | folklore - change them only alongside an artifact rebuild.
+    |
+    */
+    'desirability' => [
+        'model_version'  => env('DESIRABILITY_MODEL_VERSION', 'desir-2026-08'),
+        // Same sidecar the batch container already has wired for moderation checks.
+        'sidecar_url'    => env('EMBEDDING_SIDECAR_URL', ''),
+        // Cold-start kNN over the artifact's reference embeddings (query-space,
+        // the sidecar's own space on both sides).
+        'knn_k'          => env('DESIRABILITY_KNN_K', 10),
+        'knn_min_cos'    => env('DESIRABILITY_KNN_MIN_COS', 0.80),
+        'knn_strong_cos' => env('DESIRABILITY_KNN_STRONG_COS', 0.90),
+        'knn_gamma'      => env('DESIRABILITY_KNN_GAMMA', 8),
+        // Bucket bounds for INFERRED (kNN) scores only; exact matches carry the
+        // posterior-derived bucket computed at artifact build time.
+        'bucket_low_max'  => env('DESIRABILITY_BUCKET_LOW_MAX', 0.6),
+        'bucket_high_min' => env('DESIRABILITY_BUCKET_HIGH_MIN', 1.6),
     ],
 
     /*

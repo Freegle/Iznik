@@ -404,19 +404,159 @@ class DeferralCatchUpServiceTest extends TestCase
         });
     }
 
-    public function test_chat_room_type_does_not_matter_to_the_summary(): void
+    /**
+     * A member who wrote to a group's volunteers is on the member side of a
+     * User2Mod chat (user1), and reads the reply on the member site like any
+     * other chat. Waiting on a mod is as stranded as waiting on a member.
+     */
+    public function test_a_member_writing_to_the_volunteers_is_on_the_member_side(): void
     {
-        // A member waiting on a mod reply is as stranded as one waiting on
-        // another member.
+        Mail::fake();
+
+        $member = $this->createTestUser();
+        $mod = $this->createTestUser();
+        $room = $this->createTestChatRoom($member, $mod, ['chattype' => ChatRoom::TYPE_USER2MOD]);
+        $this->roster($room, $member, $mod);
+        $this->createTestChatMessage($room, $mod);
+        $this->owe($member->id, 'chat', 1);
+
+        $this->assertSame(1, $this->catchUp->run()['sent']);
+        Mail::assertSent(UnreadChatCatchUpMail::class, function ($mail) {
+            return $mail->chatCount === 1 && $mail->messageCount === 1
+                && $mail->modChatCount === 0 && $mail->modMessageCount === 0;
+        });
+    }
+
+    /**
+     * A moderator is on the roster of every User2Mod chat on their groups, on
+     * the volunteers' side. Those chats are only visible in ModTools: the
+     * member site lists User2Mod chats where the viewer IS the member, so
+     * pointing a moderator at the member site shows them nothing and the
+     * email looks like a lie.
+     *
+     * Found 2026-09-12: a moderator on Virgin Media was told "a message in one
+     * chat", clicked through to the member site, and saw only a two-month-old
+     * chat of her own. The message was a member writing to her group's
+     * volunteers.
+     */
+    public function test_a_moderators_chats_with_members_are_counted_on_the_mod_side(): void
+    {
+        Mail::fake();
+
+        $mod = $this->createTestUser();
+        $member = $this->createTestUser();
+        $room = $this->createTestChatRoom($member, $mod, ['chattype' => ChatRoom::TYPE_USER2MOD]);
+        $this->roster($room, $member, $mod);
+        $this->createTestChatMessage($room, $member);
+        $this->owe($mod->id, 'chat', 1);
+
+        $this->assertSame(1, $this->catchUp->run()['sent']);
+        Mail::assertSent(UnreadChatCatchUpMail::class, function ($mail) {
+            return $mail->chatCount === 0 && $mail->messageCount === 0
+                && $mail->modChatCount === 1 && $mail->modMessageCount === 1;
+        });
+    }
+
+    public function test_mod_to_mod_chats_are_on_the_mod_side(): void
+    {
+        Mail::fake();
+
+        $mod = $this->createTestUser();
+        $otherMod = $this->createTestUser();
+        $room = $this->createTestChatRoom($otherMod, $mod, ['chattype' => ChatRoom::TYPE_MOD2MOD]);
+        $this->roster($room, $otherMod, $mod);
+        $this->createTestChatMessage($room, $otherMod);
+        $this->createTestChatMessage($room, $otherMod);
+        $this->owe($mod->id, 'chat', 2);
+
+        $this->assertSame(1, $this->catchUp->run()['sent']);
+        Mail::assertSent(UnreadChatCatchUpMail::class, function ($mail) {
+            return $mail->chatCount === 0 && $mail->modChatCount === 1 && $mail->modMessageCount === 2;
+        });
+    }
+
+    /**
+     * Someone who is both a member and a moderator gets one email with both
+     * halves, each pointing where that half can actually be read.
+     */
+    public function test_member_and_mod_side_chats_are_reported_separately(): void
+    {
+        Mail::fake();
+
+        $mod = $this->createTestUser();
+        $friend = $this->createTestUser();
+        $member = $this->createTestUser();
+
+        $personal = $this->createTestChatRoom($friend, $mod);
+        $this->roster($personal, $friend, $mod);
+        $this->createTestChatMessage($personal, $friend);
+
+        $volunteers = $this->createTestChatRoom($member, $mod, ['chattype' => ChatRoom::TYPE_USER2MOD]);
+        $this->roster($volunteers, $member, $mod);
+        $this->createTestChatMessage($volunteers, $member);
+        $this->createTestChatMessage($volunteers, $member);
+
+        $this->owe($mod->id, 'chat', 3);
+
+        $this->assertSame(1, $this->catchUp->run()['sent']);
+        Mail::assertSent(UnreadChatCatchUpMail::class, 1);
+        Mail::assertSent(UnreadChatCatchUpMail::class, function ($mail) {
+            return $mail->chatCount === 1 && $mail->messageCount === 1
+                && $mail->modChatCount === 1 && $mail->modMessageCount === 2;
+        });
+    }
+
+    /**
+     * "Stopped accepting our emails on X" is about the provider, so X is when
+     * the provider started refusing us - not when we first happened to have
+     * something to hold back for this member, which can be a day or more
+     * later and, read alongside the send date, makes the email look wrong.
+     *
+     * Found 2026-09-12: Virgin Media began refusing us at 06:01 on the 10th;
+     * a member whose first held mail was on the 11th was told "stopped
+     * accepting our emails on 11 September" in an email sent on 11 September.
+     */
+    public function test_the_date_is_when_the_provider_started_refusing_not_when_we_first_held_their_mail(): void
+    {
+        Mail::fake();
+
+        $member = $this->createTestUser(['email_preferred' => 'held' . uniqid() . '@yahoo.co.uk']);
+        $other = $this->createTestUser();
+        $room = $this->createTestChatRoom($other, $member);
+        $this->roster($room, $other, $member);
+        $this->createTestChatMessage($room, $other);
+        $id = DB::table('mail_suppressions')->insertGetId([
+            'scope' => 'domain', 'value' => 'yahoo.co.uk', 'provider' => 'Yahoo',
+            'reason' => '421', 'deferred_since' => '2026-08-14 06:01:00',
+            'first_seen' => now(), 'last_seen' => now(), 'released_at' => now(),
+        ]);
+        $this->suppressions->flushCache();
+
+        // owe() records our first hold for this member as 2026-08-15.
+        $this->owe($member->id, 'chat', 4, $id);
+
+        $this->catchUp->run();
+
+        Mail::assertSent(UnreadChatCatchUpMail::class, function ($mail) {
+            return $mail->delayedSince === '14 August';
+        });
+    }
+
+    public function test_falls_back_to_our_first_hold_when_no_suppression_was_recorded(): void
+    {
         Mail::fake();
 
         $member = $this->createTestUser();
         $other = $this->createTestUser();
-        $room = $this->createTestChatRoom($other, $member, ['chattype' => ChatRoom::TYPE_USER2MOD]);
+        $room = $this->createTestChatRoom($other, $member);
         $this->roster($room, $other, $member);
         $this->createTestChatMessage($room, $other);
         $this->owe($member->id, 'chat', 1);
 
-        $this->assertSame(1, $this->catchUp->run()['sent']);
+        $this->catchUp->run();
+
+        Mail::assertSent(UnreadChatCatchUpMail::class, function ($mail) {
+            return $mail->delayedSince === '15 August' && $mail->provider === null;
+        });
     }
 }

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-05
+last_reviewed: 2026-09-15
 owner: Freegle dev team
 covers:
   - docs/developers/reference/architecture.md
@@ -108,7 +108,19 @@ and per-group membership and roles are the ones you will meet first.
   here are expensive precisely because each half looks correct on its own: a live one had the
   mail inviting members the website then refused, so people were emailed a post they could
   not find, and their replies were held indefinitely. See section 3b of the algorithm
-  reference for the lanes and the table of where each is honoured.
+  reference for the lanes and the table of where each is honoured. The unread badge is the
+  one surface where "unanswered" must not fail open, because for it open is a number: it
+  refuses (503, nothing cached) when a configured reach engine cannot answer, fails open
+  where no engine exists at all (dev, CI: every reach endpoint answers 501 and no routing
+  client opens the shared breaker on it), and honours the member's mark-all-seen watermark
+  like every other unseen count - see section 3c.
+
+  A third, easily mistaken one: which posts ripple is decided by the data, not by a feature
+  flag. A post sits out only while its community has rippling switched off, or while another
+  live message still carries its TrashNothing post id - one item held as several messages,
+  which would otherwise reach the same people once per copy. `FREEGLE_TN_INGEST_POSTS_VIA_API`
+  governs how TrashNothing posts arrive, and stopped new such sets being created; it releases
+  nothing already in the database, and the expander never reads it. Sections 4a and 4b.
 
   Agreeing on the answer is not sufficient: how a surface ASKS costs as much as what it
   concludes. The lane rings WERE 37,000-vertex polygons stored as JSON, so the read question

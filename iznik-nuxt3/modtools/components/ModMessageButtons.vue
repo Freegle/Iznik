@@ -18,6 +18,7 @@
         label="Reject Edit"
       />
       <ModMessageButton
+        v-if="modMessagingAllowed"
         :messageid="message.id"
         :groupid="groupid"
         variant="primary"
@@ -40,6 +41,7 @@
         :messageid="message.id"
         :groupid="groupid"
         :is-home-group="isHomeGroup"
+        :no-member-message="!modMessagingAllowed"
         variant="warning"
         icon="times"
         reject
@@ -84,7 +86,7 @@
     </div>
     <div v-else-if="approved" class="d-inline">
       <ModMessageButton
-        v-if="isHomeGroup"
+        v-if="isHomeGroup && modMessagingAllowed"
         :messageid="message.id"
         :groupid="groupid"
         variant="primary"
@@ -120,8 +122,13 @@
         spam
         label="Delete as Spam"
       />
+      <!-- Outcomes are facts about the whole post, so they belong to the poster or to the
+           moderators of the group it was posted on. The server refuses them from a group
+           the post merely rippled into, so do not offer them there (Discourse 10102). -->
       <SpinButton
-        v-if="message.type === 'Offer' && !message.outcomes?.length"
+        v-if="
+          isHomeGroup && message.type === 'Offer' && !message.outcomes?.length
+        "
         variant="white"
         class="m-1"
         icon-name="check"
@@ -131,7 +138,9 @@
         @handle="outcome($event, 'Taken')"
       />
       <SpinButton
-        v-if="message.type === 'Wanted' && !message.outcomes?.length"
+        v-if="
+          isHomeGroup && message.type === 'Wanted' && !message.outcomes?.length
+        "
         variant="white"
         class="m-1"
         icon-name="check"
@@ -141,7 +150,7 @@
         @handle="outcome($event, 'Received')"
       />
       <SpinButton
-        v-if="!message.outcomes?.length"
+        v-if="isHomeGroup && !message.outcomes?.length"
         variant="white"
         class="m-1"
         icon-name="trash-alt"
@@ -174,7 +183,7 @@
       </b-button>
     </div>
     <client-only>
-      <div class="mt-1 mb-1 d-flex flex-wrap">
+      <div v-if="modMessagingAllowed" class="mt-1 mb-1 d-flex flex-wrap">
         <OurToggle
           v-model="allowAutoSend"
           :height="30"
@@ -241,6 +250,16 @@ const props = defineProps({
     required: false,
     default: false,
   },
+
+  // False for a TN post whose poster never joined Freegle. Every action that would send
+  // them something - Blank Reply, the standard messages, a Reject with an explanation -
+  // is withdrawn; Approve, Delete and Hold are not. Defaults true so ordinary posts are
+  // untouched. See the Go modmessaging package for the server-side half.
+  modMessagingAllowed: {
+    type: Boolean,
+    required: false,
+    default: true,
+  },
 })
 
 const messageStore = useMessageStore()
@@ -274,18 +293,18 @@ const heldByOnThisGroup = computed(() => {
   return g?.heldby || null
 })
 
+// A post that rippled to several groups has one row per group, each with its own
+// collection. The buttons describe the copy being administered (props.groupid), not
+// whichever other group still has the post waiting: with the old any-group reading, an
+// Approved copy showed the Pending buttons while a neighbour's copy was still Pending, and
+// a Delete there was refused by the server as "no longer pending" (Discourse 10102). With
+// no group in context, fall back to any row, as before.
 function hasCollection(coll) {
-  let ret = false
-
-  if (message.value?.groups) {
-    message.value.groups.forEach((group) => {
-      if (group.collection === coll) {
-        ret = true
-      }
-    })
-  }
-
-  return ret
+  const groups = message.value?.groups || []
+  const scoped = props.groupid
+    ? groups.filter((g) => parseInt(g.groupid) === parseInt(props.groupid))
+    : groups
+  return scoped.some((g) => g.collection === coll)
 }
 
 const pending = computed(() => {
@@ -341,6 +360,10 @@ const stdmsgs = computed(() => {
 })
 
 const filterByAction = computed(() => {
+  if (!props.modMessagingAllowed) {
+    return []
+  }
+
   if (modconfig.value) {
     return stdmsgs.value.filter((stdmsg) => {
       return validActions.value.includes(stdmsg.action)

@@ -83,6 +83,43 @@ func TestVectorSearchBasic(t *testing.T) {
 	assert.Equal(t, "sofa", results[0].Matchedon.Word)
 }
 
+// TestVectorSearchLexicalGuarantee verifies the in-memory replacement for the
+// retired keyword index: a post whose subject literally contains the query words
+// is returned even when its embedding cosine is far below MinVectorScore (and so
+// it would be dropped by the semantic tiers), because LexicalMatch surfaces it.
+func TestVectorSearchLexicalGuarantee(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
+	queryVec := makeTestVec(1.0)
+	// A "white goods bundle" post whose stored vector is ANTIPARALLEL to the query
+	// (cosine ~ -1, far below MinVectorScore). Only the lexical guarantee can
+	// return it.
+	const lexID = uint64(660001)
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: lexID, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "White goods bundle", Arrival: time.Now(), SubjectVec: makeAntiparallelVec(1.0)},
+	})
+	defer embedding.Global.SetEntries(nil)
+
+	server := mockSidecarReturning(t, queryVec[:])
+	defer server.Close()
+	embedding.SetSidecarURL(server.URL)
+	defer embedding.SetSidecarURL("")
+
+	// "white" is a stopword filtered by GetWords, so the effective query word is
+	// "goods" — which the subject contains. The post must be returned despite the
+	// deeply-negative cosine.
+	results, _, err := message.VectorSearch("goods", 10, nil, nil, "", 0, 0, 0, 0)
+	require.NoError(t, err)
+	found := false
+	for _, r := range results {
+		if r.Msgid == lexID {
+			found = true
+		}
+	}
+	assert.True(t, found, "a subject containing the query word must be returned even with a below-threshold cosine")
+}
+
 func TestVectorSearchKeywordBoost(t *testing.T) {
 	embedding.ResetQueryCache()
 	t.Cleanup(embedding.ResetQueryCache)
@@ -330,50 +367,29 @@ func TestStoreSetEntriesAndCount(t *testing.T) {
 	assert.Equal(t, 0, embedding.Global.Count())
 }
 
-// TestSearchHandlerVectorModeHybridIncludesKeyword verifies the hybrid search
-// contract for searchmode=vector: vector and keyword run in parallel and results
-// are merged. Keyword guarantees exact lexical matches appear even when the
-// embedding model returns nothing above MinVectorScore (e.g. short titles, UK
-// retail terms). This is deterministic — unlike the old flaky network-triggered
-// fallback that produced different result sets on repeat attempts (Discourse 9594),
-// the hybrid always runs both paths, so the output is stable for identical inputs.
-func TestSearchHandlerVectorModeHybridIncludesKeyword(t *testing.T) {
+// TestSearchHandlerLexicalGuaranteeViaEndpoint verifies at the endpoint level
+// that a post whose subject literally contains the query word is returned even
+// when its embedding cosine is far below MinVectorScore — the in-memory lexical
+// guarantee that replaced the keyword index (short titles, UK retail terms the
+// model misses). Also deterministic across repeat calls (Discourse 9594).
+func TestSearchHandlerLexicalGuaranteeViaEndpoint(t *testing.T) {
 	embedding.ResetQueryCache()
 	t.Cleanup(embedding.ResetQueryCache)
 
-	prefix := uniquePrefix("vectorhybrid")
+	prefix := uniquePrefix("vectorlexical")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 
-	// Create a message whose indexed words match a keyword search for
-	// "television" (via exact word match on the search index).
-	CreateTestMessage(t, userID, groupID, "television stand oak", 55.9533, -3.1883)
-
-	// Confirm the keyword path actually finds this message — otherwise the
-	// assertions below would pass trivially.
-	keywordResp, _ := getApp().Test(httptest.NewRequest(
-		"GET",
-		"/api/message/search/television?searchmode=keyword&groupids="+strconv.FormatUint(groupID, 10),
-		nil,
-	), 60000)
-	require.Equal(t, 200, keywordResp.StatusCode)
-	var keywordResults []message.SearchResult
-	json.NewDecoder(keywordResp.Body).Decode(&keywordResults)
-	require.NotEmpty(t, keywordResults, "sanity check: keyword search must find the seeded message")
-
-	// Set up the embedding store with ONE entry whose vector points in the
-	// opposite direction to the query — cosine ≈ -1, far below MinVectorScore.
-	// Count() > 0 so the handler enters the hybrid branch; vector returns nothing
-	// above threshold, but the keyword leg of the hybrid must still surface the
-	// exact match.
+	// A store entry whose subject contains "television" but whose vector is
+	// antiparallel to the query (cosine ≈ -1). Only the lexical guarantee can
+	// return it — the semantic tiers drop it.
 	queryVec := makeTestVec(1.0)
 	antiparallel := makeAntiparallelVec(1.0)
+	const lexID = uint64(999998)
 	embedding.Global.SetEntries([]embedding.Entry{
 		{
-			Msgid: 999999, Groupid: groupID, Msgtype: "Offer",
+			Msgid: lexID, Groupid: groupID, Msgtype: "Offer",
 			Lat: 55.9533, Lng: -3.1883,
-			Subject: "totally unrelated noise", Arrival: time.Now(),
+			Subject: "television stand oak", Arrival: time.Now(),
 			SubjectVec: antiparallel,
 		},
 	})
@@ -384,37 +400,9 @@ func TestSearchHandlerVectorModeHybridIncludesKeyword(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	// searchmode=vector with empty vector results: the hybrid keyword leg must
-	// surface "television stand oak" so exact matches are never silently dropped.
-	hybridResp, _ := getApp().Test(httptest.NewRequest(
-		"GET",
-		"/api/message/search/television?searchmode=vector&groupids="+strconv.FormatUint(groupID, 10),
-		nil,
-	), 60000)
-	require.Equal(t, 200, hybridResp.StatusCode)
-
-	var hybridResults []message.SearchResult
-	json.NewDecoder(hybridResp.Body).Decode(&hybridResults)
-
-	// Hybrid must include the keyword match — this is the exact-match guarantee.
-	assert.NotEmpty(t, hybridResults,
-		"hybrid must surface keyword match even when vector returns nothing above threshold")
-
-	// The antiparallel noise entry (msgid 999999) must never appear — it is
-	// below MinVectorScore and does not match the keyword either.
-	for _, r := range hybridResults {
-		assert.NotEqual(t, uint64(999999), r.Msgid,
-			"below-threshold vector entry must not appear in hybrid results")
-	}
-
-	// The behaviour must be deterministic: repeated calls with identical inputs
-	// return identical result sets (no network-flap mode switching).
-	runAgain := func() []uint64 {
-		resp, _ := getApp().Test(httptest.NewRequest(
-			"GET",
-			"/api/message/search/television?searchmode=vector&groupids="+strconv.FormatUint(groupID, 10),
-			nil,
-		), 60000)
+	url := "/api/message/search/television?groupids=" + strconv.FormatUint(groupID, 10)
+	run := func() []uint64 {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil), 60000)
 		require.Equal(t, 200, resp.StatusCode)
 		var results []message.SearchResult
 		json.NewDecoder(resp.Body).Decode(&results)
@@ -424,11 +412,16 @@ func TestSearchHandlerVectorModeHybridIncludesKeyword(t *testing.T) {
 		}
 		return ids
 	}
-	first := make([]uint64, len(hybridResults))
-	for i, r := range hybridResults {
-		first[i] = r.Msgid
+
+	first := run()
+	found := false
+	for _, id := range first {
+		if id == lexID {
+			found = true
+		}
 	}
-	assert.Equal(t, first, runAgain(), "hybrid search must be deterministic for identical inputs")
+	assert.True(t, found, "lexical guarantee must surface a subject-word match even at cosine ~ -1")
+	assert.Equal(t, first, run(), "search must be deterministic for identical inputs")
 }
 
 // TestSearchHandlerVectorModeIsDeterministic confirms the same vector query
@@ -465,7 +458,7 @@ func TestSearchHandlerVectorModeIsDeterministic(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	url := "/api/message/search/television?searchmode=vector&groupids=" + strconv.FormatUint(groupID, 10)
+	url := "/api/message/search/television?groupids=" + strconv.FormatUint(groupID, 10)
 
 	runOnce := func() []uint64 {
 		resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil), 60000)

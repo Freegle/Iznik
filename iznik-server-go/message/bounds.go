@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -90,6 +91,127 @@ func ownMessageIDs(db *gorm.DB, ids []uint64, userid uint64) map[uint64]bool {
 	}
 
 	return own
+}
+
+// whenVisibleRow is one answer from stampWhenVisible's batched lookup.
+type whenVisibleRow struct {
+	ID           uint64
+	Posted       time.Time
+	VisibleSince time.Time
+}
+
+// whenVisibleChunk is the IN-list size for the date lookup. Measured on production over the
+// 54,343 posts a country-wide no-location in-bounds call returns: 1,000-id chunks took
+// 2.6-4.0s in total, 10,000-id chunks 1.7s, and 20,000 flipped the plan and took 8s - so this
+// is the sweet spot, not the likes lookup's boundsLikesChunk.
+const whenVisibleChunk = 10000
+
+// whenVisibleTTL is how long a post's two dates are remembered in-process. They move only on
+// a repost (the daily autorepost batch) or an onward ripple, and every browse surface reads
+// the same cache, so a few minutes' lag is invisible - while the country-wide in-bounds
+// fallback, asked for the same tens of thousands of posts by member after member, stops
+// paying ~1.7s of lookups per call. A var so tests can shorten it.
+var whenVisibleTTL = 5 * time.Minute
+
+// whenVisibleSweepAt bounds the cache: once it holds this many entries the next store sweeps
+// out the expired ones. Live posts number ~60k, so this is hit only by churn.
+const whenVisibleSweepAt = 200000
+
+type whenVisibleEntry struct {
+	row     whenVisibleRow
+	expires time.Time
+}
+
+var (
+	whenVisibleMu    sync.Mutex
+	whenVisibleCache = map[uint64]whenVisibleEntry{}
+)
+
+// whenVisibleCached splits ids into the answers still valid in the cache at now and the ids
+// that need a lookup. Pure, so the cache contract is unit-testable without a database.
+func whenVisibleCached(ids []uint64, now time.Time) (hits map[uint64]whenVisibleRow, misses []uint64) {
+	hits = make(map[uint64]whenVisibleRow, len(ids))
+	whenVisibleMu.Lock()
+	defer whenVisibleMu.Unlock()
+	for _, id := range ids {
+		if e, ok := whenVisibleCache[id]; ok && e.expires.After(now) {
+			hits[id] = e.row
+			continue
+		}
+		misses = append(misses, id)
+	}
+	return hits, misses
+}
+
+// whenVisibleStore remembers freshly looked-up rows until now+whenVisibleTTL, sweeping expired
+// entries first when the cache has grown past whenVisibleSweepAt.
+func whenVisibleStore(rows []whenVisibleRow, now time.Time) {
+	whenVisibleMu.Lock()
+	defer whenVisibleMu.Unlock()
+	if len(whenVisibleCache) >= whenVisibleSweepAt {
+		for id, e := range whenVisibleCache {
+			if !e.expires.After(now) {
+				delete(whenVisibleCache, id)
+			}
+		}
+	}
+	expires := now.Add(whenVisibleTTL)
+	for _, r := range rows {
+		whenVisibleCache[r.ID] = whenVisibleEntry{row: r, expires: expires}
+	}
+}
+
+// stampWhenVisible fills Posted (when the post was written, messages.arrival) and VisibleSince
+// (the oldest arrival across the groups the post is live on) on every summary - the two clocks
+// the browse list needs: the client's "Newest posted" sort and each card's age badge both read
+// VisibleSince, and the badge adds "first posted N days" from Posted (message.MessageSummary).
+//
+// This feed answered with neither, so a member who moved the map and sorted by Newest posted
+// got the ripple-bumped spatial arrival as the order while the cards, re-rendered from the
+// full message record, printed the group arrival - the same two-clock contradiction the reach
+// feed fixed (Discourse 9844, 9808/801). The list locks its order at first paint, so the field
+// has to be on the summary, not repaired later from the full record.
+//
+// Batched in boundsLikesChunk-sized IN (...) lookups, for the same reason viewedMessageIDs is:
+// the no-location country-wide fallback can match most of messages_spatial, and a correlated
+// subquery inside that SELECT would turn into one messages_groups probe per matched row.
+func stampWhenVisible(db *gorm.DB, msgs []MessageSummary) {
+	ids := make([]uint64, len(msgs))
+	for ix, m := range msgs {
+		ids[ix] = m.ID
+	}
+
+	when := whenVisible(db, ids)
+	for ix := range msgs {
+		if r, ok := when[msgs[ix].ID]; ok {
+			msgs[ix].Posted = r.Posted
+			msgs[ix].VisibleSince = r.VisibleSince
+		}
+	}
+}
+
+// whenVisible answers Posted and VisibleSince for each id: from the in-process cache where
+// it can, and otherwise in whenVisibleChunk-sized batches. Shared by the in-bounds feed and
+// search results, which both need the same two dates the browse card is built from.
+func whenVisible(db *gorm.DB, ids []uint64) map[uint64]whenVisibleRow {
+	now := time.Now()
+	when, misses := whenVisibleCached(ids, now)
+	for _, chunk := range chunkWindows(misses, whenVisibleChunk) {
+		var rows []whenVisibleRow
+		// Same expression as message.go's full-record select and message/groups.go, so every
+		// surface the card is built from agrees. A post with no live group row dates from
+		// its write time.
+		db.Raw("SELECT m.id, m.arrival AS posted, "+
+			"COALESCE(MIN(mg.arrival), m.arrival) AS visible_since "+
+			"FROM messages m "+
+			"LEFT JOIN messages_groups mg ON mg.msgid = m.id AND mg.deleted = 0 "+
+			"WHERE m.id IN (?) GROUP BY m.id, m.arrival", chunk).Scan(&rows)
+		for _, r := range rows {
+			when[r.ID] = r
+		}
+		whenVisibleStore(rows, now)
+	}
+	return when
 }
 
 func Bounds(c *fiber.Ctx) error {
@@ -265,6 +387,12 @@ func Bounds(c *fiber.Ctx) error {
 
 	if limit64 > 0 && uint64(len(msgs)) > limit64 {
 		msgs = msgs[:limit64]
+	}
+
+	// Date every summary the way the card will (see stampWhenVisible) - after the cut, since
+	// the order above does not read these dates and only what is returned needs them.
+	if len(msgs) > 0 {
+		stampWhenVisible(db, msgs)
 	}
 
 	// One batched routing call resolves every location's road-aware blur.

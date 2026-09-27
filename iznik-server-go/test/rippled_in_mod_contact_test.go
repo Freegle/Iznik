@@ -59,13 +59,13 @@ func rippledInPost(t *testing.T, prefix string, posterID uint64, collection stri
 	return origin, rippled, msgID
 }
 
-// The origin group is the one the post was not rippled into. Deriving it from an
-// arrival window instead loses it for any post moderated more than a few minutes after
+// The home groups are the ones the post was not rippled into. Deriving them from an
+// arrival window instead loses them for any post moderated more than a few minutes after
 // it arrived, because approving re-stamps messages_groups.arrival to the approval time
 // while messages.arrival keeps the time the post was received. The rabbits post in
 // Discourse 10102 arrived on 30 Aug and was approved on 2 Sep, so every group it had
 // rippled into counted as its origin.
-func TestMessageOriginGroupSurvivesLateApproval(t *testing.T) {
+func TestHomeGroupsSurviveLateApproval(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("originlate")
@@ -77,14 +77,14 @@ func TestMessageOriginGroupSurvivesLateApproval(t *testing.T) {
 	db.Exec("UPDATE messages_groups SET arrival = NOW() WHERE msgid = ? AND groupid = ?", msgID, origin)
 	db.Exec("UPDATE messages_groups SET arrival = NOW() + INTERVAL 1 MINUTE WHERE msgid = ? AND groupid = ?", msgID, rippled)
 
-	assert.Equal(t, origin, message.MessageOriginGroup(db, msgID),
-		"origin is the group the post was not rippled into, however late it was approved")
+	assert.Equal(t, map[uint64]bool{origin: true}, message.HomeGroups(db, msgID),
+		"home is the group the post was not rippled into, however late it was approved")
 }
 
-// With several rippled-in copies and no surviving origin row the origin is unknown, and
+// With several rippled-in copies and no surviving home row the home is unknown, and
 // the caller falls back to notifying rather than silently dropping a message the poster
 // may need.
-func TestMessageOriginGroupUnknownWhenEveryCopyIsRippledIn(t *testing.T) {
+func TestHomeGroupsUnknownWhenEveryCopyIsRippledIn(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("originnone")
@@ -93,8 +93,8 @@ func TestMessageOriginGroupUnknownWhenEveryCopyIsRippledIn(t *testing.T) {
 
 	db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, origin)
 
-	assert.Equal(t, uint64(0), message.MessageOriginGroup(db, msgID),
-		"no origin row left means unknown, not the nearest rippled-in group")
+	assert.Empty(t, message.HomeGroups(db, msgID),
+		"no home row left means unknown, not the nearest rippled-in group")
 }
 
 // Rejecting a rippled-in copy takes the post off that community. The poster is not told,
@@ -602,4 +602,131 @@ func TestRejectingAnOrdinaryMemberStillTellsThem(t *testing.T) {
 
 	assert.Equal(t, 1, memberNotifyFlag(t, memberID, groupID),
 		"their own members are told when they are removed")
+}
+
+// crossPostedPost is a TrashNothing cross-post: the member sent the SAME post to two
+// communities, whose per-group mails arrive a second apart, and it later rippled into a
+// third. Both direct copies carry rippled_in = 0, as the mail importer writes them; only
+// the third is rippling's. Returns (first, second, rippled, msgid).
+//
+// Discourse 10115: a Tower Hamlets mod rejecting the copy the member had sent to Tower
+// Hamlets was told it had "rippled in" and that the member would not be told, because
+// the home group was modelled as ONE row - the earliest to arrive - and Southwark's mail
+// had landed one second earlier.
+func crossPostedPost(t *testing.T, prefix string, posterID uint64, collection string) (uint64, uint64, uint64, uint64) {
+	t.Helper()
+	db := database.DBConn
+
+	first, rippled, msgID := rippledInPost(t, prefix, posterID, collection)
+	second := CreateTestGroup(t, prefix+"_second")
+
+	// CreateTestMessage stamps the first copy 15 minutes ago; this one is a second later.
+	res := db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
+		"VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 899 SECOND), ?, 0, 0)", msgID, second, collection)
+	require.NoError(t, res.Error, "seed the second direct copy")
+
+	return first, second, rippled, msgID
+}
+
+// Every direct copy is a home group. The second community the member posted to is as
+// much theirs as the first, so its rejection reaches them.
+func TestRejectOnSecondDirectCopyStillNotifiesPoster(t *testing.T) {
+	prefix := uniquePrefix("xpostreject")
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, second, _, msgID := crossPostedPost(t, prefix, posterID, "Pending")
+	CreateTestMembership(t, modID, second, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	status := postMessageAction(t, modToken, map[string]interface{}{
+		"id": msgID, "action": "Reject", "groupid": second,
+		"subject": "Sorry", "body": "We don't accept this.",
+	})
+	assert.Equal(t, fiber.StatusOK, status)
+
+	assert.Equal(t, 1, notifyPosterFlag(t, "email_message_rejected", msgID, second),
+		"a community the member posted to directly tells them when it rejects")
+}
+
+// And its Blank Reply is allowed, for the same reason.
+func TestReplyFromSecondDirectCopyIsAllowed(t *testing.T) {
+	prefix := uniquePrefix("xpostreply")
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, second, _, msgID := crossPostedPost(t, prefix, posterID, "Approved")
+	CreateTestMembership(t, modID, second, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	status := postMessageAction(t, modToken, map[string]interface{}{
+		"id": msgID, "action": "Reply", "groupid": second,
+		"subject": "Re: OFFER", "body": "Is this still available?",
+	})
+	assert.Equal(t, fiber.StatusOK, status)
+
+	assert.Equal(t, 1, notifyPosterFlag(t, "email_message_reply", msgID, second),
+		"a community the member posted to directly can write to them")
+}
+
+// Deleting the second direct copy tells the poster too.
+func TestDeleteOnSecondDirectCopyStillNotifiesPoster(t *testing.T) {
+	prefix := uniquePrefix("xpostdelete")
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, second, _, msgID := crossPostedPost(t, prefix, posterID, "Approved")
+	CreateTestMembership(t, modID, second, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	status := postMessageAction(t, modToken, map[string]interface{}{
+		"id": msgID, "action": "Delete", "groupid": second,
+		"subject": "Sorry", "body": "Not suitable here.",
+	})
+	assert.Equal(t, fiber.StatusOK, status)
+
+	assert.Equal(t, 1, notifyPosterFlag(t, "email_message_rejected", msgID, second),
+		"a community the member posted to directly tells them when it deletes")
+}
+
+// The copy that rippled in on its own stays silent, cross-post or not.
+func TestRejectOnRippledCopyOfCrossPostStaysSilent(t *testing.T) {
+	prefix := uniquePrefix("xpostripple")
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, _, rippled, msgID := crossPostedPost(t, prefix, posterID, "Pending")
+	CreateTestMembership(t, modID, rippled, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	status := postMessageAction(t, modToken, map[string]interface{}{
+		"id": msgID, "action": "Reject", "groupid": rippled,
+		"subject": "Sorry", "body": "We don't accept this.",
+	})
+	assert.Equal(t, fiber.StatusOK, status)
+
+	assert.Equal(t, 0, notifyPosterFlag(t, "email_message_rejected", msgID, rippled),
+		"the rippled-in copy's rejection is still not sent to the poster")
+}
+
+// HomeGroups is the set every notify decision reads: every direct copy, none of the
+// rippled ones, however late any of them was approved.
+func TestHomeGroupsAreEveryDirectCopy(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("homeset")
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	first, second, rippled, msgID := crossPostedPost(t, prefix, posterID, "Approved")
+
+	// Approving re-stamps arrival: the first copy now looks NEWEST of the three.
+	db.Exec("UPDATE messages_groups SET arrival = NOW() + INTERVAL 1 HOUR WHERE msgid = ? AND groupid = ?", msgID, first)
+
+	home := message.HomeGroups(db, msgID)
+	assert.True(t, home[first], "the first direct copy is home")
+	assert.True(t, home[second], "the second direct copy is home")
+	assert.False(t, home[rippled], "the rippled-in copy is not")
+
+	assert.Equal(t, 1, message.NotifyPosterFlag(home, first))
+	assert.Equal(t, 1, message.NotifyPosterFlag(home, second))
+	assert.Equal(t, 0, message.NotifyPosterFlag(home, rippled))
 }

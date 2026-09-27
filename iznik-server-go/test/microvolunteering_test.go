@@ -457,34 +457,9 @@ func TestMicroVolunteeringResponsePhotoRotateOwnPhotoAllowed(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 }
 
-func TestMicroVolunteeringResponseSearchTerm(t *testing.T) {
-	db := database.DBConn
-
-	prefix := uniquePrefix("mv_search")
-	userID := CreateTestUser(t, prefix, "User")
-	_, token := CreateTestSession(t, userID)
-
-	// Create test items
-	item1ID := CreateTestItem(t, "testitem1_"+prefix)
-	item2ID := CreateTestItem(t, "testitem2_"+prefix)
-
-	body := fmt.Sprintf(`{"searchterm1":%d,"searchterm2":%d}`, item1ID, item2ID)
-	req := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+token,
-		strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(req)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var result map[string]interface{}
-	json2.Unmarshal(rsp(resp), &result)
-	assert.Equal(t, float64(0), result["ret"])
-
-	// Verify the microaction was recorded
-	var actionType string
-	db.Raw("SELECT actiontype FROM microactions WHERE userid = ? AND item1 = ? AND item2 = ? ORDER BY id DESC LIMIT 1",
-		userID, item1ID, item2ID).Row().Scan(&actionType)
-	assert.Equal(t, microvolunteering.ChallengeSearchTerm, actionType)
-}
+// (Retired) TestMicroVolunteeringResponseSearchTerm removed with the SearchTerm
+// challenge — the keyword-similarity dataset it built is obsolete under vector
+// search.
 
 func TestMicroVolunteeringResponsePhotoRotate(t *testing.T) {
 	db := database.DBConn
@@ -819,5 +794,46 @@ func TestGetMicrovolunteering_EEELabel_RestrictsToClassifiedItems(t *testing.T) 
 			assert.NotEqual(t, msgUnclassified, result.EEELabel.Messageid,
 				"EEELabel must never serve a message whose attachments are not in eee_classified_attachments")
 		}
+	}
+}
+
+// A rippled copy retracted from a group keeps its row with deleted = 1. The vote
+// is refused for a member whose only copy is gone, so offering it there produced
+// a 403 (SR-DYS36).
+func TestGetMicrovolunteering_CheckMessageSkipsCopyRemovedFromMyGroup(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mv_rm")
+
+	liveGroup := CreateTestGroup(t, prefix+"_live")
+	myGroup := CreateTestGroup(t, prefix+"_mine")
+	db.Exec("UPDATE `groups` SET microvolunteering = 1 WHERE id IN (?, ?)", liveGroup, myGroup)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	db.Exec("UPDATE users SET trustlevel = ? WHERE id = ?", microvolunteering.TrustModerate, userID)
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	CreateTestMembership(t, userID, myGroup, "Member")
+	CreateTestMembership(t, senderID, liveGroup, "Member")
+	db.Exec("INSERT INTO microactions (actiontype, userid, version, comments, timestamp, score_negative) VALUES (?, ?, 4, 'Test block', NOW(), 0)", microvolunteering.ChallengeInvite, userID)
+
+	for _, collection := range []string{"Approved", "Pending"} {
+		var msgID uint64
+		db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, arrival, lat, lng) VALUES (?, 'Test Offer', 'Test body', 'Test body', 'Offer', NOW(), 0, 0)", senderID)
+		db.Raw("SELECT LAST_INSERT_ID()").Scan(&msgID)
+		db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, ?, NOW())", msgID, liveGroup, collection)
+		db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, rippled_in, deleted) VALUES (?, ?, ?, NOW(), 1, 1)", msgID, myGroup, collection)
+		db.Exec("INSERT INTO messages_spatial (msgid, groupid, point, arrival, successful) VALUES (?, ?, ST_GeomFromText('POINT(0 0)', 3857), NOW(), 0)", msgID, liveGroup)
+
+		token := getToken(t, userID)
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=CheckMessage", nil))
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var result microvolunteering.Challenge
+		json2.Unmarshal(rsp(resp), &result)
+		if result.Msgid != nil {
+			assert.NotEqual(t, msgID, *result.Msgid, "%s post whose copy was removed from my group must not be offered", collection)
+		}
+
+		db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
 	}
 }

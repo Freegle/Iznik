@@ -5,9 +5,11 @@
     </h2>
     <GroupHeader
       v-if="group && showGroupHeader"
+      v-model:collapsed="groupHeaderCollapsed"
       :group="group"
       show-join
       :show-give-ask="showGiveAsk"
+      collapsible
     />
     <h2 class="visually-hidden">List of wanteds and offers</h2>
     <div id="visobserver" v-observe-visibility="visibilityChanged" />
@@ -212,6 +214,7 @@ import { useMessageStore } from '~/stores/message'
 import { useNearbyStore } from '~/stores/nearby'
 import { throttleFetches } from '~/composables/useThrottle'
 import { useMe } from '~/composables/useMe'
+import { useGroupHeaderCollapsed } from '~/composables/groupHeaderCollapse'
 import { useScrollDepth } from '~/composables/useScrollDepth'
 import { useFeedCountSync } from '~/composables/useFeedCountSync'
 import {
@@ -436,6 +439,11 @@ const group = computed(() => {
 
   return ret
 })
+
+// Whether the community header above the feed is folded up to a compact bar. Starts folded
+// for a member of more than a week, full for a newer member or a non-member; the member can
+// toggle it, and it is reset when the feed moves to another community.
+const groupHeaderCollapsed = useGroupHeaderCollapsed(group, myMemberships)
 
 const reduceSuccessful = computed(() => {
   const ret = []

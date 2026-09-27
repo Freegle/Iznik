@@ -56,4 +56,38 @@ type MessageGroup struct {
 	// on Pending messages viewed by a group moderator. nil = no auto-approval expected
 	// (held / spam / danger-signalled, or not on any auto-approve path).
 	Autoapproveat *time.Time `json:"autoapproveat,omitempty" gorm:"-"`
+	// ModMessagingAllowed is whether mods on this group may message the poster of this
+	// message directly. Defaults true for ordinary Freegle posts; TN API ingestion sets
+	// it false unless TN told us the poster consented for this group (see
+	// PostSyncer::processPost / GroupPostIngestionService in iznik-batch).
+	ModMessagingAllowed bool `json:"mod_messaging_allowed"`
+}
+
+// modMessagingAllowed reduces a post's group rows to the one message-level answer the
+// moderation UI needs: may this post's poster be talked to at all?
+//
+// Only the ORIGIN row (rippled_in = 0) carries the answer. The rippling engine inserts its
+// copies without the column, so they take the table default (allowed) and would mask an
+// unaddressed origin. A post with no origin row among the rows supplied reads as allowed -
+// the safe direction, since everything this gates removes moderator abilities.
+func modMessagingAllowed(groups []MessageGroup) bool {
+	for _, g := range groups {
+		if g.RippledIn == 0 && !g.ModMessagingAllowed {
+			return false
+		}
+	}
+
+	return true
+}
+
+// listModMessagingAllowed is modMessagingAllowed for the mod queue's leaner group rows.
+// Same rule, different struct - the queue carries only the handful of columns it renders.
+func listModMessagingAllowed(groups []MessageGroupInfo) bool {
+	for _, g := range groups {
+		if g.RippledIn == 0 && !g.ModMessagingAllowed {
+			return false
+		}
+	}
+
+	return true
 }

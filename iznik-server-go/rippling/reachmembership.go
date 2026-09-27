@@ -29,8 +29,10 @@ type ReachRowInfo struct {
 	Lng      *float64
 	Schedule *string
 	Arrival  *time.Time
-	InReach  bool
-	Decided  bool
+	// Status is rippling_reach.status verbatim: expanding | stopped | done | held.
+	Status  string
+	InReach bool
+	Decided bool
 }
 
 // ReachMembership fetches the listed reach rows (no status filter - callers
@@ -50,9 +52,10 @@ func ReachMembership(db *gorm.DB, msgids []uint64, lng, lat float64) (map[uint64
 		Lng      *float64   `gorm:"column:lng"`
 		Schedule *string    `gorm:"column:schedule"`
 		Arrival  *time.Time `gorm:"column:arrival"`
+		Status   string     `gorm:"column:status"`
 	}
 	if err := db.Table("rippling_reach rr").
-		Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival").
+		Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival, rr.status").
 		Where("rr.msgid IN ?", msgids).
 		Scan(&rows).Error; err != nil {
 		log.Printf("reach membership fetch failed: %v", err)
@@ -67,7 +70,7 @@ func ReachMembership(db *gorm.DB, msgids []uint64, lng, lat float64) (map[uint64
 	verdicts := LabelVerdicts(lat, lng, msgids)
 
 	for _, r := range rows {
-		info := ReachRowInfo{Msgid: r.Msgid, Lat: r.Lat, Lng: r.Lng, Schedule: r.Schedule, Arrival: r.Arrival}
+		info := ReachRowInfo{Msgid: r.Msgid, Lat: r.Lat, Lng: r.Lng, Schedule: r.Schedule, Arrival: r.Arrival, Status: r.Status}
 		verdict := verdicts[r.Msgid]
 		info.InReach = verdict == LabelVerdictIn
 		info.Decided = verdict == LabelVerdictIn || verdict == LabelVerdictOut

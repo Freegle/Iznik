@@ -1265,6 +1265,120 @@ func TestPostChatRoomBlockThenClose(t *testing.T) {
 	assert.Equal(t, "Blocked", status, "Closed should not override Blocked")
 }
 
+// postChatRoom posts a roster update as the token's user and returns the
+// decoded response.
+func postChatRoom(t *testing.T, token string, payload map[string]interface{}) map[string]interface{} {
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	return result
+}
+
+// rosterStatusFor returns the status the roster in a POST /chatrooms response
+// reports for one member.
+func rosterStatusFor(result map[string]interface{}, userid uint64) string {
+	roster, _ := result["roster"].([]interface{})
+	for _, r := range roster {
+		entry := r.(map[string]interface{})
+		if uint64(entry["userid"].(float64)) == userid {
+			s, _ := entry["status"].(string)
+			return s
+		}
+	}
+	return ""
+}
+
+func TestPostChatRoomMarkReadKeepsBlocked(t *testing.T) {
+	// Opening a chat marks it read with a request that carries no status. That
+	// must not quietly lift a block: a member who blocked someone, then looked
+	// at the conversation, found the other person's nudges and messages
+	// reaching them again (Discourse #10153). Only an explicit Online - the
+	// Unblock button - clears a block.
+	prefix := uniquePrefix("blk_read")
+	db := database.DBConn
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	msgid := CreateTestChatMessage(t, chatid, user2ID, "hello")
+	_, token := CreateTestSession(t, user1ID)
+
+	result := postChatRoom(t, token, map[string]interface{}{"id": chatid, "status": "Blocked"})
+	assert.Equal(t, "Blocked", rosterStatusFor(result, user1ID))
+
+	// Mark as read, exactly as the client does when the chat is opened.
+	result = postChatRoom(t, token, map[string]interface{}{"id": chatid, "lastmsgseen": msgid, "allowback": false})
+	assert.Equal(t, "Blocked", rosterStatusFor(result, user1ID), "reading the chat must not unblock it")
+
+	var status string
+	var lastmsgseen uint64
+	db.Raw("SELECT status FROM chat_roster WHERE chatid = ? AND userid = ?", chatid, user1ID).Scan(&status)
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", chatid, user1ID).Scan(&lastmsgseen)
+	assert.Equal(t, "Blocked", status)
+	assert.Equal(t, msgid, lastmsgseen, "the read position is still recorded")
+
+	// A presence update (Away/Offline) is not an unblock either.
+	result = postChatRoom(t, token, map[string]interface{}{"id": chatid, "status": "Away"})
+	assert.Equal(t, "Blocked", rosterStatusFor(result, user1ID), "presence must not unblock")
+
+	// An explicit Online is the Unblock button: that does clear it.
+	result = postChatRoom(t, token, map[string]interface{}{"id": chatid, "status": "Online"})
+	assert.Equal(t, "Online", rosterStatusFor(result, user1ID))
+	db.Raw("SELECT status FROM chat_roster WHERE chatid = ? AND userid = ?", chatid, user1ID).Scan(&status)
+	assert.Equal(t, "Online", status)
+
+	// And with no block in place, reading still reopens as before.
+	postChatRoom(t, token, map[string]interface{}{"id": chatid, "status": "Closed"})
+	result = postChatRoom(t, token, map[string]interface{}{"id": chatid, "lastmsgseen": msgid, "allowback": false})
+	assert.Equal(t, "Online", rosterStatusFor(result, user1ID), "reading a merely hidden chat reopens it")
+}
+
+func TestPostChatRoomBlockRenegesPromises(t *testing.T) {
+	// Blocking someone withdraws any promise you made them (V1 parity:
+	// ChatRoom::updateRoster reneged on Block). Promises to other people are
+	// untouched.
+	prefix := uniquePrefix("blk_renege")
+	db := database.DBConn
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	blockedID := CreateTestUser(t, prefix+"_blocked", "User")
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	groupID := CreateTestGroup(t, prefix)
+	promisedMsg := CreateTestMessage(t, ownerID, groupID, prefix+" promised item", 52.5, -1.8)
+	otherMsg := CreateTestMessage(t, ownerID, groupID, prefix+" other item", 52.5, -1.8)
+	chatid := CreateTestChatRoom(t, ownerID, &blockedID, nil, "User2User")
+	_, token := CreateTestSession(t, ownerID)
+
+	db.Exec("REPLACE INTO messages_promises (msgid, userid) VALUES (?, ?)", promisedMsg, blockedID)
+	db.Exec("REPLACE INTO messages_promises (msgid, userid) VALUES (?, ?)", otherMsg, otherID)
+
+	result := postChatRoom(t, token, map[string]interface{}{"id": chatid, "status": "Blocked"})
+	assert.Equal(t, "Blocked", rosterStatusFor(result, ownerID))
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM messages_promises WHERE msgid = ? AND userid = ?", promisedMsg, blockedID).Scan(&count)
+	assert.Equal(t, int64(0), count, "promise to the blocked member is withdrawn")
+
+	db.Raw("SELECT COUNT(*) FROM messages_reneged WHERE msgid = ? AND userid = ?", promisedMsg, blockedID).Scan(&count)
+	assert.Equal(t, int64(1), count, "renege recorded for reliability")
+
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ? AND refmsgid = ? AND type = ?", chatid, promisedMsg, utils.CHAT_MESSAGE_RENEGED).Scan(&count)
+	assert.Equal(t, int64(1), count, "Reneged chat message posted in the chat")
+
+	db.Raw("SELECT COUNT(*) FROM messages_promises WHERE msgid = ? AND userid = ?", otherMsg, otherID).Scan(&count)
+	assert.Equal(t, int64(1), count, "promise to someone else is untouched")
+
+	// Blocking again is idempotent: nothing further to renege.
+	postChatRoom(t, token, map[string]interface{}{"id": chatid, "status": "Blocked"})
+	db.Raw("SELECT COUNT(*) FROM messages_reneged WHERE msgid = ? AND userid = ?", promisedMsg, blockedID).Scan(&count)
+	assert.Equal(t, int64(1), count)
+}
+
 func TestPostChatRoomNonExistentChat(t *testing.T) {
 	prefix := uniquePrefix("chat_ne")
 
@@ -1765,6 +1879,53 @@ func TestReferToSupportNotMember(t *testing.T) {
 	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 }
 
+// The button's main use: a moderator of the community refers a member-to-mods chat. The
+// moderator is never a participant of such a chat, so a participants-only check refused
+// every one of these with a 403 (Discourse 10199, 2026-09-25).
+func TestReferToSupportByGroupModerator(t *testing.T) {
+	prefix := uniquePrefix("refersupport_mod")
+	db := database.DBConn
+	memberID := CreateTestUser(t, prefix+"_m", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, memberID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	chatid := CreateTestChatRoom(t, memberID, nil, &groupID, "User2Mod")
+	CreateTestChatMessage(t, chatid, memberID, "Hello mods")
+	_, token := CreateTestSession(t, modID)
+
+	payload := map[string]interface{}{"id": chatid, "action": "ReferToSupport", "modtools": true}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'refer_to_support' AND JSON_EXTRACT(data, '$.chatid') = ? AND JSON_EXTRACT(data, '$.userid') = ?", chatid, modID).Scan(&taskCount)
+	assert.Equal(t, int64(1), taskCount, "the referral must be queued under the moderator who asked")
+}
+
+// A moderator of some other community, whose members are not in this chat, still may not.
+func TestReferToSupportByUnrelatedModerator(t *testing.T) {
+	prefix := uniquePrefix("refersupport_other")
+	memberID := CreateTestUser(t, prefix+"_m", "User")
+	otherModID := CreateTestUser(t, prefix+"_om", "Moderator")
+	groupID := CreateTestGroup(t, prefix)
+	otherGroupID := CreateTestGroup(t, prefix+"_other")
+	CreateTestMembership(t, memberID, groupID, "Member")
+	CreateTestMembership(t, otherModID, otherGroupID, "Moderator")
+	chatid := CreateTestChatRoom(t, memberID, nil, &groupID, "User2Mod")
+	_, token := CreateTestSession(t, otherModID)
+
+	payload := map[string]interface{}{"id": chatid, "action": "ReferToSupport", "modtools": true}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
 func TestReferToSupportNotLoggedIn(t *testing.T) {
 	payload := map[string]interface{}{"id": 1, "action": "ReferToSupport"}
 	s, _ := json2.Marshal(payload)
@@ -1799,7 +1960,6 @@ func TestReferToSupportMissingChatID(t *testing.T) {
 	resp, _ := getApp().Test(request)
 	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 }
-
 
 // Helper to set up a moderator with a group and User2Mod chat containing messages.
 func setupModChatData(t *testing.T, prefix string) (modID uint64, userID uint64, groupID uint64, chatID uint64, token string) {
@@ -2109,14 +2269,14 @@ func TestReviewChatMessagesSenderOnlyExcluded(t *testing.T) {
 	prefix := uniquePrefix("ReviewSenderOnly")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	otherGroupID := CreateTestGroup(t, prefix + "_other")
+	otherGroupID := CreateTestGroup(t, prefix+"_other")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, token := CreateTestSession(t, modID)
 
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
 	recipientID := CreateTestUser(t, prefix+"_recip", "User")
-	CreateTestMembership(t, senderID, groupID, "Member")    // sender in mod's group
+	CreateTestMembership(t, senderID, groupID, "Member")         // sender in mod's group
 	CreateTestMembership(t, recipientID, otherGroupID, "Member") // recipient in different group
 
 	chatID := CreateTestChatRoom(t, senderID, &recipientID, nil, "User2User")

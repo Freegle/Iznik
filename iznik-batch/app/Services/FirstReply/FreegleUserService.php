@@ -2,6 +2,7 @@
 
 namespace App\Services\FirstReply;
 
+use App\Models\User;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -121,7 +122,8 @@ class FreegleUserService
                 'userid' => $userId,
                 'email' => $email,
                 'preferred' => 1,
-                'backwards' => strrev($email),
+                // REVERSE(canon), not REVERSE(the address) - see .claude/rules/mail-and-data.md.
+                'backwards' => strrev(User::canonMail($email)),
                 'added' => now(),
             ]);
 

@@ -403,6 +403,20 @@
               <p v-else class="text-muted mb-2">
                 Starting investigation&hellip;
               </p>
+              <!-- What is being checked right now, in the volunteer's words.
+                   The raw tool calls (file reads, greps, SQL) are not listed:
+                   there are so many that the conclusions above scrolled away
+                   before anyone could read them. One line, replaced each
+                   time, keeps the "still working" signal without the noise.
+                   The snapshot progress bar below says it better while it
+                   is showing, so this yields to it. -->
+              <p
+                v-if="activity && !toolProgress"
+                class="transcript-activity small mb-2"
+                data-testid="transcript-activity"
+              >
+                {{ activity }}&hellip;
+              </p>
               <!-- Live progress for a long tool run (the member snapshot can
                    take minutes on a big account) - a moving bar with elapsed
                    time is the difference between "working" and "broken". -->
@@ -561,10 +575,13 @@ const query = ref('')
 // Processing
 const isProcessing = ref(false)
 const claudeSessionId = ref(null) // For Claude Code conversation continuity
-const transcript = ref([]) // Running transcript of thinking/tool/status steps
+const transcript = ref([]) // Running transcript: status line + conclusions (thinking steps)
 // Live progress of a long-running tool (the member snapshot): {percent,
 // section, etaMs, elapsedMs} from 'progress' SSE events, null when idle.
 const toolProgress = ref(null)
+// What the helper is checking right now, in plain words (see describeTool).
+// null between checks and while it is composing.
+const activity = ref(null)
 
 // Conversation
 const messages = ref([])
@@ -659,6 +676,7 @@ function changeUser() {
   query.value = ''
   claudeSessionId.value = null
   transcript.value = []
+  activity.value = null
   debugLog.value = []
   searchResults.value = []
   userSearch.value = ''
@@ -785,6 +803,30 @@ function scrollToBottom() {
   })
 }
 
+// A tool event names the tool and its raw arguments: a file path, a grep
+// pattern, SQL. The volunteer is not reading code, so say what kind of check
+// it is in their words. Anything unknown gets the generic label rather than
+// an internal name leaking onto the screen.
+const TOOL_ACTIVITY = {
+  Read: 'Reading the code',
+  Grep: 'Reading the code',
+  Glob: 'Reading the code',
+  identify_user: 'Identifying the member',
+  get_user_dump: 'Building the member snapshot',
+  query_dump: 'Querying the member snapshot',
+  db_query: 'Querying the database',
+  loki_search: 'Searching the logs',
+  sentry_search: 'Checking Sentry for errors',
+  discourse_search: 'Searching the Discourse forum',
+  code_history_search: 'Checking the code history',
+  git_fixed_already: 'Checking the code history',
+}
+
+function describeTool(message) {
+  const name = String(message || '').split(' ')[0]
+  return TOOL_ACTIVITY[name] || 'Checking'
+}
+
 function addDebugEntry(type, label, data) {
   if (debugMode.value) {
     debugLog.value.push({
@@ -811,6 +853,7 @@ async function submitQuery() {
   isProcessing.value = true
   transcript.value = []
   toolProgress.value = null
+  activity.value = null
 
   try {
     const result = await queryLogsForUser(queryText)
@@ -834,6 +877,7 @@ async function submitQuery() {
     isProcessing.value = false
     transcript.value = []
     toolProgress.value = null
+    activity.value = null
   }
 }
 
@@ -924,12 +968,17 @@ async function queryLogsForUser(userQuery) {
               // progress bar rather than the transcript.
               toolProgress.value =
                 event.message && !event.message.done ? event.message : null
-            } else if (
-              event.type === 'thinking' ||
-              event.type === 'tool' ||
-              event.type === 'status'
-            ) {
+            } else if (event.type === 'tool') {
+              // Not listed in the transcript - see the activity line in the
+              // template. The raw call is still wanted when something goes
+              // wrong (which SQL, which file), so Debug keeps it.
+              activity.value = describeTool(event.message)
+              addDebugEntry('tool', 'Tool call', event.message)
+              scrollToBottom()
+            } else if (event.type === 'thinking' || event.type === 'status') {
               transcript.value.push({ type: event.type, text: event.message })
+              // A conclusion means the last check has finished.
+              if (event.type === 'thinking') activity.value = null
               scrollToBottom()
             }
           } catch (e) {
@@ -1083,6 +1132,7 @@ function cancelQuery() {
   isProcessing.value = false
   transcript.value = []
   toolProgress.value = null
+  activity.value = null
 }
 
 function formatDate(dateStr) {
@@ -1229,9 +1279,9 @@ function formatDate(dateStr) {
   padding: 0.1rem 0;
 }
 
-.transcript-step.transcript-tool {
+/* The one-line "what is being checked" indicator under the conclusions */
+.transcript-activity {
   color: #6f42c1;
-  font-family: monospace;
 }
 
 .transcript-step.transcript-thinking {

@@ -1757,3 +1757,82 @@ and this job's manual catch-up mode, and does nothing for the nightly pass.
 
 Both need Edward: (1) is DDL, (2) is a behaviour change to a job that currently guarantees full
 coverage every night.
+
+## 2026-09-05 — adversarial review against the code, and what was built
+
+Every proposal was checked against the source before any of it was written. Schedules, line
+references and query shapes hold almost everywhere. Four things did not survive, and they are
+recorded here because each one would have been shipped as written.
+
+### Proposal J is measured against the wrong schedule — dropped
+
+Finding 9 audits "all 25 `everyMinute()` commands in `routes/console.php`" and lists mod2mod
+chaseup among them: *"153 rooms re-fetched every minute… ~24 million message rows a day"*, worth
+~5% of db2.
+
+`routes/console.php:586` schedules `chats:chaseup-mods` **`dailyAt('15:30')`**. It reads those
+16,730 rows **once a day**, not 1,440 times. The job never belonged in the everyMinute audit and
+the ~5% cannot be coming from it. Nothing was changed.
+
+### J's suggested fix would also have broken the mail
+
+Setting the schedule aside, the plan says the "all messages ever" fetch *"could stop at the first
+two distinct senders, since the loop only needs to know whether exactly one person has posted."*
+It needs more than that. `ChatChaseupModsService` uses the same collection twice more:
+`$messages->first()` drives the `CHASEUP_AGE_SECONDS` gate, and
+`$textSummary = $messages->map(...)->implode()` **is the body of the mail sent to the mods**.
+Truncating at two senders would have truncated the mail.
+
+### Proposal A's safety claim does not hold — this is a product decision, not a config tweak
+
+The plan says: *"No eligibility route is lost. Every signal the 60-minute window catches is still
+caught, just within 5 minutes instead of 60."*
+
+The window is `rippling_reach.updated_at >= now() - N minutes` — a grace period **after a post's
+reach last changed**, not a delivery delay. Once a post reaches `done` its `updated_at` stops
+moving and it leaves the window for good. A member who becomes eligible 30 minutes after that is
+picked up today and would **not** be picked up at 5 minutes. Not "caught later" — not caught.
+
+The saving is real and it is the largest single lever on db2. The behaviour change is real too.
+Left for Edward; no config was changed.
+
+### Proposal B's watermark leaks — built two-sided instead
+
+The plan drives the illustrations cleanup from `ma_real.id > :watermark`: only pairs whose
+**photo** arrives after the mark. Generation races the upload, so the illustration can be the
+row that lands last. Its photo's id is then already below the mark and the pair is never seen
+again — the illustration survives permanently.
+
+Confirmed rather than argued: with the one-sided form in place,
+`test_cleanup_removes_an_illustration_added_after_the_photo_watermark_passed` fails, and the
+attachment is still there. Built as two watermarked branches UNIONed, one per side, so each is
+still a primary-key range scan.
+
+### Proposal I's 30-minute window trades a CPU problem for a correctness one — built as a watermark
+
+The plan narrows the leave-check lookback from 2 days to ~30 minutes. The 2 days is not a scan
+bound; `ExpandService`'s own comment calls it *"a generous safety margin covering brief stalls"*.
+Nothing else ever revisits a rippled copy whose poster has left, so any stall longer than the
+window strands those copies permanently. Deploys and container restarts exceed 30 minutes.
+
+Built instead as a `logs.id` watermark — the `SendPendingWelcomeMailsCommand` precedent the plan
+itself cites — with the two-day clause kept exactly as it was. The watermark is the scan bound;
+the window stays the stall backstop. Behaviour is unchanged in every case, including a stall,
+and the per-tick driving set drops from ~1,195 rows to the new leaves only.
+
+A scoped (`--msgid`) run must not move the shared mark, or the next global tick skips every leave
+the scoped run filtered out. Also verified by removing the guard and watching the test fail.
+
+### Proposal L pays nothing without the DDL
+
+`LIKE` → `=` is done, but on its own it changes no plan: the lever is the index on
+`users_notifications.url`, which is operator DDL. Treat the code change as preparation for it.
+
+Note there is a second query in the same service that prefix-matches these urls with a
+**constant** `LIKE '/microvolunteering/message/%'` pattern. That one is already index-usable and
+was left alone.
+
+### Built on `perf/db2-cpu-reduction`
+
+K (both anti-join purge loops), B (two-sided), I (watermark), L (equality). All TDD, all in
+`iznik-batch`. A, D, E, F, G, H and I's index remain operator or Edward decisions.

@@ -1,0 +1,17 @@
+# tusd (uploads) on the batch-prod host: starvation of the NFS upload directory.
+#
+# The upload store is one flat NFS directory with millions of entries. A process
+# that lists it (find, ls, du) holds the directory lock for every getdents(), which
+# on NFS is a long chain of READDIRPLUS calls, and every tusd create/finish/delete
+# waits behind it. 2026-09-18: two orphaned `find /` from an ssh session blocked
+# 1,036 tusd threads for ~25 min (load average 1,049, CPU idle, NFS server fine).
+#
+# The probe reads /proc only, never the NFS mount. Status 1 = starved with a
+# scanner present: kill it, and again every cycle one is still there. Status 2 =
+# starved with nothing scanning: not this failure, so alert and touch nothing.
+# The exec itself raises a monit event, so each kill is mailed with the culprit's
+# command line in the description.
+check program tusd-nfs-starvation with path "/etc/monit/scripts/tusd-nfs-starvation.sh" timeout 30 seconds
+   group edge
+   if status = 1 then exec "/etc/monit/scripts/tusd-nfs-starvation.sh --resolve" repeat every 1 cycles
+   if status = 2 for 2 cycles then alert

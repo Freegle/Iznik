@@ -89,6 +89,49 @@ class ItemClusterServiceTest extends TestCase
     }
 
     /**
+     * A title naming a consignment should not become the name everybody else's
+     * item is filed under. "2 X sanders" was published as an item on the page
+     * because it happened to be the first row back for its cluster.
+     */
+    #[Test]
+    public function it_labels_a_cluster_with_a_name_carrying_no_quantity(): void
+    {
+        $clusters = $this->svc->cluster($this->rows([
+            ['2 X sanders', 1, 11, 21],
+            ['Lampshades x 2', 2, 12, 22],
+            ['Sander', 3, 13, 23],
+        ]));
+
+        $names = array_column($clusters, 'name');
+        $this->assertContains('Sander', $names, 'a plain name beats a counted one');
+        $this->assertNotContains('2 X sanders', $names);
+    }
+
+    /**
+     * Among names that rank equally the winner must not be whichever row the
+     * database happened to return first, or the published label changes between
+     * runs with no change in the data.
+     */
+    #[Test]
+    public function the_label_does_not_depend_on_row_order(): void
+    {
+        $rows = [
+            ['Toaster', 1, 11, 21],
+            ['toaster', 2, 12, 22],
+            ['TOASTER', 3, 13, 23],
+        ];
+
+        $forwards = $this->svc->cluster($this->rows($rows));
+        $backwards = $this->svc->cluster($this->rows(array_reverse($rows)));
+
+        $first = reset($forwards)['name'];
+        $second = reset($backwards)['name'];
+
+        $this->assertSame($first, $second);
+        $this->assertSame('Toaster', $first, 'a title in capitals is the member\'s emphasis, not the item\'s name');
+    }
+
+    /**
      * Rows arrive one per (post, group), so a post that rippled to three groups
      * arrives three times. Summing would treble it.
      */
@@ -233,5 +276,79 @@ class ItemClusterServiceTest extends TestCase
                 ]);
             },
         ]);
+    }
+
+    /**
+     * Real spellings taken from a year of live offers, where "Tv" was published as
+     * the commonest electrical at 73 while 287 posts in the same sample were TVs.
+     *
+     * Each of these is a television. None of the extra words changes what the thing
+     * is: a brand, a screen size, a panel type, a condition, or a size adjective.
+     */
+    #[Test]
+    public function it_folds_the_ways_people_type_a_television(): void
+    {
+        $names = [
+            'Tv',
+            'Samsung TV',
+            'Television',
+            'LG Smart TV 32"',
+            'Toshiba TV',
+            'Samsung 21 inch tv',
+            'Sony Bravia tv',
+            'Panasonic tv',
+            'Small tv',
+            'Flat screen TV',
+            'Toshiba 40inch TV',
+            '50" Plasma TV',
+            'Portable TV',
+        ];
+
+        $rows = [];
+        foreach ($names as $n => $name) {
+            $rows[] = [$name, $n + 1, 100 + $n, 200 + $n];
+        }
+
+        $clusters = $this->svc->cluster($this->rows($rows));
+
+        $counts = [];
+        foreach ($clusters as $key => $c) {
+            $counts[$key] = $c['count'];
+        }
+        arsort($counts);
+
+        $this->assertSame(
+            13,
+            $counts['tv'] ?? null,
+            'brand, product name, screen size, panel type and size words should all fold '
+            . 'into one item: ' . json_encode($counts)
+        );
+    }
+
+    /**
+     * The page promises a Beko and a Bosch are both just fridge freezers. The catalogue
+     * knows "bravia" is Sony's, but marks it not-to-strip because for "iPad" or "Kindle"
+     * the product name is the whole item. Removing it only where a word remains keeps
+     * both promises.
+     */
+    #[Test]
+    public function it_debrands_a_product_name_only_when_something_is_left(): void
+    {
+        $clusters = $this->svc->cluster($this->rows([
+            ['Sony Bravia TV', 1, 11, 21],
+            ['Trinitron television', 2, 12, 22],
+            ['Tv', 3, 13, 23],
+        ]));
+
+        $this->assertCount(1, $clusters, 'a Bravia and a Trinitron are both just TVs');
+        $this->assertSame('tv', reset($clusters)['canonical']);
+
+        // Nothing would be left of these, so the product name has to stay.
+        $kept = $this->svc->cluster($this->rows([
+            ['Kindle', 4, 14, 24],
+            ['iPad', 5, 15, 25],
+        ]));
+
+        $this->assertSame(['kindle', 'ipad'], array_keys($kept));
     }
 }

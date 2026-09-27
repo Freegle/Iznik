@@ -10,6 +10,21 @@ vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
 }))
 
+// Who is looking: a moderator of one of the post's groups, or Support/Admin, may remove
+// a photo from the viewer. Plain members may not.
+const { mockAuthMember, mockSupportOrAdmin } = vi.hoisted(() => {
+  const { ref } = require('vue')
+  return { mockAuthMember: vi.fn(), mockSupportOrAdmin: ref(false) }
+})
+
+vi.mock('~/stores/auth', () => ({
+  useAuthStore: () => ({ member: mockAuthMember }),
+}))
+
+vi.mock('~/composables/useMe', () => ({
+  useMe: () => ({ supportOrAdmin: mockSupportOrAdmin }),
+}))
+
 const mockModalHistory = vi.fn()
 vi.mock('~/composables/useModalHistory', () => ({
   useModalHistory: (...args) => mockModalHistory(...args),
@@ -33,6 +48,25 @@ function makeAttachments(n) {
 const globalStubs = {
   Teleport: { template: '<div class="teleport-stub"><slot /></div>' },
   'v-icon': { template: '<i :class="icon"></i>', props: ['icon'] },
+  // The moderator removal popups are always mounted; stubbed here so the viewer's own
+  // tests do not need bootstrap's modal, and exercised in their own describe below.
+  ConfirmModal: {
+    name: 'ConfirmModal',
+    template: '<div class="confirm-modal" />',
+    props: ['title'],
+    emits: ['confirm', 'hidden'],
+  },
+  AiImageRemoveModal: {
+    name: 'AiImageRemoveModal',
+    template: '<div class="ai-remove-modal" />',
+    emits: ['choose', 'cancel'],
+    methods: {
+      show() {
+        this.shown = true
+      },
+      hide() {},
+    },
+  },
   PinchMe: {
     name: 'PinchMe',
     template: '<div class="pinch-me" />',
@@ -429,6 +463,8 @@ describe('MessagePhotosModal', () => {
               template: '<div class="pinch-me" />',
             },
             'v-icon': { template: '<span />' },
+            ConfirmModal: globalStubs.ConfirmModal,
+            AiImageRemoveModal: globalStubs.AiImageRemoveModal,
           },
         },
       })
@@ -488,6 +524,8 @@ describe('MessagePhotosModal', () => {
             teleport: true,
             PinchMe: { template: '<div class="pinch-me" />' },
             'v-icon': { template: '<span />' },
+            ConfirmModal: globalStubs.ConfirmModal,
+            AiImageRemoveModal: globalStubs.AiImageRemoveModal,
           },
         },
       })
@@ -516,6 +554,140 @@ describe('MessagePhotosModal', () => {
       expect(underneath).not.toHaveBeenCalled()
 
       window.removeEventListener('keydown', underneath)
+    })
+  })
+
+  // Moderators (but not members) can take a photo off a post from the member site, with
+  // the same "why are you removing it?" popup ModTools shows for an AI image
+  // (Discourse 9630, post 92).
+  describe('moderator photo removal', () => {
+    const removalStubs = {
+      ...globalStubs,
+      ConfirmModal: {
+        name: 'ConfirmModal',
+        template: '<div class="confirm-modal" />',
+        props: ['title'],
+        emits: ['confirm', 'hidden'],
+      },
+      AiImageRemoveModal: {
+        name: 'AiImageRemoveModal',
+        template: '<div class="ai-remove-modal" />',
+        emits: ['choose', 'cancel'],
+        methods: {
+          show() {
+            this.shown = true
+          },
+          hide() {},
+        },
+      },
+    }
+
+    function mountForRemoval(props = {}) {
+      return mount(MessagePhotosModal, {
+        props: { id: 1, ...props },
+        global: { stubs: removalStubs },
+      })
+    }
+
+    beforeEach(() => {
+      mockMessageStore.patch = vi.fn().mockResolvedValue({})
+      mockMessageStore.byId.mockReturnValue({
+        id: 1,
+        groups: [{ groupid: 5, collection: 'Approved' }],
+        attachments: makeAttachments(3),
+      })
+      mockAuthMember.mockReturnValue('Member')
+      mockSupportOrAdmin.value = false
+    })
+
+    it('offers no remove control to a plain member', () => {
+      const wrapper = mountForRemoval()
+      expect(wrapper.find('.remove-button').exists()).toBe(false)
+    })
+
+    it('offers it to a moderator of a group the post is on', () => {
+      mockAuthMember.mockReturnValue('Moderator')
+      const wrapper = mountForRemoval()
+      expect(wrapper.find('.remove-button').exists()).toBe(true)
+      expect(mockAuthMember).toHaveBeenCalledWith(5)
+    })
+
+    it('offers it to Support without a membership', () => {
+      mockSupportOrAdmin.value = true
+      const wrapper = mountForRemoval()
+      expect(wrapper.find('.remove-button').exists()).toBe(true)
+    })
+
+    it('never offers it for photos that are not yet a post', () => {
+      mockAuthMember.mockReturnValue('Owner')
+      const wrapper = mountForRemoval({
+        id: null,
+        attachments: makeAttachments(2),
+      })
+      expect(wrapper.find('.remove-button').exists()).toBe(false)
+    })
+
+    it('asks for confirmation on an ordinary photo, then patches the rest', async () => {
+      mockAuthMember.mockReturnValue('Moderator')
+      const wrapper = mountForRemoval({ initialIndex: 1 })
+      await wrapper.find('.remove-button').trigger('click')
+      expect(mockMessageStore.patch).not.toHaveBeenCalled()
+
+      await wrapper.findComponent({ name: 'ConfirmModal' }).vm.$emit('confirm')
+      await flushPromises()
+
+      expect(mockMessageStore.patch).toHaveBeenCalledWith({
+        id: 1,
+        attachments: [1, 3],
+      })
+      expect(wrapper.emitted('hidden')).toBeUndefined()
+    })
+
+    it('asks why on an AI image and flags it when told it is bad for any post', async () => {
+      mockAuthMember.mockReturnValue('Moderator')
+      const attachments = makeAttachments(3)
+      attachments[1].externalmods = JSON.stringify({ ai: true })
+      mockMessageStore.byId.mockReturnValue({
+        id: 1,
+        groups: [{ groupid: 5, collection: 'Approved' }],
+        attachments,
+      })
+      const wrapper = mountForRemoval({ initialIndex: 1 })
+      await wrapper.find('.remove-button').trigger('click')
+      expect(wrapper.findComponent({ name: 'ConfirmModal' }).exists()).toBe(
+        false
+      )
+      expect(mockMessageStore.patch).not.toHaveBeenCalled()
+
+      await wrapper
+        .findComponent({ name: 'AiImageRemoveModal' })
+        .vm.$emit('choose', true)
+      await flushPromises()
+
+      expect(mockMessageStore.patch).toHaveBeenCalledWith({
+        id: 1,
+        attachments: [1, 3],
+        badAIImages: [2],
+      })
+    })
+
+    it('closes the viewer when the last photo goes', async () => {
+      mockAuthMember.mockReturnValue('Moderator')
+      mockMessageStore.byId.mockReturnValue({
+        id: 1,
+        groups: [{ groupid: 5, collection: 'Approved' }],
+        attachments: makeAttachments(1),
+      })
+      const wrapper = mountForRemoval()
+      await wrapper.find('.remove-button').trigger('click')
+      await wrapper.findComponent({ name: 'ConfirmModal' }).vm.$emit('confirm')
+      await flushPromises()
+
+      expect(mockMessageStore.patch).toHaveBeenCalledWith({
+        id: 1,
+        attachments: [],
+      })
+      expect(wrapper.emitted('hidden')).toBeTruthy()
     })
   })
 })

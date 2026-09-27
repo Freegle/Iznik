@@ -31,21 +31,51 @@ export function isCoverageJitterCheck(name: string): boolean {
 }
 
 /**
- * Split a PR's failed checks into genuine failures vs coverage-delta failures.
+ * True when a check is the guard that fails BECAUSE the PR carries a blocking
+ * label (.github/workflows/blocked-label-guard.yml).
+ *
+ * This one is not noise like the coverage delta — it is the guard doing its job.
+ * The PR is marked "do not merge" deliberately, so there is nothing to repair
+ * and no amount of work will turn the check green while the label is on. Left in
+ * the red-CI path it is worse than useless: each such PR takes the iteration's
+ * single fix slot, three times over, before being written off as exhausted. On
+ * 2026-09-22 every PR in the red list was red on this and nothing else — five of
+ * them, so up to fifteen delegate runs aimed at a guard that was working.
+ *
+ * Matched exactly, not as a substring: "guard" is the workflow that runs this
+ * check and passes on ordinary PRs, and a real failure in a job that merely
+ * mentions the phrase must stay visible.
+ */
+export function isDeliberateBlockCheck(name: string): boolean {
+  return /^\s*blocked-label\s*$/i.test(name)
+}
+
+/**
+ * Split a PR's failed checks into genuine failures, coverage-delta failures, and
+ * deliberate blocks.
+ *
  * A PR is "coverage-jitter only" when realFailed is empty but coverageFailed
  * is not — its tests pass and it merely needs more coverage to clear the noise.
+ * A PR is deliberately blocked when realFailed is empty but blockedFailed is
+ * not — it is parked on purpose and the monitor should leave it alone.
+ *
+ * A blocked PR that is ALSO genuinely broken keeps its real failures: the label
+ * says do not merge it, not stop testing it.
  */
 export function partitionFailedChecks(failed: FailedCheck[]): {
   realFailed: FailedCheck[]
   coverageFailed: FailedCheck[]
+  blockedFailed: FailedCheck[]
 } {
   const realFailed: FailedCheck[] = []
   const coverageFailed: FailedCheck[] = []
+  const blockedFailed: FailedCheck[] = []
   for (const f of failed) {
-    if (isCoverageJitterCheck(f.context)) coverageFailed.push(f)
+    if (isDeliberateBlockCheck(f.context)) blockedFailed.push(f)
+    else if (isCoverageJitterCheck(f.context)) coverageFailed.push(f)
     else realFailed.push(f)
   }
-  return { realFailed, coverageFailed }
+  return { realFailed, coverageFailed, blockedFailed }
 }
 
 /**

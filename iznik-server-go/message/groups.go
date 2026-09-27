@@ -1,14 +1,15 @@
 package message
 
 import (
+	"strconv"
+	"time"
+
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
-	"strconv"
-	"time"
 )
 
 func Groups(c *fiber.Ctx) error {
@@ -53,16 +54,16 @@ func Groups(c *fiber.Ctx) error {
 		spatialArgs = []interface{}{myid, utils.MESSAGE_LIKES_VIEW}
 	} else {
 		// Combined browse (gid=0): message must be approved in some group the viewer belongs to.
-		spatialGroupFilter = " AND EXISTS (" +
-			"SELECT 1 FROM messages_groups mg " +
-			"INNER JOIN memberships mem ON mem.groupid = mg.groupid " +
-			"WHERE mg.msgid = messages_spatial.msgid " +
-			"AND mem.userid = ? " +
-			"AND mg.collection = 'Approved' " +
-			"AND mg.deleted = 0" +
-			") "
-		// Placeholders for spatial arm: ?(likes userid), ?(likes type), ?(mem.userid)
-		spatialArgs = []interface{}{myid, utils.MESSAGE_LIKES_VIEW, myid}
+		// The viewer's groups are read first and inlined as constants where there are few
+		// enough of them, so MySQL can use the (msgid, groupid) index instead of walking every
+		// membership row each post has - see approvedInMyGroupsPredicate. Above the cap this
+		// returns the original memberships-join form, binding myid, which is why the arg list
+		// is appended to rather than written out.
+		memberFilter, memberArgs := ApprovedInMyGroups(db, "messages_spatial.msgid", myid)
+		spatialGroupFilter = " AND " + memberFilter + " "
+		// Placeholders for spatial arm: ?(likes userid), ?(likes type), then whatever the
+		// membership predicate binds (nothing in the constant form, myid in the fallback).
+		spatialArgs = append([]interface{}{myid, utils.MESSAGE_LIKES_VIEW}, memberArgs...)
 	}
 
 	// We want to include our own messages, so that it is less obvious if a message is delayed for approval and
@@ -79,26 +80,42 @@ func Groups(c *fiber.Ctx) error {
 	// verbatim once it contains a space) already proven elsewhere in this
 	// codebase for a parenthesized UNION subquery.
 	derivedTable := "(" +
-		"SELECT ST_Y(point) AS lat, " +
-		"ST_X(point) AS lng, " +
+		"SELECT ST_Y(ANY_VALUE(point)) AS lat, " +
+		"ST_X(ANY_VALUE(point)) AS lng, " +
 		"messages_spatial.msgid AS id, " +
-		"messages_spatial.successful, " +
-		"messages_spatial.promised, " +
-		"messages_spatial.groupid, " +
-		"messages_spatial.msgtype AS type, " +
+		// A cross-posted message has one messages_spatial row per group (audit §G1/H1),
+		// so this arm must collapse them the same way the own-messages arm below does
+		// (GROUP BY + aggregates) — otherwise it appears once per group in mygroups.
+		"MAX(messages_spatial.successful) AS successful, " +
+		"MAX(messages_spatial.promised) AS promised, " +
+		"ANY_VALUE(messages_spatial.groupid) AS groupid, " +
+		"ANY_VALUE(messages_spatial.msgtype) AS type, " +
 		// fromuser drives the `mine` flag below. The client pins the viewer's own posts to
 		// the top of every sort order and lifts them into the "posts by you" row, and this
 		// feed is what "All my communities" and a single-group view render - so without it
 		// own posts were pinned on the nearby feed and buried here.
 		"m.fromuser AS fromuser, " +
-		"messages_spatial.arrival, " +
+		"MAX(messages_spatial.arrival) AS arrival, " +
 		// posted = the ORIGINAL post time (messages.arrival), stable across rippling.
 		// The client's "Newest posted" sort keys on posted; messages_spatial.arrival is
 		// ripple-BUMPED, so without posted the mygroups feed fell back to it and the
 		// selected sort appeared not to be applied (Discourse 9844, mygroups variant).
 		// Mirrors the nearby/reach feed (isochrone/message.go).
 		"m.arrival AS posted, " +
-		"CASE WHEN messages_likes.msgid IS NULL AND messages_spatial.id > " + watermark + " THEN 1 ELSE 0 END AS unseen " +
+		// visible_since = the ONE clock the browse list orders by and dates its cards from
+		// (message.MessageSummary.VisibleSince): the oldest arrival across the groups the
+		// post is live on, which a repost or an onward ripple moves forward. This feed is
+		// what "All my communities" and a single community render, and it answered with a
+		// zero here while the reach feed and the full message record carried the real
+		// value - so "Newest posted" fell back to `posted` (the write time) and ordered
+		// 27, 7, 3, 28 days against cards dated from the group arrival (Discourse 9808/801).
+		// The list locks its order at first paint, so the full records loading later could
+		// not repair it: the field has to ship on the summary. Same expression as
+		// isochrone/message.go and message.go's full-record select.
+		"COALESCE((SELECT MIN(mgv.arrival) FROM messages_groups mgv WHERE mgv.msgid = messages_spatial.msgid AND mgv.deleted = 0), m.arrival) AS visible_since, " +
+		// MAX() because this arm groups by msgid to collapse a cross-posted message's
+		// one-row-per-group, and messages_spatial.id is not in the GROUP BY.
+		"MAX(CASE WHEN messages_likes.msgid IS NULL AND messages_spatial.id > " + watermark + " THEN 1 ELSE 0 END) AS unseen " +
 		"FROM messages_spatial " +
 		"INNER JOIN messages m ON m.id = messages_spatial.msgid " +
 		"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? " +
@@ -107,6 +124,7 @@ func Groups(c *fiber.Ctx) error {
 		// It exempts the viewer's own posts, which this arm has to serve: the
 		// own-posts arm below only covers posts not yet in messages_spatial.
 		" AND " + rippling.ReachPendingFilter("messages_spatial.msgid", myid) + " " +
+		"GROUP BY messages_spatial.msgid, m.arrival " +
 		"UNION " +
 		"SELECT lat, lng, messages.id, " +
 		"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, " +
@@ -116,6 +134,9 @@ func Groups(c *fiber.Ctx) error {
 		"messages.fromuser AS fromuser, " +
 		"MAX(messages_groups.arrival) AS arrival, " +
 		"messages.arrival AS posted, " +
+		// Same clock for the own-posts arm (UNION columns must line up): the oldest live
+		// group arrival, falling back to the write time for a post with no live group row.
+		"COALESCE(MIN(CASE WHEN messages_groups.deleted = 0 THEN messages_groups.arrival END), messages.arrival) AS visible_since, " +
 		"ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen " +
 		"FROM messages " +
 		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id " +

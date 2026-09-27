@@ -105,6 +105,8 @@ class AutoApproveCleanService
             ->where('mg.collection', MessageGroup::COLLECTION_PENDING)
             ->whereNull('mg.heldby')
             ->whereNull('m.heldby')
+            // A copy a moderator sent back to Pending waits for a moderator of its group.
+            ->where('mg.needs_moderator', 0)
             ->whereNull('mg.spamreason')
             ->whereNull('m.spamreason')
             // Never auto-approve a message that is in the Spam collection on ANY

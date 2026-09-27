@@ -1,0 +1,10 @@
+overnight*.tsv
+*-raw.tsv
+cpu-db*.tsv
+longq*.tsv
+q-*.txt
+q*.sql
+ripple*.txt
+big.txt
+longq2-db2.tsv
+db2-full.tsv

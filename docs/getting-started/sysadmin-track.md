@@ -39,9 +39,10 @@ for it when you have a task that needs it.
 Read [../ops/production.md](../ops/production.md) and
 [../ops/overview-and-environments.md](../ops/overview-and-environments.md).
 
-The map in one paragraph. A load balancer takes public traffic. Three database machines run
-a **multi-master cluster** - each holds a full copy, any of them can serve reads, and
-**writes all go to one nominated node**. Those same three machines also run the API, the
+The map in one paragraph. A load balancer takes public traffic. Two database machines run
+a **multi-master cluster** - each holds a full copy, either can serve reads, and
+**writes all go to one nominated node** - and a third machine runs only the Galera
+arbitrator, a vote that keeps quorum when a data node is down. The two data machines also run the API, the
 geography services and the routing service directly on the host, not in containers. One
 separate machine runs everything containerised: the scheduled jobs, mail, logging and the
 image-upload and image-delivery services. The two websites are not on our servers at all -
@@ -192,7 +193,7 @@ Three, and they explain a surprising number of confusing reports:
 - **The application routes reads and writes separately.** So "this write is not visible
   yet" is a real class of bug in our code - but do **not** explain a bug away as
   replication lag without checking. It usually is not.
-- **Index usage counters must be summed across all three nodes.** Looking at one node makes
+- **Index usage counters must be summed across both data nodes.** Looking at one node makes
   almost every index look unused, and dropping one on that basis is how you cause an
   outage.
 

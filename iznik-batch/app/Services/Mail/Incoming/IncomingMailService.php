@@ -1176,11 +1176,32 @@ class IncomingMailService
             return $this->dropped("Subscribe to unknown group");
         }
 
-        // Find or create the user
+        // Find or create the user.
+        //
+        // findUserByEmail falls back to a canon lookup, which is the thing that stops a
+        // Trash Nothing member's second per-group address creating a second Freegle
+        // account: canon strips the -gNNNN suffix, so every alias of one member reduces
+        // to the same value. Matching the address alone, as this did, is how the member
+        // in Discourse's 403 report came to hold two accounts - TN sends a Subscribe
+        // mail per group, each from a different alias.
         $envFrom = $email->envelopeFrom;
-        $userEmail = UserEmail::where('email', $envFrom)->first();
+        $user = $this->findUserByEmail($envFrom);
 
-        if ($userEmail === null) {
+        if ($user === null) {
+            // A row for this address with no user behind it is a broken state, not a new
+            // member. users_emails.email is UNIQUE, so creating here would collide on it
+            // and throw where this drops cleanly. A foreign key on users_emails.userid
+            // means it cannot arise on its own; the guard is for the case where that key
+            // is not there, and costs one indexed check on a path that only runs for an
+            // address nobody has seen before.
+            if (UserEmail::where('email', $envFrom)->exists()) {
+                Log::warning('User email exists but user not found', [
+                    'email' => $envFrom,
+                ]);
+
+                return $this->dropped("User email exists but user not found for subscribe");
+            }
+
             // Create a new user
             $user = User::create([
                 'fullname' => $email->fromName,
@@ -1189,12 +1210,14 @@ class IncomingMailService
                 'lastaccess' => now(),
             ]);
 
-            // Add their email
+            // Add their email. canon is what the lookup above reads, so leaving it null
+            // here would mean the member's NEXT alias created yet another account.
             UserEmail::create([
                 'userid' => $user->id,
                 'email' => $envFrom,
                 'preferred' => 1,
                 'added' => now(),
+                'canon' => $this->canonicalizeEmail($envFrom),
             ]);
 
             Log::info('Created new user for subscribe', [
@@ -1203,14 +1226,10 @@ class IncomingMailService
                 'created_new' => true,
             ]);
         } else {
-            $user = User::find($userEmail->userid);
-            if ($user === null) {
-                Log::warning('User email exists but user not found', [
-                    'email' => $envFrom,
-                ]);
-
-                return $this->dropped("User email exists but user not found for subscribe");
-            }
+            // It may have matched on canon rather than on the address itself - another
+            // per-group alias of the same member. Attach this one so later mail from it
+            // matches outright.
+            $this->addEmailToUser($user->id, $envFrom);
 
             // Update last access
             $user->lastaccess = now();
@@ -2588,6 +2607,11 @@ class IncomingMailService
 
     /**
      * Handle group posts.
+     *
+     * MIRRORED BY HAND in GroupPostIngestionService (the TN API ingestion
+     * path). If you change anything here, decide whether the change applies
+     * there too — EmailPathMirrorDriftTest fails on any edit to this method
+     * precisely so that decision gets made rather than skipped.
      */
     private function handleGroupPost(ParsedEmail $email): RoutingResult
     {
@@ -2596,12 +2620,18 @@ class IncomingMailService
             'subject' => $email->subject,
         ]);
 
-        // Find the group
+        $postId = $email->getTrashNothingPostId();
+        $tnType = strtolower((string) Message::determineType($email->subject));
+
+        // Find the group before logging so we can emit the numeric group ID to match the API path.
         $group = $this->findGroup($email->targetGroupName);
+        Log::info('TN-SYNC-TRACE [POST] post_id=' . $postId . ' type=' . $tnType . ' group_id=' . ($group?->id ?? $email->targetGroupName) . ' date=' . ($email->date?->format('Y-m-d\TH:i:s\Z')) . ' title=' . substr((string) $email->subject, 0, 60));
+
         if ($group === null) {
             Log::warning('Post to unknown group', [
                 'group' => $email->targetGroupName,
             ]);
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=unknown-group group_id=' . $email->targetGroupName . ' post_id=' . $postId);
 
             return $this->dropped("Post to unknown group");
         }
@@ -2612,11 +2642,14 @@ class IncomingMailService
             Log::info('Post from unknown user - dropping', [
                 'from' => $email->fromAddress,
             ]);
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=unknown-user post_id=' . $postId);
+            Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=skipped');
 
             return $this->dropped("Post from unknown user");
         }
 
         // Update user's last access
+        Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastaccess=now()');
         DB::table('users')
             ->where('id', $user->id)
             ->update(['lastaccess' => now()]);
@@ -2632,6 +2665,8 @@ class IncomingMailService
                 'user_id' => $user->id,
                 'group_id' => $group->id,
             ]);
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=non-member tnpostid=' . $postId . ' user_id=' . $user->id . ' group_id=' . $group->id);
+            Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=skipped');
 
             return $this->dropped("Post from non-member");
         }
@@ -2641,6 +2676,7 @@ class IncomingMailService
             Log::info('TAKEN/RECEIVED post swallowed', [
                 'subject' => $email->subject,
             ]);
+            Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=swallowed-taken-received');
 
             return RoutingResult::TO_SYSTEM;
         }
@@ -2668,6 +2704,7 @@ class IncomingMailService
                     $this->lastRoutingContext['spam_reason'] = $spamReason;
 
                     // #23: Log spam classification to logs table (matches legacy MailRouter)
+                    Log::info('TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Message,subtype=ClassifiedSpam,msgid=' . $messageId . ',groupid=' . $group->id);
                     DB::table('logs')->insert([
                         'timestamp' => now(),
                         'type' => 'Message',
@@ -2678,6 +2715,7 @@ class IncomingMailService
                     ]);
 
                     // #12: Record posting in messages_postings even for spam
+                    Log::info('TN-SYNC-TRACE [WRITE] table=messages_postings op=insert set=msgid=' . $messageId . ',groupid=' . $group->id . ',repost=0,autorepost=0');
                     DB::table('messages_postings')->insert([
                         'msgid' => $messageId,
                         'groupid' => $group->id,
@@ -2695,6 +2733,8 @@ class IncomingMailService
                         'spam_reason' => $spamReason,
                     ]);
                 }
+
+                Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=spam');
 
                 return RoutingResult::INCOMING_SPAM;
             }
@@ -2776,6 +2816,9 @@ class IncomingMailService
 
         // For DROPPED messages, don't create a record
         if ($routingResult === RoutingResult::DROPPED) {
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=prohibited tnpostid=' . $postId . ' user_id=' . $user->id);
+            Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=dropped');
+
             return RoutingResult::DROPPED;
         }
 
@@ -2786,6 +2829,7 @@ class IncomingMailService
             $this->lastRoutingContext['message_id'] = $messageId;
 
             // #12: Record posting in messages_postings (for repost logic)
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages_postings op=insert set=msgid=' . $messageId . ',groupid=' . $group->id . ',repost=0,autorepost=0');
             DB::table('messages_postings')->insert([
                 'msgid' => $messageId,
                 'groupid' => $group->id,
@@ -2798,9 +2842,18 @@ class IncomingMailService
             // Note: member posts are no longer Approved on arrival (see routing note
             // above). The APPROVED branch is retained for completeness / any future
             // caller; unmoderated members take the awaiting-content-check path below.
+            //
+            // Every update here is scoped to THIS group's row. A TrashNothing cross-post
+            // arrives as one email per group, minutes apart, and all of them attach to
+            // the same message; keyed on the message alone, routing the second email
+            // set the first group's copy back to Pending after the content check had
+            // already promoted it (Discourse 10142).
             if ($routingResult === RoutingResult::APPROVED) {
                 // Message is approved - update collection to Approved
+                Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Approved,approvedat=now()');
                 MessageGroup::where('msgid', $messageId)
+                    ->where('groupid', $group->id)
+                    ->where('needs_moderator', 0)
                     ->update([
                         'collection' => MessageGroup::COLLECTION_APPROVED,
                         'approvedat' => now(),
@@ -2813,24 +2866,30 @@ class IncomingMailService
                     'message_id' => $messageId,
                     'group_id' => $group->id,
                 ]);
+                Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=approved');
             } elseif ($awaitingContentCheck) {
                 // Unmoderated member: start Pending and let the content-check job
                 // promote it (clean) or hold and notify mods (flagged). We do NOT
                 // notify mods or add to the spatial index here - that is the
                 // content-check job's responsibility, so clean posts create no mod
                 // work and flagged posts never go live unchecked.
+                Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Pending reason=' . ($pendingReason ?? 'posting-status'));
                 MessageGroup::where('msgid', $messageId)
+                    ->where('groupid', $group->id)
                     ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
 
                 Log::info('Message pending content check (auto-approve candidate)', [
                     'message_id' => $messageId,
                     'group_id' => $group->id,
                 ]);
+                Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=pending');
             } else {
                 // Message is pending for a moderator reason (moderated user/group,
                 // worry words, unmapped user, Big Switch) - collection is already
                 // Incoming, update to Pending and notify mods now.
+                Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Pending reason=' . ($pendingReason ?? 'posting-status'));
                 MessageGroup::where('msgid', $messageId)
+                    ->where('groupid', $group->id)
                     ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
 
                 // #15: Notify group moderators of new pending work
@@ -2841,6 +2900,7 @@ class IncomingMailService
                     'group_id' => $group->id,
                     'reason' => $pendingReason ?? 'posting status',
                 ]);
+                Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=pending');
             }
         }
 
@@ -2852,6 +2912,9 @@ class IncomingMailService
      *
      * This stores the message in the database with appropriate collection status.
      * For spam messages, sets spamtype/spamreason and collection=Pending for moderator review.
+     *
+     * MIRRORED BY HAND in GroupPostIngestionService::createMessage() (the TN API
+     * ingestion path) — see the note on handleGroupPost() above.
      *
      * @param  ParsedEmail  $email  The parsed email
      * @param  User  $user  The sender user
@@ -2932,8 +2995,22 @@ class IncomingMailService
                 $locationId = $this->findClosestPostcodeId($lat, $lng);
             }
 
+            // The id came from the spatial index, which is a separate store and can
+            // outlive the row it points at - a purged or renumbered location leaves a
+            // stale entry behind. users.lastlocation is a foreign key, so writing an id
+            // that is no longer in `locations` throws, and because that happens inside
+            // this method the whole post is lost rather than just its location. A post
+            // with no location is still worth having, so verify before trusting it.
+            // The API path (GroupPostIngestionService) makes the same check.
+            if ($locationId !== null && !DB::table('locations')->where('id', $locationId)->exists()) {
+                Log::info('TN-SYNC-TRACE [LOCATION-STALE] spatial index returned locationid=' . $locationId
+                    . ' which is not in locations; ingesting without a location');
+                $locationId = null;
+            }
+
             // Update user's lastlocation if we found a location
             if ($locationId && $user->id) {
+                Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastlocation=' . $locationId);
                 DB::table('users')
                     ->where('id', $user->id)
                     ->update(['lastlocation' => $locationId]);
@@ -2946,6 +3023,17 @@ class IncomingMailService
             $cleanedTextBody = $this->stripTnPicLinks($email->textBody);
 
             // Create the message record
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages op=insert set=' . json_encode([
+                'messageid' => $messageId,
+                'tnpostid' => $email->getTrashNothingPostId(),
+                'groupid' => $group->id,
+                'fromuser' => $user->id,
+                'type' => $type,
+                'subject' => $email->subject,
+                'lat' => $lat,
+                'lng' => $lng,
+                'locationid' => $locationId,
+            ]));
             $message = Message::create([
                 'date' => now(),
                 'source' => Message::SOURCE_EMAIL ?? 'Email',
@@ -3011,6 +3099,7 @@ class IncomingMailService
                 ? MessageGroup::COLLECTION_PENDING
                 : MessageGroup::COLLECTION_INCOMING;
 
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=insert set=msgid=' . $message->id . ',groupid=' . $group->id . ',msgtype=' . $type . ',collection=' . $collection);
             MessageGroup::create([
                 'msgid' => $message->id,
                 'groupid' => $group->id,
@@ -3026,6 +3115,7 @@ class IncomingMailService
             $this->itemService->recordFromSubject($message->id, $email->subject ?? '');
 
             // Add to message history for spam checking
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages_history op=insert set=msgid=' . $message->id . ',groupid=' . $group->id . ',fromuser=' . $user->id);
             DB::table('messages_history')->insert([
                 'groupid' => $group->id,
                 'source' => Message::SOURCE_EMAIL ?? 'Email',
@@ -3042,6 +3132,7 @@ class IncomingMailService
             ]);
 
             // Log receipt — matches Go API logMessageReceived() and V1 Message::submit().
+            Log::info('TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Message,subtype=Received,msgid=' . $message->id . ',groupid=' . $group->id);
             DB::table('logs')->insert([
                 'timestamp' => now(),
                 'type' => 'Message',
@@ -3165,7 +3256,16 @@ class IncomingMailService
 
             $messageId = ($email->messageId ?? (microtime(true).'@'.config('freegle.mail.user_domain', 'users.ilovefreegle.org'))).'-'.$group->id;
 
-            DB::table('messages_history')->insert([
+            // insertOrIgnore for the same reason as the row above: (msgid, groupid) is
+            // unique here too, so a second delivery of the same email for a group already
+            // on this message threw 1062 one line after the INSERT IGNORE that was meant
+            // to make exactly that case harmless. Skipping the rest is right - the first
+            // delivery did it - but arriving there by exception meant it was logged as an
+            // error every time, 8, 13 and 7 times on 2026-09-11, 09-12 and 09-13. A
+            // collision here can only mean the group is already recorded against this
+            // message, because the attach path runs only when the message exists and the
+            // creating email wrote its own group's history row.
+            $historyWritten = DB::table('messages_history')->insertOrIgnore([
                 'groupid' => $group->id,
                 'source' => Message::SOURCE_EMAIL ?? 'Email',
                 'fromuser' => $user->id,
@@ -3179,6 +3279,22 @@ class IncomingMailService
                 'messageid' => $messageId,
                 'msgid' => $msgid,
             ]);
+
+            if ($historyWritten === 0) {
+                // Already attached by an earlier delivery of this same email, which wrote
+                // the receipt log and routed the copy. Return null, as the failure path
+                // did: null tells the caller there is no fresh attach to follow up, and
+                // that follow-up must not run twice - messages_postings carries no unique
+                // key on (msgid, groupid), so a second pass would record the item as
+                // posted twice and feed the repost logic a phantom. The difference is
+                // that this is now a no-op saying so, not an exception logged as an error.
+                Log::info('TN cross-post group was already attached, nothing to do', [
+                    'msgid' => $msgid,
+                    'groupid' => $group->id,
+                ]);
+
+                return null;
+            }
 
             DB::table('logs')->insert([
                 'timestamp' => now(),
@@ -4134,6 +4250,7 @@ class IncomingMailService
      */
     public function createTnImageAttachments(int $messageId, array $imageUrls): int
     {
+        Log::info('TN-SYNC-TRACE [WRITE] table=message_attachments op=insert set=msgid=' . $messageId . ' count=' . count($imageUrls));
         $tusService = app(\App\Services\TusService::class);
         $created = 0;
         $isFirst = true;
@@ -4250,6 +4367,10 @@ class IncomingMailService
                 'email' => $email,
                 'preferred' => 0,
                 'canon' => $this->canonicalizeEmail($email),
+                // backwards is REVERSE(canon), the definition V1's User::addEmail uses at
+                // both its insert sites. Leaving it null, as this did, is one source of the
+                // rows no domain prefix can find - see .claude/rules/mail-and-data.md.
+                'backwards' => strrev($this->canonicalizeEmail($email)),
             ]);
 
             Log::info('Added forwarding email to user', [

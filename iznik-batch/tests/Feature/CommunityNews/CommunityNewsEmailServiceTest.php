@@ -5,6 +5,7 @@ namespace Tests\Feature\CommunityNews;
 use App\Mail\CommunityNews\CommunityNewsMail;
 use App\Models\CommunityNewsArea;
 use App\Models\CommunityNewsItem;
+use App\Models\User;
 use App\Services\CommunityNews\CommunityNewsEmailService;
 use App\Services\CommunityNews\CommunityNewsImageService;
 use App\Services\GeminiService;
@@ -129,15 +130,32 @@ class CommunityNewsEmailServiceTest extends TestCase
         $this->createMembership($u5, $g1);
 
         // Dormant but inside the threshold -> still mailed (the boundary's
-        // other side). NULL lastaccess is untestable — the column is NOT NULL
-        // DEFAULT CURRENT_TIMESTAMP, so no real user can carry it — but the
-        // whereNull arm stays in the query as belt-and-braces matching the
-        // digest convention.
+        // other side).
         $u6 = $this->createTestUser(['email_preferred' => 'u6@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $u6->lastaccess = now()->subDays(100);
         $u6->save();
         $this->locate($u6, 51.50, -0.12);
         $this->createMembership($u6, $g1);
+
+        // Asked for no email whatsoever (simplemail None) -> no mail. The
+        // hand-rolled activity check this gate replaced only looked at
+        // lastaccess, so 2,198 members who had turned all mail off were still
+        // getting Community News.
+        $u7 = $this->createTestUser([
+            'email_preferred' => 'u7@test.com',
+            'newslettersallowed' => 1,
+            'bouncing' => 0,
+            'settings' => ['simplemail' => User::SIMPLE_MAIL_NONE],
+        ]);
+        $this->locate($u7, 51.50, -0.12);
+        $this->createMembership($u7, $g1);
+
+        // On holiday -> no mail, as for every other mail we send.
+        $u8 = $this->createTestUser(['email_preferred' => 'u8@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $u8->onholidaytill = now()->addDays(7);
+        $u8->save();
+        $this->locate($u8, 51.50, -0.12);
+        $this->createMembership($u8, $g1);
 
         $area = CommunityNewsArea::create([
             'anchorgroupid' => min($g1->id, $g2->id), 'name' => 'Testville', 'intro' => 'A few nice things.',
@@ -159,10 +177,64 @@ class CommunityNewsEmailServiceTest extends TestCase
         $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u3->id)); // bouncing
         $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u5->id)); // dormant >182.5d
         $this->assertTrue($sent->contains(fn ($m) => $m->userId === $u6->id));  // dormant 100d, inside threshold
+        $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u7->id)); // wants no email at all
+        $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u8->id)); // on holiday
 
         // Bookkeeping: item marked emailed, area cadence stamped.
         $this->assertNotNull(CommunityNewsItem::where('areaid', $area->id)->first()->emailed_at);
         $this->assertNotNull($area->fresh()->lastemailed);
+    }
+
+    /**
+     * While a provider is refusing our mail we stop generating it, rather than
+     * rendering a weekly issue that can only sit in the spool. The count is
+     * what ModTools shows the member; the catch-up policy then drops it,
+     * because next week's issue beats a stale one.
+     */
+    public function test_skips_members_whose_provider_is_refusing_our_mail(): void
+    {
+        config(['freegle.mail.enabled_types' => 'CommunityNews']);
+
+        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
+        $this->catchment($g1);
+
+        $held = $this->createTestUser([
+            'email_preferred' => 'held@suppressed-example.com',
+            'newslettersallowed' => 1,
+            'bouncing' => 0,
+        ]);
+        $this->locate($held, 51.50, -0.12);
+        $this->createMembership($held, $g1);
+
+        DB::table('mail_suppressions')->insert([
+            'scope' => 'domain',
+            'value' => 'suppressed-example.com',
+            'reason' => '421 4.7.0 temporarily deferred',
+            'provider' => 'Example',
+            'deferred_since' => now()->subHour(),
+            'first_seen' => now(),
+            'last_seen' => now(),
+            'message_count' => 100,
+        ]);
+        app(\App\Services\Mail\MailSuppressionService::class)->flushCache();
+
+        $area = CommunityNewsArea::create([
+            'anchorgroupid' => $g1->id, 'name' => 'Testville', 'intro' => 'A few nice things.',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id], 'groupcount' => 1,
+        ]);
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'Repair Café', 'snippet' => 'Fix stuff.',
+            'url' => 'https://example.org/repair', 'source' => 'Library', 'researched_at' => now(),
+        ]);
+
+        $result = $this->svc()->sendWeekly();
+
+        $this->assertSame(0, $result['sent']);
+        Mail::assertNothingSent();
+        $this->assertDatabaseHas('mail_suppressed_counts', [
+            'userid' => $held->id,
+            'emailtype' => 'communitynews',
+        ]);
     }
 
     public function test_only_mails_members_their_home_group_covers(): void

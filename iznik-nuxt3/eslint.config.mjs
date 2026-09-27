@@ -63,6 +63,9 @@ export default createConfigForNuxt({
           navigateTo: 'readonly',
           sendRedirect: 'readonly',
           setResponseStatus: 'readonly',
+          reactive: 'readonly',
+          useFetch: 'readonly',
+          $fetch: 'readonly',
         },
       },
       rules: {
@@ -144,11 +147,13 @@ export default createConfigForNuxt({
     },
     {
       // Dynamic-route files like [id].vue are necessarily single-word.
+      // The second pair covers every Nuxt layer directory (modtools/, and any
+      // deployment-specific layer built on this app), not just the root.
       files: [
         'layouts/*.vue',
         'pages/**/*.vue',
-        'modtools/layouts/*.vue',
-        'modtools/pages/**/*.vue',
+        '*/layouts/*.vue',
+        '*/pages/**/*.vue',
       ],
       rules: {
         'vue/multi-word-component-names': 'off',

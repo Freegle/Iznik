@@ -1,0 +1,4 @@
+# Warms each sending IP for the discovered provider group and routes the group
+# to whichever address is currently getting through. Every minute: that bounds
+# how far a cap can overshoot between checks.
+* * * * * root /usr/local/sbin/ip-warmup.sh >/dev/null 2>&1

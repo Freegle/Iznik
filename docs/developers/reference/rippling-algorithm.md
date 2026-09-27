@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-04
+last_reviewed: 2026-09-26
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -385,6 +385,14 @@ the reply is sent rather than held, and no "hasn't reached your area yet" notice
 `rippling.ReachRowInfo.Decided` carries that distinction in Go, `ReachQueryService::reachVerdict`
 in PHP. Mail is the one exception (see below).
 
+**A finished reach is not "on its way".** An `out` on a row whose `status` is `done` (the
+schedule ran out, or the extent governor stopped it) is permanent, so the message page says
+so (`reachfinished`, `message/reach.go` `ReachOrigin.Finished`) instead of dating an
+arrival: the only date `CoverageAt` could give is the final tick's, already in the past,
+which the client rendered as "any moment now" about a reach that had ended weeks earlier
+(Discourse 9808/797). The reply is still held and `ripple:release-replies` releases it on
+its next pass through the `done` branch, so "straight away" is what the member is told.
+
 That direction was chosen after 2026-09-02, when the reach engine was down for sixteen hours
 and the gates failed the other way. A member 13 minutes' drive from a post, in the post's own
 community since 2009, was told it had not reached her - beside an ETA, computed on a lane
@@ -395,6 +403,30 @@ Failing open means an outage is now invisible from the outside, so it has to be 
 the inside instead: `reportEvalUnavailable` (Go `rippling/labelverdicts.go`, PHP
 `ReachService`) raises a Sentry event, at most one a minute per process, carrying the reason.
 That alert is the only sign of a reach outage while it is happening. Treat it as one.
+
+The unread badge is the one surface that must NOT fail open, because for it "open" is a
+number. Since the grids retired, discovery is the badge's only source of posts, so an
+unanswered evaluation leaves it nothing to count - and nothing to count is not nothing to
+see. On 2026-09-05 the routing server's two label-store reads (`reach_eval.go`
+`leafRowLoader` and `evalRowLoader`) swallowed a dropped MySQL connection and answered 200
+with `discovered: null` or a truncated region; apiv2 counted that as zero, cached it for 30
+seconds, and members watched their badge flick 2, 0, 2 at every poll (153 members in three
+hours). Now: the routing server's discover fails CLOSED with a 503 and logs the error text;
+apiv2 retries one 503 (`labelEvalAttempts`) before reporting; `LabelVerdictsWithDiscover`
+returns an `ok` flag; and `nearbyCount` answers 503 on `!ok` and caches nothing, so the
+client keeps the number it has. A routing server with no reach engine at all (no `REACH_DIR`:
+dev, CI) answers every reach endpoint 501, which apiv2 treats as answered-with-nothing and fails
+open on - only a configured engine's 503 is retried and then refused. The shared routing breaker
+(`roadblur.MarkRoutingFailureFor`) opens only on a server fault (5xx other than 501/503): blur,
+drive-metrics, leaves and labels all apply that one rule, because a 503 from drive-metrics in an
+engine-less environment used to open it and the badge then refused for 30 seconds after every feed load. The feed keeps its degraded empty page on the same failure
+(the client's in-flight guard cannot recover from a rejected fetch until reload).
+
+The badge's spatial arm (`isochrone/reachspatial.go` `fromIDsWhere`) also carries the
+member's mark-all-seen watermark (`browse_cleared`), as every other unseen count and the
+feed's own `unseen` column do. It was written without it, so a member who had cleared their
+feed kept a badge counting posts below the clear - posts the feed already rendered as seen -
+which nothing they viewed could drain.
 
 Client wiring: apiv2 `rippling/labelverdicts.go` (`LabelVerdicts`,
 `LabelVerdictsWithDiscover`, `DropLabelOut`) feeds `rippling.ReachMembership` (reply gate)
@@ -664,18 +696,6 @@ so the animation you watch is the targeting decision at each step, not a geometr
 approximation of it. On by default; `RIPPLE_REACHABLE_GATE=false` is the killswitch, reverting
 targeting and retraction to the polygon-overlap test.
 
-### 4b. Posts that sit out: an item still held as several messages
-
-A post whose TrashNothing post id is also held by another live message does not ripple into
-new groups. Such a set is one physical item existing as more than one Freegle message, and
-each would otherwise ripple on its own account, so the item would reach people once per
-copy. Enforced in `rippleIntoNewGroups`.
-
-This is self-limiting rather than a standing exclusion: once
-`php artisan tn:merge-crossposts` has collapsed the set onto one message there is no other
-live message to match, and the post ripples like any other. Ingestion no longer creates such
-sets - see [TrashNothing](trashnothing.md#cross-posts-and-reposts).
-
 ### 4a. Communities that never ripple: phantom and training
 
 Some communities exist to hold moderator practice posts rather than real items, and their
@@ -714,6 +734,37 @@ only ever covered ripple-in, and only communities named that way - `FreeglePlayg
 its practice posts at a real Edinburgh postcode, so before this change a practice post there
 crossposted into the live Lothians communities.
 
+### 4b. Posts that sit out: an item still held as several messages
+
+A post whose TrashNothing post id is also held by another **live** (not deleted) message does
+not ripple into new groups. Such a set is one physical item existing as more than one Freegle
+message, and each would otherwise ripple on its own account, so the item would reach people
+once per copy. Enforced in `rippleIntoNewGroups`.
+
+**There is no blanket TN exclusion any more, and no feature flag on what is left.** It used to
+be a standing exclusion on every TN post while TN posts arrived by email - TN cross-posted an
+item itself, emailing a separate copy per group, so rippling on top of that spread one item
+much further than either system intended. What replaced it is the rule above, which asks what
+the database holds rather than which era we are in. `FREEGLE_TN_INGEST_POSTS_VIA_API` is what
+stopped new such sets being created (the API path takes only TN's *source* post and discards
+the per-group copies -
+[`GroupPostIngestionService::REASON_CROSSPOST`](../../../iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php)),
+but `ExpandService` never reads it, and flipping it releases nothing on its own.
+
+That distinction matters during the cutover, where the two eras coexist: an API-ingested
+message can land beside unmerged email-era copies of the same item, and it then sits out
+like any other member of such a set - the flag being on does not release it. **Collapsing the
+set does**: once `php artisan tn:merge-crossposts` has merged it onto one message there is no
+other live message to match, and the post ripples like any other. So the exclusion is
+self-limiting rather than permanent, but it is only as short-lived as the merge backlog - and
+the merge is run by hand on the batch host, not scheduled.
+
+Because a post sitting out is otherwise invisible, each one is counted as
+`tn_duplicate_sat_out` in the run stats, which `ripple:expand complete` logs. A cutover window
+where posts are being held back at volume shows up there; the remedy is to run
+`tn:merge-crossposts`, not to touch the flag. See
+[trashnothing.md](trashnothing.md#cross-posts-and-reposts).
+
 ### Rejected targeting approaches
 
 - **Polygon overlap** (`ST_Intersects(group polygon, reach polygon)`). Inherits every raster
@@ -747,6 +798,17 @@ For each due post, `ripple:expand`:
   Best-effort - a routing server without the engine is a quiet no-op, every reader still
   answers from the stored cells, and `ripple:backfill-reach-labels` retries later (with
   `--all` after a partition rebuild, which renumbers the region ids the labels refer to).
+  The reach's `arrival` is the post's earliest live `messages_spatial.arrival`, and the
+  starting tick is whatever that much elapsed time earns, so an older post starts wide.
+  **A member's own repost** is the exception: turning the post back into a draft
+  (`handleRejectToDraft`) removes every copy, so `removeStaleAndRetract` drops the reach row
+  and re-approval arrives here as a new post. `repostCarriedArrivals` reads the post's
+  `logs` instead and dates the reach from when the post first went live (its first
+  Approved/Autoapproved, else its first Received on a community that logs no approval), so it
+  resumes at the tick it had earned and people it had reached are not told "not yet"
+  (Discourse 9808/827). That holds only while the post was live within
+  `repost_keeps_reach_days` (7) before each repost; after a longer gap it starts afresh.
+  Autoreposts never need this: they keep the row and its stamp.
 - **`advanceDue`** advances to the next hazard tick: one catchment call materialises that
   tick's polygon, and the stored per-tick reached-group ids drive the ripple-in - no
   schedule recomputation. The target is normally elapsed time alone, but
@@ -764,6 +826,14 @@ For each due post, `ripple:expand`:
 **Rejoin suppression.** If a freegler's most recent Group/Joined log for a group is a
 ripple-join (`logs.text = 'Rippled'`) and they then left, rippling does not re-add them: they
 opted out of a rippled membership. A later ordinary join-then-leave does not block rippling.
+
+**Email settings for a ripple-join.** The new membership copies the poster's settings from
+their home group on the post, except immediate (-1) becomes daily (24) so an unrequested
+membership never starts a flood. If they have left every group the post is on, the settings
+come from any membership they still hold, preferring ones they joined themselves so an
+earlier ripple's guess cannot propagate itself forward. A poster holding no membership at
+all is in no community, and defaults to no email rather than to the daily digest: that
+member has done the one thing that most clearly says they want none.
 
 ### The earned-reach gate (`RIPPLE_EARNED_REACH_ENABLED`, dark by default)
 
@@ -795,6 +865,13 @@ stops such posts spreading ahead of scrutiny:
   and settles the await stamp in the same statement.
 
 ## 5a. Frozen reaches (`status = 'held'`)
+
+A freeze cannot be the only thing that stops an unapproved post going out: it does nothing to a
+post whose reach row does not exist yet, and `messages_spatial` keeps a post for up to five
+minutes after it leaves Approved. So `initialiseNew` only starts a reach, and
+`rippleIntoNewGroups` only writes a copy, when the post has a live Approved copy on a group it
+was posted to directly. `advanceDue` writes its status with `status <> 'held'`, so a freeze made
+while a run is in flight survives it.
 
 `FreezeReachIfOriginPending` (`iznik-server-go/microvolunteering`) sets `status='held'` when a
 post's origin copy stops being live-Approved, typically Back to Pending. It is the only writer,
@@ -1049,7 +1126,24 @@ rows, its latest row states its outcome.
   `updated_at` delta catch-up, then an atomic RENAME swap. Dev/CI just run the Laravel
   migration (small tables).
 - **Unified digest distance scoring:** the reach polygon feeds each post's closeness score.
-- **Reach mail:** the join notification when a post ripples to within reach.
+- **Reach mail:** the join notification when a post ripples to within reach. Two change feeds
+  drive it, one per direction, and neither uses a time window:
+  - *The post's reach moved.* `UnifiedDigestService::sendReachDigests` resumes from a per-shard
+    mark on `rippling_reach.updated_at` (`config` key `reach_mail_mark_shard{N}`), stored as the
+    time the pass started so a row written in the same second is caught next tick. A dry run,
+    a pass stopped early, or a pass with a failed post leaves the mark alone. A cold start reads
+    the last hour. A repost of a Taken or Received post bumps `updated_at` (`JoinAndPostAs` in
+    iznik-server-go), since its reach row survives with its old stamp.
+  - *The member changed.* Joining a group, changing postcode, returning after 90 days away, or
+    switching to immediate mail queues the member in `rippling_reach_member_pending` (written
+    through iznik-server-go's `reachqueue` package by `authMiddleware`, `ProcessSettingsUpdate`, `addMemberToGroup`,
+    `putMembershipsPartner`, `PutUser`, `PatchMemberships`; and by `ExpandService`'s ripple
+    auto-join and `user:add-membership` in PHP - see `ReachMemberQueueService`). The same pass
+    drains the queue, partitioned by `MOD(userid, shards)`, asking `mailNewlyReachedForPost`
+    about each candidate post scoped to that one member. `ripple:reconcile-reach-members` runs
+    daily and re-queues anyone whose join or postcode change since yesterday has no ledger row
+    after it, so a missed hook costs a day, not the mail.
+  The `rippling_reach_notified` ledger dedupes both feeds, so their overlap is harmless.
 - **Held replies:** a reply from outside the post's current reach is parked in
   `rippling_held_replies` rather than delivered, so local people keep first chance. Every hold
   is a **delay with a due time** rather than an open-ended wait - see §7a. One exception: a
@@ -1179,6 +1273,21 @@ unit-tested against the Go reference values).
 **then arrival (newest)** as the tiebreak. The score is exposed as `MessageSummary.Score` and the
 `nearby` store preserves that server order.
 
+**One clock on every browse feed.** The client re-sorts the list it is given
+(`composables/useMessageSort.js`: "New to you" = unseen by score then seen newest-first,
+"Newest posted", "Closest"), and every summary it sorts carries two dates: `posted` (when the
+post was written, `messages.arrival`) and `visibleSince` (the oldest live `messages_groups.arrival`,
+which a repost or an onward ripple moves forward). "Newest posted" orders by `visibleSince` and
+each card's age badge reads the same field (adding "first posted N days" from `posted`), so the
+order can never contradict the ages printed on it. The list locks its order at first paint, so a
+feed that omits the field is not repaired when the full records load: all three feeds the list
+is built from must carry it - the reach feed and `browseView=mygroups` (`isochrone/message.go`),
+`/message/mygroups` behind "All my communities" and a single community (`message/groups.go`),
+and `/message/inbounds` after a map move (`message/bounds.go`). The last two shipped a zero
+until 2026-09-07, and "All my communities" on Newest posted read 27, 7, 3, 28 days
+(Discourse 9808/801). Search results (`message/search.go` `SearchResult`) carry the same two
+dates, stamped by the Search handler, and its server-side "Newest" order uses `visibleSince` too.
+
 **Weights are per-consumer and env-tunable without a deploy** (defaults `close=1, fresh=0,
 budget=1, anchor=0` for both today - closeness × engagement-decay):
 - Browse: `RIPPLE_BROWSE_W_{CLOSE,FRESH,BUDGET,ANCHOR}`, `RIPPLE_BROWSE_WINDOW_HOURS`
@@ -1235,6 +1344,8 @@ about travel time, so the reach wins wherever we have it.
 - `earned_reach_enabled` (`RIPPLE_EARNED_REACH_ENABLED`), `autoapprove_hold_seconds`
   (`RIPPLE_AUTOAPPROVE_HOLD_SECONDS`, 3600), `clean_views_per_group`
   (`RIPPLE_CLEAN_VIEWS_PER_GROUP`, 5) - the earned-reach gate (§5).
+- `repost_keeps_reach_days` (`RIPPLE_REPOST_KEEPS_REACH_DAYS`, 7) - how recently a post must
+  have been live for a member's repost to resume its reach rather than restart it (§5). 0 disables.
 - `RIPPLE_HIDE_PENDING` (apiv2 env, on by default) - hide a post that has no
   `rippling_reach` row yet for its first ten minutes. Set to `0` to show every post at once.
 
@@ -1258,10 +1369,16 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   (§7a) and `releasedat`. Two similar names, one letter apart: `dueat` is when it becomes
   due, `releasedat` is when it actually went.
 - `messages_groups.rippled_in = 1` - marks a rippled-in copy (vs the origin membership).
-  It is also how the post's **origin group** is identified: `MessageOriginGroup`
-  (`iznik-server-go/message/message.go`) takes the earliest-arriving `rippled_in = 0` row,
-  and the client's `homeGroupId` (`composables/rippleStatus.js`) uses the same column.
-  Identify the origin from this column and nothing else. In particular an arrival window
+  It is also how the post's **home groups** are identified, and they are a SET: `HomeGroups`
+  (`iznik-server-go/message/message.go`) is every `rippled_in = 0` row, and
+  `NotifyPosterFlag` relays a moderation action to the poster only from one of them. The
+  client's `isHomeGroupRow` (`composables/rippleStatus.js`) reads the same column per row;
+  `homeGroupId` still picks the earliest of them where ONE anchor is needed (which chat a
+  Blank Reply joins). A TrashNothing cross-post is one post sent directly to several
+  communities, whose mails arrive a second apart, and every one of those copies is home -
+  modelling home as the single earliest row told the others they were rejecting a
+  rippled-in copy and dropped their mail to the member (Discourse 10115).
+  Identify home from this column and nothing else. In particular an arrival window
   (`messages_groups.arrival` close to `messages.arrival`) does not work: approving
   re-stamps `messages_groups.arrival` to the approval time while `messages.arrival` keeps
   the time the post was received, so any post moderated slowly has no row inside the

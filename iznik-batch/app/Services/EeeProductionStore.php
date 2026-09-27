@@ -97,17 +97,33 @@ class EeeProductionStore
      * has to be a position in the approval stream, not a wall-clock time. Reading a
      * different clock here than the selection uses would skip or rescan whole runs.
      */
+    /**
+     * How far through the approval stream the classifier has got.
+     *
+     * Each post's FIRST approval, and the newest of those. A post rippled to a dozen
+     * communities has a row per community, approved at its own time, hours or weeks
+     * apart. Taking the newest of all those rows meant one late approval of a post
+     * already classified moved the mark to the present: a run at 20:00 asked for posts
+     * approved since 19:59:15, found one, and everything approved in the hour between
+     * was never offered again. On live that held coverage at 9.5% with every day frozen
+     * at 13-20% and no day ever filling in.
+     */
     public function highWaterMark(string $model, string $promptVersion): ?string
     {
-        $mark = DB::table('messages_eee')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages_eee.msgid')
-            ->where('messages_eee.model', $model)
-            ->where('messages_eee.prompt_version', $promptVersion)
-            ->where('messages_groups.collection', 'Approved')
-            // keep-raw: MAX over a COALESCE of two columns; no builder expression form.
-            ->max(DB::raw('COALESCE(messages_groups.approvedat, messages_groups.arrival)'));
+        // keep-raw: an aggregate over a per-message aggregate. The builder has no form
+        // for MAX over a grouped subquery, and the statement reads better whole.
+        $mark = DB::selectOne(
+            'SELECT MAX(first_approved) AS mark FROM (
+                 SELECT MIN(COALESCE(mg.approvedat, mg.arrival)) AS first_approved
+                 FROM messages_eee e
+                 INNER JOIN messages_groups mg ON mg.msgid = e.msgid AND mg.collection = ?
+                 WHERE e.model = ? AND e.prompt_version = ?
+                 GROUP BY e.msgid
+             ) AS per_message',
+            ['Approved', $model, $promptVersion]
+        );
 
-        return $mark ?: null;
+        return $mark->mark ?? null;
     }
 
     /** True if this message already has a row for the model and prompt. */

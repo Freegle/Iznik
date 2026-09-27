@@ -23,16 +23,31 @@
           @endif
           That is now fixed.
         </mj-text>
+        @if ($chatCount > 0)
+          <mj-text>
+            @if ($chatCount === 1)
+              While it was going on you had {{ $messageCount === 1 ? 'a message' : $messageCount . ' messages' }} in one chat.
+            @else
+              While it was going on you had {{ $messageCount === 1 ? 'a message' : $messageCount . ' messages' }} across {{ $chatCount }} chats.
+            @endif
+          </mj-text>
+        @endif
+        @if ($modChatCount > 0)
+          <mj-text>
+            @if ($chatCount > 0)
+              You also had {{ $modMessageCount === 1 ? 'a message' : $modMessageCount . ' messages' }}
+            @else
+              While it was going on you had {{ $modMessageCount === 1 ? 'a message' : $modMessageCount . ' messages' }}
+            @endif
+            @if ($modChatCount === 1)
+              in one chat with members of a community you moderate.
+            @else
+              across {{ $modChatCount }} chats with members of communities you moderate.
+            @endif
+            Those are in ModTools.
+          </mj-text>
+        @endif
         <mj-text>
-          @if ($chatCount === 1)
-            While it was going on you had
-            {{ $messageCount === 1 ? 'a message' : $messageCount . ' messages' }}
-            in one chat.
-          @else
-            While it was going on you had
-            {{ $messageCount === 1 ? 'a message' : $messageCount . ' messages' }}
-            across {{ $chatCount }} chats.
-          @endif
           We are sending this one email rather than all of them.
         </mj-text>
       </mj-column>
@@ -40,9 +55,20 @@
 
     <mj-section background-color="#ffffff" padding="0 20px 20px">
       <mj-column>
-        <mj-button href="{{ $chatsUrl }}" border-radius="3px" font-size="16px">
-          Read your messages
-        </mj-button>
+        @if ($chatCount > 0)
+          <mj-button href="{{ $chatsUrl }}" border-radius="3px" font-size="16px">
+            Read your messages
+          </mj-button>
+        @endif
+        @if ($modChatCount > 0)
+          <mj-button href="{{ $modChatsUrl }}" border-radius="3px" font-size="16px">
+            @if ($chatCount > 0)
+              Read your ModTools messages
+            @else
+              Read your messages in ModTools
+            @endif
+          </mj-button>
+        @endif
         <mj-text font-size="13px" color="#666666">
           Sorry about the gap. It was our problem, not yours, and nothing you sent was lost.
         </mj-text>

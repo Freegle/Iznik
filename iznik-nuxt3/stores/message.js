@@ -675,14 +675,14 @@ export const useMessageStore = defineStore('message', {
     },
     // ModTools-specific methods below
     async searchMT(params) {
-      // Message search is always semantic now (the keyword toggle has been
-      // retired). We call the V2 vector search endpoint directly and pass
-      // searchmode explicitly so this does not depend on the server default.
+      // Message search is always semantic. There is no keyword tier left to
+      // choose between, so the endpoint no longer takes a searchmode.
       const results = await api(this.config).message.search({
         search: params.term,
         messagetype: 'All',
         groupids: params.groupid ? String(params.groupid) : undefined,
-        searchmode: 'vector',
+        // Approved Messages "Only this group's own posts (hide rippled-in)".
+        originonly: params.originonly ? 'true' : undefined,
       })
 
       if (!results || results.length === 0) return []
@@ -904,6 +904,9 @@ export const useMessageStore = defineStore('message', {
         params.body
       )
       // Do not remove from list
+    },
+    async report(id, groupid, message) {
+      await api(this.config).message.report(id, groupid, message)
     },
     async hold(params) {
       await this.runHoldAware(params.id, () =>

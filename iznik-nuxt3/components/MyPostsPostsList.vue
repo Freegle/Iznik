@@ -251,30 +251,25 @@ const upcomingTrysts = computed(() => {
     const message = messageStore.byId(post.id)
     if (post.type === 'Offer' && message?.promises?.length) {
       message.promises.forEach((p) => {
+        // The promisee's profile may not have loaded yet. The collection still
+        // exists, so show it under a placeholder name rather than dropping it.
         const user = userStore?.byId(p.userid)
         const isSomeone = p.userid === myid.value
+        const tryst = trystStore?.getByUser(p.userid)
 
-        if (isSomeone || user) {
-          const tryst = trystStore?.getByUser(p.userid)
-
-          // If tryst.arrangedfor is in the future or within the last hour
-          if (
-            tryst &&
-            new Date(tryst.arrangedfor).getTime() >
-              new Date().getTime() - 60 * 60 * 1000
-          ) {
-            const date = tryst
-              ? dayjs(tryst.arrangedfor).format('dddd Do HH:mm a')
-              : null
-
-            ret.push({
-              id: p.userid,
-              name: isSomeone ? 'Someone' : user.displayname,
-              tryst,
-              trystdate: date,
-              subject: message.subject,
-            })
-          }
+        // If tryst.arrangedfor is in the future or within the last hour
+        if (
+          tryst &&
+          new Date(tryst.arrangedfor).getTime() >
+            new Date().getTime() - 60 * 60 * 1000
+        ) {
+          ret.push({
+            id: p.userid,
+            name: isSomeone ? 'Someone' : user?.displayname || 'Freegler',
+            tryst,
+            trystdate: dayjs(tryst.arrangedfor).format('dddd Do HH:mm a'),
+            subject: message.subject,
+          })
         }
       })
     }
@@ -322,8 +317,12 @@ const visibleCollectionGroups = computed(() => {
 </script>
 <style scoped lang="scss">
 @import 'assets/css/_color-vars.scss';
+@import 'assets/css/navbar.scss';
 
 .my-posts-list {
+  /* The room for the fixed bottom navigation bar is on the page body in
+     myposts.vue, not here: the searches panel renders after this list and
+     was left under the bar when the padding sat on the list. */
   padding: 0;
 }
 

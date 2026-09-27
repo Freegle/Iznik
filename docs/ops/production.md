@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-22
 owner: Freegle dev team
 covers:
   - docker-compose.override.edge.yml
@@ -20,11 +20,13 @@ flowchart TD
     U["Members and moderators<br/>web + mobile apps"]
     NET["Netlify<br/>member site + ModTools<br/>static Nuxt builds"]
     LB["Load balancer 'applb'<br/>HAProxy, TLS, rate limits"]
-    subgraph DBN["Database nodes db1 / db2 / db3"]
+    subgraph DBN["Database nodes db2 / db3"]
         GAL[("Percona XtraDB Cluster<br/>multi-master")]
         API["v2 Go API"]
         SPR["spatial + routing"]
     end
+    ARB["db1: Galera arbitrator<br/>(garbd, votes, no data)"]
+    ARB -.-> GAL
     subgraph DKR["Docker host"]
         BATCH["Laravel batch<br/>scheduled jobs"]
         MAILIN["incoming mail<br/>+ spam filtering"]
@@ -57,7 +59,8 @@ host serves the content hostnames directly and does all the background work.
 | Machine | Role |
 |---------|------|
 | **Load balancer** ("applb") | HAProxy. TLS termination and the public front door for everything that is not served by Netlify or directly by the Docker host. Chooses backends per hostname/path (table below), terminates the old-domain redirects, and applies per-user API rate limits. |
-| **Database nodes** ("db1", "db2", "db3") | A **Percona XtraDB Cluster** - all three are equal masters; there is no primary/replica. Each node **also** runs, natively under monit: the **v2 Go API**, the **spatial (KNN)** server and the **routing** server. |
+| **Database nodes** ("db2", "db3") | A **Percona XtraDB Cluster** - both are equal masters; there is no primary/replica. Each node **also** runs, natively under monit: the **v2 Go API**, the **spatial (KNN)** server and the **routing** server. |
+| **Arbitrator** ("db1") | Runs **garbd**, the Galera arbitrator: a third vote so the cluster keeps quorum if one data node fails, holding no data. Its Percona, API, spatial and routing installs are still present but stopped, masked at boot and left unmonitored by monit, and it stays listed in the load balancer as a backup that health-checks down. Bringing it back as a full member is [a runbook](runbooks/database-node-restart-and-rejoin.md#bringing-the-arbitrator-machine-back-as-a-full-member): grow the disk, stop garbd, start Percona for a full state transfer, rebuild the reach artefacts, re-enable the monit checks. |
 | **Docker host** ("docker", the FreegleDocker host) | One machine running the production Docker Compose stack (profiles `backend,production,mail,edge`): the **batch** scheduler (Laravel jobs), **incoming mail** processing, **Loki** log aggregation, Redis, MJML email rendering, the embedding sidecar (semantic search), the AI support helper, the status monitor, and the **spatial** service that answers place search for `geocode.ilovefreegle.org` - plus the user-facing **edge tier** (below). Natively under monit: a host nginx. |
 | **Outbound mail** ("bulk2") | Postfix relay that sends the bulk mail (digests, notifications) - of the order of 200k messages/day. |
 | **app1** (being retired) | The old frontend server. Carries **no live HTTP traffic**; it remains only as a warm backup backend behind the load balancer until decommissioned. |

@@ -1,6 +1,7 @@
 package emailtracking
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -227,4 +228,52 @@ func base64RawURL(b []byte) string {
 		}
 	}
 	return string(out)
+}
+
+// ---------------------------------------------------------------------------
+// ?format=json: the app's way of following a tracked link. A universal link
+// hands the app the tracker's URL, which it cannot follow across origins, so it
+// asks for the destination instead - and gets exactly what a browser would be
+// sent to, including the "/" fallback for a link it must not honour.
+// ---------------------------------------------------------------------------
+
+func clickCompactJSON(t *testing.T, app *fiber.App, path string) (int, string) {
+	t.Helper()
+	req := httptest.NewRequest("GET", path, nil)
+	resp, err := app.Test(req)
+	assert.NoError(t, err)
+	var body struct {
+		URL string `json:"url"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	return resp.StatusCode, body.URL
+}
+
+func TestClickCompact_JSON_ReturnsDestinationInsteadOfRedirecting(t *testing.T) {
+	os.Setenv("USER_SITE", "www.ilovefreegle.org")
+	defer os.Unsetenv("USER_SITE")
+
+	app := newClickCompactApp()
+	enc := encodeForTest(42)
+	status, url := clickCompactJSON(t, app, "/e/d/r/zzzzzzzzzzzz/m/"+enc+"/p0?format=json")
+	assert.Equal(t, 200, status, "JSON mode answers, it does not redirect")
+	assert.Equal(t, "https://www.ilovefreegle.org/message/42?reply=1", url)
+}
+
+func TestClickCompact_JSON_BadLinkStillAnswersRoot(t *testing.T) {
+	app := newClickCompactApp()
+	status, url := clickCompactJSON(t, app, "/e/d/r/abc123456789/z/AQ/p0?format=json")
+	assert.Equal(t, 200, status)
+	assert.Equal(t, "/", url, "a link the redirect would bounce to / is answered as / too")
+}
+
+func TestClickCompact_WithoutFormat_StillRedirects(t *testing.T) {
+	os.Setenv("USER_SITE", "www.ilovefreegle.org")
+	defer os.Unsetenv("USER_SITE")
+
+	app := newClickCompactApp()
+	enc := encodeForTest(42)
+	status, loc := clickCompactLocation(t, app, "/e/d/r/zzzzzzzzzzzz/m/"+enc+"/p0")
+	assert.Equal(t, 302, status, "mail clients and browsers keep the 302")
+	assert.Equal(t, "https://www.ilovefreegle.org/message/42?reply=1", loc)
 }

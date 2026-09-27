@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\User;
 
+use App\Models\User;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -51,7 +52,8 @@ class CreateUserCommand extends Command
             'userid' => $userId,
             'email' => $email,
             'preferred' => 1,
-            'backwards' => strrev($email),
+            // REVERSE(canon), not REVERSE(the address) - see .claude/rules/mail-and-data.md.
+            'backwards' => strrev(User::canonMail($email)),
             'added' => now(),
         ]);
 

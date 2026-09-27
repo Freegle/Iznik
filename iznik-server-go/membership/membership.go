@@ -11,6 +11,8 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/modmessaging"
+	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -177,6 +179,15 @@ func PostMemberships(c *fiber.Ctx) error {
 	case "Leave Member", "Leave Approved Member":
 		// send modmail to the member without changing membership status.
 		// PHP memberships.php line 291-294: just calls $u->mail().
+		//
+		// Except to someone whose only presence here is TN posts placed on a community
+		// they never chose: they have agreed to nothing with these moderators, so there is
+		// no modmail relationship to use. ModTools hides Mail and the standard messages for
+		// them (with a notice saying why); this is the guard behind that.
+		if modmessaging.UserIsUnaddressedOnly(db, req.Userid) {
+			return fiber.NewError(fiber.StatusForbidden, "This member didn't choose this community, so they can't be contacted")
+		}
+
 		//
 		// This action is nothing but a message, so on a membership rippling created for a
 		// poster it has nothing to do: that membership is a record of where their post
@@ -428,6 +439,12 @@ type GetMembershipsMember struct {
 	MailDelayedSince    *string `json:"maildelayedsince" gorm:"column:maildelayedsince"`
 	MailDelayedProvider *string `json:"maildelayedprovider" gorm:"column:maildelayedprovider"`
 	MailDelayedCount    *int    `json:"maildelayedcount" gorm:"column:maildelayedcount"`
+	// False when every post this person has made is a TN post placed on a Freegle
+	// community they never chose - they have not joined Freegle in any sense a moderator
+	// can act on, so ModTools shows a notice instead of the Chat / Mail / standard-message
+	// buttons. True for everyone else, including a TN poster who has ALSO posted normally.
+	// Derived, not stored: see modmessaging.UsersUnaddressedOnly.
+	ModMessagingAllowed bool `json:"mod_messaging_allowed" gorm:"-"`
 }
 
 // GetMemberships handles GET /memberships - list group members (moderator use).
@@ -593,6 +610,36 @@ func GetMemberships(c *fiber.Ctx) error {
 			Joins("LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid")
 	}
 
+	// Same query, with the membership access path pinned to the group index.
+	//
+	// Only the name/email search uses this. That search is a leading-wildcard LIKE,
+	// so no index can answer it and every candidate membership has to be looked at.
+	// Left to itself the optimiser sees ORDER BY m.id with a small LIMIT and walks
+	// the primary key backwards, betting it will fill the page before it has gone
+	// far. For a common term it wins; for a rare one - which is what a moderator
+	// looking for one person types - there is nothing to find and it walks the
+	// whole table. Measured on production: a two-hit search of one community took
+	// 13.0s that way against 0.9s driven from the group index, and a search that
+	// matched nobody took 13.7s.
+	//
+	// The bet got worse on 2026-08-20, when the search branches moved from
+	// ORDER BY m.added to ORDER BY m.id so that the pagination cursor (m.id < ?)
+	// and the ordering agreed. That was right and stays: the cursor must keep
+	// working, so the ordering is not what changes here, the access path is.
+	//
+	// FORCE INDEX names an index, so it is load-bearing in a way a plain query is
+	// not: if this index is ever renamed or dropped, every name search 500s rather
+	// than merely slowing down. The membership search tests run this SQL for that
+	// reason. The index is created by iznik-batch migration
+	// 2026_08_17_000001_widen_memberships_groupid_index_with_emailfrequency.
+	// (Discourse 10179)
+	searchTx := func() *gorm.DB {
+		return db.Table("memberships m FORCE INDEX (memberships_groupid_collection_emailfrequency)").
+			Select(selectCols).
+			Joins("JOIN users u ON u.id = m.userid").
+			Joins("LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid")
+	}
+
 	// The WHERE for each branch below is built as a single string and
 	// passed to ONE Where() call: GORM's clause.Where wraps any fragment
 	// containing "AND"/"OR" in an extra paren pair once there is more than
@@ -651,7 +698,11 @@ func GetMemberships(c *fiber.Ctx) error {
 				whereSQL += " AND m.id < ?"
 				whereArgs = append(whereArgs, contextID)
 			}
-			baseTx().Joins("LEFT JOIN users_emails ue ON ue.userid = m.userid").
+			// searchTx, not baseTx: see the comment on searchTx above. The numeric
+			// branch deliberately keeps baseTx - it matches on m.userid, which that
+			// column's own index answers in about a millisecond, and pinning the
+			// group index there would turn that into a scan of the whole community.
+			searchTx().Joins("LEFT JOIN users_emails ue ON ue.userid = m.userid").
 				Where(whereSQL, whereArgs...).
 				Group("m.id").Order("m.id DESC").Limit(limit).Scan(&members)
 		}
@@ -720,8 +771,19 @@ func GetMemberships(c *fiber.Ctx) error {
 
 // enrichMembers computes displayname from name fields, resolves posting status, and parses settings JSON.
 func enrichMembers(members []GetMembershipsMember) {
+	// Whether each member can be contacted at all, answered for the whole page in one
+	// query rather than per row - the members list is the one screen that asks this about
+	// a hundred people at a time.
+	userids := make([]uint64, 0, len(members))
+	for i := range members {
+		userids = append(userids, members[i].Userid)
+	}
+	unaddressedOnly := modmessaging.UsersUnaddressedOnly(database.DBConn, userids)
+
 	for i := range members {
 		m := &members[i]
+
+		m.ModMessagingAllowed = !unaddressedOnly[m.Userid]
 
 		// Compute displayname from fullname/firstname/lastname.
 		if m.Fullname != nil && *m.Fullname != "" {
@@ -839,6 +901,9 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 		ID    uint64 `gorm:"column:id"`
 		User1 uint64 `gorm:"column:user1"`
 		User2 uint64 `gorm:"column:user2"`
+		// Why the pair was linked, for the moderator to read on the card. NULL for rows
+		// written by the browser-session detector, which the frontend words for itself.
+		Reason *string `gorm:"column:reason"`
 	}
 
 	var rows []relatedRow
@@ -846,19 +911,19 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 	// Table() passes its name argument through verbatim (no quoting) once it
 	// contains a space, so a parenthesized UNION subquery can be given as the
 	// "table name" with its own bind args in Table()'s variadic args.
-	db.Table("(SELECT users_related.id, user1, user2 FROM users_related "+
+	db.Table("(SELECT users_related.id, user1, user2, reason FROM users_related "+
 		"INNER JOIN memberships ON users_related.user1 = memberships.userid "+
 		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = 'User' "+
 		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL "+
 		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ? "+
 		"UNION "+
-		"SELECT users_related.id, user1, user2 FROM users_related "+
+		"SELECT users_related.id, user1, user2, reason FROM users_related "+
 		"INNER JOIN memberships ON users_related.user2 = memberships.userid "+
 		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL "+
 		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' "+
 		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ?) t",
 		modGroupIDs, modGroupIDs).
-		Select("DISTINCT id, user1, user2").
+		Select("DISTINCT id, user1, user2, reason").
 		Order("id DESC").
 		Limit(limit).
 		Scan(&rows)
@@ -903,9 +968,10 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 		}
 
 		result = append(result, fiber.Map{
-			"id":    r.ID,
-			"user1": r.User1,
-			"user2": r.User2,
+			"id":     r.ID,
+			"user1":  r.User1,
+			"user2":  r.User2,
+			"reason": r.Reason,
 		})
 	}
 
@@ -1361,12 +1427,15 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 	// values before comparing (the retired ormharness's normalise_test.go
 	// TestNormaliseColumnOrder_Insert, removed in d22ba1d6c),
 	// so the map-Create reorder is harmless. Identical twin: addMemberToGroup (27aa0e237120).
-	db.Table("memberships").Create(map[string]interface{}{
+	partnerJoin := db.Table("memberships").Create(map[string]interface{}{
 		"userid":     userid,
 		"groupid":    groupid,
 		"role":       utils.ROLE_MEMBER,
 		"collection": utils.COLLECTION_APPROVED,
 	})
+	if partnerJoin.RowsAffected > 0 {
+		reachqueue.QueueMember(db, userid, reachqueue.ReasonJoined)
+	}
 
 	// Record in memberships_history with processingrequired=1 so the
 	// Laravel batch (memberships:process) sends the group welcome email,
@@ -1430,6 +1499,9 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 	})
 
 	if result.RowsAffected > 0 {
+		// A new membership can make the member eligible for reach mail about posts on this
+		// group whose reach already covers them.
+		reachqueue.QueueMember(db, userid, reachqueue.ReasonJoined)
 		// Record in memberships_history with processingrequired=1 so the
 		// Laravel batch (memberships:process) sends the group welcome email,
 		// runs spam checks, and applies review flags. Without this row the
@@ -1465,6 +1537,30 @@ type DeleteMembershipsRequest struct {
 	Userid  uint64 `json:"userid"`
 	Groupid uint64 `json:"groupid"`
 	Ban     *bool  `json:"ban"`
+}
+
+// msgSelfLeaveKeepsRole is the refusal a moderator sees when they try to leave a group
+// they run. The frontend never offers that choice; this is the backstop.
+const msgSelfLeaveKeepsRole = "You are a moderator of this community, so leaving would drop that role. Ask another owner to change your role first."
+
+// selfLeaveKeepsRole reports whether leaving this group would throw away a moderator
+// role the member holds by choice. Only a membership rippling created (rippled = 1) is
+// theirs to drop freely: that is how a poster stops a rippled post reaching a group. A
+// chosen Owner or Moderator row needs another owner to change the role first (Discourse
+// 10148: an owner left the groups she ran while trying to stop a post rippling, and the
+// ripple rejoin brought her back as a plain member).
+func selfLeaveKeepsRole(db *gorm.DB, userid uint64, groupid uint64) bool {
+	var row struct {
+		Role    string
+		Rippled int
+	}
+	res := db.Table("memberships").Select("role, rippled").
+		Where("userid = ? AND groupid = ? AND collection = ?", userid, groupid, utils.COLLECTION_APPROVED).
+		Limit(1).Scan(&row)
+	if res.Error != nil || res.RowsAffected == 0 {
+		return false
+	}
+	return row.Rippled == 0 && (row.Role == utils.ROLE_MODERATOR || row.Role == utils.ROLE_OWNER)
 }
 
 // DeleteMemberships handles DELETE /memberships - user leaves a group.
@@ -1536,12 +1632,15 @@ func DeleteMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
 
-	// Self-leave is always allowed. Non-self removals require mod/owner of the group.
+	// Non-self removals require mod/owner of the group. A self-leave is allowed unless it
+	// would throw away a moderator role the member holds by choice.
 	if userid != myid {
 		if !isModOfGroup(myid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
 		}
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_DELETED, req.Groupid, userid, myid, "")
+	} else if selfLeaveKeepsRole(db, myid, req.Groupid) {
+		return fiber.NewError(fiber.StatusForbidden, msgSelfLeaveKeepsRole)
 	}
 
 	// Remove the membership.
@@ -1598,6 +1697,12 @@ func deleteMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) erro
 		return fiber.NewError(fiber.StatusNotFound, "User not found")
 	}
 	userid := candidates[0]
+
+	// The partner path is a self-leave too, so the same protection of a chosen
+	// moderator role applies.
+	if selfLeaveKeepsRole(db, userid, groupid) {
+		return fiber.NewError(fiber.StatusForbidden, msgSelfLeaveKeepsRole)
+	}
 
 	// Remove the membership.
 	// Converted together with its
@@ -1679,6 +1784,11 @@ func PatchMemberships(c *fiber.Ctx) error {
 	if req.Emailfrequency != nil {
 		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
 			Update("emailfrequency", int(*req.Emailfrequency))
+		// Reach mail goes to immediate members only, so switching to immediate is the moment
+		// a member becomes eligible for it.
+		if int(*req.Emailfrequency) == utils.FREQUENCY_IMMEDIATE {
+			reachqueue.QueueMember(db, userid, reachqueue.ReasonFrequency)
+		}
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_OUR_EMAIL_FREQUENCY, req.Groupid, userid, myid,
 			fmt.Sprintf("emailfrequency=%d", int(*req.Emailfrequency)))
 	}

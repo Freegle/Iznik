@@ -67,7 +67,12 @@ function mountButton(props = {}) {
           emits: ['handle'],
         },
         ConfirmModal: { template: '<div />' },
-        ModStdMessageModal: { template: '<div />' },
+        ModStdMessageModal: {
+          // Real methods: ModMessageButton calls show()/fillin() through the ref, and a
+          // bare <div /> stub turns that into an unhandled TypeError.
+          template: '<div />',
+          methods: { show() {}, fillin() {} },
+        },
         NoticeMessage: { template: '<div><slot /></div>', props: ['variant'] },
         'v-icon': { template: '<i />' },
       },
@@ -99,5 +104,42 @@ describe('ModMessageButton', () => {
     await wrapper.vm.$nextTick()
 
     expect(mockUserStore.fetch).not.toHaveBeenCalled()
+  })
+
+  // A post whose poster never joined Freegle is on its home group, so Delete and Delete as
+  // Spam must stay - but there is still nobody to send a rejection message to.
+  describe('when the poster cannot be written to', () => {
+    it('confirms a silent removal instead of composing a rejection', async () => {
+      const wrapper = mountButton({
+        approve: false,
+        reject: true,
+        noMemberMessage: true,
+        label: 'Reject',
+        variant: 'warning',
+        icon: 'times',
+      })
+
+      await wrapper.find('button').trigger('click')
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(true)
+      expect(wrapper.vm.showStdMsgModal).toBe(false)
+    })
+
+    it('composes a rejection as usual when the poster can be written to', async () => {
+      const wrapper = mountButton({
+        approve: false,
+        reject: true,
+        label: 'Reject',
+        variant: 'warning',
+        icon: 'times',
+      })
+
+      await wrapper.find('button').trigger('click')
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(false)
+      expect(wrapper.vm.showStdMsgModal).toBe(true)
+    })
   })
 })

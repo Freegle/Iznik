@@ -145,4 +145,94 @@ class TnCrosspostSingleMessageTest extends TestCase
         $itemLinks = DB::table('messages_items')->where('msgid', $msgid)->count();
         $this->assertSame(1, $itemLinks, 'the item link is per message and must not be duplicated');
     }
+
+    /**
+     * The same TN email redelivered for a group already on the message must be a
+     * recognised no-op. The messages_groups insert was already INSERT IGNORE for exactly
+     * that reason, but the messages_history insert one line later was not, and (msgid,
+     * groupid) is unique there too, so it threw 1062 and the whole attach was logged as
+     * an error - 8, 13 and 7 times on 2026-09-11, 09-12 and 09-13.
+     *
+     * Nothing further should be written either: messages_postings carries no unique key
+     * on (msgid, groupid), so a second pass over the per-group follow-up would record the
+     * item as posted twice and feed the repost logic a phantom.
+     */
+    public function test_the_same_tn_email_redelivered_for_one_group_is_a_no_op(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tnmember')]);
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        DB::table('users')->where('id', $user->id)->update([
+            'lastlocation' => $this->createLocation(51.5, -0.1),
+        ]);
+
+        $tnPostId = 'tn-'.uniqid();
+        $subject = 'OFFER: Redelivered Sushi Mat (Claygate KT10)';
+
+        $this->deliverTnPost($user, $group, $subject, $tnPostId);
+        $this->deliverTnPost($user, $group, $subject, $tnPostId);
+
+        $msgids = DB::table('messages')
+            ->where('tnpostid', $tnPostId)
+            ->whereNull('deleted')
+            ->pluck('id');
+        $this->assertCount(1, $msgids, 'a redelivery must not create a second message');
+        $msgid = (int) $msgids->first();
+
+        // One group row, one history row, one receipt log: the second delivery added none
+        // of them.
+        $this->assertSame(1, DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $group->id)->count());
+        $this->assertSame(1, DB::table('messages_history')->where('msgid', $msgid)->where('groupid', $group->id)->count());
+        $this->assertSame(
+            1,
+            DB::table('logs')->where('msgid', $msgid)->where('type', 'Message')->where('subtype', 'Received')->count()
+        );
+
+        // Exactly one posting, from the first delivery. This is the row with no unique
+        // key behind it, so the redelivery must not add a second.
+        $this->assertSame(1, DB::table('messages_postings')->where('msgid', $msgid)->where('groupid', $group->id)->count());
+    }
+
+    public function test_second_tn_email_does_not_revert_the_first_groups_approved_copy(): void
+    {
+        // TrashNothing sends one email per group, a minute or two apart. When the first
+        // group's copy had already been promoted to Approved by the content check, routing
+        // the second email set the collection back to Pending on EVERY row of the message,
+        // because the update was keyed on the message id alone. The first group's mods then
+        // found a clean post from a member in good standing sitting in Pending with no
+        // reason recorded (Discourse 10142).
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tnmember')]);
+        $this->createMembership($user, $groupA, ['ourPostingStatus' => 'DEFAULT']);
+        $this->createMembership($user, $groupB, ['ourPostingStatus' => 'DEFAULT']);
+        DB::table('users')->where('id', $user->id)->update([
+            'lastlocation' => $this->createLocation(51.5, -0.1),
+        ]);
+
+        $tnPostId = 'tn-'.uniqid();
+        $subject = 'OFFER: Knitting Book (London)';
+
+        $this->deliverTnPost($user, $groupA, $subject, $tnPostId);
+        $msgid = DB::table('messages')->where('tnpostid', $tnPostId)->whereNull('deleted')->value('id');
+        $this->assertNotNull($msgid);
+
+        // The content-check job finds the first copy clean and promotes it.
+        DB::table('messages_groups')
+            ->where('msgid', $msgid)->where('groupid', $groupA->id)
+            ->update(['collection' => 'Approved', 'approvedat' => now()]);
+
+        $this->deliverTnPost($user, $groupB, $subject, $tnPostId);
+
+        $this->assertSame(
+            'Approved',
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupA->id)->value('collection'),
+            'routing the second cross-post must not touch the first group\'s copy'
+        );
+        $this->assertSame(
+            'Pending',
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->value('collection'),
+            'the second group\'s own copy starts Pending for its content check'
+        );
+    }
 }

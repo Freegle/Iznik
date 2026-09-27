@@ -38,7 +38,7 @@ describe('ModRelatedMember', () => {
   const now = dayjs()
 
   // Create a pair entry (what memberStore.get returns) and populate userStore
-  function setupData(user1Overrides = {}, user2Overrides = {}) {
+  function setupData(user1Overrides = {}, user2Overrides = {}, pairOverrides = {}) {
     const u1 = {
       id: 1,
       displayname: 'User One',
@@ -76,7 +76,7 @@ describe('ModRelatedMember', () => {
     }
 
     // Pair entry in member store
-    const pair = { id: 99, user1: u1.id, user2: u2.id }
+    const pair = { id: 99, user1: u1.id, user2: u2.id, ...pairOverrides }
     mockMemberStore.get.mockReturnValue(pair)
 
     // User data in user store
@@ -117,6 +117,14 @@ describe('ModRelatedMember', () => {
             template:
               '<button :data-variant="variant" @click="$emit(\'click\')"><slot /></button>',
             props: ['variant'],
+          },
+          'b-alert': {
+            template: '<div class="alert" :data-variant="variant"><slot /></div>',
+            props: ['variant', 'show'],
+          },
+          'v-icon': {
+            template: '<i :data-icon="icon" />',
+            props: ['icon'],
           },
           ModMember: {
             template:
@@ -578,6 +586,29 @@ describe('ModRelatedMember', () => {
       })
       const wrapper = mountComponent()
       expect(wrapper.vm.user1.emails[1].email).toBe('user@gmail.com')
+    })
+  })
+
+  describe('why the pair was flagged', () => {
+    it('shows the detector reason so the mod can judge without opening the chats', () => {
+      const reason =
+        'Both accounts gave the same mobile number (ending 0373) in chat. ' +
+        '#115279: 2 messages, 14 May 2026 to 25 Jul 2026. #45058564: 1 message on 29 Aug 2026.'
+      setupData({}, {}, { reason })
+
+      const wrapper = mountComponent()
+
+      expect(wrapper.text()).toContain('same mobile number (ending 0373)')
+      expect(wrapper.text()).toContain('29 Aug 2026')
+    })
+
+    it('falls back to the browser wording for rows with no stored reason', () => {
+      // Rows written by the original session detector predate the reason column.
+      setupData({}, {}, { reason: null })
+
+      const wrapper = mountComponent()
+
+      expect(wrapper.text()).toContain('signed in from the same browser')
     })
   })
 })

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-13
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/settings/**
@@ -71,6 +71,10 @@ moderators, so there is no benefit to joining everywhere.
 - Each community has its own email frequency, set in Email settings above.
 - To **leave** a community, use **Unsubscribe** (`/unsubscribe`) and pick the community.
   Leaving stops its posts reaching you.
+- If you are a **moderator or owner** of a community, it is not in that list, and Freegle
+  refuses a leave request for it. Ask another owner to change your role first. This stops
+  you dropping your own role by accident; a community a post rippled you into is not
+  protected this way, because leaving it is how you stop that post reaching there.
 
 ## The Unsubscribe link in our emails
 

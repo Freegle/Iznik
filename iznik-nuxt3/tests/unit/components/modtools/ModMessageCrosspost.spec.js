@@ -153,6 +153,37 @@ describe('ModMessageCrosspost', () => {
         const wrapper = mountComponent()
         expect(wrapper.vm.group).toBeUndefined()
       })
+
+      it('reads the origin group row, not the first row, when a rippled copy sorts first', () => {
+        // messages_groups has no ORDER BY: a crosspost that also rippled into another
+        // group can come back with the rippled-in copy first (Discourse 10115/2).
+        mockGroupStore.get.mockImplementation((id) => ({
+          id,
+          namedisplay: 'Group ' + id,
+        }))
+        const wrapper = mountComponent(
+          {},
+          {
+            groups: [
+              {
+                groupid: 790,
+                collection: 'Approved',
+                rippled_in: 1,
+                arrival: '2024-01-02T00:00:00Z',
+              },
+              {
+                groupid: 456,
+                collection: 'Pending',
+                rippled_in: 0,
+                arrival: '2024-01-01T00:00:00Z',
+              },
+            ],
+          }
+        )
+        expect(wrapper.vm.messageGroupId).toBe(456)
+        expect(wrapper.vm.collection).toBe('Pending')
+        expect(mockGroupStore.get).toHaveBeenCalledWith(456)
+      })
     })
 
     describe('groupname', () => {

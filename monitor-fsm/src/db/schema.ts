@@ -2,7 +2,7 @@
 // Inlined (not a .sql file) so TS compilation produces a single self-contained
 // dist/ without needing a post-build copy step.
 
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 7
 
 // v2 migration: add pr_rejections column to discourse_bug.
 // Applied in applySchema() via ALTER TABLE (idempotent — caught by DUPLICATE COLUMN error).
@@ -89,6 +89,78 @@ CREATE INDEX IF NOT EXISTS idx_discourse_bug_pr ON discourse_bug(pr_number);
 COMMIT;
 `
 
+// v6 migration: allow 'question' in the discourse_bug state CHECK constraint.
+// Triage has always classified posts as questions, but they were filed as
+// 'deferred' and never looked at again. They are now kept as 'question' so the
+// answering pass can find them, which the old constraint rejects outright.
+// SQLite cannot ALTER a CHECK constraint in place, so the table is rebuilt.
+export const MIGRATION_V6_SQL = `
+BEGIN;
+ALTER TABLE discourse_bug RENAME TO discourse_bug_v5;
+CREATE TABLE discourse_bug (
+  topic INTEGER NOT NULL,
+  post INTEGER NOT NULL,
+  topic_title TEXT,
+  reporter TEXT,
+  excerpt TEXT,
+  state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open','investigating','fix-queued','deferred','fixed','confirmed','off-topic','duplicate','feature-request','question')),
+  pr_number INTEGER,
+  reason TEXT,
+  first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+  feature_area TEXT,
+  fixed_at TEXT,
+  deployed_at TEXT,
+  pr_rejections INTEGER NOT NULL DEFAULT 0,
+  symptom_tags TEXT,
+  code_area TEXT,
+  PRIMARY KEY (topic, post)
+);
+INSERT INTO discourse_bug (topic, post, topic_title, reporter, excerpt, state, pr_number, reason, first_seen_at, last_seen_at, feature_area, fixed_at, deployed_at, pr_rejections, symptom_tags, code_area)
+  SELECT topic, post, topic_title, reporter, excerpt, state, pr_number, reason, first_seen_at, last_seen_at, feature_area, fixed_at, deployed_at, pr_rejections, symptom_tags, code_area
+  FROM discourse_bug_v5;
+DROP TABLE discourse_bug_v5;
+CREATE INDEX IF NOT EXISTS idx_discourse_bug_state ON discourse_bug(state);
+CREATE INDEX IF NOT EXISTS idx_discourse_bug_pr ON discourse_bug(pr_number);
+COMMIT;
+`
+
+// v7 migration: allow 'needs-detail' in the discourse_bug state CHECK constraint.
+// A report that points at "a member" or "a group" without saying which one cannot be
+// worked on. It used to go into the fix pipeline anyway, or be parked as deferred with
+// nobody told. It is now held in 'needs-detail' while the reporter is asked what is
+// missing. SQLite cannot ALTER a CHECK constraint in place, so the table is rebuilt.
+export const MIGRATION_V7_SQL = `
+BEGIN;
+ALTER TABLE discourse_bug RENAME TO discourse_bug_v6;
+CREATE TABLE discourse_bug (
+  topic INTEGER NOT NULL,
+  post INTEGER NOT NULL,
+  topic_title TEXT,
+  reporter TEXT,
+  excerpt TEXT,
+  state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open','investigating','fix-queued','deferred','fixed','confirmed','off-topic','duplicate','feature-request','question','needs-detail')),
+  pr_number INTEGER,
+  reason TEXT,
+  first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+  feature_area TEXT,
+  fixed_at TEXT,
+  deployed_at TEXT,
+  pr_rejections INTEGER NOT NULL DEFAULT 0,
+  symptom_tags TEXT,
+  code_area TEXT,
+  PRIMARY KEY (topic, post)
+);
+INSERT INTO discourse_bug (topic, post, topic_title, reporter, excerpt, state, pr_number, reason, first_seen_at, last_seen_at, feature_area, fixed_at, deployed_at, pr_rejections, symptom_tags, code_area)
+  SELECT topic, post, topic_title, reporter, excerpt, state, pr_number, reason, first_seen_at, last_seen_at, feature_area, fixed_at, deployed_at, pr_rejections, symptom_tags, code_area
+  FROM discourse_bug_v6;
+DROP TABLE discourse_bug_v6;
+CREATE INDEX IF NOT EXISTS idx_discourse_bug_state ON discourse_bug(state);
+CREATE INDEX IF NOT EXISTS idx_discourse_bug_pr ON discourse_bug(pr_number);
+COMMIT;
+`
+
 export const SCHEMA_SQL = `
 PRAGMA foreign_keys = ON;
 
@@ -110,7 +182,7 @@ CREATE TABLE IF NOT EXISTS discourse_bug (
   topic_title TEXT,
   reporter TEXT,
   excerpt TEXT,
-  state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open','investigating','fix-queued','deferred','fixed','confirmed','off-topic','duplicate','feature-request')),
+  state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open','investigating','fix-queued','deferred','fixed','confirmed','off-topic','duplicate','feature-request','question','needs-detail')),
   pr_number INTEGER,
   reason TEXT,
   first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),

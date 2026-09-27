@@ -43,6 +43,14 @@ trait TrackableEmail
         ?array $metadata = null,
         bool $hasAmp = false
     ): void {
+        // Deployment switch: with tracking off there is no EmailTracking row, so
+        // every tracked*() helper below falls through to the plain URL.
+        if (! config('freegle.mail.tracking_enabled', true)) {
+            $this->tracking = null;
+
+            return;
+        }
+
         $this->tracking = EmailTracking::createForEmail(
             $emailType,
             $recipientEmail,

@@ -125,7 +125,7 @@ export const useMemberStore = defineStore('member', {
         received += members.length
 
         if (params.collection === 'Related') {
-          // V2 API returns {id, user1, user2} pairs.  Store each pair keyed
+          // V2 API returns {id, user1, user2, reason} pairs.  Store each pair keyed
           // by its id, and create synthetic member entries for each user so
           // that ModMember can look them up.
           members.forEach((pair) => {

@@ -155,8 +155,22 @@ class StoriesNewsletterService
         //   - in a published Freegle group
         //   - group has not disabled newsletters in its settings
         //   - user has newslettersallowed = 1
-        //   - user is not deleted
-        $eligibleMembers = DB::table('users')
+        //   - user is someone we should be mailing at all (receivingOurMails:
+        //     not deleted, seen within User::USER_INACTIVE_DAYS, simplemail not
+        //     'None', not on holiday, not bouncing)
+        //
+        // That last gate is V1 parity and it matters: V1's Newsletter::send()
+        // ran `if (!$u->getPrivate('bouncing') && $u->sendOurMails())` per user,
+        // and this port kept only the bouncing half. Without the activity check
+        // the monthly newsletter targets every member of every group however
+        // dormant - 2.56M addresses on 2026-09-13, of which 2.41M had not
+        // logged in for over six months and the median had not been seen for
+        // ten years. Mailing decade-old addresses is how you find spam traps,
+        // which is exactly what the comment in User::sendOurMails() warns
+        // about, and 296k of them queued behind the daily digest. The same
+        // mistake was made and fixed in CommunityNewsEmailService.
+        $eligibleMembers = User::query()
+            ->select(['users.id'])
             ->join('memberships', 'memberships.userid', '=', 'users.id')
             ->join('groups', function ($join) {
                 $join->on('groups.id', '=', 'memberships.groupid')
@@ -164,14 +178,13 @@ class StoriesNewsletterService
                     ->where('groups.publish', 1);
             })
             ->where('users.newslettersallowed', 1)
-            ->whereNull('users.deleted')
+            ->receivingOurMails()
             ->where(function ($q) {
                 // newsletter defaults to on (1) when not set; only excluded if explicitly set to 0.
                 $q->whereNull('groups.settings')
                     ->orWhereRaw("COALESCE(JSON_EXTRACT(groups.settings, '$.newsletter'), 1) != 0");
             })
-            ->distinct()
-            ->select('users.id');
+            ->distinct();
 
         // Stream eligible members in keyset-paginated chunks; pluck()-ing the entire
         // eligible newsletter userbase (hundreds of thousands of ids) at once exhausts memory.
@@ -186,6 +199,18 @@ class StoriesNewsletterService
             $email = \App\Models\User::find($userId)?->email_preferred;
 
             if (!$email) {
+                continue;
+            }
+
+            // The member's provider is refusing our mail. Generating this one
+            // would cost a render and then sit in the spool behind everything
+            // else, so skip before the render - the same place Community News
+            // and the digests gate. Counted, so ModTools can show the scale of
+            // what a member missed; the catch-up policy then drops it rather
+            // than replaying it, which is right for a monthly newsletter where
+            // next month's issue is a better email than a stale one.
+            if (app(\App\Services\Mail\MailSuppressionService::class)
+                ->shouldSkip($email, (int) $userId, 'storiesnewsletter')) {
                 continue;
             }
 

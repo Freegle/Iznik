@@ -168,6 +168,70 @@ class TNSyncCommandTest extends TestCase
         );
     }
 
+    public function test_sync_falsy_rating_is_not_treated_as_a_deletion(): void
+    {
+        $user = $this->createTestUser();
+        $tnRatingId = random_int(100000, 999999);
+
+        DB::table('ratings')->insert([
+            'ratee' => $user->id,
+            'rating' => 'Up',
+            'timestamp' => self::DATE_OLD,
+            'visible' => 1,
+            'tn_rating_id' => $tnRatingId,
+        ]);
+
+        Http::fake([
+            '*/ratings*' => Http::response([
+                'ratings' => [[
+                    'rating_id' => $tnRatingId,
+                    'ratee_fd_user_id' => $user->id,
+                    // Falsy but present. Only a null rating means "deleted".
+                    'rating' => 0,
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertTrue(
+            DB::table('ratings')->where('tn_rating_id', $tnRatingId)->exists(),
+            'A falsy-but-present rating must not delete the row.'
+        );
+    }
+
+    public function test_sync_rating_without_a_date_does_not_move_the_watermark(): void
+    {
+        $user = $this->createTestUser();
+
+        Http::fake([
+            '*/ratings*' => Http::response([
+                'ratings' => [
+                    [
+                        // No 'date' key at all — must neither warn nor clobber
+                        // the watermark the dated row below establishes.
+                        'rating_id' => random_int(100000, 999999),
+                        'ratee_fd_user_id' => $user->id,
+                        'rating' => 'Up',
+                    ],
+                    [
+                        'rating_id' => random_int(100000, 999999),
+                        'ratee_fd_user_id' => $user->id,
+                        'rating' => 'Down',
+                        'date' => self::DATE_SYNC,
+                    ],
+                ],
+            ], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame(self::DATE_SYNC, trim(file_get_contents($this->dateFile)));
+    }
+
     public function test_sync_skips_rating_without_fd_user_id(): void
     {
         Http::fake([
@@ -305,6 +369,61 @@ class TNSyncCommandTest extends TestCase
         $this->assertEquals(7200, $replyTime);
     }
 
+    public function test_sync_reply_time_zero_is_stored(): void
+    {
+        $user = $this->createTNUser();
+
+        DB::table('users_replytime')->insert([
+            'userid' => $user->id,
+            'replytime' => 1800,
+            'timestamp' => self::DATE_OLD,
+        ]);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => $user->id,
+                    'reply_time' => 0,
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        // A reply time of 0 is a real value (instant replies), not "no change".
+        $replyTime = DB::table('users_replytime')->where('userid', $user->id)->value('replytime');
+        $this->assertEquals(0, $replyTime);
+    }
+
+    public function test_sync_reply_time_absent_is_left_alone(): void
+    {
+        $user = $this->createTNUser();
+
+        DB::table('users_replytime')->insert([
+            'userid' => $user->id,
+            'replytime' => 1800,
+            'timestamp' => self::DATE_OLD,
+        ]);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => $user->id,
+                    'username' => 'SomeName',
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $replyTime = DB::table('users_replytime')->where('userid', $user->id)->value('replytime');
+        $this->assertEquals(1800, $replyTime);
+    }
+
     public function test_sync_reply_time_executes_without_error(): void
     {
         $user = $this->createTNUser();
@@ -347,6 +466,61 @@ class TNSyncCommandTest extends TestCase
 
         $aboutMe = DB::table('users_aboutme')->where('userid', $user->id)->value('text');
         $this->assertEquals('I love giving things away!', $aboutMe);
+    }
+
+    public function test_sync_about_me_empty_string_clears_bio(): void
+    {
+        $user = $this->createTNUser();
+
+        DB::table('users_aboutme')->insert([
+            'userid' => $user->id,
+            'text' => 'Old bio',
+            'timestamp' => self::DATE_OLD,
+        ]);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => $user->id,
+                    'about_me' => '',
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        // An empty string means the member cleared their bio, not "no change".
+        $aboutMe = DB::table('users_aboutme')->where('userid', $user->id)->value('text');
+        $this->assertSame('', $aboutMe);
+    }
+
+    public function test_sync_about_me_absent_is_left_alone(): void
+    {
+        $user = $this->createTNUser();
+
+        DB::table('users_aboutme')->insert([
+            'userid' => $user->id,
+            'text' => 'Old bio',
+            'timestamp' => self::DATE_OLD,
+        ]);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => $user->id,
+                    'username' => 'SomeName',
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $aboutMe = DB::table('users_aboutme')->where('userid', $user->id)->value('text');
+        $this->assertEquals('Old bio', $aboutMe);
     }
 
     public function test_sync_about_me_executes_without_error(): void
@@ -634,6 +808,58 @@ class TNSyncCommandTest extends TestCase
     }
 
     /**
+     * A username is not a prefix of an address. `bibiana-g%@user.trashnothing.com`
+     * also matches `bibiana-gomes-g4840@...`, so the probe on its own merged two
+     * unrelated members and deleted one of them (2026-09-13). A longer username that
+     * happens to start with `<username>-g` must be left alone.
+     */
+    public function test_incremental_scan_leaves_a_longer_username_alone(): void
+    {
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $shortBase = 'dee_' . uniqid('', true);
+        $longBase = $shortBase . '-gomes';
+
+        // The member with the longer name has been around a while.
+        $longUser = $this->createTestUser(['fullname' => 'Dee Gomes']);
+        $longEmail = "{$longBase}-g4840@user.trashnothing.com";
+        DB::table('users_emails')->insert([
+            'userid' => $longUser->id,
+            'email' => $longEmail,
+            'backwards' => strrev($longEmail),
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+
+        // Read past it, so the next run is genuinely incremental.
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        // A different member, whose name is the other's prefix, joins a group.
+        $shortUser = $this->createTestUser(['fullname' => 'Dee']);
+        $shortEmail = "{$shortBase}-g288@user.trashnothing.com";
+        DB::table('users_emails')->insert([
+            'userid' => $shortUser->id,
+            'email' => $shortEmail,
+            'backwards' => strrev($shortEmail),
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertNotNull(User::find($shortUser->id), 'the new arrival must survive');
+        $this->assertNotNull(User::find($longUser->id), 'the member with the longer name must survive');
+        $this->assertEquals(
+            $longUser->id,
+            DB::table('users_emails')->where('email', $longEmail)->value('userid'),
+            'the longer name keeps its own address'
+        );
+    }
+
+    /**
      * The hole the incremental check cannot see: a duplicate made by re-pointing an
      * existing row, which adds no new id. One tick a day re-scans everything to catch
      * those, which is the only reason narrowing the per-tick check is safe.
@@ -678,6 +904,184 @@ class TNSyncCommandTest extends TestCase
             (User::find($user1->id) !== null) xor (User::find($user2->id) !== null),
             'the full re-scan must catch what the cursor stepped over'
         );
+    }
+
+    /**
+     * The blind spot that let 96 duplicate pairs pile up on production between
+     * 2026-05 and 2026-08.
+     *
+     * 5e2a90450 swapped `email LIKE '%@user.trashnothing.com'` (a 400s full scan)
+     * for a range scan on the `backwards` index, on the stated assumption that
+     * `backwards` is REVERSE(email). It is not. Rows written by V1 hold
+     * REVERSE(canon), and canon has the TN group suffix AND the dots in the
+     * domain stripped - so those rows reverse to `mocgnihtonhsartresu@...`, not
+     * `moc.gnihtonhsart.resu@...`, and the filter steps straight over them.
+     * On production that is 1,752,575 of 2,217,411 TN addresses, with a further
+     * 13,772 holding NULL that no prefix reaches at all.
+     *
+     * Every existing test here builds `backwards` as strrev($email), which is the
+     * one format the filter does match, which is why none of them caught it. This
+     * one builds the pair the way production actually holds it: the older account
+     * canon-style (invisible), the newer one raw-style (visible). The scan sees
+     * one account, groups it alone, and merges nothing.
+     */
+    public function test_full_scan_sees_a_pair_whose_older_row_has_canon_style_backwards(): void
+    {
+        config(['freegle.trashnothing.merge_legacy_duplicates' => true]);
+
+        [$older, $newer, $tnBase] = $this->createCanonStyleDuplicatePair();
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
+
+        $this->assertTrue(
+            (User::find($older->id) !== null) xor (User::find($newer->id) !== null),
+            "the pair sharing TN username {$tnBase} must be merged even though the "
+            . 'older row holds REVERSE(canon) rather than REVERSE(email)'
+        );
+    }
+
+    /**
+     * The 13,772 Trash Nothing rows on production whose backwards is NULL outright.
+     * No set of prefixes on that column can ever reach them, which is why the widened
+     * filter tests the address instead. Two of the 96 split usernames sit here.
+     */
+    public function test_full_scan_sees_a_pair_whose_older_row_has_no_backwards_at_all(): void
+    {
+        config(['freegle.trashnothing.merge_legacy_duplicates' => true]);
+
+        $older = $this->createTestUser(['fullname' => 'Nullback']);
+        $newer = $this->createTestUser(['fullname' => 'Nullback']);
+        $tnBase = 'nb' . str_replace('.', '', uniqid('', true));
+
+        DB::table('users_emails')->insert([
+            'userid' => $older->id,
+            'email' => "{$tnBase}-g1997@user.trashnothing.com",
+            'canon' => "{$tnBase}@usertrashnothingcom",
+            'backwards' => null,
+            'preferred' => 1,
+            'added' => now(),
+        ]);
+        DB::table('users_emails')->insert([
+            'userid' => $newer->id,
+            'email' => "{$tnBase}-g9190@user.trashnothing.com",
+            'canon' => null,
+            'backwards' => null,
+            'preferred' => 1,
+            'added' => now(),
+        ]);
+
+        DB::table('config')->upsert([
+            ['key' => 'tn.dupscan_cursor', 'value' => (string) ((int) DB::table('users_emails')->max('id') + 1)],
+            ['key' => 'tn.dupscan_full_at', 'value' => now()->toDateTimeString()],
+        ], ['key'], ['value']);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
+
+        $this->assertTrue(
+            (User::find($older->id) !== null) xor (User::find($newer->id) !== null),
+            'a pair with no backwards at all must still be merged'
+        );
+    }
+
+    /**
+     * The review gate. Widening the filter suddenly exposes a backlog of real
+     * member accounts, and merging members is not reversible, so the widened
+     * scan merges nothing until someone has looked at the list. Reporting is
+     * always available and always read-only.
+     */
+    public function test_report_duplicates_lists_the_legacy_pair_without_merging(): void
+    {
+        [$older, $newer, $tnBase] = $this->createCanonStyleDuplicatePair();
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync --report-duplicates')
+            ->expectsOutputToContain($tnBase)
+            ->assertExitCode(0);
+
+        $this->assertNotNull(User::find($older->id), 'reporting must not merge');
+        $this->assertNotNull(User::find($newer->id), 'reporting must not merge');
+    }
+
+    /**
+     * Until the backlog has been reviewed the live sync behaves exactly as it did
+     * before, so enabling the wider filter stays a deliberate act.
+     */
+    public function test_legacy_pair_is_left_alone_while_the_gate_is_closed(): void
+    {
+        config(['freegle.trashnothing.merge_legacy_duplicates' => false]);
+
+        [$older, $newer] = $this->createCanonStyleDuplicatePair();
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
+
+        $this->assertNotNull(User::find($older->id), 'the gate must hold the backlog back');
+        $this->assertNotNull(User::find($newer->id), 'the gate must hold the backlog back');
+    }
+
+    /**
+     * Builds the production shape: one TN member, two accounts, the older row
+     * carrying REVERSE(canon) and the newer one REVERSE(email).
+     *
+     * @return array{0: User, 1: User, 2: string}
+     */
+    private function createCanonStyleDuplicatePair(): array
+    {
+        $older = $this->createTestUser(['fullname' => 'Immy']);
+        $newer = $this->createTestUser(['fullname' => 'Immy']);
+        $tnBase = 'i9test' . str_replace('.', '', uniqid('', true));
+
+        // The older account, as V1 wrote it: canon has the -gNNNN suffix and the
+        // domain dots stripped, and backwards is the reverse of THAT.
+        $olderEmail = "{$tnBase}-g4707@user.trashnothing.com";
+        $olderCanon = "{$tnBase}@usertrashnothingcom";
+        DB::table('users_emails')->insert([
+            'userid' => $older->id,
+            'email' => $olderEmail,
+            'canon' => $olderCanon,
+            'backwards' => strrev($olderCanon),
+            'preferred' => 1,
+            'added' => now(),
+        ]);
+
+        // The account a second TN group's alias minted, as the Laravel model
+        // writes it: no canon, backwards reversed from the raw address.
+        $newerEmail = "{$tnBase}-g1586@user.trashnothing.com";
+        DB::table('users_emails')->insert([
+            'userid' => $newer->id,
+            'email' => $newerEmail,
+            'canon' => null,
+            'backwards' => strrev($newerEmail),
+            'preferred' => 1,
+            'added' => now(),
+        ]);
+
+        // Both rows predate the cursor, as the live backlog does, so only a
+        // whole-table pass can reach them.
+        DB::table('config')->upsert([
+            ['key' => 'tn.dupscan_cursor', 'value' => (string) ((int) DB::table('users_emails')->max('id') + 1)],
+            ['key' => 'tn.dupscan_full_at', 'value' => now()->toDateTimeString()],
+        ], ['key'], ['value']);
+
+        return [$older, $newer, $tnBase];
     }
 
     public function test_no_merge_when_no_duplicates(): void
@@ -754,10 +1158,12 @@ class TNSyncCommandTest extends TestCase
 
         $this->artisan('tn:sync')->assertExitCode(0);
 
-        // Verify the API was called with the stored date as date_min.
-        Http::assertSent(function ($request) use ($storedDate) {
+        // Verify the API was called with the stored date minus the overlap window as date_min.
+        // resolveFromDate() subtracts SYNC_OVERLAP_SECONDS (10) from the stored date.
+        $expectedDateMin = '2026-03-14T23:59:50Z';
+        Http::assertSent(function ($request) use ($expectedDateMin) {
             return str_contains($request->url(), 'ratings') &&
-                   $request['date_min'] === $storedDate;
+                   $request['date_min'] === $expectedDateMin;
         });
     }
 
@@ -791,8 +1197,8 @@ class TNSyncCommandTest extends TestCase
                 return false;
             }
             $dateMin = $request['date_min'] ?? '';
-            // The stored date should be from the max rating timestamp.
-            return strtotime($dateMin) === strtotime($knownDate);
+            // resolveFromDate() subtracts SYNC_OVERLAP_SECONDS (10) from the fallback timestamp.
+            return strtotime($dateMin) === strtotime($knownDate) - 10;
         });
     }
 
@@ -1434,6 +1840,112 @@ class TNSyncCommandTest extends TestCase
         $this->artisan('tn:sync')->assertExitCode(0);
 
         Log::shouldNotHaveReceived('warning');
+    }
+
+    // =========================================================================
+    // Overlap-window idempotency
+    //
+    // Each syncer requests data with a small backward overlap (SYNC_OVERLAP_SECONDS)
+    // so data written in the last few seconds of the previous window is not missed.
+    // These tests confirm that re-processing the same item from the overlap window
+    // does not produce a second row in the database.
+    // =========================================================================
+
+    public function test_overlap_window_does_not_duplicate_ratings(): void
+    {
+        $user       = $this->createTestUser();
+        $tnRatingId = 'tn_r_overlap_' . uniqid();
+
+        $ratingPayload = [
+            'rating_id'        => $tnRatingId,
+            'ratee_fd_user_id' => $user->id,
+            'rating'           => 'Up',
+            'date'             => self::DATE_SYNC,
+        ];
+
+        // First sync window: rating is created for the first time.
+        Http::fake([
+            '*/ratings*'      => Http::response(['ratings' => [$ratingPayload]], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+        $this->artisan('tn:sync', ['--from' => '2026-03-20T09:00:00Z', '--to' => '2026-03-20T10:00:00Z'])
+            ->assertExitCode(0);
+
+        $this->assertSame(1, DB::table('ratings')->where('tn_rating_id', $tnRatingId)->count());
+
+        // Second sync window: the same rating falls inside the 10-second overlap and is
+        // returned again. firstOrNew on tn_rating_id must not create a second row.
+        Http::fake([
+            '*/ratings*'      => Http::response(['ratings' => [$ratingPayload]], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+        $this->artisan('tn:sync', ['--from' => '2026-03-20T09:59:50Z', '--to' => '2026-03-20T11:00:00Z'])
+            ->assertExitCode(0);
+
+        $this->assertSame(1, DB::table('ratings')->where('tn_rating_id', $tnRatingId)->count());
+    }
+
+    public function test_overlap_window_does_not_duplicate_user_reply_times(): void
+    {
+        $user = $this->createTNUser();
+
+        $changePayload = [
+            'fd_user_id' => $user->id,
+            'reply_time' => 3600,
+            'date'       => self::DATE_SYNC,
+        ];
+
+        // First sync window: reply time created.
+        Http::fake([
+            '*/ratings*'      => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => [$changePayload]], 200),
+        ]);
+        $this->artisan('tn:sync', ['--from' => '2026-03-20T09:00:00Z', '--to' => '2026-03-20T10:00:00Z'])
+            ->assertExitCode(0);
+
+        $this->assertSame(1, DB::table('users_replytime')->where('userid', $user->id)->count());
+
+        // Second sync window: same change re-fetched via overlap. firstOrNew on userid
+        // must upsert in place and not create a second users_replytime row.
+        Http::fake([
+            '*/ratings*'      => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => [$changePayload]], 200),
+        ]);
+        $this->artisan('tn:sync', ['--from' => '2026-03-20T09:59:50Z', '--to' => '2026-03-20T11:00:00Z'])
+            ->assertExitCode(0);
+
+        $this->assertSame(1, DB::table('users_replytime')->where('userid', $user->id)->count());
+    }
+
+    public function test_overlap_window_does_not_duplicate_about_me(): void
+    {
+        $user = $this->createTNUser();
+
+        $changePayload = [
+            'fd_user_id' => $user->id,
+            'about_me'   => 'I am a tidy person who loves repurposing things.',
+            'date'       => self::DATE_SYNC,
+        ];
+
+        // First sync window: about_me created.
+        Http::fake([
+            '*/ratings*'      => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => [$changePayload]], 200),
+        ]);
+        $this->artisan('tn:sync', ['--from' => '2026-03-20T09:00:00Z', '--to' => '2026-03-20T10:00:00Z'])
+            ->assertExitCode(0);
+
+        $this->assertSame(1, DB::table('users_aboutme')->where('userid', $user->id)->count());
+
+        // Second sync window: same about_me re-fetched via overlap.
+        Http::fake([
+            '*/ratings*'      => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => [$changePayload]], 200),
+        ]);
+        $this->artisan('tn:sync', ['--from' => '2026-03-20T09:59:50Z', '--to' => '2026-03-20T11:00:00Z'])
+            ->assertExitCode(0);
+
+        $this->assertSame(1, DB::table('users_aboutme')->where('userid', $user->id)->count());
     }
 
     // =========================================================================

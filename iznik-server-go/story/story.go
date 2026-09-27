@@ -140,8 +140,12 @@ func List(c *fiber.Ctx) error {
 		if len(modGroupIDs) > 0 && reviewed == "0" {
 			// review listing has no public filter, has 31-day date cutoff.
 			storyCutoff := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
+			// memberships.rippled = 0 for the same reason as Group() above: a membership
+			// rippling created is not a relationship with the community, so it must not put
+			// somebody's story in that group's moderators' review queue either.
 			whereSQL = "reviewed = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL " +
-				"AND users_stories.date > ? AND memberships.groupid IN (?) AND memberships.collection = ?"
+				"AND users_stories.date > ? AND memberships.groupid IN (?) AND memberships.collection = ? " +
+				"AND memberships.rippled = 0"
 			whereArgs = []interface{}{reviewed, storyCutoff, modGroupIDs, utils.COLLECTION_APPROVED}
 			tx = db.Table("users_stories").
 				Select("DISTINCT users_stories.id").
@@ -190,8 +194,8 @@ func Group(c *fiber.Ctx) error {
 		Select("DISTINCT users_stories.id").
 		Joins("INNER JOIN memberships ON memberships.userid = users_stories.userid").
 		Joins("INNER JOIN users ON users.id = users_stories.userid").
-		Where("memberships.groupid = ? AND reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL",
-			groupid64, reviewed, public).
+		Where("memberships.groupid = ? AND memberships.collection = ? AND memberships.rippled = 0 AND reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL",
+			groupid64, utils.COLLECTION_APPROVED, reviewed, public).
 		Order("date DESC").
 		Limit(int(limit64)).
 		Pluck("id", &ids)

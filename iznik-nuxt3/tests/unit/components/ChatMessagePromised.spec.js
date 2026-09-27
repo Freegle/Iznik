@@ -438,6 +438,32 @@ describe('ChatMessagePromised', () => {
       mockMyid.value = 1
     })
 
+    it('opens the renege modal for a placeholder when the other party has not loaded', async () => {
+      // Pressing Unpromise before the other party's profile is in the store used to
+      // throw on otheruser.id and leave the chat blank.
+      mockOtheruser.value = null
+      mockChat.value = { lastmsgseen: 10, otheruid: 2 }
+      try {
+        const wrapper = await createWrapper()
+        const comp = wrapper.findComponent(ChatMessagePromised)
+        comp.vm.unpromise()
+        await flushPromises()
+        const modal = wrapper.findComponent('.renege-modal')
+        expect(modal.exists()).toBe(true)
+        expect(modal.props('users')).toEqual([
+          { id: 2, displayname: 'Freegler' },
+        ])
+        expect(modal.props('selectedUser')).toBe(2)
+      } finally {
+        mockOtheruser.value = {
+          id: 2,
+          displayname: 'Other User',
+          profile: { paththumb: '/other.jpg' },
+        }
+        mockChat.value = { lastmsgseen: 10 }
+      }
+    })
+
     it('unpromise sets showRenege to true', async () => {
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(ChatMessagePromised)

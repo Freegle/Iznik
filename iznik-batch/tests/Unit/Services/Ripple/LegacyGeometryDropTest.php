@@ -4,6 +4,7 @@ namespace Tests\Unit\Services\Ripple;
 
 use App\Services\Ripple\LegacyGeometryDrop;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\Large;
 use Tests\TestCase;
 
 /**
@@ -22,6 +23,7 @@ use Tests\TestCase;
  * columns, dedup FKs and all - without touching the schema the rest of the
  * suite needs.
  */
+#[Large]
 class LegacyGeometryDropTest extends TestCase
 {
     private const CLONE = 'rr_droptest';
