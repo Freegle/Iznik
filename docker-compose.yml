@@ -676,6 +676,8 @@ services:
       - AUTOMOD_BACKEND=${AUTOMOD_BACKEND:-claude}
       - AUTOMOD_CLAUDE_MODEL=${AUTOMOD_CLAUDE_MODEL:-claude-opus-5}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Without an API key, Claude runs through the claude CLI on a subscription token.
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
     volumes:
       - automod_model_cache:/app/model-cache
 

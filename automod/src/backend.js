@@ -4,6 +4,10 @@
 // turns a thrown error into a hold (model: "unavailable"), so this file
 // does not need its own fallback-to-hold logic.
 import { pipeline, env } from '@huggingface/transformers';
+import { execFile } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
@@ -210,6 +214,81 @@ export class ClaudeBackend {
 }
 
 /**
+ * Claude through the `claude` CLI on a subscription token (CLAUDE_CODE_OAUTH_TOKEN, from
+ * `claude setup-token`), for a deployment with no metered API key. A raw OAuth call to the
+ * Messages API is not supported, so this shells out, the same way Community News does. Same
+ * questions, same one call per post, same answer shape as ClaudeBackend. The CLI runs in an
+ * empty config directory so no settings, hooks or tools load, and with no tools allowed.
+ */
+export class ClaudeCliBackend extends ClaudeBackend {
+  constructor({ token = process.env.CLAUDE_CODE_OAUTH_TOKEN, model, bin } = {}) {
+    super({ apiKey: 'unused' });
+    this.token = token;
+    this.cliModel = model || process.env.AUTOMOD_CLAUDE_CLI_MODEL || 'opus';
+    this.model = `cli-${this.cliModel}`;
+    this.bin = bin || process.env.AUTOMOD_CLAUDE_BIN || 'claude';
+    this.configDir = mkdtempSync(join(tmpdir(), 'automod-claude-'));
+  }
+
+  run(prompt) {
+    return new Promise((resolve, reject) => {
+      execFile(
+        this.bin,
+        ['-p', prompt, '--output-format', 'json', '--model', this.cliModel, '--allowedTools', ''],
+        {
+          cwd: this.configDir,
+          timeout: 180000,
+          maxBuffer: 1 << 24,
+          env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: this.token, CLAUDE_CONFIG_DIR: this.configDir, HOME: this.configDir },
+        },
+        (err, stdout) => {
+          if (err) return reject(new Error(`claude cli failed: ${String(err.message).slice(0, 200)}`));
+          try {
+            const text = JSON.parse(stdout).result || '';
+            resolve(JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)));
+          } catch (e) {
+            reject(new Error(`claude cli gave no usable answer: ${e.message}`));
+          }
+        },
+      );
+    });
+  }
+
+  async requestAll(text) {
+    const numbered = this.questions.map((q, i) => `${i}: ${q}`).join('\n');
+    const out = await this.run(
+      CLAUDE_SYSTEM.replace('one yes/no question', 'several yes/no questions') +
+        '\n\nReply with ONLY a JSON object {"answers":[{"id":number,"answer":"yes"|"no","confidence":number,"evidence":string}]}, one entry per question.' +
+        `\n\nQuestions:\n${numbered}\n\nPost:\n${text}`,
+    );
+    const parsed = ClaudeAnswers.safeParse(out);
+    if (!parsed.success) {
+      throw new Error('claude cli answer did not match the schema');
+    }
+    const byQuestion = new Map();
+    for (const a of parsed.data.answers) {
+      if (this.questions[a.id] !== undefined) {
+        byQuestion.set(this.questions[a.id], a);
+      }
+    }
+    return byQuestion;
+  }
+
+  async askOne(question, text) {
+    const out = await this.run(
+      CLAUDE_SYSTEM +
+        '\n\nReply with ONLY a JSON object {"answer":"yes"|"no","confidence":number,"evidence":string}.' +
+        `\n\nQuestion: ${question}\n\nPost:\n${text}`,
+    );
+    const parsed = ClaudeAnswer.safeParse(out);
+    if (!parsed.success) {
+      throw new Error('claude cli answer did not match the schema');
+    }
+    return this.toResult(parsed.data);
+  }
+}
+
+/**
  * Picks a backend per question: the request's override first, then the node's own
  * `check.backend`, then AUTOMOD_BACKEND (default claude). Backends are built on first use.
  */
@@ -217,7 +296,8 @@ export class BackendRouter {
   constructor(env = process.env) {
     this.defaultName = env.AUTOMOD_BACKEND || 'claude';
     this.factories = {
-      claude: () => new ClaudeBackend(),
+      // A metered API key when there is one, else the subscription token through the CLI.
+      claude: () => (env.ANTHROPIC_API_KEY || !env.CLAUDE_CODE_OAUTH_TOKEN ? new ClaudeBackend() : new ClaudeCliBackend()),
       nli: () => new NliBackend(),
       fake: () => new FakeBackend(),
     };

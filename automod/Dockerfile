@@ -23,6 +23,9 @@ ENV NODE_ENV=production
 ENV HF_CACHE_DIR=/app/.cache/huggingface
 ENV PORT=8090
 
+# The claude CLI, for the subscription-token backend (ClaudeCliBackend).
+RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
+
 COPY --from=builder /app/node_modules ./node_modules
 COPY package.json package-lock.json ./
 
