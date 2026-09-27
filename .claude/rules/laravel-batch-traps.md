@@ -160,6 +160,20 @@ collection or arrival but not `deleted = 0` treats that copy as live. The microv
 notifier did, and asked members to review posts that were no longer on their communities; every
 vote was then refused with a 403 (SR-DYS36). The same applies in Go.
 
+## CookieYes scan results are a snapshot, not the published state
+
+The MCP tool `get_scan_results` reports what the scanner found and how it categorised it
+**at scan time**. The AI Cookie Classifier runs a few minutes later and publishes its
+placements to the banner, but the scan results never change: the 27 Sep 2026 scan still
+said "Uncategorized: 3" ten minutes after the banner was publishing 0 uncategorised of 41.
+No MCP tool exposes the published categories or individual cookie names.
+
+Judge anything about categorisation on the banner script visitors actually load,
+`https://cdn-cookieyes.com/client_data/<id>/script.js` (address from `get_embed_code`),
+which carries `_ckyStore._categories` with a `cookies` list per slug; `other` is the
+uncategorised group. `CookieYesPublishedBanner` reads it. The scan results are fine for
+scan age and page counts, and as a log line.
+
 ## See also
 
 - `.claude/rules/go-api-traps.md` - the same class of silent wrong answer on the Go side.

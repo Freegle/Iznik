@@ -10,13 +10,20 @@ use Carbon\Carbon;
  * a new scan when the last is getting old.
  *
  * Nothing here categorises cookies. CookieYes's AI Cookie Classifier does that
- * during a scan (set to publish everything it classifies), so an uncategorised
+ * after a scan (set to publish everything it classifies), so an uncategorised
  * cookie means the classifier did not cope and a person has to look.
+ *
+ * "Uncategorised" is judged on what the banner publishes to visitors, read from
+ * the banner script on CookieYes's CDN. The scan results are only logged: they
+ * record what the scanner found before the classifier ran, so they keep listing
+ * cookies as uncategorised after the classifier has placed them.
  */
 class CookieYesWatchdogService
 {
-    public function __construct(private readonly CookieYesMcpClient $mcp)
-    {
+    public function __construct(
+        private readonly CookieYesMcpClient $mcp,
+        private readonly CookieYesPublishedBanner $published,
+    ) {
     }
 
     public function run(): CookieYesCheckResult
@@ -82,17 +89,28 @@ class CookieYesWatchdogService
             $wrong[] = 'GDPR not enabled';
         }
 
+        // What the scanner found, and how it categorised it at the time. For the
+        // record only: the classifier has since placed what it could.
         $scan = $this->mcp->callTool('get_scan_results', ['websiteId' => $id]);
-        $counts = [];
+        $scanCounts = [];
         foreach ($scan['categories'] ?? [] as $category) {
-            $counts[$category['name']] = (int) $category['cookie_count'];
+            $scanCounts[$category['name']] = (int) $category['cookie_count'];
         }
-        $uncategorised = $counts['Uncategorized'] ?? 0;
-        $total = (int) ($scan['total_cookies'] ?? array_sum($counts));
-        $log[] = "{$url}: scan of " . ($scan['scan_date'] ?? '?') . ' (' . ($scan['scan_status'] ?? '?') . "), {$total} cookies on " . ($scan['total_pages'] ?? '?') . ' pages: ' . json_encode($counts);
+        $scanned = (int) ($scan['total_cookies'] ?? array_sum($scanCounts));
+        $log[] = "{$url}: scan of " . ($scan['scan_date'] ?? '?') . ' (' . ($scan['scan_status'] ?? '?') . "), {$scanned} cookies on " . ($scan['total_pages'] ?? '?') . ' pages: ' . json_encode($scanCounts);
 
-        if ($uncategorised > 0) {
-            $wrong[] = "{$uncategorised} uncategorised " . ($uncategorised === 1 ? 'cookie' : 'cookies') . ' (categorise in Cookie Manager)';
+        // What visitors are shown.
+        $published = $this->published->categories($this->scriptUrl($url, $this->mcp->callTool('get_embed_code', ['websiteId' => $id])));
+        $publishedCounts = array_map('count', $published);
+        $total = array_sum($publishedCounts);
+        $uncategorised = $published['other'] ?? [];
+        $log[] = "{$url}: banner publishes {$total} cookies: " . json_encode($publishedCounts);
+
+        if ($total === 0) {
+            $wrong[] = 'banner publishes no cookies at all';
+        } elseif ($uncategorised !== []) {
+            $log[] = "{$url}: uncategorised: " . implode(', ', $uncategorised);
+            $wrong[] = count($uncategorised) . ' uncategorised ' . (count($uncategorised) === 1 ? 'cookie' : 'cookies') . ' published in the banner (the classifier could not place them; categorise in Cookie Manager)';
         }
 
         $age = empty($scan['scan_date'])
@@ -114,6 +132,19 @@ class CookieYesWatchdogService
         } else {
             $fine[] = "{$url}: banner live, all {$total} cookies categorised, scanned {$age} " . ($age === 1 ? 'day' : 'days') . ' ago';
         }
+    }
+
+    /**
+     * The banner script's address, from the embed code CookieYes hands out for
+     * the site. It is the one thing in the account that says what is published.
+     */
+    private function scriptUrl(string $url, array $embed): string
+    {
+        if (! preg_match('/\bsrc="(https:\/\/[^"]+)"/', (string) ($embed['embed_code'] ?? ''), $match)) {
+            throw new CookieYesException("{$url}: the CookieYes embed code has no banner script address: " . json_encode($embed));
+        }
+
+        return $match[1];
     }
 
     /**
