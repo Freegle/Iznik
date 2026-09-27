@@ -842,3 +842,57 @@ etc. for member writes as noted; Support/Admin callers are exempt from every ref
   reason and notice; per-surface switches with counts, in lift order; chat hard/soft; notice
   choice; incident phrases; live stats every minute; mark spam set; release/reject a class;
   lift everything; close with a note; history.
+
+### 11.6 How fast it takes effect, and showing the presser it has (added 27 September)
+
+**Target: every surface stops within about ten seconds of the press, including jobs already
+running.** A press halfway through a digest run must stop the rest of that digest.
+
+- Check per item, not per job. Every gate runs for each unit of work: each recipient in a
+  mail loop (`shouldSkip`), each spooled file before sending, each push, each chat message
+  in `processIncoming`, each post before promotion, each background task. A job that started
+  before the press stops at its next item.
+- Batch reads through a five-second in-process cache, the same as Go, so a per-recipient
+  check costs a memory read, not a query. The target follows from that.
+- What cannot be stopped: a mail already handed to the relay, and the one item in flight at
+  the moment of the press. The first is the runbook's relay step (10.14).
+- **Acknowledgements.** Table `lockdown_acks` (`id`, `loop` unique, `lockdownrowid`,
+  `seenat`). Each batch loop upserts its row the first time it acts on a lockdowns row id it
+  has not acted on before (a write per state change, not per item): `chat-process`,
+  `content-check`, `auto-approve`, `mail-spool`, `mail-loops` (shouldSkip),
+  `background-tasks`, `push`, `triage`. `GET /modtools/lockdown/stats` returns `acks`: per
+  loop, the row id seen, when, and seconds after the change; loops not yet caught up are
+  listed as waiting. The API's own delay is fixed at five seconds and shown as such.
+- **Leakage since the press.** Stats also return what still went out after `startedat`:
+  mails spooled or sent, pushes, User2User chat messages marked processed. If anything
+  leaked, the page says so and how much. That number is the honest measure of the delay.
+
+**The presser's feedback**, on the Support tab, immediately after pressing:
+
+- The page switches at once to a red "Lockdown on" state: pressed at, by whom, and a live
+  "Taking effect" list: API (within 5 seconds), then each batch loop with a tick and the
+  seconds it took once its acknowledgement arrives, or "waiting" with a spinner. Polled
+  every five seconds until all loops have acknowledged, then every minute.
+- A loop still waiting after two minutes is shown in amber: "has not picked this up; the
+  loop may be stopped or stuck. Check the batch host." Held counts climbing and "sent since
+  press" at zero are shown beside it as proof.
+- The presser's own page updates immediately; the ModTools banner and traffic light change
+  for everyone else within the thirty-second poll.
+- The same feedback follows every later change (a surface lifted, pressed again, closed).
+
+**The confirm dialog** before pressing states the consequences plainly:
+
+> Lock down Freegle?
+>
+> - Every member's chat messages, posts and ChitChat posts will stop reaching anyone. Members
+>   will think they have been sent.
+> - No emails or app notifications will go to members, except sign-in and password emails.
+> - Moderators will only be able to use the basic Approve button. Downloads will stop.
+> - Nothing lifts on its own. Someone with Support tools has to lift it, step by step, and
+>   every hour it is on delays thousands of genuine messages.
+> - geeks@ will be emailed now, and every hour until it is lifted.
+
+A reason is required, and the Press button stays disabled until the presser types
+`LOCKDOWN`. "Lift everything" and "Close" have their own dialogs: lifting releases held
+messages at a paced rate and moderators will see the risky ones in their queues; closing
+ends the incident and clears the incident phrases.
