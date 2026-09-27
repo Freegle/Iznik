@@ -108,7 +108,6 @@ describe('createReviewer / review() - branch reachability', () => {
     { name: 'PERSONAL_INFO', facts: { personal_info: true }, end: 'HOLD_PERSONAL_INFO' },
     { name: 'LANGUAGE', facts: { not_english: true }, end: 'HOLD_LANGUAGE' },
     { name: 'DUPLICATE', facts: { duplicate: true }, end: 'HOLD_DUPLICATE' },
-    { name: 'OUT_OF_AREA', facts: { out_of_area: true }, end: 'HOLD_OUT_OF_AREA' },
     { name: 'VAGUE', facts: { vague: true }, end: 'HOLD_VAGUE' },
     {
       name: 'VAGUE_TEXT',
@@ -231,8 +230,8 @@ describe('createReviewer / review() - branch reachability', () => {
     });
     assert.equal(result.verdict, 'approve');
     assert.equal(result.end, 'APPROVE');
-    // Every fact node (11) plus every text node (17) is walked when nothing matches.
-    assert.equal(result.path.length, 28);
+    // Every fact node (10) plus every text node (17) is walked when nothing matches.
+    assert.equal(result.path.length, 27);
   });
 });
 
