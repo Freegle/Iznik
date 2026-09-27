@@ -992,6 +992,10 @@ func GetSession(c *fiber.Ctx) error {
 		// Set for a group a moderator moderates that is in the post-moderation trial, so
 		// ModTools shows the Check queue only where it exists.
 		Autoapprovetrial bool `json:"autoapprovetrial,omitempty" gorm:"-"`
+		// Set for a group a moderator moderates that is in either automod list (shadow or
+		// approve), so ModTools shows the automod decision line and modal only where a
+		// decision can exist.
+		Automod bool `json:"automod,omitempty" gorm:"-"`
 	}
 
 	type LocationRow struct {
@@ -1120,6 +1124,7 @@ func GetSession(c *fiber.Ctx) error {
 	for i, m := range memberships {
 		if m.Role == utils.ROLE_OWNER || m.Role == utils.ROLE_MODERATOR {
 			memberships[i].Autoapprovetrial = utils.AutoapproveTrialGroup(m.Groupid)
+			memberships[i].Automod = utils.AutomodGroup(m.Groupid)
 			modGroupIDs = append(modGroupIDs, m.Groupid)
 			if m.Active == 1 {
 				activeGroupIDs = append(activeGroupIDs, m.Groupid)

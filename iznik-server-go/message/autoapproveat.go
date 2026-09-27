@@ -2,7 +2,6 @@ package message
 
 import (
 	"encoding/json"
-	"hash/crc32"
 	"os"
 	"strconv"
 	"strings"
@@ -20,64 +19,6 @@ func autoapproveDelayMinutes() int {
 		return n
 	}
 	return 20
-}
-
-// autoapproveQualityCheckPercent is the share of otherwise-clean posts held back for a
-// moderator's verdict. Site-wide, mirroring the batch's freegle.autoapprove.quality_check_percent
-// (FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT, default 0).
-func autoapproveQualityCheckPercent() int {
-	if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT"))); err == nil && n > 0 {
-		return n
-	}
-	return 0
-}
-
-// dangerLogDays mirrors AutoApproveCleanService::dangerLogDays() - how far back a
-// negative moderation action against the poster vetoes auto-approval. Configurable on
-// the cron side (FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS, default 90); read here from the
-// same variable so the countdown cannot disagree with what the cron will actually do.
-func dangerLogDays() int {
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS"))); err == nil && v > 0 {
-		return v
-	}
-
-	return 90
-}
-
-// holdExplanationChecks mirrors ContentCheckService::HOLD_EXPLANATION_CHECKS: the checks the
-// content check writes to say WHY a clean post is waiting (the member's posting status, the
-// group's moderate-everything setting). They describe the row, not its content. Every
-// NULL-status member's clean post carries MemberModerated, so a nil-reasons check would show
-// the 48h fallback for the whole population the clean path exists for. NoLocation is
-// deliberately absent: a post nobody can place is not publishable.
-var holdExplanationChecks = map[string]bool{"MemberModerated": true, "GroupModerated": true}
-
-// contentCheckReasonsClean mirrors ContentCheckService::reasonsAreContentClean (and the SQL
-// the cron's candidate query uses): nil, or only hold explanations. Elements without a
-// `check` are ignored, and a blob that yields no checks at all is not clean - the same
-// answers the SQL JSON_EXTRACT/JSON_CONTAINS form gives.
-func contentCheckReasonsClean(raw *json.RawMessage) bool {
-	if raw == nil {
-		return true
-	}
-	var reasons []map[string]interface{}
-	if err := json.Unmarshal(*raw, &reasons); err != nil {
-		return false
-	}
-	seen := 0
-	for _, r := range reasons {
-		check, ok := r["check"]
-		if !ok {
-			continue
-		}
-		seen++
-		name, isString := check.(string)
-		if !isString || !holdExplanationChecks[name] {
-			return false
-		}
-	}
-
-	return seen > 0
 }
 
 // groupOwnRuleChecks mirrors ContentCheckService::reasonsHoldByGroupOwnRules: the checks
@@ -114,38 +55,37 @@ func rippledInPendingHours() int {
 	return 0
 }
 
-// phpTruthy mirrors PHP's !empty(): nil, false, 0, "" and "0" are falsy; everything
-// else is truthy. Used so the Go group-allows check matches AutoApproveCleanService's
-// PHP getSetting()/empty() semantics exactly.
-func phpTruthy(v interface{}) bool {
-	switch x := v.(type) {
-	case nil:
-		return false
-	case bool:
-		return x
-	case float64:
-		return x != 0
-	case string:
-		return x != "" && x != "0"
-	default:
-		return true
-	}
+// automodApproved reports whether the latest messages_automod row for (msgid, groupid) says
+// verdict='approve' and is not stale (its created is on or after messages.editedat, or
+// editedat is null). messages_automod has a UNIQUE (msgid, groupid): a rerun of the chart
+// REPLACES the row, so there is always at most one candidate and no ORDER BY / LIMIT is
+// needed to find "the latest" one.
+func automodApproved(db *gorm.DB, msgid uint64, groupid uint64) bool {
+	var approved bool
+	db.Table("messages_automod AS ma").
+		Joins("JOIN messages m ON m.id = ma.msgid").
+		Where("ma.msgid = ? AND ma.groupid = ? AND ma.verdict = ?", msgid, groupid, "approve").
+		Where("m.editedat IS NULL OR ma.created >= m.editedat").
+		Select("COUNT(*) > 0").
+		Scan(&approved)
+
+	return approved
 }
 
 // computeAutoapproveat fills MessageGroup.Autoapproveat for the Pending group entries of
-// a message a moderator is viewing. It is an ACCURATE estimate of when the post will be
-// auto-approved:
+// a message a moderator is viewing. The automod flowchart (run by the batch container) is
+// now the single place the approve/hold decision is made; this function only READS that
+// decision and turns it into a countdown, rather than recomputing it:
 //
-//   - danger-signalled / Spam-on-any-group / held  -> nil (no auto-approval expected)
-//   - clean path (NULL posting status, content-check clean, group allows, not sampled)
-//     -> arrival + group delay (site default 20m)
-//   - otherwise (not clean, but not held/spam) -> arrival + 48h (the broad fallback)
+//   - Spam on ANY group, or held -> nil (no auto-approval expected).
+//   - a rippled-in copy -> AutoApproveService's own path (arrival + rippled_in_pending_hours),
+//     unless the RECEIVING group's own rules are holding it, in which case nil - unchanged by
+//     the flowchart, since a rippled-in copy is never a flowchart candidate.
+//   - otherwise: nil unless the copy is not quality-sampled and not pulled back to
+//     needs_moderator, AND automodApproved says the chart's decision for this copy is a
+//     current 'approve' - then arrival + the site-wide delay.
 //
 // then capped below by autoapprove_hold_until (the extend-only hold set on Pending load).
-//
-// PARITY: the clean-path eligibility and danger signals mirror
-// app/Services/AutoApproveCleanService.php (hasDangerSignals, groupAllowsAutoApprove,
-// isQualitySampled). Keep the two in sync.
 func computeAutoapproveat(db *gorm.DB, message *Message, groups []MessageGroup, idStr string) {
 	// Spam on ANY group blocks auto-approval everywhere (Discourse #9654 parity).
 	for _, mg := range groups {
@@ -155,13 +95,11 @@ func computeAutoapproveat(db *gorm.DB, message *Message, groups []MessageGroup, 
 	}
 
 	var pendingIdx []int
-	var gids []uint64
 	for i := range groups {
 		// Outside the trial there is no countdown at all, so a community not taking part sees
 		// Pending as it did before post-moderation.
 		if groups[i].Collection == utils.COLLECTION_PENDING && groups[i].Heldby == nil && utils.AutoapproveTrialGroup(groups[i].Groupid) {
 			pendingIdx = append(pendingIdx, i)
-			gids = append(gids, groups[i].Groupid)
 		}
 	}
 	if len(pendingIdx) == 0 {
@@ -169,33 +107,6 @@ func computeAutoapproveat(db *gorm.DB, message *Message, groups []MessageGroup, 
 	}
 
 	idNum, _ := strconv.ParseUint(idStr, 10, 64)
-
-	// Danger signals — mirror AutoApproveCleanService::hasDangerSignals exactly. One
-	// combined query: danger=1 if ANY signal fires for this poster/message/groups. The
-	// log window is the cron's own configurable one (see dangerLogDays): hardcoding 90
-	// here would show "no countdown" for a post the cron is about to publish, or the
-	// reverse, whenever ops tuned it.
-	//
-	// keep-raw: five independent EXISTS subqueries combined into one boolean projection
-	// with no FROM clause — GORM's chain builder cannot render this shape.
-	var danger bool
-	db.Raw(`SELECT (
-		EXISTS (SELECT 1 FROM microactions WHERE msgid = ? AND actiontype = 'CheckMessage' AND result = 'Reject')
-		OR EXISTS (SELECT 1 FROM users_comments WHERE userid = ?)
-		OR EXISTS (SELECT 1 FROM logs WHERE user = ? AND timestamp >= NOW() - INTERVAL ? DAY
-			AND (byuser != user OR byuser IS NULL)
-			AND ((type = 'Message' AND subtype IN ('Rejected','Deleted','Replied'))
-			  OR (type = 'User' AND subtype IN ('Mailed','Rejected','Deleted','Suspect','ClassifiedSpam'))))
-		OR EXISTS (SELECT 1 FROM spam_users WHERE userid = ? AND collection IN ('Spammer','PendingAdd'))
-		OR EXISTS (SELECT 1 FROM memberships WHERE userid = ? AND groupid IN ?
-			AND reviewrequestedat IS NOT NULL
-			AND (reviewedat IS NULL OR reviewedat < reviewrequestedat))
-	) AS danger`,
-		idNum, message.Fromuser, message.Fromuser, dangerLogDays(), message.Fromuser, message.Fromuser, gids,
-	).Scan(&danger)
-	if danger {
-		return
-	}
 
 	// The cron also excludes a post whose MESSAGE-level spam reason is set (not just the
 	// per-group one). The Message payload does not carry that column, so read it once.
@@ -205,7 +116,7 @@ func computeAutoapproveat(db *gorm.DB, message *Message, groups []MessageGroup, 
 	for _, i := range pendingIdx {
 		mg := &groups[i]
 
-		// A rippled-in copy is AutoApproveService's, not the clean path's, and its rules are
+		// A rippled-in copy is AutoApproveService's, not the flowchart's, and its rules are
 		// the receiving group's: a copy the group's own keywords or worry words held waits for
 		// a moderator of that group and never auto-approves, so it gets no countdown. Any
 		// other Pending copy is released once rippled_in_pending_hours have passed (the
@@ -222,85 +133,92 @@ func computeAutoapproveat(db *gorm.DB, message *Message, groups []MessageGroup, 
 			continue
 		}
 
-		var row struct {
-			OurPostingStatus     *string `gorm:"column:ourpostingstatus"`
-			Settings             *string `gorm:"column:settings"`
-			Rules                *string `gorm:"column:rules"`
-			Autofunctionoverride *string `gorm:"column:autofunctionoverride"`
-			Overridemoderation   *string `gorm:"column:overridemoderation"`
-		}
-		db.Raw("SELECT mem.ourPostingStatus AS ourpostingstatus, g.settings AS settings, g.rules AS rules, "+
-			"g.autofunctionoverride AS autofunctionoverride, g.overridemoderation AS overridemoderation "+
-			"FROM `groups` g LEFT JOIN memberships mem ON mem.groupid = g.id AND mem.userid = ? "+
-			"WHERE g.id = ? LIMIT 1", message.Fromuser, mg.Groupid).Scan(&row)
-
-		var settings map[string]interface{}
-		if row.Settings != nil && *row.Settings != "" {
-			_ = json.Unmarshal([]byte(*row.Settings), &settings)
+		// A manual quality-check sample, or a copy pulled back to needs_moderator, is never
+		// on the auto-approve path regardless of what the flowchart decided.
+		if mg.QualitySample != 0 || mg.NeedsModerator {
+			continue
 		}
 
-		// groupAllowsAutoApprove parity (PHP AutoApproveCleanService::groupAllowsAutoApprove).
-		groupAllows := true
-		if settings != nil {
-			if v, ok := settings["publish"]; ok && !phpTruthy(v) { // getSetting('publish', true)
-				groupAllows = false
+		if !automodApproved(db, idNum, mg.Groupid) {
+			continue
+		}
+
+		t := mg.Arrival.Add(time.Duration(autoapproveDelayMinutes()) * time.Minute)
+		if mg.AutoapproveHoldUntil != nil && mg.AutoapproveHoldUntil.After(t) {
+			t = *mg.AutoapproveHoldUntil
+		}
+		groups[i].Autoapproveat = &t
+	}
+}
+
+// automodRow is one messages_automod row, scanned with explicit column names since Path
+// and the *_node/chart_version columns don't match Go field names.
+type automodRow struct {
+	Groupid      uint64
+	Verdict      string
+	Reason       *string
+	EndNode      string `gorm:"column:end_node"`
+	Mode         string
+	ChartVersion string `gorm:"column:chart_version"`
+	Path         json.RawMessage
+	Created      time.Time
+}
+
+// populateAutomodDecisions fills groups[].Automod for the groups on this message that are
+// both automod groups (utils.AutomodGroup) and moderated by myid, from messages_automod.
+// One membership query and one messages_automod query cover every group on the message,
+// regardless of how many groups it's on. A group with no row yet (not run, or not on an
+// automod path) gets no Automod field, and neither does a group myid doesn't moderate.
+func populateAutomodDecisions(db *gorm.DB, myid uint64, msgid uint64, groups []MessageGroup) {
+	var automodGroupids []uint64
+	for _, mg := range groups {
+		if utils.AutomodGroup(mg.Groupid) {
+			automodGroupids = append(automodGroupids, mg.Groupid)
+		}
+	}
+
+	if len(automodGroupids) == 0 {
+		return
+	}
+
+	// Same moderator check as Heldby above, scoped to the groups this message is on that
+	// are actually automod groups.
+	var myModGroups []uint64
+	db.Table("memberships").Select("groupid").
+		Where("userid = ? AND groupid IN ? AND role IN (?, ?) AND collection = ?",
+			myid, automodGroupids, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).
+		Scan(&myModGroups)
+
+	if len(myModGroups) == 0 {
+		return
+	}
+
+	var rows []automodRow
+	db.Table("messages_automod").
+		Select("groupid, verdict, reason, end_node, mode, chart_version, path, created").
+		Where("msgid = ? AND groupid IN ?", msgid, myModGroups).
+		Scan(&rows)
+
+	if len(rows) == 0 {
+		return
+	}
+
+	byGroup := make(map[uint64]automodRow, len(rows))
+	for _, r := range rows {
+		byGroup[r.Groupid] = r
+	}
+
+	for i := range groups {
+		if r, ok := byGroup[groups[i].Groupid]; ok {
+			groups[i].Automod = &AutomodDecision{
+				Verdict: r.Verdict,
+				Reason:  r.Reason,
+				End:     r.EndNode,
+				Mode:    r.Mode,
+				Version: r.ChartVersion,
+				Path:    r.Path,
+				Created: r.Created,
 			}
-		}
-		if groupAllows && settings != nil && phpTruthy(settings["closed"]) { // isClosed()
-			groupAllows = false
-		}
-		if groupAllows && row.Autofunctionoverride != nil && phpTruthy(*row.Autofunctionoverride) {
-			groupAllows = false
-		}
-		if groupAllows && row.Overridemoderation != nil && *row.Overridemoderation == "ModerateAll" {
-			groupAllows = false
-		}
-		if groupAllows && settings != nil && phpTruthy(settings["moderated"]) { // getSetting('moderated', 0)
-			groupAllows = false
-		}
-		if groupAllows && row.Rules != nil && *row.Rules != "" {
-			var rules map[string]interface{}
-			if json.Unmarshal([]byte(*row.Rules), &rules) == nil && phpTruthy(rules["fullymoderated"]) {
-				groupAllows = false
-			}
-		}
-
-		// rippled_in and spamreason mirror the cron's candidate query: a rippled-in copy
-		// belongs to AutoApproveService (the clean path structurally never sees it), and a
-		// row with a spam reason is excluded even when it is not in the Spam collection. A
-		// countdown for either would promise an auto-approval that cannot happen.
-		onCleanPath := utils.AutoapproveTrialGroup(mg.Groupid) &&
-			groupAllows &&
-			row.OurPostingStatus == nil &&
-			mg.ContentcheckCheckedAt != nil &&
-			contentCheckReasonsClean(mg.ContentcheckReasons) &&
-			mg.QualitySample == 0 &&
-			mg.RippledIn == 0 &&
-			mg.Spamreason == nil &&
-			!msgSpamreason
-
-		// The delay and the quality-check sample are both site-wide (the same env the
-		// batch reads); a community has no override for either.
-		delayMinutes := autoapproveDelayMinutes()
-		qualityPercent := autoapproveQualityCheckPercent()
-		// Deterministic quality sample (mirror PHP isQualitySampled: crc32(msgid) % 100 < percent).
-		qualitySampled := qualityPercent > 0 && int(crc32.ChecksumIEEE([]byte(idStr))%100) < qualityPercent
-
-		var base time.Time
-		if onCleanPath && !qualitySampled {
-			base = mg.Arrival.Add(time.Duration(delayMinutes) * time.Minute)
-		} else if mg.Spamtype == nil {
-			// Not on the clean path (or quality-sampled), but not spam/held: 48h fallback.
-			// (Estimate nuance: the fallback also needs >=48h membership, which we ignore.)
-			base = mg.Arrival.Add(48 * time.Hour)
-		}
-
-		if !base.IsZero() {
-			t := base
-			if mg.AutoapproveHoldUntil != nil && mg.AutoapproveHoldUntil.After(t) {
-				t = *mg.AutoapproveHoldUntil
-			}
-			groups[i].Autoapproveat = &t
 		}
 	}
 }

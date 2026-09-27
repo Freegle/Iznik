@@ -31,6 +31,18 @@ func getAutoapproveatField(t *testing.T, msgid uint64, groupid uint64, token str
 	return nil
 }
 
+// insertAutomodRow records a messages_automod decision for (msgid, groupid), as the
+// automod flowchart would after judging a Pending copy. createdMinutesAgo backdates
+// created (0 = just now); pass a value bigger than how long ago the post was last edited
+// to produce a stale row.
+func insertAutomodRow(t *testing.T, msgid uint64, groupid uint64, verdict string, createdMinutesAgo int) {
+	sql := fmt.Sprintf(
+		"INSERT INTO messages_automod (msgid, groupid, mode, chart_version, verdict, end_node, reason, path, created) "+
+			"VALUES (?, ?, 'approve', 'v1', ?, 'test_end', NULL, '{}', NOW() - INTERVAL %d MINUTE)", createdMinutesAgo)
+	res := database.DBConn.Exec(sql, msgid, groupid, verdict)
+	assert.NoError(t, res.Error)
+}
+
 // A3: loading the Pending queue bumps autoapprove_hold_until to >= NOW()+10m
 // (extend-only — an existing longer hold is never shortened).
 func TestListMessagesMTPendingBumpsHold(t *testing.T) {
@@ -91,60 +103,21 @@ func TestAutoapproveatPendingModGating(t *testing.T) {
 	_, modToken := CreateTestSession(t, modID)
 	_, regToken := CreateTestSession(t, regularID)
 
-	// Clean-path pending post: NULL poster, content-check clean, arrival 5 min ago.
+	// Clean-path pending post: NULL poster, content-check clean, arrival 5 min ago, and the
+	// flowchart's own decision recorded as a current approve.
 	cleanMsg := CreateTestMessage(t, poster, groupID, prefix+" clean pending", 52.0, -1.0)
 	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE, contentcheck_reasons=NULL, autoapprove_hold_until=NULL WHERE msgid=?", cleanMsg)
+	insertAutomodRow(t, cleanMsg, groupID, "approve", 0)
+	defer db.Exec("DELETE FROM messages_automod WHERE msgid=?", cleanMsg)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid=?", cleanMsg)
+	defer db.Exec("DELETE FROM messages WHERE id=?", cleanMsg)
 
 	// Mod sees autoapproveat.
 	assert.NotNil(t, getAutoapproveatField(t, cleanMsg, groupID, modToken),
-		"mod should see autoapproveat on a clean pending post")
+		"mod should see autoapproveat on a clean pending post with an approve verdict")
 	// Non-mod does not.
 	assert.Nil(t, getAutoapproveatField(t, cleanMsg, groupID, regToken),
 		"non-mod must not see autoapproveat")
-
-	// Danger-signalled post (poster is a known spammer) → no countdown.
-	dangerMsg := CreateTestMessage(t, poster, groupID, prefix+" danger pending", 52.0, -1.0)
-	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE WHERE msgid=?", dangerMsg)
-	db.Exec("INSERT INTO spam_users (userid, collection, added) VALUES (?, 'Spammer', NOW())", poster)
-	assert.Nil(t, getAutoapproveatField(t, dangerMsg, groupID, modToken),
-		"danger-signalled post must not show a countdown")
-
-	db.Exec("DELETE FROM spam_users WHERE userid=?", poster)
-	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", cleanMsg, dangerMsg)
-	db.Exec("DELETE FROM messages WHERE id IN (?, ?)", cleanMsg, dangerMsg)
-}
-
-// The danger-signal log window is configurable for the cron
-// (FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS, default 90). The countdown must honour the
-// same setting, or the two disagree about whether a post will auto-approve: a
-// hardcoded 90 in the countdown shows "no countdown" for a post the cron is about
-// to publish.
-func TestAutoapproveatDangerLogDaysConfigurable(t *testing.T) {
-	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "true")
-	t.Setenv("FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS", "7")
-	prefix := uniquePrefix("aadangerdays")
-	db := database.DBConn
-
-	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
-	_, modToken := CreateTestSession(t, modID)
-
-	msg := CreateTestMessage(t, poster, groupID, prefix+" clean pending", 52.0, -1.0)
-	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE, contentcheck_reasons=NULL, autoapprove_hold_until=NULL WHERE msgid=?", msg)
-
-	// A negative moderation log 30 days old: inside the default 90-day window,
-	// outside the configured 7-day one - so it must NOT suppress the countdown.
-	db.Exec("INSERT INTO logs (type, subtype, user, byuser, timestamp) VALUES ('Message', 'Rejected', ?, ?, NOW() - INTERVAL 30 DAY)", poster, modID)
-	defer db.Exec("DELETE FROM logs WHERE user=? AND type='Message' AND subtype='Rejected'", poster)
-	defer db.Exec("DELETE FROM messages_groups WHERE msgid=?", msg)
-	defer db.Exec("DELETE FROM messages WHERE id=?", msg)
-
-	assert.NotNil(t, getAutoapproveatField(t, msg, groupID, modToken),
-		"a negative log outside the configured danger window must not suppress the countdown")
 }
 
 // The wait before a clean post publishes itself is the same for every community. A
@@ -167,6 +140,8 @@ func TestAutoapproveatDelayIsSiteWide(t *testing.T) {
 
 	msg := CreateTestMessage(t, poster, groupID, prefix+" clean pending", 52.0, -1.0)
 	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE, contentcheck_reasons=NULL, autoapprove_hold_until=NULL WHERE msgid=?", msg)
+	insertAutomodRow(t, msg, groupID, "approve", 0)
+	defer db.Exec("DELETE FROM messages_automod WHERE msgid=?", msg)
 	defer db.Exec("DELETE FROM messages_groups WHERE msgid=?", msg)
 	defer db.Exec("DELETE FROM messages WHERE id=?", msg)
 
@@ -193,12 +168,11 @@ func TestAutoapproveatDelayIsSiteWide(t *testing.T) {
 		"FREEGLE_AUTOAPPROVE_DELAY_MINUTES must set the countdown; got %v", at)
 }
 
-// The quality-check sample is site-wide too: a community's own percentage is ignored,
-// and the env figure the cron reads decides whether a post is held for a moderator
-// (no countdown) or counts down as normal.
-func TestAutoapproveatQualitySampleIsSiteWide(t *testing.T) {
+// A copy the batch picked for the quality-check sample waits for a moderator, whatever the
+// chart decided, so it shows no countdown. An unsampled copy with an approve decision does.
+func TestAutoapproveatQualitySample(t *testing.T) {
 	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "true")
-	prefix := uniquePrefix("aasamplesite")
+	prefix := uniquePrefix("aasample")
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
@@ -207,75 +181,19 @@ func TestAutoapproveatQualitySampleIsSiteWide(t *testing.T) {
 	CreateTestMembership(t, poster, groupID, "Member")
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
-	// A community that tried to sample everything.
-	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.autoapprove.quality_check_percent', 100) WHERE id = ?", groupID)
 	_, modToken := CreateTestSession(t, modID)
 
 	msg := CreateTestMessage(t, poster, groupID, prefix+" clean pending", 52.0, -1.0)
-	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE, contentcheck_reasons=NULL, autoapprove_hold_until=NULL WHERE msgid=?", msg)
+	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE, autoapprove_hold_until=NULL, quality_sample=0 WHERE msgid=?", msg)
+	insertAutomodRow(t, msg, groupID, "approve", 0)
+	defer db.Exec("DELETE FROM messages_automod WHERE msgid=?", msg)
 	defer db.Exec("DELETE FROM messages_groups WHERE msgid=?", msg)
 	defer db.Exec("DELETE FROM messages WHERE id=?", msg)
 
-	// Site-wide sample is 0: the community's 100 is ignored and the post counts down.
-	t.Setenv("FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT", "0")
-	assert.NotNil(t, getAutoapproveatField(t, msg, groupID, modToken),
-		"a community's own sample rate must not hold the post")
+	assert.NotNil(t, getAutoapproveatField(t, msg, groupID, modToken), "not sampled: counts down")
 
-	// Site-wide sample is 100: the post is held for a moderator, so no 20-minute countdown.
-	// (The 48-hour fallback still applies, so autoapproveat is far off rather than absent.)
-	t.Setenv("FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT", "100")
-	v := getAutoapproveatField(t, msg, groupID, modToken)
-	if s, ok := v.(string); ok {
-		at, err := time.Parse(time.RFC3339, s)
-		assert.NoError(t, err)
-		assert.True(t, at.After(time.Now().Add(6*time.Hour)),
-			"a sampled post must not show the short countdown; got %v", at)
-	}
-}
-
-// The content check writes a MemberModerated explanation onto every NULL-status
-// member's clean post - that is what the real population looks like, not reasons=NULL.
-// The countdown must read that as clean (20-minute path), exactly as the cron does, and
-// must still read a real content finding beside it as not clean (48h fallback).
-func TestAutoapproveatMemberModeratedExplanationIsClean(t *testing.T) {
-	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "true")
-	prefix := uniquePrefix("aaexplain")
-	db := database.DBConn
-
-	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
-	_, modToken := CreateTestSession(t, modID)
-
-	parseAt := func(v interface{}) time.Time {
-		s, ok := v.(string)
-		assert.True(t, ok, "autoapproveat should be a timestamp string")
-		at, err := time.Parse(time.RFC3339, s)
-		assert.NoError(t, err)
-		return at
-	}
-
-	explained := CreateTestMessage(t, poster, groupID, prefix+" explained", 52.0, -1.0)
-	flagged := CreateTestMessage(t, poster, groupID, prefix+" flagged", 52.0, -1.0)
-	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", explained, flagged)
-	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", explained, flagged)
-	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE, autoapprove_hold_until=NULL, "+
-		"contentcheck_reasons='[{\"check\":\"MemberModerated\",\"category\":null,\"action\":\"flag\",\"detail\":\"This member''s posts are moderated\"}]' WHERE msgid=?", explained)
-	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE, autoapprove_hold_until=NULL, "+
-		"contentcheck_reasons='[{\"check\":\"MemberModerated\",\"action\":\"flag\"},{\"check\":\"Money\",\"action\":\"flag\"}]' WHERE msgid=?", flagged)
-
-	v := getAutoapproveatField(t, explained, groupID, modToken)
-	assert.NotNil(t, v, "a post carrying only the MemberModerated explanation is on the clean path")
-	assert.True(t, parseAt(v).Before(time.Now().Add(time.Hour)),
-		"the explanation alone must give the 20-minute clean-path estimate, not the 48h fallback")
-
-	v = getAutoapproveatField(t, flagged, groupID, modToken)
-	assert.NotNil(t, v)
-	assert.True(t, parseAt(v).After(time.Now().Add(40*time.Hour)),
-		"a content finding beside the explanation is not clean: 48h fallback")
+	db.Exec("UPDATE messages_groups SET quality_sample=1 WHERE msgid=?", msg)
+	assert.Nil(t, getAutoapproveatField(t, msg, groupID, modToken), "sampled: waits for a moderator")
 }
 
 // A rippled-in copy is AutoApproveService's: released after rippled_in_pending_hours,
@@ -343,6 +261,8 @@ func TestAutoapproveatRolloutGate(t *testing.T) {
 	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msg)
 	defer db.Exec("DELETE FROM messages WHERE id = ?", msg)
 	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE, contentcheck_reasons=NULL, autoapprove_hold_until=NULL WHERE msgid=?", msg)
+	insertAutomodRow(t, msg, groupID, "approve", 0)
+	defer db.Exec("DELETE FROM messages_automod WHERE msgid = ?", msg)
 
 	parseAt := func(v interface{}) time.Time {
 		s, ok := v.(string)
