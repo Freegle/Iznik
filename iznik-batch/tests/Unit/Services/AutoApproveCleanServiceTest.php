@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\Message;
+use App\Models\MessageAutomod;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Services\AutoApproveCleanService;
@@ -41,6 +42,12 @@ class AutoApproveCleanServiceTest extends TestCase
      * Build a clean, content-checked, NULL-status pending post that is eligible for
      * auto-approval (arrival older than the default 20-minute delay).
      *
+     * Eligibility for auto-approval is now a messages_automod row (the automod flowchart's
+     * verdict, plans/active/automod-flowchart.md) rather than anything AutoApproveCleanService
+     * computes itself, so this seeds a passing "approve" verdict by default. Pass
+     * `automod => false` to skip seeding (post has no verdict yet), or `automod => [...]` to
+     * override fields (e.g. verdict => MessageAutomod::VERDICT_HOLD, or a stale `created`).
+     *
      * @return array{0: User, 1: Group, 2: Message}
      */
     private function makeApprovable(array $opts = []): array
@@ -63,6 +70,20 @@ class AutoApproveCleanServiceTest extends TestCase
                 'contentcheck_checked_at' => now()->subMinutes(20),
                 'contentcheck_reasons'    => null,
             ], $opts['mg'] ?? []));
+
+        if (($opts['automod'] ?? []) !== false) {
+            MessageAutomod::create(array_merge([
+                'msgid' => $message->id,
+                'groupid' => $group->id,
+                'mode' => MessageAutomod::MODE_APPROVE,
+                'chart_version' => 'test',
+                'verdict' => MessageAutomod::VERDICT_APPROVE,
+                'end_node' => 'APPROVE',
+                'reason' => null,
+                'path' => [],
+                'created' => now(),
+            ], is_array($opts['automod'] ?? null) ? $opts['automod'] : []));
+        }
 
         return [$user, $group, $message];
     }
@@ -90,7 +111,7 @@ class AutoApproveCleanServiceTest extends TestCase
     public function test_stats_structure(): void
     {
         $stats = $this->service->process();
-        foreach (['approved', 'held_quality', 'vetoed', 'skipped', 'errors'] as $key) {
+        foreach (['approved', 'held_quality', 'errors'] as $key) {
             $this->assertArrayHasKey($key, $stats);
         }
     }
@@ -151,27 +172,19 @@ class AutoApproveCleanServiceTest extends TestCase
         $this->assertStillPending($message->id, $group->id);
     }
 
-    public function test_skips_when_content_check_flagged_reasons(): void
-    {
-        // Suspect content (reasons present) must keep the post in Pending for a mod.
-        [$user, $group, $message] = $this->makeApprovable([
-            'mg' => ['contentcheck_reasons' => json_encode([['check' => 'Money', 'action' => 'flag']])],
-        ]);
-
-        $this->service->process();
-
-        $this->assertStillPending($message->id, $group->id);
-    }
-
-    public function test_the_real_content_check_then_the_clean_path_publishes(): void
+    public function test_the_real_content_check_then_the_automod_approve_path_publishes(): void
     {
         // End to end through the two crons, in order. The content check writes a
         // MemberModerated explanation onto every NULL-status member's clean post (that is
         // why it is waiting), so a clean path that asked for reasons IS NULL matched none of
         // the population it was built for. Seeding reasons = NULL directly, as the other
-        // tests here do, could never see that.
+        // tests here do, could never see that. Eligibility for auto-approval is now an
+        // automod "approve" verdict (messages_automod), seeded here the way the automod
+        // command would write it once the chart has reviewed the post — the content check
+        // and automod review are independent crons, run in the order they would in prod.
         [$user, $group, $message] = $this->makeApprovable([
             'mg' => ['contentcheck_checked_at' => null, 'contentcheck_reasons' => null],
+            'automod' => false,
         ]);
 
         (new ContentCheckService())->processUnprocessed();
@@ -185,54 +198,22 @@ class AutoApproveCleanServiceTest extends TestCase
             'the content check records why the post is waiting'
         );
 
+        MessageAutomod::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'mode' => MessageAutomod::MODE_APPROVE,
+            'chart_version' => 'test',
+            'verdict' => MessageAutomod::VERDICT_APPROVE,
+            'end_node' => 'APPROVE',
+            'reason' => null,
+            'path' => [],
+            'created' => now(),
+        ]);
+
         $stats = $this->service->process();
 
         $this->assertGreaterThanOrEqual(1, $stats['approved']);
         $this->assertApproved($message->id, $group->id);
-    }
-
-    public function test_hold_explanations_alone_are_content_clean(): void
-    {
-        [$user, $group, $message] = $this->makeApprovable([
-            'mg' => ['contentcheck_reasons' => json_encode([
-                ['check' => ContentCheckService::CHECK_MEMBER_MODERATED, 'category' => null, 'action' => 'flag', 'detail' => "This member's posts are moderated"],
-            ])],
-        ]);
-
-        $this->service->process();
-
-        $this->assertApproved($message->id, $group->id);
-    }
-
-    public function test_a_content_finding_beside_the_explanation_is_not_clean(): void
-    {
-        [$user, $group, $message] = $this->makeApprovable([
-            'mg' => ['contentcheck_reasons' => json_encode([
-                ['check' => ContentCheckService::CHECK_MEMBER_MODERATED, 'action' => 'flag'],
-                ['check' => ContentCheckService::CHECK_MONEY, 'action' => 'flag'],
-            ])],
-        ]);
-
-        $this->service->process();
-
-        $this->assertStillPending($message->id, $group->id);
-    }
-
-    public function test_a_post_with_no_location_is_not_clean(): void
-    {
-        // NoLocation is a hold explanation too, but a post nobody can place is not
-        // publishable: the clean path seeds the spatial index from the post's location.
-        [$user, $group, $message] = $this->makeApprovable([
-            'message' => ['lat' => null, 'lng' => null],
-            'mg' => ['contentcheck_reasons' => json_encode([
-                ['check' => ContentCheckService::CHECK_MEMBER_MODERATED, 'action' => 'flag'],
-                ['check' => ContentCheckService::CHECK_NO_LOCATION, 'action' => 'flag'],
-            ])],
-        ]);
-
-        $this->service->process();
-
-        $this->assertStillPending($message->id, $group->id);
     }
 
     public function test_skips_held_message(): void
@@ -265,143 +246,6 @@ class AutoApproveCleanServiceTest extends TestCase
 
         $this->service->process();
 
-        $this->assertStillPending($message->id, $group->id);
-    }
-
-    public function test_skips_moderated_group(): void
-    {
-        [$user, $group, $message] = $this->makeApprovable([
-            'group' => ['settings' => ['moderated' => 1]],
-        ]);
-
-        $this->service->process();
-
-        $this->assertStillPending($message->id, $group->id);
-    }
-
-    public function test_skips_closed_group(): void
-    {
-        [$user, $group, $message] = $this->makeApprovable([
-            'group' => ['settings' => ['closed' => true]],
-        ]);
-
-        $this->service->process();
-
-        $this->assertStillPending($message->id, $group->id);
-    }
-
-    public function test_veto_microvolunteering_reject(): void
-    {
-        [$user, $group, $message] = $this->makeApprovable();
-        $reviewer = $this->createTestUser();
-        DB::table('microactions')->insert([
-            'userid'         => $reviewer->id,
-            'msgid'          => $message->id,
-            'actiontype'     => 'CheckMessage',
-            'result'         => 'Reject',
-            'score_negative' => 1,
-        ]);
-
-        $stats = $this->service->process();
-
-        $this->assertGreaterThanOrEqual(1, $stats['vetoed']);
-        $this->assertStillPending($message->id, $group->id);
-    }
-
-    public function test_does_not_veto_microvolunteering_approve(): void
-    {
-        [$user, $group, $message] = $this->makeApprovable();
-        $reviewer = $this->createTestUser();
-        DB::table('microactions')->insert([
-            'userid'         => $reviewer->id,
-            'msgid'          => $message->id,
-            'actiontype'     => 'CheckMessage',
-            'result'         => 'Approve',
-            'score_negative' => 0,
-        ]);
-
-        $this->service->process();
-
-        $this->assertApproved($message->id, $group->id);
-    }
-
-    public function test_veto_user_note(): void
-    {
-        [$user, $group, $message] = $this->makeApprovable();
-        DB::table('users_comments')->insert([
-            'userid'  => $user->id,
-            'groupid' => $group->id,
-            'user1'   => 'Keep an eye on this member.',
-        ]);
-
-        $stats = $this->service->process();
-
-        $this->assertGreaterThanOrEqual(1, $stats['vetoed']);
-        $this->assertStillPending($message->id, $group->id);
-    }
-
-    public function test_veto_recent_negative_mod_log(): void
-    {
-        [$user, $group, $message] = $this->makeApprovable();
-        $mod = $this->createTestUser();
-        DB::table('logs')->insert([
-            'timestamp' => now()->subDays(1),
-            'type'      => 'User',
-            'subtype'   => 'Mailed',
-            'user'      => $user->id,
-            'byuser'    => $mod->id,
-            'groupid'   => $group->id,
-        ]);
-
-        $stats = $this->service->process();
-
-        $this->assertGreaterThanOrEqual(1, $stats['vetoed']);
-        $this->assertStillPending($message->id, $group->id);
-    }
-
-    public function test_does_not_veto_old_negative_log(): void
-    {
-        [$user, $group, $message] = $this->makeApprovable();
-        $mod = $this->createTestUser();
-        DB::table('logs')->insert([
-            'timestamp' => now()->subDays(120), // outside the 90-day danger window
-            'type'      => 'User',
-            'subtype'   => 'Mailed',
-            'user'      => $user->id,
-            'byuser'    => $mod->id,
-            'groupid'   => $group->id,
-        ]);
-
-        $this->service->process();
-
-        $this->assertApproved($message->id, $group->id);
-    }
-
-    public function test_veto_known_spammer(): void
-    {
-        [$user, $group, $message] = $this->makeApprovable();
-        DB::table('spam_users')->insert([
-            'userid'     => $user->id,
-            'collection' => 'Spammer',
-        ]);
-
-        $stats = $this->service->process();
-
-        $this->assertGreaterThanOrEqual(1, $stats['vetoed']);
-        $this->assertStillPending($message->id, $group->id);
-    }
-
-    public function test_veto_membership_review_pending(): void
-    {
-        [$user, $group, $message] = $this->makeApprovable();
-        DB::table('memberships')
-            ->where('userid', $user->id)
-            ->where('groupid', $group->id)
-            ->update(['reviewrequestedat' => now()->subHour(), 'reviewedat' => null]);
-
-        $stats = $this->service->process();
-
-        $this->assertGreaterThanOrEqual(1, $stats['vetoed']);
         $this->assertStillPending($message->id, $group->id);
     }
 

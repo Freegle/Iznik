@@ -81,18 +81,6 @@
       "description": "Looks like a duplicate or an early repost of the member's own post.",
       "nodeType": "end"
     },
-    "OUT_OF_AREA": {
-      "description": "Is the post outside this community's area, in a community that removes posts from outside its area?",
-      "nodeType": "tool",
-      "check": {
-        "kind": "fact",
-        "fact": "out_of_area"
-      }
-    },
-    "HOLD_OUT_OF_AREA": {
-      "description": "Outside this community's area - this community removes posts from outside its area.",
-      "nodeType": "end"
-    },
     "SPAM_SIGNAL": {
       "description": "Does this post show signs of spam?",
       "nodeType": "tool",
@@ -931,28 +919,6 @@
     {
       "id": "DUPLICATE_no",
       "from": "DUPLICATE",
-      "to": "OUT_OF_AREA",
-      "trigger": "host_driven",
-      "condition": "no",
-      "label": "no",
-      "metadata": {
-        "answer": "no"
-      }
-    },
-    {
-      "id": "OUT_OF_AREA_yes",
-      "from": "OUT_OF_AREA",
-      "to": "HOLD_OUT_OF_AREA",
-      "trigger": "host_driven",
-      "condition": "yes",
-      "label": "yes",
-      "metadata": {
-        "answer": "yes"
-      }
-    },
-    {
-      "id": "OUT_OF_AREA_no",
-      "from": "OUT_OF_AREA",
       "to": "SPAM_SIGNAL",
       "trigger": "host_driven",
       "condition": "no",

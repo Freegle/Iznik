@@ -1465,9 +1465,46 @@ return [
     'autoapprove' => [
         'enabled'               => (bool) env('FREEGLE_AUTOAPPROVE_ENABLED', false),
         'trial_group_ids'       => env('FREEGLE_AUTOAPPROVE_TRIAL_GROUPS', ''),
-        'delay_minutes'         => (int) env('FREEGLE_AUTOAPPROVE_DELAY_MINUTES', 20),
+        // docker-compose passes these through as empty strings when unset, and (int) '' is 0,
+        // which would publish with no wait and veto nothing. Blank or zero means the default,
+        // matching the Go countdown.
+        'delay_minutes'         => (int) (env('FREEGLE_AUTOAPPROVE_DELAY_MINUTES') ?: 20),
         'quality_check_percent' => (int) env('FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT', 0),
-        'danger_log_days'       => (int) env('FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS', 90),
+        'danger_log_days'       => (int) (env('FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS') ?: 90),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Automated review flowchart (#639 follow-on)
+    |--------------------------------------------------------------------------
+    |
+    | Settings for the messages:automod command and AutomodService, which send
+    | facts about a Pending post to the automod Node microservice, walk the
+    | flowchart in automod/chart.json, and store the verdict on
+    | messages_automod. Two independent group lists gate the rollout:
+    |
+    | - shadow_group_ids: the chart runs and the verdict is recorded, but
+    |                      nothing about moderation changes. Purely for
+    |                      gathering agreement numbers before trusting a
+    |                      community's flow.
+    | - (approve mode has no separate list here: it reuses
+    |    AutoApproveCleanService::enabledGroupIds(), i.e.
+    |    FREEGLE_AUTOAPPROVE_ENABLED / FREEGLE_AUTOAPPROVE_TRIAL_GROUPS. A
+    |    chart "approve" there feeds #639's clean-approve path; the chart
+    |    never auto-rejects.)
+    |
+    | - url:     base URL of the automod Node service (internal network only,
+    |            not routed through Traefik).
+    | - timeout: HTTP timeout in seconds for the /review call. A timeout or
+    |            any other failure is treated as "unavailable", not a hold:
+    |            AutomodService records end_node=UNAVAILABLE and leaves the
+    |            post to ordinary moderation.
+    |
+    */
+    'automod' => [
+        'url'              => env('AUTOMOD_URL', 'http://automod:8080'),
+        'shadow_group_ids' => env('FREEGLE_AUTOMOD_SHADOW_GROUPS', ''),
+        'timeout'          => (int) env('AUTOMOD_TIMEOUT', 20),
     ],
 
     'email_health' => [

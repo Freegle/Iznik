@@ -167,5 +167,12 @@ point for distillation, not a replacement.
 
 Changes from this: one Claude call answers every text question for a post (the walker
 reuses the answers); new text nodes SWAP and VAGUE; MEDICINE covers supplements and
-vitamins. Before any community moves to approve-only, the chart needs fact nodes for
-duplicate / too soon and out of area, which the Laravel facts service supplies.
+vitamins; a DUPLICATE fact node (the member's own open post, or a repost sooner than the
+community allows), which the Laravel facts service supplies.
+
+Out of area is deliberately not a node. With rippling, a post reaches the communities
+around it by design, so being outside the origin community's polygon is not a reason to
+hold it, and `restrictdistance` is about removing members, not posts. The chart only runs
+on a post's origin copy (`rippled_in = 0`), so a rippled-in copy is never judged against
+the receiving community's area either. The 5 "out of area" rejections in the sample are
+the old habit, not something to automate.

@@ -3,8 +3,8 @@
 namespace App\Services;
 
 use App\Models\BackgroundTask;
-use App\Models\Group;
 use App\Models\Message;
+use App\Models\MessageAutomod;
 use App\Models\MessageGroup;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -19,24 +19,23 @@ use Illuminate\Support\Facades\Log;
  *
  * This service reinterprets NULL as "auto-moderated": their posts are held in Pending for
  * a short window — giving moderators and microvolunteers a chance to intervene — and are
- * then released automatically, UNLESS a danger signal is present. A configurable
- * percentage is held back as a manual quality-check sample.
+ * then released automatically. A configurable percentage is held back as a manual
+ * quality-check sample.
  *
- * Posts only become eligible AFTER messages:contentcheck has run and found no content
- * problem (contentcheck_checked_at set; contentcheck_reasons NULL or carrying only the
- * "why is this waiting" explanations - see ContentCheckService::HOLD_EXPLANATION_CHECKS).
- * Suspect posts keep their contentcheck_reasons and are never auto-approved here — they
- * stay in Pending (or are moved to Spam) exactly as before.
+ * Posts only become eligible once the automod chart (messages:automod, AutomodService)
+ * has reviewed them and recorded an approve verdict on messages_automod — see
+ * plans/active/automod-flowchart.md. That chart is what now applies the group-eligibility
+ * and member-danger-signal checks that used to live here directly (groupAllowsAutoApprove()
+ * and hasDangerSignals() were ported verbatim to AutomodFactsService::groupDisallows() and
+ * ::memberVeto()); this service no longer duplicates them. A row goes stale — and this
+ * service stops treating it as clean — the moment the post is edited after the chart last
+ * saw it (messages.editedat past messages_automod.created).
  *
  * Trusted members (DEFAULT/UNMODERATED) are unaffected — contentcheck already approves
  * their clean posts immediately. Explicit MODERATED/PROHIBITED members are unaffected too.
  */
 class AutoApproveCleanService
 {
-    /** Negative moderation log subtypes that veto auto-approval. */
-    private const DANGER_MESSAGE_SUBTYPES = ['Rejected', 'Deleted', 'Replied'];
-    private const DANGER_USER_SUBTYPES    = ['Mailed', 'Rejected', 'Deleted', 'Suspect', 'ClassifiedSpam'];
-
     /** How long a clean post waits in Pending before it publishes itself: the same for every community. */
     public function delayMinutes(): int
     {
@@ -47,11 +46,6 @@ class AutoApproveCleanService
     public function qualityCheckPercent(): int
     {
         return (int) config('freegle.autoapprove.quality_check_percent', 0);
-    }
-
-    public function dangerLogDays(): int
-    {
-        return (int) config('freegle.autoapprove.danger_log_days', 90);
     }
 
     /**
@@ -78,11 +72,11 @@ class AutoApproveCleanService
     /**
      * Process all eligible pending messages.
      *
-     * @return array{approved:int, held_quality:int, vetoed:int, skipped:int, errors:int}
+     * @return array{approved:int, held_quality:int, errors:int}
      */
     public function process(bool $dryRun = false): array
     {
-        $stats = ['approved' => 0, 'held_quality' => 0, 'vetoed' => 0, 'skipped' => 0, 'errors' => 0];
+        $stats = ['approved' => 0, 'held_quality' => 0, 'errors' => 0];
 
         $enabledGroupIds = $this->enabledGroupIds();
         if ($enabledGroupIds === []) {
@@ -125,10 +119,21 @@ class AutoApproveCleanService
             ->whereNull('u.deleted')
             ->whereNull('mem.ourPostingStatus')           // the auto-moderated tier
             ->whereNotNull('mg.contentcheck_checked_at')   // content check has run ...
-            // ... and found no content problem. Not a NULL test: the content check writes a
-            // MemberModerated explanation onto every NULL-status member's clean post (that is
-            // why it is waiting), so "reasons IS NULL" matched none of this population.
-            ->whereRaw(ContentCheckService::contentCleanSql('mg.contentcheck_reasons'))
+            // ... and the automod chart (messages:automod) has since reviewed it and recorded
+            // an approve verdict that is still fresh — i.e. not superseded by a later edit.
+            // This replaces the old direct contentCleanSql()/groupAllowsAutoApprove()/
+            // hasDangerSignals() checks, which now live in AutomodFactsService instead
+            // (plans/active/automod-flowchart.md).
+            ->whereExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('messages_automod as ma')
+                    ->whereColumn('ma.msgid', 'mg.msgid')
+                    ->whereColumn('ma.groupid', 'mg.groupid')
+                    ->where('ma.verdict', MessageAutomod::VERDICT_APPROVE)
+                    // keep-raw: COALESCE against a nullable column (m.editedat) compared to
+                    // another column (ma.created) isn't expressible with whereColumn/where.
+                    ->whereRaw('ma.created >= COALESCE(m.editedat, ?)', ['1970-01-01 00:00:00']);
+            })
             ->where('mg.quality_sample', 0)               // already-sampled rows are excluded entirely
             ->where('mg.rippled_in', 0)                   // rippled-in rows belong to AutoApproveService (carries the Taken/Received + rippled_in_pending_hours + recentLogs-bypass guards)
             // keep-raw: NOW() - INTERVAL keeps the comparison on the database clock, like the hold check below.
@@ -150,16 +155,6 @@ class AutoApproveCleanService
 
         foreach ($candidates as $row) {
             try {
-                if (!$this->groupAllowsAutoApprove((int) $row->groupid)) {
-                    $stats['skipped']++;
-                    continue;
-                }
-
-                if ($this->hasDangerSignals((int) $row->msgid, (int) $row->groupid, (int) $row->fromuser)) {
-                    $stats['vetoed']++;
-                    continue;
-                }
-
                 if ($this->isQualitySampled((int) $row->msgid)) {
                     if (!$dryRun) {
                         // Mark it as a quality-check sample so the moderation-stats
@@ -190,100 +185,6 @@ class AutoApproveCleanService
         }
 
         return $stats;
-    }
-
-    /**
-     * The group must be open, published and NOT moderated — a moderated group (or one
-     * under the Big Switch) deliberately wants every post reviewed by a human.
-     */
-    protected function groupAllowsAutoApprove(int $groupid): bool
-    {
-        $group = Group::find($groupid);
-        if (!$group) {
-            return false;
-        }
-        if (!$group->getSetting('publish', true)) {
-            return false;
-        }
-        if ($group->isClosed()) {
-            return false;
-        }
-        if ($group->getAttribute('autofunctionoverride')) {
-            return false;
-        }
-        if ($group->getAttribute('overridemoderation') === 'ModerateAll') {
-            return false;
-        }
-        if (!empty($group->getSetting('moderated', 0))) {
-            return false;
-        }
-        $rules = $group->rules ?? [];
-        if (!empty($rules['fullymoderated'])) {
-            return false;
-        }
-
-        return true;
-    }
-
-    /**
-     * Any one of these "danger signals" keeps the post in Pending for a moderator to handle.
-     */
-    protected function hasDangerSignals(int $msgid, int $groupid, int $fromuser): bool
-    {
-        // A microvolunteer flagged the post as not OK.
-        if (DB::table('microactions')
-            ->where('msgid', $msgid)
-            ->where('actiontype', 'CheckMessage')
-            ->where('result', 'Reject')
-            ->exists()) {
-            return true;
-        }
-
-        // A moderator has left a note on this member.
-        if (DB::table('users_comments')->where('userid', $fromuser)->exists()) {
-            return true;
-        }
-
-        // A recent negative moderation action against this member (rejection, deletion,
-        // modmail, spam classification) — not a self-initiated action.
-        if (DB::table('logs')
-            ->where('user', $fromuser)
-            ->where('timestamp', '>=', now()->subDays($this->dangerLogDays()))
-            ->where(function ($q) {
-                $q->whereColumn('byuser', '!=', 'user')->orWhereNull('byuser');
-            })
-            ->where(function ($q) {
-                $q->where(function ($q2) {
-                    $q2->where('type', 'Message')->whereIn('subtype', self::DANGER_MESSAGE_SUBTYPES);
-                })->orWhere(function ($q2) {
-                    $q2->where('type', 'User')->whereIn('subtype', self::DANGER_USER_SUBTYPES);
-                });
-            })
-            ->exists()) {
-            return true;
-        }
-
-        // A known or suspected spammer.
-        if (DB::table('spam_users')
-            ->where('userid', $fromuser)
-            ->whereIn('collection', ['Spammer', 'PendingAdd'])
-            ->exists()) {
-            return true;
-        }
-
-        // A moderation review is outstanding on this membership.
-        if (DB::table('memberships')
-            ->where('userid', $fromuser)
-            ->where('groupid', $groupid)
-            ->whereNotNull('reviewrequestedat')
-            ->where(function ($q) {
-                $q->whereNull('reviewedat')->orWhereColumn('reviewedat', '<', 'reviewrequestedat');
-            })
-            ->exists()) {
-            return true;
-        }
-
-        return false;
     }
 
     /**
