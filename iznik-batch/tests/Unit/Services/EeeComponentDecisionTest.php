@@ -4,6 +4,7 @@ namespace Tests\Unit\Services;
 
 use App\Services\EeeComponentService;
 use App\Services\EeeSqliteService;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -65,9 +66,7 @@ class EeeComponentDecisionTest extends TestCase
         $this->assertSame('named_eee', $result['is_eee_reason']);
     }
 
-    /**
-     * @dataProvider provideNamedEeeItems
-     */
+    #[DataProvider('provideNamedEeeItems')]
     public function test_named_eee_items_are_eee(string $itemName): void
     {
         $result = $this->decide($itemName, ['metal frame']);
@@ -126,9 +125,7 @@ class EeeComponentDecisionTest extends TestCase
         $this->assertSame('primary', $result['is_eee_reason']);
     }
 
-    /**
-     * @dataProvider provideNamedNotEeeItems
-     */
+    #[DataProvider('provideNamedNotEeeItems')]
     public function test_named_not_eee_items_are_not_eee(string $itemName): void
     {
         $result = $this->decide($itemName, ['electronic ignition']);

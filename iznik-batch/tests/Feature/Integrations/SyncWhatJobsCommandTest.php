@@ -7,6 +7,7 @@ use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 class SyncWhatJobsCommandTest extends TestCase
@@ -101,7 +102,7 @@ class SyncWhatJobsCommandTest extends TestCase
     // canonicalJobTitle — pure-logic unit tests
     // -----------------------------------------------------------------
 
-    /** @test */
+    #[Test]
     public function test_canonical_job_title_exact_match(): void
     {
         $svc = new WhatJobsService();
@@ -109,7 +110,7 @@ class SyncWhatJobsCommandTest extends TestCase
         $this->assertSame('Chef', $svc->canonicalJobTitle('Chef - London'));
     }
 
-    /** @test */
+    #[Test]
     public function test_canonical_job_title_keyword_match(): void
     {
         $svc = new WhatJobsService();
@@ -117,7 +118,7 @@ class SyncWhatJobsCommandTest extends TestCase
         $this->assertSame('Software Engineer', $svc->canonicalJobTitle('Graduate Software Engineer'));
     }
 
-    /** @test */
+    #[Test]
     public function test_canonical_job_title_no_match_returns_null(): void
     {
         $svc = new WhatJobsService();
@@ -129,7 +130,7 @@ class SyncWhatJobsCommandTest extends TestCase
     // parseFeed — XML parsing
     // -----------------------------------------------------------------
 
-    /** @test */
+    #[Test]
     public function test_parse_feed_returns_empty_for_below_minimum_cpc(): void
     {
         $xml = $this->makeFeedXml([['job_reference' => 'low-cpc', 'cpc' => '0.05']]);
@@ -141,7 +142,7 @@ class SyncWhatJobsCommandTest extends TestCase
         $this->assertEmpty($jobs);
     }
 
-    /** @test */
+    #[Test]
     public function test_parse_feed_skips_old_jobs(): void
     {
         $xml = $this->makeFeedXml([['job_reference' => 'old', 'posted_at' => date('Y-m-d', strtotime('-30 days'))]]);
@@ -152,7 +153,7 @@ class SyncWhatJobsCommandTest extends TestCase
         $this->assertEmpty($jobs);
     }
 
-    /** @test */
+    #[Test]
     public function test_parse_feed_skips_when_geocode_fails(): void
     {
         // No geocoder configured — all geocodes return null
@@ -169,7 +170,7 @@ class SyncWhatJobsCommandTest extends TestCase
     // boxPoly helper
     // -----------------------------------------------------------------
 
-    /** @test */
+    #[Test]
     public function test_box_poly_format(): void
     {
         $wkt = WhatJobsService::boxPoly(51.5, -0.1, 51.6, 0.0);
@@ -185,7 +186,7 @@ class SyncWhatJobsCommandTest extends TestCase
     // SyncWhatJobsCommand — artisan command level
     // -----------------------------------------------------------------
 
-    /** @test */
+    #[Test]
     public function test_command_reports_inserted_jobs(): void
     {
         $this->mock(WhatJobsService::class)
@@ -199,7 +200,7 @@ class SyncWhatJobsCommandTest extends TestCase
             ->assertExitCode(0);
     }
 
-    /** @test */
+    #[Test]
     public function test_command_dry_run_outputs_dry_run_prefix(): void
     {
         // No feeds configured in the test environment, so the real service parses 0 jobs.
@@ -214,7 +215,7 @@ class SyncWhatJobsCommandTest extends TestCase
     // dry-run mode
     // -----------------------------------------------------------------
 
-    /** @test */
+    #[Test]
     public function test_dry_run_does_not_create_table(): void
     {
         DB::statement('DROP TABLE IF EXISTS jobs_new');
@@ -257,7 +258,7 @@ class SyncWhatJobsCommandTest extends TestCase
         );
     }
 
-    /** @test */
+    #[Test]
     public function test_sync_dry_run_covers_real_sync_method(): void
     {
         $geom = WhatJobsService::boxPoly(53.8, -1.55, 53.9, -1.45);
@@ -290,7 +291,7 @@ class SyncWhatJobsCommandTest extends TestCase
         $this->assertEquals(0, $result['inserted']);
     }
 
-    /** @test */
+    #[Test]
     public function test_sync_refuses_to_swap_when_zero_jobs_parsed(): void
     {
         // Pre-seed the live jobs table with rows that must not be wiped.
@@ -329,7 +330,7 @@ class SyncWhatJobsCommandTest extends TestCase
         DB::table('jobs')->where('job_reference', 'like', 'guard-zero-%')->delete();
     }
 
-    /** @test */
+    #[Test]
     public function test_sync_refuses_to_swap_when_parsed_far_below_existing(): void
     {
         // Seed enough rows that the existing-count threshold is met.
@@ -396,7 +397,7 @@ class SyncWhatJobsCommandTest extends TestCase
         DB::table('jobs')->where('job_reference', 'like', 'guard-drop-%')->delete();
     }
 
-    /** @test */
+    #[Test]
     public function test_sync_non_dry_run_inserts_into_jobs_new(): void
     {
         DB::statement('DROP TABLE IF EXISTS jobs_new');

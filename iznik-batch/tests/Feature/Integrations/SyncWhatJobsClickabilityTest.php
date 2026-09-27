@@ -4,6 +4,7 @@ namespace Tests\Feature\Integrations;
 
 use App\Services\WhatJobsService;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 /**
@@ -50,7 +51,7 @@ class SyncWhatJobsClickabilityTest extends TestCase
         return (int) DB::getPdo()->lastInsertId();
     }
 
-    /** @test */
+    #[Test]
     public function test_analyseClickability_populates_keywords_from_clicked_jobs(): void
     {
         $jobId = $this->insertJob(
@@ -72,7 +73,7 @@ class SyncWhatJobsClickabilityTest extends TestCase
         $this->assertContains('web developer', $keywords);
     }
 
-    /** @test */
+    #[Test]
     public function test_analyseClickability_backfills_jobid_from_url(): void
     {
         $jobId = $this->insertJob(
@@ -94,7 +95,7 @@ class SyncWhatJobsClickabilityTest extends TestCase
         $this->assertEquals($jobId, $updated->jobid);
     }
 
-    /** @test */
+    #[Test]
     public function test_updateClickability_scores_jobs_with_matching_keywords(): void
     {
         DB::table('jobs_keywords')->insert(['keyword' => 'web developer', 'count' => 5]);
@@ -111,7 +112,7 @@ class SyncWhatJobsClickabilityTest extends TestCase
         $this->assertGreaterThan(0, $job->clickability);
     }
 
-    /** @test */
+    #[Test]
     public function test_updateClickability_leaves_zero_for_unmatched_jobs(): void
     {
         DB::table('jobs_keywords')->insert(['keyword' => 'nurse practitioner', 'count' => 10]);
@@ -129,14 +130,13 @@ class SyncWhatJobsClickabilityTest extends TestCase
     }
 
     /**
-     * @test
-     *
      * sync() now scores clickability in PHP and writes it on the batched INSERT
      * (insertJobs) instead of a post-swap per-row UPDATE pass, so the ~1M-row
      * table is never re-touched. This asserts the score lands on the row at
      * insert time — the same title-keyword scoring updateClickability applied
      * (a matching title > 0, an unmatched title 0), now folded into the insert.
      */
+    #[Test]
     public function test_insertJobs_scores_clickability_on_insert_from_keywords(): void
     {
         // getMaxish() 95th-pct over a single keyword returns its count (5), so a
@@ -159,7 +159,7 @@ class SyncWhatJobsClickabilityTest extends TestCase
         DB::statement('DROP TABLE IF EXISTS jobs_new');
     }
 
-    /** @test */
+    #[Test]
     public function test_insertJobs_handles_null_title(): void
     {
         // parseFeed yields title=null for feed jobs with an empty <title> and
