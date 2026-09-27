@@ -85,6 +85,41 @@ func Invalidate() {
 	expires = time.Time{}
 }
 
+// SetTestState overrides the in-process lockdown state for tests, without ever touching the
+// database. It exists so that gate tests living OUTSIDE this package - a membership, message
+// or newsfeed handler test proving its endpoint is held or refused - do not need a real
+// "lockdowns" row to make Held/GateMod/GateMember/GateDownload see the state they are testing.
+//
+// This matters because `go test ./...` runs different packages' test binaries concurrently
+// (the plain, non-coverage run has no -p 1), each against the SAME shared test database. A
+// test that wrote a genuine active row - even one cleaned up a moment later - would be
+// visible to every other package's process the instant its own cache read it, which turns
+// "gate refuses this action" tests across a dozen packages into a source of unrelated,
+// timing-dependent failures elsewhere in the suite. SetTestState instead only ever touches
+// this process's own package-level cache variables, so it is invisible to every other test
+// binary: a database race that only a real PATCH /lockdown write can cause (see the small,
+// deliberately real-row set of tests in test/lockdown_handlers_test.go, which accept that
+// exposure because they are testing the persistence layer itself, the same tradeoff already
+// made by setActiveLockdownRow in this package's own tests).
+//
+// Returns a restore function that puts the real database-backed state back; call it via
+// defer so the override never leaks into the next test in the same binary.
+func SetTestState(s State) func() {
+	mu.Lock()
+	current = s
+	expires = time.Now().Add(time.Hour)
+	loadLatest = func() (State, error) { return s, nil }
+	mu.Unlock()
+
+	return func() {
+		mu.Lock()
+		defer mu.Unlock()
+		current = State{}
+		expires = time.Time{}
+		loadLatest = loadLatestFromDB
+	}
+}
+
 // Held reports whether the given surface is currently held back: the switch is active and
 // this surface is one of the ones it covers. Held applies uniformly to everyone, including
 // Support and Admin - there is no exemption from being held, only from being refused.
@@ -105,9 +140,15 @@ func ChatMode() string {
 
 // Count increments the counter for kind against the current incident. It is a no-op when
 // the site is not locked down, since there is then no incident to attach the count to.
+//
+// Keyed on IncidentID, not ID: ID is the newest row's own primary key, which changes every
+// time a surfaces/notice/phrases sub-action writes another row for the same incident, while
+// IncidentID is carried unchanged on every row of that incident (the migration's own doc
+// comment on lockdowns: "holds and counters hang off it [incidentid]"). Keying on ID would
+// split one incident's counters across as many lockdownid values as it had sub-actions.
 func Count(kind string) {
 	s := Current()
-	if !s.Active || s.ID == 0 {
+	if !s.Active || s.IncidentID == 0 {
 		return
 	}
 
@@ -116,7 +157,7 @@ func Count(kind string) {
 			"count": gorm.Expr("count + 1"),
 		}),
 	}).Create(map[string]interface{}{
-		"lockdownid": s.ID,
+		"lockdownid": s.IncidentID,
 		"kind":       kind,
 		"count":      1,
 	})
@@ -125,9 +166,11 @@ func Count(kind string) {
 // InsertHold records a held chat message, post or ChitChat post against the current
 // incident so it can be triaged and released later. It is a no-op when the site is not
 // locked down.
+//
+// Keyed on IncidentID rather than ID for the same reason as Count above.
 func InsertHold(kind string, refid uint64, userid uint64, risk string) {
 	s := Current()
-	if !s.Active || s.ID == 0 {
+	if !s.Active || s.IncidentID == 0 {
 		return
 	}
 
@@ -141,7 +184,7 @@ func InsertHold(kind string, refid uint64, userid uint64, risk string) {
 			"risk": riskVal,
 		}),
 	}).Create(map[string]interface{}{
-		"lockdownid": s.ID,
+		"lockdownid": s.IncidentID,
 		"kind":       kind,
 		"refid":      refid,
 		"userid":     userid,

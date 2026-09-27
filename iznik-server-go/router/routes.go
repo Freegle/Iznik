@@ -53,6 +53,7 @@ import (
 	"github.com/freegle/iznik-server-go/item"
 	"github.com/freegle/iznik-server-go/job"
 	"github.com/freegle/iznik-server-go/location"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/logs"
 	"github.com/freegle/iznik-server-go/membership"
 	"github.com/freegle/iznik-server-go/merge"
@@ -1441,6 +1442,13 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/modtools/stdmsg", stdmsg.PostStdMsg)
 		rg.Patch("/modtools/stdmsg", stdmsg.PatchStdMsg)
 		rg.Delete("/modtools/stdmsg", stdmsg.DeleteStdMsg)
+
+		// Lockdown switch (manual, reversible, site-wide hold)
+		rg.Get("/lockdown", lockdown.GetLockdown)
+		rg.Patch("/lockdown", config.RequireSupportOrAdminMiddleware(), lockdown.PatchLockdown)
+		rg.Get("/modtools/lockdown", lockdown.GetModtoolsLockdown)
+		rg.Get("/modtools/lockdown/stats", config.RequireSupportOrAdminMiddleware(), lockdown.GetModtoolsLockdownStats)
+		rg.Get("/modtools/lockdown/history", config.RequireSupportOrAdminMiddleware(), lockdown.GetModtoolsLockdownHistory)
 
 		// Trysts (handover arrangements)
 		rg.Get("/tryst", tryst.GetTryst)

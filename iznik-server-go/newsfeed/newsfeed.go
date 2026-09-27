@@ -13,6 +13,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/queue"
@@ -1274,6 +1275,9 @@ func Post(c *fiber.Ctx) error {
 		}
 	case "Hide":
 		if req.ID > 0 && canHidePost(myid) {
+			if lockdown.GateMod(c, myid) {
+				return nil
+			}
 			db.Table("newsfeed").Where("id = ?", req.ID).
 				Updates(map[string]interface{}{"hidden": gorm.Expr("NOW()"), "hiddenby": myid})
 			db.Table("logs").Create(map[string]interface{}{
@@ -1313,6 +1317,9 @@ func Post(c *fiber.Ctx) error {
 		if !canHidePost(myid) {
 			return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 		}
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 
 		createRefer(db, myid, req.ID, "ConvertedToPost", req.Msgid)
 
@@ -1346,18 +1353,30 @@ func Post(c *fiber.Ctx) error {
 		})
 	case "ReferToWanted":
 		if req.ID > 0 {
+			if lockdown.GateMod(c, myid) {
+				return nil
+			}
 			createRefer(db, myid, req.ID, "ReferToWanted", 0)
 		}
 	case "ReferToOffer":
 		if req.ID > 0 {
+			if lockdown.GateMod(c, myid) {
+				return nil
+			}
 			createRefer(db, myid, req.ID, "ReferToOffer", 0)
 		}
 	case "ReferToTaken":
 		if req.ID > 0 {
+			if lockdown.GateMod(c, myid) {
+				return nil
+			}
 			createRefer(db, myid, req.ID, "ReferToTaken", 0)
 		}
 	case "ReferToReceived":
 		if req.ID > 0 {
+			if lockdown.GateMod(c, myid) {
+				return nil
+			}
 			createRefer(db, myid, req.ID, "ReferToReceived", 0)
 		}
 	case "AttachToThread":
@@ -1366,6 +1385,9 @@ func Post(c *fiber.Ctx) error {
 			var modCount int64
 			db.Table("memberships").Where("userid = ? AND role IN (?, ?) AND collection = ?", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Count(&modCount)
 			if modCount > 0 {
+				if lockdown.GateMod(c, myid) {
+					return nil
+				}
 				db.Table("newsfeed").Where("id = ?", req.ID).Update("replyto", req.Replyto)
 				db.Table("logs").Create(map[string]interface{}{
 					"timestamp": gorm.Expr("NOW()"),
@@ -1385,6 +1407,12 @@ func Post(c *fiber.Ctx) error {
 			db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
 			if modCount == 0 {
 				return fiber.NewError(fiber.StatusForbidden, "Permission denied")
+			}
+
+			// Section 11.3 of the lockdown plan: converting a newsfeed entry into a
+			// story is a moderator action, refused while "mods" is held.
+			if lockdown.GateMod(c, myid) {
+				return nil
 			}
 
 			// Get the newsfeed entry
@@ -1445,7 +1473,13 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 	// Check suppression status
 	var newsfeedmodstatus string
 	db.Table("users").Select("COALESCE(newsfeedmodstatus, '')").Where("id = ?", myid).Scan(&newsfeedmodstatus)
-	hidden := newsfeedmodstatus == utils.NEWSFEED_MODSTATUS_SUPPRESSED
+
+	// Section 11.3 of the lockdown plan: while "chitchat" is held, a new post or
+	// reply is created hidden (same mechanism as a suppressed poster) rather than
+	// refused, and a lockdown_holds row is inserted below once the id is known, so
+	// it shows up in the moderators' triage queue instead of vanishing.
+	chitchatHeld := lockdown.Held("chitchat")
+	hidden := newsfeedmodstatus == utils.NEWSFEED_MODSTATUS_SUPPRESSED || chitchatHeld
 
 	// Get user's lat/lng for geographic positioning
 	latlng := user.GetLatLng(myid)
@@ -1526,6 +1560,10 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 
 	idInt, _ := row["@id"].(int64)
 	id := uint64(idInt)
+
+	if chitchatHeld && id > 0 {
+		lockdown.InsertHold("chitchat", id, myid, "")
+	}
 
 	// If this is a reply and not hidden, bump the thread
 	if id > 0 && req.Replyto > 0 && !hidden {
@@ -1697,6 +1735,14 @@ func Edit(c *fiber.Ctx) error {
 
 	if ownerID != myid && !canModifyPost(myid, req.ID) {
 		return fiber.NewError(fiber.StatusForbidden, "Not authorized to edit this post")
+	}
+
+	// Section 11.3 of the lockdown plan: PATCH /newsfeed is refused outright while
+	// "chitchat" is held, for both the poster's own edit and a moderator's edit -
+	// unlike the create path just above, there is no pending-edits state for a
+	// ChitChat post to fall back to.
+	if lockdown.GateMember(c, myid, "chitchat") {
+		return nil
 	}
 
 	db.Table("newsfeed").Where("id = ?", req.ID).Update("message", req.Message)

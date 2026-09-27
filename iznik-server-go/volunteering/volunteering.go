@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/newsfeed"
 	"github.com/freegle/iznik-server-go/queue"
@@ -514,6 +515,20 @@ func Update(c *fiber.Ctx) error {
 	if req.Action != "Release" && isModerator(myid, req.ID) {
 		if holder, name := volunteeringHeldByAnother(db, req.ID, myid); holder != 0 {
 			return heldByAnotherResponse(c, holder, name)
+		}
+	}
+
+	// Section 11.3 of the lockdown plan: PATCH /volunteering is refused while
+	// "events" is held, except a moderator approving it out of moderation - setting
+	// Pending to false and nothing else in the same call - which stays allowed so the
+	// review queue keeps draining, the same shape as Approve elsewhere in the plan.
+	isApprove := req.Pending != nil && !*req.Pending && req.Action == "" &&
+		req.Title == nil && req.Location == nil && req.Online == nil &&
+		req.Contactname == nil && req.Contactphone == nil && req.Contactemail == nil &&
+		req.Contacturl == nil && req.Description == nil && req.Timecommitment == nil
+	if !isApprove {
+		if lockdown.GateMember(c, myid, "events") {
+			return nil
 		}
 	}
 

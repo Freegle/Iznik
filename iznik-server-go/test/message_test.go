@@ -3598,6 +3598,53 @@ func TestPutMessageGeneratesSyntheticMessageID(t *testing.T) {
 	assert.Contains(t, *messageid, fmt.Sprintf("-%d", groupID), "messageid must have -{groupid} suffix")
 }
 
+// TestPutMessageUnmoderatedMemberGoesDirectToApproved verifies that a trusted
+// (unmoderated, DEFAULT ourPostingStatus) member's direct PUT /message submission
+// on a non-moderated, non-closed group goes straight to Approved, not Pending.
+// This pins down a real bug found while testing the lockdown switch: the
+// ourPostingStatus lookup used to Scan into a throwaway one-field struct whose
+// field name ("OurPostingStatus" -> GORM's default "our_posting_status") never
+// matched the raw "ourPostingStatus" column actually selected, so the value was
+// silently always nil and every direct-submit member was forced through Pending
+// regardless of their real posting status - with no error surfaced beyond a
+// TRACE-level GORM scan warning. Fixed by scanning directly into *string, the
+// same pattern already used by every other ourPostingStatus read in this file.
+func TestPutMessageUnmoderatedMemberGoesDirectToApproved(t *testing.T) {
+	prefix := uniquePrefix("msgput_directapprove")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ? AND groupid = ?", userID, groupID)
+	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.moderated', 0, '$.closed', 0) WHERE id = ?", groupID)
+
+	body := map[string]interface{}{
+		"groupid":    groupID,
+		"type":       "Offer",
+		"subject":    prefix + " Test Offer",
+		"textbody":   "A test offer message",
+		"item":       "Test Item",
+		"collection": "Pending",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PUT", "/api/message?jwt="+token, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	newID := uint64(result["id"].(float64))
+
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", newID, groupID).Scan(&collection)
+	assert.Equal(t, "Approved", collection, "a trusted (unmoderated) member's direct post must go straight to Approved")
+}
+
 // TestPutMessageAvailableNowSetsInitially verifies: sending only
 // availablenow sets both availableinitially and availablenow to that value.
 func TestPutMessageAvailableNowSetsInitially(t *testing.T) {

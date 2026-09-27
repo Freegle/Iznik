@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -236,7 +237,20 @@ func PostNoticeboard(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
 
-	// Create new noticeboard
+	// Create new noticeboard.
+	//
+	// Section 11.3 of the lockdown plan: noticeboard has no pending/review state
+	// for a new board to fall into (confirmed against the noticeboards migration -
+	// there is no "pending" or "reviewed" column, just "active", which means
+	// something different: is this physical board still there), so unlike
+	// communityevent/volunteering/story the plan's "held if they have a pending
+	// state, otherwise refused" resolves to a refusal here, not a hold. The
+	// checked-in actions above (Refreshed/Declined/Inactive/Comments) are left
+	// ungated - they report on a board that already exists, not new content.
+	if lockdown.GateMember(c, myid, "events") {
+		return nil
+	}
+
 	if req.Lat == nil || req.Lng == nil {
 		return fiber.NewError(fiber.StatusBadRequest, "lat and lng are required")
 	}
@@ -317,6 +331,13 @@ func PatchNoticeboard(c *fiber.Ctx) error {
 	// Must be the creator or a moderator.
 	if myid != addedby && !auth.IsSystemMod(myid) {
 		return fiber.NewError(fiber.StatusForbidden, "Permission denied")
+	}
+
+	// Section 11.3 of the lockdown plan: PATCH /noticeboard (an edit, whether the
+	// creator's own or a moderator's) is refused outright while "events" is held -
+	// there is no pending-edits state for a noticeboard to fall into.
+	if lockdown.GateMember(c, myid, "events") {
+		return nil
 	}
 
 	// Update settable attributes

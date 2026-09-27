@@ -10,6 +10,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/modmessaging"
 	"github.com/freegle/iznik-server-go/reachqueue"
@@ -163,6 +164,9 @@ func PostMemberships(c *fiber.Ctx) error {
 
 	switch req.Action {
 	case "Hold":
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		if result := db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
 			Update("heldby", myid); result.Error != nil {
 			stdlog.Printf("Failed to hold membership user %d group %d: %v", req.Userid, req.Groupid, result.Error)
@@ -171,6 +175,9 @@ func PostMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Release":
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
 			Update("heldby", gorm.Expr("NULL"))
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_RELEASE, req.Groupid, req.Userid, myid, "")
@@ -252,6 +259,9 @@ func PostMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Reject", "Delete Approved Member":
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		if result := db.Table("memberships").Where("userid = ? AND groupid = ? AND collection IN (?, ?)",
 			req.Userid, req.Groupid, utils.COLLECTION_PENDING, utils.COLLECTION_APPROVED).Delete(nil); result.Error != nil {
 			stdlog.Printf("Failed to reject membership user %d group %d: %v", req.Userid, req.Groupid, result.Error)
@@ -281,6 +291,9 @@ func PostMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Ban":
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		// V1 parity: removeMembership($ban=true) deletes the memberships row entirely, then
 		// writes to users_banned. There is no memberships.collection='Banned' row in V1.
 		// Converted together with its
@@ -307,24 +320,36 @@ func PostMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Unban":
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		// V1 parity: unban() deletes from users_banned only — there is no memberships row to delete.
 		db.Table("users_banned").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).Delete(nil)
 		// V1 parity: unban() does not log.
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewHold":
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		// ReviewHold is used in the chat review context - sets heldby on the membership.
 		db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
 			Update("heldby", myid)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewRelease":
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		// ReviewRelease clears the heldby on the membership (chat review context).
 		db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
 			Update("heldby", gorm.Expr("NULL"))
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewIgnore":
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		// Per-group: mods on adjacent communities make independent decisions (Discourse 9618 #8).
 		// Closing the review is terminal for THIS group, so drop our own hold with it -
 		// otherwise the row keeps a heldby that nothing clears, and the member shows as
@@ -345,6 +370,9 @@ func PostMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "HappinessReviewed":
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		if req.Happiness == nil {
 			return fiber.NewError(fiber.StatusBadRequest, "happiness is required for HappinessReviewed")
 		}
@@ -1613,6 +1641,9 @@ func DeleteMemberships(c *fiber.Ctx) error {
 		if !isModOfGroup(myid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
 		}
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		// Converted together with its
 		// identical twin in PostMemberships's Ban action (98ee705a8a74).
 		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).Delete(nil)
@@ -1637,6 +1668,9 @@ func DeleteMemberships(c *fiber.Ctx) error {
 	if userid != myid {
 		if !isModOfGroup(myid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
+		}
+		if lockdown.GateMod(c, myid) {
+			return nil
 		}
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_DELETED, req.Groupid, userid, myid, "")
 	} else if selfLeaveKeepsRole(db, myid, req.Groupid) {
@@ -1850,6 +1884,9 @@ func PatchMemberships(c *fiber.Ctx) error {
 		if !isModOfGroup(myid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "Only moderators can change posting status")
 		}
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
 			Update("ourPostingStatus", *req.OurPostingStatus)
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_OUR_POSTING_STATUS, req.Groupid, userid, myid,
@@ -1865,6 +1902,9 @@ func PatchMemberships(c *fiber.Ctx) error {
 		// Must be a mod/owner of the group (or admin/support) to change anyone's role.
 		if !isModOfGroup(myid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "Only moderators can change roles")
+		}
+		if lockdown.GateMod(c, myid) {
+			return nil
 		}
 
 		// Only owners (or admin/support) can promote to Moderator or Owner.

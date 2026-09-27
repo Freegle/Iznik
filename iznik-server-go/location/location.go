@@ -13,6 +13,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/utils"
@@ -705,6 +706,12 @@ func CreateLocation(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "System moderator or admin role required")
 	}
 
+	// Section 11.3 of the lockdown plan: map editing is refused while "mods" is
+	// held (Support is exempt, via GateMod's own IsAdminOrSupport check).
+	if lockdown.GateMod(c, myid) {
+		return nil
+	}
+
 	var req CreateLocationRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
@@ -791,6 +798,12 @@ func UpdateLocation(c *fiber.Ctx) error {
 
 	if !auth.IsSystemMod(myid) {
 		return fiber.NewError(fiber.StatusForbidden, "System moderator or admin role required")
+	}
+
+	// Section 11.3 of the lockdown plan: map editing is refused while "mods" is
+	// held (Support is exempt, via GateMod's own IsAdminOrSupport check).
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	var req UpdateLocationRequest
@@ -964,6 +977,12 @@ func ExcludeLocation(c *fiber.Ctx) error {
 
 	if !auth.IsModOfGroup(myid, req.GroupID) {
 		return fiber.NewError(fiber.StatusForbidden, "Must be a moderator or owner of the group")
+	}
+
+	// Section 11.3 of the lockdown plan: map editing is refused while "mods" is
+	// held (Support is exempt, via GateMod's own IsAdminOrSupport check).
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	db := database.DBConn

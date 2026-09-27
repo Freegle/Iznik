@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
@@ -164,6 +165,13 @@ func ListStatsJobs(c *fiber.Ctx) error {
 func DownloadStatsFile(c *fiber.Ctx) error {
 	if _, err := requireUser(c); err != nil {
 		return err
+	}
+
+	// Section 11.3 of the lockdown plan: a partnership statistics file is a
+	// download, refused while "export" is held - nobody is exempt from this one,
+	// not even Support or Admin (GateDownload's own rule).
+	if lockdown.GateDownload(c) {
+		return nil
 	}
 
 	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)

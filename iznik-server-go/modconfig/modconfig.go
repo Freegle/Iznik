@@ -7,6 +7,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -315,6 +316,10 @@ func PostModConfig(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
+	if lockdown.GateMod(c, myid) {
+		return nil
+	}
+
 	if !auth.IsSystemMod(myid) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Don't have rights to create configs"})
 	}
@@ -472,6 +477,10 @@ func PatchModConfig(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
+	if lockdown.GateMod(c, myid) {
+		return nil
+	}
+
 	type PatchRequest struct {
 		ID             uint64  `json:"id"`
 		Name           *string `json:"name"`
@@ -621,6 +630,10 @@ func DeleteModConfig(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	id, _ := strconv.ParseUint(c.Query("id", "0"), 10, 64)

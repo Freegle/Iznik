@@ -19,6 +19,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/emailhygiene"
 	"github.com/freegle/iznik-server-go/location"
+	"github.com/freegle/iznik-server-go/lockdown"
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/reachqueue"
@@ -1822,6 +1823,12 @@ func handleRatingReviewed(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRe
 		}
 	}
 
+	// Section 11.3 of the lockdown plan: POST /user RatingReviewed is a moderator
+	// action, refused outright while "mods" is held.
+	if lockdown.GateMod(c, myid) {
+		return nil
+	}
+
 	db.Table("ratings").Where("id = ?", req.Ratingid).Update("reviewrequired", gorm.Expr("0"))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -2480,6 +2487,13 @@ func PatchUser(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusForbidden, "Not authorized to moderate this user")
 		}
 
+		// Section 11.3 of the lockdown plan: PATCH /user's moderation statuses
+		// (chatmodstatus, newsfeedmodstatus, and a moderator setting someone else's
+		// trustlevel below) are refused outright while "mods" is held.
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
+
 		// chatmodstatus is an ENUM. Without this check an unrecognised value is
 		// coerced to '' by MySQL in non-strict mode, which reads back as neither
 		// Moderated nor Fully and so quietly drops the member out of the spam
@@ -2530,6 +2544,10 @@ func PatchUser(c *fiber.Ctx) error {
 			}
 		}
 
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
+
 		db.Table("users").Where("id = ?", req.ID).Update("newsfeedmodstatus", *req.Newsfeedmodstatus)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
@@ -2565,6 +2583,12 @@ func PatchUser(c *fiber.Ctx) error {
 
 	// Self-only updates always target the logged-in user.
 	if req.Displayname != nil {
+		// Section 11.3 of the lockdown plan (Profile/"posts" row): a member
+		// changing their public-facing name is refused while "posts" is held.
+		if lockdown.GateMember(c, myid, "posts") {
+			return nil
+		}
+
 		// None of these three
 		// assignments reference another assigned column.
 		db.Table("users").Where("id = ?", myid).Updates(map[string]interface{}{
@@ -2626,6 +2650,12 @@ func PatchUser(c *fiber.Ctx) error {
 	}
 
 	if req.Aboutme != nil {
+		// Section 11.3 of the lockdown plan (Profile/"posts" row): a member
+		// editing their "about me" text is refused while "posts" is held.
+		if lockdown.GateMember(c, myid, "posts") {
+			return nil
+		}
+
 		// Insert a new aboutme entry. The most recent is fetched via ORDER BY timestamp DESC LIMIT 1.
 		db.Table("users_aboutme").Create(map[string]interface{}{
 			"userid":    myid,
@@ -2705,6 +2735,14 @@ func PatchUser(c *fiber.Ctx) error {
 		}
 
 		if isMod {
+			// A moderator setting someone's trust level is a moderation status
+			// change, refused while "mods" is held (section 11.3 of the lockdown
+			// plan) - the self-service Basic/Declined path below is a personal
+			// setting, not moderation, and stays ungated.
+			if lockdown.GateMod(c, myid) {
+				return nil
+			}
+
 			if *req.Trustlevel == "" {
 				db.Table("users").Where("id = ?", trustTarget).Update("trustlevel", gorm.Expr("NULL"))
 			} else {

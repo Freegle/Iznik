@@ -7,6 +7,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
@@ -150,6 +151,12 @@ func PostShortlink(c *fiber.Ctx) error {
 	}
 	if !auth.IsModOfGroup(myid, req.Groupid) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Not a moderator of this group"})
+	}
+
+	// Section 11.3 of the lockdown plan: creating a shortlink is a moderator
+	// tooling action, refused outright while "mods" is held.
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	// Check if name already exists.

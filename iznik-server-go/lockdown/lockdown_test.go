@@ -256,17 +256,25 @@ func setActiveLockdownRow(t *testing.T, surfaces string) uint64 {
 	t.Helper()
 	db := database.DBConn
 	result := db.Table("lockdowns").Create(map[string]interface{}{
-		"active":     1,
-		"incidentid": 1,
-		"surfaces":   surfaces,
-		"startedby":  1,
-		"startedat":  time.Now(),
+		"active":    1,
+		"surfaces":  surfaces,
+		"startedby": 1,
+		"startedat": time.Now(),
 	})
 	require.NoError(t, result.Error)
 
 	var id uint64
 	db.Table("lockdowns").Select("id").Order("id DESC").Limit(1).Scan(&id)
 	require.NotZero(t, id)
+
+	// incidentid must be the row's own id - Count/InsertHold key every write on IncidentID
+	// (see the doc comment on Count in lockdown.go), so a fixed literal here only ever worked
+	// by coincidence, when this row happened to land on id 1 in a freshly created test
+	// database. The moment any earlier test's row (or a fixture) pushes the auto-increment
+	// past 1, every counterCount(id, ...) assertion below reads the wrong row and sees zero -
+	// exactly the failures this fix addresses.
+	require.NoError(t, db.Table("lockdowns").Where("id = ?", id).Update("incidentid", id).Error)
+
 	t.Cleanup(func() {
 		db.Table("lockdowns").Where("id = ?", id).Delete(nil)
 		db.Table("lockdown_counters").Where("lockdownid = ?", id).Delete(nil)
@@ -435,4 +443,51 @@ func TestLoadLatestFromDBWithNoRowsIsOpen(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, s.Active)
 	assert.Equal(t, uint64(0), s.ID)
+}
+
+// ---------------------------------------------------------------------------
+// SetTestState: the database-free override other packages' gate tests use. See its doc
+// comment for why this exists instead of every gate test writing a real "lockdowns" row.
+// ---------------------------------------------------------------------------
+
+func TestSetTestStateMakesHeldTrueWithoutADatabaseRow(t *testing.T) {
+	reset()
+	db := database.DBConn
+	var before int64
+	db.Table("lockdowns").Count(&before)
+
+	restore := SetTestState(State{Active: true, ID: 424242, Surfaces: map[string]bool{"posts": true}})
+
+	assert.True(t, Held("posts"))
+	assert.False(t, Held("chat"))
+
+	var during int64
+	db.Table("lockdowns").Count(&during)
+	assert.Equal(t, before, during, "SetTestState must not write a lockdowns row")
+
+	restore()
+}
+
+func TestSetTestStateRestoreReturnsToTheRealDatabaseState(t *testing.T) {
+	reset()
+	restore := SetTestState(State{Active: true, ID: 1, Surfaces: map[string]bool{"posts": true}})
+	assert.True(t, Held("posts"))
+
+	restore()
+
+	// After restore, Current must re-read the database rather than keep serving the
+	// override - loadLatest is back to loadLatestFromDB and the cache is expired.
+	assert.False(t, Held("posts"))
+}
+
+func TestSetTestStateSurvivesInvalidate(t *testing.T) {
+	reset()
+	restore := SetTestState(State{Active: true, ID: 1, Surfaces: map[string]bool{"mods": true}})
+	defer restore()
+
+	// A gate test may run code that itself calls Invalidate() (e.g. after a PATCH
+	// elsewhere in the same request). The override must still answer from its own
+	// loadLatest rather than falling through to the real table.
+	Invalidate()
+	assert.True(t, Held("mods"))
 }

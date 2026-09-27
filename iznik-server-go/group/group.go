@@ -15,6 +15,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -808,6 +809,10 @@ func PatchGroup(c *fiber.Ctx) error {
 	// Check authorization: must be mod/owner of the group OR admin/support
 	if !auth.IsModOfGroup(myid, req.ID) {
 		return fiber.NewError(fiber.StatusForbidden, "Permission denied")
+	}
+
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	isAdmin := auth.IsAdminOrSupport(myid)

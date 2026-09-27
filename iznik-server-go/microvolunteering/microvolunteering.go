@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	flog "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/modmessaging"
@@ -164,6 +165,16 @@ func GetChallenge(c *fiber.Ctx) error {
 			ChallengeEEELabel,
 			ChallengePhotoRotate,
 		}
+	}
+
+	// Section 11.3 of the lockdown plan: while "mods" or "posts" is held, no new
+	// microvolunteering challenges are offered - not a refusal (nothing was
+	// attempted that needs blocking), just the same silent "nothing to offer right
+	// now" response already used below for declined/excluded trust levels, so
+	// members aren't asked to help moderate or check posts while incident response
+	// is under way.
+	if lockdown.Held("mods") || lockdown.Held("posts") {
+		return c.JSON(fiber.Map{})
 	}
 
 	// Get user's trust level
@@ -928,6 +939,12 @@ func ModFeedback(c *fiber.Ctx) error {
 	// Only moderators can provide feedback.
 	if !auth.IsSystemMod(myid) {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator")
+	}
+
+	// Section 11.3 of the lockdown plan: PATCH /microvolunteering is a moderator
+	// action, refused outright while "mods" is held.
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	var req ModFeedbackRequest

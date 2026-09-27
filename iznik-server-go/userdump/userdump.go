@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
@@ -59,6 +60,15 @@ func GetUserDump(c *fiber.Ctx) error {
 		if !user.IsAdminOrSupport(myid) {
 			return fiber.NewError(fiber.StatusForbidden, "Must be Support or Admin")
 		}
+	}
+
+	// Section 11.3 of the lockdown plan: a user dump is a download, refused while
+	// "export" is held - nobody is exempt from this one, not even Support/Admin
+	// (GateDownload's own rule), and this covers both auth paths above (the
+	// third-party API key path included) since it runs after either has
+	// succeeded.
+	if lockdown.GateDownload(c) {
+		return nil
 	}
 
 	targetID, err := strconv.ParseUint(c.Params("id"), 10, 64)
