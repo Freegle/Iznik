@@ -68,26 +68,40 @@ const STOP_WORDS = new Set([
   'a', 'an', 'the', 'is', 'this', 'post', 'about', 'or', 'to', 'for', 'of', 'in', 'on',
   'and', 'than', 'other', 'such', 'as', 'does', 'that', 'it', 'something', 'rather',
   'with', 'from', 'be', 'are', 'was', 'were', 'has', 'have', 'do', 'asking',
+  'offer', 'offered', 'offering', 'wanted', 'item', 'items', 'being', 'given', 'giving',
+  'answer', 'covered', 'another', 'question', 'physical', 'general', 'request', 'names',
+  'specific', 'poster', 'freely', 'form',
 ]);
 
+// The words that carry a question: its last sentence, without quoted examples.
 function keywordsOf(question) {
-  return question
+  const sentences = question.split(/(?<=[.?])\s+/);
+  return sentences[sentences.length - 1]
+    .replace(/"[^"]*"/g, ' ')
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter((word) => word.length > 3 && !STOP_WORDS.has(word));
 }
 
 /**
- * Deterministic backend for tests. Pulls the distinctive words out of the
- * question (chart.json's wording, not hand-listed here) and answers "yes"
- * with high confidence if any of them appear as a whole word in the post text, "no" with
- * low confidence otherwise. Selected with AUTOMOD_BACKEND=fake.
+ * Deterministic backend for tests and local runs, selected with AUTOMOD_BACKEND=fake. Given
+ * yesFor (a list of questions), it answers yes to exactly those. Otherwise it answers yes
+ * when a distinctive word of the question appears as a whole word in the post text.
  */
 export class FakeBackend {
+  constructor({ yesFor } = {}) {
+    this.yesFor = yesFor || null;
+  }
+
   async ask(question, text) {
-    const words = new Set(text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/));
-    const hit = keywordsOf(question).some((word) => words.has(word));
+    let hit;
+    if (this.yesFor) {
+      hit = this.yesFor.includes(question);
+    } else {
+      const words = new Set(text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/));
+      hit = keywordsOf(question).some((word) => words.has(word));
+    }
     return { p: hit ? 0.95 : 0.05, model: 'fake' };
   }
 }

@@ -162,6 +162,21 @@ describe('createReviewer / review() - branch reachability', () => {
       end: 'HOLD_KNIVES',
     },
     {
+      name: 'MEDICINE_OTC',
+      body: 'Spare vitamins, unopened.',
+      end: 'HOLD_MEDICINE_OTC',
+    },
+    {
+      name: 'MEDICINE_ANIMAL',
+      body: 'Flea and worming treatments, unopened.',
+      end: 'HOLD_MEDICINE_ANIMAL',
+    },
+    {
+      name: 'CONTACT_LENSES',
+      body: 'Daily contact lenses, unopened.',
+      end: 'HOLD_CONTACT_LENSES',
+    },
+    {
       name: 'MEDICINE',
       body: 'Spare prescription medication no longer needed.',
       end: 'HOLD_MEDICINE',
@@ -201,7 +216,10 @@ describe('createReviewer / review() - branch reachability', () => {
 
   for (const testCase of cases) {
     test(`${testCase.name} holds at ${testCase.end}`, async () => {
-      const reviewer = createReviewer({ backend: new FakeBackend(), chartPath: CHART_PATH });
+      // Yes to exactly this node's question, so the case does not depend on its wording.
+      const question = realChart().states[testCase.name].check.question;
+      const backend = new FakeBackend({ yesFor: question ? [question] : [] });
+      const reviewer = createReviewer({ backend, chartPath: CHART_PATH });
       const result = await reviewer.review({
         msgid: 1,
         groupid: 1,
@@ -230,8 +248,8 @@ describe('createReviewer / review() - branch reachability', () => {
     });
     assert.equal(result.verdict, 'approve');
     assert.equal(result.end, 'APPROVE');
-    // Every fact node (10) plus every text node (17) is walked when nothing matches.
-    assert.equal(result.path.length, 27);
+    // Every fact node (10) plus every text node (21) is walked when nothing matches.
+    assert.equal(result.path.length, 31);
   });
 });
 
@@ -362,6 +380,6 @@ describe('createReviewer / review() - response shape', () => {
       'version',
     ].sort());
     assert.equal(result.chart, 'freegle-automod');
-    assert.equal(result.version, '3');
+    assert.equal(result.version, '4');
   });
 });
