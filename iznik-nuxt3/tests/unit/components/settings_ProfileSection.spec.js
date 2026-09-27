@@ -479,6 +479,28 @@ describe('ProfileSection', () => {
         await wrapper.vm.saveName()
         expect(wrapper.emitted('update')).toBeTruthy()
       })
+
+      // plans/active/2026-09-27-lockdown-switch.md section 11.3: display name
+      // is refused with a short message while the "posts" surface is held.
+      // saveAndGet rethrows a tagged error (see stores/auth.js, api/lockdownConflict.js);
+      // the editor must show that message rather than emit update or blow up.
+      it('shows the paused message and does not emit update when the surface is held', async () => {
+        const lockdownError = new Error(
+          'Changes are paused for a few hours while we deal with a security incident.'
+        )
+        lockdownError.lockdownRefused = true
+        mockSaveAndGet.mockRejectedValueOnce(lockdownError)
+
+        const wrapper = createWrapper()
+        wrapper.vm.displayName = 'New Name'
+        await wrapper.vm.saveName()
+        await wrapper.vm.$nextTick()
+
+        expect(wrapper.emitted('update')).toBeFalsy()
+        expect(wrapper.text()).toContain(
+          'Changes are paused for a few hours while we deal with a security incident.'
+        )
+      })
     })
 
     describe('uploadProfile', () => {

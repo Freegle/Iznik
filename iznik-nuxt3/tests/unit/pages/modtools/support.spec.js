@@ -132,6 +132,9 @@ describe('support/[[id]].vue page', () => {
           ModSupportConcernKeywords: {
             template: '<div class="mod-support-concern-keywords" />',
           },
+          ModSupportLockdown: {
+            template: '<div class="mod-support-lockdown" />',
+          },
           NoticeMessage: {
             template: '<div class="notice-message"><slot /></div>',
             props: ['variant'],
@@ -175,6 +178,23 @@ describe('support/[[id]].vue page', () => {
     it('renders user tab component', () => {
       const wrapper = mountComponent()
       expect(wrapper.find('.mod-support-find-user').exists()).toBe(true)
+    })
+
+    // plans/active/2026-09-27-lockdown-switch.md section 10.9/10.12: the
+    // Lockdown tab is first and red, so it's the thing a Support user
+    // reaches fastest during an incident.
+    it('renders the Lockdown tab component', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.find('.mod-support-lockdown').exists()).toBe(true)
+    })
+
+    it('renders the Lockdown tab title in red, before User', () => {
+      const wrapper = mountComponent()
+      const titles = wrapper.findAll('.b-tab').map((t) => t.text())
+      expect(titles[0]).toContain('Lockdown')
+      const lockdownTitle = wrapper.find('[data-testid="lockdown-tab-title"]')
+      expect(lockdownTitle.exists()).toBe(true)
+      expect(lockdownTitle.classes()).toContain('text-danger')
     })
   })
 
@@ -254,11 +274,21 @@ describe('support/[[id]].vue page', () => {
 
   describe('tab query parameter handling', () => {
     it('sets activeTab from query param', async () => {
+      // The Lockdown tab was inserted first (index 0), so every other tab's
+      // index shifted up by one - community is now 2, not 1.
       mockRouteQuery.value = { tab: 'community' }
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
       await flushPromises()
-      expect(wrapper.vm.activeTab).toBe(1)
+      expect(wrapper.vm.activeTab).toBe(2)
+    })
+
+    it('sets activeTab to 0 for the lockdown tab', async () => {
+      mockRouteQuery.value = { tab: 'lockdown' }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      await flushPromises()
+      expect(wrapper.vm.activeTab).toBe(0)
     })
   })
 })

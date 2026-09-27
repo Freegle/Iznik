@@ -3,6 +3,21 @@
     <div v-if="supportOrAdmin">
       <div>
         <b-tabs v-model="activeTab" content-class="mt-3" card>
+          <!-- Lockdown Tab: first, red - see plans/active/2026-09-27-lockdown-switch.md
+               section 10.9. Whether to press, and everything about lifting once
+               pressed, needs to be the thing a Support user reaches fastest. -->
+          <b-tab>
+            <template #title>
+              <h2
+                class="ms-2 me-2 text-danger fw-bold"
+                data-testid="lockdown-tab-title"
+              >
+                Lockdown
+              </h2>
+            </template>
+            <ModSupportLockdown />
+          </b-tab>
+
           <!-- User Tab -->
           <b-tab>
             <template #title>
@@ -159,11 +174,12 @@ const communitySubTab = ref(0)
 
 // Tab name to index mapping
 const topTabMap = {
-  user: 0,
-  community: 1,
-  message: 2,
-  ai: 3,
-  spam: 4,
+  lockdown: 0,
+  user: 1,
+  community: 2,
+  message: 3,
+  ai: 4,
+  spam: 5,
 }
 
 const communitySubTabMap = {

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { SocialLogin } from '@capgo/capacitor-social-login'
 import { LoginError, SignUpError } from '~/api/APIErrors'
 import { isBannedFailure } from '~/api/bannedFailure'
+import { runLockdownAware } from '~/api/lockdownConflict'
 import {
   abortAllPendingRequests,
   enterLogoutMode,
@@ -604,12 +605,21 @@ export const useAuthStore = defineStore('auth', {
       await this.$api.user.unbounce(id)
     },
     async saveAndGet(params) {
-      console.log('Save and get', params)
-      await this.$api.session.save(params)
-      console.log('Saved')
-      const user = await this.fetchUser()
-      console.log('Fetched user', JSON.stringify(user))
-      return user
+      // plans/active/2026-09-27-lockdown-switch.md section 10.5: display
+      // name, about me and avatar changes are refused with a short message
+      // while the "profile" surface is held. This is the single choke point
+      // both go through, so it's the one place that needs to know about
+      // that 409 - runLockdownAware turns it into a tagged, readable error
+      // (api/lockdownConflict.js) instead of the raw response, and any
+      // other failure propagates untouched.
+      return await runLockdownAware(async () => {
+        console.log('Save and get', params)
+        await this.$api.session.save(params)
+        console.log('Saved')
+        const user = await this.fetchUser()
+        console.log('Fetched user', JSON.stringify(user))
+        return user
+      })
     },
     async setGroup(params, nofetch) {
       await this.$api.memberships.update(params)
