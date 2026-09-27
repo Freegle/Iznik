@@ -166,6 +166,9 @@ export function createReviewer({ backend, chartPath } = {}) {
   return { review, chart, engine };
 }
 
+// Each step records the node's short description as its question: that is what a moderator
+// reads in ModTools. check.question is the fuller wording, with Freegle's rule, that the model
+// is asked.
 async function evaluateCheck(nodeId, node, { facts, rules, text, backend, backendName }) {
   const check = node.check;
 
@@ -186,7 +189,7 @@ async function evaluateCheck(nodeId, node, { facts, rules, text, backend, backen
   if (check.rule && rules[check.rule] === true) {
     return {
       node: nodeId,
-      question: check.question,
+      question: node.description,
       kind: 'text',
       answer: 'no',
       threshold: check.threshold,
@@ -198,7 +201,7 @@ async function evaluateCheck(nodeId, node, { facts, rules, text, backend, backen
   if (check.when && facts[check.when] !== true) {
     return {
       node: nodeId,
-      question: check.question,
+      question: node.description,
       kind: 'text',
       answer: 'no',
       threshold: check.threshold,
@@ -221,7 +224,7 @@ async function evaluateCheck(nodeId, node, { facts, rules, text, backend, backen
 
   return {
     node: nodeId,
-    question: check.question,
+    question: node.description,
     kind: 'text',
     answer: p >= check.threshold ? 'yes' : 'no',
     p,
