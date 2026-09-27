@@ -14,9 +14,17 @@ checks that it is still doing its job, with nobody involved:
 - the banner is live on every website in the CookieYes account (not switched off, and not
   disabled by the plan's pageview limit);
 - GDPR is one of the laws the banner applies;
-- every cookie the last scan found is in a category;
+- every cookie the banner publishes to visitors is in a category, and it publishes at
+  least one;
 - the last scan is under 45 days old. Once it is over 30 days old, the watchdog starts a
   new one at the plan's full page limit.
+
+"Publishes" is the operative word. The check reads the banner script CookieYes serves from
+its CDN (the `src` in the site's embed code), which carries the categories and cookies
+visitors are shown. It does not judge categorisation on the scan results: those record what
+the scanner found and how it categorised it at the time, before the classifier ran, so they
+go on listing cookies as uncategorised after the classifier has placed and published them.
+The scan results are still written to the log for the record.
 
 The result goes into `housekeeper_tasks` as the task `cookieyes`, which drives the
 housekeeping badge on the ModTools Sysadmin page. That badge also shows the task as overdue
@@ -31,8 +39,9 @@ set in Cookie Manager to "publish all AI-classified cookies automatically", whic
 Basic plan or above. So an uncategorised cookie now means the classifier could not place
 it, and a person has to look. That is why it fails the check.
 
-The classifier only handles cookies found by scans run after it was switched on. Cookies
-that were already uncategorised stay that way until someone categorises them.
+The classifier works on the cookies a scan finds, a few minutes after the scan completes,
+and publishes straight to the banner. A cookie it cannot place stays in the banner's
+"Uncategorized" group until someone categorises it by hand.
 
 ## How it talks to CookieYes
 
@@ -46,6 +55,7 @@ Claude.
 | `CookieYesOAuth` | OAuth 2.1 + PKCE login as a public client, and keeping the login alive |
 | `CookieYesTokenStore` | Keeps the login in the `config` table, encrypted with `APP_KEY` |
 | `CookieYesMcpClient` | Calls a tool and unwraps the answer; knows nothing about the checks |
+| `CookieYesPublishedBanner` | Fetches the banner script from the CDN and reads the published categories out of it |
 | `CookieYesWatchdogService` | The checks above |
 
 The MCP server's tools can read the account and start a scan, but **none of them can
@@ -60,7 +70,8 @@ php artisan cookieyes:call get_scan_results --args='{"websiteId":"<id from list_
 ```
 
 The test fixtures in `iznik-batch/tests/fixtures/cookieyes/` are real answers, recorded
-this way.
+this way. `script.js` there is the category part of the real banner script, fetched from
+the address in `get_embed_code.json`.
 
 ## The login, and keeping it
 

@@ -109,3 +109,4 @@ Banner restyling, any use of Claude, categorising cookies (the classifier does i
 | 7 | Extension: remove the CookieYes task | ✅ | freegle-housekeeper branch remove-cookieyes-task; purges stored creds |
 | 8 | Docs: developer reference page + ops note for the one-time authorise | ✅ | |
 | 9 | Full Laravel suite, review, PR | ✅ | 6933 passed; crash handling added after review |
+| 10 | Judge "uncategorised" on the published banner script, not the scan snapshot | 🔄 | 27 Sep prod: scan said 3 uncategorised, banner published 0 of 41 → false failure. `CookieYesPublishedBanner` reads `_ckyStore._categories` from the embed code's script.js; scan counts logged only |
