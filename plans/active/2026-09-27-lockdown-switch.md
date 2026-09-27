@@ -692,3 +692,153 @@ expiry; any Support user presses and lifts; approve is the basic button.
 | use mail already sent | runbook step on the relay host: `postsuper -h ALL` to hold the queue; `postqueue -p` to list; `postsuper -d` by queue id for anything from or about the marked actors before release; `RelayQueueRecorder` shows what is there | out of the application's reach; already-read messages are the officer's "warn the recipients" (section 4, step 5) and `chats:process-spam` |
 | reach members where the switch does not run | Facebook, the support mailbox, Discourse: the notice, if chosen, repeated by hand | not ours to hold |
 | wait it out | lifting by surface and class; the soft mode; the young-account budget (section 5) is the next thing to build, as it holds a resumed wave without holding everyone | the lockdown's cost is every innocent chat delayed for its length; a crew that waits costs nothing to wait |
+
+## 11. Build contract (27 September)
+
+Scope: section 10 only. Not the duty officer, not the young-account budget.
+
+### 11.1 State
+
+Tables in `2026_09_27_000001_create_lockdown_tables.php`.
+
+- `lockdowns`: append-only; current state = row with the highest id. Every change inserts a
+  row copying the previous one with the change applied. `incidentid` = id of the pressing
+  row, carried forward. `active` 1 from press until close. `startedby/startedat` carried.
+  Close sets `active = 0`, all surfaces false, `endedby/endedat/endnote`. `changedby` and
+  `created` are per row. `announcedat` is set by the batch once it has mailed geeks@ and
+  raised Sentry for that row.
+- `surfaces` JSON, keys all present:
+  `{"chat":bool,"chat_mode":"hard"|"soft","posts":bool,"chitchat":bool,"events":bool,
+  "email":bool,"push":bool,"export":bool,"mods":bool}`. true = held. The full preset on
+  press: all true, `chat_mode` hard.
+- `notice`: null (none), `delay` or `security`. Texts (identical in Go and batch):
+  - delay: "Freegle is running slowly today. Messages and posts may take longer than usual
+    to reach people."
+  - security: "We're dealing with a spam attack. Messages may be delayed. If you received a
+    message about vouchers or payments, please don't click the link."
+  - `normal` is also allowed after close, for a day: "Things are back to normal."
+- `phrases` JSON array of lowercase strings (incident phrases and addresses), cleared on close.
+- `lockdown_holds`: `lockdownid` = incidentid. `kind` chat|post|chitchat. `risk` null until
+  triaged. `outcome`: null (waiting), `released` (low, no person read it), `review` (risky,
+  sent to moderators), `approved`, `rejected` (marked actor, dropped), `spam_marked`
+  (Support marked the sender; batch rejects the item on its next run).
+- `lockdown_counters`: `(lockdownid, kind)` unique, `count` incremented with
+  `INSERT ... ON DUPLICATE KEY UPDATE count = count + 1`. Kinds: `email:<type>`, `push`,
+  `export`, `refused:<userid>` (moderator action refused), `approved:<userid>` (moderator
+  approval made while mods held), `refused_member` (member write refused).
+
+Surface "held" helper, both codebases: `held(surface)` = active AND surfaces[surface].
+A process that has never managed to read the state treats the site as open; a failed read
+after a successful one keeps the last state.
+
+### 11.2 Go API (`iznik-server-go/lockdown/`)
+
+- `lockdown.Current()` — five-second cache (browsecount pattern), `lockdown.Held(surface)`,
+  `lockdown.ChatMode()`, `lockdown.Count(kind)`, `lockdown.Refuse(c)` which writes 409
+  `{"ret":409,"status":"Changes are paused for a few hours while we deal with a security incident.","lockdown":true}`
+  and for downloads `"Downloads are paused while we deal with a security incident."`.
+  `lockdown.Invalidate()` after a PATCH.
+- `GET /lockdown` public: `{"notice": null}` or `{"notice": {"key":"security","text":"..."}}`.
+  Never returns surfaces or active.
+- `GET /modtools/lockdown` any moderator: `{"active","incidentid","surfaces","reason",
+  "notice","startedat","startedby","startedbyname"}`. Phrases only to Support/Admin.
+- `GET /modtools/lockdown/stats` Support/Admin: held per kind (count, distinct users, oldest,
+  new in last 10 minutes), triage counts per kind and risk, three samples per risk class for
+  spam and risky only (never low; chat sample = message text truncated to 200 chars,
+  sender id), clusters (same folded first line, top 5 with count), accounts created since
+  start, counters grouped (email by type, push, export, refused by moderator, approved by
+  moderator with names), outcomes, pressed at / by / minutes ago.
+- `GET /modtools/lockdown/history` Support/Admin: last 50 rows.
+- `PATCH /lockdown` Support/Admin (`RequireSupportOrAdminMiddleware`). Body `action`:
+  - `press` {reason, notice?}: full preset. 409 if already active.
+  - `surfaces` {surfaces: partial map, chat_mode?}: set any subset (lift or re-press one).
+  - `notice` {notice}: null|delay|security|normal.
+  - `phrases` {phrases: []}.
+  - `markspam`: every hold with risk spam and outcome null → sender into `spam_users`
+    (collection Spammer, reason "Lockdown <incidentid>", byuserid me; skip if already
+    present), hold outcome `spam_marked`. Returns counts.
+  - `releaseclass` {kind, risk}: Support releases or rejects a whole class with samples in
+    front of them: `decision` release|reject; sets outcome `approved`/`spam_marked` on
+    matching holds with outcome null or `review`, batch acts on it.
+  - `liftall` {endnote?}: sets every surface false (batch then releases in its order).
+  - `close` {endnote}: active 0, surfaces all false, phrases cleared, ended fields.
+  Each writes a new row. Returns the new state.
+
+### 11.3 Go gates (section 10.5)
+
+`refused` = `lockdown.Refuse(c)` when `Held("mods")` for moderator actions, `Held("posts")`
+etc. for member writes as noted; Support/Admin callers are exempt from every refusal.
+
+- Posts (`posts`): PUT /message direct-approve path forced to Pending; member PATCH /message
+  of an Approved post forced through the pending-edits review; moderator PATCH refused.
+  No Go hold row: posts are triaged by the batch.
+- `mods`: `dispatchPostMessageAction` allows `Approve` only without subject/body/stdmsgid
+  and refuses the others listed in 10.5 (counted `refused:<myid>`; approvals counted
+  `approved:<myid>`); chatmessages moderation: Approve allowed (basic), others refused;
+  memberships: Approve allowed, moderator Reject/Delete Approved Member/Ban/Unban/Hold/
+  Release/Review*/HappinessReviewed/Role/OurPostingStatus/moderator DELETE refused; newsfeed
+  Unhide allowed, Hide/Convert*/AttachToThread/ReferTo* refused; comment, PATCH /group,
+  /modtools/admin, modconfig, stdmsg, spammers PATCH/DELETE, PATCH /microvolunteering,
+  POST /shortlink, locations writes, `POST /user` RatingReviewed, `PATCH /user` moderation
+  statuses: refused. POST /modtools/spammers (report) allowed.
+- `chitchat`: POST /newsfeed create/reply sets `hidden = NOW()` and inserts a
+  `lockdown_holds` row (kind chitchat); PATCH /newsfeed refused.
+- `events`: POST communityevent/volunteering forced `pending = 1`; member PATCH refused
+  (moderator approve allowed under `mods` rules); noticeboard and story: creation held if
+  they have a pending state, otherwise refused; edits refused.
+- Profile (`posts`): PATCH /user displayname, aboutme, avatar/profile refused.
+- `export`: POST/GET /export, GET /modtools/user/:id/dump (both auth paths),
+  GET /modtools/spammers/export, GET /partnership/statsfile/:id refused (counted `export`).
+  Support/Admin are NOT exempt from downloads.
+- Microvolunteering GET returns no tasks while `mods` or `posts` held.
+- Chat send needs no Go change: every message is created `processingrequired = 1` and the
+  batch holds it.
+
+### 11.4 Batch (`iznik-batch/app/Services/Lockdown/`)
+
+- `LockdownService`: `current()` reads the newest row (call at the top of every loop
+  iteration, never cached across iterations), `held($surface)`, `chatMode()`,
+  `count($kind)`, `press()`, `setSurfaces()`, `close()`, notice texts.
+- Commands: `lockdown:on {--reason=} {--notice=} {--by=}`, `lockdown:off {--surface=*}
+  {--all} {--close} {--note=}`, `lockdown:status`, `lockdown:triage` (every minute:
+  announce unannounced rows by mail to geeks@ and a Sentry message; triage; act on
+  `spam_marked` holds; release lifted surfaces paced), `lockdown:report` (hourly while
+  active: stats mail to geeks@; `--closing` after close).
+- Triage (`LockdownTriageService`), constants with reasoning beside them:
+  spam / low / risky as 10.7; holds created for User2User chat messages with
+  `processingrequired = 1` created since `startedat`, and for posts Pending since
+  `startedat` whose poster is not a moderator.
+- Chat (`ChatProcessService::processIncoming`): User2User messages from members, while chat
+  held: hard → not processed. soft → by class: low processed normally, risky processed
+  with `reviewrequired = 1, reportreason = 'Lockdown'` (outcome review), spam dropped as
+  `dropBlocked` does. Unclassified: classify first. When chat not held: holds with outcome
+  null are released the same way, at most 300 per run, id order; new messages flow as
+  normal. User2Mod and Mod2Mod always flow. `ChatNotificationService` re-admits messages
+  by `lockdown_holds.releasedat` as it does released rippling holds.
+- Posts: `ContentCheckService` and `AutoApproveService` do not promote while posts held; when
+  lifted, held posts with risk low are promoted at most 200 per run with `arrival = NOW()`;
+  risky held posts are never promoted automatically (a moderator decides); spam_marked →
+  `Spam` collection.
+- ChitChat: when lifted, low holds get `hidden` cleared; risky stay hidden; spam_marked
+  deleted (as the existing delete does).
+- Email: `MailSuppressionService::shouldSkip()` global branch while email held (scope
+  `lockdown`, counted `email:<type>`); `EmailSpoolerService::spool()` refuses non-allowlisted
+  types while held (counted); `ProcessSpoolCommand` sends only allowlisted types while held
+  (the rest wait in the spool); `ProcessBackgroundTasksCommand` steps over email tasks;
+  `SendPendingWelcomeMailsCommand` skips. Allowlist: password reset / sign-in link,
+  verification, unsubscribe confirmation, account deletion. On email lift:
+  `mail:spool:purge-spammers` removes spooled mail from spam_users written before the press;
+  `DeferralCatchUpService` runs for the lockdown scope.
+- Push: `PushNotificationService` entry points return early while held, counted `push`.
+
+### 11.5 Clients
+
+- Member site: `api/LockdownAPI.js`, `stores/lockdown.js`, `components/LockdownNotice.vue`
+  beside `MailDelayed` in `LayoutCommon.vue`, fetched on the navbar's sixty-second pass.
+- ModTools: state on the thirty-second work poll (`useModMe`); red banner in
+  `modtools/layouts/default.vue`; `ModStatus.vue` red; only the basic Approve buttons shown
+  while `mods` held; a 409 with `lockdown: true` shows the paused message, not an error
+  modal. Support page: a first, red Lockdown tab (`ModSupportLockdown.vue`): press with
+  reason and notice; per-surface switches with counts, in lift order; chat hard/soft; notice
+  choice; incident phrases; live stats every minute; mark spam set; release/reject a class;
+  lift everything; close with a note; history.
