@@ -54,11 +54,25 @@ export function isCrawler(userAgent) {
   return CRAWLER_RE.test(ua || '')
 }
 
+// The fetch used when a caller does not supply one. Under Vitest that is
+// nothing: a component spec that fires an image error must not start real
+// network requests, whose abort timers would outlive the spec and stall the
+// run. Specs that exercise the probes pass their own fetch.
+function defaultFetch() {
+  if (import.meta.env?.VITEST) {
+    return null
+  }
+
+  return globalThis.fetch
+}
+
 // Fetch a URL purely to learn whether the host answers. A CORS refusal rejects
 // just like a dead host, so a failed cors fetch is retried in no-cors mode: an
 // opaque response still proves the host is there.
-export async function probeUrl(url, fetchImpl = globalThis.fetch) {
-  if (typeof fetchImpl !== 'function' || !url) {
+export async function probeUrl(url, fetchImpl) {
+  const doFetch = fetchImpl === undefined ? defaultFetch() : fetchImpl
+
+  if (typeof doFetch !== 'function' || !url) {
     return { probed: false }
   }
 
@@ -70,7 +84,7 @@ export async function probeUrl(url, fetchImpl = globalThis.fetch) {
       : null
 
     try {
-      const response = await fetchImpl(url, {
+      const response = await doFetch(url, {
         mode,
         cache: 'no-store',
         credentials: 'omit',

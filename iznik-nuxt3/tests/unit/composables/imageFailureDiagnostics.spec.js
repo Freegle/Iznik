@@ -154,7 +154,20 @@ describe('useImageFailureDiagnostics', () => {
       ).toEqual({
         probed: false,
       })
-      expect(await probeUrl(IMAGE_URL, undefined)).toEqual({ probed: false })
+      expect(await probeUrl(IMAGE_URL, null)).toEqual({ probed: false })
+    })
+
+    it('never uses the real fetch under Vitest when no fetch is supplied', async () => {
+      // Other component specs fire image errors without mocking this module;
+      // a real network probe there would leak timers past the spec.
+      const realFetch = vi.fn()
+      vi.stubGlobal('fetch', realFetch)
+      try {
+        expect(await probeUrl(IMAGE_URL)).toEqual({ probed: false })
+        expect(realFetch).not.toHaveBeenCalled()
+      } finally {
+        vi.unstubAllGlobals()
+      }
     })
   })
 
