@@ -47,6 +47,7 @@ function mountComponent() {
         ModSysAdminRipplingAnalytics: stub('c-rippling'),
         ModSysAdminSupportAI: stub('c-supportai'),
         ModSysAdminModerationStats: stub('c-moderation'),
+        ModSysAdminAutomod: stub('c-automod'),
       },
     },
   })
@@ -164,6 +165,13 @@ describe('sysadmin page tab grouping', () => {
     const wrapper = mountComponent()
     await flushPromises()
     expect(wrapper.find('.c-moderation').exists()).toBe(true)
+  })
+
+  it('mounts the automated review agreement panel next to Moderation', async () => {
+    mockRouteQuery.value = { tab: 'moderation' }
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.find('.c-automod').exists()).toBe(true)
   })
 
   it('shows an access notice to non-admins', () => {

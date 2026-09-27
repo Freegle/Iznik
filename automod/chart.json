@@ -1,0 +1,1009 @@
+{
+  "id": "freegle-automod",
+  "name": "Freegle automated review",
+  "version": "2",
+  "description": "Fact and text checks that decide whether a Pending post can be approved automatically (plans/active/automod-flowchart.md).",
+  "initialState": "START",
+  "states": {
+    "START": {
+      "description": "Entry point. Immediately continues to the first check.",
+      "nodeType": "start"
+    },
+    "VETO": {
+      "description": "Is this member blocked from posting to this community?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "member_veto"
+      }
+    },
+    "HOLD_VETO": {
+      "description": "This member is blocked from posting to this community.",
+      "nodeType": "end"
+    },
+    "MODERATED": {
+      "description": "Is this member on moderated posting?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "member_moderated"
+      }
+    },
+    "HOLD_MODERATED": {
+      "description": "This member is on moderated posting and needs a moderator's decision.",
+      "nodeType": "end"
+    },
+    "GROUP_CLOSED": {
+      "description": "Does this community disallow automated review for this post?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "group_disallows"
+      }
+    },
+    "HOLD_GROUP_CLOSED": {
+      "description": "This community does not allow automated review to publish this type of post.",
+      "nodeType": "end"
+    },
+    "NO_LOCATION": {
+      "description": "Is this post missing a location?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "no_location"
+      }
+    },
+    "HOLD_NO_LOCATION": {
+      "description": "This post has no location.",
+      "nodeType": "end"
+    },
+    "OUTSIDE_UK": {
+      "description": "Is this post's location outside the UK?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "outside_uk"
+      }
+    },
+    "HOLD_OUTSIDE_UK": {
+      "description": "This post's location is outside the UK.",
+      "nodeType": "end"
+    },
+    "DUPLICATE": {
+      "description": "Is this a duplicate of the member's own open post, or a repost sooner than this community allows?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "duplicate"
+      }
+    },
+    "HOLD_DUPLICATE": {
+      "description": "Looks like a duplicate or an early repost of the member's own post.",
+      "nodeType": "end"
+    },
+    "OUT_OF_AREA": {
+      "description": "Is the post outside this community's area, in a community that removes posts from outside its area?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "out_of_area"
+      }
+    },
+    "HOLD_OUT_OF_AREA": {
+      "description": "Outside this community's area - this community removes posts from outside its area.",
+      "nodeType": "end"
+    },
+    "SPAM_SIGNAL": {
+      "description": "Does this post show signs of spam?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "spam_signal"
+      }
+    },
+    "HOLD_SPAM_SIGNAL": {
+      "description": "This post shows signs of spam.",
+      "nodeType": "end"
+    },
+    "PERSONAL_INFO": {
+      "description": "Does this post contain personal information such as a phone number or address?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "personal_info"
+      }
+    },
+    "HOLD_PERSONAL_INFO": {
+      "description": "This post contains personal information such as a phone number or address.",
+      "nodeType": "end"
+    },
+    "LANGUAGE": {
+      "description": "Is this post written in a language other than English?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "not_english"
+      }
+    },
+    "HOLD_LANGUAGE": {
+      "description": "This post is not in English.",
+      "nodeType": "end"
+    },
+    "VAGUE": {
+      "description": "Is this post too vague to publish automatically?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "vague"
+      }
+    },
+    "HOLD_VAGUE": {
+      "description": "This post is too vague to publish automatically.",
+      "nodeType": "end"
+    },
+    "VAGUE_TEXT": {
+      "description": "Is it too vague to tell what is offered or wanted?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post too vague to tell what item or kind of item is being offered or asked for (for example \"various\", \"anything\", or a long list of unrelated things)?",
+        "threshold": 0.7
+      }
+    },
+    "HOLD_VAGUE_TEXT": {
+      "description": "Too vague to tell what is offered or wanted - ask the member to say what the item is.",
+      "nodeType": "end"
+    },
+    "NOT_AN_ITEM": {
+      "description": "Is this post about something other than a physical item, such as a service, event, or general chat?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post about something other than a physical item, such as a service, event, or general chat?",
+        "threshold": 0.7
+      }
+    },
+    "HOLD_NOT_AN_ITEM": {
+      "description": "This post is not offering or requesting a physical item.",
+      "nodeType": "end"
+    },
+    "SELLING": {
+      "description": "Is this post trying to sell something for money rather than give it away?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post trying to sell something for money rather than give it away?",
+        "threshold": 0.7
+      }
+    },
+    "HOLD_SELLING": {
+      "description": "This post is trying to sell something for money, which Freegle does not allow.",
+      "nodeType": "end"
+    },
+    "LOAN": {
+      "description": "Is this post asking to borrow something or offering a loan?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post asking to borrow something or offering a loan?",
+        "threshold": 0.7,
+        "rule": "allowloans"
+      }
+    },
+    "HOLD_LOAN": {
+      "description": "Asks to borrow - this community does not allow loans.",
+      "nodeType": "end"
+    },
+    "SWAP": {
+      "description": "Does it ask for something in exchange?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is the poster asking for something in exchange, such as a swap or trade, rather than giving or asking freely?",
+        "threshold": 0.7
+      }
+    },
+    "HOLD_SWAP": {
+      "description": "Asks for something in exchange - posts on Freegle must be free.",
+      "nodeType": "end"
+    },
+    "ANIMALS_OFFER": {
+      "description": "Is this post offering an animal, such as a pet or livestock?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post offering an animal, such as a pet or livestock?",
+        "threshold": 0.7,
+        "rule": "animalsoffer",
+        "when": "is_offer"
+      }
+    },
+    "HOLD_ANIMALS_OFFER": {
+      "description": "Offers an animal - this community does not allow animals to be offered this way.",
+      "nodeType": "end"
+    },
+    "ANIMALS_WANTED": {
+      "description": "Is this post asking for an animal, such as a pet or livestock?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post asking for an animal, such as a pet or livestock?",
+        "threshold": 0.7,
+        "rule": "animalswanted",
+        "when": "is_wanted"
+      }
+    },
+    "HOLD_ANIMALS_WANTED": {
+      "description": "Asks for an animal - this community does not allow animals to be requested this way.",
+      "nodeType": "end"
+    },
+    "WEAPONS": {
+      "description": "Is this post about a weapon?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post about a weapon?",
+        "threshold": 0.7,
+        "rule": "weapons"
+      }
+    },
+    "HOLD_WEAPONS": {
+      "description": "Mentions a weapon - this community does not allow weapons.",
+      "nodeType": "end"
+    },
+    "FIREARMS": {
+      "description": "Is this post about a firearm or ammunition?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post about a firearm or ammunition?",
+        "threshold": 0.7,
+        "rule": "firearms"
+      }
+    },
+    "HOLD_FIREARMS": {
+      "description": "Mentions a firearm - this community does not allow firearms.",
+      "nodeType": "end"
+    },
+    "KNIVES": {
+      "description": "Is this post about a knife or other bladed weapon?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post about a knife or other bladed weapon?",
+        "threshold": 0.7,
+        "rule": "knives"
+      }
+    },
+    "HOLD_KNIVES": {
+      "description": "Mentions a knife or bladed weapon - this community does not allow them.",
+      "nodeType": "end"
+    },
+    "MEDICINE": {
+      "description": "Is it about medicines or health supplements?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post about medicines, prescription drugs, or health supplements such as vitamins or nutritional drinks?",
+        "threshold": 0.7,
+        "rule": "medicationsprescription"
+      }
+    },
+    "HOLD_MEDICINE": {
+      "description": "Mentions medicines or health supplements - this community does not allow them.",
+      "nodeType": "end"
+    },
+    "ALCOHOL": {
+      "description": "Is this post about alcohol?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post about alcohol?",
+        "threshold": 0.7,
+        "rule": "alcohol"
+      }
+    },
+    "HOLD_ALCOHOL": {
+      "description": "Mentions alcohol - this community does not allow it.",
+      "nodeType": "end"
+    },
+    "TOBACCO": {
+      "description": "Is this post about tobacco or cigarettes?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post about tobacco or cigarettes?",
+        "threshold": 0.7,
+        "rule": "tobacco"
+      }
+    },
+    "HOLD_TOBACCO": {
+      "description": "Mentions tobacco or cigarettes - this community does not allow them.",
+      "nodeType": "end"
+    },
+    "VAPING": {
+      "description": "Is this post about vaping or e-cigarettes?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post about vaping or e-cigarettes?",
+        "threshold": 0.7,
+        "rule": "vaping"
+      }
+    },
+    "HOLD_VAPING": {
+      "description": "Mentions vaping or e-cigarettes - this community does not allow them.",
+      "nodeType": "end"
+    },
+    "TICKETS": {
+      "description": "Is this post about tickets to an event?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post about tickets to an event?",
+        "threshold": 0.7,
+        "rule": "tickets"
+      }
+    },
+    "HOLD_TICKETS": {
+      "description": "Mentions tickets to an event - this community does not allow them.",
+      "nodeType": "end"
+    },
+    "GAS": {
+      "description": "Is this post about a gas cylinder, such as Calor gas, propane, or butane?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post about a gas cylinder, such as Calor gas, propane, or butane?",
+        "threshold": 0.7,
+        "rule": "gascylinders"
+      }
+    },
+    "HOLD_GAS": {
+      "description": "Mentions a gas cylinder - this community does not allow them.",
+      "nodeType": "end"
+    },
+    "CONCERN": {
+      "description": "Does this post raise a safeguarding or welfare concern?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Does this post raise a safeguarding or welfare concern?",
+        "threshold": 0.7,
+        "when": "concern_keyword"
+      }
+    },
+    "HOLD_CONCERN": {
+      "description": "This post raises a safeguarding or welfare concern that needs a moderator's attention.",
+      "nodeType": "end"
+    },
+    "APPROVE": {
+      "description": "Nothing in this post needs a moderator's attention.",
+      "nodeType": "end"
+    }
+  },
+  "transitions": [
+    {
+      "id": "START_to_first",
+      "from": "START",
+      "to": "VETO",
+      "trigger": "unconditional"
+    },
+    {
+      "id": "VETO_yes",
+      "from": "VETO",
+      "to": "HOLD_VETO",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "VETO_no",
+      "from": "VETO",
+      "to": "MODERATED",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "MODERATED_yes",
+      "from": "MODERATED",
+      "to": "HOLD_MODERATED",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "MODERATED_no",
+      "from": "MODERATED",
+      "to": "GROUP_CLOSED",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "GROUP_CLOSED_yes",
+      "from": "GROUP_CLOSED",
+      "to": "HOLD_GROUP_CLOSED",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "GROUP_CLOSED_no",
+      "from": "GROUP_CLOSED",
+      "to": "NO_LOCATION",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "NO_LOCATION_yes",
+      "from": "NO_LOCATION",
+      "to": "HOLD_NO_LOCATION",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "NO_LOCATION_no",
+      "from": "NO_LOCATION",
+      "to": "OUTSIDE_UK",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "OUTSIDE_UK_yes",
+      "from": "OUTSIDE_UK",
+      "to": "HOLD_OUTSIDE_UK",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "OUTSIDE_UK_no",
+      "from": "OUTSIDE_UK",
+      "to": "DUPLICATE",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "SPAM_SIGNAL_yes",
+      "from": "SPAM_SIGNAL",
+      "to": "HOLD_SPAM_SIGNAL",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "SPAM_SIGNAL_no",
+      "from": "SPAM_SIGNAL",
+      "to": "PERSONAL_INFO",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "PERSONAL_INFO_yes",
+      "from": "PERSONAL_INFO",
+      "to": "HOLD_PERSONAL_INFO",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "PERSONAL_INFO_no",
+      "from": "PERSONAL_INFO",
+      "to": "LANGUAGE",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "LANGUAGE_yes",
+      "from": "LANGUAGE",
+      "to": "HOLD_LANGUAGE",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "LANGUAGE_no",
+      "from": "LANGUAGE",
+      "to": "VAGUE",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "VAGUE_yes",
+      "from": "VAGUE",
+      "to": "HOLD_VAGUE",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "VAGUE_no",
+      "from": "VAGUE",
+      "to": "VAGUE_TEXT",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "NOT_AN_ITEM_yes",
+      "from": "NOT_AN_ITEM",
+      "to": "HOLD_NOT_AN_ITEM",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "NOT_AN_ITEM_no",
+      "from": "NOT_AN_ITEM",
+      "to": "SELLING",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "SELLING_yes",
+      "from": "SELLING",
+      "to": "HOLD_SELLING",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "SELLING_no",
+      "from": "SELLING",
+      "to": "LOAN",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "LOAN_yes",
+      "from": "LOAN",
+      "to": "HOLD_LOAN",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "LOAN_no",
+      "from": "LOAN",
+      "to": "SWAP",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "ANIMALS_OFFER_yes",
+      "from": "ANIMALS_OFFER",
+      "to": "HOLD_ANIMALS_OFFER",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "ANIMALS_OFFER_no",
+      "from": "ANIMALS_OFFER",
+      "to": "ANIMALS_WANTED",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "ANIMALS_WANTED_yes",
+      "from": "ANIMALS_WANTED",
+      "to": "HOLD_ANIMALS_WANTED",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "ANIMALS_WANTED_no",
+      "from": "ANIMALS_WANTED",
+      "to": "WEAPONS",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "WEAPONS_yes",
+      "from": "WEAPONS",
+      "to": "HOLD_WEAPONS",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "WEAPONS_no",
+      "from": "WEAPONS",
+      "to": "FIREARMS",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "FIREARMS_yes",
+      "from": "FIREARMS",
+      "to": "HOLD_FIREARMS",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "FIREARMS_no",
+      "from": "FIREARMS",
+      "to": "KNIVES",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "KNIVES_yes",
+      "from": "KNIVES",
+      "to": "HOLD_KNIVES",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "KNIVES_no",
+      "from": "KNIVES",
+      "to": "MEDICINE",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "MEDICINE_yes",
+      "from": "MEDICINE",
+      "to": "HOLD_MEDICINE",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "MEDICINE_no",
+      "from": "MEDICINE",
+      "to": "ALCOHOL",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "ALCOHOL_yes",
+      "from": "ALCOHOL",
+      "to": "HOLD_ALCOHOL",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "ALCOHOL_no",
+      "from": "ALCOHOL",
+      "to": "TOBACCO",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "TOBACCO_yes",
+      "from": "TOBACCO",
+      "to": "HOLD_TOBACCO",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "TOBACCO_no",
+      "from": "TOBACCO",
+      "to": "VAPING",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "VAPING_yes",
+      "from": "VAPING",
+      "to": "HOLD_VAPING",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "VAPING_no",
+      "from": "VAPING",
+      "to": "TICKETS",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "TICKETS_yes",
+      "from": "TICKETS",
+      "to": "HOLD_TICKETS",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "TICKETS_no",
+      "from": "TICKETS",
+      "to": "GAS",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "GAS_yes",
+      "from": "GAS",
+      "to": "HOLD_GAS",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "GAS_no",
+      "from": "GAS",
+      "to": "CONCERN",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "CONCERN_yes",
+      "from": "CONCERN",
+      "to": "HOLD_CONCERN",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "CONCERN_no",
+      "from": "CONCERN",
+      "to": "APPROVE",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "DUPLICATE_yes",
+      "from": "DUPLICATE",
+      "to": "HOLD_DUPLICATE",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "DUPLICATE_no",
+      "from": "DUPLICATE",
+      "to": "OUT_OF_AREA",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "OUT_OF_AREA_yes",
+      "from": "OUT_OF_AREA",
+      "to": "HOLD_OUT_OF_AREA",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "OUT_OF_AREA_no",
+      "from": "OUT_OF_AREA",
+      "to": "SPAM_SIGNAL",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "VAGUE_TEXT_yes",
+      "from": "VAGUE_TEXT",
+      "to": "HOLD_VAGUE_TEXT",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "VAGUE_TEXT_no",
+      "from": "VAGUE_TEXT",
+      "to": "NOT_AN_ITEM",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "SWAP_yes",
+      "from": "SWAP",
+      "to": "HOLD_SWAP",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "SWAP_no",
+      "from": "SWAP",
+      "to": "ANIMALS_OFFER",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    }
+  ]
+}

@@ -11,7 +11,12 @@
     </p>
     <p class="mb-0">Reject or hold anything that shouldn't go live.</p>
   </NoticeMessage>
-  <b-button v-else-if="inTrial" variant="link" class="float-end pt-0" @click="toggleHelp">
+  <b-button
+    v-else-if="inTrial"
+    variant="link"
+    class="float-end pt-0"
+    @click="toggleHelp"
+  >
     Help
   </b-button>
 </template>

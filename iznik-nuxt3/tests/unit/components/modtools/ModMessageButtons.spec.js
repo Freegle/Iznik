@@ -905,6 +905,51 @@ describe('ModMessageButtons', () => {
     })
   })
 
+  describe('oversight context (checked/trusted pages)', () => {
+    function rejectBtn(wrapper) {
+      const btn = wrapper.find('[data-testid="oversight-reject"]')
+      return btn.exists() ? btn : undefined
+    }
+
+    it('shows Reject when oversight=true and the message is Approved', () => {
+      const wrapper = mountComponent(
+        { oversight: true },
+        { groups: [{ groupid: 456, collection: 'Approved' }] }
+      )
+      expect(rejectBtn(wrapper)).toBeDefined()
+    })
+
+    it('does NOT show Reject when oversight is false (default) for Approved', () => {
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'Approved' }] }
+      )
+      expect(rejectBtn(wrapper)).toBeUndefined()
+    })
+
+    it('does NOT show Reject for Pending even with oversight=true', () => {
+      const wrapper = mountComponent(
+        { oversight: true },
+        { groups: [{ groupid: 456, collection: 'Pending' }] }
+      )
+      expect(rejectBtn(wrapper)).toBeUndefined()
+    })
+
+    it('calls rejectFromOversight with messageid and groupid on click', async () => {
+      const wrapper = mountComponent(
+        { oversight: true, groupid: 456 },
+        { id: 123, groups: [{ groupid: 456, collection: 'Approved' }] }
+      )
+      const btn = rejectBtn(wrapper)
+      expect(btn).toBeDefined()
+      await btn.trigger('click')
+      expect(mockMessageStore.rejectFromOversight).toHaveBeenCalledWith(
+        123,
+        456
+      )
+    })
+  })
+
   // A TN post placed on a community its poster never chose: the moderator keeps the queue
   // actions but loses everything that would write to the poster, because there is nobody
   // on the other end who agreed to hear from them. See modmessaging in the Go API.
@@ -1079,48 +1124,6 @@ describe('ModMessageButtons', () => {
       )
       const labels = wrapper.findAll('.mod-message-button').map((b) => b.text())
       expect(labels).not.toContain('Blank Reply')
-    })
-  })
-
-  describe('oversight context (checked/trusted pages)', () => {
-    function rejectBtn(wrapper) {
-      const btn = wrapper.find('[data-testid="oversight-reject"]')
-      return btn.exists() ? btn : undefined
-    }
-
-    it('shows Reject when oversight=true and the message is Approved', () => {
-      const wrapper = mountComponent(
-        { oversight: true },
-        { groups: [{ groupid: 456, collection: 'Approved' }] }
-      )
-      expect(rejectBtn(wrapper)).toBeDefined()
-    })
-
-    it('does NOT show Reject when oversight is false (default) for Approved', () => {
-      const wrapper = mountComponent(
-        {},
-        { groups: [{ groupid: 456, collection: 'Approved' }] }
-      )
-      expect(rejectBtn(wrapper)).toBeUndefined()
-    })
-
-    it('does NOT show Reject for Pending even with oversight=true', () => {
-      const wrapper = mountComponent(
-        { oversight: true },
-        { groups: [{ groupid: 456, collection: 'Pending' }] }
-      )
-      expect(rejectBtn(wrapper)).toBeUndefined()
-    })
-
-    it('calls rejectFromOversight with messageid and groupid on click', async () => {
-      const wrapper = mountComponent(
-        { oversight: true, groupid: 456 },
-        { id: 123, groups: [{ groupid: 456, collection: 'Approved' }] }
-      )
-      const btn = rejectBtn(wrapper)
-      expect(btn).toBeDefined()
-      await btn.trigger('click')
-      expect(mockMessageStore.rejectFromOversight).toHaveBeenCalledWith(123, 456)
     })
   })
 })

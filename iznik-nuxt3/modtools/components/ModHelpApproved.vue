@@ -8,7 +8,12 @@
       this: the posts that went live by themselves and nobody has looked at.
     </p>
   </NoticeMessage>
-  <b-button v-else-if="inTrial" variant="link" class="float-end pt-0" @click="toggleHelp">
+  <b-button
+    v-else-if="inTrial"
+    variant="link"
+    class="float-end pt-0"
+    @click="toggleHelp"
+  >
     Help
   </b-button>
 </template>
