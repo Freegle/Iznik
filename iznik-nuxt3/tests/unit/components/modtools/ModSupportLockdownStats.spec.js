@@ -3,11 +3,13 @@ import { mount } from '@vue/test-utils'
 import ModSupportLockdownStats from '~/modtools/components/ModSupportLockdownStats.vue'
 
 // plans/active/2026-09-27-lockdown-switch.md section 10.6/10.9/10.10/11.2.
-// The stats JSON shape here is this agent's own proposal (the Go handler
-// isn't built yet - see .claude-agent-status/ui-lockdown.md) - kept
-// defensive with optional chaining so a field rename is a small diff.
+// `pressedat`, `counters` (push/export/refused/approved) and `waiting.email`
+// (with its `queued`/`removed`/`deferred` sub-objects) match the real
+// GET /modtools/lockdown/stats shape (iznik-server-go/lockdown/handlers.go) -
+// confirmed by team-lead, not a guess.
 describe('ModSupportLockdownStats', () => {
   const stats = {
+    pressedat: new Date(Date.now() - 3600000).toISOString(),
     triage: {
       chat: { spam: 40, risky: 10, low: 70 },
       post: { spam: 5, risky: 2, low: 23 },
@@ -29,11 +31,22 @@ describe('ModSupportLockdownStats', () => {
     clusters: [{ line: 'click here to claim your refund', count: 34 }],
     accountscreated: 17,
     counters: {
-      email: { digest: 200, immediate: 50 },
       push: 30,
       export: 2,
       refused: [{ userid: 1, name: 'Jane Mod', count: 4 }],
       approved: [{ userid: 1, name: 'Jane Mod', count: 12 }],
+    },
+    // plans/active/2026-09-27-lockdown-switch.md section 11.7/11.8: member
+    // email is not generated while held, so `waiting.email` covers all three
+    // of what's still queued to send, what filtering removed before resume,
+    // and how many mail runs were deferred rather than dropped. Real shape,
+    // confirmed by team-lead against iznik-server-go/lockdown/handlers.go.
+    waiting: {
+      email: {
+        queued: { digest: 200, immediate: 50 },
+        removed: { digest: 5, immediate: 1 },
+        deferred: { 'mail-loops': 12, 'background-tasks': 3 },
+      },
     },
     outcomes: {
       released: 100,
@@ -108,10 +121,54 @@ describe('ModSupportLockdownStats', () => {
   it('renders not-sent counters and moderator actions', () => {
     const wrapper = createWrapper()
     const counters = wrapper.find('[data-testid="lockdown-counters"]')
-    expect(counters.text()).toContain('200')
-    expect(counters.text()).toContain('50')
     expect(counters.text()).toContain('30')
     expect(counters.text()).toContain('Jane Mod')
+  })
+
+  // plans/active/2026-09-27-lockdown-switch.md section 11.7 (rewritten):
+  // member email is not generated while held, so there is no big "waiting"
+  // pile - generation itself is paused and resumes from the watermarks on
+  // lift, without anything removed being re-added.
+  it('shows email paused since the press, with the resume-without-loss wording', () => {
+    const wrapper = createWrapper()
+    const paused = wrapper.find('[data-testid="lockdown-email-paused"]')
+    expect(paused.text()).toContain('Email paused since')
+    expect(paused.text()).toContain('ago')
+    expect(paused.text()).toContain(
+      'Digests and notifications will be generated when email is resumed, without anything removed in the meantime.'
+    )
+  })
+
+  it('renders the send queue depth, summed with a per-type breakdown', () => {
+    const wrapper = createWrapper()
+    const paused = wrapper.find('[data-testid="lockdown-email-paused"]')
+    expect(paused.text()).toContain('In the send queue: 250')
+    expect(paused.text()).toContain('digest: 200')
+    expect(paused.text()).toContain('immediate: 50')
+  })
+
+  it('renders mail removed from the queue, summed with a per-type breakdown', () => {
+    const wrapper = createWrapper()
+    const paused = wrapper.find('[data-testid="lockdown-email-paused"]')
+    expect(paused.text()).toContain('Removed from the queue: 6')
+    expect(paused.text()).toContain('digest: 5')
+    expect(paused.text()).toContain('immediate: 1')
+  })
+
+  it('renders mail runs deferred, summed across loops', () => {
+    const wrapper = createWrapper()
+    const paused = wrapper.find('[data-testid="lockdown-email-paused"]')
+    expect(paused.text()).toContain('Mail runs deferred: 15')
+  })
+
+  it('shows the email-paused block sensibly when stats is missing', () => {
+    const wrapper = createWrapper({ stats: null })
+    const paused = wrapper.find('[data-testid="lockdown-email-paused"]')
+    expect(paused.text()).toContain('Email paused.')
+    expect(paused.text()).not.toContain('since')
+    expect(paused.text()).toContain('In the send queue: 0')
+    expect(paused.text()).toContain('Removed from the queue: 0')
+    expect(paused.text()).toContain('Mail runs deferred: 0')
   })
 
   it('renders outcomes', () => {

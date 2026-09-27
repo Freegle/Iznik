@@ -60,7 +60,11 @@ const surfaceOrder = [
   { key: 'chitchat', label: 'ChitChat' },
   { key: 'events', label: 'Events, noticeboards, stories' },
   { key: 'push', label: 'Push' },
-  { key: 'email', label: 'Email' },
+  // plans/active/2026-09-27-lockdown-switch.md section 11.7 (rewritten):
+  // member email is not generated while held and resumes from the
+  // watermarks on lift, so the switch is labelled for what lifting it does
+  // rather than just the surface name.
+  { key: 'email', label: 'Resume email' },
   { key: 'export', label: 'Export / downloads' },
 ]
 

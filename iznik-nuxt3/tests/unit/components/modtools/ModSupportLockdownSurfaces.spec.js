@@ -31,8 +31,9 @@ describe('ModSupportLockdownSurfaces', () => {
         stubs: {
           'b-form-checkbox': {
             template:
-              '<input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" />',
+              '<span><input type="checkbox" v-bind="$attrs" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" /><slot /></span>',
             props: ['modelValue', 'switch'],
+            inheritAttrs: false,
           },
           'b-form-select': {
             template:
@@ -81,6 +82,17 @@ describe('ModSupportLockdownSurfaces', () => {
     expect(
       wrapper.find('[data-testid="lockdown-surface-chitchat"]').text()
     ).toContain('1')
+  })
+
+  // plans/active/2026-09-27-lockdown-switch.md section 11.7 (rewritten):
+  // member email is not generated while held and resumes on lift, so the
+  // switch is labelled for what lifting it does rather than just the
+  // surface name.
+  it('labels the email switch "Resume email"', () => {
+    const wrapper = createWrapper()
+    expect(
+      wrapper.find('[data-testid="lockdown-surface-email"]').text()
+    ).toContain('Resume email')
   })
 
   it('shows no held count for surfaces with no triage kind', () => {

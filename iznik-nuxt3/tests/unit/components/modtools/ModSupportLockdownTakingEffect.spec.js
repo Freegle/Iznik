@@ -144,6 +144,23 @@ describe('ModSupportLockdownTakingEffect', () => {
     expect(leaked.classes()).not.toContain('text-danger')
   })
 
+  // plans/active/2026-09-27-lockdown-switch.md section 11.7: leaked relay
+  // sends for email come per type as leaked:email:<type> - a compound key,
+  // same as any other leaked entry - so the total just sums every value
+  // regardless of how its key is composed.
+  it('sums leaked totals across compound keys such as email:<type>', () => {
+    const wrapper = createWrapper({
+      stats: {
+        api: { delayseconds: 5 },
+        acks: [],
+        leaked: { 'email:sign-in': 2, 'email:digest': 1, push: 0 },
+      },
+    })
+    const leaked = wrapper.find('[data-testid="lockdown-leaked"]')
+    expect(leaked.text()).toContain('Sent since the press: 3')
+    expect(leaked.classes()).toContain('text-danger')
+  })
+
   it('highlights a non-zero leaked count', () => {
     const wrapper = createWrapper({
       stats: {

@@ -102,19 +102,35 @@
 
     <h4>Not sent, and moderator actions</h4>
     <div data-testid="lockdown-counters">
-      <p>
-        Email held by type:
-        <span
-          v-for="(count, type) in stats?.counters?.email ?? {}"
-          :key="type"
-          class="me-2"
-        >
-          {{ type }}: {{ count }}
-        </span>
-        <span v-if="!Object.keys(stats?.counters?.email ?? {}).length">
-          none
-        </span>
-      </p>
+      <div data-testid="lockdown-email-paused">
+        <p>
+          Email paused<span v-if="stats?.pressedat">
+            since {{ timeago(stats.pressedat) }}</span
+          >. Digests and notifications will be generated when email is resumed,
+          without anything removed in the meantime.
+        </p>
+        <p>
+          In the send queue: {{ emailQueueTotal }}
+          <span
+            v-for="(count, type) in emailQueueBreakdown"
+            :key="type"
+            class="me-2"
+          >
+            {{ type }}: {{ count }}
+          </span>
+        </p>
+        <p>
+          Removed from the queue: {{ emailRemovedTotal }}
+          <span
+            v-for="(count, type) in emailRemovedBreakdown"
+            :key="type"
+            class="me-2"
+          >
+            {{ type }}: {{ count }}
+          </span>
+        </p>
+        <p>Mail runs deferred: {{ mailRunsDeferredTotal }}</p>
+      </div>
       <p>Push held: {{ stats?.counters?.push ?? 0 }}</p>
       <p>Export refused: {{ stats?.counters?.export ?? 0 }}</p>
       <p>
@@ -187,13 +203,15 @@
 
 <script setup>
 import { computed, ref } from 'vue'
+import { timeago } from '~/composables/useTimeFormat'
 
 // plans/active/2026-09-27-lockdown-switch.md sections 10.6, 10.9 step 2-3,
-// 10.10, 11.2 (GET /modtools/lockdown/stats, PATCH markspam/releaseclass).
-// The exact JSON field names are this agent's own proposal - the Go handler
-// isn't built yet (see .claude-agent-status/ui-lockdown.md and the message
-// sent to go-lockdown2) - so every read here is defensive (optional
-// chaining, falls back to 0/empty) rather than assuming the shape holds.
+// 10.10, 11.2, 11.7/11.8 (GET /modtools/lockdown/stats, PATCH
+// markspam/releaseclass). `pressedat`, `counters` and `waiting.email` (with
+// its `queued`/`removed`/`deferred` sub-objects) match the real Go handler
+// (iznik-server-go/lockdown/handlers.go), confirmed by team-lead - every read
+// here is still defensive (optional chaining, falls back to 0/empty) for
+// when stats itself hasn't loaded yet, not because the shape is a guess.
 const props = defineProps({
   stats: {
     type: Object,
@@ -213,6 +231,40 @@ function kindLabel(kind) {
 function totalHeld(risk) {
   return kinds.reduce((n, k) => n + (props.stats?.triage?.[k]?.[risk] ?? 0), 0)
 }
+
+// plans/active/2026-09-27-lockdown-switch.md section 11.7 (rewritten):
+// member email is not generated while held, so there is no big "waiting"
+// pile - just the small send queue the batch already had before the loops
+// saw the press, exposed as stats.waiting.email.queued
+// (iznik-server-go/lockdown/handlers.go).
+const emailQueueBreakdown = computed(
+  () => props.stats?.waiting?.email?.queued ?? {}
+)
+
+const emailQueueTotal = computed(() =>
+  Object.values(emailQueueBreakdown.value).reduce((n, v) => n + (v ?? 0), 0)
+)
+
+// Section 11.8: lockdown:filter-spool removes queued mail whose `about`
+// names content Support has since removed, before email resumes - exposed as
+// stats.waiting.email.removed.
+const emailRemovedBreakdown = computed(
+  () => props.stats?.waiting?.email?.removed ?? {}
+)
+
+const emailRemovedTotal = computed(() =>
+  Object.values(emailRemovedBreakdown.value).reduce((n, v) => n + (v ?? 0), 0)
+)
+
+// Section 11.7: every mail loop checks the switch before each unit of work
+// and, while email is held, stops without advancing its watermark - exposed
+// as stats.waiting.email.deferred, keyed by loop.
+const mailRunsDeferredTotal = computed(() =>
+  Object.values(props.stats?.waiting?.email?.deferred ?? {}).reduce(
+    (n, v) => n + (v ?? 0),
+    0
+  )
+)
 
 const confirmMarkSpamModal = ref(null)
 function confirmMarkSpam() {
