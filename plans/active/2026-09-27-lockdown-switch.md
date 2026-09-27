@@ -946,8 +946,7 @@ Support removed before it drains.
   `filtered:email:<type>`.
 - It runs on every triage pass while email is held, and once more as the first action of
   lifting email; lifting refuses to proceed if the filter fails.
-- A waiting file of a member-content type with no `about` (from before this change was
-  deployed, or a gap) is held back and listed on the Support page for a person to release
-  or remove; it is never sent unexamined.
+- A waiting file with no `about` is sent as normal. The enumeration test is what stops a
+  member-content mail type from lacking one.
 - Background tasks re-read their content when they run (11.7). Mail already at the relay is
   the runbook step (10.14).
