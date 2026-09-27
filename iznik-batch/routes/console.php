@@ -1234,9 +1234,6 @@ Schedule::command('users:update-approx-locs')
     ->sendOutputTo(cronLog('users:update-approx-locs'))
     ->runInBackground();
 
-// (Retired) The keyword search index (messages_index) is no longer maintained;
-// search is served from vector embeddings, so there is nothing to deindex.
-
 // Score microvolunteering actions and promote accurate users to Moderate trust.
 // V1: cron/microactions_score.php (daily at 23:00)
 // Note: Laravel uses correct SUM() aggregation in promote() — V1 had a longstanding aggregation
@@ -1595,9 +1592,6 @@ Schedule::command('embeddings:searches')
     ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('embeddings:searches'))
     ->runInBackground();
-
-// (Retired) The keyword search index (messages_index) is no longer maintained;
-// search is served from vector embeddings (embeddings:generate above).
 
 // =============================================================================
 // NOT YET ENABLED - pending review / sign-off

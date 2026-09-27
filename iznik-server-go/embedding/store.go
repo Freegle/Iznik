@@ -527,7 +527,8 @@ func tokenizeWords(s string) map[string]bool {
 
 // LexicalMatch returns every open entry whose subject contains ALL of the given
 // words (case-insensitive), subject to the same type/group/allowedIDs/bbox
-// filters as Search — including allowedIDs, the browse-scoped Nearby-feed
+// filters as Search — including the rippled-in groups entryInAnyGroup matches,
+// and allowedIDs, the browse-scoped Nearby-feed
 // universe restriction, so the lexical guarantee can't surface a post outside
 // the viewer's reach that the cosine path would have excluded. This is the
 // in-memory replacement for the retired keyword index's exact-match guarantee:
@@ -562,7 +563,7 @@ func (s *Store) LexicalMatch(words []string, msgtype string, groupids []uint64,
 		if msgtype == "Wanted" && e.Msgtype != "Wanted" {
 			continue
 		}
-		if hasGroupFilter && !groupSet[e.Groupid] {
+		if hasGroupFilter && !entryInAnyGroup(e, groupSet) {
 			continue
 		}
 		if allowedIDs != nil && !allowedIDs[e.Msgid] {
@@ -598,8 +599,8 @@ func (s *Store) LexicalMatch(words []string, msgtype string, groupids []uint64,
 			Msgtype: e.Msgtype,
 			Lat:     e.Lat,
 			Lng:     e.Lng,
-			Subject:  e.Subject,
-			Arrival:  e.Arrival,
+			Subject: e.Subject,
+			Arrival: e.Arrival,
 		})
 	}
 	return out
