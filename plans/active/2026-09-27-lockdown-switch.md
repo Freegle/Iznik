@@ -896,3 +896,32 @@ A reason is required, and the Press button stays disabled until the presser type
 `LOCKDOWN`. "Lift everything" and "Close" have their own dialogs: lifting releases held
 messages at a paced rate and moderators will see the risky ones in their queues; closing
 ends the incident and clears the incident phrases.
+
+### 11.7 Email is deferred, never dropped (27 September)
+
+A lockdown lasts hours, so no member mail is skipped. But mail must not be generated while
+held either: the wave's early messages went live before the press, and a digest or chat
+notification rendered during the hold would still describe them after Support has removed
+them. So while email is held, member mail is **not generated**, and nothing moves on:
+
+- Every mail loop checks the switch before each unit of work and, while email is held,
+  stops without advancing its watermark (digests per group, `chat_roster.lastmsgemailed`,
+  per-post and other watermark-driven mail). Where the watermark is per group rather than
+  per recipient, the check is before each group, so a press mid-group finishes that one
+  group and no recipient is mailed twice on lift.
+- Email background tasks stay in `background_tasks` and pending welcome mails stay pending.
+  On lift each handler re-reads its content, so a task whose chat, post or member has been
+  removed sends nothing.
+- The spool sends only the allowlisted types (sign-in, password reset, verification,
+  unsubscribe and deletion confirmations) while held. Anything else in it was generated in
+  the seconds before the loops saw the press; it waits and is sent on lift. That is the
+  measured leak.
+- Lifting email is step 8, after step 3 has removed the spam set. Generation resumes from
+  the watermarks, so members get the digests and notifications they would have had,
+  without the removed content, a few hours late.
+- `MailSuppressionService::shouldSkip()` has no lockdown branch and nothing is counted as
+  suppressed. Counted: `deferred:<loop>` (runs or groups deferred), `spooled_held:<type>`
+  (in the spool, waiting), `leaked:email:<type>` (reached the relay after the press).
+
+This replaces the email lines of 11.4 and the catch-up and purge of 10.9 step 8: there is
+no catch-up and no purge; generation pauses and resumes.
