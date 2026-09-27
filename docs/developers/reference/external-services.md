@@ -114,3 +114,5 @@ every visitor - so only publishable keys belong in it (a Stripe *publishable* ke
 advert publisher id). Server-side secrets go in `.env` (development, see `.env.example`) and
 `.env.background` (production batch, see `.env.background.example`), and in the batch tier
 are read through `iznik-batch/config/freegle.php` rather than `env()` at the point of use.
+`.env.example` also holds settings for the local stack itself that are not services, such
+as `PERCONA_STORAGE`, which keeps the development database in memory or on disk.

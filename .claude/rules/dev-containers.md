@@ -248,6 +248,23 @@ Wait for `docker ps` to show the batch container settled before running the scri
 it once. If the database is already half-migrated, drop `iznik` first, or the recorded rows
 and the real schema stay out of step.
 
+## The database is in memory, so a stopped percona comes back empty
+
+`PERCONA_STORAGE=ram`, the default, puts percona's data directory on a tmpfs volume. The
+reason is the disk: every schema change forces several syncs, a sync costs 10-13ms on WSL's
+virtual disk, and 511 migrations took about 12 minutes there against 9 seconds in memory.
+Tuning `innodb_flush_log_at_trx_commit` or `sync_binlog` makes no difference to schema
+changes.
+
+The cost is that anything which stops percona, including the idle-stack sweeper, empties it.
+The batch container migrates again when it starts, but the fixtures come only from
+`scripts/setup-test-database.sh`, so tests after a restart fail on missing data until that is
+rerun. Set `PERCONA_STORAGE=disk` for a database that should survive. It uses the same volume
+the stack used before, so old data is still there. In memory, `conf/percona-ram.cnf` shrinks the
+system tablespace from `percona-my.cnf`'s preallocated 2000M, which would otherwise cost 2GB
+of RAM per stack. Never apply that file to an existing on-disk datadir: InnoDB refuses to
+start when the tablespace layout differs.
+
 ## See also
 
 - `CLAUDE.md` - the container quick reference and the worktree CLI.
