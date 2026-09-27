@@ -1,7 +1,7 @@
 {
   "id": "freegle-automod",
   "name": "Freegle automated review",
-  "version": "3",
+  "version": "4",
   "description": "Fact and text checks that decide whether a Pending post can be approved automatically (plans/active/automod-flowchart.md).",
   "initialState": "START",
   "states": {
@@ -134,20 +134,20 @@
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post too vague to tell what item or kind of item is being offered or asked for (for example \"various\", \"anything\", or a long list of unrelated things)?",
+        "question": "Freegle asks members to name the items they want, for example \"a sofa, a cooker or a bed\". Is this post a general request that names no specific item - such as \"anything\", \"various\", \"any dog items\", or a single broad category like \"furniture\" or \"electrical\" - or, for an offer, is it unclear what is being given?",
         "threshold": 0.7
       }
     },
     "HOLD_VAGUE_TEXT": {
-      "description": "Too vague to tell what is offered or wanted - ask the member to say what the item is.",
+      "description": "Too vague: Freegle asks members to name the items they want. Ask the member to say what the item is.",
       "nodeType": "end"
     },
     "NOT_AN_ITEM": {
-      "description": "Is this post about something other than a physical item, such as a service, event, or general chat?",
+      "description": "Is it about something other than an item?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about something other than a physical item, such as a service, event, or general chat?",
+        "question": "Freegle posts must offer or ask for physical items, to keep them out of landfill. Is this post about something else - a service, job, event, lift, room, help, a question or general chat - rather than a physical item? Tickets and vouchers are covered by another question, so answer no for those.",
         "threshold": 0.7
       }
     },
@@ -156,24 +156,24 @@
       "nodeType": "end"
     },
     "SELLING": {
-      "description": "Is this post trying to sell something for money rather than give it away?",
+      "description": "Does it ask for or offer money?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post trying to sell something for money rather than give it away?",
+        "question": "Everything on Freegle must be given entirely free, with no strings. Does this post ask for or offer money in any form - a price, \"ono\", a \"donation\" to the poster, or payment for delivery, fuel or postage?",
         "threshold": 0.7
       }
     },
     "HOLD_SELLING": {
-      "description": "This post is trying to sell something for money, which Freegle does not allow.",
+      "description": "Asks for or offers money - everything on Freegle must be given entirely free.",
       "nodeType": "end"
     },
     "LOAN": {
-      "description": "Is this post asking to borrow something or offering a loan?",
+      "description": "Is it a loan or a request to borrow?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post asking to borrow something or offering a loan?",
+        "question": "Is this post asking to borrow something, or offering to lend something?",
         "threshold": 0.7,
         "rule": "allowloans"
       }
@@ -187,7 +187,7 @@
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is the poster asking for something in exchange, such as a swap or trade, rather than giving or asking freely?",
+        "question": "Is the poster asking for something in exchange - another item, a favour or work - rather than giving or asking freely?",
         "threshold": 0.7
       }
     },
@@ -196,11 +196,11 @@
       "nodeType": "end"
     },
     "ANIMALS_OFFER": {
-      "description": "Is this post offering an animal, such as a pet or livestock?",
+      "description": "Is it offering a live animal?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post offering an animal, such as a pet or livestock?",
+        "question": "Is this post offering a live animal, such as a pet or livestock, for rehoming?",
         "threshold": 0.7,
         "rule": "animalsoffer",
         "when": "is_offer"
@@ -211,11 +211,11 @@
       "nodeType": "end"
     },
     "ANIMALS_WANTED": {
-      "description": "Is this post asking for an animal, such as a pet or livestock?",
+      "description": "Is it asking for a live animal?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post asking for an animal, such as a pet or livestock?",
+        "question": "Is this post asking for a live animal, such as a pet or livestock?",
         "threshold": 0.7,
         "rule": "animalswanted",
         "when": "is_wanted"
@@ -254,11 +254,11 @@
       "nodeType": "end"
     },
     "KNIVES": {
-      "description": "Is this post about a knife or other bladed weapon?",
+      "description": "Is it about knives?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about a knife or other bladed weapon?",
+        "question": "Is this post about a knife or other bladed item, other than ordinary cutlery?",
         "threshold": 0.7,
         "rule": "knives"
       }
@@ -268,17 +268,73 @@
       "nodeType": "end"
     },
     "MEDICINE": {
-      "description": "Is it about medicines or health supplements?",
+      "description": "Is it about prescription medicine?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about medicines, prescription drugs, or health supplements such as vitamins or nutritional drinks?",
+        "question": "Is this post about prescription medicine?",
         "threshold": 0.7,
         "rule": "medicationsprescription"
       }
     },
     "HOLD_MEDICINE": {
-      "description": "Mentions medicines or health supplements - this community does not allow them.",
+      "description": "Prescription medicine - this community does not allow it.",
+      "nodeType": "end"
+    },
+    "MEDICINE_OTC": {
+      "description": "Is it about non-prescription medicine or supplements?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post about medicine you can buy without a prescription, or health supplements such as vitamins or nutritional drinks?",
+        "threshold": 0.7,
+        "rule": "medicationsotc"
+      }
+    },
+    "HOLD_MEDICINE_OTC": {
+      "description": "Non-prescription medicine or supplements - this community does not allow them.",
+      "nodeType": "end"
+    },
+    "MEDICINE_ANIMAL": {
+      "description": "Is it about medicine for animals?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post about medicine or treatments for animals, such as flea or worming treatments?",
+        "threshold": 0.7,
+        "rule": "medicationsanimals"
+      }
+    },
+    "HOLD_MEDICINE_ANIMAL": {
+      "description": "Medicine for animals - this community does not allow it.",
+      "nodeType": "end"
+    },
+    "CONTACT_LENSES": {
+      "description": "Is it about contact lenses?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post about contact lenses?",
+        "threshold": 0.7,
+        "rule": "contactlenses"
+      }
+    },
+    "HOLD_CONTACT_LENSES": {
+      "description": "Contact lenses - this community does not allow them.",
+      "nodeType": "end"
+    },
+    "LENS_SOLUTION": {
+      "description": "Is it about contact lens solution?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "question": "Is this post about contact lens solution?",
+        "threshold": 0.7,
+        "rule": "contactlensessolutions"
+      }
+    },
+    "HOLD_LENS_SOLUTION": {
+      "description": "Contact lens solution - this community does not allow it.",
       "nodeType": "end"
     },
     "ALCOHOL": {
@@ -324,11 +380,11 @@
       "nodeType": "end"
     },
     "TICKETS": {
-      "description": "Is this post about tickets to an event?",
+      "description": "Is it about tickets, vouchers or coupons?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about tickets to an event?",
+        "question": "Is this post about tickets, vouchers or coupons?",
         "threshold": 0.7,
         "rule": "tickets"
       }
@@ -765,7 +821,7 @@
     {
       "id": "MEDICINE_no",
       "from": "MEDICINE",
-      "to": "ALCOHOL",
+      "to": "MEDICINE_OTC",
       "trigger": "host_driven",
       "condition": "no",
       "label": "no",
@@ -964,6 +1020,94 @@
       "id": "SWAP_no",
       "from": "SWAP",
       "to": "ANIMALS_OFFER",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "MEDICINE_OTC_yes",
+      "from": "MEDICINE_OTC",
+      "to": "HOLD_MEDICINE_OTC",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "MEDICINE_OTC_no",
+      "from": "MEDICINE_OTC",
+      "to": "MEDICINE_ANIMAL",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "MEDICINE_ANIMAL_yes",
+      "from": "MEDICINE_ANIMAL",
+      "to": "HOLD_MEDICINE_ANIMAL",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "MEDICINE_ANIMAL_no",
+      "from": "MEDICINE_ANIMAL",
+      "to": "CONTACT_LENSES",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "CONTACT_LENSES_yes",
+      "from": "CONTACT_LENSES",
+      "to": "HOLD_CONTACT_LENSES",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "CONTACT_LENSES_no",
+      "from": "CONTACT_LENSES",
+      "to": "LENS_SOLUTION",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "LENS_SOLUTION_yes",
+      "from": "LENS_SOLUTION",
+      "to": "HOLD_LENS_SOLUTION",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "LENS_SOLUTION_no",
+      "from": "LENS_SOLUTION",
+      "to": "ALCOHOL",
       "trigger": "host_driven",
       "condition": "no",
       "label": "no",
