@@ -340,6 +340,13 @@ describe('ModMessage', () => {
             template: '<div class="mod-member-actions"><slot /></div>',
             props: ['userid', 'groupid'],
           },
+          // A parallel branch owns the real component. Stub it here so tests can
+          // still assert it is rendered with the right props.
+          ModAutomodLine: {
+            name: 'ModAutomodLine',
+            template: '<div class="mod-automod-line" />',
+            props: ['message', 'groupid', 'pending'],
+          },
           OurUploader: {
             template: '<div class="our-uploader"><slot /></div>',
             props: ['modelValue', 'type', 'multiple'],
@@ -696,6 +703,9 @@ describe('ModMessage', () => {
       const text = wrapper.text()
       expect(text).toContain("We couldn't work out where this post is")
       expect(text).not.toContain('add a postcode before approving')
+      const notice = wrapper.find('.notice-message.danger')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toContain("We couldn't work out where this post is")
     })
 
     it('drops a stale no-location reason once the post has a location', async () => {
@@ -1423,6 +1433,64 @@ describe('ModMessage', () => {
       )
       await wrapper.vm.$nextTick()
       expect(wrapper.text()).toContain('TAKEN')
+      const notice = wrapper.find('.notice-message.info')
+      expect(notice.exists()).toBe(true)
+      expect(notice.classes()).toContain('mb-2')
+    })
+  })
+
+  describe('Bulk clearance notice', () => {
+    it('shows as an info notice when the post carries bulk items', async () => {
+      const wrapper = mountComponent({ summary: false }, { bulkcount: 3 })
+      // expanded starts false and is flipped to true in a mounted hook, so
+      // the DOM needs a tick before the notice appears.
+      await wrapper.vm.$nextTick()
+      const notice = wrapper.find('.notice-message.info')
+      expect(notice.exists()).toBe(true)
+      expect(notice.classes()).toContain('mb-2')
+      expect(notice.text()).toContain('Bulk clearance')
+      expect(notice.text()).toContain('3 items')
+    })
+
+    it('still has a working preview button inside the notice', async () => {
+      const wrapper = mountComponent({ summary: false }, { bulkcount: 2 })
+      await wrapper.vm.$nextTick()
+      const button = wrapper.find('[data-testid="bulk-preview-btn"]')
+      expect(button.exists()).toBe(true)
+      await button.trigger('click')
+      expect(wrapper.vm.showBulkPreview).toBe(true)
+    })
+
+    it('does not show when the post has no bulk items', async () => {
+      const wrapper = mountComponent({ summary: false }, { bulkcount: 0 })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).not.toContain('Bulk clearance')
+    })
+  })
+
+  describe('Sender identity notices', () => {
+    it("shows 'Sender only available to mods' for a member without fromuser loaded", async () => {
+      const wrapper = mountComponent(
+        { summary: false },
+        { fromuser: null, myrole: 'Member' }
+      )
+      await wrapper.vm.$nextTick()
+      const notice = wrapper.find('.notice-message.danger')
+      expect(notice.exists()).toBe(true)
+      expect(notice.classes()).toContain('mb-2')
+      expect(notice.text()).toContain('Sender only available to mods.')
+    })
+
+    it("shows the can't-identify-sender fallback for other roles", async () => {
+      const wrapper = mountComponent(
+        { summary: false },
+        { fromuser: null, myrole: 'Moderator' }
+      )
+      await wrapper.vm.$nextTick()
+      const notice = wrapper.find('.notice-message.danger')
+      expect(notice.exists()).toBe(true)
+      expect(notice.classes()).toContain('mb-2')
+      expect(notice.text()).toContain("Can't identify sender")
     })
   })
 
@@ -1655,6 +1723,25 @@ describe('ModMessage', () => {
       await wrapper.vm.$nextTick()
       expect(wrapper.text()).toContain(
         'needs editing so that we know where it is'
+      )
+    })
+
+    it('does not also show the body no-location notice while editing', async () => {
+      // The edit-mode postcode-input notice takes over; showing both would say
+      // the same thing twice.
+      const wrapper = mountComponent(
+        { summary: false },
+        {
+          lat: null,
+          lng: null,
+          location: null,
+        }
+      )
+      await wrapper.vm.$nextTick()
+      wrapper.vm.startEdit()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).not.toContain(
+        "We couldn't work out where this post is"
       )
     })
   })
@@ -2374,6 +2461,27 @@ describe('ModMessage', () => {
       expect(badge.exists()).toBe(true)
       // 10 min is <=30m, so prominent m/s formatting (the sooner one wins).
       expect(badge.text()).toMatch(/Auto-approves in \d+m \d{2}s/)
+    })
+  })
+
+  describe('ModAutomodLine', () => {
+    it('renders once per card with the message, current group and pending state', () => {
+      const wrapper = mountComponent()
+      const lines = wrapper.findAllComponents({ name: 'ModAutomodLine' })
+      expect(lines.length).toBe(1)
+      const line = lines[0]
+      expect(line.props('message').id).toBe(123)
+      expect(line.props('groupid')).toBe(wrapper.vm.currentGroupid)
+      expect(line.props('pending')).toBe(wrapper.vm.pending)
+    })
+
+    it('passes pending as false once the post is approved', () => {
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 789, collection: 'Approved' }] }
+      )
+      const line = wrapper.findComponent({ name: 'ModAutomodLine' })
+      expect(line.props('pending')).toBe(false)
     })
   })
 })

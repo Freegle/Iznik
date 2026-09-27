@@ -649,6 +649,36 @@ services:
     volumes:
       - embedding_model_cache:/app/model-cache
 
+  # Automated post review (plans/active/automod-flowchart.md): walks
+  # automod/chart.json with ai-flower and answers approve/hold + reason.
+  # Internal network only - no ports, no Traefik labels, reached by other
+  # services as http://automod:8090.
+  automod:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-automod
+    profiles:
+      - backend
+    networks:
+      - default
+    build:
+      context: ./automod
+    restart: unless-stopped
+    mem_limit: 1.5g
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8090/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    environment:
+      - PORT=8090
+      - HF_CACHE_DIR=/app/model-cache
+      # Text questions go to Claude unless a node or request names the local model.
+      - AUTOMOD_BACKEND=${AUTOMOD_BACKEND:-claude}
+      - AUTOMOD_CLAUDE_MODEL=${AUTOMOD_CLAUDE_MODEL:-claude-opus-5}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - automod_model_cache:/app/model-cache
+
   host-scripts:
     image: alpine:latest
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-host-scripts
@@ -770,6 +800,9 @@ services:
       - FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS=${FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS:-}
       - FREEGLE_AUTOAPPROVE_DELAY_MINUTES=${FREEGLE_AUTOAPPROVE_DELAY_MINUTES:-}
       - FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT=${FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT:-}
+      # Automod shadow trial: chart runs and records but changes nothing
+      # (plans/active/automod-flowchart.md).
+      - FREEGLE_AUTOMOD_SHADOW_GROUPS=${FREEGLE_AUTOMOD_SHADOW_GROUPS:-}
       # Earned-reach review gate (reviewer-pool bounding in microvolunteering.go).
       - RIPPLE_EARNED_REACH_ENABLED=${RIPPLE_EARNED_REACH_ENABLED:-}
       - LOKI_ENABLED=true
@@ -800,6 +833,10 @@ services:
       # no-auth port (SPATIAL_INTERNAL_PORT=8194) — NOT spatial-knn, NOT the 8196
       # auth port. Explicit so the drive-time analytics don't silently misroute.
       - ROUTING_EVAL_URL=${ROUTING_EVAL_URL:-http://spatial:8194}
+      # Automated review (automod/chart.json): local flowchart service that
+      # classifies Pending posts (approve/hold + reason), internal network
+      # only, no ports/Traefik.
+      - AUTOMOD_URL=http://automod:8090
     volumes:
       - apiv2_logs:/var/log/freegle
       - embedding_model_cache:/app/model-cache
@@ -988,6 +1025,9 @@ services:
       - FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS=${FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS:-}
       - FREEGLE_AUTOAPPROVE_DELAY_MINUTES=${FREEGLE_AUTOAPPROVE_DELAY_MINUTES:-}
       - FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT=${FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT:-}
+      # Automod shadow trial: chart runs and records but changes nothing
+      # (plans/active/automod-flowchart.md).
+      - FREEGLE_AUTOMOD_SHADOW_GROUPS=${FREEGLE_AUTOMOD_SHADOW_GROUPS:-}
       # Earned-reach review gate (reviewer-pool bounding in microvolunteering.go).
       - RIPPLE_EARNED_REACH_ENABLED=${RIPPLE_EARNED_REACH_ENABLED:-}
       - LOKI_ENABLED=true
@@ -1719,6 +1759,11 @@ services:
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
       - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/avatar
       - SPATIAL_KNN_URL=http://spatial-knn:8194
+      # Automated review (automod/chart.json): local flowchart service that
+      # classifies Pending posts (approve/hold + reason), internal network
+      # only, no ports/Traefik. This is the caller - the `messages:automod`
+      # command reviews Pending posts in shadow/approve groups every minute.
+      - AUTOMOD_URL=http://automod:8090
       - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter,Reengage,CommunityNews
       # Post-moderation + earned-reach flags: the Laravel cron is the component that
       # actually acts on these, so they MUST reach this container from the same root
@@ -1729,6 +1774,9 @@ services:
       - FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS=${FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS:-}
       - FREEGLE_AUTOAPPROVE_DELAY_MINUTES=${FREEGLE_AUTOAPPROVE_DELAY_MINUTES:-}
       - FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT=${FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT:-}
+      # Automod shadow trial: chart runs and records but changes nothing
+      # (plans/active/automod-flowchart.md).
+      - FREEGLE_AUTOMOD_SHADOW_GROUPS=${FREEGLE_AUTOMOD_SHADOW_GROUPS:-}
       - RIPPLE_EARNED_REACH_ENABLED=${RIPPLE_EARNED_REACH_ENABLED:-}
       - RIPPLE_AUTOAPPROVE_HOLD_SECONDS=${RIPPLE_AUTOAPPROVE_HOLD_SECONDS:-}
       - RIPPLE_CLEAN_VIEWS_PER_GROUP=${RIPPLE_CLEAN_VIEWS_PER_GROUP:-}
@@ -1895,6 +1943,11 @@ services:
       # because both read EMBEDDING_SIDECAR_URL and default to empty. The dev
       # `batch` block above has always set it; this one never did.
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
+      # Automated review (automod/chart.json): local flowchart service that
+      # classifies Pending posts (approve/hold + reason), internal network
+      # only, no ports/Traefik. Shadow trial records but changes nothing.
+      - AUTOMOD_URL=http://automod:8090
+      - FREEGLE_AUTOMOD_SHADOW_GROUPS=${FREEGLE_AUTOMOD_SHADOW_GROUPS:-}
       # Avatar generation (Go API)
       - FREEGLE_AVATAR_SERVER_URL=https://api.ilovefreegle.org/avatar
       # AMP Email
@@ -1996,6 +2049,8 @@ volumes:
   apiv2_logs:
     driver: local
   embedding_model_cache:
+    driver: local
+  automod_model_cache:
     driver: local
   # edge profile (front-end host) — see plans/2026-06-25-frontend-server-migration.md
   delivery-cache:

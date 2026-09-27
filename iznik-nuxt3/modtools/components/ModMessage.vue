@@ -141,6 +141,11 @@
             >
               {{ countdownLabel.text }}
             </span>
+            <ModAutomodLine
+              :message="message"
+              :groupid="currentGroupid"
+              :pending="pending"
+            />
             <!-- Approved-by is shown by MessageHistory with resolved name -->
             <div v-if="message.deadline" class="text-danger small">
               Deadline: end {{ dateonly(message.deadline) }}
@@ -329,7 +334,8 @@
             <div v-if="expanded">
               <NoticeMessage
                 v-if="message.outcomes && message.outcomes.length"
-                class="mb-1"
+                variant="info"
+                class="mb-2"
               >
                 {{ message.outcomes[0].outcome.toUpperCase() }}
                 at
@@ -383,7 +389,11 @@
                 {{ fromUser.activedistance }} miles apart.
               </NoticeMessage>
             </div>
-            <NoticeMessage v-if="noLocation" variant="warning" class="mb-2">
+            <NoticeMessage
+              v-if="noLocation && !editing"
+              variant="danger"
+              class="mb-2"
+            >
               We couldn't work out where this post is (often an emailed post
               whose subject has no recognised place name). Please click
               <strong>Edit</strong> and add a postcode (it doesn't have to be
@@ -529,12 +539,7 @@
                   {{ eBody }}
                 </span>
               </div>
-              <b-alert
-                v-if="isBulk"
-                :model-value="true"
-                variant="info"
-                class="mb-3"
-              >
+              <NoticeMessage v-if="isBulk" variant="info" class="mb-2">
                 <strong>
                   <v-icon icon="boxes-stacked" /> Bulk clearance —
                   {{ message.bulkcount }} item{{
@@ -552,7 +557,7 @@
                 >
                   See how members see it
                 </b-button>
-              </b-alert>
+              </NoticeMessage>
               <div v-if="attachments?.length" class="w-100 d-flex flex-wrap">
                 <div
                   v-for="attachment in attachments"
@@ -623,10 +628,11 @@
                     message.myrole === 'Member'
                   "
                   variant="danger"
+                  class="mb-2"
                 >
                   Sender only available to mods.
                 </NoticeMessage>
-                <NoticeMessage v-else variant="danger">
+                <NoticeMessage v-else variant="danger" class="mb-2">
                   Can't identify sender. Could have been purged but perhaps a
                   bug.
                 </NoticeMessage>
@@ -745,13 +751,6 @@
           don't click them by accident. Please check with them before releasing
           the message.
         </div>
-        <NoticeMessage
-          v-else-if="!editing && !message.lat && !message.lng"
-          variant="danger"
-          class="mb-2"
-        >
-          This message needs editing so that we know where it is.
-        </NoticeMessage>
         <div
           v-if="
             pending && (!contextGroup?.heldby || heldbyId === myid) && !editing

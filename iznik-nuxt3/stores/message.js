@@ -720,6 +720,16 @@ export const useMessageStore = defineStore('message', {
       return await api(this.config).message.moderationStats(params)
     },
 
+    // Tell the server a moderator thinks one node of an automated review decision was wrong.
+    async postAutomodFeedback(params) {
+      return await api(this.config).message.automodFeedback(params)
+    },
+
+    // Fetch SysAdmin automated review agreement analytics for the last N days.
+    async fetchAutomodAgreement(params) {
+      return await api(this.config).message.automodAgreement(params)
+    },
+
     async fetchMessagesMT(params) {
       if (params.context) {
         // Server expects context as a JSON-encoded string; URLSearchParams

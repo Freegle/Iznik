@@ -182,6 +182,11 @@
             v-if="showModeration"
             :key="'moderation-' + moderationBump"
           />
+          <ModSysAdminAutomod
+            v-if="showModeration"
+            :key="'automod-' + moderationBump"
+            class="mt-4"
+          />
         </b-tab>
       </b-tabs>
     </div>

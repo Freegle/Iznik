@@ -90,6 +90,16 @@ export default class MessageAPI extends BaseAPI {
     return this.$getv2('/modtools/moderationstats', params)
   }
 
+  // Records that a moderator thinks one node of an automated review decision was wrong.
+  automodFeedback(params) {
+    return this.$postv2('/modtools/automod/feedback', params)
+  }
+
+  // SysAdmin automated review agreement analytics for the last N days.
+  automodAgreement(params) {
+    return this.$getv2('/modtools/automod/agreement', params)
+  }
+
   update(event) {
     return this.$postv2('/message', event)
   }

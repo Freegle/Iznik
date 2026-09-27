@@ -5,12 +5,12 @@
       v-for="(match, i) in displayedWorry"
       :key="'worry-' + message.id + '-' + i"
       variant="warning"
-      class="mb-1"
+      class="mb-2"
     >
       <p>
-        Flagged for review: "<span class="text-danger fw-bold">{{
+        Flagged for review: "<strong>{{
           match.worryword.keyword
-        }}</span
+        }}</strong
         >".
       </p>
       <p v-if="substanceCopy(WORRY_TYPE_CATEGORY[match.worryword.type])">
@@ -36,7 +36,7 @@
       v-for="(reason, i) in displayedReasons"
       :key="'contentcheck-' + message.id + '-' + i"
       :variant="reasonVariant(reason)"
-      class="mb-1"
+      class="mb-2"
     >
       <span v-if="reason.check === 'Vague'">
         <strong>Vague post:</strong> {{ reason.detail }}. Please ask the member
@@ -78,9 +78,9 @@
              Only for the categorised messages above - the generic one already
              quotes the word in its detail text. -->
         <span v-if="reason.category && flaggedWord(reason)" class="d-block">
-          Triggered by the word "<span class="text-danger fw-bold">{{
+          Triggered by the word "<strong>{{
             flaggedWord(reason)
-          }}</span
+          }}</strong
           >".
         </span>
       </span>

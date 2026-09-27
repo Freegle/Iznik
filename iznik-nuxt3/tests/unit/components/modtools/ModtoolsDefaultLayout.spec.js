@@ -344,7 +344,16 @@ describe('modtools default layout — Check only on trial communities', () => {
     const links = []
     const Capturing = {
       template: '<div />',
-      props: ['link', 'name', 'count', 'othercount', 'indent', 'countVariant', 'directcount', 'sub'],
+      props: [
+        'link',
+        'name',
+        'count',
+        'othercount',
+        'indent',
+        'countVariant',
+        'directcount',
+        'sub',
+      ],
       setup(props) {
         links.push(props.link)
       },
@@ -367,7 +376,7 @@ describe('modtools default layout — Check only on trial communities', () => {
     mockAuthStore.groups = []
   })
 
-  it('hides Check when none of the moderator\'s communities is in the trial', async () => {
+  it("hides Check when none of the moderator's communities is in the trial", async () => {
     mockAuthStore.groups = [{ groupid: 1, role: 'Moderator' }]
     const links = captureLinks()
     await flushPromises()
@@ -376,7 +385,7 @@ describe('modtools default layout — Check only on trial communities', () => {
     expect(links).not.toContain('/messages/check')
   })
 
-  it('shows Check when one of the moderator\'s communities is in the trial', async () => {
+  it("shows Check when one of the moderator's communities is in the trial", async () => {
     mockAuthStore.groups = [
       { groupid: 1, role: 'Moderator' },
       { groupid: 2, role: 'Moderator', autoapprovetrial: true },

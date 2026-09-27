@@ -25,7 +25,7 @@ const stubs = {
     props: ['variant'],
   },
   'b-button': {
-    template: "<button @click=\"$emit('click')\"><slot /></button>",
+    template: '<button @click="$emit(\'click\')"><slot /></button>',
   },
 }
 
