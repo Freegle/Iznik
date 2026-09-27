@@ -138,6 +138,25 @@ const SHOTS = [
     path: '/messages/check',
   },
   {
+    // Automated review's decision on a Pending post: the one-line reason.
+    audience: 'moderators',
+    name: 'automod-line',
+    auth: 'mod',
+    app: 'mod',
+    path: '/messages/pending',
+    clip: '.automod-line',
+  },
+  {
+    // "Why?" opened: each question the flowchart asked, its answer and evidence.
+    audience: 'moderators',
+    name: 'automod-why',
+    auth: 'mod',
+    app: 'mod',
+    path: '/messages/pending',
+    click: '.automod-line__why',
+    clip: '.modal-dialog',
+  },
+  {
     audience: 'moderators',
     name: 'members',
     auth: 'mod',
@@ -226,12 +245,30 @@ async function capture(context, shot) {
   })
   // Settle animations and lazy content.
   await page.waitForTimeout(1500)
-  await page.screenshot({
+  // shot.click opens something first (a modal); shot.clip captures just that element,
+  // padded a little, rather than the whole page.
+  if (shot.click) {
+    await page.locator(shot.click).first().click()
+    await page.waitForTimeout(800)
+  }
+  const opts = {
     path: resolve(outDir, shot.name + '.png'),
     animations: 'disabled',
     caret: 'hide',
     mask: MASK.map((sel) => page.locator(sel)),
-  })
+  }
+  if (shot.clip) {
+    const box = await page.locator(shot.clip).first().boundingBox()
+    if (!box) throw new Error(`nothing matches ${shot.clip}`)
+    const pad = 12
+    opts.clip = {
+      x: Math.max(0, box.x - pad),
+      y: Math.max(0, box.y - pad),
+      width: box.width + 2 * pad,
+      height: box.height + 2 * pad,
+    }
+  }
+  await page.screenshot(opts)
   console.log(`  captured ${shot.audience}/${shot.name}.png  (${shot.path})`)
 }
 
