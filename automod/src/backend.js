@@ -289,6 +289,72 @@ export class ClaudeCliBackend extends ClaudeBackend {
 }
 
 /**
+ * TypeSafe's Jev: a structured-decision model that answers typed questions with calibrated
+ * probabilities. Every chart question goes in one request per post as a yes/no ("noul")
+ * question, and its probability of yes is p. TYPESAFE_BASE_URL points it at any compatible
+ * server instead of the hosted one. Only the post's type, subject and body are sent.
+ */
+export class JevBackend {
+  constructor({ apiKey = process.env.TYPESAFE_API_KEY, baseUrl, model } = {}) {
+    this.apiKey = apiKey;
+    this.baseUrl = (baseUrl || process.env.TYPESAFE_BASE_URL || 'https://api.typesafe.ai').replace(/\/$/, '');
+    this.model = model || process.env.AUTOMOD_JEV_MODEL || 'jev-latest';
+    this.questions = [];
+    this.cache = new Map();
+  }
+
+  setQuestions(questions) {
+    this.questions = questions;
+  }
+
+  async requestAll(text) {
+    const questions = {};
+    this.questions.forEach((q, i) => {
+      questions[`q${i}`] = {
+        type: 'noul',
+        instructions: q,
+        criteria: { true: 'Yes, for this post as written', false: 'No, for this post as written' },
+      };
+    });
+    const r = await fetch(`${this.baseUrl}/v1/systemone`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: this.model, state: { freegle_post: text }, questions }),
+    });
+    if (!r.ok) {
+      throw new Error(`jev ${r.status}`);
+    }
+    const j = await r.json();
+    const byQuestion = new Map();
+    this.questions.forEach((q, i) => {
+      const noul = j.answers?.[`q${i}`]?.noul;
+      if (typeof noul === 'number') {
+        byQuestion.set(q, noul);
+      }
+    });
+    return byQuestion;
+  }
+
+  async ask(question, text) {
+    if (!this.cache.has(text)) {
+      const pending = this.requestAll(text).catch((err) => {
+        this.cache.delete(text);
+        throw err;
+      });
+      this.cache.set(text, pending);
+      if (this.cache.size > ANSWER_CACHE_SIZE) {
+        this.cache.delete(this.cache.keys().next().value);
+      }
+    }
+    const p = (await this.cache.get(text)).get(question);
+    if (p === undefined) {
+      throw new Error('jev left a question unanswered');
+    }
+    return { p, model: `jev:${this.model}` };
+  }
+}
+
+/**
  * Picks a backend per question: the request's override first, then the node's own
  * `check.backend`, then AUTOMOD_BACKEND (default claude). Backends are built on first use.
  */
@@ -299,6 +365,7 @@ export class BackendRouter {
       // A metered API key when there is one, else the subscription token through the CLI.
       claude: () => (env.ANTHROPIC_API_KEY || !env.CLAUDE_CODE_OAUTH_TOKEN ? new ClaudeBackend() : new ClaudeCliBackend()),
       nli: () => new NliBackend(),
+      jev: () => new JevBackend(),
       fake: () => new FakeBackend(),
     };
     this.instances = {};

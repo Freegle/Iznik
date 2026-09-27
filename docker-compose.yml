@@ -678,6 +678,9 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       # Without an API key, Claude runs through the claude CLI on a subscription token.
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
+      # TypeSafe Jev as a backend for comparison (evaluate.js); TYPESAFE_BASE_URL for a compatible server.
+      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
+      - TYPESAFE_BASE_URL=${TYPESAFE_BASE_URL:-}
     volumes:
       - automod_model_cache:/app/model-cache
 
