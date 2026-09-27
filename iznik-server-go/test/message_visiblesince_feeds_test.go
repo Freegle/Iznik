@@ -53,7 +53,6 @@ func visibleSinceFixture(t *testing.T, prefix string, word string) (viewerToken 
 	db.Exec("UPDATE messages_spatial SET arrival = NOW() WHERE msgid = ?", msgID)
 
 	cleanup = func() {
-		db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
