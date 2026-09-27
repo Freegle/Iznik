@@ -184,8 +184,24 @@ version 1. VAGUE_TEXT alone adds 9. The four holds a moderator approved: a bare 
 concern, and one ambiguous "selling". The DUPLICATE fact is not in these numbers: it needs
 the database at decision time, so it is measured in shadow mode, not offline.
 
-Jev (TypeSafe) is a `jev` backend in the service, one request per post with every question as
-a calibrated yes/no. It has not been measured on this set yet: no TypeSafe key is available
-locally. With `TYPESAFE_API_KEY` set, `node src/evaluate.js posts.jsonl --backends=claude,jev`
-gives the per-node comparison against Claude, and `TYPESAFE_BASE_URL` points it at a local
-compatible server for the local rung.
+## Jev, measured (27 September 2026)
+
+Same 225 posts, chart version 3. Jev (`jev-latest`, the service's `jev` backend) answers
+every text question in one request per post, about 0.3 seconds, as a calibrated yes/no.
+Scored against Claude's answers and against what the moderator did:
+
+| | held | of which a moderator rejected | rejections caught (of 105) |
+|---|---|---|---|
+| Claude | 30 | 26 (87%) | 26 |
+| Jev | 21 | 20 (95%) | 20 |
+
+Question by question against Claude: they agree on 24 of Claude's 37 yeses. Jev misses 13,
+mostly VAGUE_TEXT (5), SELLING (3) and CONCERN (3). It adds 7 holds Claude did not make, and
+since 20 of its 21 holds were posts a moderator rejected, those extra holds were mostly
+right. Jev is more precise and far cheaper; Claude catches more.
+
+The sample has 1 to 10 yes cases per question, too few to move any question off Claude on
+this evidence. Shadow mode is where the numbers to decide per question come from:
+`evaluate.js --backends=claude,jev` over posts exported from shadow communities.
+`TYPESAFE_API_KEY` enables it; `TYPESAFE_BASE_URL` points it at a local compatible server
+for the rung below.
