@@ -39,6 +39,10 @@
           which is against Freegle rules, we may take further action.
         </p>
         <p>
+          During a security incident, some messages may be held and a small
+          number reviewed by our volunteers.
+        </p>
+        <p>
           So that potential new users can see what is being offered on Freegle,
           we make some details of posts public, i.e. the item name, approximate
           location, the description and any photos. No personal details are made
@@ -231,6 +235,11 @@
         <h3>Change History</h3>
         <p>Here are the changes to this page.</p>
         <ul class>
+          <li>
+            27/09/2026: Add section 2: during a security incident some
+            messages may be held and a small number reviewed by our
+            volunteers.
+          </li>
           <li>
             06/08/2026: Remove section 2.1 on voice descriptions. You can no
             longer describe an item by speaking, so we no longer record audio,

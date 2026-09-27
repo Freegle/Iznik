@@ -18,4 +18,17 @@ describe('pages/privacy.vue', () => {
     expect(wrapper.text()).toContain('Unsubscribing and deleting your data')
     expect(wrapper.text()).toContain('Legal Basis')
   })
+
+  it('mentions that messages may be held during a security incident', () => {
+    // plans/active/2026-09-27-lockdown-switch.md section 10.13: the privacy
+    // page default is one sentence, not silence.
+    const wrapper = mount(PrivacyPage, {
+      global: {
+        stubs: { 'client-only': { template: '<div><slot /></div>' } },
+      },
+    })
+
+    expect(wrapper.text()).toContain('security incident')
+    expect(wrapper.text()).toMatch(/held.*reviewed by (our )?volunteers/)
+  })
 })

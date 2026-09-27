@@ -2,6 +2,7 @@
   <div v-if="message">
     <div v-if="editreview" class="d-inline">
       <ModMessageButton
+        v-if="!modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="primary"
@@ -10,6 +11,7 @@
         label="Accept Edit"
       />
       <ModMessageButton
+        v-if="!modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -18,7 +20,7 @@
         label="Reject Edit"
       />
       <ModMessageButton
-        v-if="modMessagingAllowed"
+        v-if="modMessagingAllowed && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="primary"
@@ -38,6 +40,7 @@
         label="Approve"
       />
       <ModMessageButton
+        v-if="!modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         :is-home-group="isHomeGroup"
@@ -48,7 +51,7 @@
         label="Reject"
       />
       <ModMessageButton
-        v-if="isHomeGroup"
+        v-if="isHomeGroup && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -57,7 +60,7 @@
         label="Delete"
       />
       <ModMessageButton
-        v-if="!heldByOnThisGroup"
+        v-if="!heldByOnThisGroup && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="warning"
@@ -66,7 +69,7 @@
         label="Hold"
       />
       <ModMessageButton
-        v-else
+        v-else-if="heldByOnThisGroup && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="success"
@@ -75,7 +78,7 @@
         label="Release"
       />
       <ModMessageButton
-        v-if="isHomeGroup"
+        v-if="isHomeGroup && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -86,7 +89,7 @@
     </div>
     <div v-else-if="approved" class="d-inline">
       <ModMessageButton
-        v-if="isHomeGroup && modMessagingAllowed"
+        v-if="isHomeGroup && modMessagingAllowed && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="primary"
@@ -95,7 +98,7 @@
         label="Blank Reply"
       />
       <ModMessageButton
-        v-if="isHomeGroup"
+        v-if="isHomeGroup && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -104,7 +107,7 @@
         label="Delete"
       />
       <ModMessageButton
-        v-if="isHomeGroup"
+        v-if="isHomeGroup && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -117,7 +120,10 @@
            the post merely rippled into, so do not offer them there (Discourse 10102). -->
       <SpinButton
         v-if="
-          isHomeGroup && message.type === 'Offer' && !message.outcomes?.length
+          isHomeGroup &&
+          message.type === 'Offer' &&
+          !message.outcomes?.length &&
+          !modsHeld
         "
         variant="white"
         class="m-1"
@@ -129,7 +135,10 @@
       />
       <SpinButton
         v-if="
-          isHomeGroup && message.type === 'Wanted' && !message.outcomes?.length
+          isHomeGroup &&
+          message.type === 'Wanted' &&
+          !message.outcomes?.length &&
+          !modsHeld
         "
         variant="white"
         class="m-1"
@@ -140,7 +149,7 @@
         @handle="outcome($event, 'Received')"
       />
       <SpinButton
-        v-if="isHomeGroup && !message.outcomes?.length"
+        v-if="isHomeGroup && !message.outcomes?.length && !modsHeld"
         variant="white"
         class="m-1"
         icon-name="trash-alt"
@@ -150,7 +159,7 @@
         @handle="outcome($event, 'Withdrawn')"
       />
     </div>
-    <div v-if="!editreview" class="d-lg-inline">
+    <div v-if="!editreview && !modsHeld" class="d-lg-inline">
       <ModMessageButton
         v-for="stdmsg in filtered"
         :key="stdmsg.id"
@@ -173,7 +182,10 @@
       </b-button>
     </div>
     <client-only>
-      <div v-if="modMessagingAllowed" class="mt-1 mb-1 d-flex flex-wrap">
+      <div
+        v-if="modMessagingAllowed && !modsHeld"
+        class="mt-1 mb-1 d-flex flex-wrap"
+      >
         <OurToggle
           v-model="allowAutoSend"
           :height="30"
@@ -197,6 +209,7 @@ import { ref, computed, watch } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useModConfigStore } from '~/stores/modconfig'
 import { copyStdMsgs, icon, variant } from '~/composables/useStdMsgs'
+import { useLockdown } from '~/modtools/composables/useLockdown'
 
 const props = defineProps({
   messageid: {
@@ -242,6 +255,8 @@ const props = defineProps({
     default: true,
   },
 })
+
+const { modsHeld } = useLockdown()
 
 const messageStore = useMessageStore()
 const modConfigStore = useModConfigStore()

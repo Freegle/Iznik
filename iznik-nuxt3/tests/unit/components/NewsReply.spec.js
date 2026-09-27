@@ -50,6 +50,11 @@ vi.mock('~/stores/auth', () => ({
   }),
 }))
 
+const mockModsHeld = ref(false)
+vi.mock('~/modtools/composables/useLockdown', () => ({
+  useLockdown: () => ({ modsHeld: mockModsHeld, held: () => false }),
+}))
+
 // Mock composables
 vi.mock('~/composables/useTwem', () => ({
   twem: (text) => text,
@@ -253,6 +258,7 @@ describe('NewsReply', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockSeenBeforeVisit = null
+    mockModsHeld.value = false
     mockAuthUser.value = {
       id: 1,
       displayname: 'Current User',
@@ -390,6 +396,51 @@ describe('NewsReply', () => {
     it('hides dropdown for regular users viewing other replies', () => {
       const wrapper = createWrapper()
       expect(wrapper.find('.b-dropdown').exists()).toBe(false)
+    })
+  })
+
+  describe('lockdown (mods held)', () => {
+    // Plan 11.3: newsfeed Hide is refused while the mods surface is held, but
+    // Unhide stays allowed (it is the ChitChat equivalent of Approve). Own
+    // Edit/Delete are a different gate (own-content / chitchat surface) and
+    // must not be affected by modsHeld.
+    it('hides the Hide action for moderators when mods held', () => {
+      mockAuthUser.value.systemrole = 'Moderator'
+      mockModsHeld.value = true
+      const wrapper = createWrapper()
+      const hideItem = wrapper
+        .findAll('.dropdown-item')
+        .find((i) => i.text() === 'Hide')
+      expect(hideItem).toBeUndefined()
+    })
+
+    it('shows the Hide action for moderators when not held', () => {
+      mockAuthUser.value.systemrole = 'Moderator'
+      const wrapper = createWrapper()
+      const hideItem = wrapper
+        .findAll('.dropdown-item')
+        .find((i) => i.text() === 'Hide')
+      expect(hideItem).toBeDefined()
+    })
+
+    it('keeps Unhide visible for moderators even when mods held', () => {
+      mockAuthUser.value.systemrole = 'Moderator'
+      mockModsHeld.value = true
+      const hiddenReply = { ...mockReply, hidden: true }
+      const wrapper = createWrapper({}, hiddenReply)
+      const unhideItem = wrapper
+        .findAll('.dropdown-item')
+        .find((i) => i.text() === 'Unhide')
+      expect(unhideItem).toBeDefined()
+    })
+
+    it('leaves Edit and Delete visible while mods held', () => {
+      mockAuthUser.value.systemrole = 'Admin'
+      mockModsHeld.value = true
+      const wrapper = createWrapper()
+      const items = wrapper.findAll('.dropdown-item')
+      expect(items.find((i) => i.text() === 'Edit')).toBeDefined()
+      expect(items.find((i) => i.text() === 'Delete')).toBeDefined()
     })
   })
 

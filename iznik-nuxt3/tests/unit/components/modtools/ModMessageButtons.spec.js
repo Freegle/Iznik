@@ -1,6 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { ref } from 'vue'
 import ModMessageButtons from '~/modtools/components/ModMessageButtons.vue'
+
+// plans/active/2026-09-27-lockdown-switch.md section 11.3: while the mods
+// surface is held, the Go API allows only a bare Approve (no subject/body/
+// stdmsgid) and refuses everything else - Reject, Delete, Hold/Release,
+// Delete as Spam, standard messages, edit review actions. useLockdown()
+// already folds in the Support/Admin exemption, so this component only has
+// to ask it one question.
+const mockModsHeld = ref(false)
+
+vi.mock('~/modtools/composables/useLockdown', () => ({
+  useLockdown: () => ({ modsHeld: mockModsHeld, held: () => false }),
+}))
 
 // Mock stores and composables before vi.mock calls using vi.hoisted
 const { mockMessageStore, mockModConfigStore } = vi.hoisted(() => {
@@ -191,6 +204,7 @@ describe('ModMessageButtons', () => {
     vi.clearAllMocks()
     // Reset configsById
     mockModConfigStore.configsById = {}
+    mockModsHeld.value = false
   })
 
   describe('rendering', () => {
@@ -910,6 +924,112 @@ describe('ModMessageButtons', () => {
         .map((b) => b.text())
 
       expect(labels).toContain('Blank Reply')
+    })
+  })
+
+  describe('when mods is held (lockdown)', () => {
+    // plans/active/2026-09-27-lockdown-switch.md section 11.3: the Go gate
+    // allows only a bare Approve (no subject/body/stdmsgid) while mods is
+    // held, and refuses everything else. useLockdown() already folds in the
+    // Support/Admin exemption (tested in useLockdown.spec.js), so from this
+    // component's point of view modsHeld true always means "hide it".
+    beforeEach(() => {
+      mockModsHeld.value = true
+    })
+
+    it('still shows Approve for a pending message', () => {
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'Pending' }] }
+      )
+      expect(wrapper.find('.mod-message-button.approve').exists()).toBe(true)
+    })
+
+    it('still shows Approve for a spam-collection message', () => {
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'Spam' }] }
+      )
+      expect(wrapper.find('.mod-message-button.approve').exists()).toBe(true)
+    })
+
+    it('hides reject, delete, hold and spam for a pending message', () => {
+      const wrapper = mountComponent(
+        { groupid: 456 },
+        {
+          groups: [{ groupid: 456, collection: 'Pending', heldby: null }],
+        }
+      )
+      expect(wrapper.find('.mod-message-button.reject').exists()).toBe(false)
+      expect(wrapper.find('.mod-message-button.delete').exists()).toBe(false)
+      expect(wrapper.find('.mod-message-button.hold').exists()).toBe(false)
+      expect(wrapper.find('.mod-message-button.spam').exists()).toBe(false)
+    })
+
+    it('hides release even when the copy on this group is already held', () => {
+      const wrapper = mountComponent(
+        { groupid: 456 },
+        {
+          groups: [{ groupid: 456, collection: 'Pending', heldby: 1 }],
+        }
+      )
+      expect(wrapper.find('.mod-message-button.release').exists()).toBe(false)
+    })
+
+    it('hides standard message buttons and the rare-message reveal', () => {
+      const modConfig = createModConfig({
+        stdmsgs: [
+          { id: 1, title: 'Common', action: 'Approve', rarelyused: 0 },
+          { id: 2, title: 'Rare', action: 'Reject', rarelyused: 1 },
+        ],
+      })
+      mockModConfigStore.configsById = { 1: modConfig }
+
+      const wrapper = mountComponent(
+        { modconfigid: 1 },
+        { groups: [{ groupid: 456, collection: 'Pending' }] }
+      )
+      const stdmsgButtons = wrapper
+        .findAll('.mod-message-button')
+        .filter((b) => /^\d+$/.test(b.attributes('data-stdmsgid') || ''))
+
+      expect(stdmsgButtons.length).toBe(0)
+      expect(wrapper.text()).not.toContain('+1...')
+    })
+
+    it('hides the autosend toggle', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.find('.our-toggle').exists()).toBe(false)
+    })
+
+    it('shows no action buttons for an approved message', () => {
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'Approved' }], outcomes: [] }
+      )
+      const labels = wrapper
+        .findAll('.mod-message-button')
+        .map((b) => b.text())
+
+      expect(labels).not.toContain('Blank Reply')
+      expect(wrapper.find('.mod-message-button.delete').exists()).toBe(false)
+      expect(wrapper.find('.mod-message-button.spam').exists()).toBe(false)
+      expect(wrapper.findAll('.spin-button').length).toBe(0)
+    })
+
+    it('shows no action buttons in edit review', () => {
+      const wrapper = mountComponent({ editreview: true })
+
+      expect(wrapper.find('.mod-message-button.approveedits').exists()).toBe(
+        false
+      )
+      expect(wrapper.find('.mod-message-button.revertedits').exists()).toBe(
+        false
+      )
+      const labels = wrapper
+        .findAll('.mod-message-button')
+        .map((b) => b.text())
+      expect(labels).not.toContain('Blank Reply')
     })
   })
 })

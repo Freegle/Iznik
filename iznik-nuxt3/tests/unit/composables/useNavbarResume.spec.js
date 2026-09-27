@@ -13,6 +13,7 @@ let mountedCallbacks = []
 let mockUser = null
 const mockMessageFetchCount = vi.fn()
 const mockNewsfeedFetchCount = vi.fn()
+const mockLockdownFetch = vi.fn()
 
 vi.stubGlobal('onMounted', (fn) => mountedCallbacks.push(fn))
 vi.stubGlobal('useHead', () => {})
@@ -65,6 +66,11 @@ vi.mock('~/stores/volunteering', () => ({
 vi.mock('~/stores/mobile', () => ({
   useMobileStore: () => ({ isApp: false, setBadgeCount: vi.fn() }),
 }))
+// Fetched on the same cadence (see useNavbarLockdown.spec.js) - mocked here
+// too so these timing tests aren't at the mercy of a real network call.
+vi.mock('~/stores/lockdown', () => ({
+  useLockdownStore: () => ({ fetch: mockLockdownFetch }),
+}))
 vi.mock('~/composables/useMe', () => ({ fetchMe: vi.fn() }))
 
 let hidden = false
@@ -100,6 +106,7 @@ describe('navbar counts refresh when the page comes back to life', () => {
     mountedCallbacks = []
     mockMessageFetchCount.mockReset().mockResolvedValue(0)
     mockNewsfeedFetchCount.mockReset().mockResolvedValue(0)
+    mockLockdownFetch.mockReset().mockResolvedValue({ notice: null })
     mockUser = {
       id: 35909200,
       settings: { browseView: 'nearby', browseMaxDistance: 20.6 },

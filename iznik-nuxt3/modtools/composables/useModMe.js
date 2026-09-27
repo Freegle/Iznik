@@ -4,6 +4,7 @@ import { useMiscStore } from '@/stores/misc'
 import { useModGroupStore } from '@/stores/modgroup'
 import { useMe } from '~/composables/useMe'
 import { useMobileStore } from '~/stores/mobile'
+import { useLockdownStore } from '~/stores/lockdown'
 
 // Skip beep on the first checkWork() call after page load. The first call
 // establishes the baseline work count; beeping at that point would interrupt
@@ -150,12 +151,28 @@ export function useModMe() {
       const mobileStore = useMobileStore()
       mobileStore.setBadgeCount(totalCount ?? 0)
     }
+    await fetchLockdownState()
     miscStore.deferGetMessages = false
     miscStore.workTimer = setTimeout(checkWork, 30000)
   }
 
   function resetCheckWork() {
     isFirstCheckWork = true
+  }
+
+  // The full moderator lockdown state (plans/active/2026-09-27-lockdown-switch.md
+  // section 11.5) rides this same 30s poll rather than a timer of its own, and
+  // deliberately outside the oktocheck/force gate above: a press must still
+  // reach the screen while a mod happens to be mid-edit, since it is what
+  // hides the dangerous buttons (section 11.3). Its own try/catch keeps a
+  // failed fetch from ever breaking the work poll.
+  async function fetchLockdownState() {
+    try {
+      const lockdownStore = useLockdownStore()
+      await lockdownStore.fetchMod()
+    } catch (e) {
+      console.log('Ignore error fetching lockdown state', e)
+    }
   }
 
   return {

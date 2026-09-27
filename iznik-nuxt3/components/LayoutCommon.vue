@@ -69,6 +69,7 @@
       <DeletedRestore />
       <BouncingEmail />
       <MailDelayed />
+      <LockdownNotice />
       <div class="navbar-toggle" style="display: none" />
     </client-only>
     <div
@@ -167,6 +168,9 @@ const BouncingEmail = defineAsyncComponent(
 )
 const MailDelayed = defineAsyncComponent(
   () => import('~/components/MailDelayed')
+)
+const LockdownNotice = defineAsyncComponent(
+  () => import('~/components/LockdownNotice')
 )
 const BreakpointFettler = defineAsyncComponent(
   () => import('~/components/BreakpointFettler')

@@ -670,6 +670,46 @@ describe('auth store', () => {
     })
   })
 
+  // plans/active/2026-09-27-lockdown-switch.md section 10.5: display name,
+  // about me and avatar changes are refused with a short message while the
+  // "profile" surface is held; other PATCH /session fields (own settings)
+  // are unaffected. saveAndGet is the single choke point both go through, so
+  // it wraps the save in runLockdownAware and rethrows a tagged, readable
+  // error instead of a raw 409 - see api/lockdownConflict.js.
+  describe('saveAndGet lockdown refusal', () => {
+    it('rethrows a tagged, readable error when PATCH /session returns a lockdown 409', async () => {
+      const err = new Error('Conflict')
+      err.response = {
+        status: 409,
+        data: {
+          lockdown: true,
+          status:
+            'Changes are paused for a few hours while we deal with a security incident.',
+        },
+      }
+      mockSave.mockRejectedValue(err)
+      mockFetchv2.mockResolvedValue({ me: { id: 42 }, groups: [] })
+
+      await expect(
+        store.saveAndGet({ displayname: 'New Name' })
+      ).rejects.toMatchObject({
+        lockdownRefused: true,
+        message:
+          'Changes are paused for a few hours while we deal with a security incident.',
+      })
+    })
+
+    it('does not tag an ordinary error as a lockdown refusal', async () => {
+      const err = new Error('Unauthorized')
+      err.response = { status: 401 }
+      mockSave.mockRejectedValue(err)
+
+      await expect(
+        store.saveAndGet({ displayname: 'New Name' })
+      ).rejects.toThrow('Unauthorized')
+    })
+  })
+
   describe('fetchUser app out of date (ret:123)', () => {
     it('flags the app as out of date and preserves auth when session returns ret:123', async () => {
       store.setAuth('valid-jwt', 'valid-persistent')

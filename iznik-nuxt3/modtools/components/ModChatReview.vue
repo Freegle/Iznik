@@ -239,7 +239,9 @@
       </b-card-body>
       <b-card-footer>
         <div class="d-flex flex-wrap justify-content-start">
-          <template v-if="!message.widerchatreview && isActiveMod">
+          <template
+            v-if="!message.widerchatreview && isActiveMod && !modsHeld"
+          >
             <ModChatViewButton :id="message.chatid" :pov="chatPov" />
             <b-button
               v-if="message.held && me.id === message.held.id"
@@ -275,7 +277,9 @@
             class="me-2 mb-1"
             @handle="approve"
           />
-          <template v-if="!message.widerchatreview && isActiveMod">
+          <template
+            v-if="!message.widerchatreview && isActiveMod && !modsHeld"
+          >
             <SpinButton
               v-if="!message.held"
               icon-name="check"
@@ -335,6 +339,7 @@ import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/modtools/composables/useModMe'
 import { useChatStore } from '~/stores/chat'
 import { useAuthStore } from '~/stores/auth'
+import { useLockdown } from '~/modtools/composables/useLockdown'
 // Imported rather than relying on the Nuxt auto-import: the component unit tests mount without
 // the auto-import layer (they inject timeago as a mock), and a hold duration is worth asserting
 // against the real formatter rather than a stub.
@@ -353,6 +358,7 @@ const props = defineProps({
 
 const chatStore = useChatStore()
 const authStore = useAuthStore()
+const { modsHeld } = useLockdown()
 
 const message = computed(() => chatStore.messageById(props.messageid))
 

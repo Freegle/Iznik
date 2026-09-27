@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import ModStatus from '~/modtools/components/ModStatus.vue'
+import { useLockdownStore } from '~/stores/lockdown'
 
 // This spec used to mount a hand-written COPY of ModStatus's template and setup()
 // rather than the component itself. That is why the platform status dot could be
@@ -20,6 +21,14 @@ const mockStatusFetch = vi.fn()
 
 vi.mock('#app', () => ({
   useNuxtApp: () => ({ $api: { status: { fetch: mockStatusFetch } } }),
+}))
+
+// plans/active/2026-09-27-lockdown-switch.md line 343-344: "the platform
+// traffic light in ModStatus.vue turns red" during a lockdown - fed by the
+// same store as the ModTools banner (ModLockdownBanner.vue), not gated to
+// support/admin like the warning dot is.
+vi.mock('~/stores/lockdown', () => ({
+  useLockdownStore: vi.fn(() => ({ active: false })),
 }))
 
 const OK_STATUS = { ret: 0, error: false, warning: false, info: {} }
@@ -58,6 +67,7 @@ describe('ModStatus', () => {
     vi.clearAllMocks()
     mockSupportOrAdmin.value = false
     mockStatusFetch.mockResolvedValue(OK_STATUS)
+    useLockdownStore.mockReturnValue({ active: false })
   })
 
   afterEach(() => {
@@ -106,6 +116,25 @@ describe('ModStatus', () => {
 
       expect(wrapper.find('.warning').exists()).toBe(false)
       expect(wrapper.find('.fine').exists()).toBe(true)
+    })
+
+    it('turns red for every mod when a lockdown is active, platform otherwise fine', async () => {
+      // Unlike the warning dot, this is not gated to support/admin - every mod
+      // needs to see why some Approve buttons have gone missing.
+      useLockdownStore.mockReturnValue({ active: true })
+      mockSupportOrAdmin.value = false
+      await mountComponent()
+
+      expect(wrapper.find('.error').exists()).toBe(true)
+      expect(wrapper.find('.fine').exists()).toBe(false)
+    })
+
+    it('stays red for a lockdown even once the platform status itself is fine again', async () => {
+      useLockdownStore.mockReturnValue({ active: true })
+      mockStatusFetch.mockResolvedValue(OK_STATUS)
+      await mountComponent()
+
+      expect(wrapper.find('.error').exists()).toBe(true)
     })
   })
 

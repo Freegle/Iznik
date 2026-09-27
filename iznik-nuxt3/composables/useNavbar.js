@@ -13,6 +13,7 @@ import { useCommunityEventStore } from '~/stores/communityevent'
 import { useVolunteeringStore } from '~/stores/volunteering'
 import { useMobileStore } from '~/stores/mobile'
 import { combinedBadgeCount } from '~/composables/useBadgeCount'
+import { useLockdownStore } from '~/stores/lockdown'
 
 export const navBarHidden = ref(false)
 
@@ -122,6 +123,7 @@ export function useNavbar() {
   const chatStore = useChatStore()
   const communityEventStore = useCommunityEventStore()
   const volunteeringStore = useVolunteeringStore()
+  const lockdownStore = useLockdownStore()
   const route = useRoute()
   const router = useRouter()
 
@@ -409,6 +411,19 @@ export function useNavbar() {
     }
   }
 
+  // The lockdown notice (plans/active/2026-09-27-lockdown-switch.md section
+  // 11.5) rides this same cadence rather than a timer of its own. Unlike
+  // fetchAllCounts it is never gated by myid.value: a security notice ("if
+  // you received a message about vouchers or payments, don't click the
+  // link") has to reach an anonymous visitor as well as a signed-in member.
+  const fetchLockdownNotice = async () => {
+    try {
+      await lockdownStore.fetch()
+    } catch (e) {
+      console.log('Ignore error fetching lockdown notice', e)
+    }
+  }
+
   // One pass in flight at a time. A refresh that lands mid-pass (resume,
   // visibility, login) is queued and runs as soon as the pass ends, so it is
   // never lost and never starts a second 60s loop alongside the first.
@@ -422,6 +437,7 @@ export function useNavbar() {
     countsInFlight = true
     try {
       await fetchAllCounts()
+      await fetchLockdownNotice()
     } finally {
       countsInFlight = false
     }

@@ -146,6 +146,7 @@ function mountLayout(stubs = {}) {
         ModMenuItemLeft: { template: '<div />' },
         ModMissingRules: { template: '<div />' },
         ModMissingProfile: { template: '<div />' },
+        ModLockdownBanner: { template: '<div class="lockdown-banner-stub" />' },
         SomethingWentWrong: { template: '<div />' },
         ExternalLink: { template: '<a><slot /></a>' },
         'b-navbar': { template: '<nav><slot /></nav>' },
@@ -336,5 +337,38 @@ describe('modtools default layout — re-login group refresh', () => {
     // Without the fix (no loggedIn watcher), checkWork is never called here —
     // groups stay empty for up to 30s until the polling timer fires.
     expect(mockCheckWork).toHaveBeenCalledWith(true)
+  })
+})
+
+describe('modtools default layout — lockdown banner', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockCheckWork.mockReset()
+    mockResetCheckWork.mockReset()
+    mockAuthStore.user = null
+    mockAuthStore.loginStateKnown = false
+  })
+
+  afterEach(() => {
+    mockAuthStore.user = null
+    mockAuthStore.loginStateKnown = false
+  })
+
+  // plans/active/2026-09-27-lockdown-switch.md section 10.8: "Members: nothing,
+  // by default. Moderators: always the banner." The layout must render
+  // ModLockdownBanner unconditionally (it decides its own visibility from the
+  // lockdown store) — not gate it behind login state or any other layout flag.
+  it('always renders ModLockdownBanner, whether or not a moderator is logged in', async () => {
+    const wrapper = mountLayout()
+    await flushPromises()
+    await nextTick()
+
+    expect(wrapper.find('.lockdown-banner-stub').exists()).toBe(true)
+
+    mockAuthStore.user = { id: 1, displayname: 'Test Mod' }
+    mockAuthStore.loginStateKnown = true
+    await nextTick()
+
+    expect(wrapper.find('.lockdown-banner-stub').exists()).toBe(true)
   })
 })

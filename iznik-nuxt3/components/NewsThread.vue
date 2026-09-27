@@ -77,29 +77,47 @@
               <!-- Says what it leaves behind. This posts in the member's name
                    and adds a note to this public thread, so the menu shouldn't
                    read like a private mod action. -->
-              <b-dropdown-item v-if="chitChatMod" @click="showConvert = true">
+              <b-dropdown-item
+                v-if="chitChatMod && !modsHeld"
+                @click="showConvert = true"
+              >
                 Post this as an OFFER/WANTED for them
                 <div class="small text-muted convert-hint">
                   Posts as them, and adds a note to this thread
                 </div>
               </b-dropdown-item>
-              <b-dropdown-item v-if="canRefer" @click="referToOffer">
+              <b-dropdown-item
+                v-if="canRefer && !modsHeld"
+                @click="referToOffer"
+              >
                 Refer to OFFER
               </b-dropdown-item>
-              <b-dropdown-item v-if="canRefer" @click="referToWanted">
+              <b-dropdown-item
+                v-if="canRefer && !modsHeld"
+                @click="referToWanted"
+              >
                 Refer to WANTED
               </b-dropdown-item>
-              <b-dropdown-item v-if="canRefer" @click="referToTaken">
+              <b-dropdown-item
+                v-if="canRefer && !modsHeld"
+                @click="referToTaken"
+              >
                 Refer to TAKEN
               </b-dropdown-item>
-              <b-dropdown-item v-if="canRefer" @click="referToReceived">
+              <b-dropdown-item
+                v-if="canRefer && !modsHeld"
+                @click="referToReceived"
+              >
                 Refer to RECEIVED
               </b-dropdown-item>
-              <b-dropdown-item v-if="canStory" @click="createStory">
+              <b-dropdown-item
+                v-if="canStory && !modsHeld"
+                @click="createStory"
+              >
                 Turn this into a Story
               </b-dropdown-item>
               <b-dropdown-item
-                v-if="chitChatMod && !newsfeed.hidden"
+                v-if="chitChatMod && !newsfeed.hidden && !modsHeld"
                 @click="hide"
               >
                 Hide this thread
@@ -330,6 +348,7 @@ import {
 } from '~/composables/useScrollAnchor'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
+import { useLockdown } from '~/modtools/composables/useLockdown'
 import { isIOS } from '~/composables/useIsIOS'
 
 // Use standard import to avoid screen-flicker
@@ -406,6 +425,7 @@ const userStore = useUserStore()
 const miscStore = useMiscStore()
 const mobileStore = useMobileStore()
 const { chitChatMod, supportOrAdmin } = useMe()
+const { modsHeld } = useLockdown()
 
 // In the app there is no browser to open a new window in - target="_blank"
 // bounces through the OS back into the app, which just reopens it. Hide the
