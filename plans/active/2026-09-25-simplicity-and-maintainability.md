@@ -25,6 +25,28 @@ while the tier agents were still working, so the final table in the pull request
 Surfaces gone at the same point: 20 of 266 API routes, 7 of 27 routing routes, 6 of 93
 member pages, 9 of 37 ModTools pages, 40 of 176 ModTools components, 14 of 152 batch services.
 
+### Where it will end up
+
+`scripts/simplicity-estimate.mjs` projects the end state from the branch itself: for each tier
+it measures how much the files that mentioned the group model and have already been treated
+shrank, and applies that rate to the files that still mention it. The low end of each range
+uses the rate from files that were edited and survived; the high end includes the files that
+were deleted outright. On 2026-09-27, with 121 code files still to treat:
+
+| Tier | Now | Estimated end |
+|---|---|---|
+| Go API | -13% | -18% to -28% |
+| Batch (Laravel) | -27% | -34% to -46% |
+| Member site | -10% | -11% to -12% |
+| ModTools | -42% | -47% to -55% |
+| Spatial and routing | -7% | -8% to -9% |
+| Tests | -17% | -22% to -31% |
+| All code and tests | -19% | -23% to -32% |
+
+The remainder is mostly large files that are only partly about communities (the Go message
+package, the incoming mail service, the background task command), so the truth is nearer the
+low end: roughly a quarter of the codebase, and half of ModTools.
+
 ### The database
 
 `scripts/dropped-tables-share.mjs` reads an `information_schema.TABLES` export (table, rows,
