@@ -49,14 +49,16 @@ with the review effort concentrated on posts that show any reason for caution.
 Where it is running (see the status note above - centrally switched on, during the trial
 for named communities only):
 
-- A post from an **auto-moderated member** (no explicit posting status) that the
-  automated content checks found **clean** goes live by itself after a short delay -
-  **20 minutes**, the same for every community.
+- A post from an **auto-moderated member** (no explicit posting status) that
+  **automated review approves** goes live by itself after a short delay - **20 minutes**,
+  the same for every community. Automated review is a flowchart of plain questions, set
+  out in "Automated review" below. Anything it is unsure about stays in Pending for you.
 - It does **not** go live automatically if there is any **danger signal**: a moderator
   note on the member, a microvolunteer rejection, a negative moderation action in the
   last 90 days (that window is configurable), a known or suspected spammer record (spam
   on any community blocks approval on all of them), or an outstanding membership review.
-  Those posts stay in Pending for a human, exactly as now.
+  These are the first questions on the flowchart. Those posts stay in Pending for a
+  human, exactly as now.
 - Members you have explicitly set to **Moderated** or **Prohibited** are completely
   untouched - their posts always wait for you.
 - A configurable **quality sample** of otherwise-clean posts is held back in Pending
@@ -97,8 +99,9 @@ active ratification does not.
 
 ## What a community NOT taking part still sees
 
-Worth being explicit, because "it is off for us" is not the same as "nothing changes for
-us". Three effects reach a community that is not in the trial:
+ModTools looks as it did before post-moderation: no countdown on Pending, no Check queue
+or badge, no post-moderation help text, and no automated review line or its explanation.
+One effect does reach a community that is not in the trial:
 
 - **Posts from participating communities can ripple in.** This is the substantive one.
   A post that auto-published on a trial community, with no human look, can spread to
@@ -107,19 +110,6 @@ us". Three effects reach a community that is not in the trial:
   any complaint freezing it, a moderator look settling it). If you reject the copy on
   your community, that removes it from your area exactly as any secondary rejection
   does. The hold applies to any post no human has looked at, wherever it started.
-- **The Check queue appears for everyone, and it is not empty.** Check is added to the
-  ModTools menu for all moderators, not only trial communities, and it lists posts from
-  members with no posting status that went live without a moderator's click - which
-  already happens everywhere today, through the long standing **48-hour fallback** when
-  nobody got to them. So on a community with post-moderation off, the queue surfaces
-  oversight work that existed before this change and had no home; it does not mean
-  auto-approve is running there. Posts from **trusted** members go straight to Approved,
-  as they always have, and have no queue of their own.
-- **The Pending countdown appears for everyone.** Where post-moderation is off, the
-  countdown on a Pending post shows the 48-hour fallback rather than a 20-minute one -
-  it is reporting the auto-approval that already existed, not a new one. Opening the
-  Pending queue also holds its posts for a further 10 minutes on every community, which
-  only ever delays an auto-approval, never causes one.
 
 What does **not** cross over: no member of yours starts auto-publishing because a
 neighbouring community joined the trial. Whether a post auto-publishes is decided by the
@@ -294,8 +284,7 @@ write notes.
   communities are withdrawn the next time spreading runs - the whole post comes down.
   Back to Pending freezes the spread but leaves every community's copy in its own
   Pending queue, for that community to approve or reject. Which of the two a neighbouring
-  moderator sees depends on which button the post's own community pressed. That
-  difference is under review.
+  moderator sees depends on which button the post's own community pressed.
 
 ### Things that will surprise members
 
@@ -361,16 +350,17 @@ These are known and not fully solved:
   live. New on each post that is on the auto-approve path: a **live countdown** to
   when it will publish (muted "~Nh" when far off, prominent minutes-and-seconds inside
   the last half hour). Posts that are not going to auto-approve (suspect, spam, held,
-  sampled for quality, or the feature is off for your community) show no countdown.
+  sampled for quality, or not approved by automated review) show no countdown. A
+  community outside the trial never shows one.
 - **Opening Pending guarantees you a look.** Every post on the queue gets at least 10
   more minutes before it can auto-approve, extended each time you load the page.
   Nothing publishes out from under you while you are reading it.
 
   ![The Pending queue, with the countdown on a post that is about to publish itself](assets/pending.png)
 - **One oversight queue, Check**, sits under Approved in the menu, indented and joined
-  to it by a small line, because it is a slice of Approved (on every community, in the
-  trial or not - see "What a community NOT taking part still sees").
-  It lists the posts that went live by themselves via the automatic checks and that
+  to it by a small line, because it is a slice of Approved. It appears only if you
+  moderate a community in the trial.
+  It lists the posts that went live by themselves via automated review and that
   nobody has looked at yet. It shows a blue count of what you have not yet looked at,
   offers **"Mark all as checked"**, and ages posts out after **7 days** so it never
   piles up. Posts that merely rippled in from another community do not appear -
@@ -385,10 +375,20 @@ These are known and not fully solved:
   on communities with microvolunteering switched on.
 
   ![The Check queue: posts that published themselves, waiting for a look](assets/check.png)
-- **Reject from the oversight queue** pulls a live post straight back to Pending and
-  held, stops its rippling immediately, withdraws the copies it had rippled into other
-  communities, and records the rejection - which both feeds the error rate and becomes
-  a danger signal on that member's next post.
+- **Reject from the oversight queue** pulls a live post back to Pending, held by you,
+  and the card turns into an ordinary Pending card where it is, so you approve, edit or
+  reject it with the usual buttons and standard messages without going to find it again.
+  It stops the post's rippling immediately and withdraws the copies it had rippled into
+  other communities. It is recorded as a hold and counts towards the error rate; what you
+  then do records the decision, so a post you approve does not count against the member,
+  and one you reject becomes a danger signal on their next post.
+- **Automated review's reason** appears as one short line on each post on a trial
+  community - on Pending ("Automated review: holding - asks to borrow") and on Approved
+  ("Auto-approved by automated review", or "Approved by a moderator - automated review
+  would have held: ..."). **Why?** opens the questions it asked, in order, what it
+  answered, how sure it was, and the words in the post that decided it. If one of those
+  answers is wrong, **This step is wrong** records it against that question. Those marks
+  are how the questions are corrected.
 - **Your notes and statuses matter more, not less.** A note on a member keeps their
   posts in Pending. Explicit statuses always win. If you know a reason someone needs
   a human eye, write it down.
@@ -399,6 +399,43 @@ These are known and not fully solved:
 - **Your day-to-day habits are unchanged otherwise** - including the rippling ones:
   "out of area" is still never a reason to reject, and a post arriving from a
   neighbouring community is still the system working.
+
+## Automated review
+
+Automated review decides whether a post is clean enough to go live by itself. It is a
+flowchart of plain questions, the same for every community, kept centrally:
+
+1. Facts about the member and the post, answered from Freegle's own records: the danger
+   signals above; whether the member has a posting status; whether the community
+   moderates everything; no location or outside the UK; spam signals; personal details
+   where the community restricts them; not English; the content check's vague-post
+   finding; and whether this is a duplicate of the member's own open post or a repost
+   sooner than the community allows.
+2. Questions about the words of the post, answered by an AI model: is it too vague to
+   tell what is offered or wanted; is it about something other than an item; is it
+   selling or asking for money; a loan or a request to borrow; asking for something in
+   exchange; animals; weapons, firearms, knives; medicines or supplements; alcohol,
+   tobacco, vaping; tickets; gas cylinders; and, where a concern word appears, whether it
+   is really about the concern.
+3. Your community's own rules decide the item questions: if your community allows loans,
+   animals or alcohol, those questions are skipped and never hold a post.
+
+The first question answered "yes" holds the post in Pending with that reason; if none is,
+the post is approved. It never rejects anything. Out of area is not a question: with
+rippling, a post reaches the communities around it by design.
+
+It runs in two modes, set centrally per community for the trial:
+
+- **Shadow**: it records what it would have done on every Pending post, and changes
+  nothing. You see its line and its reasons, and moderate as normal.
+- **Approve-only**: a post it approves goes live after the 20-minute wait, as described
+  above. A post it holds waits for you, with the reason shown.
+
+Measured on 225 real posts from the last 30 days, 105 of which a moderator rejected: the
+questions about the words held 30 posts, 26 of which a moderator had rejected. Most
+rejections turn on things the words of a post cannot show (a duplicate, or a reason the
+moderator did not record), which is why the facts come first and why approve-only waits
+for shadow numbers from real communities.
 
 ## What changes for members, and what they notice
 
