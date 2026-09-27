@@ -14,6 +14,11 @@ vi.mock('~/composables/useHelpBox', () => ({
   }),
 }))
 
+const mockInTrial = ref(true)
+vi.mock('~/modtools/composables/useAutoapproveTrial', () => ({
+  useAutoapproveTrial: () => ({ inTrial: mockInTrial }),
+}))
+
 const stubs = {
   NoticeMessage: {
     template: '<div class="notice-message"><slot /></div>',
@@ -28,6 +33,7 @@ describe('ModHelpApproved', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockShowHelp.value = true
+    mockInTrial.value = true
   })
 
   it('explains that Approved is every live post and Check is a subset', () => {
@@ -47,5 +53,12 @@ describe('ModHelpApproved', () => {
     const wrapper = mount(ModHelpApproved, { global: { stubs } })
     await wrapper.find('button').trigger('click')
     expect(mockToggleHelp).toHaveBeenCalled()
+  })
+
+  it('shows nothing, not even the Help link, outside the trial', () => {
+    mockInTrial.value = false
+    const wrapper = mount(ModHelpApproved, { global: { stubs } })
+    expect(wrapper.find('.notice-message').exists()).toBe(false)
+    expect(wrapper.find('button').exists()).toBe(false)
   })
 })

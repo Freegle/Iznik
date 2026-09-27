@@ -338,3 +338,52 @@ describe('modtools default layout — re-login group refresh', () => {
     expect(mockCheckWork).toHaveBeenCalledWith(true)
   })
 })
+
+describe('modtools default layout — Check only on trial communities', () => {
+  function captureLinks() {
+    const links = []
+    const Capturing = {
+      template: '<div />',
+      props: ['link', 'name', 'count', 'othercount', 'indent', 'countVariant', 'directcount', 'sub'],
+      setup(props) {
+        links.push(props.link)
+      },
+    }
+    mountLayout({ ModMenuItemLeft: Capturing })
+    return links
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockAuthStore.user = { id: 1, displayname: 'Test Mod' }
+    mockAuthStore.loginStateKnown = true
+    mockAuthStore.work = {}
+  })
+
+  afterEach(() => {
+    mockAuthStore.user = null
+    mockAuthStore.loginStateKnown = false
+    mockAuthStore.work = null
+    mockAuthStore.groups = []
+  })
+
+  it('hides Check when none of the moderator\'s communities is in the trial', async () => {
+    mockAuthStore.groups = [{ groupid: 1, role: 'Moderator' }]
+    const links = captureLinks()
+    await flushPromises()
+    await nextTick()
+    expect(links).toContain('/messages/approved')
+    expect(links).not.toContain('/messages/check')
+  })
+
+  it('shows Check when one of the moderator\'s communities is in the trial', async () => {
+    mockAuthStore.groups = [
+      { groupid: 1, role: 'Moderator' },
+      { groupid: 2, role: 'Moderator', autoapprovetrial: true },
+    ]
+    const links = captureLinks()
+    await flushPromises()
+    await nextTick()
+    expect(links).toContain('/messages/check')
+  })
+})

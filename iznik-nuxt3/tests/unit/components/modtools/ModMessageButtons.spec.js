@@ -772,9 +772,8 @@ describe('ModMessageButtons', () => {
 
   describe('oversight context (checked/trusted pages)', () => {
     function rejectBtn(wrapper) {
-      return wrapper
-        .findAll('.spin-button')
-        .find((b) => b.text().includes('Reject (back to Pending)'))
+      const btn = wrapper.find('[data-testid="oversight-reject"]')
+      return btn.exists() ? btn : undefined
     }
 
     it('shows Reject when oversight=true and the message is Approved', () => {

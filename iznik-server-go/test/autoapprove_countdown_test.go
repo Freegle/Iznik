@@ -323,10 +323,8 @@ func TestAutoapproveatRippledInCopy(t *testing.T) {
 
 // The rollout gate (FREEGLE_AUTOAPPROVE_ENABLED / FREEGLE_AUTOAPPROVE_TRIAL_GROUPS)
 // mirrors AutoApproveCleanService::enabledGroupIds. With the gate off (the default) a
-// clean pending post must NOT show the 20-minute countdown — the clean path will not
-// run, so showing it would promise moderators an auto-approval that never fires. It
-// falls back to the 48h estimate instead. A trial group restores the 20-minute path
-// for that group only.
+// pending post shows no countdown at all: a community outside the trial sees Pending as
+// it did before post-moderation. A trial group gets the 20-minute path for that group only.
 func TestAutoapproveatRolloutGate(t *testing.T) {
 	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "")
 	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", "")
@@ -354,11 +352,9 @@ func TestAutoapproveatRolloutGate(t *testing.T) {
 		return at
 	}
 
-	// Gate fully off: the countdown falls back to the 48h estimate.
+	// Gate fully off: no countdown.
 	v := getAutoapproveatField(t, msg, groupID, modToken)
-	assert.NotNil(t, v, "gate off: clean pending post still shows the 48h fallback estimate")
-	assert.True(t, parseAt(v).After(time.Now().Add(40*time.Hour)),
-		"gate off: estimate must be the 48h fallback, not the 20-minute clean path")
+	assert.Nil(t, v, "gate off: a community outside the trial shows no countdown")
 
 	// This group in the trial list: the 20-minute clean path applies again.
 	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf(" %d ", groupID))
@@ -498,12 +494,15 @@ func TestMarkCheckedReject(t *testing.T) {
 	assert.Equal(t, int64(1), pendingHeld, "rejected post is Pending, held by the mod, checkedat cleared")
 	assert.Equal(t, int64(0), stillChecked, "checkedat must be cleared on reject")
 
-	// The Rejected log row is what feeds the moderation-stats KPI and the clean
-	// auto-approver's danger-signal veto for this member's next post.
-	var rejectedLogs int64
-	db.Raw("SELECT COUNT(*) FROM logs WHERE type='Message' AND subtype='Rejected' AND msgid=? AND groupid=? AND user=? AND byuser=?",
-		approved, groupA, poster, modID).Scan(&rejectedLogs)
-	assert.Equal(t, int64(1), rejectedLogs, "reject must write a Message/Rejected log row")
+	// Pulling a post back is a Hold, not a decision: the moderator's later Approve or
+	// Reject writes its own log. No Rejected row yet, so an approved post does not count
+	// against the member.
+	var holdLogs, rejectedLogs int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type='Message' AND subtype='Hold' AND msgid=? AND groupid=? AND user=? AND byuser=?",
+		approved, groupA, poster, modID).Scan(&holdLogs)
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type='Message' AND subtype='Rejected' AND msgid=?", approved).Scan(&rejectedLogs)
+	assert.Equal(t, int64(1), holdLogs, "reject must write a Message/Hold log row")
+	assert.Equal(t, int64(0), rejectedLogs, "reject must not write a Rejected log before the moderator decides")
 
 	// The reach engine is hard-stopped immediately, not left to expand for another tick.
 	var reachStatus string
@@ -536,7 +535,7 @@ func TestMarkCheckedReject(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid=? AND groupid=? AND collection='Approved' AND rippled_in=1", approved, groupB).Scan(&rippledCopy)
 	assert.Equal(t, int64(1), rippledCopy, "a receiving-group mod's reject must not yank a rippled-in copy")
 
-	db.Exec("DELETE FROM logs WHERE type='Message' AND subtype='Rejected' AND msgid=?", approved)
+	db.Exec("DELETE FROM logs WHERE type='Message' AND subtype='Hold' AND msgid=?", approved)
 	db.Exec("DELETE FROM messages_groups WHERE msgid=?", approved)
 	db.Exec("DELETE FROM messages WHERE id=?", approved)
 }

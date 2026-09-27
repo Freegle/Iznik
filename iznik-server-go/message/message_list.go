@@ -465,6 +465,14 @@ func ListMessagesMT(c *fiber.Ctx) error {
 	//             the automated checks, from members with no posting status
 	filter := c.Query("filter", "")
 
+	// The Check queue exists only on communities in the post-moderation trial.
+	if filter == "checked" {
+		groupIDs = utils.AutoapproveTrialGroups(groupIDs)
+		if len(groupIDs) == 0 {
+			return c.JSON(fiber.Map{"messages": []uint64{}})
+		}
+	}
+
 	var msgIDs []uint64
 
 	// Hide Pending messages not yet processed by the content-check batch job.

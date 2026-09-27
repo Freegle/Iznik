@@ -966,6 +966,9 @@ func GetSession(c *fiber.Ctx) error {
 		Active                   int     `json:"active"` // 1=active mod, 0=backup mod
 		Type                     string  `json:"-"`      // Used server-side for moderator detection, not returned to client
 		Settings                 *string `json:"-"`      // Per-group membership settings JSON, used to determine active/inactive
+		// Set for a group a moderator moderates that is in the post-moderation trial, so
+		// ModTools shows the Check queue only where it exists.
+		Autoapprovetrial bool `json:"autoapprovetrial,omitempty" gorm:"-"`
 	}
 
 	type LocationRow struct {
@@ -1091,8 +1094,9 @@ func GetSession(c *fiber.Ctx) error {
 	// of red (danger) badges. Default is active.
 	var modGroupIDs, activeGroupIDs, inactiveGroupIDs []uint64
 	isFreegleMod := false
-	for _, m := range memberships {
+	for i, m := range memberships {
 		if m.Role == utils.ROLE_OWNER || m.Role == utils.ROLE_MODERATOR {
+			memberships[i].Autoapprovetrial = utils.AutoapproveTrialGroup(m.Groupid)
 			modGroupIDs = append(modGroupIDs, m.Groupid)
 			if m.Active == 1 {
 				activeGroupIDs = append(activeGroupIDs, m.Groupid)
@@ -1197,10 +1201,15 @@ func GetSession(c *fiber.Ctx) error {
 
 		// --- Checked: UNCHECKED auto-approved posts from auto-moderated (NULL) members.
 		// Outstanding oversight work (blue): a mod hasn't marked it checked and it
-		// is within the 7-day check window. ---
+		// is within the 7-day check window. Only communities in the post-moderation
+		// trial have a Check queue. ---
+		trialGroupIDs := utils.AutoapproveTrialGroups(modGroupIDs)
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
+			if len(trialGroupIDs) == 0 {
+				return
+			}
 			db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
 				"INNER JOIN messages m ON m.id = mg.msgid "+
 				"INNER JOIN users u ON u.id = m.fromuser "+
@@ -1209,7 +1218,7 @@ func GetSession(c *fiber.Ctx) error {
 				"AND m.deleted IS NULL AND u.deleted IS NULL "+
 				"AND mg.approvedby IS NULL AND mg.rippled_in = 0 AND mem.ourPostingStatus IS NULL "+
 				checkedWindowSQL,
-				modGroupIDs, utils.COLLECTION_APPROVED).Scan(&checked)
+				trialGroupIDs, utils.COLLECTION_APPROVED).Scan(&checked)
 		}()
 
 		// --- Spam messages (only for active groups) ---

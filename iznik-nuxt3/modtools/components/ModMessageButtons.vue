@@ -94,11 +94,11 @@
       />
       <SpinButton
         v-if="oversight && approved"
+        data-testid="oversight-reject"
         variant="warning"
         class="m-1"
         icon-name="times"
-        label="Reject (back to Pending)"
-        confirm
+        label="Reject"
         :flex="false"
         @handle="rejectFromOversight"
       />
@@ -233,9 +233,9 @@ const props = defineProps({
     required: false,
     default: true,
   },
-  // Set to true ONLY from the Check oversight page: shows a "Reject (back to Pending)"
-  // button for Approved posts so a mod can pull an auto-published post back into Pending via the
-  // markChecked endpoint. Not shown in the regular Approved view.
+  // Set to true ONLY from the Check oversight page: shows a Reject button for Approved posts.
+  // It pulls the post back to Pending, held by this moderator, and the card turns into the
+  // usual Pending card so the moderator approves, edits or rejects it as normal.
   oversight: {
     type: Boolean,
     required: false,
@@ -373,8 +373,8 @@ function outcome(callback, type) {
   if (callback) callback()
 }
 
-// Oversight Reject button (Check page only): send the post back to Pending via
-// markChecked({reject:true}) and drop it from the local store so it leaves the oversight list.
+// Oversight Reject button (Check page only): pull the post back to Pending via
+// markChecked({reject:true}); it stays in the list as a Pending card.
 async function rejectFromOversight(callback) {
   await messageStore.rejectFromOversight(props.messageid, props.groupid)
   if (callback) callback()
