@@ -19,10 +19,6 @@ import (
 // the new text. This mirrors the reported bug: a Wanted's subject was edited to add
 // "Moulinex" and a Support Tools search for "Moulinex" found nothing, while the original
 // subject wording still matched.
-//
-// This test used to assert the same for the keyword index (messages_index) alongside the
-// embedding. That index is retired in this branch, so CreateTestMessage no longer populates
-// it and there is nothing left to invalidate — the embedding is now the whole search index.
 func TestPatchMessageSubjectEditInvalidatesSearchIndexes(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("reindexSubj")
@@ -65,11 +61,6 @@ func TestPatchMessageSubjectEditInvalidatesSearchIndexes(t *testing.T) {
 // (GenerateEmbeddingsCommand), so editing only the body invalidates it just as a subject
 // edit does. This is the counterpart to the test above: invalidation must not depend on the
 // subject having changed.
-//
-// This test previously also asserted that a body-only edit left the keyword index
-// (messages_index) alone, since that index was subject-derived and dropping it would have
-// made the message needlessly unsearchable. With the keyword index retired in this branch
-// there is no such index to preserve, and the embedding is the only thing to invalidate.
 func TestPatchMessageBodyOnlyEditInvalidatesEmbedding(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("reindexBody")
@@ -108,7 +99,7 @@ func TestPatchMessageBodyOnlyEditInvalidatesEmbedding(t *testing.T) {
 // (embedding.Global) that Refresh()es on a timer and is presence-keyed, so if the batch
 // re-embeds the new content before the store ever observes the msgid as absent, the STALE
 // in-memory blob keeps matching the OLD wording (see Store.Refresh's "Known limitation").
-// invalidateMessageSearchIndexes therefore also evicts the msgid from the store. This test
+// invalidateMessageEmbedding therefore also evicts the msgid from the store. This test
 // seeds the store with the message's soon-to-be-stale entry, edits it, and asserts the
 // entry is gone so the next Refresh reloads the regenerated embedding.
 func TestPatchMessageEditEvictsStaleInMemoryEmbedding(t *testing.T) {

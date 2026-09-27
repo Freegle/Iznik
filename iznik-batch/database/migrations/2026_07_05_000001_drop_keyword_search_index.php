@@ -14,19 +14,8 @@ return new class extends Migration
      * micro-volunteering challenge (removed across Go/PHP/front-end earlier in
      * this change set) and are no longer read or written by any code path.
      *
-     * NOT dropped here, deferred to a follow-up: words, words_cache, items_index
-     * and messages_index. These backed the V1 keyword search - Item::typeahead()/
-     * create()/delete() and Message::search()/searchActiveInBounds() (the
-     * iznik-server PHP tree), plus Search::bump()/delete() from auto-repost. That
-     * V1 PHP tree was removed wholesale on 2026-07-09 (commit c14a7125b, an
-     * ancestor of this branch), and the Laravel port does NOT maintain these
-     * indexes (AutoRepostService deliberately skips the Search::bump() side effect,
-     * per its own header comment), so NO live code reads or writes these four
-     * tables any more - they are already dead. They are left in place only because
-     * dropping them is a separate, larger migration, and items_index in particular
-     * is still referenced by test-fixtures.sql, so dropping it now would crash CI
-     * fixture setup until that fixture is updated too. A follow-on migration can
-     * drop these four now-dead tables.
+     * words, words_cache, items_index and messages_index are dropped by the later
+     * 2026_09_27_000001_drop_dead_keyword_search_tables migration.
      *
      * KEPT deliberately: search_history and users_searches (search analytics, still
      * used) and the damlevlim() stored function.
