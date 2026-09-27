@@ -40,18 +40,28 @@ class HousekeeperService
 
         // Record this task run with log and summary.
         if ($task) {
-            DB::table('housekeeper_tasks')->updateOrInsert(
-                ['task_key' => $task],
-                [
-                    'name' => $task,
-                    'last_run_at' => now(),
-                    'last_status' => $status,
-                    'last_summary' => $generatedSummary,
-                    'last_log' => $logText ?: null,
-                    'updated_at' => now(),
-                ]
-            );
+            $this->recordRun($task, $status, $generatedSummary, $logText);
         }
+    }
+
+    /**
+     * Record a run in housekeeper_tasks, which drives the ModTools housekeeping
+     * badge. $fields sets registry columns (name, description, interval_hours,
+     * enabled, placeholder) for tasks that run server-side rather than in the
+     * extension.
+     */
+    public function recordRun(string $taskKey, string $status, string $summary, ?string $log = null, array $fields = []): void
+    {
+        DB::table('housekeeper_tasks')->updateOrInsert(
+            ['task_key' => $taskKey],
+            array_merge(['name' => $taskKey], $fields, [
+                'last_run_at' => now(),
+                'last_status' => $status,
+                'last_summary' => $summary,
+                'last_log' => $log ?: null,
+                'updated_at' => now(),
+            ])
+        );
     }
 
     /**

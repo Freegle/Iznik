@@ -86,6 +86,20 @@ stop and start makes a rejoin slower.
   file; a joining node refusing connections for 10 to 18 minutes is a full copy in
   progress, not a hang.
 
+## CookieYes watchdog says the login is lost
+
+The weekly `cookieyes:check` job (see
+[the developer page](../../developers/reference/cookieyes-watchdog.md)) emails Geeks and
+fails the `cookieyes` housekeeping task when its CookieYes login has expired or been
+revoked. Nothing member-facing is affected: the cookie banner keeps working. Only the
+weekly checks and monthly scans stop until someone logs in again.
+
+- The CookieYes account owner runs `php artisan cookieyes:authorize` on the batch host,
+  opens the link it prints, clicks Allow, and then runs it again with `--callback` set to
+  the address the browser landed on.
+- To verify, run `php artisan cookieyes:check`, which should record a result for the
+  `cookieyes` task on the ModTools Sysadmin housekeeping list.
+
 ## Adding a runbook
 
 Keep summaries here **non-confidential**: describe impact, what pauses, what stays up, and

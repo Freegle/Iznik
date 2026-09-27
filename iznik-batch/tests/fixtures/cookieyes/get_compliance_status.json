@@ -1,0 +1,10 @@
+{
+  "applicable_laws": [
+    "gdpr"
+  ],
+  "targeted_location": "worldwide",
+  "is_iab_enabled": true,
+  "last_scan_at": "2026-09-20 20:45:02",
+  "last_scan_status": "completed",
+  "last_successful_scan_at": "2026-09-20 20:45:02"
+}

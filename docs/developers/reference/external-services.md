@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-19
+last_reviewed: 2026-09-27
 owner: Freegle dev team
 covers:
   - .env.example
@@ -53,7 +53,7 @@ Visible, annoying, not fatal.
 | **MaxMind** | Turns an IP address into a rough location, used in anti-abuse |
 | **Playwire** | Advert delivery ([ads.md](ads.md)) |
 | **WhatJobs** | The job listings that fill some advert slots ([ads.md](ads.md)) |
-| **CookieYes** | The cookie consent banner |
+| **CookieYes** | The cookie consent banner, checked weekly by `cookieyes:check` ([cookieyes-watchdog.md](cookieyes-watchdog.md)) |
 | **Google Tag Manager** | Analytics tags, only when `GTM_ID` is set |
 | **Trustpilot** | Review link |
 

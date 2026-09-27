@@ -1522,6 +1522,19 @@ return [
         'cpi_max_age_days' => (int) env('FREEGLE_MONITORING_CPI_MAX_AGE_DAYS', 40),
     ],
 
+    // CookieYes watchdog (cookieyes:check): talks to CookieYes's MCP server over
+    // OAuth. The login itself is stored in the `config` table by
+    // cookieyes:authorize, not here. See docs/developers/reference/cookieyes-watchdog.md.
+    'cookieyes' => [
+        // Off stops the weekly schedule, for a deployment with no CookieYes account.
+        'enabled' => (bool) env('COOKIEYES_ENABLED', true),
+        'base_url' => env('COOKIEYES_BASE_URL', 'https://app.cookieyes.com'),
+        // Trigger a new scan once the latest is this old.
+        'rescan_after_days' => (int) env('COOKIEYES_RESCAN_AFTER_DAYS', 30),
+        // Fail the check once the latest scan is this old.
+        'stale_after_days' => (int) env('COOKIEYES_STALE_AFTER_DAYS', 45),
+    ],
+
     'lovejunk' => [
         'api' => env('LOVE_JUNK_API', 'https://elmer.api-lovejunk.com/elmer/v1'),
         'secret' => env('LOVE_JUNK_SECRET', ''),
