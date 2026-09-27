@@ -5,15 +5,8 @@
 -- micro-volunteering challenge) plus the legacy VW_search_term_similarities
 -- view. The matching code removals ship in the same change set.
 --
--- NOT dropped here, deferred to a follow-up: words, words_cache, items_index and
--- messages_index. These backed the V1 keyword search (Item::typeahead/create/delete,
--- Message::search/searchActiveInBounds, Search::bump/delete from auto-repost) in the
--- iznik-server PHP tree, which was removed wholesale on 2026-07-09 (commit c14a7125b,
--- an ancestor of this branch). The Laravel port does NOT maintain these indexes, so
--- no live code reads or writes these four tables any more - they are already dead.
--- They are left in place only because dropping them is a separate, larger migration,
--- and items_index in particular is still referenced by test-fixtures.sql, so dropping
--- it now would crash CI fixture setup until that fixture is updated too.
+-- words, words_cache, items_index and messages_index are dropped by the later
+-- 2026_09_27_000001_drop_dead_keyword_search_tables migration.
 --
 -- KEPT deliberately: search_history and users_searches (search analytics) and the
 -- damlevlim() stored function.
@@ -45,9 +38,16 @@ SET @idx := (SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS
 SET @sql := IF(@idx IS NOT NULL, CONCAT('ALTER TABLE microactions DROP INDEX `', @idx, '`'), 'DO 0');
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 
--- 3. Drop the columns.
-ALTER TABLE microactions DROP COLUMN IF EXISTS searchterm1;
-ALTER TABLE microactions DROP COLUMN IF EXISTS searchterm2;
+-- 3. Drop the columns. MySQL has no DROP COLUMN IF EXISTS, so guard each one.
+SET @sql := IF(EXISTS(SELECT 1 FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'microactions' AND COLUMN_NAME = 'searchterm1'),
+  'ALTER TABLE microactions DROP COLUMN searchterm1', 'DO 0');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+
+SET @sql := IF(EXISTS(SELECT 1 FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'microactions' AND COLUMN_NAME = 'searchterm2'),
+  'ALTER TABLE microactions DROP COLUMN searchterm2', 'DO 0');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 
 -- 4. Drop the SearchTerm table (no inter-table foreign keys).
 DROP TABLE IF EXISTS search_terms;
