@@ -92,6 +92,7 @@ So Jira would give us somewhere tidy to keep tickets, which is the part we alrea
 - **It looks things up before asking.** It can read the production database (read-only) and production logs in Loki. Its instructions say to check those before guessing, and to ask the reporter only for what only they know (which member, which group, which post, what they saw, when), at most three things in one message.
 - **But those lookups run through a connection from the machine it runs on.** When that connection is down, it records the diagnosis as unchecked and puts the bug off.
 - **Once it asks, it holds the report until there is an answer,** with no time limit. A reporter who never replies leaves the report waiting for ever.
+- **It answers questions as well as fixing bugs.** It tells a question from a bug report, reads the code and the docs, and drafts a short answer. The answer waits for a person to approve it. If it isn't confident, it leaves the question for a person. If a person rejects an answer, the reason is passed to the next attempt.
 - **What it can post:** it may ask a reporter for missing details without approval, and post "possible fix applied, please retest" once a fix is live. Anything that says how Freegle works waits for a person to approve it first. That split is right, and the design keeps it.
 - **Its records mix two things.** One field holds both what kind of report it is and how far along it is. So a simple question like "which feature requests are still open?" can't be answered.
 - **Its Sentry records are empty.**
@@ -232,7 +233,7 @@ It also reports every hour what it actually did ("checked 40 topics, asked 3 que
 **The Helper** gets the sorting its July plan proposed:
 - Looking into a member stays as it is.
 - Bug reports become cases for the FSM.
-- Questions about how Freegle works get a drafted answer for a person to approve.
+- Questions about how Freegle works go through the FSM's existing question answering, rather than a second copy of it.
 
 ### Telling people when it's fixed
 
