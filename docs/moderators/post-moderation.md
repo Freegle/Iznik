@@ -389,6 +389,10 @@ These are known and not fully solved:
   answered, how sure it was, and the words in the post that decided it. If one of those
   answers is wrong, **This step is wrong** records it against that question. Those marks
   are how the questions are corrected.
+
+  ![Automated review's reason on a Pending post](assets/automod-line.png)
+
+  ![Why? opened: each question in order, with the one that held the post highlighted](assets/automod-why.png)
 - **Your notes and statuses matter more, not less.** A note on a member keeps their
   posts in Pending. Explicit statuses always win. If you know a reason someone needs
   a human eye, write it down.
