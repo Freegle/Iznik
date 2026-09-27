@@ -108,4 +108,4 @@ Banner restyling, any use of Claude, categorising cookies (the classifier does i
 | 6 | `cookieyes:check`, `HousekeeperService::recordRun`, schedule, failure email | ✅ | Monday 10:30 UTC; ran for real on dev |
 | 7 | Extension: remove the CookieYes task | ✅ | freegle-housekeeper branch remove-cookieyes-task; purges stored creds |
 | 8 | Docs: developer reference page + ops note for the one-time authorise | ✅ | |
-| 9 | Full Laravel suite, review, PR | 🔄 | |
+| 9 | Full Laravel suite, review, PR | ✅ | 6933 passed; crash handling added after review |

@@ -55,6 +55,18 @@ class CheckCommandTest extends TestCase
         });
     }
 
+    public function test_a_crash_is_recorded_and_emailed_rather_than_lost(): void
+    {
+        $this->mock(CookieYesWatchdogService::class)->shouldReceive('run')->once()->andThrow(new \RuntimeException('boom'));
+
+        $this->artisan('cookieyes:check')->assertSuccessful();
+
+        $row = DB::table('housekeeper_tasks')->where('task_key', 'cookieyes')->first();
+        $this->assertSame('failure', $row->last_status);
+        $this->assertStringContainsString('boom', $row->last_summary);
+        Mail::assertSent(HousekeeperResultsMail::class, fn (HousekeeperResultsMail $mail) => str_contains($mail->summary, 'boom'));
+    }
+
     public function test_it_takes_over_the_row_the_extension_used_to_own(): void
     {
         DB::table('housekeeper_tasks')->insert([

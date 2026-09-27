@@ -3,6 +3,7 @@
 namespace App\Console\Commands\CookieYes;
 
 use App\Mail\Housekeeper\HousekeeperResultsMail;
+use App\Services\CookieYes\CookieYesCheckResult;
 use App\Services\CookieYes\CookieYesWatchdogService;
 use App\Services\EmailSpoolerService;
 use App\Services\HousekeeperService;
@@ -23,7 +24,14 @@ class CheckCommand extends Command
 
     public function handle(CookieYesWatchdogService $watchdog, HousekeeperService $housekeeper, EmailSpoolerService $spooler): int
     {
-        $result = $watchdog->run();
+        try {
+            $result = $watchdog->run();
+        } catch (\Throwable $e) {
+            // Anything unexpected (an answer in a shape we do not know, a lock
+            // timeout) still has to reach someone, or the watchdog goes quiet.
+            report($e);
+            $result = new CookieYesCheckResult(false, 'The CookieYes watchdog crashed: ' . $e->getMessage(), [(string) $e]);
+        }
 
         $housekeeper->recordRun(
             self::TASK_KEY,
