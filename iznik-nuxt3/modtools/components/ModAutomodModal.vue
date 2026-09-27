@@ -6,53 +6,57 @@
     hide-footer
   >
     <div v-if="automod">
+      <p class="mb-2">
+        <strong>{{ summary }}</strong>
+      </p>
       <p class="small text-muted mb-3">
-        Chart version {{ automod.version
+        The questions below were asked in this order; the first answered yes
+        holds a post. Chart version {{ automod.version
         }}<span v-if="ranAt"> &middot; ran {{ ranAt }}</span>
       </p>
       <div
         v-for="(node, index) in automod.path"
         :key="index"
-        class="automod-node mb-3 pb-2"
-        :class="{
-          'automod-node--deciding border-start border-3 ps-2':
-            isDeciding(index),
-        }"
+        class="automod-node"
+        :class="
+          isDeciding(index)
+            ? 'automod-node--deciding border-start border-3 border-warning ps-2 mb-3'
+            : 'mb-2 small'
+        "
       >
-        <p class="mb-1">
-          <strong>{{ node.question }}</strong>
-        </p>
-        <p class="mb-1">
-          Answer: <strong>{{ node.answer === 'yes' ? 'Yes' : 'No' }}</strong>
-        </p>
-        <p
+        <div class="d-flex justify-content-between align-items-baseline">
+          <span :class="{ 'fw-bold': isDeciding(index) }">{{
+            node.question
+          }}</span>
+          <span class="ms-2 text-nowrap">
+            <strong>{{ node.answer === 'yes' ? 'Yes' : 'No' }}</strong>
+            <span v-if="feedbackSent[index]" class="small text-muted ms-1"
+              >Thanks, noted</span
+            >
+            <b-button
+              v-else
+              v-b-tooltip.hover
+              variant="link"
+              size="sm"
+              class="p-0 ms-1 small align-baseline"
+              title="This step is wrong"
+              @click="sendFeedback(node, index)"
+            >
+              wrong?
+            </b-button>
+          </span>
+        </div>
+        <div
           v-if="node.kind === 'text' && node.p !== null && node.p !== undefined"
-          class="mb-1"
+          class="text-muted"
         >
           {{ Math.round(node.p * 100) }}% sure, holds above
           {{ Math.round(node.threshold * 100) }}%
-        </p>
-        <p v-if="node.evidence" class="mb-1 fst-italic">
-          "{{ node.evidence }}"
-        </p>
-        <p v-if="node.model" class="small text-muted mb-1">
-          Model: {{ node.model }}
-        </p>
-        <p v-if="isDeciding(index)" class="small text-muted mb-1">
-          This step decided the outcome.
-        </p>
-        <div v-if="feedbackSent[index]" class="small text-muted">
-          Thanks, noted
         </div>
-        <b-button
-          v-else
-          variant="link"
-          size="sm"
-          class="p-0"
-          @click="sendFeedback(node, index)"
-        >
-          This step is wrong
-        </b-button>
+        <div v-if="node.evidence" class="fst-italic">"{{ node.evidence }}"</div>
+        <div v-if="isDeciding(index)" class="small text-muted">
+          This step decided the outcome. Answered by {{ node.model }}.
+        </div>
       </div>
     </div>
   </b-modal>
@@ -85,6 +89,19 @@ const messageStore = useMessageStore()
 
 const { modal, show, hide } = useOurModal({ autoShow: false })
 
+// One line saying what happened, before the detail.
+const summary = computed(() => {
+  const a = props.automod
+  if (!a) return ''
+  const shadow = a.mode === 'shadow'
+  if (a.verdict === 'hold') {
+    return (shadow ? 'Would hold: ' : 'Held: ') + a.reason
+  }
+  return shadow
+    ? 'Would approve: no question below needed a moderator.'
+    : 'Approved: no question below needed a moderator.'
+})
+
 const ranAt = computed(() => {
   if (!props.automod?.created) return null
   return new Date(props.automod.created).toLocaleString()
@@ -115,6 +132,7 @@ async function sendFeedback(node, index) {
 }
 
 defineExpose({
+  summary,
   modal,
   show,
   hide,

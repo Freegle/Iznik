@@ -253,4 +253,14 @@ class AutomodFactsServiceTest extends TestCase
             }
         }
     }
+
+    public function test_member_moderated_only_for_an_explicit_posting_status(): void
+    {
+        [$user, $group, $message] = $this->makeFactsSubject();
+        DB::table("memberships")->where("userid", $user->id)->where("groupid", $group->id)->update(["ourPostingStatus" => null]);
+        $this->assertFalse($this->service->facts($message->id, $group->id)["member_moderated"], "blank status is the auto-moderated tier");
+
+        DB::table("memberships")->where("userid", $user->id)->where("groupid", $group->id)->update(["ourPostingStatus" => "MODERATED"]);
+        $this->assertTrue($this->service->facts($message->id, $group->id)["member_moderated"]);
+    }
 }

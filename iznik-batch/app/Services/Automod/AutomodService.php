@@ -55,8 +55,9 @@ class AutomodService
             'subject' => $message->subject ?? '',
             'body' => $message->textbody ?? '',
             'type' => $message->type ?? '',
-            'facts' => $facts,
-            'rules' => $rules,
+            // Objects, not arrays: an empty PHP array encodes as [] and the service wants {}.
+            'facts' => (object) $facts,
+            'rules' => (object) $rules,
         ];
 
         if ($backend) {

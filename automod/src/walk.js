@@ -177,7 +177,8 @@ async function evaluateCheck(nodeId, node, { facts, rules, text, backend, backen
       kind: 'fact',
       answer: value ? 'yes' : 'no',
       model: 'fact',
-      evidence: `facts.${check.fact} is ${value}`,
+      // The batch's own detail when it has one (which veto, which spam finding); else none.
+      evidence: facts[`${check.fact}_detail`] || '',
     };
   }
 
@@ -190,7 +191,7 @@ async function evaluateCheck(nodeId, node, { facts, rules, text, backend, backen
       answer: 'no',
       threshold: check.threshold,
       model: 'rule',
-      evidence: `community allows ${check.rule}`,
+      evidence: 'This community allows it',
     };
   }
 
@@ -202,7 +203,7 @@ async function evaluateCheck(nodeId, node, { facts, rules, text, backend, backen
       answer: 'no',
       threshold: check.threshold,
       model: 'skipped',
-      evidence: `facts.${check.when} is not true`,
+      evidence: 'Does not apply to this post',
     };
   }
 
@@ -226,6 +227,6 @@ async function evaluateCheck(nodeId, node, { facts, rules, text, backend, backen
     p,
     threshold: check.threshold,
     model,
-    evidence: evidence || `model scored ${p.toFixed(2)} against threshold ${check.threshold}`,
+    evidence: evidence || '',
   };
 }

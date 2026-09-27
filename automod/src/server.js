@@ -58,7 +58,11 @@ async function handleReview(req, res, reviewer) {
     return;
   }
 
-  const { msgid, groupid, subject, body, type, facts, rules, backend } = payload;
+  const { msgid, groupid, subject, body, type, backend } = payload;
+  // An empty PHP array arrives as []; treat it as no facts or rules.
+  const emptyList = (v) => Array.isArray(v) && v.length === 0;
+  const facts = emptyList(payload.facts) ? {} : payload.facts;
+  const rules = emptyList(payload.rules) ? {} : payload.rules;
   if (!msgid || !groupid) {
     sendJson(res, 400, { error: 'msgid and groupid are required' });
     return;
