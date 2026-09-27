@@ -116,7 +116,7 @@ const messages = computed(() => {
     const contextGid = groupid.value ? parseInt(groupid.value) : null
     messages = messages.filter((m) => {
       if (!m.groups?.length) return true
-      if (messageStore.pulledBack[m.id]) return true
+      if (messageStore.pulledBack?.[m.id]) return true
       if (contextGid) {
         const g = m.groups.find((g) => parseInt(g.groupid) === contextGid)
         return g ? allowed.includes(g.collection) : true
