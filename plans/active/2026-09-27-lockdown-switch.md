@@ -925,3 +925,29 @@ them. So while email is held, member mail is **not generated**, and nothing move
 
 This replaces the email lines of 11.4 and the catch-up and purge of 10.9 step 8: there is
 no catch-up and no purge; generation pauses and resumes.
+
+### 11.8 Filtering the send queue before email resumes (27 September)
+
+Deferring generation (11.7) leaves the send queue holding mail generated before the loops saw
+the press, some of it about the wave's early messages. The queue is filtered against what
+Support removed before it drains.
+
+- Every spooled mail that describes member content carries an `about` field in its spool
+  file: `chatmessages`, `messages`, `newsfeed` (ids) and `users` (the authors). Set in
+  `EmailSpoolerService::spool()` from the Mailable (a small interface such as
+  `DescribesMemberContent::about()`), for chat notifications, digests, per-post mail,
+  ChitChat notifications and any other mail quoting a member. A test enumerates the
+  Mailables that render member content and fails if one does not declare `about`, so a new
+  mail type cannot slip past the filter.
+- `lockdown:filter-spool` removes, before email resumes, every waiting file whose `about`
+  names a chat message that was rejected or never delivered, a post not Approved, a ChitChat
+  post deleted or still hidden, or an author now in `spam_users`. Removed files go to a
+  `lockdown-removed` directory for the report, not straight to deletion. Counted
+  `filtered:email:<type>`.
+- It runs on every triage pass while email is held, and once more as the first action of
+  lifting email; lifting refuses to proceed if the filter fails.
+- A waiting file of a member-content type with no `about` (from before this change was
+  deployed, or a gap) is held back and listed on the Support page for a person to release
+  or remove; it is never sent unexamined.
+- Background tasks re-read their content when they run (11.7). Mail already at the relay is
+  the runbook step (10.14).
