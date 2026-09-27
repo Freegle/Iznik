@@ -1,7 +1,7 @@
 {
   "id": "freegle-automod",
   "name": "Freegle automated review",
-  "version": "2",
+  "version": "3",
   "description": "Fact and text checks that decide whether a Pending post can be approved automatically (plans/active/automod-flowchart.md).",
   "initialState": "START",
   "states": {
@@ -10,7 +10,7 @@
       "nodeType": "start"
     },
     "VETO": {
-      "description": "Is this member blocked from posting to this community?",
+      "description": "Is there a reason on record to look at this member's posts?",
       "nodeType": "tool",
       "check": {
         "kind": "fact",
@@ -18,11 +18,11 @@
       }
     },
     "HOLD_VETO": {
-      "description": "This member is blocked from posting to this community.",
+      "description": "There is a reason on record to look at this member's posts: a moderator note, a rejected post, a spam mark or an open membership review.",
       "nodeType": "end"
     },
     "MODERATED": {
-      "description": "Is this member on moderated posting?",
+      "description": "Has a moderator given this member a posting status?",
       "nodeType": "tool",
       "check": {
         "kind": "fact",
@@ -30,11 +30,11 @@
       }
     },
     "HOLD_MODERATED": {
-      "description": "This member is on moderated posting and needs a moderator's decision.",
+      "description": "This member has a posting status set by a moderator, so their posts wait for a moderator.",
       "nodeType": "end"
     },
     "GROUP_CLOSED": {
-      "description": "Does this community disallow automated review for this post?",
+      "description": "Does this community have every post checked by a moderator, or is it closed?",
       "nodeType": "tool",
       "check": {
         "kind": "fact",
@@ -42,7 +42,7 @@
       }
     },
     "HOLD_GROUP_CLOSED": {
-      "description": "This community does not allow automated review to publish this type of post.",
+      "description": "This community has every post checked by a moderator, or is closed.",
       "nodeType": "end"
     },
     "NO_LOCATION": {

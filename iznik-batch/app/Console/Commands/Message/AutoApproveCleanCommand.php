@@ -34,7 +34,7 @@ class AutoApproveCleanCommand extends Command
         $prefix = $dryRun ? '[DRY RUN] ' : '';
         $this->info(
             "{$prefix}Approved: {$stats['approved']}, Held (quality): {$stats['held_quality']}, " .
-            "Vetoed: {$stats['vetoed']}, Skipped: {$stats['skipped']}, Errors: {$stats['errors']}"
+            "Errors: {$stats['errors']}"
         );
 
         if ($stats['errors'] > 0) {

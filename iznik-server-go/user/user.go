@@ -1455,11 +1455,12 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 	// A membership rippling created for the poster (rippled = 1) is left unset: no
 	// moderator chose that membership, so a blank status there is not a moderation
 	// decision, and reading it as MODERATED put a "This member is Moderated" notice on
-	// every rippled-in copy (Discourse 10115).
+	// every rippled-in copy (Discourse 10115). On a community in the post-moderation trial a
+	// blank status is the tier whose posts publish themselves, so it is not Moderated either.
 	if modtools {
 		for i := range memberships {
 			m := &memberships[i]
-			if m.Rippled == 0 && (m.OurPostingStatus == nil || *m.OurPostingStatus == "") {
+			if m.Rippled == 0 && !utils.AutoapproveTrialGroup(m.Groupid) && (m.OurPostingStatus == nil || *m.OurPostingStatus == "") {
 				v := utils.POSTING_STATUS_MODERATED
 				m.OurPostingStatus = &v
 			}

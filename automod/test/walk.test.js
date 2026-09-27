@@ -249,7 +249,7 @@ describe('createReviewer / review() - rule and when short-circuits', () => {
     const loanStep = result.path.find((step) => step.node === 'LOAN');
     assert.equal(loanStep.answer, 'no');
     assert.equal(loanStep.model, 'rule');
-    assert.equal(loanStep.evidence, 'community allows allowloans');
+    assert.equal(loanStep.evidence, 'This community allows it');
     // Walk continues past LOAN rather than holding there.
     assert.notEqual(result.end, 'HOLD_LOAN');
   });
@@ -267,7 +267,7 @@ describe('createReviewer / review() - rule and when short-circuits', () => {
     const offerStep = result.path.find((step) => step.node === 'ANIMALS_OFFER');
     assert.equal(offerStep.answer, 'no');
     assert.equal(offerStep.model, 'skipped');
-    assert.equal(offerStep.evidence, 'facts.is_offer is not true');
+    assert.equal(offerStep.evidence, 'Does not apply to this post');
     assert.notEqual(result.end, 'HOLD_ANIMALS_OFFER');
   });
 });
@@ -362,6 +362,6 @@ describe('createReviewer / review() - response shape', () => {
       'version',
     ].sort());
     assert.equal(result.chart, 'freegle-automod');
-    assert.equal(result.version, '2');
+    assert.equal(result.version, '3');
   });
 });

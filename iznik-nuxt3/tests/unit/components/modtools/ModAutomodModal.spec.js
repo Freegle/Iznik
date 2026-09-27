@@ -53,7 +53,7 @@ const held = {
 function mountModal(automod) {
   return mount(ModAutomodModal, {
     props: { msgid: 42, groupid: 7, automod },
-    global: { stubs },
+    global: { stubs, directives: { 'b-tooltip': {} } },
   })
 }
 
@@ -99,7 +99,7 @@ describe('ModAutomodModal', () => {
   it('records "this step is wrong" and thanks the moderator', async () => {
     const wrapper = mountModal(held)
     const node = wrapper.findAll('.automod-node')[1]
-    await node.find('button').trigger('click')
+    await node.find('button').trigger('click') // the "wrong?" link
     await flushPromises()
     expect(mockPostAutomodFeedback).toHaveBeenCalledWith({
       msgid: 42,
@@ -108,6 +108,16 @@ describe('ModAutomodModal', () => {
     })
     expect(wrapper.findAll('.automod-node')[1].text()).toContain(
       'Thanks, noted'
+    )
+  })
+
+  it('says what happened first', () => {
+    expect(mountModal(held).text()).toContain('Held: Asks to borrow')
+    expect(mountModal({ ...held, mode: 'shadow' }).text()).toContain(
+      'Would hold: Asks to borrow'
+    )
+    expect(mountModal({ ...held, verdict: 'approve' }).text()).toContain(
+      'Approved: no question'
     )
   })
 })

@@ -30,7 +30,7 @@ describe('GET /health', () => {
     const res = await fetch(`${baseUrl}/health`);
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.deepEqual(body, { status: 'ok', chart: 'freegle-automod', version: '2' });
+    assert.deepEqual(body, { status: 'ok', chart: 'freegle-automod', version: '3' });
   });
 });
 
@@ -40,7 +40,7 @@ describe('GET /chart', () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.id, 'freegle-automod');
-    assert.equal(body.version, '2');
+    assert.equal(body.version, '3');
     assert.ok(body.states.VETO);
   });
 });
@@ -164,5 +164,16 @@ describe('POST /review', () => {
       body: JSON.stringify({ msgid: 1, groupid: 1, body: hugeBody }),
     });
     assert.equal(res.status, 400);
+  });
+});
+
+describe('POST /review - PHP-encoded empty arrays', () => {
+  test('treats [] facts and rules as empty objects', async () => {
+    const res = await fetch(`${baseUrl}/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ msgid: 1, groupid: 1, subject: 'OFFER: Sofa', body: 'Brown sofa', type: 'Offer', facts: [], rules: [] }),
+    });
+    assert.equal(res.status, 200);
   });
 });

@@ -11,7 +11,8 @@ class AutoApproveCleanCommandTest extends TestCase
     private function stats(array $overrides = []): array
     {
         return array_merge([
-            'approved' => 0, 'held_quality' => 0, 'vetoed' => 0, 'skipped' => 0, 'errors' => 0,
+            // Exactly the keys AutoApproveCleanService::process() returns.
+            'approved' => 0, 'held_quality' => 0, 'errors' => 0,
         ], $overrides);
     }
 
@@ -19,12 +20,12 @@ class AutoApproveCleanCommandTest extends TestCase
     {
         $service = $this->createMock(AutoApproveCleanService::class);
         $service->method('process')->willReturn($this->stats([
-            'approved' => 5, 'held_quality' => 1, 'vetoed' => 2, 'skipped' => 3,
+            'approved' => 5, 'held_quality' => 1,
         ]));
         $this->app->instance(AutoApproveCleanService::class, $service);
 
         $this->artisan('messages:auto-approve-clean')
-            ->expectsOutputToContain('Approved: 5, Held (quality): 1, Vetoed: 2, Skipped: 3, Errors: 0')
+            ->expectsOutputToContain('Approved: 5, Held (quality): 1, Errors: 0')
             ->assertExitCode(Command::SUCCESS);
     }
 

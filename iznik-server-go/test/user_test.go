@@ -3328,8 +3328,13 @@ func TestGetUserMembershipsPostingStatus(t *testing.T) {
 		{"MODERATED stays MODERATED", moderatedUser, "MODERATED"},
 		{"PROHIBITED stays PROHIBITED", prohibitedUser, "PROHIBITED"},
 		{"NULL on a rippled membership stays unset", rippledUser, nil},
+		{"NULL on a post-moderation trial community stays unset", nullUser, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// On a trial community a blank status is the tier whose posts publish themselves.
+			if tc.name == "NULL on a post-moderation trial community stays unset" {
+				t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d", groupID))
+			}
 			url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", tc.uid, modToken)
 			resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
 			assert.NoError(t, err)

@@ -18,8 +18,10 @@ use Illuminate\Support\Facades\DB;
  *   groupAllowsAutoApprove() (PR #639) verbatim - the flowchart replaces AutoApproveCleanService
  *   as the place that decides whether a post is safe to release automatically, but the checks
  *   themselves are unchanged.
- * - member_moderated reuses ContentCheckService::isUserModerated() rather than re-deriving
- *   posting status, so a change there (e.g. the TrashNothing carve-out) is not duplicated.
+ * - member_moderated is any explicit posting status on the community. A blank status is the
+ *   auto-moderated tier, the one post-moderation exists for (AutoApproveCleanService selects
+ *   ourPostingStatus IS NULL). ContentCheckService::isUserModerated() counts blank as
+ *   moderated because it answers a different question, so it is not reused here.
  * - no_location / outside_uk port the bounding-box logic ModTools already shows moderators
  *   (ModMessage.vue noLocation/outsideUK) so the member-facing warning and the automated
  *   decision agree. A location that has collapsed to ~(0,0) - an ungeocoded email post, say -
@@ -104,9 +106,7 @@ class AutomodFactsService
         return [
             'member_veto' => $memberVeto,
             'member_veto_detail' => $memberVetoDetail,
-            'member_moderated' => $fromuser
-                ? $this->contentCheckService()->isUserModerated($msgid, $groupid, (int) $fromuser)
-                : true,
+            'member_moderated' => $this->memberHasPostingStatus($groupid, $fromuser),
             'group_disallows' => $groupDisallows,
             'group_disallows_detail' => $groupDisallowsDetail,
             'no_location' => $noLocation,
@@ -212,6 +212,20 @@ class AutomodFactsService
         }
 
         return [false, null];
+    }
+
+    private function memberHasPostingStatus(int $groupid, ?int $fromuser): bool
+    {
+        if (!$fromuser) {
+            return true;
+        }
+
+        $membership = DB::table('memberships')
+            ->where('userid', $fromuser)
+            ->where('groupid', $groupid)
+            ->first(['ourPostingStatus']);
+
+        return $membership === null || ($membership->ourPostingStatus !== null && $membership->ourPostingStatus !== '');
     }
 
     private function contentCheckService(): ContentCheckService
