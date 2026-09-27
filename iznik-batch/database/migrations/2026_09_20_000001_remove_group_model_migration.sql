@@ -162,14 +162,13 @@ ALTER TABLE stats_summaries DROP COLUMN groupid;
 ALTER TABLE reengage DROP COLUMN volunteer_groupid;
 ALTER TABLE rippling_reach DROP COLUMN rejected_groups, DROP COLUMN reachable_group_ids;
 ALTER TABLE community_news_areas DROP COLUMN anchorgroupid, DROP COLUMN groupids;
-ALTER TABLE concern_keywords DROP COLUMN scope, DROP COLUMN group_id;
 ALTER TABLE simulation_message_isochrones_messages DROP COLUMN groupid;
 
 DROP TABLE IF EXISTS memberships_yahoo_dump, memberships_yahoo, memberships_history, memberships,
     messages_groups, groups_digests, groups_facebook_shares, groups_facebook_toshare, groups_facebook,
     groups_images, groups_mods_welfare, groups_sponsorship, groups_twitter, users_banned,
     communityevents_groups, volunteering_groups, partnerships_groups, rippling_proximity_checked,
-    rippling_proximity, mod_bulkops_run, plugin, `groups`;
+    rippling_proximity, mod_bulkops_run, plugin, concern_keywords, spam_keywords, `groups`;
 
 -- Verify pass 3:
 --   SHOW TABLES LIKE 'groups%';                                -- empty

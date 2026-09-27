@@ -27,6 +27,8 @@ return new class extends Migration
         'groups_images', 'groups_mods_welfare', 'groups_sponsorship', 'groups_twitter',
         'users_banned', 'communityevents_groups', 'volunteering_groups', 'partnerships_groups',
         'rippling_proximity_checked', 'rippling_proximity', 'mod_bulkops_run', 'plugin',
+        // Word lists: the rules are questions a model answers now (see the judgement service).
+        'concern_keywords', 'spam_keywords',
         'groups',
     ];
 
@@ -43,7 +45,6 @@ return new class extends Migration
         ['stats_summaries', 'groupid'], ['reengage', 'volunteer_groupid'],
         ['rippling_reach', 'rejected_groups'], ['rippling_reach', 'reachable_group_ids'],
         ['community_news_areas', 'anchorgroupid'], ['community_news_areas', 'groupids'],
-        ['concern_keywords', 'scope'], ['concern_keywords', 'group_id'],
         ['simulation_message_isochrones_messages', 'groupid'],
     ];
 
