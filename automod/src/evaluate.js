@@ -10,7 +10,8 @@
 // Usage: node src/evaluate.js posts.jsonl [--backends=claude,nli] [--limit=N] [--out=report.json]
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createBackend } from './backend.js';
-import { createReviewer, loadChart } from './walk.js';
+import { createReviewer, loadChart } from './walk.js'
+import { keywordFlags, postText as postTextOf } from './prompt.js';
 
 function arg(name, fallback) {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -31,7 +32,7 @@ function pct(n, d) {
   return d ? `${((100 * n) / d).toFixed(1)}%` : '-';
 }
 
-export async function evaluate(posts, { backends, router, chartPath } = {}) {
+export async function evaluate(posts, { backends, router, chartPath, parallel = 1 } = {}) {
   const chart = loadChart(chartPath);
   const textNodes = Object.entries(chart.states).filter(([, s]) => s.check?.kind === 'text');
   const nodes = {};
@@ -42,17 +43,22 @@ export async function evaluate(posts, { backends, router, chartPath } = {}) {
   }
 
   const reviewer = createReviewer({ backend: router, chartPath });
+  const perPost = [];
 
-  for (const post of posts) {
+  let next = 0;
+  async function worker() {
+  while (next < posts.length) {
+    const post = posts[next++];
     const text = postText(post);
+    const record = { id: post.id, outcome: post.outcome, reason_title: post.reason_title, answers: {}, verdict: {} };
 
     for (const [nodeId, state] of textNodes) {
       const node = (nodes[nodeId] ||= { question: state.check.question, answers: {}, agree: 0, asked: 0, labelled: 0, correct: {}, confusion: {} });
       const answers = {};
       for (const name of backends) {
         try {
-          const { p } = await router.ask(state.check.question, text, name);
-          answers[name] = p >= state.check.threshold ? 'yes' : 'no';
+          const r = await router.ask(state.check.question, text, { backendName: name, flags: state.check.flags, flagged: (state.check.flags || []).flatMap((c) => keywordFlags(text)[c] || []) });
+          answers[name] = r.answer || (r.p >= state.check.threshold ? 'yes' : 'no');
         } catch {
           answers[name] = 'error';
         }
@@ -60,6 +66,7 @@ export async function evaluate(posts, { backends, router, chartPath } = {}) {
         node.answers[name][answers[name]]++;
       }
       node.asked++;
+      for (const name of backends) (record.answers[name] ||= {})[nodeId] = answers[name];
       if (new Set(Object.values(answers)).size === 1) {
         node.agree++;
       }
@@ -79,6 +86,7 @@ export async function evaluate(posts, { backends, router, chartPath } = {}) {
 
     for (const name of backends) {
       const result = await reviewer.review({ ...post, msgid: post.id, groupid: 1, backend: name });
+      record.verdict[name] = { verdict: result.verdict, end: result.end };
       const v = verdicts[name];
       const rejected = post.outcome === 'rejected';
       v.rejected += rejected ? 1 : 0;
@@ -90,9 +98,13 @@ export async function evaluate(posts, { backends, router, chartPath } = {}) {
         v.approvedRejected += rejected ? 1 : 0;
       }
     }
+    perPost.push(record);
+    if (perPost.length % 25 === 0) console.error(`${perPost.length}/${posts.length}`);
   }
+  }
+  await Promise.all(Array.from({ length: parallel }, worker));
 
-  return { posts: posts.length, backends, nodes, verdicts };
+  return { posts: posts.length, backends, nodes, verdicts, perPost };
 }
 
 export function formatReport(report) {
@@ -136,7 +148,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     posts = posts.slice(0, limit);
   }
   const backends = arg('backends', 'claude,nli').split(',');
-  const report = await evaluate(posts, { backends, router: createBackend() });
+  const report = await evaluate(posts, { backends, router: createBackend(), parallel: parseInt(arg('parallel', '1'), 10) });
   console.log(formatReport(report));
   const out = arg('out', '');
   if (out) {

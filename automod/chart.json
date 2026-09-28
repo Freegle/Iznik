@@ -1,52 +1,88 @@
 {
   "id": "freegle-automod",
   "name": "Freegle automated review",
-  "version": "4",
-  "description": "Fact and text checks that decide whether a Pending post can be approved automatically (plans/active/automod-flowchart.md).",
+  "version": "5",
+  "description": "Fact and text checks that decide whether a Pending post can be approved automatically (plans/active/automod-flowchart.md). Built by scripts/build-chart.mjs.",
   "initialState": "START",
   "states": {
     "START": {
       "description": "Entry point. Immediately continues to the first check.",
       "nodeType": "start"
     },
-    "VETO": {
-      "description": "Is there a reason on record to look at this member's posts?",
+    "MOD_NOTE": {
+      "description": "Has a moderator left a note about this member?",
       "nodeType": "tool",
       "check": {
         "kind": "fact",
-        "fact": "member_veto"
+        "fact": "mod_note"
       }
     },
-    "HOLD_VETO": {
-      "description": "There is a reason on record to look at this member's posts: a moderator note, a rejected post, a spam mark or an open membership review.",
+    "HOLD_MOD_NOTE": {
+      "description": "A moderator has left a note about this member, so their posts wait for a moderator.",
       "nodeType": "end"
     },
-    "MODERATED": {
-      "description": "Has a moderator given this member a posting status?",
+    "MICROVOL_REJECT": {
+      "description": "Did a microvolunteer say this post should not be on Freegle?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "microvol_reject"
+      }
+    },
+    "HOLD_MICROVOL_REJECT": {
+      "description": "A microvolunteer said this post should not be on Freegle.",
+      "nodeType": "end"
+    },
+    "RECENT_ACTION": {
+      "description": "Has a moderator rejected, deleted or replied to one of this member's posts in the last 90 days?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "recent_action"
+      }
+    },
+    "HOLD_RECENT_ACTION": {
+      "description": "A moderator acted on one of this member's posts recently, so this one waits for a moderator.",
+      "nodeType": "end"
+    },
+    "SPAMMER": {
+      "description": "Is this member on Freegle's spammer list?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "spammer"
+      }
+    },
+    "HOLD_SPAMMER": {
+      "description": "This member is on Freegle's spammer list.",
+      "nodeType": "end"
+    },
+    "MEMBERSHIP_REVIEW": {
+      "description": "Is a review of this membership waiting for a moderator?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "membership_review"
+      }
+    },
+    "HOLD_MEMBERSHIP_REVIEW": {
+      "description": "A review of this membership is waiting for a moderator.",
+      "nodeType": "end"
+    },
+    "POSTING_STATUS": {
+      "description": "Has a moderator set a posting status for this member on this community?",
       "nodeType": "tool",
       "check": {
         "kind": "fact",
         "fact": "member_moderated"
       }
     },
-    "HOLD_MODERATED": {
-      "description": "This member has a posting status set by a moderator, so their posts wait for a moderator.",
-      "nodeType": "end"
-    },
-    "GROUP_CLOSED": {
-      "description": "Does this community have every post checked by a moderator, or is it closed?",
-      "nodeType": "tool",
-      "check": {
-        "kind": "fact",
-        "fact": "group_disallows"
-      }
-    },
-    "HOLD_GROUP_CLOSED": {
-      "description": "This community has every post checked by a moderator, or is closed.",
+    "HOLD_POSTING_STATUS": {
+      "description": "A moderator has set this member's posting status, so their posts wait for a moderator.",
       "nodeType": "end"
     },
     "NO_LOCATION": {
-      "description": "Is this post missing a location?",
+      "description": "Is the post missing a location? (The place the member gave for it, mapped to a point; not their IP address.)",
       "nodeType": "tool",
       "check": {
         "kind": "fact",
@@ -54,11 +90,11 @@
       }
     },
     "HOLD_NO_LOCATION": {
-      "description": "This post has no location.",
+      "description": "The post has no location, so nobody could find it by place.",
       "nodeType": "end"
     },
     "OUTSIDE_UK": {
-      "description": "Is this post's location outside the UK?",
+      "description": "Is the post's location (the place the member gave, mapped to a point) outside the UK?",
       "nodeType": "tool",
       "check": {
         "kind": "fact",
@@ -66,47 +102,47 @@
       }
     },
     "HOLD_OUTSIDE_UK": {
-      "description": "This post's location is outside the UK.",
+      "description": "The post's location is outside the UK.",
       "nodeType": "end"
     },
-    "DUPLICATE": {
-      "description": "Is this a duplicate of the member's own open post, or a repost sooner than this community allows?",
+    "DUPLICATE_SAME": {
+      "description": "Is this the member's own open post again, or a repost sooner than this community allows?",
       "nodeType": "tool",
       "check": {
         "kind": "fact",
         "fact": "duplicate"
       }
     },
-    "HOLD_DUPLICATE": {
-      "description": "Looks like a duplicate or an early repost of the member's own post.",
+    "HOLD_DUPLICATE_SAME": {
+      "description": "This is the member's own open post again, or a repost sooner than this community allows.",
       "nodeType": "end"
     },
-    "SPAM_SIGNAL": {
-      "description": "Does this post show signs of spam?",
+    "SPAM_LINKS": {
+      "description": "Does it contain a web link, a messaging link, or a link on the Spamhaus blocklist?",
       "nodeType": "tool",
       "check": {
         "kind": "fact",
-        "fact": "spam_signal"
+        "fact": "spam_links"
       }
     },
-    "HOLD_SPAM_SIGNAL": {
-      "description": "This post shows signs of spam.",
+    "HOLD_SPAM_LINKS": {
+      "description": "It contains a link, which the spam checks flag.",
       "nodeType": "end"
     },
-    "PERSONAL_INFO": {
-      "description": "Does this post contain personal information such as a phone number or address?",
+    "SPAM_PATTERN": {
+      "description": "Do the spam checks match it: sent in bulk, a subject repeated across many posts, a known spammer, a greeting-only post, or image spam?",
       "nodeType": "tool",
       "check": {
         "kind": "fact",
-        "fact": "personal_info"
+        "fact": "spam_pattern"
       }
     },
-    "HOLD_PERSONAL_INFO": {
-      "description": "This post contains personal information such as a phone number or address.",
+    "HOLD_SPAM_PATTERN": {
+      "description": "The spam checks matched it.",
       "nodeType": "end"
     },
     "LANGUAGE": {
-      "description": "Is this post written in a language other than English?",
+      "description": "Is it written in a language other than English?",
       "nodeType": "tool",
       "check": {
         "kind": "fact",
@@ -114,58 +150,100 @@
       }
     },
     "HOLD_LANGUAGE": {
-      "description": "This post is not in English.",
+      "description": "It is not written in English.",
       "nodeType": "end"
     },
-    "VAGUE": {
-      "description": "Is this post too vague to publish automatically?",
+    "PERSONAL_INFO": {
+      "description": "Does it contain a phone number or email address, on a community that does not allow them?",
       "nodeType": "tool",
       "check": {
         "kind": "fact",
-        "fact": "vague"
+        "fact": "personal_info",
+        "requiresRule": "restrictpersonalinfo"
       }
     },
-    "HOLD_VAGUE": {
-      "description": "This post is too vague to publish automatically.",
+    "HOLD_PERSONAL_INFO": {
+      "description": "It contains a phone number or email address, which this community does not allow.",
       "nodeType": "end"
     },
-    "VAGUE_TEXT": {
-      "description": "Is it too vague to tell what is offered or wanted?",
+    "DUPLICATE_ITEM": {
+      "description": "Is it the same item as one of the member's other open posts?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Freegle asks members to name the items they want, for example \"a sofa, a cooker or a bed\". Is this post a general request that names no specific item - such as \"anything\", \"various\", \"any dog items\", or a single broad category like \"furniture\" or \"electrical\" - or, for an offer, is it unclear what is being given?",
-        "threshold": 0.7
+        "when": "has_other_posts",
+        "context": "other_posts",
+        "threshold": 0.7,
+        "question": "Compare this post with the member's other open posts on this community, listed below. Is it the same item as one of them, even if worded differently?"
       }
     },
-    "HOLD_VAGUE_TEXT": {
+    "HOLD_DUPLICATE_ITEM": {
+      "description": "It is the same item as one of the member's other open posts on this community.",
+      "nodeType": "end"
+    },
+    "VAGUE": {
+      "description": "Is it too vague: does it name no specific item?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "threshold": 0.7,
+        "flags": [
+          "vague"
+        ],
+        "hint": "vague",
+        "question": "Freegle asks members to name the items they want, for example \"a sofa, a cooker or a bed\". Is this post a general request that names no specific item - \"anything\", \"various\", \"any dog items\", or only a broad category like \"furniture\" or \"electrical\" - or, for an offer, is it unclear what is being given? A short post that names one specific item is fine."
+      }
+    },
+    "HOLD_VAGUE": {
       "description": "Too vague: Freegle asks members to name the items they want. Ask the member to say what the item is.",
       "nodeType": "end"
     },
     "NOT_AN_ITEM": {
-      "description": "Is it about something other than an item?",
+      "description": "Is it about something other than a physical item?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Freegle posts must offer or ask for physical items, to keep them out of landfill. Is this post about something else - a service, job, event, lift, room, help, a question or general chat - rather than a physical item? Tickets and vouchers are covered by another question, so answer no for those.",
-        "threshold": 0.7
+        "threshold": 0.7,
+        "flags": [
+          "notitem"
+        ],
+        "question": "Freegle posts must offer or ask for physical items, to keep them out of landfill. Is this post about something else: a service, job, event, lift, room, help, a question, general chat, a code, voucher or ticket sent electronically, or an appeal for people to buy new goods to donate?"
       }
     },
     "HOLD_NOT_AN_ITEM": {
-      "description": "This post is not offering or requesting a physical item.",
+      "description": "It is not about a physical item. Freegle posts must offer or ask for items, to keep them out of landfill.",
       "nodeType": "end"
     },
-    "SELLING": {
+    "MONEY": {
       "description": "Does it ask for or offer money?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Everything on Freegle must be given entirely free, with no strings. Does this post ask for or offer money in any form - a price, \"ono\", a \"donation\" to the poster, or payment for delivery, fuel or postage?",
-        "threshold": 0.7
+        "threshold": 0.7,
+        "flags": [
+          "money"
+        ],
+        "question": "Everything on Freegle must be given entirely free, with no strings. Does this post ask for or offer money in any form: a price, \"ono\", a \"donation\" or \"contribution\" to the poster, a reward, or payment for delivery, fuel or postage?"
       }
     },
-    "HOLD_SELLING": {
-      "description": "Asks for or offers money - everything on Freegle must be given entirely free.",
+    "HOLD_MONEY": {
+      "description": "Asks for or offers money. Everything on Freegle must be given entirely free.",
+      "nodeType": "end"
+    },
+    "LISTING": {
+      "description": "Does it read like a sale advert or a trader's listing?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "threshold": 0.7,
+        "flags": [
+          "listing"
+        ],
+        "question": "Does this post read as a commercial sale advert or a trader's listing rather than a member giving something away: for example a listing copied from a sale site with \"buyer\", \"condition:\", \"model:\" or \"RRP\", paid delivery or transport offered, or a business advertising itself?"
+      }
+    },
+    "HOLD_LISTING": {
+      "description": "It reads like a sale advert or a trader's listing rather than a member giving something away.",
       "nodeType": "end"
     },
     "LOAN": {
@@ -173,13 +251,16 @@
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post asking to borrow something, or offering to lend something?",
         "threshold": 0.7,
-        "rule": "allowloans"
+        "rule": "allowloans",
+        "flags": [
+          "loan"
+        ],
+        "question": "Is this post asking to borrow something, or offering to lend something, so that it would be given back?"
       }
     },
     "HOLD_LOAN": {
-      "description": "Asks to borrow - this community does not allow loans.",
+      "description": "Asks to borrow, or offers a loan. This community does not allow loans.",
       "nodeType": "end"
     },
     "SWAP": {
@@ -187,12 +268,47 @@
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is the poster asking for something in exchange - another item, a favour or work - rather than giving or asking freely?",
-        "threshold": 0.7
+        "threshold": 0.7,
+        "flags": [
+          "swap"
+        ],
+        "question": "Is the poster asking for something in exchange - another item, a favour or work - rather than giving or asking freely?"
       }
     },
     "HOLD_SWAP": {
-      "description": "Asks for something in exchange - posts on Freegle must be free.",
+      "description": "Asks for something in exchange. Posts on Freegle must be free.",
+      "nodeType": "end"
+    },
+    "ILLEGAL": {
+      "description": "Is it illegal, counterfeit or stolen?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "threshold": 0.7,
+        "flags": [
+          "illegal"
+        ],
+        "question": "Is this item illegal to own, give away or use in the UK, or counterfeit, pirated, stolen, or something that needs a licence the post does not mention?"
+      }
+    },
+    "HOLD_ILLEGAL": {
+      "description": "It looks illegal to give away in the UK, counterfeit, or stolen.",
+      "nodeType": "end"
+    },
+    "HAZARDOUS": {
+      "description": "Is it a hazardous or restricted substance?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "text",
+        "threshold": 0.7,
+        "flags": [
+          "hazardous"
+        ],
+        "question": "Is this post about a hazardous or restricted substance: chemicals, pesticides or weedkiller, fuel, fireworks, asbestos, or anything else dangerous to hand over?"
+      }
+    },
+    "HOLD_HAZARDOUS": {
+      "description": "It is a hazardous or restricted substance.",
       "nodeType": "end"
     },
     "ANIMALS_OFFER": {
@@ -200,14 +316,17 @@
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post offering a live animal, such as a pet or livestock, for rehoming?",
         "threshold": 0.7,
         "rule": "animalsoffer",
-        "when": "is_offer"
+        "when": "is_offer",
+        "flags": [
+          "animals"
+        ],
+        "question": "Is this post offering a live animal, such as a pet or livestock, for rehoming?"
       }
     },
     "HOLD_ANIMALS_OFFER": {
-      "description": "Offers an animal - this community does not allow animals to be offered this way.",
+      "description": "Offers a live animal for rehoming. This community does not allow it.",
       "nodeType": "end"
     },
     "ANIMALS_WANTED": {
@@ -215,42 +334,51 @@
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post asking for a live animal, such as a pet or livestock?",
         "threshold": 0.7,
         "rule": "animalswanted",
-        "when": "is_wanted"
+        "when": "is_wanted",
+        "flags": [
+          "animals"
+        ],
+        "question": "Is this post asking for a live animal, such as a pet or livestock? A very short post naming a breed or kind of animal counts."
       }
     },
     "HOLD_ANIMALS_WANTED": {
-      "description": "Asks for an animal - this community does not allow animals to be requested this way.",
+      "description": "Asks for a live animal. This community does not allow it.",
       "nodeType": "end"
     },
     "WEAPONS": {
-      "description": "Is this post about a weapon?",
+      "description": "Is it about a weapon?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about a weapon?",
         "threshold": 0.7,
-        "rule": "weapons"
+        "rule": "weapons",
+        "flags": [
+          "weapons"
+        ],
+        "question": "Is this post about a weapon of any kind, including air guns, crossbows, swords and catapults?"
       }
     },
     "HOLD_WEAPONS": {
-      "description": "Mentions a weapon - this community does not allow weapons.",
+      "description": "Mentions a weapon. This community does not allow them.",
       "nodeType": "end"
     },
     "FIREARMS": {
-      "description": "Is this post about a firearm or ammunition?",
+      "description": "Is it about a firearm?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about a firearm or ammunition?",
         "threshold": 0.7,
-        "rule": "firearms"
+        "rule": "firearms",
+        "flags": [
+          "weapons"
+        ],
+        "question": "Is this post about a firearm, including an air rifle, air pistol or BB gun, or ammunition?"
       }
     },
     "HOLD_FIREARMS": {
-      "description": "Mentions a firearm - this community does not allow firearms.",
+      "description": "Mentions a firearm. This community does not allow them.",
       "nodeType": "end"
     },
     "KNIVES": {
@@ -258,41 +386,50 @@
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about a knife or other bladed item, other than ordinary cutlery?",
         "threshold": 0.7,
-        "rule": "knives"
+        "rule": "knives",
+        "flags": [
+          "weapons"
+        ],
+        "question": "Is this post about a knife or other bladed item, other than ordinary cutlery or kitchen knives in a set?"
       }
     },
     "HOLD_KNIVES": {
-      "description": "Mentions a knife or bladed weapon - this community does not allow them.",
+      "description": "Mentions knives. This community does not allow them.",
       "nodeType": "end"
     },
-    "MEDICINE": {
+    "MEDICINE_RX": {
       "description": "Is it about prescription medicine?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about prescription medicine?",
         "threshold": 0.7,
-        "rule": "medicationsprescription"
+        "rule": "medicationsprescription",
+        "flags": [
+          "medicine"
+        ],
+        "question": "Is this post about prescription medicine?"
       }
     },
-    "HOLD_MEDICINE": {
-      "description": "Prescription medicine - this community does not allow it.",
+    "HOLD_MEDICINE_RX": {
+      "description": "Prescription medicine. This community does not allow it.",
       "nodeType": "end"
     },
     "MEDICINE_OTC": {
-      "description": "Is it about non-prescription medicine or supplements?",
+      "description": "Is it about non-prescription medicine, supplements or medical products?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about medicine you can buy without a prescription, or health supplements such as vitamins or nutritional drinks?",
         "threshold": 0.7,
-        "rule": "medicationsotc"
+        "rule": "medicationsotc",
+        "flags": [
+          "medicine"
+        ],
+        "question": "Is this post about medicine you can buy without a prescription, health supplements such as vitamins or nutritional drinks, or medical products such as nasal sprays, inhalers and spacers, test kits or dressings?"
       }
     },
     "HOLD_MEDICINE_OTC": {
-      "description": "Non-prescription medicine or supplements - this community does not allow them.",
+      "description": "Non-prescription medicine, supplements or medical products. This community does not allow them.",
       "nodeType": "end"
     },
     "MEDICINE_ANIMAL": {
@@ -300,13 +437,16 @@
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about medicine or treatments for animals, such as flea or worming treatments?",
         "threshold": 0.7,
-        "rule": "medicationsanimals"
+        "rule": "medicationsanimals",
+        "flags": [
+          "medicine"
+        ],
+        "question": "Is this post about medicine or treatments for animals, such as flea or worming treatments?"
       }
     },
     "HOLD_MEDICINE_ANIMAL": {
-      "description": "Medicine for animals - this community does not allow it.",
+      "description": "Medicine for animals. This community does not allow it.",
       "nodeType": "end"
     },
     "CONTACT_LENSES": {
@@ -314,13 +454,16 @@
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about contact lenses?",
         "threshold": 0.7,
-        "rule": "contactlenses"
+        "rule": "contactlenses",
+        "flags": [
+          "lenses"
+        ],
+        "question": "Is this post about contact lenses?"
       }
     },
     "HOLD_CONTACT_LENSES": {
-      "description": "Contact lenses - this community does not allow them.",
+      "description": "Contact lenses. This community does not allow them.",
       "nodeType": "end"
     },
     "LENS_SOLUTION": {
@@ -328,55 +471,67 @@
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about contact lens solution?",
         "threshold": 0.7,
-        "rule": "contactlensessolutions"
+        "rule": "contactlensessolutions",
+        "flags": [
+          "lenses"
+        ],
+        "question": "Is this post about contact lens solution or saline?"
       }
     },
     "HOLD_LENS_SOLUTION": {
-      "description": "Contact lens solution - this community does not allow it.",
+      "description": "Contact lens solution. This community does not allow it.",
       "nodeType": "end"
     },
     "ALCOHOL": {
-      "description": "Is this post about alcohol?",
+      "description": "Is it about alcohol?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about alcohol?",
         "threshold": 0.7,
-        "rule": "alcohol"
+        "rule": "alcohol",
+        "flags": [
+          "alcohol"
+        ],
+        "question": "Is this post about alcoholic drink?"
       }
     },
     "HOLD_ALCOHOL": {
-      "description": "Mentions alcohol - this community does not allow it.",
+      "description": "Alcohol. This community does not allow it.",
       "nodeType": "end"
     },
     "TOBACCO": {
-      "description": "Is this post about tobacco or cigarettes?",
+      "description": "Is it about tobacco?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about tobacco or cigarettes?",
         "threshold": 0.7,
-        "rule": "tobacco"
+        "rule": "tobacco",
+        "flags": [
+          "tobacco"
+        ],
+        "question": "Is this post about tobacco or cigarettes?"
       }
     },
     "HOLD_TOBACCO": {
-      "description": "Mentions tobacco or cigarettes - this community does not allow them.",
+      "description": "Tobacco. This community does not allow it.",
       "nodeType": "end"
     },
     "VAPING": {
-      "description": "Is this post about vaping or e-cigarettes?",
+      "description": "Is it about vaping?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about vaping or e-cigarettes?",
         "threshold": 0.7,
-        "rule": "vaping"
+        "rule": "vaping",
+        "flags": [
+          "vaping"
+        ],
+        "question": "Is this post about vapes, e-cigarettes or e-liquid?"
       }
     },
     "HOLD_VAPING": {
-      "description": "Mentions vaping or e-cigarettes - this community does not allow them.",
+      "description": "Vaping products. This community does not allow them.",
       "nodeType": "end"
     },
     "TICKETS": {
@@ -384,41 +539,48 @@
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about tickets, vouchers or coupons?",
         "threshold": 0.7,
-        "rule": "tickets"
+        "rule": "tickets",
+        "flags": [
+          "tickets"
+        ],
+        "question": "Is this post about tickets, vouchers, coupons, gift cards or discount codes?"
       }
     },
     "HOLD_TICKETS": {
-      "description": "Mentions tickets to an event - this community does not allow them.",
+      "description": "Tickets, vouchers or coupons. This community does not allow them.",
       "nodeType": "end"
     },
     "GAS": {
-      "description": "Is this post about a gas cylinder, such as Calor gas, propane, or butane?",
+      "description": "Is it about gas cylinders?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Is this post about a gas cylinder, such as Calor gas, propane, or butane?",
         "threshold": 0.7,
-        "rule": "gascylinders"
+        "rule": "gascylinders",
+        "flags": [
+          "gas"
+        ],
+        "question": "Is this post about gas cylinders or gas bottles, full or empty?"
       }
     },
     "HOLD_GAS": {
-      "description": "Mentions a gas cylinder - this community does not allow them.",
+      "description": "Gas cylinders. This community does not allow them.",
       "nodeType": "end"
     },
     "CONCERN": {
-      "description": "Does this post raise a safeguarding or welfare concern?",
+      "description": "A concern word matched: is the post really about that concern?",
       "nodeType": "tool",
       "check": {
         "kind": "text",
-        "question": "Does this post raise a safeguarding or welfare concern?",
         "threshold": 0.7,
-        "when": "concern_keyword"
+        "when": "concern_keyword",
+        "hint": "concern_keyword",
+        "question": "One of Freegle's concern words matched this post (see the findings above). Is the post genuinely about that concern, rather than the word appearing in an innocent sense?"
       }
     },
     "HOLD_CONCERN": {
-      "description": "This post raises a safeguarding or welfare concern that needs a moderator's attention.",
+      "description": "A concern word matched, and the post is about that concern.",
       "nodeType": "end"
     },
     "APPROVE": {
@@ -428,15 +590,15 @@
   },
   "transitions": [
     {
-      "id": "START_to_first",
+      "id": "start",
       "from": "START",
-      "to": "VETO",
+      "to": "MOD_NOTE",
       "trigger": "unconditional"
     },
     {
-      "id": "VETO_yes",
-      "from": "VETO",
-      "to": "HOLD_VETO",
+      "id": "MOD_NOTE_yes",
+      "from": "MOD_NOTE",
+      "to": "HOLD_MOD_NOTE",
       "trigger": "host_driven",
       "condition": "yes",
       "label": "yes",
@@ -445,9 +607,9 @@
       }
     },
     {
-      "id": "VETO_no",
-      "from": "VETO",
-      "to": "MODERATED",
+      "id": "MOD_NOTE_no",
+      "from": "MOD_NOTE",
+      "to": "MICROVOL_REJECT",
       "trigger": "host_driven",
       "condition": "no",
       "label": "no",
@@ -456,9 +618,9 @@
       }
     },
     {
-      "id": "MODERATED_yes",
-      "from": "MODERATED",
-      "to": "HOLD_MODERATED",
+      "id": "MICROVOL_REJECT_yes",
+      "from": "MICROVOL_REJECT",
+      "to": "HOLD_MICROVOL_REJECT",
       "trigger": "host_driven",
       "condition": "yes",
       "label": "yes",
@@ -467,9 +629,9 @@
       }
     },
     {
-      "id": "MODERATED_no",
-      "from": "MODERATED",
-      "to": "GROUP_CLOSED",
+      "id": "MICROVOL_REJECT_no",
+      "from": "MICROVOL_REJECT",
+      "to": "RECENT_ACTION",
       "trigger": "host_driven",
       "condition": "no",
       "label": "no",
@@ -478,9 +640,9 @@
       }
     },
     {
-      "id": "GROUP_CLOSED_yes",
-      "from": "GROUP_CLOSED",
-      "to": "HOLD_GROUP_CLOSED",
+      "id": "RECENT_ACTION_yes",
+      "from": "RECENT_ACTION",
+      "to": "HOLD_RECENT_ACTION",
       "trigger": "host_driven",
       "condition": "yes",
       "label": "yes",
@@ -489,8 +651,74 @@
       }
     },
     {
-      "id": "GROUP_CLOSED_no",
-      "from": "GROUP_CLOSED",
+      "id": "RECENT_ACTION_no",
+      "from": "RECENT_ACTION",
+      "to": "SPAMMER",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "SPAMMER_yes",
+      "from": "SPAMMER",
+      "to": "HOLD_SPAMMER",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "SPAMMER_no",
+      "from": "SPAMMER",
+      "to": "MEMBERSHIP_REVIEW",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "MEMBERSHIP_REVIEW_yes",
+      "from": "MEMBERSHIP_REVIEW",
+      "to": "HOLD_MEMBERSHIP_REVIEW",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "MEMBERSHIP_REVIEW_no",
+      "from": "MEMBERSHIP_REVIEW",
+      "to": "POSTING_STATUS",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "POSTING_STATUS_yes",
+      "from": "POSTING_STATUS",
+      "to": "HOLD_POSTING_STATUS",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "POSTING_STATUS_no",
+      "from": "POSTING_STATUS",
       "to": "NO_LOCATION",
       "trigger": "host_driven",
       "condition": "no",
@@ -535,7 +763,7 @@
     {
       "id": "OUTSIDE_UK_no",
       "from": "OUTSIDE_UK",
-      "to": "DUPLICATE",
+      "to": "DUPLICATE_SAME",
       "trigger": "host_driven",
       "condition": "no",
       "label": "no",
@@ -544,9 +772,9 @@
       }
     },
     {
-      "id": "SPAM_SIGNAL_yes",
-      "from": "SPAM_SIGNAL",
-      "to": "HOLD_SPAM_SIGNAL",
+      "id": "DUPLICATE_SAME_yes",
+      "from": "DUPLICATE_SAME",
+      "to": "HOLD_DUPLICATE_SAME",
       "trigger": "host_driven",
       "condition": "yes",
       "label": "yes",
@@ -555,9 +783,9 @@
       }
     },
     {
-      "id": "SPAM_SIGNAL_no",
-      "from": "SPAM_SIGNAL",
-      "to": "PERSONAL_INFO",
+      "id": "DUPLICATE_SAME_no",
+      "from": "DUPLICATE_SAME",
+      "to": "SPAM_LINKS",
       "trigger": "host_driven",
       "condition": "no",
       "label": "no",
@@ -566,9 +794,9 @@
       }
     },
     {
-      "id": "PERSONAL_INFO_yes",
-      "from": "PERSONAL_INFO",
-      "to": "HOLD_PERSONAL_INFO",
+      "id": "SPAM_LINKS_yes",
+      "from": "SPAM_LINKS",
+      "to": "HOLD_SPAM_LINKS",
       "trigger": "host_driven",
       "condition": "yes",
       "label": "yes",
@@ -577,8 +805,30 @@
       }
     },
     {
-      "id": "PERSONAL_INFO_no",
-      "from": "PERSONAL_INFO",
+      "id": "SPAM_LINKS_no",
+      "from": "SPAM_LINKS",
+      "to": "SPAM_PATTERN",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "SPAM_PATTERN_yes",
+      "from": "SPAM_PATTERN",
+      "to": "HOLD_SPAM_PATTERN",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "SPAM_PATTERN_no",
+      "from": "SPAM_PATTERN",
       "to": "LANGUAGE",
       "trigger": "host_driven",
       "condition": "no",
@@ -601,6 +851,50 @@
     {
       "id": "LANGUAGE_no",
       "from": "LANGUAGE",
+      "to": "PERSONAL_INFO",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "PERSONAL_INFO_yes",
+      "from": "PERSONAL_INFO",
+      "to": "HOLD_PERSONAL_INFO",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "PERSONAL_INFO_no",
+      "from": "PERSONAL_INFO",
+      "to": "DUPLICATE_ITEM",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "DUPLICATE_ITEM_yes",
+      "from": "DUPLICATE_ITEM",
+      "to": "HOLD_DUPLICATE_ITEM",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "DUPLICATE_ITEM_no",
+      "from": "DUPLICATE_ITEM",
       "to": "VAGUE",
       "trigger": "host_driven",
       "condition": "no",
@@ -623,7 +917,7 @@
     {
       "id": "VAGUE_no",
       "from": "VAGUE",
-      "to": "VAGUE_TEXT",
+      "to": "NOT_AN_ITEM",
       "trigger": "host_driven",
       "condition": "no",
       "label": "no",
@@ -645,7 +939,7 @@
     {
       "id": "NOT_AN_ITEM_no",
       "from": "NOT_AN_ITEM",
-      "to": "SELLING",
+      "to": "MONEY",
       "trigger": "host_driven",
       "condition": "no",
       "label": "no",
@@ -654,9 +948,9 @@
       }
     },
     {
-      "id": "SELLING_yes",
-      "from": "SELLING",
-      "to": "HOLD_SELLING",
+      "id": "MONEY_yes",
+      "from": "MONEY",
+      "to": "HOLD_MONEY",
       "trigger": "host_driven",
       "condition": "yes",
       "label": "yes",
@@ -665,8 +959,30 @@
       }
     },
     {
-      "id": "SELLING_no",
-      "from": "SELLING",
+      "id": "MONEY_no",
+      "from": "MONEY",
+      "to": "LISTING",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "LISTING_yes",
+      "from": "LISTING",
+      "to": "HOLD_LISTING",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "LISTING_no",
+      "from": "LISTING",
       "to": "LOAN",
       "trigger": "host_driven",
       "condition": "no",
@@ -690,6 +1006,72 @@
       "id": "LOAN_no",
       "from": "LOAN",
       "to": "SWAP",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "SWAP_yes",
+      "from": "SWAP",
+      "to": "HOLD_SWAP",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "SWAP_no",
+      "from": "SWAP",
+      "to": "ILLEGAL",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "ILLEGAL_yes",
+      "from": "ILLEGAL",
+      "to": "HOLD_ILLEGAL",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "ILLEGAL_no",
+      "from": "ILLEGAL",
+      "to": "HAZARDOUS",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "HAZARDOUS_yes",
+      "from": "HAZARDOUS",
+      "to": "HOLD_HAZARDOUS",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "HAZARDOUS_no",
+      "from": "HAZARDOUS",
+      "to": "ANIMALS_OFFER",
       "trigger": "host_driven",
       "condition": "no",
       "label": "no",
@@ -799,7 +1181,7 @@
     {
       "id": "KNIVES_no",
       "from": "KNIVES",
-      "to": "MEDICINE",
+      "to": "MEDICINE_RX",
       "trigger": "host_driven",
       "condition": "no",
       "label": "no",
@@ -808,9 +1190,9 @@
       }
     },
     {
-      "id": "MEDICINE_yes",
-      "from": "MEDICINE",
-      "to": "HOLD_MEDICINE",
+      "id": "MEDICINE_RX_yes",
+      "from": "MEDICINE_RX",
+      "to": "HOLD_MEDICINE_RX",
       "trigger": "host_driven",
       "condition": "yes",
       "label": "yes",
@@ -819,9 +1201,97 @@
       }
     },
     {
-      "id": "MEDICINE_no",
-      "from": "MEDICINE",
+      "id": "MEDICINE_RX_no",
+      "from": "MEDICINE_RX",
       "to": "MEDICINE_OTC",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "MEDICINE_OTC_yes",
+      "from": "MEDICINE_OTC",
+      "to": "HOLD_MEDICINE_OTC",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "MEDICINE_OTC_no",
+      "from": "MEDICINE_OTC",
+      "to": "MEDICINE_ANIMAL",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "MEDICINE_ANIMAL_yes",
+      "from": "MEDICINE_ANIMAL",
+      "to": "HOLD_MEDICINE_ANIMAL",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "MEDICINE_ANIMAL_no",
+      "from": "MEDICINE_ANIMAL",
+      "to": "CONTACT_LENSES",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "CONTACT_LENSES_yes",
+      "from": "CONTACT_LENSES",
+      "to": "HOLD_CONTACT_LENSES",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "CONTACT_LENSES_no",
+      "from": "CONTACT_LENSES",
+      "to": "LENS_SOLUTION",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "LENS_SOLUTION_yes",
+      "from": "LENS_SOLUTION",
+      "to": "HOLD_LENS_SOLUTION",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "LENS_SOLUTION_no",
+      "from": "LENS_SOLUTION",
+      "to": "ALCOHOL",
       "trigger": "host_driven",
       "condition": "no",
       "label": "no",
@@ -954,160 +1424,6 @@
       "id": "CONCERN_no",
       "from": "CONCERN",
       "to": "APPROVE",
-      "trigger": "host_driven",
-      "condition": "no",
-      "label": "no",
-      "metadata": {
-        "answer": "no"
-      }
-    },
-    {
-      "id": "DUPLICATE_yes",
-      "from": "DUPLICATE",
-      "to": "HOLD_DUPLICATE",
-      "trigger": "host_driven",
-      "condition": "yes",
-      "label": "yes",
-      "metadata": {
-        "answer": "yes"
-      }
-    },
-    {
-      "id": "DUPLICATE_no",
-      "from": "DUPLICATE",
-      "to": "SPAM_SIGNAL",
-      "trigger": "host_driven",
-      "condition": "no",
-      "label": "no",
-      "metadata": {
-        "answer": "no"
-      }
-    },
-    {
-      "id": "VAGUE_TEXT_yes",
-      "from": "VAGUE_TEXT",
-      "to": "HOLD_VAGUE_TEXT",
-      "trigger": "host_driven",
-      "condition": "yes",
-      "label": "yes",
-      "metadata": {
-        "answer": "yes"
-      }
-    },
-    {
-      "id": "VAGUE_TEXT_no",
-      "from": "VAGUE_TEXT",
-      "to": "NOT_AN_ITEM",
-      "trigger": "host_driven",
-      "condition": "no",
-      "label": "no",
-      "metadata": {
-        "answer": "no"
-      }
-    },
-    {
-      "id": "SWAP_yes",
-      "from": "SWAP",
-      "to": "HOLD_SWAP",
-      "trigger": "host_driven",
-      "condition": "yes",
-      "label": "yes",
-      "metadata": {
-        "answer": "yes"
-      }
-    },
-    {
-      "id": "SWAP_no",
-      "from": "SWAP",
-      "to": "ANIMALS_OFFER",
-      "trigger": "host_driven",
-      "condition": "no",
-      "label": "no",
-      "metadata": {
-        "answer": "no"
-      }
-    },
-    {
-      "id": "MEDICINE_OTC_yes",
-      "from": "MEDICINE_OTC",
-      "to": "HOLD_MEDICINE_OTC",
-      "trigger": "host_driven",
-      "condition": "yes",
-      "label": "yes",
-      "metadata": {
-        "answer": "yes"
-      }
-    },
-    {
-      "id": "MEDICINE_OTC_no",
-      "from": "MEDICINE_OTC",
-      "to": "MEDICINE_ANIMAL",
-      "trigger": "host_driven",
-      "condition": "no",
-      "label": "no",
-      "metadata": {
-        "answer": "no"
-      }
-    },
-    {
-      "id": "MEDICINE_ANIMAL_yes",
-      "from": "MEDICINE_ANIMAL",
-      "to": "HOLD_MEDICINE_ANIMAL",
-      "trigger": "host_driven",
-      "condition": "yes",
-      "label": "yes",
-      "metadata": {
-        "answer": "yes"
-      }
-    },
-    {
-      "id": "MEDICINE_ANIMAL_no",
-      "from": "MEDICINE_ANIMAL",
-      "to": "CONTACT_LENSES",
-      "trigger": "host_driven",
-      "condition": "no",
-      "label": "no",
-      "metadata": {
-        "answer": "no"
-      }
-    },
-    {
-      "id": "CONTACT_LENSES_yes",
-      "from": "CONTACT_LENSES",
-      "to": "HOLD_CONTACT_LENSES",
-      "trigger": "host_driven",
-      "condition": "yes",
-      "label": "yes",
-      "metadata": {
-        "answer": "yes"
-      }
-    },
-    {
-      "id": "CONTACT_LENSES_no",
-      "from": "CONTACT_LENSES",
-      "to": "LENS_SOLUTION",
-      "trigger": "host_driven",
-      "condition": "no",
-      "label": "no",
-      "metadata": {
-        "answer": "no"
-      }
-    },
-    {
-      "id": "LENS_SOLUTION_yes",
-      "from": "LENS_SOLUTION",
-      "to": "HOLD_LENS_SOLUTION",
-      "trigger": "host_driven",
-      "condition": "yes",
-      "label": "yes",
-      "metadata": {
-        "answer": "yes"
-      }
-    },
-    {
-      "id": "LENS_SOLUTION_no",
-      "from": "LENS_SOLUTION",
-      "to": "ALCOHOL",
       "trigger": "host_driven",
       "condition": "no",
       "label": "no",

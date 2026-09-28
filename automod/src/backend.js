@@ -8,6 +8,7 @@ import { execFile } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { SYSTEM, BATCH_JSON, SINGLE_JSON, batchPrompt, singlePrompt, keywordFlags } from './prompt.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
@@ -95,6 +96,7 @@ export class FakeBackend {
   }
 
   async ask(question, text) {
+    // Extra options (flags, hints, context) do not change a fake answer.
     let hit;
     if (this.yesFor) {
       hit = this.yesFor.includes(question);
@@ -112,28 +114,41 @@ const ClaudeAnswer = z.object({
   evidence: z.string(),
 });
 
+const ClaudeFeatures = z.object({
+  items: z.array(z.string()),
+  item_named: z.boolean(),
+  money: z.string(),
+  sale_listing: z.string(),
+  borrowing: z.string(),
+  exchange: z.string(),
+  animals: z.string(),
+  medicines: z.string(),
+  substances: z.string(),
+  links_or_codes: z.string(),
+  readings: z.string(),
+});
+
 const ClaudeAnswers = z.object({
+  features: ClaudeFeatures,
   answers: z.array(ClaudeAnswer.extend({ id: z.number() })),
 });
 
 // Posts whose answers are kept, so a walk asks Claude once per post.
 const ANSWER_CACHE_SIZE = 200;
 
-const CLAUDE_SYSTEM =
-  'You check posts on Freegle, a UK site where people give away and ask for unwanted ' +
-  'items for free. You are asked one yes/no question about one post. Answer only that ' +
-  'question, about this post as written. "confidence" is how sure you are that the answer ' +
-  'to the question is yes, from 0 to 1. "evidence" is a short quote from the post that ' +
-  'decided it, or an empty string.';
+/** setQuestions takes strings or {question, flags}; this is the one shape used inside. */
+function normaliseQuestions(questions) {
+  return questions.map((q) => (typeof q === 'string' ? { question: q, flags: [] } : { flags: [], ...q }));
+}
 
 /**
- * Frontier backend: Claude answers with a strict JSON verdict. It is the default for every
- * text node because a local model only earns a node by matching it (see
- * plans/active/automod-flowchart.md, "Choosing models: top down"). Given the chart's text
- * questions (setQuestions), the first question asked about a post answers all of them in
- * one call and the rest of the walk reads the cached answers. Only the post's type,
- * subject and body are sent. A refusal or a malformed answer throws, which holds the post
- * for a moderator.
+ * Frontier backend: Claude, asked to extract the post's features and then answer every
+ * question in one call per post (src/prompt.js). It is the default for every text node
+ * because a local model only earns a node by matching it (plans/active/automod-flowchart.md,
+ * "Choosing models: top down"). A question that carries keyword flags and comes back "no"
+ * while its flagged words appear in the post is asked again on its own with those words
+ * quoted: the review pass. Only the post's type, subject and body are sent. A refusal or a
+ * malformed answer throws, which holds the post for a moderator.
  */
 export class ClaudeBackend {
   constructor({ apiKey = process.env.ANTHROPIC_API_KEY, model, effort } = {}) {
@@ -145,12 +160,16 @@ export class ClaudeBackend {
   }
 
   setQuestions(questions) {
-    this.questions = questions;
+    this.questions = normaliseQuestions(questions);
   }
 
-  async askAll(text) {
+  questionTexts() {
+    return this.questions.map((q) => q.question);
+  }
+
+  async askAll(text, hints) {
     if (!this.cache.has(text)) {
-      const pending = this.requestAll(text).catch((err) => {
+      const pending = this.requestAll(text, hints).catch((err) => {
         this.cache.delete(text);
         throw err;
       });
@@ -162,61 +181,79 @@ export class ClaudeBackend {
     return this.cache.get(text);
   }
 
-  async requestAll(text) {
-    const numbered = this.questions.map((q, i) => `${i}: ${q}`).join('\n');
+  batchPromptFor(text, hints) {
+    return batchPrompt({ questions: this.questionTexts(), text, flags: keywordFlags(text), hints });
+  }
+
+  async requestAll(text, hints) {
     const response = await this.client.messages.parse({
       model: this.model,
-      max_tokens: 4000,
+      max_tokens: 6000,
       output_config: { effort: this.effort, format: zodOutputFormat(ClaudeAnswers) },
-      system: CLAUDE_SYSTEM.replace('one yes/no question', 'several yes/no questions'),
-      messages: [
-        {
-          role: 'user',
-          content: `Answer every question, giving its number as id.\n\nQuestions:\n${numbered}\n\nPost:\n${text}`,
-        },
-      ],
+      system: SYSTEM,
+      messages: [{ role: 'user', content: this.batchPromptFor(text, hints) }],
     });
 
     if (response.stop_reason === 'refusal' || !response.parsed_output) {
       throw new Error(`claude gave no usable answer (${response.stop_reason})`);
     }
 
+    return this.indexAnswers(response.parsed_output);
+  }
+
+  indexAnswers({ features, answers }) {
     const byQuestion = new Map();
-    for (const a of response.parsed_output.answers) {
+    for (const a of answers) {
       if (this.questions[a.id] !== undefined) {
-        byQuestion.set(this.questions[a.id], a);
+        byQuestion.set(this.questions[a.id].question, { ...a, features });
       }
     }
     return byQuestion;
   }
 
-  async ask(question, text) {
-    if (this.questions.includes(question)) {
-      const all = await this.askAll(text);
-      const a = all.get(question);
-      if (!a) {
-        throw new Error('claude left a question unanswered');
-      }
-      return this.toResult(a);
+  /**
+   * @param {string} question
+   * @param {string} text
+   * @param {{flags?: string[], flagged?: string[], hints?: string[], context?: string}} [opts]
+   *   flags: keyword categories this question is about; flagged: the words from them found in
+   *   the post; hints: findings from Freegle's own checks, for the batched call; context:
+   *   extra text this question needs, which makes it a call of its own.
+   */
+  async ask(question, text, opts = {}) {
+    const known = this.questions.find((q) => q.question === question);
+    if (!known || opts.context) {
+      return this.askOne(question, text, opts);
     }
 
-    return this.askOne(question, text);
+    const all = await this.askAll(text, opts.hints);
+    const a = all.get(question);
+    if (!a) {
+      throw new Error('claude left a question unanswered');
+    }
+
+    // The review pass: a flagged word in the post and a "no" is worth a second, focused look.
+    if (a.answer === 'no' && opts.flagged?.length) {
+      const again = await this.askOne(question, text, opts);
+      return { ...again, model: `${again.model}+review`, features: a.features };
+    }
+
+    return this.toResult(a);
   }
 
-  toResult({ answer, confidence, evidence }) {
+  toResult({ answer, confidence, evidence, features }) {
     const c = Math.min(1, Math.max(0, confidence));
-    // p is the probability of "yes"; the stated answer wins over a contradictory confidence.
+    // p is the probability of "yes"; the stated answer is the decision.
     const p = answer === 'yes' ? Math.max(c, 0.5) : Math.min(c, 0.49);
-    return { p, model: `claude:${this.model}`, evidence };
+    return { p, answer, model: `claude:${this.model}`, evidence, features };
   }
 
-  async askOne(question, text) {
+  async askOne(question, text, opts = {}) {
     const response = await this.client.messages.parse({
       model: this.model,
       max_tokens: 2000,
       output_config: { effort: this.effort, format: zodOutputFormat(ClaudeAnswer) },
-      system: CLAUDE_SYSTEM,
-      messages: [{ role: 'user', content: `Question: ${question}\n\nPost:\n${text}` }],
+      system: SYSTEM,
+      messages: [{ role: 'user', content: singlePrompt({ question, text, flagged: opts.flagged, context: opts.context }) }],
     });
 
     if (response.stop_reason === 'refusal' || !response.parsed_output) {
@@ -231,7 +268,7 @@ export class ClaudeBackend {
  * Claude through the `claude` CLI on a subscription token (CLAUDE_CODE_OAUTH_TOKEN, from
  * `claude setup-token`), for a deployment with no metered API key. A raw OAuth call to the
  * Messages API is not supported, so this shells out, the same way Community News does. Same
- * questions, same one call per post, same answer shape as ClaudeBackend. The CLI runs in an
+ * prompts, same one call per post, same answer shape as ClaudeBackend. The CLI runs in an
  * empty config directory so no settings, hooks or tools load, and with no tools allowed.
  */
 export class ClaudeCliBackend extends ClaudeBackend {
@@ -268,31 +305,18 @@ export class ClaudeCliBackend extends ClaudeBackend {
     });
   }
 
-  async requestAll(text) {
-    const numbered = this.questions.map((q, i) => `${i}: ${q}`).join('\n');
-    const out = await this.run(
-      CLAUDE_SYSTEM.replace('one yes/no question', 'several yes/no questions') +
-        '\n\nReply with ONLY a JSON object {"answers":[{"id":number,"answer":"yes"|"no","confidence":number,"evidence":string}]}, one entry per question.' +
-        `\n\nQuestions:\n${numbered}\n\nPost:\n${text}`,
-    );
+  async requestAll(text, hints) {
+    const out = await this.run(`${SYSTEM}\n\n${BATCH_JSON}\n\n${this.batchPromptFor(text, hints)}`);
     const parsed = ClaudeAnswers.safeParse(out);
     if (!parsed.success) {
       throw new Error('claude cli answer did not match the schema');
     }
-    const byQuestion = new Map();
-    for (const a of parsed.data.answers) {
-      if (this.questions[a.id] !== undefined) {
-        byQuestion.set(this.questions[a.id], a);
-      }
-    }
-    return byQuestion;
+    return this.indexAnswers(parsed.data);
   }
 
-  async askOne(question, text) {
+  async askOne(question, text, opts = {}) {
     const out = await this.run(
-      CLAUDE_SYSTEM +
-        '\n\nReply with ONLY a JSON object {"answer":"yes"|"no","confidence":number,"evidence":string}.' +
-        `\n\nQuestion: ${question}\n\nPost:\n${text}`,
+      `${SYSTEM}\n\n${SINGLE_JSON}\n\n${singlePrompt({ question, text, flagged: opts.flagged, context: opts.context })}`,
     );
     const parsed = ClaudeAnswer.safeParse(out);
     if (!parsed.success) {
@@ -318,7 +342,7 @@ export class JevBackend {
   }
 
   setQuestions(questions) {
-    this.questions = questions;
+    this.questions = normaliseQuestions(questions).map((q) => q.question);
   }
 
   async requestAll(text) {
@@ -349,7 +373,31 @@ export class JevBackend {
     return byQuestion;
   }
 
-  async ask(question, text) {
+  async askSingle(question, text, context) {
+    const r = await fetch(`${this.baseUrl}/v1/systemone`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: this.model,
+        state: { freegle_post: text, context: context || '' },
+        questions: { q: { type: 'noul', instructions: question, criteria: { true: 'Yes, for this post as written', false: 'No, for this post as written' } } },
+      }),
+    });
+    if (!r.ok) {
+      throw new Error(`jev ${r.status}`);
+    }
+    const j = await r.json();
+    const p = j.answers?.q?.noul;
+    if (typeof p !== 'number') {
+      throw new Error('jev gave no probability');
+    }
+    return { p, model: `jev:${this.model}` };
+  }
+
+  async ask(question, text, opts = {}) {
+    if (opts.context || !this.questions.includes(question)) {
+      return this.askSingle(question, text, opts.context);
+    }
     if (!this.cache.has(text)) {
       const pending = this.requestAll(text).catch((err) => {
         this.cache.delete(text);
@@ -406,8 +454,9 @@ export class BackendRouter {
     return this.instances[key];
   }
 
-  ask(question, text, name) {
-    return this.get(name).ask(question, text);
+  // opts.backendName picks the backend; the rest of opts goes to it.
+  ask(question, text, opts = {}) {
+    return this.get(opts.backendName).ask(question, text, opts);
   }
 }
 

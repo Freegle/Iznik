@@ -60,16 +60,16 @@ test('evaluate compares backends node by node and against the moderator outcome'
   const router = routerWith({ claude: new FakeBackend(), nli: new FakeBackend() });
   const posts = [
     { id: 1, subject: 'OFFER: Sofa', body: 'Brown sofa, collect from Leeds', type: 'Offer', facts: {}, rules: {}, outcome: 'approved' },
-    { id: 2, subject: 'OFFER: Bike', body: 'Selling my bike, money please', type: 'Offer', facts: {}, rules: {}, outcome: 'rejected', labels: { SELLING: 'yes' } },
+    { id: 2, subject: 'OFFER: Bike', body: 'Selling my bike, money please', type: 'Offer', facts: {}, rules: {}, outcome: 'rejected', labels: { MONEY: 'yes' } },
   ];
   const report = await evaluate(posts, { backends: ['claude', 'nli'], router });
 
   assert.equal(report.posts, 2);
-  assert.equal(report.nodes.SELLING.asked, 2);
-  assert.equal(report.nodes.SELLING.agree, 2, 'two copies of the same backend always agree');
-  assert.equal(report.nodes.SELLING.labelled, 1);
+  assert.equal(report.nodes.MONEY.asked, 2);
+  assert.equal(report.nodes.MONEY.agree, 2, 'two copies of the same backend always agree');
+  assert.equal(report.nodes.MONEY.labelled, 1);
   assert.equal(report.verdicts.claude.rejected, 1);
-  assert.match(formatReport(report), /SELLING/);
+  assert.match(formatReport(report), /MONEY/);
 });
 
 test('claude answers every chart question in one call per post', async () => {
@@ -78,7 +78,7 @@ test('claude answers every chart question in one call per post', async () => {
   let calls = 0;
   claude.requestAll = async () => {
     calls++;
-    return new Map(claude.questions.map((q) => [q, { answer: 'no', confidence: 0.1, evidence: '' }]));
+    return new Map(claude.questions.map((q) => [q.question, { answer: 'no', confidence: 0.1, evidence: '' }]));
   };
   const router = new BackendRouter({ AUTOMOD_BACKEND: 'claude' });
   router.instances.claude = claude;
@@ -112,4 +112,34 @@ test('jev asks every chart question in one request and reads each probability of
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test('the review pass asks again, on its own, when a flagged word met a no', async () => {
+  const { ClaudeBackend } = await import('../src/backend.js');
+  const claude = new ClaudeBackend({ apiKey: 'test' });
+  const calls = [];
+  claude.requestAll = async () => new Map(claude.questions.map((q) => [q.question, { answer: 'no', confidence: 0.2, evidence: '' }]));
+  claude.askOne = async (question, text, opts) => {
+    calls.push(opts);
+    return { p: 0.9, answer: 'yes', model: 'claude:test', evidence: 'Buyer must remove' };
+  };
+  claude.setQuestions([{ question: 'Money?', flags: ['money'] }, { question: 'Loan?', flags: ['loan'] }]);
+
+  const money = await claude.ask('Money?', 'Buyer must remove it', { flags: ['money'], flagged: ['buyer'] });
+  const loan = await claude.ask('Loan?', 'Buyer must remove it', { flags: ['loan'], flagged: [] });
+
+  assert.equal(money.answer, 'yes');
+  assert.equal(money.model, 'claude:test+review');
+  assert.deepEqual(calls[0].flagged, ['buyer']);
+  assert.equal(loan.answer, 'no', 'no flagged word, no second look');
+  assert.equal(calls.length, 1);
+});
+
+test('keyword flags match whole words and symbols', async () => {
+  const { keywordFlags } = await import('../src/prompt.js');
+  const f = keywordFlags('Selling my bike, £50 ono. Buyer collects.');
+  assert.ok(f.money.includes('£'));
+  assert.ok(f.money.includes('ono'));
+  assert.ok(f.listing.includes('buyer'));
+  assert.equal(keywordFlags('A rattan chair').animals, undefined, '"rat" inside "rattan" is not a flag');
 });

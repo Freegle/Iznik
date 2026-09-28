@@ -38,20 +38,20 @@ describe('validateChart', () => {
 
   test('rejects a tool node with no check', () => {
     const chart = realChart();
-    delete chart.states.VETO.check;
-    assert.throws(() => validateChart(chart), /VETO' has no valid check\.kind/);
+    delete chart.states.MOD_NOTE.check;
+    assert.throws(() => validateChart(chart), /MOD_NOTE' has no valid check\.kind/);
   });
 
   test('rejects a fact node with no check.fact', () => {
     const chart = realChart();
-    delete chart.states.VETO.check.fact;
-    assert.throws(() => validateChart(chart), /VETO' has no check\.fact/);
+    delete chart.states.MOD_NOTE.check.fact;
+    assert.throws(() => validateChart(chart), /MOD_NOTE' has no check\.fact/);
   });
 
   test('rejects a text node with no check.question', () => {
     const chart = realChart();
-    delete chart.states.SELLING.check.question;
-    assert.throws(() => validateChart(chart), /SELLING' has no check\.question/);
+    delete chart.states.MONEY.check.question;
+    assert.throws(() => validateChart(chart), /MONEY' has no check\.question/);
   });
 
   test('rejects a tool node missing its no transition', () => {
@@ -70,7 +70,7 @@ describe('validateChart', () => {
     const yesTransition = chart.transitions.find(
       (t) => t.from === 'LOAN' && t.metadata?.answer === 'yes',
     );
-    chart.transitions.push({ ...yesTransition, to: 'HOLD_VETO' });
+    chart.transitions.push({ ...yesTransition, to: 'HOLD_MOD_NOTE' });
     assert.throws(
       () => validateChart(chart),
       /LOAN' must have exactly one yes and one no transition \(found 2 yes, 1 no\)/,
@@ -91,152 +91,41 @@ describe('validateChart', () => {
 
   test('loadChart() runs the same checks against a file on disk', () => {
     const chart = realChart();
-    delete chart.states.VETO.check;
+    delete chart.states.MOD_NOTE.check;
     const brokenPath = writeChart(chart);
-    assert.throws(() => loadChart(brokenPath), /VETO' has no valid check\.kind/);
+    assert.throws(() => loadChart(brokenPath), /MOD_NOTE' has no valid check\.kind/);
   });
 });
 
-describe('createReviewer / review() - branch reachability', () => {
-  const cases = [
-    { name: 'VETO', facts: { member_veto: true }, end: 'HOLD_VETO' },
-    { name: 'MODERATED', facts: { member_moderated: true }, end: 'HOLD_MODERATED' },
-    { name: 'GROUP_CLOSED', facts: { group_disallows: true }, end: 'HOLD_GROUP_CLOSED' },
-    { name: 'NO_LOCATION', facts: { no_location: true }, end: 'HOLD_NO_LOCATION' },
-    { name: 'OUTSIDE_UK', facts: { outside_uk: true }, end: 'HOLD_OUTSIDE_UK' },
-    { name: 'SPAM_SIGNAL', facts: { spam_signal: true }, end: 'HOLD_SPAM_SIGNAL' },
-    { name: 'PERSONAL_INFO', facts: { personal_info: true }, end: 'HOLD_PERSONAL_INFO' },
-    { name: 'LANGUAGE', facts: { not_english: true }, end: 'HOLD_LANGUAGE' },
-    { name: 'DUPLICATE', facts: { duplicate: true }, end: 'HOLD_DUPLICATE' },
-    { name: 'VAGUE', facts: { vague: true }, end: 'HOLD_VAGUE' },
-    {
-      name: 'VAGUE_TEXT',
-      body: 'Wanted anything and various things please.',
-      end: 'HOLD_VAGUE_TEXT',
-    },
-    {
-      name: 'SWAP',
-      body: 'Happy to swap or trade for a lawnmower.',
-      end: 'HOLD_SWAP',
-    },
-    {
-      name: 'NOT_AN_ITEM',
-      body: 'Just fancy a chat about something in general, nothing specific.',
-      end: 'HOLD_NOT_AN_ITEM',
-    },
-    {
-      name: 'SELLING',
-      body: 'Trying to sell this for some money, will consider offers.',
-      end: 'HOLD_SELLING',
-    },
-    {
-      name: 'LOAN',
-      body: 'Can I borrow your ladder for the weekend please?',
-      end: 'HOLD_LOAN',
-    },
-    {
-      name: 'ANIMALS_OFFER',
-      facts: { is_offer: true },
-      body: 'This animal would suit a new owner, livestock enclosure included.',
-      end: 'HOLD_ANIMALS_OFFER',
-    },
-    {
-      name: 'ANIMALS_WANTED',
-      facts: { is_wanted: true },
-      body: 'Looking for an animal or livestock to add to our smallholding.',
-      end: 'HOLD_ANIMALS_WANTED',
-    },
-    {
-      name: 'WEAPONS',
-      body: 'This weapon needs a home urgently.',
-      end: 'HOLD_WEAPONS',
-    },
-    {
-      name: 'FIREARMS',
-      body: 'These firearm and ammunition boxes are for a collector.',
-      end: 'HOLD_FIREARMS',
-    },
-    {
-      name: 'KNIVES',
-      body: 'This knife set includes several bladed tools for the kitchen.',
-      end: 'HOLD_KNIVES',
-    },
-    {
-      name: 'MEDICINE_OTC',
-      body: 'Spare vitamins, unopened.',
-      end: 'HOLD_MEDICINE_OTC',
-    },
-    {
-      name: 'MEDICINE_ANIMAL',
-      body: 'Flea and worming treatments, unopened.',
-      end: 'HOLD_MEDICINE_ANIMAL',
-    },
-    {
-      name: 'CONTACT_LENSES',
-      body: 'Daily contact lenses, unopened.',
-      end: 'HOLD_CONTACT_LENSES',
-    },
-    {
-      name: 'MEDICINE',
-      body: 'Spare prescription medication no longer needed.',
-      end: 'HOLD_MEDICINE',
-    },
-    {
-      name: 'ALCOHOL',
-      body: 'A bottle of alcohol from a work party gift.',
-      end: 'HOLD_ALCOHOL',
-    },
-    {
-      name: 'TOBACCO',
-      body: 'Unopened tobacco and cigarettes packets.',
-      end: 'HOLD_TOBACCO',
-    },
-    {
-      name: 'VAPING',
-      body: 'Unused vaping starter kit, barely used.',
-      end: 'HOLD_VAPING',
-    },
-    {
-      name: 'TICKETS',
-      body: 'Two spare tickets no longer needed.',
-      end: 'HOLD_TICKETS',
-    },
-    {
-      name: 'GAS',
-      body: 'Empty calor gas cylinder for collection.',
-      end: 'HOLD_GAS',
-    },
-    {
-      name: 'CONCERN',
-      facts: { concern_keyword: true },
-      body: 'I want to raise a safeguarding welfare concern about this post.',
-      end: 'HOLD_CONCERN',
-    },
-  ];
+describe('createReviewer / review() - every branch holds', () => {
+  const chart = realChart();
+  const tools = Object.entries(chart.states).filter(([, s]) => s.nodeType === 'tool');
 
-  for (const testCase of cases) {
-    test(`${testCase.name} holds at ${testCase.end}`, async () => {
-      // Yes to exactly this node's question, so the case does not depend on its wording.
-      const question = realChart().states[testCase.name].check.question;
-      const backend = new FakeBackend({ yesFor: question ? [question] : [] });
+  // For each question, a request that makes exactly that question answer yes.
+  for (const [id, state] of tools) {
+    test(`${id} holds at HOLD_${id}`, async () => {
+      const check = state.check;
+      const facts = {};
+      const rules = {};
+      const request = { msgid: 1, groupid: 1, subject: 'Test post', body: 'A tidy box of odds and ends, works fine.', type: 'Offer' };
+      if (check.kind === 'fact') facts[check.fact] = true;
+      if (check.when) facts[check.when] = true;
+      if (check.requiresRule) rules[check.requiresRule] = true;
+      if (check.context) request[check.context] = ['WANTED: ladder'];
+      const backend = new FakeBackend({ yesFor: check.kind === 'text' ? [check.question] : [] });
       const reviewer = createReviewer({ backend, chartPath: CHART_PATH });
-      const result = await reviewer.review({
-        msgid: 1,
-        groupid: 1,
-        subject: 'Test post',
-        body: testCase.body || 'A tidy box of odds and ends, works fine.',
-        type: 'Offer',
-        facts: testCase.facts || {},
-        rules: {},
-      });
-      assert.equal(result.end, testCase.end);
+
+      const result = await reviewer.review({ ...request, facts, rules });
+
+      assert.equal(result.end, `HOLD_${id}`);
       assert.equal(result.verdict, 'hold');
-      assert.equal(result.reason, reviewer.chart.states[testCase.end].description);
+      assert.equal(result.reason, chart.states[`HOLD_${id}`].description);
+      assert.equal(result.path.at(-1).question, state.description, 'a step shows the short wording');
     });
   }
 
-  test('a clean post with no matching keywords or facts is approved', async () => {
-    const reviewer = createReviewer({ backend: new FakeBackend(), chartPath: CHART_PATH });
+  test('a clean post with no matching facts or answers is approved', async () => {
+    const reviewer = createReviewer({ backend: new FakeBackend({ yesFor: [] }), chartPath: CHART_PATH });
     const result = await reviewer.review({
       msgid: 2,
       groupid: 1,
@@ -248,138 +137,132 @@ describe('createReviewer / review() - branch reachability', () => {
     });
     assert.equal(result.verdict, 'approve');
     assert.equal(result.end, 'APPROVE');
-    // Every fact node (10) plus every text node (21) is walked when nothing matches.
-    assert.equal(result.path.length, 31);
+    // Every question is walked when nothing matches.
+    assert.equal(result.path.length, tools.length);
   });
 });
 
-describe('createReviewer / review() - rule and when short-circuits', () => {
-  test('a rule toggled on forces "no" even when the keyword matches', async () => {
-    const reviewer = createReviewer({ backend: new FakeBackend(), chartPath: CHART_PATH });
-    const result = await reviewer.review({
-      msgid: 3,
-      groupid: 1,
-      body: 'Can I borrow your ladder for the weekend please?',
-      type: 'Offer',
-      facts: {},
-      rules: { allowloans: true },
-    });
-    const loanStep = result.path.find((step) => step.node === 'LOAN');
-    assert.equal(loanStep.answer, 'no');
-    assert.equal(loanStep.model, 'rule');
-    assert.equal(loanStep.evidence, 'This community allows it');
-    // Walk continues past LOAN rather than holding there.
+describe('createReviewer / review() - gating', () => {
+  const loanQuestion = realChart().states.LOAN.check.question;
+
+  test('a rule the community allows answers no without asking', async () => {
+    const reviewer = createReviewer({ backend: new FakeBackend({ yesFor: [loanQuestion] }), chartPath: CHART_PATH });
+    const result = await reviewer.review({ msgid: 3, groupid: 1, body: 'Can I borrow your ladder?', type: 'Wanted', facts: {}, rules: { allowloans: true } });
+    const step = result.path.find((s) => s.node === 'LOAN');
+    assert.equal(step.answer, 'no');
+    assert.equal(step.model, 'rule');
+    assert.equal(step.evidence, 'This community allows it');
     assert.notEqual(result.end, 'HOLD_LOAN');
   });
 
-  test('a when precondition that is not met is skipped regardless of wording', async () => {
-    const reviewer = createReviewer({ backend: new FakeBackend(), chartPath: CHART_PATH });
+  test('a question that needs a rule the community has not set is not asked', async () => {
+    const reviewer = createReviewer({ backend: new FakeBackend({ yesFor: [] }), chartPath: CHART_PATH });
+    const result = await reviewer.review({ msgid: 3, groupid: 1, body: 'Ring me on 07700 900000', type: 'Offer', facts: { personal_info: true, personal_info_detail: 'phone number' }, rules: {} });
+    const step = result.path.find((s) => s.node === 'PERSONAL_INFO');
+    assert.equal(step.answer, 'no');
+    assert.equal(step.model, 'rule');
+    assert.notEqual(result.end, 'HOLD_PERSONAL_INFO');
+  });
+
+  test('a when precondition that is not met skips the question', async () => {
+    const offerQuestion = realChart().states.ANIMALS_OFFER.check.question;
+    const reviewer = createReviewer({ backend: new FakeBackend({ yesFor: [offerQuestion] }), chartPath: CHART_PATH });
+    const result = await reviewer.review({ msgid: 4, groupid: 1, body: 'Kitten needs a home', type: 'Offer', facts: {}, rules: {} });
+    const step = result.path.find((s) => s.node === 'ANIMALS_OFFER');
+    assert.equal(step.answer, 'no');
+    assert.equal(step.model, 'skipped');
+    assert.equal(step.evidence, 'Does not apply to this post');
+  });
+
+  test('a fact step carries the detail the batch gave as evidence', async () => {
+    const reviewer = createReviewer({ backend: new FakeBackend({ yesFor: [] }), chartPath: CHART_PATH });
+    const result = await reviewer.review({ msgid: 5, groupid: 1, facts: { mod_note: true, mod_note_detail: 'Note left 3 Sep' }, rules: {} });
+    assert.equal(result.end, 'HOLD_MOD_NOTE');
+    assert.equal(result.path.at(-1).evidence, 'Note left 3 Sep');
+  });
+});
+
+describe('createReviewer / review() - what the backend is told', () => {
+  test('keyword flags and hints reach the backend, and the flagged words are recorded', async () => {
+    const seen = [];
+    const backend = {
+      setQuestions() {},
+      async ask(question, text, opts) {
+        seen.push({ question, opts });
+        return { p: 0.1, answer: 'no', model: 'spy' };
+      },
+    };
+    const reviewer = createReviewer({ backend, chartPath: CHART_PATH });
     const result = await reviewer.review({
-      msgid: 4,
-      groupid: 1,
-      body: 'This animal would suit a new owner, livestock enclosure included.',
-      type: 'Offer',
-      facts: {}, // is_offer not set, so ANIMALS_OFFER is skipped despite the keyword match
-      rules: {},
+      msgid: 6, groupid: 1, type: 'Offer', subject: 'OFFER: Bike', body: 'Selling my bike, 50 pounds ono.',
+      facts: { vague: true, vague_detail: 'Subject is one word' }, rules: {},
     });
-    const offerStep = result.path.find((step) => step.node === 'ANIMALS_OFFER');
-    assert.equal(offerStep.answer, 'no');
-    assert.equal(offerStep.model, 'skipped');
-    assert.equal(offerStep.evidence, 'Does not apply to this post');
-    assert.notEqual(result.end, 'HOLD_ANIMALS_OFFER');
+    const money = seen.find((s) => s.question === realChart().states.MONEY.check.question);
+    assert.deepEqual(money.opts.flags, ['money']);
+    assert.ok(money.opts.flagged.includes('ono'));
+    assert.ok(money.opts.hints.some((h) => h.includes('Subject is one word')), 'the vague finding is a hint');
+    const step = result.path.find((s) => s.node === 'MONEY');
+    assert.match(step.evidence, /"ono"/);
+  });
+
+  test("a backend's own answer decides, whatever its probability", async () => {
+    const backend = { setQuestions() {}, async ask() { return { p: 0.55, answer: 'yes', model: 'spy' }; } };
+    const reviewer = createReviewer({ backend, chartPath: CHART_PATH });
+    const result = await reviewer.review({ msgid: 7, groupid: 1, body: 'x', type: 'Offer', facts: {}, rules: {} });
+    assert.equal(result.verdict, 'hold');
+    assert.equal(result.path.at(-1).answer, 'yes');
+  });
+
+  test('a question with context is asked with the request field put into words', async () => {
+    let got;
+    const backend = { setQuestions() {}, async ask(q, t, opts) { if (opts.context) got = opts.context; return { p: 0, answer: 'no', model: 'spy' }; } };
+    const reviewer = createReviewer({ backend, chartPath: CHART_PATH });
+    await reviewer.review({ msgid: 8, groupid: 1, body: 'Brown sofa', type: 'Offer', facts: { has_other_posts: true }, rules: {}, other_posts: ['OFFER: Sofa, brown (Leeds)'] });
+    assert.match(got, /other open posts/);
+    assert.match(got, /Sofa, brown/);
   });
 });
 
 describe('createReviewer / review() - backend failure', () => {
-  test('a backend that throws holds the post rather than approving it', async () => {
-    const throwingBackend = {
-      async ask() {
-        throw new Error('model unavailable in this test');
-      },
-    };
+  test('a backend that throws holds the post, and says the review could not answer', async () => {
+    const throwingBackend = { setQuestions() {}, async ask() { throw new Error('model unavailable in this test'); } };
     const reviewer = createReviewer({ backend: throwingBackend, chartPath: CHART_PATH });
-    const result = await reviewer.review({
-      msgid: 5,
-      groupid: 1,
-      body: 'A tidy box of odds and ends, works fine.',
-      type: 'Offer',
-      facts: {},
-      rules: {},
-    });
+    const result = await reviewer.review({ msgid: 9, groupid: 1, body: 'A tidy box of odds and ends, works fine.', type: 'Offer', facts: {}, rules: {} });
     assert.equal(result.verdict, 'hold');
-    // VAGUE_TEXT is the first text node, so it is the first backend call and
-    // the first to fail.
-    assert.equal(result.end, 'HOLD_VAGUE_TEXT');
+    assert.equal(result.end, 'UNAVAILABLE');
+    assert.match(result.reason, /could not answer/);
     const failedStep = result.path.at(-1);
     assert.equal(failedStep.model, 'unavailable');
     assert.equal(failedStep.answer, 'yes');
-    assert.equal(failedStep.p, 1);
   });
 });
 
 describe('createReviewer / review() - response shape', () => {
   test('fact steps omit p and threshold', async () => {
-    const reviewer = createReviewer({ backend: new FakeBackend(), chartPath: CHART_PATH });
-    const result = await reviewer.review({
-      msgid: 6,
-      groupid: 1,
-      facts: { member_veto: true },
-      rules: {},
-    });
+    const reviewer = createReviewer({ backend: new FakeBackend({ yesFor: [] }), chartPath: CHART_PATH });
+    const result = await reviewer.review({ msgid: 10, groupid: 1, facts: { mod_note: true }, rules: {} });
     const step = result.path[0];
-    assert.equal(step.node, 'VETO');
+    assert.equal(step.node, 'MOD_NOTE');
     assert.equal(step.kind, 'fact');
     assert.ok(!('p' in step));
     assert.ok(!('threshold' in step));
     assert.equal(step.model, 'fact');
   });
 
-  test('rule/when short-circuit steps include threshold but omit p', async () => {
-    const reviewer = createReviewer({ backend: new FakeBackend(), chartPath: CHART_PATH });
-    const result = await reviewer.review({
-      msgid: 7,
-      groupid: 1,
-      body: 'Can I borrow your ladder for the weekend please?',
-      facts: {},
-      rules: { allowloans: true },
-    });
-    const step = result.path.find((s) => s.node === 'LOAN');
-    assert.ok(!('p' in step));
-    assert.equal(step.threshold, 0.7);
-  });
-
-  test('a real backend-evaluated text step includes both p and threshold', async () => {
-    const reviewer = createReviewer({ backend: new FakeBackend(), chartPath: CHART_PATH });
-    const result = await reviewer.review({
-      msgid: 8,
-      groupid: 1,
-      body: 'Trying to sell this for some money, will consider offers.',
-      facts: {},
-      rules: {},
-    });
-    const step = result.path.find((s) => s.node === 'SELLING');
+  test('a backend-evaluated text step includes both p and threshold', async () => {
+    const reviewer = createReviewer({ backend: new FakeBackend({ yesFor: [] }), chartPath: CHART_PATH });
+    const result = await reviewer.review({ msgid: 11, groupid: 1, body: 'Brown sofa', type: 'Offer', facts: {}, rules: {} });
+    const step = result.path.find((s) => s.node === 'MONEY');
     assert.equal(typeof step.p, 'number');
     assert.equal(step.threshold, 0.7);
     assert.equal(step.model, 'fake');
   });
 
   test('the top-level response has exactly the contract fields', async () => {
-    const reviewer = createReviewer({ backend: new FakeBackend(), chartPath: CHART_PATH });
-    const result = await reviewer.review({
-      msgid: 9,
-      groupid: 1,
-      facts: { member_veto: true },
-      rules: {},
-    });
-    assert.deepEqual(Object.keys(result).sort(), [
-      'chart',
-      'end',
-      'path',
-      'reason',
-      'verdict',
-      'version',
-    ].sort());
+    const reviewer = createReviewer({ backend: new FakeBackend({ yesFor: [] }), chartPath: CHART_PATH });
+    const result = await reviewer.review({ msgid: 12, groupid: 1, facts: { mod_note: true }, rules: {} });
+    assert.deepEqual(Object.keys(result).sort(), ['chart', 'end', 'path', 'reason', 'verdict', 'version'].sort());
     assert.equal(result.chart, 'freegle-automod');
-    assert.equal(result.version, '4');
+    assert.equal(result.version, '5');
   });
 });

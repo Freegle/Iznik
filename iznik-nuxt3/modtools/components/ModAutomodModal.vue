@@ -53,7 +53,13 @@
           {{ Math.round(node.p * 100) }}% sure, holds above
           {{ Math.round(node.threshold * 100) }}%
         </div>
-        <div v-if="node.evidence" class="fst-italic">"{{ node.evidence }}"</div>
+        <!-- A quote from the post for a question the model answered; a finding, in plain words, for a fact. -->
+        <div v-if="node.evidence && node.kind === 'text'" class="fst-italic">
+          "{{ node.evidence }}"
+        </div>
+        <div v-else-if="node.evidence" class="text-muted">
+          {{ node.evidence }}
+        </div>
         <div v-if="isDeciding(index)" class="small text-muted">
           This step decided the outcome. Answered by {{ node.model }}.
         </div>

@@ -409,20 +409,33 @@ These are known and not fully solved:
 Automated review decides whether a post is clean enough to go live by itself. It is a
 flowchart of plain questions, the same for every community, kept centrally:
 
-1. Facts about the member and the post, answered from Freegle's own records: the danger
-   signals above; whether the member has a posting status; whether the community
-   moderates everything; no location or outside the UK; spam signals; personal details
-   where the community restricts them; not English; the content check's vague-post
-   finding; and whether this is a duplicate of the member's own open post or a repost
-   sooner than the community allows.
-2. Questions about the words of the post, answered by an AI model and worded from
-   Freegle's own rules: does it name the items wanted (not "anything" or just
-   "furniture"); is it about something other than an item; does it ask for or offer money
-   in any form, including a "donation" or delivery costs; a loan or a request to borrow;
-   something in exchange; animals; weapons, firearms, knives; prescription medicine,
-   non-prescription medicine or supplements, animal medicine; contact lenses and lens
-   solution; alcohol, tobacco, vaping; tickets and vouchers; gas cylinders; and, where a
-   concern word appears, whether it is really about the concern.
+1. Facts Freegle already knows, each answered from its records and shown with what was
+   found: a moderator's note on the member; a microvolunteer saying no to the post; a
+   moderator rejecting, deleting or replying to one of the member's posts in the last 90
+   days; the spammer list; an open membership review; a posting status a moderator set;
+   no location, or a location outside the UK (the place the member gave, mapped to a
+   point, never their IP address); the member's own post posted again, or a repost
+   sooner than the community allows; a web or messaging link, or a blocklisted one; the
+   spam checks (bulk mail, a repeated subject, a known spammer, a greeting-only post,
+   image spam); another language; and, only where the community restricts personal
+   details, a phone number or email address.
+2. Questions about the words of the post, answered by an AI model that first writes down
+   what it sees (the items named, any money or sale language, borrowing language,
+   animals, medicines, links or codes, and for a very short post its likely meanings)
+   and then answers, each question worded from Freegle's own rules: is it the same item
+   as one of the member's other open posts, compared as items rather than as wording;
+   does it name a specific item, or only "anything" or a category; is it about
+   something other than a physical item, including codes, e-tickets and appeals to buy
+   new goods; does it ask for or offer money in any form, including "donations" and
+   delivery money; does it read like a sale advert or a trader's listing; a loan;
+   something in exchange; illegal, counterfeit or stolen; a hazardous substance;
+   animals; weapons, firearms, knives; prescription medicine, non-prescription medicine
+   and supplements, animal medicine; contact lenses and lens solution; alcohol,
+   tobacco, vaping; tickets and vouchers; gas cylinders; and, where a concern word
+   appears, whether it is really about the concern. A plain list of words that often
+   signal each rule ("ono", "buyer", "borrow", a breed name) is matched in code as well:
+   the model is shown them and, if it still says no, is asked that one question again on
+   its own.
 3. Your community's own rules decide the item questions: if your community allows loans,
    animals or alcohol, those questions are skipped and never hold a post.
 

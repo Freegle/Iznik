@@ -1542,7 +1542,8 @@ return [
     'automod' => [
         'url'              => env('AUTOMOD_URL', 'http://automod:8080'),
         'shadow_group_ids' => env('FREEGLE_AUTOMOD_SHADOW_GROUPS', ''),
-        'timeout'          => (int) env('AUTOMOD_TIMEOUT', 20),
+        // One call answers every question about a post; the frontier model takes 10 to 20 seconds.
+        'timeout'          => (int) (env('AUTOMOD_TIMEOUT') ?: 60),
     ],
 
     'email_health' => [

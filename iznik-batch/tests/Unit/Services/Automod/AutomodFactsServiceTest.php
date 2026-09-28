@@ -82,7 +82,8 @@ class AutomodFactsServiceTest extends TestCase
         $facts = $this->service->facts($message->id, $group->id);
 
         $this->assertTrue($facts['member_veto']);
-        $this->assertSame('A microvolunteer flagged this post', $facts['member_veto_detail']);
+        $this->assertTrue($facts['microvol_reject']);
+        $this->assertStringContainsString('microvolunteer', $facts['microvol_reject_detail']);
     }
 
     public function test_does_not_veto_microvolunteering_approve(): void
@@ -115,7 +116,8 @@ class AutomodFactsServiceTest extends TestCase
         $facts = $this->service->facts($message->id, $group->id);
 
         $this->assertTrue($facts['member_veto']);
-        $this->assertSame('A moderator has left a note on this member', $facts['member_veto_detail']);
+        $this->assertTrue($facts['mod_note']);
+        $this->assertStringContainsString('Note left', $facts['mod_note_detail']);
     }
 
     public function test_veto_recent_negative_mod_log(): void
@@ -134,7 +136,8 @@ class AutomodFactsServiceTest extends TestCase
         $facts = $this->service->facts($message->id, $group->id);
 
         $this->assertTrue($facts['member_veto']);
-        $this->assertSame('A recent moderation action was taken against this member', $facts['member_veto_detail']);
+        $this->assertTrue($facts['recent_action']);
+        $this->assertStringContainsString('User Mailed', $facts['recent_action_detail']);
     }
 
     public function test_does_not_veto_old_negative_log(): void
@@ -167,7 +170,8 @@ class AutomodFactsServiceTest extends TestCase
         $facts = $this->service->facts($message->id, $group->id);
 
         $this->assertTrue($facts['member_veto']);
-        $this->assertSame('This member is a known or suspected spammer', $facts['member_veto_detail']);
+        $this->assertTrue($facts['spammer']);
+        $this->assertStringContainsString('spammer', $facts['spammer_detail']);
     }
 
     public function test_veto_membership_review_pending(): void
@@ -181,7 +185,8 @@ class AutomodFactsServiceTest extends TestCase
         $facts = $this->service->facts($message->id, $group->id);
 
         $this->assertTrue($facts['member_veto']);
-        $this->assertSame('A membership review is outstanding for this member', $facts['member_veto_detail']);
+        $this->assertTrue($facts['membership_review']);
+        $this->assertStringContainsString('Review requested', $facts['membership_review_detail']);
     }
 
     public function test_normalise_subject_ignores_prefix_place_and_case(): void
@@ -262,5 +267,49 @@ class AutomodFactsServiceTest extends TestCase
 
         DB::table("memberships")->where("userid", $user->id)->where("groupid", $group->id)->update(["ourPostingStatus" => "MODERATED"]);
         $this->assertTrue($this->service->facts($message->id, $group->id)["member_moderated"]);
+    }
+
+    public function test_other_open_posts_are_listed_for_the_duplicate_question(): void
+    {
+        [$user, $group, $message] = $this->makeFactsSubject(["message" => ["subject" => "OFFER: Brown sofa (Leeds)"]]);
+        $other = $this->createTestMessage($user, $group, ["subject" => "OFFER: Kettle (Leeds)", "textbody" => "Works fine"]);
+        $gone = $this->createTestMessage($user, $group, ["subject" => "OFFER: Lamp (Leeds)"]);
+        DB::table("messages_outcomes")->insert(["msgid" => $gone->id, "outcome" => "Taken", "timestamp" => now()]);
+
+        $facts = $this->service->facts($message->id, $group->id);
+
+        $this->assertTrue($facts["has_other_posts"]);
+        $this->assertCount(1, $facts["other_posts"]);
+        $this->assertStringContainsString("Kettle", $facts["other_posts"][0]);
+        $this->assertStringContainsString("Works fine", $facts["other_posts"][0]);
+    }
+
+    public function test_posting_status_detail_names_the_status(): void
+    {
+        [$user, $group, $message] = $this->makeFactsSubject();
+        DB::table("memberships")->where("userid", $user->id)->where("groupid", $group->id)->update(["ourPostingStatus" => "MODERATED"]);
+
+        $facts = $this->service->facts($message->id, $group->id);
+
+        $this->assertTrue($facts["member_moderated"]);
+        $this->assertSame("Moderated", $facts["member_moderated_detail"]);
+    }
+
+    public function test_spam_findings_split_into_links_and_patterns(): void
+    {
+        [$user, $group, $message] = $this->makeFactsSubject();
+        DB::table("messages_groups")->where("msgid", $message->id)->where("groupid", $group->id)->update([
+            "contentcheck_reasons" => json_encode([
+                ["check" => "Url", "category" => null, "action" => "flag", "detail" => "Link to example.com"],
+                ["check" => "BulkMail", "category" => null, "action" => "flag", "detail" => "Sent to 40 addresses"],
+            ]),
+        ]);
+
+        $facts = $this->service->facts($message->id, $group->id);
+
+        $this->assertTrue($facts["spam_links"]);
+        $this->assertSame("Link to example.com", $facts["spam_links_detail"]);
+        $this->assertTrue($facts["spam_pattern"]);
+        $this->assertSame("Sent to 40 addresses", $facts["spam_pattern_detail"]);
     }
 }
