@@ -160,6 +160,18 @@ collection or arrival but not `deleted = 0` treats that copy as live. The microv
 notifier did, and asked members to review posts that were no longer on their communities; every
 vote was then refused with a 403 (SR-DYS36). The same applies in Go.
 
+## DDL inside a test commits, and its rows leak into the rest of the suite
+
+MySQL commits implicitly on `CREATE TABLE`, `TRUNCATE` and other DDL, so a test that runs any
+of them after `DatabaseTransactions` has opened its transaction silently loses its rollback.
+Every row it wrote stays committed in the test database, and a later test elsewhere in the
+full suite picks them up, often through a query with no `WHERE` or `ORDER BY`. The test that
+leaks passes; a test in another class fails, and only in the full suite, never filtered.
+
+Three tests did this with a leftover `CREATE TABLE IF NOT EXISTS background_tasks` (the
+migration already creates it). Tables come from migrations, never from a test; clean up with
+`delete()`, not `truncate()`.
+
 ## See also
 
 - `.claude/rules/go-api-traps.md` - the same class of silent wrong answer on the Go side.
