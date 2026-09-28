@@ -84,15 +84,92 @@ describe('ModSupportLockdownSurfaces', () => {
     ).toContain('1')
   })
 
-  // plans/active/2026-09-27-lockdown-switch.md section 11.7 (rewritten):
-  // member email is not generated while held and resumes on lift, so the
-  // switch is labelled for what lifting it does rather than just the
-  // surface name.
-  it('labels the email switch "Resume email"', () => {
+  // A switch that is ON means held. Every row must say so in words rather
+  // than leaving the reader to infer it from the switch position, and the
+  // action shown must match: "Lift" while held, "Hold" while running.
+  it('states each row\'s status in words: "held" while on, "running" while off', () => {
+    const held = createWrapper()
+    expect(held.find('[data-testid="lockdown-surface-chat"]').text()).toContain(
+      'Chat - held'
+    )
+
+    const running = createWrapper({
+      surfaces: {
+        mods: false,
+        chat: false,
+        chat_mode: 'hard',
+        posts: false,
+        chitchat: false,
+        events: false,
+        push: false,
+        email: false,
+        export: false,
+      },
+    })
+    expect(
+      running.find('[data-testid="lockdown-surface-chat"]').text()
+    ).toContain('Chat - running')
+  })
+
+  it("shows the Lift/Hold action matching each row's state", () => {
+    const held = createWrapper()
+    expect(
+      held.find('[data-testid="lockdown-surface-action-chat"]').text()
+    ).toContain('Lift')
+
+    const running = createWrapper({
+      surfaces: {
+        mods: false,
+        chat: false,
+        chat_mode: 'hard',
+        posts: false,
+        chitchat: false,
+        events: false,
+        push: false,
+        email: false,
+        export: false,
+      },
+    })
+    expect(
+      running.find('[data-testid="lockdown-surface-action-chat"]').text()
+    ).toContain('Hold')
+  })
+
+  // plans/active/2026-09-27-lockdown-switch.md section 11.7: member email is
+  // not generated while held and resumes on lift. The row is labelled
+  // "Email" like every other row is labelled for its surface - "held"/
+  // "running" already says what state it is in - and only its lift action
+  // carries the special wording, since that is the one that needs it.
+  it('labels the email row "Email", and names its lift action "Resume email"', () => {
     const wrapper = createWrapper()
+    const row = wrapper.find('[data-testid="lockdown-surface-email"]')
+    expect(row.text()).toContain('Email - held')
+    expect(row.text()).not.toContain('Resume email - held')
+    expect(
+      wrapper.find('[data-testid="lockdown-surface-action-email"]').text()
+    ).toContain('Resume email')
+  })
+
+  it('names the email row\'s hold action plainly, not "Resume email"', () => {
+    const wrapper = createWrapper({
+      surfaces: {
+        mods: false,
+        chat: false,
+        chat_mode: 'hard',
+        posts: false,
+        chitchat: false,
+        events: false,
+        push: false,
+        email: false,
+        export: false,
+      },
+    })
     expect(
       wrapper.find('[data-testid="lockdown-surface-email"]').text()
-    ).toContain('Resume email')
+    ).toContain('Email - running')
+    expect(
+      wrapper.find('[data-testid="lockdown-surface-action-email"]').text()
+    ).toContain('Hold')
   })
 
   it('shows no held count for surfaces with no triage kind', () => {

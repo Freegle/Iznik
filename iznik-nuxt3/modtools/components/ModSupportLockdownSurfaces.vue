@@ -12,8 +12,15 @@
         :data-testid="'lockdown-surface-toggle-' + s.key"
         @update:model-value="(v) => onToggle(s.key, v)"
       >
-        {{ s.label }}
+        {{ s.label }} - {{ surfaces[s.key] ? 'held' : 'running' }}
       </b-form-checkbox>
+
+      <b-badge
+        :variant="surfaces[s.key] ? 'warning' : 'secondary'"
+        :data-testid="'lockdown-surface-action-' + s.key"
+      >
+        {{ actionFor(s) }}
+      </b-badge>
 
       <b-badge v-if="countFor(s.key) !== null" variant="secondary">
         {{ countFor(s.key) }} held
@@ -60,11 +67,12 @@ const surfaceOrder = [
   { key: 'chitchat', label: 'ChitChat' },
   { key: 'events', label: 'Events, noticeboards, stories' },
   { key: 'push', label: 'Push' },
-  // plans/active/2026-09-27-lockdown-switch.md section 11.7 (rewritten):
-  // member email is not generated while held and resumes from the
-  // watermarks on lift, so the switch is labelled for what lifting it does
-  // rather than just the surface name.
-  { key: 'email', label: 'Resume email' },
+  // plans/active/2026-09-27-lockdown-switch.md section 11.7: member email is
+  // not generated while held and resumes from the watermarks on lift. The
+  // row itself is named for the surface, like every other row - "held"/
+  // "running" already says which state it is in - and only the lift action
+  // carries the special wording, because that is the one that needs it.
+  { key: 'email', label: 'Email', liftAction: 'Resume email' },
   { key: 'export', label: 'Export / downloads' },
 ]
 
@@ -83,6 +91,13 @@ function countFor(key) {
   const kind = kindForSurface[key]
   if (!kind) return null
   return props.heldCounts?.[kind]?.count ?? 0
+}
+
+// The action a press on this row's switch would now take: held rows lift
+// (email's lift resumes the mail queue, so it says that instead), running
+// rows hold.
+function actionFor(s) {
+  return props.surfaces[s.key] ? s.liftAction || 'Lift' : 'Hold'
 }
 
 function onToggle(key, value) {

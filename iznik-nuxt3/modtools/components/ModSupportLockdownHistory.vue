@@ -5,22 +5,22 @@
     <table v-else class="table table-sm">
       <thead>
         <tr>
-          <th>Reason</th>
-          <th>Started</th>
+          <th>When</th>
+          <th>Change</th>
+          <th>Changed by</th>
           <th>Ended</th>
-          <th>End note</th>
         </tr>
       </thead>
       <tbody>
-        <tr
-          v-for="h in history"
-          :key="h.incidentid"
-          data-testid="lockdown-history-row"
-        >
-          <td>{{ h.reason }}</td>
-          <td>#{{ h.startedby }}, {{ dateshort(h.startedat) }}</td>
-          <td>{{ h.endedbyname }}, {{ dateshort(h.endedat) }}</td>
-          <td>{{ h.endnote || '-' }}</td>
+        <tr v-for="h in history" :key="h.id" data-testid="lockdown-history-row">
+          <td>{{ dateshort(h.created) }}</td>
+          <td>{{ h.reason || h.notice || '-' }}</td>
+          <td>#{{ h.changedby }}</td>
+          <td v-if="h.endedat">
+            {{ h.endedbyname }}, {{ dateshort(h.endedat) }}
+            <template v-if="h.endnote"> - {{ h.endnote }}</template>
+          </td>
+          <td v-else>-</td>
         </tr>
       </tbody>
     </table>

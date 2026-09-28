@@ -147,11 +147,13 @@ import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRoute } from '#imports'
 import { useChatStore } from '~/stores/chat'
 import { useMessageStore } from '~/stores/message'
+import { useLockdownStore } from '~/stores/lockdown'
 import { useMe } from '~/composables/useMe'
 
 // Stores
 const chatStore = useChatStore()
 const messageStore = useMessageStore()
+const lockdownStore = useLockdownStore()
 
 // Composables
 const { supportOrAdmin } = useMe()
@@ -169,7 +171,6 @@ const messageTerm = ref(null)
 const id = ref('id' in route.params ? parseInt(route.params.id) : 0)
 const showAIAssistant = ref(false)
 const aiAssistantBump = ref(0)
-const activeTab = ref(0)
 const communitySubTab = ref(0)
 
 // Tab name to index mapping
@@ -181,6 +182,18 @@ const topTabMap = {
   ai: 4,
   spam: 5,
 }
+
+// Lockdown stays first in the tab row always (plans/active/2026-09-27-lockdown-switch.md
+// section 10.9/10.12: it's the thing a Support user reaches fastest during an
+// incident). But it's only the DEFAULT tab while there's actually an incident to
+// react to, or the caller asked for it by link (?tab=lockdown) - otherwise Support
+// Tools opens on User, same as before this tab existed. A moderator's bookmarked
+// or shared /support link with no ?tab must still land on User.
+const activeTab = ref(
+  route.query.tab === 'lockdown' || lockdownStore.active
+    ? topTabMap.lockdown
+    : topTabMap.user
+)
 
 const communitySubTabMap = {
   find: 0,

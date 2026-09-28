@@ -23,8 +23,10 @@
  * live. Confirm the Go API is complete before running this for real.
  */
 
+const fs = require('fs')
+const path = require('path')
 const { test, expect } = require('./fixtures')
-const { timeouts, environment } = require('./config')
+const { timeouts, environment, SCREENSHOTS_DIR } = require('./config')
 const {
   loginViaModTools,
   loginViaHomepage,
@@ -39,6 +41,27 @@ const {
 } = require('./utils/reply-helpers')
 
 const MODTOOLS_URL = environment.modtoolsBaseUrl
+
+// PR screenshots (plans/active/2026-09-27-lockdown-switch.md sections 10/11)
+// are taken here, at real moments in the one test that presses a real
+// lockdown, rather than in a separate spec faking the state with
+// page.route() - a faked screenshot would show made-up numbers. Cheap and
+// non-failing: a screenshot never gates the test, it just rides along on
+// assertions that are already there for correctness.
+//
+// They go in a 'pr' subdirectory of SCREENSHOTS_DIR, not the directory
+// itself: fixtures.js registers a global test.afterAll that calls
+// cleanupScreenshots(), which unlinks every top-level *.png in
+// SCREENSHOTS_DIR whenever the run exits clean (process.exitCode 0 or
+// undefined). That fired straight after this file's one test passed and
+// deleted these screenshots within seconds of them being written - no
+// error, nothing in the logs, just an empty directory afterwards.
+// cleanupScreenshots() is not recursive, so a subdirectory is invisible to
+// it.
+const PR_SCREENSHOTS_DIR = path.join(SCREENSHOTS_DIR, 'pr')
+if (!fs.existsSync(PR_SCREENSHOTS_DIR)) {
+  fs.mkdirSync(PR_SCREENSHOTS_DIR, { recursive: true })
+}
 
 // iznik-server-go/lockdown/handlers.go noticeText['security'] - the exact
 // member-facing wording, kept in sync by hand. If this assertion starts
@@ -232,6 +255,30 @@ test.describe('Lockdown switch', () => {
     await expect(confirmPressButton).toBeEnabled({
       timeout: timeouts.ui.appearance,
     })
+
+    // ConfirmModal's b-modal is `scrollable` (its own internal modal-body
+    // scroll, independent of the page), and the confirm input sits below the
+    // five consequence bullets. Filling it a moment ago auto-scrolled that
+    // internal scroll box to keep the input in view, which leaves the first
+    // bullet ("Members will think they have been sent") scrolled out of the
+    // modal before the screenshot - fullPage captures the outer document, not
+    // the modal's own scroll position, so it does not help. Scroll the first
+    // bullet back into view so every bullet is visible in the shot.
+    await modPage
+      .getByTestId('lockdown-confirm-modal')
+      .locator('li')
+      .first()
+      .scrollIntoViewIfNeeded()
+
+    await modPage.screenshot({
+      path: path.join(
+        PR_SCREENSHOTS_DIR,
+        'lockdown-1-press-confirm-dialog.png'
+      ),
+      fullPage: true,
+    })
+    console.log('[Lockdown screenshots] press confirm dialog with LOCKDOWN')
+
     await confirmPressButton.click()
 
     await expect(modPage.getByTestId('lockdown-active-banner')).toBeVisible({
@@ -246,6 +293,31 @@ test.describe('Lockdown switch', () => {
       }
     )
     console.log('[Lockdown] Pressed - active banner and Taking effect visible')
+
+    // Give real batch loops a chance to ack before the screenshot, so it
+    // shows genuine "took N seconds" rows rather than every loop still
+    // spinning on "waiting" - wait for at least one loop row to have
+    // caught up (ModSupportLockdownTakingEffect.vue's ack.caughtup branch),
+    // rather than the always-present API line, which never says "took".
+    await expect
+      .poll(
+        async () =>
+          modPage
+            .locator('[data-testid^="lockdown-taking-effect-"]')
+            .filter({ hasText: 'took' })
+            .count(),
+        {
+          message: 'Waiting for at least one batch loop to ack the press',
+          timeout: timeouts.background,
+        }
+      )
+      .toBeGreaterThan(0)
+
+    await modPage.screenshot({
+      path: path.join(PR_SCREENSHOTS_DIR, 'lockdown-2-support-tab-active.png'),
+      fullPage: true,
+    })
+    console.log('[Lockdown screenshots] Support tab active, Taking effect')
 
     // Step 3: a post made while the lockdown holds writes stays Pending, same
     // as any other new post - it just never gets promoted or approved for
@@ -278,6 +350,32 @@ test.describe('Lockdown switch', () => {
       timeout: timeouts.background,
     })
     console.log('[Lockdown] Member-facing security notice visible')
+
+    await page.screenshot({
+      path: path.join(PR_SCREENSHOTS_DIR, 'lockdown-3-member-notice.png'),
+      fullPage: true,
+    })
+    console.log('[Lockdown screenshots] member-facing security notice')
+
+    // Same notice at phone width, since the notice sits in the page flow
+    // (never overlaying page controls) and that's worth checking narrow.
+    // Reset to a normal desktop size afterwards - later steps interact with
+    // the reply form and don't need a mobile layout.
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect(page.getByText(SECURITY_NOTICE_TEXT)).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
+    await page.screenshot({
+      path: path.join(
+        PR_SCREENSHOTS_DIR,
+        'lockdown-4-member-notice-mobile.png'
+      ),
+      fullPage: true,
+    })
+    console.log(
+      '[Lockdown screenshots] member-facing security notice, phone width'
+    )
+    await page.setViewportSize({ width: 1280, height: 800 })
 
     await page.gotoAndVerify(`/message/${posted.id}`, { maxRetries: 1 })
     await waitForAuthHydration(page)
@@ -361,6 +459,35 @@ test.describe('Lockdown switch', () => {
     )
     console.log('[Lockdown] Moderator card shows only Approve')
 
+    // The "only Approve" gating above is instant (modsHeld, set synchronously
+    // by the press). The "Held by lockdown" label is not: it depends on
+    // lockdown:triage risk-assessing this post and writing its lockdown_holds
+    // row, which - like the chat processor - runs on its own per-minute
+    // schedule, not on press. Wait for it with the same background timeout
+    // used for the "Taking effect" loops above, rather than assuming it is
+    // already there by the time the pending queue is checked.
+    await expect(heldCard.getByText(/Held by lockdown/)).toBeVisible({
+      timeout: timeouts.background,
+    })
+    console.log(
+      '[Lockdown] Held-by-lockdown label appeared on the pending card'
+    )
+
+    await heldCard.scrollIntoViewIfNeeded()
+    // Not fullPage: a fullPage screenshot re-renders the sticky navbar at
+    // wherever it "stuck" partway down the stitched image, landing it mid-shot.
+    // A plain viewport screenshot with the card already scrolled into view
+    // shows the same card without that artefact.
+    await modPage.screenshot({
+      path: path.join(
+        PR_SCREENSHOTS_DIR,
+        'lockdown-5-modtools-approve-only.png'
+      ),
+    })
+    console.log(
+      '[Lockdown screenshots] ModTools banner and Approve-only pending card'
+    )
+
     // Step 7: lift everything and close, exactly as a Support user would.
     // modPage is still signed in as plainMod from Step 6, deliberately not
     // Support/Admin, so Support Tools refuses it ("You don't have access to
@@ -390,6 +517,12 @@ test.describe('Lockdown switch', () => {
       timeout: timeouts.ui.appearance,
     })
     console.log('[Lockdown] Lifted and closed')
+
+    await modPage.screenshot({
+      path: path.join(PR_SCREENSHOTS_DIR, 'lockdown-6-support-tab-lifted.png'),
+      fullPage: true,
+    })
+    console.log('[Lockdown screenshots] Support tab, lifted and closed')
 
     // The moderator persona's work is done - close its context so nothing
     // from here on can accidentally touch it. `page` (the member site) never
@@ -453,3 +586,4 @@ test.describe('Lockdown switch', () => {
     await withdrawPost({ item: heldItem })
   })
 })
+// sync-marker-2 1790634727221852341

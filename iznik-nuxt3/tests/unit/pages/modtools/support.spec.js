@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import SupportPage from '~/modtools/pages/support/[[id]].vue'
+import { useLockdownStore } from '~/stores/lockdown'
 
 // Mock stores
 const mockChatStore = {
@@ -79,10 +80,10 @@ globalThis.__testUseRoute = () => ({
 })
 
 describe('support/[[id]].vue page', () => {
-  function mountComponent() {
+  function mountComponent(pinia = createPinia()) {
     return mount(SupportPage, {
       global: {
-        plugins: [createPinia()],
+        plugins: [pinia],
         stubs: {
           ModSupportFindUser: {
             template: '<div class="mod-support-find-user" />',
@@ -288,6 +289,25 @@ describe('support/[[id]].vue page', () => {
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
       await flushPromises()
+      expect(wrapper.vm.activeTab).toBe(0)
+    })
+  })
+
+  // A bookmarked or shared /support link with no ?tab must keep opening on
+  // User, same as before the Lockdown tab existed - it only jumps the
+  // default when there's actually an incident to react to (or the link asks
+  // for it explicitly, covered above).
+  describe('default tab', () => {
+    it('defaults to the User tab when no lockdown is active and no tab query param is set', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.vm.activeTab).toBe(1)
+    })
+
+    it('defaults to the Lockdown tab when a lockdown is active', () => {
+      const pinia = createPinia()
+      setActivePinia(pinia)
+      useLockdownStore().active = true
+      const wrapper = mountComponent(pinia)
       expect(wrapper.vm.activeTab).toBe(0)
     })
   })
