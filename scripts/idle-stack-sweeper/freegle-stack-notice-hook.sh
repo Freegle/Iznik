@@ -47,5 +47,7 @@ fi
 echo "[idle-stack sweeper] Heads up: this worktree's containers (project '$proj') are stopped."
 sed 's/^/  /' "$marker" 2>/dev/null
 echo "  To bring them back for this work, restart with:  ( cd $wt && docker compose start )"
+echo "  The database is in memory by default (PERCONA_STORAGE=ram), so it restarts empty. Once"
+echo "  batch is healthy, reload the fixtures:  ( cd $wt && scripts/setup-test-database.sh )"
 rm -f "$marker"
 exit 0

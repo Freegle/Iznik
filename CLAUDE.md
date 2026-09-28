@@ -55,6 +55,7 @@ Canonical documentation lives in **[`docs/`](docs/README.md)**, organised by aud
 - **Status container**: Restart after code changes (`docker restart status`).
 - **Compose check**: Stop all containers, prune, rebuild, restart, monitor via status container.
 - **Profiles**: Set `COMPOSE_PROFILES` in `.env`. Local dev: `frontend,database,backend,dev,monitoring`. See `docker-compose.yml` for profile definitions.
+- **Database in memory**: `PERCONA_STORAGE=ram` (the default) keeps percona's data in a memory-backed volume, because schema changes on the WSL disk are about 85x slower. Anything that stops percona empties it: rerun `scripts/setup-test-database.sh` (about 30s). `PERCONA_STORAGE=disk` uses the persistent volume. Yesterday is always on disk.
 - **Networking**: No hardcoded IPs. Traefik handles `.localhost` routing via network aliases. Playwright uses Docker default network.
 - **Playwright tests**: Run against **production container**. If debugging failures, check for container reload triggers — add to pre-optimization in `nuxt.config.js`.
 - Container changes are lost on restart — always make changes locally too.
