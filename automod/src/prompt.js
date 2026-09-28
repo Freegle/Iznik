@@ -12,7 +12,7 @@
 export const KEYWORDS = {
   money: [
     '£', '$', '€', 'pound', 'pounds', 'quid', 'price', 'priced', 'cost', 'costs', 'ono', 'o.n.o',
-    'offers over', 'nearest offer', 'sell', 'selling', 'sale', 'sold', 'buy', 'buyer', 'buyers',
+    'offers over', 'nearest offer', 'auction', 'for sale', 'sell', 'selling', 'sale', 'sold', 'buy', 'buyer', 'buyers',
     'buying', 'purchase', 'paypal', 'cash', 'bank transfer', 'payment', 'pay', 'paid', 'fee',
     'fees', 'charge', 'charges', 'deposit', 'invoice', 'cheap', 'bargain', 'discount', 'worth',
     'rrp', 'delivery charge', 'petrol money', 'fuel money', 'postage', 'p&p', 'donation',

@@ -426,9 +426,10 @@ flowchart of plain questions, the same for every community, kept centrally:
    as one of the member's other open posts, compared as items rather than as wording;
    does it name a specific item, or only "anything" or a category; is it about
    something other than a physical item, including codes, e-tickets and appeals to buy
-   new goods; does it ask for or offer money in any form, including "donations" and
-   delivery money; does it read like a sale advert or a trader's listing; a loan;
-   something in exchange; illegal, counterfeit or stolen; a hazardous substance;
+   new goods; does it mention money, selling or buying in any way, even with no price
+   (any mention holds, including "donations" and
+   delivery money); does it read like a sale advert or a trader's listing; a loan;
+   any mention of swapping, even as one option; illegal, counterfeit or stolen; a hazardous substance;
    animals; weapons, firearms, knives; prescription medicine, non-prescription medicine
    and supplements, animal medicine; contact lenses and lens solution; alcohol,
    tobacco, vaping; tickets and vouchers; gas cylinders; and, where a concern word
@@ -453,13 +454,14 @@ It runs in two modes, set centrally per community for the trial:
 How well it does was measured against real decisions, treating neither the model nor the
 moderator as always right. Only decisions by moderators in the middle of the range were
 used: over six months the median moderator rejects 1.7% of what they see, and the strictest
-reject 13 to 17%, so those outside the middle half were left out. On 516 such posts, the
-review held about two thirds of the posts rejected as vague, selling or borrowing, and nine
-in ten of those rejected for animals, medicines or not being an item, and held 9 of 300
-posts moderators had approved. Of the rejections it did not hold, most were, on the
-model's own reading, the moderator's error, a standard message naming a rule the post
-did not break, or a stricter local rule such as one item per post. Its own misses were
-five. Many rejections turn on things the words of a post cannot show, such as a duplicate
+reject 13 to 17%, so those outside the middle half were left out. Each post was read as the
+moderator saw it, because members often edit a post after it is rejected. On 516 such posts,
+the review held 97% or more of the posts rejected for money, borrowing or swapping, 94% of
+those rejected as not an item or for medicines, all of those rejected for animals, and 73%
+of those rejected as vague. It held 16 of 300 posts moderators had approved, most of them
+because they mention money in passing ("giving away, not selling"), which it holds on
+purpose. Most of the vague rejections it does not hold name an item, or apply a stricter
+local rule such as one item per post. Many rejections turn on things the words of a post cannot show, such as a duplicate
 or a reason the moderator did not record. That is why the facts come first, and why a
 community runs in shadow before approve-only.
 
