@@ -40,7 +40,11 @@ class ObjectStore
         try {
             return $this->disk()->size($key);
         } catch (UnableToRetrieveMetadata $e) {
-            if (self::statusCode($e) === 404) {
+            $aws = self::awsCause($e);
+
+            // A local disk (dev, tests) has no store to be unavailable: it
+            // raises this only for a file that is not there.
+            if ($aws === null || $aws->getStatusCode() === 404) {
                 return null;
             }
 
@@ -64,10 +68,14 @@ class ObjectStore
                 'CacheControl' => 'public, max-age=31536000, immutable',
             ]);
         } catch (FilesystemException $e) {
-            $status = self::statusCode($e);
+            $aws = self::awsCause($e);
 
-            if ($status === null || $status === 401 || $status === 403 || $status >= 500) {
-                throw self::unavailable('PutObject', $key, $e);
+            if ($aws !== null) {
+                $status = $aws->getStatusCode();
+
+                if ($status === null || $status === 401 || $status === 403 || $status >= 500) {
+                    throw self::unavailable('PutObject', $key, $e);
+                }
             }
 
             throw $e;
@@ -99,15 +107,14 @@ class ObjectStore
     }
 
     /**
-     * The HTTP status the store answered with, or null when it did not answer
-     * (a connection failure has no response) or the failure was not the
-     * store's at all.
+     * The store's own exception underneath flysystem's, or null when the
+     * failure was not the store's at all (a local disk).
      */
-    private static function statusCode(\Throwable $e): ?int
+    private static function awsCause(\Throwable $e): ?AwsException
     {
         for ($cause = $e; $cause !== null; $cause = $cause->getPrevious()) {
             if ($cause instanceof AwsException) {
-                return $cause->getStatusCode();
+                return $cause;
             }
         }
 
@@ -116,7 +123,8 @@ class ObjectStore
 
     private static function unavailable(string $operation, string $key, \Throwable $e): ObjectStoreUnavailable
     {
-        $status = self::statusCode($e);
+        // A connection failure has no response, so no status.
+        $status = self::awsCause($e)?->getStatusCode();
         $answer = $status === null ? 'no answer' : "HTTP {$status}";
 
         return new ObjectStoreUnavailable(

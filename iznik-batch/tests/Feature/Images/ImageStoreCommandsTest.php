@@ -3,12 +3,21 @@
 namespace Tests\Feature\Images;
 
 use App\Services\ImageStore\ObjectStoreUnavailable;
-use GuzzleHttp\Promise\Create;
+use Aws\Command;
+use Aws\S3\Exception\S3Exception;
 use GuzzleHttp\Psr7\Response;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use League\Flysystem\Config;
+use League\Flysystem\FileAttributes;
+use League\Flysystem\Filesystem as Flysystem;
+use League\Flysystem\Local\LocalFilesystemAdapter;
+use League\Flysystem\UnableToDeleteFile;
+use League\Flysystem\UnableToRetrieveMetadata;
+use League\Flysystem\UnableToWriteFile;
 use Tests\TestCase;
 
 /**
@@ -148,30 +157,45 @@ class ImageStoreCommandsTest extends TestCase
             ->assertExitCode(1);
     }
     /**
-     * Swap the faked images disk for a real S3 driver whose every request the
-     * bucket answers with the given status, without any network. 403 is what
+     * An images disk whose every request the bucket refuses with the given
+     * status, wrapped the way flysystem wraps the real S3 driver. 403 is what
      * the bucket answered when its public read and key were both revoked.
+     * Built on the fake disk, so nothing touches the network.
      */
     private function bucketThatAnswers(int $status): void
     {
-        Storage::forgetDisk('images');
-        config(['filesystems.disks.images' => [
-            'driver' => 's3',
-            'key' => 'key',
-            'secret' => 'secret',
-            'region' => 'us-east-1',
-            'bucket' => 'images',
-            'url' => 'http://store.test/images/',
-            'endpoint' => 'http://store.test',
-            'use_path_style_endpoint' => true,
-            'request_checksum_calculation' => 'when_required',
-            'response_checksum_validation' => 'when_required',
-            'throw' => true,
-            'report' => false,
-            'http_handler' => fn () => Create::promiseFor(
-                new Response($status, [], '<?xml version="1.0"?><Error><Code>AccessDenied</Code><Message>Access Denied.</Message></Error>')
-            ),
-        ]]);
+        $refused = fn (string $operation) => new S3Exception(
+            "{$operation} refused", new Command($operation), ['response' => new Response($status)]
+        );
+
+        $adapter = new class(Storage::disk('images')->path(''), $refused) extends LocalFilesystemAdapter {
+            public function __construct(string $root, private \Closure $refused)
+            {
+                parent::__construct($root);
+            }
+
+            public function fileSize(string $path): FileAttributes
+            {
+                throw UnableToRetrieveMetadata::fileSize($path, '', ($this->refused)('HeadObject'));
+            }
+
+            public function write(string $path, string $contents, Config $config): void
+            {
+                throw UnableToWriteFile::atLocation($path, '', ($this->refused)('PutObject'));
+            }
+
+            public function writeStream(string $path, $contents, Config $config): void
+            {
+                throw UnableToWriteFile::atLocation($path, '', ($this->refused)('PutObject'));
+            }
+
+            public function delete(string $path): void
+            {
+                throw UnableToDeleteFile::atLocation($path, '', ($this->refused)('DeleteObject'));
+            }
+        };
+
+        Storage::set('images', new FilesystemAdapter(new Flysystem($adapter), $adapter, ['throw' => true]));
     }
 
     public function test_push_spool_stops_and_reports_when_the_store_is_unavailable(): void
