@@ -283,6 +283,22 @@ func ItemHeld(kind string, refid uint64) bool {
 }
 
 func loadLatestFromDB() (State, error) {
+	return loadStateFrom(database.DBConn)
+}
+
+// loadStateForUpdate reads the newest lockdowns row locked FOR UPDATE, for a caller that is
+// about to write the next row in the same transaction and cannot afford to act on Current()'s
+// cache (finding 6: the cache is per apiv2 process and up to five seconds stale, so two
+// instances - or two overlapping requests within the same TTL window - can both act on a state
+// one of them has already superseded; PatchLockdown reads through here instead of Current()).
+// Must be called inside a transaction, since a lock taken outside one is released immediately.
+func loadStateForUpdate(tx *gorm.DB) (State, error) {
+	return loadStateFrom(tx.Clauses(clause.Locking{Strength: "UPDATE"}))
+}
+
+// loadStateFrom is loadLatestFromDB/loadStateForUpdate's shared body, parameterised on the
+// *gorm.DB so the locked and unlocked reads share one implementation.
+func loadStateFrom(db *gorm.DB) (State, error) {
 	var row struct {
 		ID         uint64
 		Incidentid uint64
@@ -298,7 +314,7 @@ func loadLatestFromDB() (State, error) {
 		Endnote    *string
 	}
 
-	result := database.DBConn.Table("lockdowns").
+	result := db.Table("lockdowns").
 		Select("id, incidentid, active, surfaces, reason, notice, phrases, startedby, startedat, endedby, endedat, endnote").
 		Order("id DESC").
 		Limit(1).

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -304,6 +305,68 @@ func TestPatchLockdownSurfacesRefusesWhenNotActive(t *testing.T) {
 	assert.Equal(t, 409, resp.StatusCode)
 }
 
+// --- Finding 6: every PATCH decides against a fresh, locked read, not Current()'s cache ---
+
+// TestPatchLockdownPressRefusesEvenWithStaleCacheSayingInactive poisons the process-level
+// Current() cache with a state saying no incident is active, while a real one is - the shape
+// the pre-fix code got wrong, since it based the whole PATCH on Current() and would have let a
+// second press through, opening a second incident on top of the first. SetTestState cannot
+// reach loadStateForUpdate at all (it overrides the loadLatest package var; the locked read
+// calls loadStateFrom directly), so this only passes once PatchLockdown reads the real row.
+func TestPatchLockdownPressRefusesEvenWithStaleCacheSayingInactive(t *testing.T) {
+	prefix := uniquePrefix("ld_press_stale_cache")
+	supportID := CreateTestUser(t, prefix, "Support")
+	_, token := CreateTestSession(t, supportID)
+
+	incidentID := pressLockdown(t, token, "stale cache press "+prefix)
+	defer cleanupIncident(t, incidentID)
+
+	restore := lockdown.SetTestState(lockdown.State{Active: false})
+	defer restore()
+
+	resp, result := patchLockdown(t, token, map[string]interface{}{"action": "press", "reason": "second " + prefix})
+	assert.Equal(t, 409, resp.StatusCode, "must refuse against the real active row, not the poisoned cache saying inactive: %v", result)
+}
+
+// TestPatchLockdownSurfacesMergesFromFreshRowNotStaleCache models the actual production race:
+// one apiv2 process writes a new lockdowns row and calls Invalidate() on ITS OWN cache, but a
+// second process's five-second Current() cache is unaffected and still holds the older
+// surfaces. A raw, un-invalidated write stands in for that other process. If patchSurfaces
+// merged its change onto the stale cached surfaces instead of the fresh row, the concurrent
+// write lowering "mods" would be silently reverted the moment this process's next surfaces
+// PATCH landed.
+func TestPatchLockdownSurfacesMergesFromFreshRowNotStaleCache(t *testing.T) {
+	prefix := uniquePrefix("ld_surf_fresh_row")
+	db := database.DBConn
+	supportID := CreateTestUser(t, prefix, "Support")
+	_, token := CreateTestSession(t, supportID)
+
+	incidentID := pressLockdown(t, token, "surfaces fresh row "+prefix)
+	defer cleanupIncident(t, incidentID)
+
+	// pressLockdown's own response already warmed this process's Current() cache with every
+	// surface true - the state the merge must NOT use.
+	concurrentSurfaces, err := json.Marshal(map[string]interface{}{
+		"chat": true, "posts": true, "chitchat": true, "events": true,
+		"email": true, "push": true, "export": true, "mods": false, "chat_mode": "hard",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Table("lockdowns").Create(map[string]interface{}{
+		"incidentid": incidentID, "active": 1, "surfaces": string(concurrentSurfaces),
+		"changedby": supportID, "reason": "concurrent write " + prefix,
+	}).Error)
+
+	resp, result := patchLockdown(t, token, map[string]interface{}{
+		"action":   "surfaces",
+		"surfaces": map[string]interface{}{"chat": false},
+	})
+	require.Equal(t, 200, resp.StatusCode, "%v", result)
+	surfaces := result["surfaces"].(map[string]interface{})
+	assert.Equal(t, false, surfaces["chat"], "the surface this PATCH lowered")
+	assert.Equal(t, false, surfaces["mods"], "must stay lowered from the fresh row, not reverted from the stale cache")
+	assert.Equal(t, true, surfaces["posts"], "an untouched surface must be carried over as the fresh row had it")
+}
+
 // --- PATCH /lockdown action=notice ---
 
 func TestPatchLockdownNoticeValidatesEnum(t *testing.T) {
@@ -330,6 +393,80 @@ func TestPatchLockdownNoticeAllowedAfterClose(t *testing.T) {
 	assert.Equal(t, "normal", result["notice"])
 }
 
+// TestGetLockdownNoticeClearedOnCloseWhenSecurity is finding 7: GetLockdown used to show
+// s.Notice unconditionally, and close carried the notice forward unchanged, so members kept
+// seeing "we're dealing with a spam attack" long after the incident that caused it had ended.
+func TestGetLockdownNoticeClearedOnCloseWhenSecurity(t *testing.T) {
+	prefix := uniquePrefix("ld_notice_close_sec")
+	supportID := CreateTestUser(t, prefix, "Support")
+	_, token := CreateTestSession(t, supportID)
+
+	incidentID := pressLockdown(t, token, "notice close security "+prefix)
+	defer cleanupIncident(t, incidentID)
+
+	nresp, _ := patchLockdown(t, token, map[string]interface{}{"action": "notice", "notice": "security"})
+	require.Equal(t, 200, nresp.StatusCode)
+
+	req := httptest.NewRequest("GET", "/api/lockdown", nil)
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	notice, ok := result["notice"].(map[string]interface{})
+	require.True(t, ok, "notice must show while the incident is active: %v", result)
+	assert.Equal(t, "security", notice["key"])
+
+	closeResp, _ := patchLockdown(t, token, map[string]interface{}{"action": "close", "endnote": "resolved " + prefix})
+	require.Equal(t, 200, closeResp.StatusCode)
+
+	req2 := httptest.NewRequest("GET", "/api/lockdown", nil)
+	resp2, err := getApp().Test(req2)
+	require.NoError(t, err)
+	var result2 map[string]interface{}
+	json.Unmarshal(rsp(resp2), &result2)
+	assert.Nil(t, result2["notice"], "a security notice must not linger for members once the incident is closed: %v", result2)
+}
+
+// TestGetLockdownNormalNoticeExpiresAfter24Hours: unlike delay/security, "normal" (the settled
+// all-clear) is allowed to be set with no incident active at all, and is meant to show for a
+// while rather than forever - finding 7 sets that window at 24 hours from the row that set it.
+func TestGetLockdownNormalNoticeExpiresAfter24Hours(t *testing.T) {
+	prefix := uniquePrefix("ld_notice_expire")
+	db := database.DBConn
+	supportID := CreateTestUser(t, prefix, "Support")
+	_, token := CreateTestSession(t, supportID)
+
+	incidentID := pressLockdown(t, token, "notice expiry "+prefix)
+	defer cleanupIncident(t, incidentID)
+	closeResp, _ := patchLockdown(t, token, map[string]interface{}{"action": "close", "endnote": "resolved " + prefix})
+	require.Equal(t, 200, closeResp.StatusCode)
+
+	nresp, nresult := patchLockdown(t, token, map[string]interface{}{"action": "notice", "notice": "normal"})
+	require.Equal(t, 200, nresp.StatusCode, "%v", nresult)
+	rowID := uint64(nresult["id"].(float64))
+
+	req := httptest.NewRequest("GET", "/api/lockdown", nil)
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	notice, ok := result["notice"].(map[string]interface{})
+	require.True(t, ok, "a freshly set normal notice must show: %v", result)
+	assert.Equal(t, "normal", notice["key"])
+
+	// lockdowns.created has no ON UPDATE clause (2026_09_27_000001_create_lockdown_tables.php),
+	// so back-dating it directly is safe and cannot be reset by anything else touching the row.
+	require.NoError(t, db.Exec("UPDATE lockdowns SET created = DATE_SUB(NOW(), INTERVAL 25 HOUR) WHERE id = ?", rowID).Error)
+	lockdown.Invalidate()
+
+	req2 := httptest.NewRequest("GET", "/api/lockdown", nil)
+	resp2, err := getApp().Test(req2)
+	require.NoError(t, err)
+	var result2 map[string]interface{}
+	json.Unmarshal(rsp(resp2), &result2)
+	assert.Nil(t, result2["notice"], "a normal notice older than 24 hours must stop showing: %v", result2)
+}
+
 // --- PATCH /lockdown action=phrases ---
 
 func TestPatchLockdownPhrasesRefusesWhenNotActive(t *testing.T) {
@@ -339,6 +476,41 @@ func TestPatchLockdownPhrasesRefusesWhenNotActive(t *testing.T) {
 
 	resp, _ := patchLockdown(t, token, map[string]interface{}{"action": "phrases", "phrases": []string{"x"}})
 	assert.Equal(t, 409, resp.StatusCode)
+}
+
+// TestPatchLockdownPhrasesRejectsOverTheCountCap is finding 10: phrases had no cap at all, so a
+// mistaken paste (or someone testing what the limit even was) could hand the hot path scanning
+// every held message an unbounded slice.
+func TestPatchLockdownPhrasesRejectsOverTheCountCap(t *testing.T) {
+	prefix := uniquePrefix("ld_phrases_countcap")
+	supportID := CreateTestUser(t, prefix, "Support")
+	_, token := CreateTestSession(t, supportID)
+
+	incidentID := pressLockdown(t, token, "phrases count cap "+prefix)
+	defer cleanupIncident(t, incidentID)
+
+	phrases := make([]string, 201)
+	for i := range phrases {
+		phrases[i] = fmt.Sprintf("phrase%d", i)
+	}
+
+	resp, _ := patchLockdown(t, token, map[string]interface{}{"action": "phrases", "phrases": phrases})
+	assert.Equal(t, 400, resp.StatusCode)
+}
+
+// TestPatchLockdownPhrasesRejectsAnOverlongPhrase is the per-entry half of finding 10's cap.
+func TestPatchLockdownPhrasesRejectsAnOverlongPhrase(t *testing.T) {
+	prefix := uniquePrefix("ld_phrases_lengthcap")
+	supportID := CreateTestUser(t, prefix, "Support")
+	_, token := CreateTestSession(t, supportID)
+
+	incidentID := pressLockdown(t, token, "phrases length cap "+prefix)
+	defer cleanupIncident(t, incidentID)
+
+	resp, _ := patchLockdown(t, token, map[string]interface{}{
+		"action": "phrases", "phrases": []string{strings.Repeat("a", 201)},
+	})
+	assert.Equal(t, 400, resp.StatusCode)
 }
 
 // --- PATCH /lockdown action=markspam ---
@@ -411,6 +583,63 @@ func TestPatchLockdownMarkspamSkipsExistingSpamUser(t *testing.T) {
 	var reason string
 	db.Raw("SELECT reason FROM spam_users WHERE userid = ?", senderID).Scan(&reason)
 	assert.Equal(t, "already flagged", reason, "an existing spam_users row must not be overwritten")
+}
+
+// TestPatchLockdownMarkspamUpgradesPendingAddAndSkipsWhitelisted is finding 10: patchMarkspam used
+// to ignore the error spam_users.Create returns for a userid that already has a row (the column is
+// UNIQUE), so a sender sitting in PendingAdd was silently never upgraded to Spammer, and a
+// Whitelisted sender's hold was marked spam_marked with nothing in the response to say their
+// spam_users row was left alone.
+func TestPatchLockdownMarkspamUpgradesPendingAddAndSkipsWhitelisted(t *testing.T) {
+	prefix := uniquePrefix("ld_markspam_upgrade")
+	db := database.DBConn
+	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	_, token := CreateTestSession(t, supportID)
+	pendingID := CreateTestUser(t, prefix+"_pending", "User")
+	whitelistedID := CreateTestUser(t, prefix+"_white", "User")
+	newID := CreateTestUser(t, prefix+"_new", "User")
+
+	incidentID := pressLockdown(t, token, "markspam upgrade "+prefix)
+	defer cleanupIncident(t, incidentID, pendingID, whitelistedID, newID)
+
+	require.NoError(t, db.Table("spam_users").Create(map[string]interface{}{
+		"userid": pendingID, "collection": "PendingAdd", "reason": "earlier flag",
+	}).Error)
+	require.NoError(t, db.Table("spam_users").Create(map[string]interface{}{
+		"userid": whitelistedID, "collection": "Whitelisted", "reason": "trusted",
+	}).Error)
+
+	require.NoError(t, db.Table("lockdown_holds").Create(map[string]interface{}{
+		"lockdownid": incidentID, "kind": "chat", "refid": 601, "userid": pendingID, "risk": "spam",
+	}).Error)
+	require.NoError(t, db.Table("lockdown_holds").Create(map[string]interface{}{
+		"lockdownid": incidentID, "kind": "chat", "refid": 602, "userid": whitelistedID, "risk": "spam",
+	}).Error)
+	require.NoError(t, db.Table("lockdown_holds").Create(map[string]interface{}{
+		"lockdownid": incidentID, "kind": "chat", "refid": 603, "userid": newID, "risk": "spam",
+	}).Error)
+
+	resp, result := patchLockdown(t, token, map[string]interface{}{"action": "markspam"})
+	require.Equal(t, 200, resp.StatusCode, "%v", result)
+	assert.Equal(t, float64(3), result["holds"])
+	assert.Equal(t, float64(2), result["users"], "pending-upgrade and brand-new senders both count as newly flagged")
+	assert.Equal(t, float64(1), result["skippedwhitelisted"])
+
+	var pendingCollection string
+	db.Raw("SELECT collection FROM spam_users WHERE userid = ?", pendingID).Scan(&pendingCollection)
+	assert.Equal(t, "Spammer", pendingCollection, "a PendingAdd sender must be upgraded to Spammer")
+
+	var whitelistedCollection string
+	db.Raw("SELECT collection FROM spam_users WHERE userid = ?", whitelistedID).Scan(&whitelistedCollection)
+	assert.Equal(t, "Whitelisted", whitelistedCollection, "a Whitelisted sender must never be overwritten")
+
+	var newCount int64
+	db.Raw("SELECT COUNT(*) FROM spam_users WHERE userid = ? AND collection = 'Spammer'", newID).Scan(&newCount)
+	assert.Equal(t, int64(1), newCount)
+
+	var markedCount int64
+	db.Raw("SELECT COUNT(*) FROM lockdown_holds WHERE lockdownid = ? AND outcome = 'spam_marked'", incidentID).Scan(&markedCount)
+	assert.Equal(t, int64(3), markedCount, "every hold must still be marked spam_marked, including the whitelisted sender's")
 }
 
 // --- PATCH /lockdown action=releaseclass ---
@@ -800,6 +1029,108 @@ func TestGetModtoolsLockdownStatsAcksLeakedWaiting(t *testing.T) {
 	removed, ok := waitingEmail["removed"].(map[string]interface{})
 	require.True(t, ok, "waiting.email.removed must be present: %v", waitingEmail)
 	assert.Equal(t, float64(2), removed["digest"])
+}
+
+// TestGetModtoolsLockdownStatsLeakedChatExcludesReleasedHolds is finding 8: leakedChatCount used
+// to count every User2User message processed since the press, including ones the lockdown's own
+// hold pipeline had already caught and released, so "sent since the press" over-counted by
+// however many the incident had already dealt with.
+func TestGetModtoolsLockdownStatsLeakedChatExcludesReleasedHolds(t *testing.T) {
+	prefix := uniquePrefix("ld_leaked_chat")
+	db := database.DBConn
+	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	_, token := CreateTestSession(t, supportID)
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	recipientID := CreateTestUser(t, prefix+"_recip", "User")
+
+	incidentID := pressLockdown(t, token, "leaked chat "+prefix)
+	defer cleanupIncident(t, incidentID, senderID, recipientID)
+
+	chatID := CreateTestChatRoom(t, senderID, &recipientID, nil, "User2User")
+
+	leakedMsgID := CreateTestChatMessage(t, chatID, senderID, "leaked "+prefix)
+	releasedMsgID := CreateTestChatMessage(t, chatID, senderID, "released "+prefix)
+
+	// lockdowns.startedat and chat_messages.date are both second-precision TIMESTAMP columns, so
+	// a NOW()-based insert immediately after the press can tie with startedat at the same second
+	// and miss the "> startedat" filter; push both a full minute past it instead.
+	require.NoError(t, db.Exec(
+		"UPDATE chat_messages SET processingsuccessful = 1, "+
+			"date = DATE_ADD((SELECT startedat FROM lockdowns WHERE id = ?), INTERVAL 1 MINUTE) "+
+			"WHERE id IN (?, ?)", incidentID, leakedMsgID, releasedMsgID).Error)
+
+	require.NoError(t, db.Table("lockdown_holds").Create(map[string]interface{}{
+		"lockdownid": incidentID, "kind": "chat", "refid": releasedMsgID, "userid": senderID,
+		"risk": "risky", "outcome": "approved",
+	}).Error)
+
+	req := httptest.NewRequest("GET", "/api/modtools/lockdown/stats?jwt="+token, nil)
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+
+	leaked, ok := result["leaked"].(map[string]interface{})
+	require.True(t, ok, "leaked must be present: %v", result)
+	assert.Equal(t, float64(1), leaked["chat"], "only the message the hold pipeline never saw counts as leaked: %v", leaked)
+}
+
+// TestGetModtoolsLockdownStatsSamplesAndClustersAcrossKinds is finding 9: batchSampleTexts must
+// key its results by (kind, refid) together, not refid alone, since chat_messages, messages and
+// newsfeed all use their own independent auto-increment ids and can collide.
+func TestGetModtoolsLockdownStatsSamplesAndClustersAcrossKinds(t *testing.T) {
+	prefix := uniquePrefix("ld_batch_samples")
+	db := database.DBConn
+	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	_, token := CreateTestSession(t, supportID)
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	incidentID := pressLockdown(t, token, "batch samples "+prefix)
+	defer cleanupIncident(t, incidentID, senderID)
+
+	recipientID := CreateTestUser(t, prefix+"_recip", "User")
+	chatID := CreateTestChatRoom(t, senderID, &recipientID, nil, "User2User")
+	chatMsgID := CreateTestChatMessage(t, chatID, senderID, "chat sample "+prefix)
+	postID := CreateTestMessage(t, senderID, groupID, "post sample "+prefix, 51.5, -0.1)
+	newsfeedID := CreateTestNewsfeed(t, senderID, 51.5, -0.1, "chitchat sample "+prefix)
+
+	require.NoError(t, db.Table("lockdown_holds").Create(map[string]interface{}{
+		"lockdownid": incidentID, "kind": "chat", "refid": chatMsgID, "userid": senderID, "risk": "risky",
+	}).Error)
+	require.NoError(t, db.Table("lockdown_holds").Create(map[string]interface{}{
+		"lockdownid": incidentID, "kind": "post", "refid": postID, "userid": senderID, "risk": "risky",
+	}).Error)
+	require.NoError(t, db.Table("lockdown_holds").Create(map[string]interface{}{
+		"lockdownid": incidentID, "kind": "chitchat", "refid": newsfeedID, "userid": senderID, "risk": "risky",
+	}).Error)
+
+	req := httptest.NewRequest("GET", "/api/modtools/lockdown/stats?jwt="+token, nil)
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+
+	samples, ok := result["samples"].(map[string]interface{})
+	require.True(t, ok, "samples must be present: %v", result)
+	risky, ok := samples["risky"].([]interface{})
+	require.True(t, ok, "samples.risky must be present: %v", samples)
+	require.Len(t, risky, 3, "one sample per kind: %v", risky)
+
+	texts := map[uint64]string{}
+	for _, s := range risky {
+		row := s.(map[string]interface{})
+		texts[uint64(row["refid"].(float64))] = row["text"].(string)
+	}
+	assert.Contains(t, texts[chatMsgID], "chat sample "+prefix, "chat sample text must be batched from the right (kind, refid)")
+	assert.Contains(t, texts[postID], "post sample "+prefix, "post sample text must be batched from the right (kind, refid)")
+	assert.Contains(t, texts[newsfeedID], "chitchat sample "+prefix, "chitchat sample text must be batched from the right (kind, refid)")
+
+	clusters, ok := result["clusters"].([]interface{})
+	require.True(t, ok, "clusters must be present: %v", result)
+	require.Len(t, clusters, 3, "three distinct texts must produce three distinct clusters, not merged across kinds: %v", clusters)
 }
 
 func TestGetModtoolsLockdownStatsRefusesPlainModerator(t *testing.T) {

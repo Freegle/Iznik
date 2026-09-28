@@ -23,6 +23,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // surfaceKeys are the eight surfaces the surfaces JSON column always carries, matching the
@@ -55,6 +56,13 @@ var validNotices = map[string]bool{"delay": true, "security": true, "normal": tr
 // telling an anonymous caller whether a lockdown is active, or which surfaces are held, would
 // let an attacker time their actions around the moment they are about to be throttled.
 //
+// The notice itself is member-facing only while it is still relevant (finding 7): while the
+// incident is active, whatever notice is set shows unconditionally, same as before. Once
+// closed, delay/security notices are cleared by patchClose (they would otherwise tell members
+// about a security incident that ended), and a "normal" notice - the deliberate "things are
+// back to normal" reassurance - shows for 24 hours after the row that set it and then stops,
+// rather than lingering on the public page forever.
+//
 // @Summary Get the public lockdown notice
 // @Description Returns the current member-facing notice, if any. Never reveals whether a
 // @Description lockdown is active or which surfaces are held.
@@ -64,13 +72,26 @@ var validNotices = map[string]bool{"delay": true, "security": true, "normal": tr
 // @Router /lockdown [get]
 func GetLockdown(c *fiber.Ctx) error {
 	s := Current()
-	text, ok := noticeText[s.Notice]
-	if s.Notice == "" || !ok {
+
+	notice := s.Notice
+	if !s.Active {
+		if notice != "normal" || !within24Hours(rowCreatedAt(s.ID)) {
+			notice = ""
+		}
+	}
+
+	text, ok := noticeText[notice]
+	if notice == "" || !ok {
 		return c.JSON(fiber.Map{"notice": nil})
 	}
 	return c.JSON(fiber.Map{
-		"notice": fiber.Map{"key": s.Notice, "text": text},
+		"notice": fiber.Map{"key": notice, "text": text},
 	})
+}
+
+// within24Hours reports whether t is set and less than 24 hours in the past.
+func within24Hours(t *time.Time) bool {
+	return t != nil && time.Since(*t) < 24*time.Hour
 }
 
 // GetModtoolsLockdown is visible to any moderator; phrases are added only for Support/Admin.
@@ -312,13 +333,19 @@ func samplesByRisk(incidentID uint64) map[string]interface{} {
 			Where("lockdownid = ? AND risk = ? AND outcome IS NULL", incidentID, risk).
 			Order("id DESC").Limit(3).Scan(&holds)
 
+		refs := make([]holdRef, 0, len(holds))
+		for _, h := range holds {
+			refs = append(refs, holdRef{Kind: h.Kind, Refid: h.Refid})
+		}
+		texts := batchSampleTexts(refs)
+
 		samples := make([]fiber.Map, 0, len(holds))
 		for _, h := range holds {
 			samples = append(samples, fiber.Map{
 				"kind":   h.Kind,
 				"refid":  h.Refid,
 				"userid": h.Userid,
-				"text":   holdSampleText(h.Kind, h.Refid),
+				"text":   texts[h.Kind][h.Refid],
 			})
 		}
 		out[risk] = samples
@@ -326,21 +353,50 @@ func samplesByRisk(incidentID uint64) map[string]interface{} {
 	return out
 }
 
-// holdSampleText fetches the text a hold refers to, truncated to 200 characters: chat
-// messages by their own text, posts by subject (the body is not held content, the whole post
-// is), ChitChat by its message text.
-func holdSampleText(kind string, refid uint64) string {
-	db := database.DBConn
-	var text string
-	switch kind {
-	case "chat":
-		db.Table("chat_messages").Select("message").Where("id = ?", refid).Limit(1).Scan(&text)
-	case "post":
-		db.Table("messages").Select("subject").Where("id = ?", refid).Limit(1).Scan(&text)
-	case "chitchat":
-		db.Table("newsfeed").Select("message").Where("id = ?", refid).Limit(1).Scan(&text)
+// holdRef is the (kind, refid) key batchSampleTexts groups by.
+type holdRef struct {
+	Kind  string
+	Refid uint64
+}
+
+// batchSampleTexts fetches the text a list of holds refers to - chat messages by their own
+// text, posts by subject (the body is not held content, the whole post is), ChitChat by its
+// message text - truncated to 200 characters, in one query per distinct kind rather than one
+// query per hold (finding 9: lockdownClusters can look at up to 200 holds in a single stats
+// poll, and samplesByRisk adds up to six more; a poll whose cost does not grow with the size
+// of the wave). A (kind, refid) with nothing found is simply absent from the result, which
+// callers read the same as "" via the map's zero value.
+func batchSampleTexts(refs []holdRef) map[string]map[uint64]string {
+	byKind := map[string][]uint64{}
+	for _, r := range refs {
+		byKind[r.Kind] = append(byKind[r.Kind], r.Refid)
 	}
-	return utils.TruncateStringUtil(text, 200)
+
+	out := make(map[string]map[uint64]string, len(byKind))
+	db := database.DBConn
+	for kind, refids := range byKind {
+		var rows []struct {
+			ID   uint64 `gorm:"column:id"`
+			Text string `gorm:"column:text"`
+		}
+		switch kind {
+		case "chat":
+			db.Table("chat_messages").Select("id, message AS text").Where("id IN ?", refids).Scan(&rows)
+		case "post":
+			db.Table("messages").Select("id, subject AS text").Where("id IN ?", refids).Scan(&rows)
+		case "chitchat":
+			db.Table("newsfeed").Select("id, message AS text").Where("id IN ?", refids).Scan(&rows)
+		default:
+			continue
+		}
+
+		texts := make(map[uint64]string, len(rows))
+		for _, r := range rows {
+			texts[r.ID] = utils.TruncateStringUtil(r.Text, 200)
+		}
+		out[kind] = texts
+	}
+	return out
 }
 
 // lockdownClusters folds the first line of up to 200 most recent pending holds' sample text,
@@ -356,9 +412,15 @@ func lockdownClusters(incidentID uint64) []fiber.Map {
 		Where("lockdownid = ? AND outcome IS NULL", incidentID).
 		Order("id DESC").Limit(200).Scan(&holds)
 
+	refs := make([]holdRef, 0, len(holds))
+	for _, h := range holds {
+		refs = append(refs, holdRef{Kind: h.Kind, Refid: h.Refid})
+	}
+	texts := batchSampleTexts(refs)
+
 	counts := map[string]int{}
 	for _, h := range holds {
-		line := firstLine(holdSampleText(h.Kind, h.Refid))
+		line := firstLine(texts[h.Kind][h.Refid])
 		if line == "" {
 			continue
 		}
@@ -579,11 +641,16 @@ func leakedSince(incidentID uint64, startedAt *time.Time) fiber.Map {
 // leakedChatCount counts User2User chat messages the processor marked processingsuccessful
 // after startedat, sent by someone who is neither Support/Admin nor a moderator of any group
 // (a mod sending through the held surface is the deliberate exception in plan 11.3, not a
-// leak). One query, every column it filters on indexed: chat_messages.date leads the
-// (date, seenbyall) composite index, chat_rooms.chattype and users.systemrole are both
-// indexed on their own, and memberships has no covering index for this shape but is small
-// enough per user that the correlated subquery costs nothing next to the outer scan -
-// cheap enough for a five-second poll.
+// leak), and which never went through the hold pipeline at all. A message with its own
+// lockdown_holds row (kind='chat', refid=cm.id) was seen and held by this incident - reviewed
+// and then released via markspam/releaseclass/liftall, or still waiting - so it is exactly the
+// pipeline working, not a leak; without excluding it, every hold this incident itself released
+// counted as "sent since the press" (finding 8), which over-counts as the incident works
+// through its own backlog. One query, every column it filters on indexed: chat_messages.date
+// leads the (date, seenbyall) composite index, chat_rooms.chattype and users.systemrole are
+// both indexed on their own, lockdown_holds has a unique key on (kind, refid), and memberships
+// has no covering index for this shape but is small enough per user that the correlated
+// subquery costs nothing next to the outer scan - cheap enough for a five-second poll.
 //
 // date is chat_messages' only timestamp column - there is no separate "processed at" column
 // - so it is the best available marker of when the message went out.
@@ -596,6 +663,7 @@ func leakedChatCount(startedAt time.Time) int64 {
 			utils.CHAT_TYPE_USER2USER, startedAt, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN).
 		Where("NOT EXISTS (SELECT 1 FROM memberships m WHERE m.userid = cm.userid AND m.role IN (?, ?))",
 			utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Where("NOT EXISTS (SELECT 1 FROM lockdown_holds lh WHERE lh.kind = 'chat' AND lh.refid = cm.id)").
 		Count(&count)
 	return count
 }
@@ -671,6 +739,20 @@ type patchLockdownRequest struct {
 // @Failure 403 {object} map[string]interface{}
 // @Failure 409 {object} map[string]interface{}
 // @Router /lockdown [patch]
+// patchResult carries what a patch sub-handler produced back out to PatchLockdown: the id of
+// the row it wrote, plus any extra fields (holds/users counts and the like) the response needs
+// beyond the usual state view.
+type patchResult struct {
+	rowID uint64
+	extra fiber.Map
+}
+
+// PatchLockdown is the single Support/Admin write endpoint. Finding 6: every action must decide
+// against the newest row, not the process's five-second Current() cache, or two Support agents
+// (or one double-click) acting within that window can both believe they are the ones pressing,
+// or merge surfaces onto a state that a concurrent write has already moved on from. So the whole
+// dispatch runs inside one transaction, reading the latest row FOR UPDATE first - which also
+// blocks a second PATCH until the first has committed and invalidated the cache.
 func PatchLockdown(c *fiber.Ctx) error {
 	myid := auth.WhoAmI(c)
 	if myid == 0 {
@@ -684,34 +766,62 @@ func PatchLockdown(c *fiber.Ctx) error {
 		}
 	}
 
-	s := Current()
-	switch req.Action {
-	case "press":
-		return patchPress(c, myid, s, req)
-	case "surfaces":
-		return patchSurfaces(c, myid, s, req)
-	case "notice":
-		return patchNotice(c, myid, s, req)
-	case "phrases":
-		return patchPhrases(c, myid, s, req)
-	case "markspam":
-		return patchMarkspam(c, myid, s)
-	case "releaseclass":
-		return patchReleaseclass(c, myid, s, req)
-	case "liftall":
-		return patchLiftall(c, myid, s, req)
-	case "close":
-		return patchClose(c, myid, s, req)
-	default:
-		return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
+	var result patchResult
+	txErr := database.DBConn.Transaction(func(tx *gorm.DB) error {
+		fresh, err := loadStateForUpdate(tx)
+		if err != nil {
+			return err
+		}
+
+		var res patchResult
+		switch req.Action {
+		case "press":
+			res, err = patchPress(tx, myid, fresh, req)
+		case "surfaces":
+			res, err = patchSurfaces(tx, myid, fresh, req)
+		case "notice":
+			res, err = patchNotice(tx, myid, fresh, req)
+		case "phrases":
+			res, err = patchPhrases(tx, myid, fresh, req)
+		case "markspam":
+			res, err = patchMarkspam(tx, myid, fresh)
+		case "releaseclass":
+			res, err = patchReleaseclass(tx, myid, fresh, req)
+		case "liftall":
+			res, err = patchLiftall(tx, myid, fresh, req)
+		case "close":
+			res, err = patchClose(tx, myid, fresh, req)
+		default:
+			err = fiber.NewError(fiber.StatusBadRequest, "Unknown action")
+		}
+		if err != nil {
+			return err
+		}
+		result = res
+		return nil
+	})
+	if txErr != nil {
+		if fe, ok := txErr.(*fiber.Error); ok {
+			return fe
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, txErr.Error())
 	}
+
+	Invalidate()
+	response := patchResponse(result.rowID, Current())
+	for k, v := range result.extra {
+		response[k] = v
+	}
+	return c.JSON(response)
 }
 
-// writeStateRow inserts the next row of the append-only lockdowns table and invalidates the
-// cache so the change takes effect immediately. A fresh press (IncidentID still zero, Active
-// true) needs a second write once the row's own id is known, so the incident is keyed on its
-// own pressing row - the same two-step pattern lockdown_test.go's setActiveLockdownRow uses.
-func writeStateRow(myid uint64, next State) (uint64, error) {
+// writeStateRow inserts the next row of the append-only lockdowns table. It runs on the same
+// transaction PatchLockdown reads the fresh row from and locks it (finding 6) - the caller
+// invalidates the cache once the transaction has committed, not here. A fresh press (IncidentID
+// still zero, Active true) needs a second write once the row's own id is known, so the incident
+// is keyed on its own pressing row - the same two-step pattern lockdown_test.go's
+// setActiveLockdownRow uses.
+func writeStateRow(tx *gorm.DB, myid uint64, next State) (uint64, error) {
 	surfacesJSON, err := json.Marshal(surfacesStorageMap(next))
 	if err != nil {
 		return 0, err
@@ -752,20 +862,19 @@ func writeStateRow(myid uint64, next State) (uint64, error) {
 		row["endnote"] = next.EndNote
 	}
 
-	if result := database.DBConn.Table("lockdowns").Create(row); result.Error != nil {
+	if result := tx.Table("lockdowns").Create(row); result.Error != nil {
 		return 0, result.Error
 	}
 	idInt, _ := row["@id"].(int64)
 	id := uint64(idInt)
 
 	if next.IncidentID == 0 && next.Active {
-		if err := database.DBConn.Table("lockdowns").Where("id = ?", id).
+		if err := tx.Table("lockdowns").Where("id = ?", id).
 			Update("incidentid", id).Error; err != nil {
 			return 0, err
 		}
 	}
 
-	Invalidate()
 	return id, nil
 }
 
@@ -784,17 +893,17 @@ func patchResponse(rowID uint64, s State) fiber.Map {
 	return view
 }
 
-func patchPress(c *fiber.Ctx, myid uint64, s State, req patchLockdownRequest) error {
-	if s.Active {
-		return fiber.NewError(fiber.StatusConflict, "A lockdown incident is already active.")
+func patchPress(tx *gorm.DB, myid uint64, fresh State, req patchLockdownRequest) (patchResult, error) {
+	if fresh.Active {
+		return patchResult{}, fiber.NewError(fiber.StatusConflict, "A lockdown incident is already active.")
 	}
 	if strings.TrimSpace(req.Reason) == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "reason is required")
+		return patchResult{}, fiber.NewError(fiber.StatusBadRequest, "reason is required")
 	}
 	notice := ""
 	if req.Notice != nil {
 		if !validNotices[*req.Notice] {
-			return fiber.NewError(fiber.StatusBadRequest, "notice must be one of: delay, security, normal")
+			return patchResult{}, fiber.NewError(fiber.StatusBadRequest, "notice must be one of: delay, security, normal")
 		}
 		notice = *req.Notice
 	}
@@ -813,21 +922,21 @@ func patchPress(c *fiber.Ctx, myid uint64, s State, req patchLockdownRequest) er
 		StartedAt: timePtr(time.Now()),
 	}
 
-	rowID, err := writeStateRow(myid, next)
+	rowID, err := writeStateRow(tx, myid, next)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to press lockdown")
+		return patchResult{}, fiber.NewError(fiber.StatusInternalServerError, "Failed to press lockdown")
 	}
-	return c.JSON(patchResponse(rowID, Current()))
+	return patchResult{rowID: rowID}, nil
 }
 
-func patchSurfaces(c *fiber.Ctx, myid uint64, s State, req patchLockdownRequest) error {
-	if !s.Active {
-		return fiber.NewError(fiber.StatusConflict, "No lockdown incident is active.")
+func patchSurfaces(tx *gorm.DB, myid uint64, fresh State, req patchLockdownRequest) (patchResult, error) {
+	if !fresh.Active {
+		return patchResult{}, fiber.NewError(fiber.StatusConflict, "No lockdown incident is active.")
 	}
 
 	merged := make(map[string]bool, len(surfaceKeys))
 	for _, k := range surfaceKeys {
-		merged[k] = s.Surfaces[k]
+		merged[k] = fresh.Surfaces[k]
 	}
 	for k, v := range req.Surfaces {
 		if isSurfaceKey(k) {
@@ -835,119 +944,169 @@ func patchSurfaces(c *fiber.Ctx, myid uint64, s State, req patchLockdownRequest)
 		}
 	}
 
-	next := s
+	next := fresh
 	next.Surfaces = merged
 	if req.ChatMode != nil {
 		if *req.ChatMode != "hard" && *req.ChatMode != "soft" {
-			return fiber.NewError(fiber.StatusBadRequest, "chat_mode must be hard or soft")
+			return patchResult{}, fiber.NewError(fiber.StatusBadRequest, "chat_mode must be hard or soft")
 		}
 		next.ChatMode = *req.ChatMode
 	}
 
-	rowID, err := writeStateRow(myid, next)
+	rowID, err := writeStateRow(tx, myid, next)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to update lockdown surfaces")
+		return patchResult{}, fiber.NewError(fiber.StatusInternalServerError, "Failed to update lockdown surfaces")
 	}
-	return c.JSON(patchResponse(rowID, Current()))
+	return patchResult{rowID: rowID}, nil
 }
 
-func patchNotice(c *fiber.Ctx, myid uint64, s State, req patchLockdownRequest) error {
-	next := s
+// patchNotice writes the free-standing "what members see" notice. Finding 7: while no incident
+// is active the only notice that may be set is normal (a settled all-clear) or cleared outright
+// - delay/security are incident wording and must not be revivable once there is nothing to warn
+// members about.
+func patchNotice(tx *gorm.DB, myid uint64, fresh State, req patchLockdownRequest) (patchResult, error) {
+	next := fresh
 	if req.Notice == nil {
 		next.Notice = ""
 	} else if !validNotices[*req.Notice] {
-		return fiber.NewError(fiber.StatusBadRequest, "notice must be one of: delay, security, normal")
+		return patchResult{}, fiber.NewError(fiber.StatusBadRequest, "notice must be one of: delay, security, normal")
+	} else if !fresh.Active && *req.Notice != "normal" {
+		return patchResult{}, fiber.NewError(fiber.StatusConflict, "Only the normal notice can be set while no lockdown incident is active.")
 	} else {
 		next.Notice = *req.Notice
 	}
 
-	rowID, err := writeStateRow(myid, next)
+	rowID, err := writeStateRow(tx, myid, next)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to update lockdown notice")
+		return patchResult{}, fiber.NewError(fiber.StatusInternalServerError, "Failed to update lockdown notice")
 	}
-	return c.JSON(patchResponse(rowID, Current()))
+	return patchResult{rowID: rowID}, nil
 }
 
-func patchPhrases(c *fiber.Ctx, myid uint64, s State, req patchLockdownRequest) error {
-	if !s.Active {
-		return fiber.NewError(fiber.StatusConflict, "No lockdown incident is active.")
+// maxPhrases and maxPhraseLength cap patchPhrases (finding 10): with no limit, a support agent
+// (or a script driving the endpoint) can grow the phrases column without bound, and every phrase
+// on it is checked against every message the content checker sees.
+const (
+	maxPhrases      = 200
+	maxPhraseLength = 200
+)
+
+func patchPhrases(tx *gorm.DB, myid uint64, fresh State, req patchLockdownRequest) (patchResult, error) {
+	if !fresh.Active {
+		return patchResult{}, fiber.NewError(fiber.StatusConflict, "No lockdown incident is active.")
+	}
+	if len(req.Phrases) > maxPhrases {
+		return patchResult{}, fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("phrases is limited to %d entries", maxPhrases))
 	}
 
 	phrases := make([]string, 0, len(req.Phrases))
 	for _, p := range req.Phrases {
 		p = strings.ToLower(strings.TrimSpace(p))
-		if p != "" {
-			phrases = append(phrases, p)
+		if p == "" {
+			continue
 		}
+		if len(p) > maxPhraseLength {
+			return patchResult{}, fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("each phrase is limited to %d characters", maxPhraseLength))
+		}
+		phrases = append(phrases, p)
 	}
 
-	next := s
+	next := fresh
 	next.Phrases = phrases
 
-	rowID, err := writeStateRow(myid, next)
+	rowID, err := writeStateRow(tx, myid, next)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to update lockdown phrases")
+		return patchResult{}, fiber.NewError(fiber.StatusInternalServerError, "Failed to update lockdown phrases")
 	}
-	return c.JSON(patchResponse(rowID, Current()))
+	return patchResult{rowID: rowID}, nil
 }
 
 // patchMarkspam marks every still-waiting spam hold as spam_marked and flags each distinct
-// sender into spam_users (collection Spammer), skipping a sender already flagged there so a
-// second markspam call, or an overlapping one, never overwrites an existing reason. It writes
-// a carried-forward lockdowns row purely to record who did this and when.
-func patchMarkspam(c *fiber.Ctx, myid uint64, s State) error {
-	if !s.Active {
-		return fiber.NewError(fiber.StatusConflict, "No lockdown incident is active.")
+// sender into spam_users (collection Spammer). Finding 10: spam_users.userid is unique, so a
+// sender already on the table - PendingAdd, PendingRemove or Spammer from some earlier pass -
+// made the old bare Create fail silently while the hold was still marked spam_marked, losing
+// the failure and (for a sender who was actually Whitelisted) wrongly treating them as flagged.
+// Now: no row yet -> create as Spammer; PendingAdd/PendingRemove -> upgrade to Spammer;
+// Whitelisted -> leave alone and count it separately; already Spammer -> nothing to do.
+func patchMarkspam(tx *gorm.DB, myid uint64, fresh State) (patchResult, error) {
+	if !fresh.Active {
+		return patchResult{}, fiber.NewError(fiber.StatusConflict, "No lockdown incident is active.")
 	}
 
-	db := database.DBConn
 	var holds []struct {
 		ID     uint64 `gorm:"column:id"`
 		Userid uint64 `gorm:"column:userid"`
 	}
-	db.Table("lockdown_holds").Select("id, userid").
-		Where("lockdownid = ? AND risk = 'spam' AND outcome IS NULL", s.IncidentID).
+	tx.Table("lockdown_holds").Select("id, userid").
+		Where("lockdownid = ? AND risk = 'spam' AND outcome IS NULL", fresh.IncidentID).
 		Scan(&holds)
 
 	seen := map[uint64]bool{}
 	newlyFlagged := 0
+	skippedWhitelisted := 0
 	for _, h := range holds {
 		if h.Userid != 0 && !seen[h.Userid] {
 			seen[h.Userid] = true
-			var existing int64
-			db.Table("spam_users").Where("userid = ? AND collection = 'Spammer'", h.Userid).Count(&existing)
-			if existing == 0 {
-				db.Table("spam_users").Create(map[string]interface{}{
+
+			var existing struct {
+				Collection string `gorm:"column:collection"`
+			}
+			found := tx.Table("spam_users").Select("collection").
+				Where("userid = ?", h.Userid).Scan(&existing)
+			if found.Error != nil {
+				return patchResult{}, fiber.NewError(fiber.StatusInternalServerError, "Failed to check spam_users")
+			}
+
+			switch {
+			case found.RowsAffected == 0:
+				if err := tx.Table("spam_users").Create(map[string]interface{}{
 					"userid":     h.Userid,
 					"collection": "Spammer",
 					"byuserid":   myid,
-					"reason":     fmt.Sprintf("Lockdown %d", s.IncidentID),
-				})
+					"reason":     fmt.Sprintf("Lockdown %d", fresh.IncidentID),
+				}).Error; err != nil {
+					return patchResult{}, fiber.NewError(fiber.StatusInternalServerError, "Failed to flag spam user")
+				}
+				newlyFlagged++
+			case existing.Collection == "Whitelisted":
+				skippedWhitelisted++
+			case existing.Collection != "Spammer":
+				if err := tx.Table("spam_users").Where("userid = ?", h.Userid).
+					Update("collection", "Spammer").Error; err != nil {
+					return patchResult{}, fiber.NewError(fiber.StatusInternalServerError, "Failed to flag spam user")
+				}
 				newlyFlagged++
 			}
 		}
-		db.Table("lockdown_holds").Where("id = ?", h.ID).Update("outcome", "spam_marked")
+		if err := tx.Table("lockdown_holds").Where("id = ?", h.ID).
+			Update("outcome", "spam_marked").Error; err != nil {
+			return patchResult{}, fiber.NewError(fiber.StatusInternalServerError, "Failed to mark hold as spam")
+		}
 	}
 
-	rowID, err := writeStateRow(myid, s)
+	rowID, err := writeStateRow(tx, myid, fresh)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to record lockdown action")
+		return patchResult{}, fiber.NewError(fiber.StatusInternalServerError, "Failed to record lockdown action")
 	}
-	response := patchResponse(rowID, Current())
-	response["holds"] = len(holds)
-	response["users"] = newlyFlagged
-	return c.JSON(response)
+	return patchResult{
+		rowID: rowID,
+		extra: fiber.Map{
+			"holds":              len(holds),
+			"users":              newlyFlagged,
+			"skippedwhitelisted": skippedWhitelisted,
+		},
+	}, nil
 }
 
 // patchReleaseclass lets Support release or reject a whole risk class at once, having already
 // looked at samples of it: release approves every matching hold still waiting or under
 // review, reject marks the sender's holds spam_marked so the batch rejects them.
-func patchReleaseclass(c *fiber.Ctx, myid uint64, s State, req patchLockdownRequest) error {
-	if !s.Active {
-		return fiber.NewError(fiber.StatusConflict, "No lockdown incident is active.")
+func patchReleaseclass(tx *gorm.DB, myid uint64, fresh State, req patchLockdownRequest) (patchResult, error) {
+	if !fresh.Active {
+		return patchResult{}, fiber.NewError(fiber.StatusConflict, "No lockdown incident is active.")
 	}
 	if req.Kind == "" || req.Risk == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "kind and risk are required")
+		return patchResult{}, fiber.NewError(fiber.StatusBadRequest, "kind and risk are required")
 	}
 
 	var outcome string
@@ -957,32 +1116,33 @@ func patchReleaseclass(c *fiber.Ctx, myid uint64, s State, req patchLockdownRequ
 	case "reject":
 		outcome = "spam_marked"
 	default:
-		return fiber.NewError(fiber.StatusBadRequest, "decision must be release or reject")
+		return patchResult{}, fiber.NewError(fiber.StatusBadRequest, "decision must be release or reject")
 	}
 
-	result := database.DBConn.Table("lockdown_holds").
+	result := tx.Table("lockdown_holds").
 		Where("lockdownid = ? AND kind = ? AND risk = ? AND (outcome IS NULL OR outcome = 'review')",
-			s.IncidentID, req.Kind, req.Risk).
+			fresh.IncidentID, req.Kind, req.Risk).
 		Update("outcome", outcome)
 	if result.Error != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to release class")
+		return patchResult{}, fiber.NewError(fiber.StatusInternalServerError, "Failed to release class")
 	}
 
-	rowID, err := writeStateRow(myid, s)
+	rowID, err := writeStateRow(tx, myid, fresh)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to record lockdown action")
+		return patchResult{}, fiber.NewError(fiber.StatusInternalServerError, "Failed to record lockdown action")
 	}
-	response := patchResponse(rowID, Current())
-	response["holds"] = result.RowsAffected
-	return c.JSON(response)
+	return patchResult{
+		rowID: rowID,
+		extra: fiber.Map{"holds": result.RowsAffected},
+	}, nil
 }
 
-func patchLiftall(c *fiber.Ctx, myid uint64, s State, req patchLockdownRequest) error {
-	if !s.Active {
-		return fiber.NewError(fiber.StatusConflict, "No lockdown incident is active.")
+func patchLiftall(tx *gorm.DB, myid uint64, fresh State, req patchLockdownRequest) (patchResult, error) {
+	if !fresh.Active {
+		return patchResult{}, fiber.NewError(fiber.StatusConflict, "No lockdown incident is active.")
 	}
 
-	next := s
+	next := fresh
 	lowered := make(map[string]bool, len(surfaceKeys))
 	for _, k := range surfaceKeys {
 		lowered[k] = false
@@ -992,22 +1152,25 @@ func patchLiftall(c *fiber.Ctx, myid uint64, s State, req patchLockdownRequest) 
 		next.EndNote = req.Endnote
 	}
 
-	rowID, err := writeStateRow(myid, next)
+	rowID, err := writeStateRow(tx, myid, next)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to lift lockdown surfaces")
+		return patchResult{}, fiber.NewError(fiber.StatusInternalServerError, "Failed to lift lockdown surfaces")
 	}
-	return c.JSON(patchResponse(rowID, Current()))
+	return patchResult{rowID: rowID}, nil
 }
 
-func patchClose(c *fiber.Ctx, myid uint64, s State, req patchLockdownRequest) error {
-	if !s.Active {
-		return fiber.NewError(fiber.StatusConflict, "No lockdown incident is active.")
+// patchClose ends the incident. Finding 7: delay/security notice wording belongs to the
+// incident that set it, so close clears it; normal (a settled all-clear set independently of
+// any incident) is left untouched.
+func patchClose(tx *gorm.DB, myid uint64, fresh State, req patchLockdownRequest) (patchResult, error) {
+	if !fresh.Active {
+		return patchResult{}, fiber.NewError(fiber.StatusConflict, "No lockdown incident is active.")
 	}
 	if strings.TrimSpace(req.Endnote) == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "endnote is required")
+		return patchResult{}, fiber.NewError(fiber.StatusBadRequest, "endnote is required")
 	}
 
-	next := s
+	next := fresh
 	next.Active = false
 	lowered := make(map[string]bool, len(surfaceKeys))
 	for _, k := range surfaceKeys {
@@ -1015,15 +1178,18 @@ func patchClose(c *fiber.Ctx, myid uint64, s State, req patchLockdownRequest) er
 	}
 	next.Surfaces = lowered
 	next.Phrases = []string{}
+	if next.Notice == "delay" || next.Notice == "security" {
+		next.Notice = ""
+	}
 	next.EndedBy = myid
 	next.EndedAt = timePtr(time.Now())
 	next.EndNote = req.Endnote
 
-	rowID, err := writeStateRow(myid, next)
+	rowID, err := writeStateRow(tx, myid, next)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to close lockdown")
+		return patchResult{}, fiber.NewError(fiber.StatusInternalServerError, "Failed to close lockdown")
 	}
-	return c.JSON(patchResponse(rowID, Current()))
+	return patchResult{rowID: rowID}, nil
 }
 
 func boolToInt(b bool) int {
