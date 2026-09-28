@@ -111,6 +111,9 @@ behaviour rather than name an endpoint are listed in
 Frontend values that reach the browser are declared in `runtimeConfig.public` in
 `iznik-nuxt3/nuxt.config.ts`. Anything there is **public by definition** - it is served to
 every visitor - so only publishable keys belong in it (a Stripe *publishable* key, an
-advert publisher id). Server-side secrets go in `.env` (development, see `.env.example`) and
+advert publisher id). One of them, `ENVIRONMENT`, is what the browser and app report to
+Sentry as the environment: an explicit `ENVIRONMENT` build variable wins, otherwise CI
+builds are `ci`, production builds (including the app) are `production` and the dev
+server is `dev`. Server-side secrets go in `.env` (development, see `.env.example`) and
 `.env.background` (production batch, see `.env.background.example`), and in the batch tier
 are read through `iznik-batch/config/freegle.php` rather than `env()` at the point of use.
