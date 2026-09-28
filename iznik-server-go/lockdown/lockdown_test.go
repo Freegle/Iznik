@@ -491,3 +491,56 @@ func TestSetTestStateSurvivesInvalidate(t *testing.T) {
 	Invalidate()
 	assert.True(t, Held("mods"))
 }
+
+// ---------------------------------------------------------------------------
+// ItemHeld
+//
+// Unlike Held (surface-level, in-memory, TTL-cached), this is a per-item,
+// uncached lookup keyed on lockdown_holds' own unique (kind, refid) index, so
+// no SetTestState/reset dance is needed - it is a plain read of a plain row.
+// ---------------------------------------------------------------------------
+
+func insertLockdownHoldRow(t *testing.T, kind string, refid uint64, outcome *string) {
+	t.Helper()
+	db := database.DBConn
+	result := db.Table("lockdown_holds").Create(map[string]interface{}{
+		"lockdownid": 1,
+		"kind":       kind,
+		"refid":      refid,
+		"outcome":    outcome,
+	})
+	require.NoError(t, result.Error)
+	t.Cleanup(func() {
+		db.Table("lockdown_holds").Where("kind = ? AND refid = ?", kind, refid).Delete(nil)
+	})
+}
+
+func TestItemHeldIsFalseWhenNoHoldRowExists(t *testing.T) {
+	assert.False(t, ItemHeld("post", 9999999991))
+}
+
+func TestItemHeldIsTrueForAnUnresolvedHold(t *testing.T) {
+	refid := uint64(time.Now().UnixNano())
+	insertLockdownHoldRow(t, "post", refid, nil)
+	assert.True(t, ItemHeld("post", refid))
+}
+
+func TestItemHeldIsFalseOnceOutcomeIsRecorded(t *testing.T) {
+	refid := uint64(time.Now().UnixNano())
+	outcome := "approved"
+	insertLockdownHoldRow(t, "post", refid, &outcome)
+	assert.False(t, ItemHeld("post", refid))
+}
+
+func TestItemHeldDoesNotMatchADifferentKindWithTheSameRefid(t *testing.T) {
+	refid := uint64(time.Now().UnixNano())
+	insertLockdownHoldRow(t, "chat", refid, nil)
+	assert.False(t, ItemHeld("post", refid))
+	assert.True(t, ItemHeld("chat", refid))
+}
+
+func TestItemHeldWorksForChitchatKind(t *testing.T) {
+	refid := uint64(time.Now().UnixNano())
+	insertLockdownHoldRow(t, "chitchat", refid, nil)
+	assert.True(t, ItemHeld("chitchat", refid))
+}

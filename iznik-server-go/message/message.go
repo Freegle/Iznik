@@ -273,6 +273,11 @@ type Message struct {
 	// no messages.heldby column behind it any more. Remove once the app floor has moved
 	// past the per-group frontend.
 	Heldby           *uint64          `json:"heldby"`
+	// Lockdownheld: section 10.6/10.12 of the lockdown plan. True while this post has an
+	// unresolved lockdown_holds row (kind='post') - inserted by the Laravel batch triage
+	// service, not by this API - so ModTools can label the pending card "held by lockdown"
+	// rather than showing it as an ordinary pending post. See lockdown.ItemHeld.
+	Lockdownheld     bool             `json:"lockdownheld" gorm:"-"`
 	Source           *string          `json:"source"`
 	Sourceheader     *string          `json:"sourceheader"`
 	Fromaddr         *string          `json:"fromaddr"`
@@ -747,10 +752,11 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 
 			wg.Wait()
 
+			idNum, _ := strconv.ParseUint(id, 10, 64)
+
 			// isGroupMod is used for edit access and location disclosure.
 			isGroupMod := isMod
 			if !isGroupMod {
-				idNum, _ := strconv.ParseUint(id, 10, 64)
 				isGroupMod = isModForMessage(db, myid, idNum)
 			}
 
@@ -795,6 +801,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			message.MessageReply = messageReply
 			message.MessageOutcomes = messageOutcomes
 			message.MessagePromises = messagePromises
+			message.Lockdownheld = lockdown.ItemHeld("post", idNum)
 			if isMod && len(messageEdits) > 0 {
 				message.Edits = messageEdits
 			}

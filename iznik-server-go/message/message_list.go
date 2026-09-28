@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
@@ -55,6 +56,10 @@ type ListMessageItem struct {
 	// ModMessagingAllowed: see Message.ModMessagingAllowed. Reduced from Groups by
 	// modMessagingAllowed() so the queue does not have to re-derive it per card.
 	ModMessagingAllowed bool `json:"mod_messaging_allowed"`
+	// Lockdownheld: see Message.Lockdownheld. Populated the same way, from
+	// lockdown.ItemHeld("post", ...), so the mod pending-queue list carries the same
+	// "held by lockdown" signal as the per-post detail fetch.
+	Lockdownheld bool `json:"lockdownheld" gorm:"-"`
 }
 
 type ListMessagesResponse struct {
@@ -250,10 +255,11 @@ func ListMessages(c *fiber.Ctx) error {
 			var groups []MessageGroupInfo
 			var attachments []MessageAttachment
 			var replycount int64
+			var lockdownheld bool
 
 			var wg sync.WaitGroup
 
-			wg.Add(4)
+			wg.Add(5)
 
 			go func() {
 				defer wg.Done()
@@ -282,11 +288,17 @@ func ListMessages(c *fiber.Ctx) error {
 					Count(&replycount)
 			}()
 
+			go func() {
+				defer wg.Done()
+				lockdownheld = lockdown.ItemHeld("post", msgID)
+			}()
+
 			wg.Wait()
 
 			msg.Groups = groups
 			msg.ModMessagingAllowed = listModMessagingAllowed(groups)
 			msg.Replycount = int(replycount)
+			msg.Lockdownheld = lockdownheld
 
 			// Compute expiresat from group settings.
 			if len(groups) > 0 {

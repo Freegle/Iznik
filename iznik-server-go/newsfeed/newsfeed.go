@@ -54,6 +54,11 @@ type NewsfeedSummary struct {
 	Eventpending        bool       `json:"-"`
 	Volunteeringpending bool       `json:"-"`
 	Storypending        bool       `json:"-"`
+	// Lockdownheld: section 10.6/10.12 of the lockdown plan. True while this ChitChat post
+	// has an unresolved lockdown_holds row (kind='chitchat'). Mods see hidden ChitChat
+	// inline in the ordinary feed rather than a separate queue, so this has to travel on
+	// the summary too, not just on the full Newsfeed detail. See lockdown.ItemHeld.
+	Lockdownheld bool `json:"lockdownheld" gorm:"-"`
 }
 
 func (NewsfeedPreview) TableName() string {
@@ -108,6 +113,9 @@ type Newsfeed struct {
 	// on any entry path (feed card or notification deep link) without an extra
 	// request. Never populated on nested replies.
 	SeenWatermark uint64 `json:"seenwatermark,omitempty" gorm:"-"`
+	// Lockdownheld: see NewsfeedSummary.Lockdownheld. Populated the same way, from
+	// lockdown.ItemHeld("chitchat", ...), on the full-detail thread fetch.
+	Lockdownheld bool `json:"lockdownheld" gorm:"-"`
 }
 
 func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, float64, float64) {
@@ -656,6 +664,11 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, minutes uint64, all
 			if newsfeed[i].Userid == myid || amAMod {
 				// Don't use hidden entries unless they are ours.  This means that to a spammer or suppressed user
 				// it looks like their posts are there but nobody else sees them.
+				// Section 10.6/10.12: label a lockdown-held ChitChat post so a mod browsing the
+				// ordinary feed - there is no separate ModTools ChitChat queue - sees "held by
+				// lockdown" rather than an unexplained hidden card. Only worth the extra query
+				// for the hidden subset, not every feed item.
+				newsfeed[i].Lockdownheld = lockdown.ItemHeld("chitchat", newsfeed[i].ID)
 				ret = append(ret, newsfeed[i])
 			}
 		} else {
@@ -957,6 +970,11 @@ func fetchSingle(id uint64, myid uint64, lovelist bool) (Newsfeed, bool) {
 		if newsfeed.Replyto == 0 {
 			newsfeed.Threadhead = newsfeed.ID
 		}
+
+		// Section 10.6/10.12: label a lockdown-held ChitChat post on the full-detail thread
+		// fetch too, so NewsThread.vue can show "held by lockdown" on a single opened item
+		// as well as on the feed-summary card. See NewsfeedSummary.Lockdownheld.
+		newsfeed.Lockdownheld = lockdown.ItemHeld("chitchat", newsfeed.ID)
 
 		return newsfeed, false
 	} else {

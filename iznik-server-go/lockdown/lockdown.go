@@ -264,6 +264,24 @@ func GateDownload(c *fiber.Ctx) bool {
 	return true
 }
 
+// ItemHeld reports whether a chat message, post or ChitChat post (kind "chat", "post" or
+// "chitchat", refid the item's own id) is currently held pending triage: a lockdown_holds
+// row exists for it with no outcome recorded yet. This is a plain, uncached read of the
+// unique (kind, refid) key - unlike Held, it is not a surface-level in-memory state, so a
+// caller always sees a hold recorded moments ago by another process (e.g. the Laravel batch
+// triage service, which inserts kind='post' rows Go never writes itself) without waiting out
+// Current's TTL.
+//
+// For labelling a card "held by lockdown" on read (section 10.6/10.12) - never for gating a
+// write; use Held/GateMod/GateMember/GateDownload for that.
+func ItemHeld(kind string, refid uint64) bool {
+	var count int64
+	database.DBConn.Table("lockdown_holds").
+		Where("kind = ? AND refid = ? AND outcome IS NULL", kind, refid).
+		Count(&count)
+	return count > 0
+}
+
 func loadLatestFromDB() (State, error) {
 	var row struct {
 		ID         uint64
