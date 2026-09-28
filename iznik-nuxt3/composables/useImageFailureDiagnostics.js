@@ -8,12 +8,15 @@
 //  1. Probe the same URL with fetch() and record whether the host answered and
 //     with what status.
 //  2. If the host did not answer, check once per session whether the delivery
-//     host is unreachable while the API host is fine. That combination means
-//     something on this device or network is blocking images specifically
-//     (Screen Time and similar filters work per hostname and abort the TLS
-//     handshake). We report it once, to Sentry and to the client log, and keep
-//     a per-session flag. Nothing is shown to the member: the tiles are too
-//     small for an explanation, and support can act on the report.
+//     host is unreachable while the API host is fine. If no image has loaded
+//     this session, that combination means something on this device or network
+//     is blocking images specifically (Screen Time and similar filters work per
+//     hostname and abort the TLS handshake). If images had loaded, the host
+//     stopped answering partway through, which is a dropped connection rather
+//     than a block, and is reported as such. Either way we report once, to
+//     Sentry and to the client log; a block also sets a per-session flag.
+//     Nothing is shown to the member: the tiles are too small for an
+//     explanation, and support can act on the report.
 //  3. Cap the per-image Sentry reports per session and ignore crawlers, whose
 //     renderers fire these events by the thousand.
 import { ref } from 'vue'
@@ -37,6 +40,7 @@ const CRAWLER_RE =
 const imageHostBlocked = ref(false)
 
 let failures = 0
+let loads = 0
 let individualReports = 0
 let firstFailedUrl = null
 let hostCheckStarted = false
@@ -46,6 +50,12 @@ let hostCheckResult = null
 // unreachable from this device while the API is reachable.
 export function useImageHostBlocked() {
   return imageHostBlocked
+}
+
+// Called by OurUploadedImage for every image that loads. A later failure uses
+// this to tell a device that never reached the image host from one that lost it.
+export function noteImageLoaded() {
+  loads++
 }
 
 export function isCrawler(userAgent) {
@@ -170,22 +180,30 @@ export async function checkImageHost(fetchImpl) {
   const apiUp = api.probed && api.reachable === true
 
   if (deliveryDown && apiUp) {
-    imageHostBlocked.value = true
-
     const nav = typeof navigator !== 'undefined' ? navigator : null
     const detail = {
       delivery_error: delivery.error,
       failures_so_far: failures,
+      images_loaded_before: loads,
       first_failed_url: firstFailedUrl,
       online: nav ? nav.onLine : null,
       connection: nav?.connection?.effectiveType || null,
     }
 
-    captureMessage(
-      'Image host unreachable: delivery blocked on this device or network',
-      { level: 'warning', extra: detail }
-    )
-    clientLogWarn('image_host_unreachable', detail)
+    if (loads === 0) {
+      imageHostBlocked.value = true
+      captureMessage(
+        'Image host unreachable: delivery blocked on this device or network',
+        { level: 'warning', extra: detail }
+      )
+      clientLogWarn('image_host_unreachable', detail)
+    } else {
+      captureMessage(
+        'Image host stopped answering mid-session: images had loaded earlier',
+        { level: 'warning', extra: detail }
+      )
+      clientLogWarn('image_host_dropped', detail)
+    }
   }
 
   return hostCheckResult
@@ -245,6 +263,7 @@ export async function reportImageFailure({ src, url }, fetchImpl) {
 export function resetImageFailureDiagnostics() {
   imageHostBlocked.value = false
   failures = 0
+  loads = 0
   individualReports = 0
   firstFailedUrl = null
   hostCheckStarted = false
