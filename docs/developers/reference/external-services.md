@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-27
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 covers:
   - .env.example
@@ -65,7 +65,8 @@ These look like external services on other sites. We run them.
 |---|---|---|
 | **Place search** | A paid geocoding API | Part of the spatial service. An index of named UK places built from OpenStreetMap data, held in memory and reloaded without a restart |
 | **OSM tile server** | A paid map tile service | Edge tier (`tile-server` container) |
-| **tusd** | An upload service | Edge tier. Uploads are resumable; identifiers look like `freegletusd-*` |
+| **tusd** | An upload service | Edge tier. Uploads are resumable; identifiers look like `freegletusd-*`. tusd writes to a local spool; the batch scheduler moves completed uploads to the object store below |
+| **Object store** (Katapult / any S3-compatible bucket) | S3 | Where finished uploads live, read anonymously by the edge nginx (`IMAGE_STORE_PUBLIC_URL`) and written by batch (`IMAGE_STORE_*` in the batch secrets). The dev `edge` stack uses RustFS as a stand-in. Legacy uploads are still on an NFS share while they are copied - [runbook](../../ops/runbooks/images-to-object-storage.md) |
 | **weserv** | Cloudinary or similar | Image resizing and delivery (`IMAGE_DELIVERY`) |
 | **Loki + Grafana** | A hosted log service | [../../ops/monitoring-and-logging.md](../../ops/monitoring-and-logging.md) |
 | **Discourse** | A hosted forum | `discourse.ilovefreegle.org`, the volunteers' forum |

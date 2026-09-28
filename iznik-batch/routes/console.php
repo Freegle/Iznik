@@ -71,6 +71,32 @@ Schedule::command('mail:welcome:send --limit=100 --spool')
     ->sendOutputTo(cronLog('mail:welcome:send'))
     ->runInBackground();
 
+// =============================================================================
+// IMAGE OBJECT STORE (docs/ops/runbooks/images-to-object-storage.md)
+// =============================================================================
+// tusd writes uploads to a local spool; this moves each completed one to the
+// bucket. Inert until IMAGE_STORE_ENABLED, which waits for
+// images:object-store-check to pass against the real bucket. withoutOverlapping
+// because a slow bucket must queue the next minute's pass, not double it.
+Schedule::command('images:push-spool')
+    ->everyMinute()
+    ->withoutOverlapping(10)
+    ->when(fn () => (bool) config('freegle.image_store.enabled', false))
+    ->sendOutputTo(cronLog('images:push-spool'))
+    ->runInBackground();
+
+// The one-off copy of the legacy NFS store, in slices: each stops on its time
+// budget and the next carries on from the cursor. On only between the cutover
+// and a clean --verify. The backup drain's skip() applies to it like every
+// other event, so it merely pauses for the window.
+Schedule::command('images:migrate-legacy')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->when(fn () => (bool) config('freegle.image_store.enabled', false)
+        && (bool) config('freegle.image_store.migrate_enabled', false))
+    ->sendOutputTo(cronLog('images:migrate-legacy'))
+    ->runInBackground();
+
 // Record the deployed Laravel commit so /api/version reports the live build
 // (the monitor-fsm "verified-live" reply gate compares it against merged PRs).
 // Lightweight (just a config upsert) — safe to run frequently; deploy:watch is

@@ -209,6 +209,23 @@ NFS server was healthy throughout - `nfsstat` and the admin UI both said so.)
 - monit (`ops/hosts/monit/batch-host/conf.d/tusd`) kills whatever is scanning once tusd is
   starved, so a process of yours vanishing mid-scan is that, not a crash.
 
+## An image bucket that is not public fails through to "every new photo is missing"
+
+The uploads vhost in `frontend-nginx.conf` answers a GET from the spool, then the object
+store, then the legacy share, and a 403 from the bucket is treated like a 404 so the chain
+can go on. So a bucket whose public read was never switched on in the console does not
+error: every new photo falls through to the legacy share, which has never heard of it, and
+weserv gets a 404 that the delivery cache keeps for five minutes. Nothing logs the 403.
+
+`php artisan images:object-store-check` reads a probe back anonymously at the public URL
+and is the only thing that proves the bucket is public. Run it before enabling
+`IMAGE_STORE_ENABLED` and after any change to the bucket or its keys
+(`docs/ops/runbooks/images-to-object-storage.md`).
+
+The same file is an envsubst template. Only `${IMAGE_STORE_*}` is substituted, because
+compose sets `NGINX_ENVSUBST_FILTER`; without the filter every nginx `$variable` is
+blanked and `nginx -t` fails, so that one at least is loud.
+
 ## Branches, clones and the tools around them
 
 - **Creating a worktree branches off your local master**, which may be behind or ahead of the
