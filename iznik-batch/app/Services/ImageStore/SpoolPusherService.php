@@ -61,7 +61,13 @@ class SpoolPusherService
      * One pass over the spool. $limit bounds the number of uploads pushed or
      * cleaned up in this pass; the rest wait for the next.
      *
-     * @return array{scanned:int,pushed:int,present:int,recent:int,incomplete:int,unreadable:int,abandoned:int,failed:int,bytes:int}
+     * A store that is unavailable (see ObjectStoreUnavailable) ends the pass
+     * at the first upload that meets it: `unavailable` carries the reason and
+     * nothing is counted failed, because nothing about those uploads is wrong.
+     * They stay in the spool, where the read chain serves them, until a pass
+     * finds the store back.
+     *
+     * @return array{scanned:int,pushed:int,present:int,recent:int,incomplete:int,unreadable:int,abandoned:int,failed:int,bytes:int,unavailable:?string}
      */
     public function push(int $limit = 500, bool $dryRun = false): array
     {
@@ -75,6 +81,7 @@ class SpoolPusherService
             'abandoned' => 0,
             'failed' => 0,
             'bytes' => 0,
+            'unavailable' => null,
         ];
 
         $now = time();
@@ -99,6 +106,10 @@ class SpoolPusherService
 
             try {
                 $result = $this->handle($id, $now, $abandonBefore, $dryRun, $stats);
+            } catch (ObjectStoreUnavailable $e) {
+                $stats['unavailable'] = $e->getMessage();
+                Log::error('images:push-spool: object store unavailable; pass stopped, spool untouched', ['id' => $id, 'error' => $e->getMessage()]);
+                break;
             } catch (\Throwable $e) {
                 $stats['failed']++;
                 Log::warning('images:push-spool: upload failed', ['id' => $id, 'error' => $e->getMessage()]);

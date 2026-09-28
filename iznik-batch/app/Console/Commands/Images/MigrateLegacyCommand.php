@@ -3,6 +3,7 @@
 namespace App\Console\Commands\Images;
 
 use App\Services\ImageStore\LegacyMigrationService;
+use App\Services\ImageStore\ObjectStoreUnavailable;
 use Illuminate\Console\Command;
 
 /**
@@ -102,6 +103,14 @@ class MigrateLegacyCommand extends Command
             ]
         );
 
+        if ($stats['unavailable'] !== null) {
+            // Sentry, via the exception handler: the log stack is file-only.
+            $this->error("The object store is unavailable; the run stopped with the cursor before the row that met it, and nothing is counted failed. {$stats['unavailable']}");
+            report(new ObjectStoreUnavailable('images:migrate-legacy: ' . $stats['unavailable']));
+
+            return Command::FAILURE;
+        }
+
         if ($stats['finished']) {
             $this->info('Every requested source is complete. Run --verify next.');
         } elseif ($stats['budget_exhausted']) {
@@ -124,6 +133,13 @@ class MigrateLegacyCommand extends Command
                 ['Not a tusd id', $stats['invalid']],
             ]
         );
+
+        if ($stats['unavailable'] !== null) {
+            $this->error("The object store is unavailable; the verify stopped with its cursor before the row that met it. {$stats['unavailable']}");
+            report(new ObjectStoreUnavailable('images:migrate-legacy --verify: ' . $stats['unavailable']));
+
+            return Command::FAILURE;
+        }
 
         if ($stats['missing'] > 0) {
             $this->error("{$stats['missing']} referenced upload(s) are not in the object store:");

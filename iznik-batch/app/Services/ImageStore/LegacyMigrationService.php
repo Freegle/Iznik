@@ -92,14 +92,19 @@ class LegacyMigrationService
      * chunks, when $limit rows have been examined, or when every source is
      * done. Always does at least one chunk, so progress is always possible.
      *
-     * @return array{scanned:int,copied:int,present:int,missing_source:int,invalid:int,failed:int,bytes:int,finished:bool,budget_exhausted:bool}
+     * A store that is unavailable (see ObjectStoreUnavailable) stops the walk
+     * at the row that met it, with the cursor left BEFORE that row so the next
+     * run retries it, and nothing counted failed: `unavailable` carries the
+     * reason. `failed` is for one object the store would not take.
+     *
+     * @return array{scanned:int,copied:int,present:int,missing_source:int,invalid:int,failed:int,bytes:int,finished:bool,budget_exhausted:bool,unavailable:?string}
      */
     public function migrate(array $sources, int $timeBudgetSeconds, int $chunk, int $limit = 0, float $maxMbps = 0, bool $dryRun = false): array
     {
         $stats = [
             'scanned' => 0, 'copied' => 0, 'present' => 0, 'missing_source' => 0,
             'invalid' => 0, 'failed' => 0, 'bytes' => 0,
-            'finished' => false, 'budget_exhausted' => false,
+            'finished' => false, 'budget_exhausted' => false, 'unavailable' => null,
         ];
 
         $this->runStart = microtime(true);
@@ -117,13 +122,16 @@ class LegacyMigrationService
      * nothing and does not move the copy cursor. Its own cursor lets a long
      * verify be resumed.
      *
-     * @return array{scanned:int,present:int,missing:int,missing_ids:list<string>,invalid:int,finished:bool,budget_exhausted:bool}
+     * An unavailable store stops the verify the same way it stops a copy: at
+     * the row, cursor before it, nothing reported missing.
+     *
+     * @return array{scanned:int,present:int,missing:int,missing_ids:list<string>,invalid:int,finished:bool,budget_exhausted:bool,unavailable:?string}
      */
     public function verify(array $sources, int $timeBudgetSeconds, int $chunk, int $limit = 0): array
     {
         $stats = [
             'scanned' => 0, 'present' => 0, 'missing' => 0, 'missing_ids' => [],
-            'invalid' => 0, 'finished' => false, 'budget_exhausted' => false,
+            'invalid' => 0, 'finished' => false, 'budget_exhausted' => false, 'unavailable' => null,
         ];
 
         $this->walk($sources, $timeBudgetSeconds, $chunk, $limit, $stats, 'verify_last_id', 'verify_completed_at', false,
@@ -229,6 +237,7 @@ class LegacyMigrationService
                 }
 
                 foreach ($rows as $id => $value) {
+                    $previousId = $lastId;
                     $lastId = (int) $id;
                     $stats['scanned']++;
 
@@ -239,7 +248,19 @@ class LegacyMigrationService
                         continue;
                     }
 
-                    $each($uid, $stats, $row);
+                    try {
+                        $each($uid, $stats, $row);
+                    } catch (ObjectStoreUnavailable $e) {
+                        // Nothing is known about this row, so it is not examined,
+                        // not failed, and the cursor stops before it. Every row
+                        // after it would meet the same answer.
+                        $stats['scanned']--;
+                        $stats['unavailable'] = $e->getMessage();
+                        $lastId = $previousId;
+                        $stopped = true;
+                        Log::error('images:migrate-legacy: object store unavailable; run stopped', ['source' => $source, 'id' => $id, 'error' => $e->getMessage()]);
+                        break;
+                    }
 
                     if ($limit > 0 && $stats['scanned'] >= $limit) {
                         $stopped = true;
@@ -325,6 +346,9 @@ class LegacyMigrationService
             $row['bytes'] += $length;
 
             $this->pace($stats['bytes'], $this->runStart, $maxMbps);
+        } catch (ObjectStoreUnavailable $e) {
+            // The walk stops on this; it is not a failure of the object.
+            throw $e;
         } catch (\Throwable $e) {
             $stats['failed']++;
             $row['failed']++;
