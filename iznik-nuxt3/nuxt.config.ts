@@ -379,6 +379,7 @@ export default defineNuxtConfig({
       MODTOOLS_SITE: config.MODTOOLS_SITE,
       IMAGE_SITE: config.IMAGE_SITE,
       SENTRY_DSN: config.IS_MT ? config.SENTRY_DSN_MT : config.SENTRY_DSN,
+      ENVIRONMENT: config.ENVIRONMENT,
       BUILD_DATE: new Date().toISOString(),
       ISAPP: config.ISAPP,
       MOBILE_VERSION: config.MOBILE_VERSION,

@@ -116,11 +116,6 @@ describe('MicroVolunteering', () => {
             props: ['id'],
             emits: ['next'],
           },
-          MicroVolunteeringSimilarTerms: {
-            template: '<div class="mv-similar-terms" />',
-            props: ['terms'],
-            emits: ['next'],
-          },
           MicroVolunteeringFacebook: {
             template: '<div class="mv-facebook" />',
             props: ['id'],
@@ -245,16 +240,6 @@ describe('MicroVolunteering', () => {
       const wrapper = createWrapper({ force: true })
       await flushPromises()
       expect(wrapper.text()).toContain('Does this post look OK?')
-    })
-
-    it('renders SearchTerm task type header', async () => {
-      mockMicroVolunteeringStore.challenge.mockResolvedValue({
-        type: 'SearchTerm',
-        terms: [{ id: 1, term: 'test' }],
-      })
-      const wrapper = createWrapper({ force: true })
-      await flushPromises()
-      expect(wrapper.text()).toContain('Word Match')
     })
 
     it('renders PhotoRotate task type header', async () => {

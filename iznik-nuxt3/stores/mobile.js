@@ -15,6 +15,7 @@
 import { defineStore } from 'pinia'
 import { watch } from 'vue'
 import { Capacitor } from '@capacitor/core'
+import { setTag as sentrySetTag } from '@sentry/browser'
 import { useAuthStore } from '~/stores/auth'
 import { useChatStore } from '~/stores/chat'
 import { useNotificationStore } from '~/stores/notification'
@@ -133,6 +134,12 @@ export const useMobileStore = defineStore('mobile', {
       // Make it available to client logs (session_start) so support sees the
       // real app version a member is running.
       setAppVersion(this.appVersion)
+      try {
+        sentrySetTag('app.version', this.appVersion)
+        sentrySetTag('app.build', this.appBuild)
+      } catch (e) {
+        // Tagging is best effort.
+      }
       dbg()?.info('=== APP STARTUP ===')
       dbg()?.info('App version', runtimeConfig.public.MOBILE_VERSION)
       dbg()?.info('Native app version', appInfo.version)
@@ -242,6 +249,16 @@ export const useMobileStore = defineStore('mobile', {
     async getDeviceInfo(Device) {
       const deviceinfo = await Device.getInfo()
       this.deviceinfo = deviceinfo
+
+      // Sentry only sees the coarse OS version from the user agent ("18.7").
+      // Tag the exact native values so a device-specific failure can be pinned
+      // to a patch level and model. setTag is safe before Sentry.init.
+      try {
+        sentrySetTag('os.version.exact', deviceinfo.osVersion || null)
+        sentrySetTag('device.model.exact', deviceinfo.model || null)
+      } catch (e) {
+        // Tagging is best effort.
+      }
 
       // Build device info string - avoid duplicates (platform/operatingSystem are often same)
       const parts = []

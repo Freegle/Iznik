@@ -4,8 +4,10 @@ import (
 	json2 "encoding/json"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/stretchr/testify/assert"
 )
@@ -19,7 +21,16 @@ import (
 // exercised by the Go suite (0% covered per Coveralls on c66acbe0e). Two calls in a row
 // exercise both the cache-miss (first, runs the reach containment query) and cache-hit
 // (second, immediate) paths.
+//
+// Both messages are seeded into the embedding store with an antiparallel (far
+// below MinVectorScore) vector so neither is found via cosine ranking - only via
+// the lexical guarantee (LexicalMatch). That's deliberate: LexicalMatch must
+// respect the same allowedIDs (reach universe) restriction as the cosine path,
+// or the guarantee would leak the out-of-reach post around the reach filter.
 func TestBrowseScopedSearchNearby(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	db := database.DBConn
 
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
@@ -59,6 +70,24 @@ func TestBrowseScopedSearchNearby(t *testing.T) {
 	// The reach universe must come from THESE fixtures, not the real
 	// index built from another database.
 	stubReachIndexFromDB(t, false)
+
+	// Seed both messages into the embedding store with antiparallel vectors (cosine
+	// ~-1, far below MinVectorScore) so they're findable only via the lexical
+	// guarantee, not cosine ranking - the reach restriction under test is applied
+	// on that path too (see LexicalMatch's allowedIDs filter).
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: inReach, Groupid: group, Msgtype: "Offer", Lat: 51.5, Lng: -0.1,
+			Subject: "Zorbnak Sofa reach covers viewer (browsesearchnearby)", Arrival: time.Now(), SubjectVec: makeAntiparallelVec(10.0)},
+		{Msgid: outOfReach, Groupid: group, Msgtype: "Offer", Lat: 51.5, Lng: -0.1,
+			Subject: "Zorbnak Sofa reach excludes viewer (browsesearchnearby)", Arrival: time.Now(), SubjectVec: makeAntiparallelVec(11.0)},
+	})
+	t.Cleanup(func() { embedding.Global.SetEntries(nil) })
+
+	queryVec := makeTestVec(1.0)
+	server := mockSidecarReturning(t, queryVec[:])
+	defer server.Close()
+	embedding.SetSidecarURL(server.URL)
+	t.Cleanup(func() { embedding.SetSidecarURL("") })
 
 	words := message.GetWords("Zorbnak Sofa reach covers viewer (browsesearchnearby)")
 	searchWord := words[0]

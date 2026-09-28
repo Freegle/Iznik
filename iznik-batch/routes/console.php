@@ -71,6 +71,32 @@ Schedule::command('mail:welcome:send --limit=100 --spool')
     ->sendOutputTo(cronLog('mail:welcome:send'))
     ->runInBackground();
 
+// =============================================================================
+// IMAGE OBJECT STORE (docs/ops/runbooks/images-to-object-storage.md)
+// =============================================================================
+// tusd writes uploads to a local spool; this moves each completed one to the
+// bucket. Inert until IMAGE_STORE_ENABLED, which waits for
+// images:object-store-check to pass against the real bucket. withoutOverlapping
+// because a slow bucket must queue the next minute's pass, not double it.
+Schedule::command('images:push-spool')
+    ->everyMinute()
+    ->withoutOverlapping(10)
+    ->when(fn () => (bool) config('freegle.image_store.enabled', false))
+    ->sendOutputTo(cronLog('images:push-spool'))
+    ->runInBackground();
+
+// The one-off copy of the legacy NFS store, in slices: each stops on its time
+// budget and the next carries on from the cursor. On only between the cutover
+// and a clean --verify. The backup drain's skip() applies to it like every
+// other event, so it merely pauses for the window.
+Schedule::command('images:migrate-legacy')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->when(fn () => (bool) config('freegle.image_store.enabled', false)
+        && (bool) config('freegle.image_store.migrate_enabled', false))
+    ->sendOutputTo(cronLog('images:migrate-legacy'))
+    ->runInBackground();
+
 // Record the deployed Laravel commit so /api/version reports the live build
 // (the monitor-fsm "verified-live" reply gate compares it against merged PRs).
 // Lightweight (just a config upsert) — safe to run frequently; deploy:watch is
@@ -1234,14 +1260,6 @@ Schedule::command('users:update-approx-locs')
     ->sendOutputTo(cronLog('users:update-approx-locs'))
     ->runInBackground();
 
-// Remove search index entries for messages older than 30 days.
-// V1: cron/message_deindex.php (daily at 01:00)
-Schedule::command('messages:deindex')
-    ->dailyAt('01:00')
-    ->withoutOverlapping(360)
-    ->sendOutputTo(cronLog('messages:deindex'))
-    ->runInBackground();
-
 // Score microvolunteering actions and promote accurate users to Moderate trust.
 // V1: cron/microactions_score.php (daily at 23:00)
 // Note: Laravel uses correct SUM() aggregation in promote() — V1 had a longstanding aggregation
@@ -1603,13 +1621,37 @@ Schedule::command('embeddings:searches')
 
 // =============================================================================
 // NOT YET ENABLED - pending review / sign-off
-// Index unindexed messages for search.
-// V1: cron/message_unindexed.php (every 30 min)
-Schedule::command('messages:update-index')
-    ->everyThirtyMinutes()
-    ->withoutOverlapping(60)
-    ->sendOutputTo(cronLog('messages:update-index'))
-    ->runInBackground();
+// Remove confirmed spammers from groups.
+// V1: cron/check_spammers.php
+// Schedule::command('users:remove-spammers')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('users:remove-spammers'))
+//     ->runInBackground();
+
+// Process chat spam messages.
+// V1: cron/chat_spam.php
+// Schedule::command('chats:process-spam')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('chats:process-spam'))
+//     ->runInBackground();
+
+// Send mod notifications.
+// V1: cron/mod_notifs.php
+// Schedule::command('mail:mod-notifs')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('mail:mod-notifs'))
+//     ->runInBackground();
+
+// Update GiftAid donations.
+// V1: cron/donations_giftaid.php
+// Schedule::command('donations:update-giftaid')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('donations:update-giftaid'))
+//     ->runInBackground();
 
 // Volunteering opportunity maintenance — daily. Asks owners of dateless
 // opportunities approaching expiry whether they are still active (renewal

@@ -15,12 +15,17 @@
     :loading="preload ? 'eager' : loading"
     :sizes="sizes"
     :placeholder="placeholder"
+    @load="noteImageLoaded"
     @error="brokenImage"
   />
 </template>
 <script setup>
 import { ref, computed, onBeforeUnmount } from 'vue'
 import { captureMessage as sentryCaptureMessage } from '@sentry/browser'
+import {
+  reportImageFailure,
+  noteImageLoaded,
+} from '~/composables/useImageFailureDiagnostics'
 
 const props = defineProps({
   src: {
@@ -161,10 +166,16 @@ function brokenImage(e) {
     return
   }
 
-  console.log('Our uploaded image broken', props.src)
+  // The URL the browser actually tried (the <picture> source it chose), not
+  // just our image id, so a failure can be reproduced and probed as-is.
+  const url = e?.target?.currentSrc || e?.target?.src || null
+
+  console.log('Our uploaded image broken', props.src, url)
   emit('error', e)
   show.value = false
 
-  sentryCaptureMessage('Failed to fetch image ' + props.src)
+  // Probes the URL, reports to Sentry with the result (capped per session) and
+  // flags the session if the image host turns out to be unreachable.
+  reportImageFailure({ src: props.src, url })
 }
 </script>

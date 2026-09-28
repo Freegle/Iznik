@@ -4,6 +4,7 @@ namespace Tests\Unit\Services;
 
 use App\Services\EeeSqliteService;
 use PDO;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -330,9 +331,7 @@ class EeeSqliteServiceTest extends TestCase
         $this->assertGreaterThan(0, $id1);
     }
 
-    /**
-     * @dataProvider provideHasClassificationCases
-     */
+    #[DataProvider('provideHasClassificationCases')]
     public function test_has_classification(array $inserted, int $messageid, string $model, ?string $promptVersion, bool $expected): void
     {
         $service = $this->newService();
@@ -609,9 +608,7 @@ class EeeSqliteServiceTest extends TestCase
         $this->assertSame(['count' => 5], json_decode($observations[0]['evidence'], true));
     }
 
-    /**
-     * @dataProvider provideConfidenceFilterCases
-     */
+    #[DataProvider('provideConfidenceFilterCases')]
     public function test_get_observations_filters_by_min_confidence(string $minConfidence, array $expectedFindings): void
     {
         $service = $this->newService();
@@ -849,9 +846,7 @@ class EeeSqliteServiceTest extends TestCase
     // journalCompareRun()
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * @dataProvider provideJournalCompareRunCases
-     */
+    #[DataProvider('provideJournalCompareRunCases')]
     public function test_journal_compare_run_confidence_tiers(array $agreementStats, bool $expectObservation, ?string $expectedConfidence = null): void
     {
         $service = $this->newService();
