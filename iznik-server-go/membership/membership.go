@@ -187,6 +187,15 @@ func PostMemberships(c *fiber.Ctx) error {
 		// send modmail to the member without changing membership status.
 		// PHP memberships.php line 291-294: just calls $u->mail().
 		//
+		// Despite its name this is not the member's own action: it is a moderator
+		// starting a message to a member, exactly as much as a chat or mail send is
+		// (plan section 11.9, added after review, correcting 10.5's original "own |
+		// allowed" classification). While "mods" is held, refuse it for anyone who
+		// isn't Support or Admin, before the background_tasks mail row is queued.
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
+		//
 		// Except to someone whose only presence here is TN posts placed on a community
 		// they never chose: they have agreed to nothing with these moderators, so there is
 		// no modmail relationship to use. ModTools hides Mail and the standard messages for

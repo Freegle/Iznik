@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -208,6 +209,28 @@ func ownsImageParent(myid uint64, imgType string, parentID uint64) bool {
 	return owner != 0 && owner == myid
 }
 
+// heldSurfaceForImgType maps an image's parent content type to the lockdown surface
+// that gates an edit of that content (section 11.3 of the lockdown plan; review
+// finding 5). Attaching a new image to an existing parent is a direct write to
+// content that is already live - a different table from the parent's own gated PATCH
+// edit path, so without this it reached a held post/event/opportunity/story/
+// noticeboard/chitchat item regardless of the surface's hold. Group, Newsletter,
+// ChatMessage and User have no surface of their own here: Group/Newsletter images are
+// mod-managed outside any member-facing surface, ChatMessage images ride the chat
+// surface's own gate elsewhere, and User (avatar) uploads are never held.
+func heldSurfaceForImgType(imgType string) string {
+	switch imgType {
+	case "Message":
+		return "posts"
+	case "CommunityEvent", "Volunteering", "Story", "Noticeboard":
+		return "events"
+	case "Newsfeed":
+		return "chitchat"
+	default:
+		return ""
+	}
+}
+
 func doCreate(c *fiber.Ctx, req *PostRequest) error {
 	if req.ExternalUID == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "externaluid is required")
@@ -241,6 +264,11 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 		}
 		if !ownsImageParent(myid, imgType, parentID) {
 			return fiber.NewError(fiber.StatusForbidden, "Cannot attach an image to content you do not own")
+		}
+		if surface := heldSurfaceForImgType(imgType); surface != "" {
+			if lockdown.GateMember(c, myid, surface) {
+				return nil
+			}
 		}
 	}
 

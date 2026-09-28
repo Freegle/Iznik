@@ -2,10 +2,15 @@ package test
 
 // Gate tests for membership.go (section 11.3 of the lockdown plan,
 // plans/active/2026-09-27-lockdown-switch.md): moderator actions on POST/PATCH/DELETE
-// /memberships are refused outright while "mods" is held. Own actions (join, leave,
+// /memberships are refused outright while "mods" is held. Own actions (DELETE self-leave,
 // Approve, Emailfrequency/Eventsallowed/Volunteeringallowed/Settings) stay allowed -
 // the plan is explicit that membership Approve carries no subject/body restriction and
 // is not counted, unlike message.go's dispatchPostMessageAction.
+//
+// POST /memberships "Leave Member"/"Leave Approved Member" looks like the member's own
+// action from its name, but is a moderator sending mail to the member, and section 11.9
+// (added after review) corrects the plan's original "own | allowed" classification of it
+// to refused while "mods" is held - see TestLockdownRefusesPostMembershipsLeaveMember.
 //
 // Uses lockdown.SetTestState (see modsHeld() in lockdown_gates_moderation_test.go) so
 // these tests never write a real "lockdowns" row and cannot race the other packages'
@@ -209,20 +214,54 @@ func TestLockdownDoesNotRefusePostMembershipsApprove(t *testing.T) {
 
 // "Leave Member"/"Leave Approved Member" is not a decision like Approve/Reject/Ban -
 // it is a moderator sending the member a mod-mail (V1 memberships.php:291-294, just
-// $u->mail()) without changing the membership row, so PostMemberships's blanket
-// isModOfGroup check (the caller must be a moderator) applies here exactly as it
-// does for every other action on this endpoint - there is no member-invoked-on-
-// themselves path to test. The plan's "own | allowed" therefore means "not one of
-// the moderation decisions this hold pauses", not "callable by a plain member";
-// the actual self-service leave the plan lists separately is DELETE /memberships
-// own, covered elsewhere in this file. So this stays allowed when a MODERATOR
-// calls it while mods is held.
-func TestLockdownDoesNotRefusePostMembershipsLeaveMember(t *testing.T) {
-	prefix := uniquePrefix("ld_mem_leave_ok")
+// $u->mail()) without changing the membership row. Section 10.5 of the plan first
+// filed it as "own | allowed", reasoning from the membership row it does not touch,
+// but section 11.9 (added after review) corrects that: it is a moderator starting a
+// message to a member exactly as much as a chat or mail send is, so while "mods" is
+// held a moderator who is not Support or Admin may not send it. It is refused with
+// the same GateMod used for the moderation decisions above, before the
+// background_tasks mail row is ever queued.
+func TestLockdownRefusesPostMembershipsLeaveMember(t *testing.T) {
+	prefix := uniquePrefix("ld_mem_leave")
 	groupID, modToken, targetID := setUpModAndTarget(t, prefix)
 
 	restore := modsHeld()
 	defer restore()
+
+	url := fmt.Sprintf("/api/memberships?jwt=%s", modToken)
+	body := fmt.Sprintf(`{"userid":%d,"groupid":%d,"action":"Leave Member"}`, targetID, groupID)
+	req := httptest.NewRequest("POST", url, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assertLockdownRefused(t, resp)
+}
+
+// Leave Approved Member is the same action under a different name (V1 parity, see
+// membership.go); both must be refused the same way.
+func TestLockdownRefusesPostMembershipsLeaveApprovedMember(t *testing.T) {
+	prefix := uniquePrefix("ld_mem_leaveapproved")
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	CreateTestMembership(t, targetID, groupID, "Member")
+
+	restore := modsHeld()
+	defer restore()
+
+	url := fmt.Sprintf("/api/memberships?jwt=%s", modToken)
+	body := fmt.Sprintf(`{"userid":%d,"groupid":%d,"action":"Leave Approved Member"}`, targetID, groupID)
+	req := httptest.NewRequest("POST", url, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assertLockdownRefused(t, resp)
+}
+
+// Not held: an ordinary day sends the mail as normal, unaffected by GateMod.
+func TestLockdownDoesNotRefusePostMembershipsLeaveMemberWhenNotHeld(t *testing.T) {
+	prefix := uniquePrefix("ld_mem_leave_notheld_ok")
+	groupID, modToken, targetID := setUpModAndTarget(t, prefix)
 
 	url := fmt.Sprintf("/api/memberships?jwt=%s", modToken)
 	body := fmt.Sprintf(`{"userid":%d,"groupid":%d,"action":"Leave Member"}`, targetID, groupID)

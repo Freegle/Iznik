@@ -423,14 +423,22 @@ func Update(c *fiber.Ctx) error {
 	// "events" is held, except a moderator approving it out of moderation - setting
 	// Pending to false and nothing else in the same call - which stays allowed so the
 	// review queue keeps draining, the same shape as Approve elsewhere in the plan.
+	//
+	// isApprove is only a body-shape check, so it must never grant the fast path by
+	// itself: canModify above lets the event's own owner through this same code path,
+	// and without a role check here that owner could send the bare approve body and
+	// self-publish their own held event (review finding 3). Only a moderator of the
+	// event's group, or Support/Admin, gets the fast path; everyone else still needs
+	// isApprove to be false to even reach GateMember, so an owner's approve attempt is
+	// refused exactly as any other edit is.
 	isApprove := req.Pending != nil && !*req.Pending && req.Action == "" &&
 		req.Title == nil && req.Location == nil && req.Contactname == nil &&
 		req.Contactphone == nil && req.Contactemail == nil && req.Contacturl == nil &&
 		req.Description == nil
-	if !isApprove {
-		if lockdown.GateMember(c, myid, "events") {
-			return nil
-		}
+	if isApprove && isModerator(myid, req.ID) {
+		lockdown.CountApproval(myid)
+	} else if lockdown.GateMember(c, myid, "events") {
+		return nil
 	}
 
 	// Update settable attributes
