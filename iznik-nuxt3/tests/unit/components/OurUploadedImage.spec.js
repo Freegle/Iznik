@@ -9,10 +9,12 @@ import OurUploadedImage from '~/components/OurUploadedImage.vue'
 // end up checking a different fn than the one the component actually
 // called — giving a confusing "Number of calls: 0" on a spy that was
 // genuinely invoked.
-const { mockCaptureMessage, mockReportImageFailure } = vi.hoisted(() => ({
-  mockCaptureMessage: vi.fn(),
-  mockReportImageFailure: vi.fn(),
-}))
+const { mockCaptureMessage, mockReportImageFailure, mockNoteImageLoaded } =
+  vi.hoisted(() => ({
+    mockCaptureMessage: vi.fn(),
+    mockReportImageFailure: vi.fn(),
+    mockNoteImageLoaded: vi.fn(),
+  }))
 
 vi.mock('@sentry/browser', () => ({
   captureMessage: mockCaptureMessage,
@@ -22,6 +24,7 @@ vi.mock('@sentry/browser', () => ({
 // the URL and reports to Sentry itself (covered by its own spec).
 vi.mock('~/composables/useImageFailureDiagnostics', () => ({
   reportImageFailure: mockReportImageFailure,
+  noteImageLoaded: mockNoteImageLoaded,
 }))
 
 describe('OurUploadedImage', () => {
@@ -39,7 +42,7 @@ describe('OurUploadedImage', () => {
         stubs: {
           NuxtPicture: {
             template:
-              '<img class="nuxt-picture" :src="src" :alt="alt" :class="imageClass" :data-provider="provider" :data-modifiers="modString" :width="width" :height="height" :loading="loading" @error="$emit(\'error\', $event)" />',
+              '<img class="nuxt-picture" :src="src" :alt="alt" :class="imageClass" :data-provider="provider" :data-modifiers="modString" :width="width" :height="height" :loading="loading" @error="$emit(\'error\', $event)" @load="$emit(\'load\', $event)" />',
             props: [
               'src',
               'alt',
@@ -55,7 +58,7 @@ describe('OurUploadedImage', () => {
               'sizes',
               'placeholder',
             ],
-            emits: ['error'],
+            emits: ['error', 'load'],
             computed: {
               imageClass() {
                 return this.class
@@ -201,6 +204,16 @@ describe('OurUploadedImage', () => {
       expect(classes).toContain('custom')
       expect(classes).toContain('img-fluid')
       expect(classes).toContain('ai-image-duotone')
+    })
+  })
+
+  describe('load tracking', () => {
+    it('counts a loaded image, so a later failure can tell a drop from a block', async () => {
+      const wrapper = createWrapper()
+
+      await wrapper.find('.nuxt-picture').trigger('load')
+
+      expect(mockNoteImageLoaded).toHaveBeenCalledTimes(1)
     })
   })
 

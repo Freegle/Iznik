@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 ---
 
@@ -185,7 +185,7 @@ flowchart LR
 | `production` | Production background services | batch-prod |
 | `monitoring` | Monitoring stack | (reserved for future use) |
 | `backup` | On-demand backup jobs | loki-backup |
-| `edge` | User-facing front-end services on the prod docker host (scale-in-place — see `docs/ops/production.md`). In NO default profile set, so dev/CI never start these. | tile-server, wiki-media, wiki-mysql; frontend-nginx, delivery, tusd (images tier, live since 2026-07-08) |
+| `edge` | User-facing front-end services on the prod docker host (scale-in-place — see `docs/ops/production.md`). In NO default profile set, so dev/CI never start these. | tile-server, wiki-media, wiki-mysql; frontend-nginx, delivery, tusd (images tier, live since 2026-07-08; uploads spool locally and are pushed to object storage, see `docs/ops/runbooks/images-to-object-storage.md`); objectstore + objectstore-init (RustFS, the dev stand-in for the bucket; replicas 0 in prod) |
 
 To enable profiles, set `COMPOSE_PROFILES` in `.env`:
 ```bash

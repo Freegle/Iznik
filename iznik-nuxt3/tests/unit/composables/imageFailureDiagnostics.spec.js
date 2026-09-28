@@ -1,5 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
+import {
+  reportImageFailure,
+  probeUrl,
+  checkImageHost,
+  resetImageFailureDiagnostics,
+  useImageHostBlocked,
+  noteImageLoaded,
+  isCrawler,
+  MAX_INDIVIDUAL_REPORTS,
+  AGGREGATE_EVERY,
+} from '~/composables/useImageFailureDiagnostics'
+
 const { mockCaptureMessage, mockClientWarn } = vi.hoisted(() => ({
   mockCaptureMessage: vi.fn(),
   mockClientWarn: vi.fn(),
@@ -22,17 +34,6 @@ vi.mock('#app', () => ({
     },
   }),
 }))
-
-import {
-  reportImageFailure,
-  probeUrl,
-  checkImageHost,
-  resetImageFailureDiagnostics,
-  useImageHostBlocked,
-  isCrawler,
-  MAX_INDIVIDUAL_REPORTS,
-  AGGREGATE_EVERY,
-} from '~/composables/useImageFailureDiagnostics'
 
 const IPHONE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
@@ -231,6 +232,7 @@ describe('useImageFailureDiagnostics', () => {
           delivery_error: 'Load failed',
           failures_so_far: 1,
           first_failed_url: IMAGE_URL,
+          images_loaded_before: 0,
         })
       )
       const apiProbes = fetch.mock.calls.filter((c) => isApi(c[0])).length
@@ -251,6 +253,32 @@ describe('useImageFailureDiagnostics', () => {
       )
       expect(fetch.mock.calls.filter((c) => isApi(c[0])).length).toBe(1)
       expect(mockClientWarn).toHaveBeenCalledTimes(1)
+    })
+
+    // A device that blocks the image host never loads an image. One that loaded
+    // images and then lost the host dropped its connection partway through, and
+    // calling that a block sends support looking for a filter that isn't there.
+    it('reports a mid-session drop, not a block, when images had loaded before', async () => {
+      const fetch = fakeFetch((url) => (isApi(url) ? 'ok' : 'dead'))
+      noteImageLoaded()
+      noteImageLoaded()
+
+      await reportImageFailure(
+        { src: 'freegletusd-abc', url: IMAGE_URL },
+        fetch
+      )
+
+      expect(useImageHostBlocked().value).toBe(false)
+      const messages = mockCaptureMessage.mock.calls.map((c) => c[0])
+      expect(messages).toEqual([
+        'Failed to fetch image freegletusd-abc',
+        'Image host stopped answering mid-session: images had loaded earlier',
+      ])
+      expect(mockClientWarn).toHaveBeenCalledTimes(1)
+      expect(mockClientWarn).toHaveBeenCalledWith(
+        'image_host_dropped',
+        expect.objectContaining({ images_loaded_before: 2 })
+      )
     })
 
     it('does not flag the session when the API is unreachable too (offline)', async () => {
