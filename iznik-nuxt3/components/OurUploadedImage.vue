@@ -15,13 +15,17 @@
     :loading="preload ? 'eager' : loading"
     :sizes="sizes"
     :placeholder="placeholder"
+    @load="noteImageLoaded"
     @error="brokenImage"
   />
 </template>
 <script setup>
 import { ref, computed, onBeforeUnmount } from 'vue'
 import { captureMessage as sentryCaptureMessage } from '@sentry/browser'
-import { reportImageFailure } from '~/composables/useImageFailureDiagnostics'
+import {
+  reportImageFailure,
+  noteImageLoaded,
+} from '~/composables/useImageFailureDiagnostics'
 
 const props = defineProps({
   src: {
