@@ -229,7 +229,7 @@ class NameSanitiser
         return FALSE;
     }
 
-    private static function isSuspicious(string $raw): bool
+    public static function isSuspicious(string $raw): bool
     {
         if ($raw === '') {
             return FALSE;

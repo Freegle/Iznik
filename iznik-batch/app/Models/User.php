@@ -325,19 +325,57 @@ class User extends Model implements Auditable
 
         $name = self::removeTNGroup($name);
 
+        if (!NameSanitiser::isSuspicious($name)) {
+            return $name;
+        }
+
         return NameSanitiser::sanitize($name, $this->isNameExempt());
     }
 
     /**
      * A user is exempt from the display-name sanitiser when they are a
-     * platform mod/support/admin or Owner/Moderator on any group.
+     * platform mod/support/admin, an Owner/Moderator on any group, or one of
+     * Freegle's own mailboxes.
      */
     public function isNameExempt(): bool
     {
         if (in_array($this->systemrole, ['Moderator', 'Support', 'Admin'], TRUE)) {
             return TRUE;
         }
-        return $this->isModerator();
+        return $this->isModerator() || $this->isOfficialFreegleUser();
+    }
+
+    /**
+     * Freegle's own mailboxes (support@, mentors@, ...), from the mail config.
+     * iznik-server-go/user/namevalidation.go keeps the same list.
+     *
+     * @return string[]
+     */
+    public static function officialAddresses(): array
+    {
+        $mail = config('freegle.mail');
+        $addrs = [];
+        foreach ([
+            'noreply_addr', 'geek_alerts_addr', 'geeks_addr', 'support_addr',
+            'chitchat_support_addr', 'spam_addr', 'partnerships_addr', 'info_addr',
+            'fundraising_addr', 'thanks_addr', 'mentors_addr', 'centralmods_addr',
+            'treasurer_addr',
+        ] as $key) {
+            $addrs[] = $mail[$key] ?? NULL;
+        }
+        $addrs[] = config('freegle.communitynews.system_user_email');
+        $addrs[] = config('freegle.firstreply.chat.system_user_email');
+
+        return array_values(array_unique(array_filter($addrs)));
+    }
+
+    /**
+     * Whether this user holds one of Freegle's own mailbox addresses. Those
+     * users are genuine Freegle, so "Freegle Support" is not impersonation.
+     */
+    public function isOfficialFreegleUser(): bool
+    {
+        return $this->emails()->whereIn('email', self::officialAddresses())->exists();
     }
 
     /**

@@ -1,0 +1,7 @@
+# Read after conf/percona-my.cnf (mounted at /etc/mysql/my.cnf, which mysqld reads
+# after /etc/my.cnf), so these settings win. Used when PERCONA_STORAGE=ram, where the
+# data directory is in memory and starts empty on every start.
+[mysqld]
+# The disk config preallocates a 2000M system tablespace. Every table has its own
+# file, so it stays nearly empty, but in memory the preallocation would cost 2GB.
+innodb_data_file_path=ibdata1:12M:autoextend

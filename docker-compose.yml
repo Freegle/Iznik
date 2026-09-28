@@ -68,9 +68,17 @@ services:
       - default
     image: percona:8.0.43-34
     restart: always
+    # PERCONA_STORAGE=ram (the default) keeps the data directory in memory. Every
+    # schema change forces several disk syncs, and on WSL each sync costs 10-13ms, so
+    # the 511 migrations took about 12 minutes on disk and 9 seconds in memory. The
+    # data is lost when the container stops: the batch container migrates again when
+    # it starts, and scripts/setup-test-database.sh reloads the fixtures.
+    # PERCONA_STORAGE=disk uses the on-disk volume instead. Yesterday pins disk in its
+    # own override files, because it restores the production database.
     volumes:
-      - freegle_db:/var/lib/mysql
+      - freegle_db_${PERCONA_STORAGE:-ram}:/var/lib/mysql
       - ./conf/percona-my.cnf:/etc/my.cnf:ro
+      - ./conf/percona-${PERCONA_STORAGE:-ram}.cnf:/etc/mysql/my.cnf:ro
     environment:
       MYSQL_ROOT_PASSWORD: iznik
       MYSQL_DATABASE: iznik
@@ -2018,7 +2026,18 @@ services:
 volumes:
   rebuild-requests:
     driver: local
-  freegle_db: {}
+  # On disk. Named explicitly so it is the volume the key freegle_db created before
+  # PERCONA_STORAGE existed, and existing data carries over.
+  freegle_db_disk:
+    name: ${COMPOSE_PROJECT_NAME:-freegle}_freegle_db
+  # In memory. uid and gid are the mysql user in the percona image. The size is a
+  # ceiling, not an allocation: a worktree's databases use about 350MB.
+  freegle_db_ram:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=${PERCONA_RAM_SIZE:-4g},uid=1001,gid=1001,mode=0750"
   phpmyadmin-sessions:
     driver: local
   geoip_data:

@@ -100,14 +100,17 @@ unique, so it is a plain copy), and put the old tusd command and bind back.
 | 4 | Services + commands (TDD) | ✅ | 41 tests: red 41/159, then green 159/159 |
 | 5 | Migration table | ✅ | + prod SQL |
 | 6 | Schedule | ✅ | gated with ->when() on the two switches |
-| 7 | Tests green through the worktree status API | 🔄 | filtered run green; full suite still to run |
+| 7 | Tests green through the worktree status API | ✅ | full suite 7011/7011; image tests 159/159 on final code |
 | 8 | Local end-to-end on the edge stack with RustFS | ✅ | tus create/patch via nginx; served from spool; pushed (bucket serves image/jpeg, immutable cache header); served from bucket with tusd logging the spool miss; legacy id only on the share served static and resized by delivery; migrate copied it; verify clean; .info 404; unknown id 404 |
 | 9 | Docs | ✅ | runbook, production, spend, architecture, runbooks index, env examples |
-| 10 | PR | ⬜ | |
+| 10 | PR | ✅ | #1630 |
 
 ## Open for Edward
 
-- Creating the object storage account starts the base fee, so it waits for Edward.
-  The calls are in the runbook.
+- Done 2026-09-28 on Edward's go-ahead: object storage enabled in uk-lon-1, bucket created
+  with public read on and listing off, and one access key that can read and write only that
+  bucket. Proven: write, size, anonymous read, 404 for a missing key, listing refused,
+  delete. The key's secret is in a private file on Edward's machine, not in the repo.
+- Left for the rollout: put the key and bucket URL on the prod host, apply the SQL, cut over.
 - Whether the file storage volume can be deleted outright at the end, or must be
   emptied first, is a billing question for the console.

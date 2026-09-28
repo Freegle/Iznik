@@ -228,6 +228,24 @@ class UserModelTest extends TestCase
         $this->assertEquals('Alice', $user->display_name);
     }
 
+    public function test_display_name_kept_for_official_freegle_address(): void
+    {
+        // Freegle's own mailboxes are ordinary users, and "Freegle Support" is
+        // exactly the name the impersonation check catches. Holding one of the
+        // configured Freegle addresses makes the name genuine.
+        $official = $this->uniqueEmail('support');
+        config(['freegle.mail.support_addr' => $official]);
+
+        $user = $this->createTestUser([
+            'fullname' => 'Freegle Support',
+            'email_preferred' => $official,
+        ]);
+        $impostor = $this->createTestUser(['fullname' => 'Freegle Support']);
+
+        $this->assertEquals('Freegle Support', $user->display_name);
+        $this->assertEquals('A freegler', $impostor->display_name);
+    }
+
     public function test_is_tn_returns_true_for_trashnothing_user(): void
     {
         $user = User::create([

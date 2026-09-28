@@ -54,3 +54,13 @@ internal notes.
 Which containers come up is controlled by `COMPOSE_PROFILES` in `.env`. A typical local
 set is `frontend,database,backend,dev,monitoring`. See the profile definitions in
 `docker-compose.yml` and the summary in [../developers/reference/architecture.md](../developers/reference/architecture.md).
+
+## Where the local database keeps its data
+
+`PERCONA_STORAGE` in `.env` chooses it. `ram`, the default, keeps the data in memory:
+building the schema takes seconds instead of the 12 minutes it takes on a WSL disk, but
+the data is gone whenever percona stops, so run `scripts/setup-test-database.sh` again
+after a restart. `disk` keeps the persistent volume, which is the one the stack used
+before this setting existed. CI gets `ram`, since every run starts from empty. Yesterday
+is always on disk: its override files replace the mounts, because it restores the
+production database.
