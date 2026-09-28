@@ -1319,5 +1319,48 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
+-- plainmod@test.com: a genuine, non-exempt Moderator fixture, used so
+-- lockdown.spec.js Step 6 and lockdown-pr-screenshots.spec.js can assert
+-- against a real API session that is NOT exempt from a lockdown hold.
+-- testmod@test.com above is seeded systemrole='Admin', and useLockdown.js
+-- deliberately exempts Support/Admin from modsHeld (plan 11.3), so testmod
+-- can't be used to prove the "only Approve" rendering - this is the plain
+-- Moderator that can.
+--
+-- Deliberately does NOT hardcode an id, unlike the captured rows above.
+-- This worktree's test DB is only dropped and recreated fresh when
+-- setup-test-database.sh runs with SELF_HOSTED_RUNNER=true (real CI always
+-- sets that); run without it, against a reused, long-lived local DB,
+-- dynamically-created Playwright test accounts keep consuming auto_increment
+-- ids past whatever this file last captured, so a hardcoded id here
+-- silently collided with one of them and `INSERT IGNORE` swallowed the
+-- conflict without ever creating this fixture (found 2026-09-28, id 105
+-- had been reused by a live Playwright-created account). Auto-incrementing
+-- the id and resolving every downstream reference through
+-- users_emails.email works unconditionally, on a fresh DB and a reused
+-- one, without needing the flag - and each insert is separately guarded so
+-- re-running this file against a DB that already has plainmod is a no-op.
+INSERT INTO `users` (`yahooUserId`, `firstname`, `lastname`, `fullname`, `systemrole`, `added`, `lastaccess`, `settings`, `gotrealemail`, `yahooid`, `licenses`, `newslettersallowed`, `relevantallowed`, `onholidaytill`, `marketingconsent`, `publishconsent`, `lastlocation`, `lastrelevantcheck`, `lastidlechaseup`, `bouncing`, `permissions`, `invitesleft`, `source`, `chatmodstatus`, `deleted`, `inventedname`, `newsfeedmodstatus`, `replyambit`, `engagement`, `trustlevel`, `lastupdated`, `tnuserid`, `ljuserid`, `forgotten`)
+SELECT NULL,'Plain','Moderator','Plain Moderator','Moderator','2026-07-09 10:02:21','2026-07-09 10:02:21',NULL,0,NULL,0,1,1,NULL,0,0,NULL,NULL,NULL,0,NULL,10,NULL,'Moderated',NULL,0,'Unmoderated',0,NULL,NULL,'2026-07-09 10:02:22',NULL,NULL,NULL
+FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM `users_emails` WHERE `email` = 'plainmod@test.com');
+
+INSERT INTO `users_emails` (`userid`, `email`, `preferred`, `added`, `validatekey`, `validated`, `canon`, `backwards`, `bounced`, `viewed`, `validatetime`)
+SELECT LAST_INSERT_ID(),'plainmod@test.com',1,'2026-07-09 10:02:21',NULL,NULL,'plainmod@testcom','moctset@domnialp',NULL,NULL,'2026-07-09 10:02:21'
+FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM `users_emails` WHERE `email` = 'plainmod@test.com');
+
+INSERT INTO `memberships` (`userid`, `groupid`, `role`, `collection`, `configid`, `added`, `settings`, `syncdelete`, `heldby`, `emailfrequency`, `eventsallowed`, `volunteeringallowed`, `rippled`, `ourPostingStatus`, `reviewrequestedat`, `reviewreason`, `reviewedat`)
+SELECT ue.`userid`,1,'Moderator','Approved',NULL,'2026-07-09 10:02:21',NULL,0,NULL,24,1,1,0,'DEFAULT',NULL,NULL,NULL
+FROM `users_emails` ue
+WHERE ue.`email` = 'plainmod@test.com'
+  AND NOT EXISTS (SELECT 1 FROM `memberships` WHERE `userid` = ue.`userid` AND `groupid` = 1);
+
+INSERT INTO `users_logins` (`userid`, `type`, `uid`, `credentials`, `added`, `lastaccess`, `credentials2`, `credentialsrotated`, `salt`)
+SELECT ue.`userid`,'Native',CAST(ue.`userid` AS CHAR),'ed8b449ff4866d664a287bfe372f8ecc7594f8ec','2026-07-09 10:02:21','2026-07-09 10:02:21',NULL,NULL,'zzzz'
+FROM `users_emails` ue
+WHERE ue.`email` = 'plainmod@test.com'
+  AND NOT EXISTS (SELECT 1 FROM `users_logins` WHERE `userid` = ue.`userid` AND `type` = 'Native');
+
 SET UNIQUE_CHECKS=1;
 SET FOREIGN_KEY_CHECKS=1;

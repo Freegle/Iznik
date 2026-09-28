@@ -247,6 +247,7 @@ describe('ModChatReview', () => {
       ['Language', 'English'],
       ['SameImage', 'Same image'],
       ['DodgyImage', 'Suspect text or email'],
+      ['Lockdown', 'Held by lockdown'],
     ])('returns correct text for %s reason', (reason, expectedText) => {
       const wrapper = mountComponent({ reviewreason: reason })
       expect(wrapper.vm.reviewreason).toContain(expectedText)

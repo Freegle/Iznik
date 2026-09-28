@@ -534,6 +534,24 @@ describe('NewsThread', () => {
       expect(wrapper.text()).toContain('the system')
     })
 
+    // Plan 10.6/10.12: ChitChat posts held by the lockdown switch are labelled so a
+    // volunteer can tell them apart from an ordinary system hide. Confirmed live via
+    // GET /newsfeed/:id -> .lockdownheld (unconditional, no mod-only gating).
+    it('shows "by lockdown" when lockdownheld is true and hiddenby is not set', async () => {
+      mockNewsfeed.value.hiddenby = null
+      mockNewsfeed.value.lockdownheld = true
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('by lockdown')
+      expect(wrapper.text()).not.toContain('the system')
+    })
+
+    it('prefers "by" and UserName over lockdownheld when hiddenby is set', async () => {
+      mockNewsfeed.value.hiddenby = 50
+      mockNewsfeed.value.lockdownheld = true
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.user-name').exists()).toBe(true)
+    })
+
     it('does not show hidden notice for regular users', async () => {
       mockMe.value.systemrole = 'User'
       const wrapper = await createWrapper()

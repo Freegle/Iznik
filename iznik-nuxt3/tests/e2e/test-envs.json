@@ -1,4 +1,90 @@
 {
+  "lockdown": {
+    "group": {
+      "id": 1,
+      "name": "FreeglePlayground"
+    },
+    "group2": {
+      "id": 1,
+      "name": "FreeglePlayground"
+    },
+    "mod": {
+      "id": 2,
+      "email": "testmod@test.com"
+    },
+    "plainMod": {
+      "id": 105,
+      "email": "plainmod@test.com"
+    },
+    "user": {
+      "id": 1,
+      "email": "test@test.com"
+    },
+    "user2": {
+      "id": 3,
+      "email": "test3@test.com"
+    },
+    "messages": {
+      "offer": null,
+      "wanted": null
+    },
+    "pending": {
+      "offer": null,
+      "wanted": null
+    },
+    "rejected": {
+      "offer": null
+    },
+    "chats": {
+      "user2user": null,
+      "user2mod": null
+    },
+    "postcode": null,
+    "spammers": []
+  },
+  "lockdownprscreenshots": {
+    "group": {
+      "id": 1,
+      "name": "FreeglePlayground"
+    },
+    "group2": {
+      "id": 1,
+      "name": "FreeglePlayground"
+    },
+    "mod": {
+      "id": 2,
+      "email": "testmod@test.com"
+    },
+    "plainMod": {
+      "id": 105,
+      "email": "plainmod@test.com"
+    },
+    "user": {
+      "id": 1,
+      "email": "test@test.com"
+    },
+    "user2": {
+      "id": 3,
+      "email": "test3@test.com"
+    },
+    "messages": {
+      "offer": null,
+      "wanted": null
+    },
+    "pending": {
+      "offer": null,
+      "wanted": null
+    },
+    "rejected": {
+      "offer": null
+    },
+    "chats": {
+      "user2user": null,
+      "user2mod": null
+    },
+    "postcode": null,
+    "spammers": []
+  },
   "browse": {
     "group": {
       "id": 3,

@@ -6,29 +6,42 @@ import ModSupportLockdownStats from '~/modtools/components/ModSupportLockdownSta
 // `pressedat`, `counters` (push/export/refused/approved) and `waiting.email`
 // (with its `queued`/`removed`/`deferred` sub-objects) match the real
 // GET /modtools/lockdown/stats shape (iznik-server-go/lockdown/handlers.go) -
-// confirmed by team-lead, not a guess.
+// confirmed by team-lead, not a guess. So do `triage` (a flat array of
+// {kind,risk,count} rows, every hold regardless of outcome - not an object
+// keyed by kind/risk) and `samples` entries, which carry `refid`/`userid`,
+// not `id`/`senderid`; `clusters` entries carry `text`, not `line`.
 describe('ModSupportLockdownStats', () => {
   const stats = {
     pressedat: new Date(Date.now() - 3600000).toISOString(),
-    triage: {
-      chat: { spam: 40, risky: 10, low: 70 },
-      post: { spam: 5, risky: 2, low: 23 },
-      chitchat: { spam: 0, risky: 1, low: 4 },
-    },
+    triage: [
+      { kind: 'chat', risk: 'spam', count: 40 },
+      { kind: 'chat', risk: 'risky', count: 10 },
+      { kind: 'chat', risk: 'low', count: 70 },
+      { kind: 'post', risk: 'spam', count: 5 },
+      { kind: 'post', risk: 'risky', count: 2 },
+      { kind: 'post', risk: 'low', count: 23 },
+      { kind: 'chitchat', risk: 'risky', count: 1 },
+      { kind: 'chitchat', risk: 'low', count: 4 },
+    ],
     samples: {
       spam: [
         {
           kind: 'chat',
-          id: 111,
+          refid: 111,
           text: 'Click here to claim your refund now',
-          senderid: 456,
+          userid: 456,
         },
       ],
       risky: [
-        { kind: 'post', id: 222, text: 'Anyone want this sofa', senderid: 789 },
+        {
+          kind: 'post',
+          refid: 222,
+          text: 'Anyone want this sofa',
+          userid: 789,
+        },
       ],
     },
-    clusters: [{ line: 'click here to claim your refund', count: 34 }],
+    clusters: [{ text: 'click here to claim your refund', count: 34 }],
     accountscreated: 17,
     counters: {
       push: 30,
@@ -68,7 +81,7 @@ describe('ModSupportLockdownStats', () => {
             props: ['variant', 'size', 'disabled'],
           },
           ConfirmModal: {
-            template: '<div />',
+            template: '<div class="confirm-modal-stub" :data-title="title" />',
             props: ['title', 'message'],
             emits: ['confirm'],
           },
@@ -178,6 +191,23 @@ describe('ModSupportLockdownStats', () => {
     expect(outcomes.text()).toContain('45')
   })
 
+  it('shows release/reject buttons only for kind/risk combos actually held, with the real count', () => {
+    const wrapper = createWrapper()
+    // chat/spam: 40 held, per the flat triage array.
+    const chatSpamRelease = wrapper.find(
+      '[data-testid="lockdown-releaseclass-chat-spam-release"]'
+    )
+    expect(chatSpamRelease.exists()).toBe(true)
+    expect(chatSpamRelease.text()).toContain('40')
+    // chitchat/spam: no row at all in the triage array, so 0 held and no
+    // button - a missing combination is not the same as an empty object.
+    expect(
+      wrapper
+        .find('[data-testid="lockdown-releaseclass-chitchat-spam-release"]')
+        .exists()
+    ).toBe(false)
+  })
+
   it('emits markspam when "Mark spam set" is confirmed', async () => {
     const wrapper = createWrapper()
     await wrapper.vm.confirmMarkSpam()
@@ -198,5 +228,29 @@ describe('ModSupportLockdownStats', () => {
     expect(
       wrapper.find('[data-testid="lockdown-accounts-created"]').text()
     ).toContain('0')
+  })
+
+  // useOurModal() defaults autoShow to true, so an always-mounted
+  // ConfirmModal pops open the instant this component mounts instead of
+  // waiting for its button - the bug fixed here for "Mark spam set" and
+  // release/reject-class, matching the pattern already used for "Press".
+  it('does not mount the mark-spam or release-class confirm modals until their buttons are clicked', async () => {
+    const wrapper = createWrapper()
+    expect(wrapper.find('.confirm-modal-stub').exists()).toBe(false)
+
+    await wrapper
+      .find('[data-testid="lockdown-markspam-button"] button')
+      .trigger('click')
+    expect(
+      wrapper
+        .find('.confirm-modal-stub[data-title="Mark the spam set?"]')
+        .exists()
+    ).toBe(true)
+    expect(wrapper.findAll('.confirm-modal-stub').length).toBe(1)
+
+    await wrapper
+      .find('[data-testid="lockdown-releaseclass-chat-spam-release"]')
+      .trigger('click')
+    expect(wrapper.findAll('.confirm-modal-stub').length).toBe(2)
   })
 })

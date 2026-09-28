@@ -17,7 +17,7 @@
 
       <ModSupportLockdownSurfaces
         :surfaces="store.surfaces"
-        :held-counts="store.stats?.held ?? {}"
+        :held-counts="heldByKind"
         @toggle-surface="onToggleSurface"
         @set-chat-mode="onSetChatMode"
       />
@@ -55,7 +55,7 @@
         variant="warning"
         class="mt-3"
         data-testid="lockdown-liftall-button"
-        @click="liftAllModal?.show?.()"
+        @click="showLiftAllModal = true"
       >
         Lift everything
       </b-button>
@@ -70,7 +70,7 @@
       <b-button
         variant="secondary"
         data-testid="lockdown-close-button"
-        @click="closeModal?.show?.()"
+        @click="showCloseModal = true"
       >
         Close
       </b-button>
@@ -78,9 +78,11 @@
       <ModSupportLockdownHistory :history="store.history" />
 
       <ConfirmModal
+        v-if="showLiftAllModal"
         ref="liftAllModal"
         title="Lift everything?"
         @confirm="onLiftAll"
+        @hidden="showLiftAllModal = false"
       >
         <div data-testid="lockdown-liftall-confirm">
           <p>
@@ -91,9 +93,11 @@
       </ConfirmModal>
 
       <ConfirmModal
+        v-if="showCloseModal"
         ref="closeModal"
         title="Close the lockdown?"
         @confirm="onClose"
+        @hidden="showCloseModal = false"
       >
         <div data-testid="lockdown-close-confirm">
           <p>Closing ends the incident and clears the incident phrases.</p>
@@ -136,6 +140,19 @@ const allCaughtUp = computed(() => {
   const acks = store.stats?.acks
   if (!acks || !acks.length) return false
   return acks.every((a) => a.caughtup)
+})
+
+// GET /modtools/lockdown/stats' `held` is a flat array of
+// {kind,count,distinctusers,oldest,newlast10min} (unresolved holds only),
+// one entry per kind - not an object keyed by kind. ModSupportLockdownSurfaces
+// indexes its heldCounts prop by kind, so build that lookup here rather than
+// passing the array straight through.
+const heldByKind = computed(() => {
+  const map = {}
+  for (const h of store.stats?.held ?? []) {
+    map[h.kind] = h
+  }
+  return map
 })
 
 onMounted(async () => {
@@ -226,11 +243,17 @@ async function onReleaseClass({ kind, risk, decision }) {
 }
 
 const liftAllModal = ref(null)
+// ConfirmModal is v-if-gated (house pattern - see ModSupportLockdownPress.vue's
+// showConfirmModal): useOurModal() defaults autoShow to true, so an
+// always-mounted ConfirmModal pops open the instant the active-state page
+// mounts instead of waiting for its button.
+const showLiftAllModal = ref(false)
 async function onLiftAll() {
   await patchAndRefresh({ action: 'liftall' })
 }
 
 const closeModal = ref(null)
+const showCloseModal = ref(false)
 const endNote = ref('')
 async function onClose() {
   await patchAndRefresh({ action: 'close', endnote: endNote.value.trim() })

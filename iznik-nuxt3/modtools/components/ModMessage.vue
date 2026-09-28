@@ -386,6 +386,16 @@
               {{ position.lng }}), which means it might be a scam. Please check
               carefully.
             </NoticeMessage>
+            <!-- Plan 10.6/10.12: posts held by the lockdown switch are labelled in the
+                 queue so a mod can tell them apart from a post held for the group's own
+                 reasons. Confirmed live via GET /message/:id -> message.lockdownheld. -->
+            <NoticeMessage
+              v-if="message.lockdownheld"
+              variant="warning"
+              class="mb-2"
+            >
+              Held by lockdown during a security incident. Approve if genuine.
+            </NoticeMessage>
             <NoticeMessage
               v-if="message.spamreason"
               variant="warning"

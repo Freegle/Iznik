@@ -57,7 +57,9 @@ describe('LockdownAPI', () => {
     const ret = await createApi().fetch()
 
     expect(mockFetch).toHaveBeenCalledTimes(1)
-    expect(mockFetch.mock.calls[0][0]).toContain('https://api.test.com/lockdown')
+    expect(mockFetch.mock.calls[0][0]).toContain(
+      'https://api.test.com/lockdown'
+    )
     expect(mockFetch.mock.calls[0][1].method).toBe('GET')
     expect(ret.notice).toBeNull()
   })
@@ -70,7 +72,9 @@ describe('LockdownAPI', () => {
         incidentid: 5,
         surfaces: { mods: true },
         reason: 'spam wave',
-        notice: { key: 'security', text: 'We are dealing with a spam attack.' },
+        // GET /modtools/lockdown returns notice as a bare string, unlike the
+        // public GET /lockdown endpoint, which wraps it as {key, text}.
+        notice: 'security',
         startedat: '2026-09-27 10:00:00',
         startedby: 1,
         startedbyname: 'Support',
@@ -114,7 +118,9 @@ describe('LockdownAPI', () => {
 
     await createApi().patch({ action: 'press', reason: 'spam wave' })
 
-    expect(mockFetch.mock.calls[0][0]).toContain('https://api.test.com/lockdown')
+    expect(mockFetch.mock.calls[0][0]).toContain(
+      'https://api.test.com/lockdown'
+    )
     expect(mockFetch.mock.calls[0][1].method).toBe('PATCH')
   })
 

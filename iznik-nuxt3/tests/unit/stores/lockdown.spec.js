@@ -46,7 +46,10 @@ describe('lockdown store', () => {
       const store = useLockdownStore()
       store.init({ public: {} })
       mockFetch.mockResolvedValue({
-        notice: { key: 'security', text: 'We are dealing with a security incident.' },
+        notice: {
+          key: 'security',
+          text: 'We are dealing with a security incident.',
+        },
       })
 
       await store.fetch()
@@ -79,7 +82,10 @@ describe('lockdown store', () => {
         incidentid: 5,
         surfaces: { mods: true, posts: true },
         reason: 'spam wave',
-        notice: { key: 'security', text: 'We are dealing with a spam attack.' },
+        // GET /modtools/lockdown returns notice as a bare string (e.g.
+        // "security"/"delay"/"normal"), unlike the public GET /lockdown
+        // endpoint, which wraps it as {key, text}.
+        notice: 'security',
         startedat: '2026-09-27 10:00:00',
         startedby: 1,
         startedbyname: 'Support',
@@ -92,10 +98,7 @@ describe('lockdown store', () => {
       expect(store.incidentid).toBe(5)
       expect(store.surfaces).toEqual({ mods: true, posts: true })
       expect(store.reason).toBe('spam wave')
-      expect(store.notice).toEqual({
-        key: 'security',
-        text: 'We are dealing with a spam attack.',
-      })
+      expect(store.notice).toBe('security')
       expect(store.startedat).toBe('2026-09-27 10:00:00')
       expect(store.startedby).toBe(1)
       expect(store.startedbyname).toBe('Support')
@@ -132,13 +135,23 @@ describe('lockdown store', () => {
     it('fetches and stores history', async () => {
       const store = useLockdownStore()
       store.init({ public: {} })
-      mockFetchHistory.mockResolvedValue({
-        history: [{ incidentid: 1, reason: 'test' }],
-      })
+      // GET /modtools/lockdown/history returns a bare JSON array, not
+      // wrapped in a `history` key.
+      mockFetchHistory.mockResolvedValue([{ incidentid: 1, reason: 'test' }])
 
       await store.fetchHistory()
 
       expect(store.history).toEqual([{ incidentid: 1, reason: 'test' }])
+    })
+
+    it('stores an empty array when the server returns nothing', async () => {
+      const store = useLockdownStore()
+      store.init({ public: {} })
+      mockFetchHistory.mockResolvedValue(null)
+
+      await store.fetchHistory()
+
+      expect(store.history).toEqual([])
     })
   })
 

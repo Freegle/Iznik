@@ -57,8 +57,10 @@ export const useLockdownStore = defineStore('lockdown', {
     },
 
     async fetchHistory() {
+      // GET /modtools/lockdown/history returns a bare JSON array (newest
+      // first, max 50), not an object wrapping one.
       const ret = await api(this.config).lockdown.fetchHistory()
-      this.history = ret?.history ?? []
+      this.history = ret ?? []
       return ret
     },
 

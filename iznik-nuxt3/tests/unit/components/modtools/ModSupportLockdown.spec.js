@@ -147,6 +147,27 @@ describe('ModSupportLockdown', () => {
     )
   })
 
+  // GET /modtools/lockdown/stats' `held` is a flat array of
+  // {kind,count,...}, one entry per kind, not an object keyed by kind - see
+  // ModSupportLockdownSurfaces.vue's countFor(), which indexes heldCounts by
+  // kind.
+  it('turns the held array into a kind-keyed lookup for the surfaces panel', async () => {
+    store.active = true
+    store.stats = {
+      held: [
+        { kind: 'chat', count: 5, distinctusers: 3 },
+        { kind: 'post', count: 2, distinctusers: 2 },
+      ],
+    }
+    const wrapper = createWrapper()
+    await flushPromises()
+    const surfaces = wrapper.findComponent('.mod-support-lockdown-surfaces')
+    expect(surfaces.props('heldCounts')).toEqual({
+      chat: { kind: 'chat', count: 5, distinctusers: 3 },
+      post: { kind: 'post', count: 2, distinctusers: 2 },
+    })
+  })
+
   it('refetches mod state when the press form emits pressed', async () => {
     store.active = false
     const wrapper = createWrapper()
@@ -319,11 +340,16 @@ describe('ModSupportLockdown', () => {
 
   // plans/active/2026-09-27-lockdown-switch.md section 11.6: "Lift
   // everything" and "Close" have their own dialogs with this specific
-  // wording.
+  // wording. Both ConfirmModals are v-if-gated (house pattern - see
+  // ModSupportLockdownPress.vue's showConfirmModal), so each test has to
+  // open it first rather than finding it already mounted.
   it('shows the lift-everything dialog wording', async () => {
     store.active = true
     const wrapper = createWrapper()
     await flushPromises()
+    await wrapper
+      .find('[data-testid="lockdown-liftall-button"]')
+      .trigger('click')
     const dialog = wrapper.find('[data-testid="lockdown-liftall-confirm"]')
     expect(dialog.text()).toContain(
       'Lifting releases held messages at a paced rate, and moderators will see the risky ones in their queues.'
@@ -334,9 +360,41 @@ describe('ModSupportLockdown', () => {
     store.active = true
     const wrapper = createWrapper()
     await flushPromises()
+    await wrapper.find('[data-testid="lockdown-close-button"]').trigger('click')
     const dialog = wrapper.find('[data-testid="lockdown-close-confirm"]')
     expect(dialog.text()).toContain(
       'Closing ends the incident and clears the incident phrases.'
     )
+  })
+
+  // useOurModal() defaults autoShow to true, so an always-mounted
+  // ConfirmModal pops open the instant the active-state page mounts instead
+  // of waiting for its button - the bug fixed here for "Lift everything" and
+  // "Close", matching the pattern already used for "Press".
+  it('does not mount the lift-everything or close confirm modals until their buttons are clicked', async () => {
+    store.active = true
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(
+      wrapper.find('[data-testid="lockdown-liftall-confirm"]').exists()
+    ).toBe(false)
+    expect(
+      wrapper.find('[data-testid="lockdown-close-confirm"]').exists()
+    ).toBe(false)
+
+    await wrapper
+      .find('[data-testid="lockdown-liftall-button"]')
+      .trigger('click')
+    expect(
+      wrapper.find('[data-testid="lockdown-liftall-confirm"]').exists()
+    ).toBe(true)
+    expect(
+      wrapper.find('[data-testid="lockdown-close-confirm"]').exists()
+    ).toBe(false)
+
+    await wrapper.find('[data-testid="lockdown-close-button"]').trigger('click')
+    expect(
+      wrapper.find('[data-testid="lockdown-close-confirm"]').exists()
+    ).toBe(true)
   })
 })

@@ -18,7 +18,7 @@
           data-testid="lockdown-history-row"
         >
           <td>{{ h.reason }}</td>
-          <td>{{ h.startedbyname }}, {{ dateshort(h.startedat) }}</td>
+          <td>#{{ h.startedby }}, {{ dateshort(h.startedat) }}</td>
           <td>{{ h.endedbyname }}, {{ dateshort(h.endedat) }}</td>
           <td>{{ h.endnote || '-' }}</td>
         </tr>

@@ -239,9 +239,7 @@
       </b-card-body>
       <b-card-footer>
         <div class="d-flex flex-wrap justify-content-start">
-          <template
-            v-if="!message.widerchatreview && isActiveMod && !modsHeld"
-          >
+          <template v-if="!message.widerchatreview && isActiveMod && !modsHeld">
             <ModChatViewButton :id="message.chatid" :pov="chatPov" />
             <b-button
               v-if="message.held && me.id === message.held.id"
@@ -277,9 +275,7 @@
             class="me-2 mb-1"
             @handle="approve"
           />
-          <template
-            v-if="!message.widerchatreview && isActiveMod && !modsHeld"
-          >
+          <template v-if="!message.widerchatreview && isActiveMod && !modsHeld">
             <SpinButton
               v-if="!message.held"
               icon-name="check"
@@ -531,6 +527,10 @@ const reviewreason = computed(() => {
       }
       case 'DodgyImage': {
         ret = 'Suspect text or email found in image, so needs checking.'
+        break
+      }
+      case 'Lockdown': {
+        ret = 'Held by lockdown during a security incident. Approve if genuine.'
         break
       }
       default: {

@@ -13,9 +13,9 @@
       <tbody>
         <tr v-for="kind in kinds" :key="kind">
           <td>{{ kindLabel(kind) }}</td>
-          <td>{{ stats?.triage?.[kind]?.spam ?? 0 }}</td>
-          <td>{{ stats?.triage?.[kind]?.risky ?? 0 }}</td>
-          <td>{{ stats?.triage?.[kind]?.low ?? 0 }}</td>
+          <td>{{ triageCount(kind, 'spam') }}</td>
+          <td>{{ triageCount(kind, 'risky') }}</td>
+          <td>{{ triageCount(kind, 'low') }}</td>
         </tr>
       </tbody>
     </table>
@@ -29,12 +29,12 @@
       <div :data-testid="'lockdown-samples-' + risk">
         <p
           v-for="sample in stats?.samples?.[risk] ?? []"
-          :key="risk + '-' + sample.kind + '-' + sample.id"
+          :key="risk + '-' + sample.kind + '-' + sample.refid"
           class="mb-1"
         >
           <b-badge variant="secondary">{{ sample.kind }}</b-badge>
           <span class="ms-2">{{ (sample.text || '').slice(0, 200) }}</span>
-          <span class="text-muted ms-2">member #{{ sample.senderid }}</span>
+          <span class="text-muted ms-2">member #{{ sample.userid }}</span>
         </p>
         <p v-if="!(stats?.samples?.[risk] ?? []).length" class="text-muted">
           None held.
@@ -50,7 +50,7 @@
           variant="danger"
           size="sm"
           :disabled="!totalHeld('spam')"
-          @click="confirmMarkSpamModal?.show()"
+          @click="showMarkSpamModal = true"
         >
           Mark spam set ({{ totalHeld('spam') }})
         </b-button>
@@ -58,7 +58,7 @@
 
       <div class="d-flex gap-2 flex-wrap">
         <template v-for="kind in kinds" :key="kind">
-          <template v-if="(stats?.triage?.[kind]?.[risk] ?? 0) > 0">
+          <template v-if="triageCount(kind, risk) > 0">
             <b-button
               size="sm"
               variant="outline-success"
@@ -68,7 +68,7 @@
               @click="askReleaseClass(kind, risk, 'release')"
             >
               Release {{ kindLabel(kind) }} {{ risk }} ({{
-                stats.triage[kind][risk]
+                triageCount(kind, risk)
               }})
             </b-button>
             <b-button
@@ -80,7 +80,7 @@
               @click="askReleaseClass(kind, risk, 'reject')"
             >
               Reject {{ kindLabel(kind) }} {{ risk }} ({{
-                stats.triage[kind][risk]
+                triageCount(kind, risk)
               }})
             </b-button>
           </template>
@@ -91,7 +91,7 @@
     <h4>Clusters</h4>
     <ul data-testid="lockdown-clusters">
       <li v-for="(c, i) in stats?.clusters ?? []" :key="i">
-        "{{ c.line }}" - {{ c.count }}
+        "{{ c.text }}" - {{ c.count }}
       </li>
       <li v-if="!(stats?.clusters ?? []).length" class="text-muted">None.</li>
     </ul>
@@ -184,19 +184,23 @@
     </table>
 
     <ConfirmModal
+      v-if="showMarkSpamModal"
       ref="confirmMarkSpamModal"
       title="Mark the spam set?"
       message="<p>Every spam-classed hold's sender goes into spam_users and is
         rejected. Do this once the spam samples above look right.</p>"
       @confirm="confirmMarkSpam"
+      @hidden="showMarkSpamModal = false"
     />
 
     <ConfirmModal
+      v-if="showReleaseClassModal"
       ref="confirmReleaseClassModal"
       :title="releaseClassTitle"
       message="<p>Look at the samples above before confirming - this acts on
         the whole class at once.</p>"
       @confirm="confirmReleaseClass"
+      @hidden="showReleaseClassModal = false"
     />
   </div>
 </template>
@@ -207,11 +211,17 @@ import { timeago } from '~/composables/useTimeFormat'
 
 // plans/active/2026-09-27-lockdown-switch.md sections 10.6, 10.9 step 2-3,
 // 10.10, 11.2, 11.7/11.8 (GET /modtools/lockdown/stats, PATCH
-// markspam/releaseclass). `pressedat`, `counters` and `waiting.email` (with
-// its `queued`/`removed`/`deferred` sub-objects) match the real Go handler
-// (iznik-server-go/lockdown/handlers.go), confirmed by team-lead - every read
-// here is still defensive (optional chaining, falls back to 0/empty) for
-// when stats itself hasn't loaded yet, not because the shape is a guess.
+// markspam/releaseclass). Shapes confirmed against the real Go handler
+// (iznik-server-go/lockdown/handlers.go): `triage` is a flat array of
+// {kind,risk,count} (every hold, any outcome) and `samples` entries use
+// `refid`/`userid`, not `id`/`senderid`; `clusters` entries use `text`, not
+// `line`. `pressedat`, `counters` (push/export/refused/approved) and
+// `waiting.email` (with its `queued`/`removed`/`deferred` sub-objects) match
+// too. `counters.email` is a real field but no code path currently writes a
+// bare "email:*" counter - every mail counter that exists lands in
+// `waiting.email` or `leaked` instead - so it is deliberately not shown here;
+// it would always read empty. Every read below is still defensive (optional
+// chaining, falls back to 0/empty) for when stats itself hasn't loaded yet.
 const props = defineProps({
   stats: {
     type: Object,
@@ -228,8 +238,24 @@ function kindLabel(kind) {
   return kindLabels[kind] || kind
 }
 
+// `triage` arrives as a flat array of {kind,risk,count} rows, one per
+// kind/risk combination - build a kind->risk->count lookup once rather than
+// scanning the array on every read.
+const triageMap = computed(() => {
+  const map = {}
+  for (const t of props.stats?.triage ?? []) {
+    if (!map[t.kind]) map[t.kind] = {}
+    map[t.kind][t.risk] = t.count
+  }
+  return map
+})
+
+function triageCount(kind, risk) {
+  return triageMap.value[kind]?.[risk] ?? 0
+}
+
 function totalHeld(risk) {
-  return kinds.reduce((n, k) => n + (props.stats?.triage?.[k]?.[risk] ?? 0), 0)
+  return kinds.reduce((n, k) => n + triageCount(k, risk), 0)
 }
 
 // plans/active/2026-09-27-lockdown-switch.md section 11.7 (rewritten):
@@ -266,13 +292,19 @@ const mailRunsDeferredTotal = computed(() =>
   )
 )
 
+// Both ConfirmModals below are v-if-gated (house pattern - see
+// ModSupportLockdownPress.vue's showConfirmModal): useOurModal() defaults
+// autoShow to true, so an always-mounted ConfirmModal pops open the instant
+// this component mounts instead of waiting for its button.
 const confirmMarkSpamModal = ref(null)
+const showMarkSpamModal = ref(false)
 function confirmMarkSpam() {
   emit('markspam')
 }
 
 const pendingReleaseClass = ref(null)
 const confirmReleaseClassModal = ref(null)
+const showReleaseClassModal = ref(false)
 
 const releaseClassTitle = computed(() => {
   const p = pendingReleaseClass.value
@@ -284,7 +316,7 @@ const releaseClassTitle = computed(() => {
 
 function askReleaseClass(kind, risk, decision) {
   pendingReleaseClass.value = { kind, risk, decision }
-  confirmReleaseClassModal.value?.show?.()
+  showReleaseClassModal.value = true
 }
 
 function confirmReleaseClass() {
