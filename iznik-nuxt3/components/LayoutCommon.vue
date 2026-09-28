@@ -1,6 +1,9 @@
 <template>
   <div>
     <main class="ml-0 ps-0 pe-0 pageContent">
+      <client-only>
+        <LockdownNotice />
+      </client-only>
       <div
         class="aboveSticky"
         :class="{
@@ -69,7 +72,6 @@
       <DeletedRestore />
       <BouncingEmail />
       <MailDelayed />
-      <LockdownNotice />
       <div class="navbar-toggle" style="display: none" />
     </client-only>
     <div

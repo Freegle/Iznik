@@ -56,9 +56,7 @@ describe('LockdownNotice', () => {
       notice: { key: 'security', text: 'Security text' },
     })
 
-    expect(render().find('.notice').attributes('data-variant')).toBe(
-      'danger'
-    )
+    expect(render().find('.notice').attributes('data-variant')).toBe('danger')
   })
 
   it('shows the delay notice text', () => {
@@ -80,9 +78,7 @@ describe('LockdownNotice', () => {
       notice: { key: 'delay', text: 'Delay text' },
     })
 
-    expect(render().find('.notice').attributes('data-variant')).toBe(
-      'warning'
-    )
+    expect(render().find('.notice').attributes('data-variant')).toBe('warning')
   })
 
   it('uses the warning variant for the back-to-normal notice', () => {
@@ -90,9 +86,7 @@ describe('LockdownNotice', () => {
       notice: { key: 'normal', text: 'Things are back to normal.' },
     })
 
-    expect(render().find('.notice').attributes('data-variant')).toBe(
-      'warning'
-    )
+    expect(render().find('.notice').attributes('data-variant')).toBe('warning')
   })
 
   it('has no dismiss button', () => {
@@ -101,5 +95,29 @@ describe('LockdownNotice', () => {
     })
 
     expect(render().find('.test-dismiss').exists()).toBe(false)
+  })
+
+  it('renders in normal flow, not as a fixed-position overlay', () => {
+    // MailDelayed and BouncingEmail pin themselves to the bottom of the
+    // viewport with the "bottom verytop" pattern, and MailDelayed's own
+    // comment admits that covers whatever is down there, including the
+    // reply composer's Send button - a cost it can only pay because it is
+    // dismissible. LockdownNotice is never dismissible, so it must never
+    // carry that positioning: it has to sit in the page's normal flow
+    // instead (see LayoutCommon.vue, top of main.pageContent). jsdom has no
+    // layout engine, so this can only check the class list, not real pixel
+    // positions - the actual proof is the Playwright run over a browser.
+    useLockdownStore.mockReturnValue({
+      notice: { key: 'security', text: 'Security text' },
+    })
+
+    const wrapper = render()
+    const classes = wrapper.classes()
+
+    expect(classes).toContain('lockdown')
+    expect(classes).not.toContain('bottom')
+    expect(classes).not.toContain('verytop')
+    expect(wrapper.find('.bottom').exists()).toBe(false)
+    expect(wrapper.find('.verytop').exists()).toBe(false)
   })
 })
