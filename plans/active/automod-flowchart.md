@@ -344,7 +344,7 @@ Holds by the moderator's reason, on the text the moderator saw:
 | borrow/swap | 32 | 31 (97%) | 29 (91%) |
 | medicine | 30 | 28 (93%) | 25 (83%) |
 | animals | 26 | 26 (100%) | 25 (96%) |
-| approved | 300 | 16 (5%) | 15 (5%) |
+| approved | 300 | 13 (4%) | 15 (5%) |
 
 197 of 216 rejections held (91%), with each community's rules applied as production applies
 them (`scripts/walk-from-answers.mjs`). The cost of holding any mention of money is on
@@ -385,10 +385,13 @@ changed one decision.
 | animals | 100% (26) | 100% (13) |
 | vague | 73% (48) | 81% (21) |
 | all rejections | 91% | 94% |
-| approved posts held | 5% (300) | 5% (400) |
+| approved posts held | 4% (300) | 4% (400) |
 
 No sign of fitting the first set. The unseen set's approved posts held were mostly the money
-rule doing what it was asked (a poster's own past purchase, "very expensive when new"), and
-the hazardous question holding an empty gas cylinder and used lighters. Gas cylinders have
+rule catching a poster's own past purchase ("I bought it in a charity shop", "very
+expensive when new"). Edward: a past purchase is fine, so the money question now lets it
+through when no amount is given; an amount, as in "bought at auction for £3000", still
+holds. That let 7 approved posts through and lost no rejection, each of those six being
+held by another question. The rest were the hazardous question holding an empty gas cylinder and used lighters. Gas cylinders have
 their own community rule, so the hazardous question now leaves them, and ordinary household
 items, to it; asked again, both posts pass.
