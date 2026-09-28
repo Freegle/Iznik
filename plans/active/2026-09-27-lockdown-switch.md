@@ -963,3 +963,16 @@ send a moderator's mail to the member. 10.5 had them as the member's own action.
   questions still get answers. A hijacked moderator can reach only members who wrote to
   their volunteers, one at a time, and every such message is visible to the other
   moderators of the group.
+
+### 11.10 Other corrections from review (27 September)
+
+- **Approving events and volunteering** is an approve only when the caller moderates the
+  item's group, or is Support or Admin. An owner sending `pending: false` on their own item
+  is a member edit and is refused while `events` is held. Moderator approvals are counted
+  like any other.
+- **Partnership records** are not Support-only: the Partnerships team can write them. While
+  `mods` is held their writes are refused; Support and Admin are exempt as elsewhere. 10.5's
+  "Support tooling (exempt)" list is wrong to include them.
+- **Images** attached straight to content that is already live are an edit of that content
+  and are treated as its surface's edit. Rotating an image is allowed.
+- **Nudges** are created held while chat is held, like any other chat message.
