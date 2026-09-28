@@ -733,7 +733,7 @@ after a successful one keeps the last state.
 
 ### 11.2 Go API (`iznik-server-go/lockdown/`)
 
-- `lockdown.Current()` — five-second cache (browsecount pattern), `lockdown.Held(surface)`,
+- `lockdown.Current()`: five-second cache (browsecount pattern), `lockdown.Held(surface)`,
   `lockdown.ChatMode()`, `lockdown.Count(kind)`, `lockdown.Refuse(c)` which writes 409
   `{"ret":409,"status":"Changes are paused for a few hours while we deal with a security incident.","lockdown":true}`
   and for downloads `"Downloads are paused while we deal with a security incident."`.

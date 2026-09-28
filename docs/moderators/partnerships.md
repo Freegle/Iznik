@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/partnerships.vue
@@ -87,6 +87,14 @@ Building one takes a few minutes, so it runs in the background:
 You do not have to keep the page open - come back later and the finished spreadsheets are
 still there. If one council fails (a boundary that no longer exists, say) the others still
 come through, and the reason is shown against the job.
+
+## During a lockdown
+
+While Freegle is in a [lockdown](../ops/runbooks/lockdown.md), writes to a partnership
+(creating or editing a deal, recording an invoice, generating statistics) are refused for
+the Partnerships team. Support and Admin are exempt, so the team can still be helped
+with something urgent, but ordinary Partnerships access is read-only until the lockdown
+is lifted.
 
 ## Under the covers
 

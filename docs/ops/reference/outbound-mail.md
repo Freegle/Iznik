@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-15
+last_reviewed: 2026-09-28
 owner: Freegle ops
 covers:
   - iznik-batch/app/Services/EmailSpoolerService.php
@@ -60,6 +60,15 @@ Draining is strict priority, so the bottom band waits for everything above it. A
 `p9` queue behind a digest run is normal.
 
 A kind of email with no entry in the map flows at `p5` rather than failing or stalling.
+
+**Lockdown holds the spool, not just generation.** Most member mail is already stopped
+upstream of the spool during a [lockdown](../runbooks/lockdown.md), but anything that
+reaches `EmailSpoolerService` before generation was gated still carries an `about`
+field naming the post or chat message it concerns. `mail:spool:process` does not drain
+those entries while email is held. On resume, `lockdown:filter-spool` walks the pending
+spool first and removes any entry whose `about` content was marked spam and taken down
+while the lockdown was on, so nobody is sent mail about something that no longer exists.
+Only then does the normal drain in this section resume.
 
 **Four workers.** `mail:spool:process` runs four times under supervisor. Delivery is
 latency-bound rather than CPU-bound - about 150ms a message, dominated by the SMTP

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-15
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 covers:
   - docs/ops/reference/logging.md
@@ -48,6 +48,12 @@ at all. Click it and a **Platform Status** panel opens listing what is wrong.
 
 The panel headline reads **Not sure** if the browser has not had an answer for ten
 minutes, which means the API itself is unreachable rather than that it reported a problem.
+
+A [lockdown](runbooks/lockdown.md) turns this dot red too, for everyone, the same as a
+platform fault, because it is one. It sits alongside the separate red banner that
+appears on every ModTools page while a lockdown is on (see
+[Getting started](../moderators/getting-started.md)); the dot is the general "something
+is wrong" signal, the banner names the specific incident.
 
 What feeds it matters, because it decides what the dot can and cannot tell you:
 

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-25
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -167,6 +167,21 @@ so use plain approve if you want them to stay under review.
 
 (This is different from moderating the **ChitChat** discussion feed, which is done on the
 main Freegle site by the ChitChat Moderation team, not in ModTools.)
+
+## During a lockdown
+
+While Freegle is in a [lockdown](../ops/runbooks/lockdown.md), most of the member tools
+on this page are switched off on purpose. You keep the plain **Approve** button; Ban,
+Remove, Merge, and the **Mail** and **Leave** standard-message buttons are refused, and
+you cannot start a new chat with a member. A lockdown is a response to a spam or
+phishing wave, and the tools that write to a member or open a conversation with one are
+exactly the ones worth taking away while an incident is live.
+
+Chat review changes shape too. Held messages are triaged every minute by
+`ChatProcessService`, not queued for a moderator straight away: spam is dropped, low
+risk is delivered after a short delay and never read by anyone, and only messages
+classed risky reach **Chats > Review**, marked with reason "Lockdown". Nothing held is
+released without a person deciding it.
 
 ## Notes about members
 

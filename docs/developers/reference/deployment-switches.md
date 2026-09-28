@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-27
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 covers:
   - iznik-batch/config/freegle.php
@@ -55,7 +55,7 @@ variables like every other Freegle setting.
 | `backup.drain.enabled` | `BACKUP_DRAIN_ENABLED` | `false` | Holds batch work off while the nightly database backup runs. Off ships as a no-op. See below. |
 | `backup.drain.start` | `BACKUP_DRAIN_START` | `03:50` | When the hold starts, `HH:MM` in the app timezone. Anything that is not a valid `HH:MM` leaves the drain off rather than holding the schedule back for ever. |
 | `backup.drain.minutes` | `BACKUP_DRAIN_MINUTES` | `45` | How long the hold lasts. Zero or negative leaves it off, on the same reasoning. |
-| `backup.drain.always_run` | `BACKUP_DRAIN_ALWAYS_RUN` | empty | Comma-separated artisan command names that run anyway, matched without their arguments. Anything listed is competing with the backup, so keep it short. |
+| `backup.drain.always_run` | `BACKUP_DRAIN_ALWAYS_RUN` | `lockdown:triage,lockdown:report` | Comma-separated artisan command names that run anyway, matched without their arguments. Anything listed is competing with the backup, so keep it short. |
 | `backup.database.enabled` | `BACKUP_DB_ENABLED` | `false` | Takes the nightly physical backup from Laravel instead of the shell script on the database node. Off ships as a no-op: the command refuses and the scheduled entry does not fire. |
 | `backup.database.host` | `BACKUP_DB_HOST` | empty | The node being backed up. xtrabackup copies a local data directory, so the pipeline runs there and only control flow crosses ssh. Empty is a configuration error rather than a default. |
 | `backup.database.ssh_key` | `BACKUP_DB_SSH_KEY` | `/etc/monitoring-ssh-key` | The private key the batch container uses to reach the node, at its path inside the container. The default is the monitoring key, which docker-compose already mounts and which is the root shell the backup needs anyway. |
@@ -116,6 +116,11 @@ workers catch up, because a backlog then is the drain doing its job. A check who
 age is longer than the window, such as the 24-hour rippling backlog check, is never skipped:
 a 45-minute hold cannot explain a day-old row.
 `always_run` matches an artisan command name or, for a scheduled closure, its `->name()`.
+
+**`lockdown:triage` and `lockdown:report` are in the default `always_run` list** because a
+lockdown is a live security incident, not routine batch work: the announce mail, the
+hold-triage sort and the hourly stats report cannot wait out a 45-minute backup drain
+window while a spam wave is still going out. See the [lockdown runbook](../../ops/runbooks/lockdown.md).
 
 ### Taking the backup from Laravel
 

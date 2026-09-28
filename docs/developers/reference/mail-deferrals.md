@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-15
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Mail/Deferrals/*.php
@@ -457,6 +457,28 @@ whose oldest waiting message is older than `maildeferral.pacedMinAge` qualify -
 a paced address always has something queued, so a shorter threshold would put a
 permanent banner in front of every member at a paced provider, which is the
 same as having no banner at all.
+
+## Lockdown
+
+A lockdown holds member mail through the same gate a suppression uses:
+`MailSuppressionService::isSuppressed()` also checks lockdown state before the
+render, for the same reason, so the expensive digest and immediate-mail work
+is not done while a security incident is in progress. Because the check sits
+before the cursor is read, nothing moves while email is held: the daily
+digest cursor, the immediate-mail cursor and the chat notification tracker
+only advance once a mail is actually generated, so lifting the lockdown
+catches everyone up from where they stopped, the same as a provider
+suppression.
+
+Only account-critical mail keeps going to the spool during a lockdown:
+sign-in, password reset, email verification, unsubscribe and account
+deletion. Everything else waits.
+
+When email is resumed, the send queue is filtered against whatever was
+marked as spam and removed while it was held, before anything goes out, so
+nobody receives mail about a post or message that has since been taken down.
+See the [lockdown runbook](../../ops/runbooks/lockdown.md) for the full
+lift sequence.
 
 ## Configuration
 

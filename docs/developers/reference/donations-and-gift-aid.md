@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 covers:
   - iznik-server-go/donations/**

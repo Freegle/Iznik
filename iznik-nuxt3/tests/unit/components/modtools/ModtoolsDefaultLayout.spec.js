@@ -340,7 +340,7 @@ describe('modtools default layout — re-login group refresh', () => {
   })
 })
 
-describe('modtools default layout — lockdown banner', () => {
+describe('modtools default layout: lockdown banner', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockCheckWork.mockReset()
@@ -357,7 +357,7 @@ describe('modtools default layout — lockdown banner', () => {
   // plans/active/2026-09-27-lockdown-switch.md section 10.8: "Members: nothing,
   // by default. Moderators: always the banner." The layout must render
   // ModLockdownBanner unconditionally (it decides its own visibility from the
-  // lockdown store) — not gate it behind login state or any other layout flag.
+  // lockdown store), not gate it behind login state or any other layout flag.
   it('always renders ModLockdownBanner, whether or not a moderator is logged in', async () => {
     const wrapper = mountLayout()
     await flushPromises()

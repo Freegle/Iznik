@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-25
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/index.vue
@@ -101,6 +101,15 @@ moderator role on at least one community. If it does not - for example after you
 down from your only community - the link shows a message saying so instead of signing you in;
 ask an owner of your community to restore your role. If ModTools cannot verify your session,
 it asks you to log out and log in again before trying the link again.
+
+## When Freegle is in lockdown
+
+If Freegle is dealing with a spam or phishing wave, you will see a red banner at the top
+of every ModTools page, whatever community or tool you are looking at. It stays up for
+every moderator until Support or Admin closes the incident, and it is separate from the
+platform traffic light on the dashboard (see [monitoring and logging](../ops/monitoring-and-logging.md)).
+Most of your day-to-day tools keep working; the ones that are held or refused are called
+out in [Managing members](managing-members.md) and the [lockdown runbook](../ops/runbooks/lockdown.md).
 
 ## Next steps
 
