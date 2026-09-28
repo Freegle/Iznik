@@ -139,6 +139,27 @@ export default defineConfig({
         rootDir,
         'tests/unit/mocks/handsontable-css.js'
       ),
+      // Map libraries installed only by the ModTools layer (modtools/package.json).
+      // Unresolvable here, they made the coverage transform of ModGroupMap.vue
+      // fail silently; see tests/unit/mocks/modtools-map-libs.js. The CSS entry
+      // must precede the package entry: a string alias also matches the
+      // package's sub-paths.
+      '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css': path.join(
+        rootDir,
+        'tests/unit/mocks/handsontable-css.js'
+      ),
+      '@geoman-io/leaflet-geoman-free': path.join(
+        rootDir,
+        'tests/unit/mocks/modtools-map-libs.js'
+      ),
+      'turf-polygon': path.join(
+        rootDir,
+        'tests/unit/mocks/modtools-map-libs.js'
+      ),
+      'turf-intersect': path.join(
+        rootDir,
+        'tests/unit/mocks/modtools-map-libs.js'
+      ),
       // Store mocks for testing (avoids complex dependency chains)
       '~/stores/auth': path.join(rootDir, 'tests/unit/mocks/auth-store.js'),
       '@/stores/auth': path.join(rootDir, 'tests/unit/mocks/auth-store.js'),
