@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\BackgroundTask;
 use App\Models\Message;
 use App\Models\MessageGroup;
+use App\Services\Lockdown\LockdownService;
+use App\Services\Lockdown\LockdownTriageService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Nitotm\Eld\LanguageDetector;
@@ -14,7 +16,16 @@ class ContentCheckService
     public function __construct(
         private readonly ?ContentEmbeddingService $embeddingService = null,
         private readonly ?MessageSpatialService $messageSpatialService = null,
+        private readonly ?LockdownService $lockdown = null,
     ) {}
+
+    /**
+     * Previously-held Pending posts released per processUnprocessed() run once posts is
+     * no longer held, oldest first. Bounds how many freebie-alert/spatial-index writes a
+     * single run triggers the instant a lockdown lifts on a large backlog; the rest waits
+     * for the next run. Mirrors ChatProcessService::RELEASE_BATCH_LIMIT for chat.
+     */
+    private const POST_RELEASE_BATCH_LIMIT = 200;
 
     /**
      * A block keyword whose alphanumeric skeleton is at least this long also
@@ -48,6 +59,7 @@ class ContentCheckService
     public const CHECK_MEMBER_MODERATED  = 'MemberModerated';
     public const CHECK_GROUP_MODERATED   = 'GroupModerated';
     public const CHECK_NO_LOCATION       = 'NoLocation';
+    public const CHECK_LOCKDOWN_RISKY    = 'LockdownRisky';
 
     /**
      * Candidate languages for the content-check language detector. Restricted to
@@ -294,134 +306,47 @@ class ContentCheckService
             'errors'           => 0,
         ];
 
+        $lockdown = $this->lockdown ?? app(LockdownService::class);
+
+        // Risky holds are never auto-promoted, even once posts is no longer held (11.4) -
+        // unlike the posts hold re-read per row below, this stays true for these specific
+        // posts indefinitely, until a moderator approves or rejects them by hand. Fetched
+        // once per run as a set: the backlog a lockdown leaves behind is at most a few
+        // thousand rows, far cheaper than a query per candidate below. Also handed to
+        // releasePostHolds() below, so a held post admitted via the release class or the
+        // low-risk backlog is judged by the same set.
+        // Cast explicitly: the driver can hand back refid as a numeric string,
+        // and in_array(..., true) below would then silently never match.
+        $riskyHeldMsgids = array_map('intval', DB::table('lockdown_holds')
+            ->where('kind', LockdownTriageService::KIND_POST)
+            ->where('risk', LockdownTriageService::RISK_RISKY)
+            ->whereNull('outcome')
+            ->pluck('refid')
+            ->all());
+
+        // A sender Support marks a spammer mid-incident is moved to Spam on the spot,
+        // whatever the posts surface's held state - it doesn't wait for a lift. A post the
+        // release class approved by name is admitted regardless of the held state too. A
+        // previously-held low-risk backlog is promoted, paced, once posts is no longer
+        // held - all three run through the same normal decision admitHeldPost() calls, so
+        // a moderated group or a missing location still holds them. Risky holds are left
+        // exactly where they are; a moderator decides.
+        if (!$dryRun) {
+            $this->releasePostHolds($lockdown, $riskyHeldMsgids, $stats);
+        }
+
         // Per-row processing, shared by the two candidate queries below.
-        $processChunk = function ($candidates) use (&$stats, $dryRun) {
+        $processChunk = function ($candidates) use (&$stats, $dryRun, $lockdown, $riskyHeldMsgids) {
                 foreach ($candidates as $row) {
-                    try {
-                        $reasons = $this->checkMessage((int) $row->msgid, (int) $row->groupid);
+                    // Re-read per post (section 11.6): a press between two posts of this
+                    // same chunk must stop the next one being promoted at once, not wait
+                    // for the next run. held() is a memory read within the five-second
+                    // cache (see LockdownService), so this costs nothing beyond the first
+                    // check every five seconds.
+                    $lockdown->ack('content-check');
+                    $postsHeld = $lockdown->held('posts');
 
-                        // A moderator is holding this copy, or sent the post back to pending
-                        // for its moderators to decide: record what the check found so they
-                        // get the reasons, but never promote or block it - that would take the
-                        // post out from under them (9816/9815, 122011064).
-                        if ($row->heldby !== null || (int) ($row->needs_moderator ?? 0) === 1) {
-                            $this->recordCheckOnly($row, $reasons, $dryRun, $stats, 'held');
-                            continue;
-                        }
-
-                        // Already-live (Approved-on-arrival) posts: content-check them but
-                        // never auto-demote a post members can already see. Clean -> just
-                        // record the check; any reasons -> store them and notify mods.
-                        if ($row->collection === MessageGroup::COLLECTION_APPROVED) {
-                            $this->recordCheckOnly($row, $reasons, $dryRun, $stats, 'approved');
-                            continue;
-                        }
-
-                        $userModerated  = $this->isUserModerated((int) $row->msgid, (int) $row->groupid, (int) $row->fromuser);
-                        $groupModerated = $this->isGroupModerated((int) $row->groupid);
-                        $isModerated    = $userModerated || $groupModerated;
-                        // Never auto-promote an Offer/Wanted we couldn't locate (NULL lat -
-                        // subject didn't geocode and no usable poster fallback): it would go
-                        // live undiscoverable. Keep it in the mod queue so a moderator adds a
-                        // postcode via the "add a postcode" prompt (Discourse #9865).
-                        $missingLocation = $row->lat === null
-                                        && in_array($row->msgtype, ['Offer', 'Wanted'], true);
-                        $promote     = empty($reasons) && !$isModerated && !$missingLocation;
-                        $hasBlock    = !$promote && !empty(array_filter(
-                            $reasons,
-                            fn($r) => ($r['action'] ?? 'flag') === 'block'
-                        ));
-
-                        // A post held for a STATUS reason rather than a content reason used to
-                        // store no reasons at all, so it arrived in the mod queue with nothing
-                        // saying why - "there is no explanation of why the post needs Approval"
-                        // (Discourse #9987). Record the cause too. Appended after $hasBlock is
-                        // computed so it can never turn a flag into a block.
-                        if (!$promote && !$hasBlock) {
-                            $reasons = array_merge(
-                                $reasons,
-                                $this->holdReasons($userModerated, $groupModerated, $missingLocation)
-                            );
-                        }
-
-                        if ($dryRun) {
-                            if ($promote) {
-                                $stats['approved']++;
-                            } elseif ($hasBlock) {
-                                $stats['blocked']++;
-                            } else {
-                                $stats['kept_pending']++;
-                            }
-                            continue;
-                        }
-
-                        if ($promote) {
-                            DB::transaction(function () use ($row, &$stats) {
-                                DB::table('messages_groups')
-                                    ->where('msgid', $row->msgid)
-                                    ->where('groupid', $row->groupid)
-                                    ->update([
-                                        'collection'              => MessageGroup::COLLECTION_APPROVED,
-                                        'approvedby'              => null,
-                                        'approvedat'              => now(),
-                                        'contentcheck_checked_at' => now(),
-                                        'contentcheck_reasons'    => null,
-                                    ]);
-
-                                // Clearance/bulk-offer posts are excluded from freebiealerts.app.
-                                if ($row->msgtype === Message::TYPE_OFFER &&
-                                    !DB::table('messages_bulk_items')->where('msgid', $row->msgid)->exists()) {
-                                    DB::table('background_tasks')->insert([
-                                        'task_type' => BackgroundTask::TASK_FREEBIE_ALERTS_ADD,
-                                        'data'      => json_encode(['msgid' => (int) $row->msgid]),
-                                    ]);
-                                }
-
-                                // Now Approved — add to the spatial index immediately so the
-                                // post shows in browse/search without waiting for the periodic
-                                // messages:update-spatial-index reconciler.
-                                ($this->messageSpatialService ?? app(MessageSpatialService::class))->addApprovedMessage((int) $row->msgid);
-
-                                $stats['approved']++;
-                            });
-
-                            Log::info("ContentCheck: approved message #{$row->msgid} on group #{$row->groupid}");
-                        } elseif ($hasBlock) {
-                            DB::table('messages_groups')
-                                ->where('msgid', $row->msgid)
-                                ->where('groupid', $row->groupid)
-                                ->update([
-                                    'collection'              => MessageGroup::COLLECTION_SPAM,
-                                    'contentcheck_checked_at' => now(),
-                                    'contentcheck_reasons'    => json_encode($reasons),
-                                ]);
-
-                            $stats['blocked']++;
-                            Log::info("ContentCheck: blocked message #{$row->msgid} on group #{$row->groupid}", ['reasons' => $reasons]);
-                        } else {
-                            DB::transaction(function () use ($row, $reasons, &$stats) {
-                                DB::table('messages_groups')
-                                    ->where('msgid', $row->msgid)
-                                    ->where('groupid', $row->groupid)
-                                    ->update([
-                                        'contentcheck_checked_at' => now(),
-                                        'contentcheck_reasons'    => empty($reasons) ? null : json_encode($reasons),
-                                    ]);
-
-                                DB::table('background_tasks')->insert([
-                                    'task_type' => BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS,
-                                    'data'      => json_encode(['group_id' => (int) $row->groupid]),
-                                ]);
-
-                                $stats['kept_pending']++;
-                            });
-
-                            Log::info("ContentCheck: kept pending message #{$row->msgid} on group #{$row->groupid}", ['reasons' => $reasons]);
-                        }
-                    } catch (\Exception $e) {
-                        Log::error("ContentCheck: error processing message #{$row->msgid}: " . $e->getMessage());
-                        $stats['errors']++;
-                    }
+                    $this->decideAndApply($row, $riskyHeldMsgids, $postsHeld, $dryRun, $stats);
                 }
         };
 
@@ -461,6 +386,26 @@ class ContentCheckService
             ->whereNull('m.deleted')
             ->whereNotNull('m.fromuser')
             ->whereNull('u.deleted')
+            // A post with an open low-risk hold, or one the release class approved by
+            // name, is only ever admitted through releasePostHolds()/admitHeldPost() -
+            // that is what enforces POST_RELEASE_BATCH_LIMIT pacing across a whole
+            // backlog at once. Left out of this exclusion: a risky hold (still handled
+            // per-row below via $riskyHeldMsgids, since it must keep blocking promotion
+            // in the normal walk too, not just skip it) and every other outcome
+            // (released/review/rejected), which is a hold already resolved and must not
+            // stop the row being picked up normally again.
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('lockdown_holds as lh')
+                    ->whereColumn('lh.refid', 'mg.msgid')
+                    ->where('lh.kind', LockdownTriageService::KIND_POST)
+                    ->where(function ($q2) {
+                        $q2->where(function ($q3) {
+                            $q3->whereNull('lh.outcome')
+                                ->where('lh.risk', LockdownTriageService::RISK_LOW);
+                        })->orWhere('lh.outcome', 'approved');
+                    });
+            })
             ->orderBy('mg.msgid')
             ->orderBy('mg.groupid');
 
@@ -481,6 +426,294 @@ class ContentCheckService
             ->chunk(100, $processChunk);
 
         return $stats;
+    }
+
+    /**
+     * Act on this incident's post holds: spam_marked moves the post to Spam on the spot
+     * (Support marked the sender, whatever the posts surface's held state). A hold the
+     * release class marked 'approved' is admitted by name, also whatever the held state -
+     * Support named this one post specifically. Once posts is no longer held, the
+     * low-risk backlog still waiting (outcome NULL) is admitted too, oldest first, both
+     * capped together at POST_RELEASE_BATCH_LIMIT per run. A risky hold is never touched
+     * here - it stays Pending, exactly where the normal mod queue already shows it, until
+     * a moderator acts (11.4).
+     */
+    private function releasePostHolds(LockdownService $lockdown, array $riskyHeldMsgids, array &$stats): void
+    {
+        $kind = LockdownTriageService::KIND_POST;
+
+        $spamMarked = DB::table('lockdown_holds')
+            ->where('kind', $kind)
+            ->where('outcome', 'spam_marked')
+            ->get();
+        foreach ($spamMarked as $hold) {
+            $this->moveHeldPostToSpam((int) $hold->refid);
+            DB::table('lockdown_holds')->where('id', $hold->id)->update([
+                'outcome' => 'rejected',
+                'releasedat' => now(),
+            ]);
+        }
+
+        // Called exactly once per run, whether or not there is anything to release -
+        // ContentCheckLockdownTest::test_second_pending_post_stops_promoting_once_
+        // pressed_mid_run counts this call.
+        $postsHeld = $lockdown->held('posts');
+
+        $releasable = DB::table('lockdown_holds')
+            ->where('kind', $kind)
+            ->where('outcome', 'approved')
+            ->when(!$postsHeld, function ($q) use ($kind) {
+                $q->orWhere(function ($q2) use ($kind) {
+                    $q2->where('kind', $kind)
+                        ->where('risk', LockdownTriageService::RISK_LOW)
+                        ->whereNull('outcome');
+                });
+            })
+            ->orderBy('id')
+            ->limit(self::POST_RELEASE_BATCH_LIMIT)
+            ->get();
+
+        foreach ($releasable as $hold) {
+            $this->admitHeldPost($hold, $riskyHeldMsgids, $stats);
+        }
+    }
+
+    /**
+     * Admit one held post into the SAME decision processUnprocessed()'s ordinary Pending
+     * walk would have made on the day (decideAndApply()), plus arrival = NOW() so a post
+     * that sat behind a lockdown hold isn't shown stale at the back of the queue the
+     * moment it reappears (plan 11.4/10.7). This is deliberately not a direct promotion:
+     * a moderated group, a moderated member or a missing location still holds it exactly
+     * as it would a brand new post.
+     *
+     * $postsHeld is always false here - by the time a hold reaches this method it has
+     * already been resolved individually, either because posts is no longer generally
+     * held (the low-risk backlog) or because the release class approved this one post by
+     * name regardless of the general held state.
+     *
+     * A held post can have more than one still-Pending messages_groups row (rippled to
+     * several groups before the lockdown pressed). The hold's own outcome is the worst
+     * thing that happened to any of them: 'rejected' if any was blocked, else 'review' if
+     * any is still waiting on a moderator (or errored - left untouched, so it still needs
+     * a look), else 'released'.
+     */
+    private function admitHeldPost(object $hold, array $riskyHeldMsgids, array &$stats): void
+    {
+        $rows = DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->join('users as u', 'u.id', '=', 'm.fromuser')
+            ->select('mg.msgid', 'mg.groupid', 'mg.collection', 'mg.heldby', 'mg.needs_moderator', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'), DB::raw('m.lat as lat'))
+            ->where('mg.msgid', $hold->refid)
+            ->where('mg.collection', MessageGroup::COLLECTION_PENDING)
+            ->where('mg.deleted', 0)
+            ->whereNull('m.deleted')
+            ->whereNotNull('m.fromuser')
+            ->whereNull('u.deleted')
+            ->get();
+
+        $worst = 'released';
+        foreach ($rows as $row) {
+            $outcome = $this->decideAndApply($row, $riskyHeldMsgids, false, false, $stats, true);
+
+            if ($outcome === 'blocked') {
+                $worst = 'rejected';
+            } elseif ($outcome !== 'approved' && $worst !== 'rejected') {
+                $worst = 'review';
+            }
+        }
+
+        DB::table('lockdown_holds')->where('id', $hold->id)->update([
+            'outcome'    => $worst,
+            'releasedat' => now(),
+        ]);
+
+        Log::info("ContentCheck: lockdown admitted held post #{$hold->refid}", ['outcome' => $worst]);
+    }
+
+    /**
+     * Move every still-Pending group row of a held post to Spam - the same collection
+     * change the block-keyword path (processUnprocessed's $hasBlock branch) already makes,
+     * triggered here by Support marking the sender rather than by a keyword match.
+     */
+    private function moveHeldPostToSpam(int $msgid): void
+    {
+        DB::table('messages_groups')
+            ->where('msgid', $msgid)
+            ->where('collection', MessageGroup::COLLECTION_PENDING)
+            ->where('deleted', 0)
+            ->update([
+                'collection'              => MessageGroup::COLLECTION_SPAM,
+                'contentcheck_checked_at' => now(),
+            ]);
+
+        Log::info("ContentCheck: lockdown spam-marked post #{$msgid} moved to Spam");
+    }
+
+    /**
+     * Decide what happens to one messages_groups row and apply it - promote to Approved,
+     * block to Spam, or keep it Pending with reasons recorded - then report what
+     * happened. This is the one place that decision is made: processUnprocessed()'s
+     * ordinary Pending/Approved-on-arrival walk calls it per candidate row, and
+     * admitHeldPost() calls it for a lockdown hold's backlog on lift, so a held post is
+     * decided exactly as it would have been on the day (plan 10.7) rather than promoted
+     * directly.
+     *
+     * A moderator's hold, and an already-live Approved-on-arrival post, are recorded but
+     * never acted on either way (9816/9815) - checking is not acting. Any exception is
+     * caught here (not by the caller) so both callers get the same safety: the row is
+     * left exactly as it was and counted as an error, never silently promoted.
+     *
+     * @param bool $refreshArrival Set arrival = NOW() on promotion. Only true for a row
+     *        admitted from a lockdown hold, so it isn't shown stale at the back of the
+     *        queue the moment it reappears (plan 11.4).
+     * @return string One of 'approved', 'blocked', 'kept_pending', 'error'.
+     */
+    private function decideAndApply(object $row, array $riskyHeldMsgids, bool $postsHeld, bool $dryRun, array &$stats, bool $refreshArrival = false): string
+    {
+        try {
+            $reasons = $this->checkMessage((int) $row->msgid, (int) $row->groupid);
+
+            // A moderator is holding this copy, or sent the post back to pending
+            // for its moderators to decide: record what the check found so they
+            // get the reasons, but never promote or block it - that would take the
+            // post out from under them (9816/9815, 122011064).
+            if ($row->heldby !== null || (int) ($row->needs_moderator ?? 0) === 1) {
+                $this->recordCheckOnly($row, $reasons, $dryRun, $stats, 'held');
+                return 'kept_pending';
+            }
+
+            // Already-live (Approved-on-arrival) posts: content-check them but
+            // never auto-demote a post members can already see. Clean -> just
+            // record the check; any reasons -> store them and notify mods.
+            if ($row->collection === MessageGroup::COLLECTION_APPROVED) {
+                $this->recordCheckOnly($row, $reasons, $dryRun, $stats, 'approved');
+                return 'approved';
+            }
+
+            $userModerated  = $this->isUserModerated((int) $row->msgid, (int) $row->groupid, (int) $row->fromuser);
+            $groupModerated = $this->isGroupModerated((int) $row->groupid);
+            $isModerated    = $userModerated || $groupModerated;
+            // Never auto-promote an Offer/Wanted we couldn't locate (NULL lat -
+            // subject didn't geocode and no usable poster fallback): it would go
+            // live undiscoverable. Keep it in the mod queue so a moderator adds a
+            // postcode via the "add a postcode" prompt (Discourse #9865).
+            $missingLocation = $row->lat === null
+                            && in_array($row->msgtype, ['Offer', 'Wanted'], true);
+            // A lockdown flagged this exact post risky and nobody has resolved
+            // that hold yet - never auto-promoted, whether or not posts is still
+            // held, until a moderator approves or rejects it by hand (11.4).
+            $lockdownRisky = in_array((int) $row->msgid, $riskyHeldMsgids, true);
+            // While posts is held, nothing promotes - it waits in the mod queue
+            // exactly as a moderator-held post does, until the lockdown lifts (the
+            // triage cron's holds and this service's own release below are what act
+            // on it after that; the check runs and is recorded either way).
+            $promote     = empty($reasons) && !$isModerated && !$missingLocation && !$postsHeld && !$lockdownRisky;
+            $hasBlock    = !$promote && !empty(array_filter(
+                $reasons,
+                fn($r) => ($r['action'] ?? 'flag') === 'block'
+            ));
+
+            // A post held for a STATUS reason rather than a content reason used to
+            // store no reasons at all, so it arrived in the mod queue with nothing
+            // saying why - "there is no explanation of why the post needs Approval"
+            // (Discourse #9987). Record the cause too. Appended after $hasBlock is
+            // computed so it can never turn a flag into a block.
+            if (!$promote && !$hasBlock) {
+                $reasons = array_merge(
+                    $reasons,
+                    $this->holdReasons($userModerated, $groupModerated, $missingLocation, $lockdownRisky)
+                );
+            }
+
+            if ($dryRun) {
+                if ($promote) {
+                    $stats['approved']++;
+                } elseif ($hasBlock) {
+                    $stats['blocked']++;
+                } else {
+                    $stats['kept_pending']++;
+                }
+
+                return $promote ? 'approved' : ($hasBlock ? 'blocked' : 'kept_pending');
+            }
+
+            if ($promote) {
+                DB::transaction(function () use ($row, &$stats, $refreshArrival) {
+                    DB::table('messages_groups')
+                        ->where('msgid', $row->msgid)
+                        ->where('groupid', $row->groupid)
+                        ->update(array_merge([
+                            'collection'              => MessageGroup::COLLECTION_APPROVED,
+                            'approvedby'              => null,
+                            'approvedat'              => now(),
+                            'contentcheck_checked_at' => now(),
+                            'contentcheck_reasons'    => null,
+                        ], $refreshArrival ? ['arrival' => now()] : []));
+
+                    // Clearance/bulk-offer posts are excluded from freebiealerts.app.
+                    if ($row->msgtype === Message::TYPE_OFFER &&
+                        !DB::table('messages_bulk_items')->where('msgid', $row->msgid)->exists()) {
+                        DB::table('background_tasks')->insert([
+                            'task_type' => BackgroundTask::TASK_FREEBIE_ALERTS_ADD,
+                            'data'      => json_encode(['msgid' => (int) $row->msgid]),
+                        ]);
+                    }
+
+                    // Now Approved — add to the spatial index immediately so the
+                    // post shows in browse/search without waiting for the periodic
+                    // messages:update-spatial-index reconciler.
+                    ($this->messageSpatialService ?? app(MessageSpatialService::class))->addApprovedMessage((int) $row->msgid);
+
+                    $stats['approved']++;
+                });
+
+                Log::info("ContentCheck: approved message #{$row->msgid} on group #{$row->groupid}");
+
+                return 'approved';
+            }
+
+            if ($hasBlock) {
+                DB::table('messages_groups')
+                    ->where('msgid', $row->msgid)
+                    ->where('groupid', $row->groupid)
+                    ->update([
+                        'collection'              => MessageGroup::COLLECTION_SPAM,
+                        'contentcheck_checked_at' => now(),
+                        'contentcheck_reasons'    => json_encode($reasons),
+                    ]);
+
+                $stats['blocked']++;
+                Log::info("ContentCheck: blocked message #{$row->msgid} on group #{$row->groupid}", ['reasons' => $reasons]);
+
+                return 'blocked';
+            }
+
+            DB::transaction(function () use ($row, $reasons, &$stats) {
+                DB::table('messages_groups')
+                    ->where('msgid', $row->msgid)
+                    ->where('groupid', $row->groupid)
+                    ->update([
+                        'contentcheck_checked_at' => now(),
+                        'contentcheck_reasons'    => empty($reasons) ? null : json_encode($reasons),
+                    ]);
+
+                DB::table('background_tasks')->insert([
+                    'task_type' => BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS,
+                    'data'      => json_encode(['group_id' => (int) $row->groupid]),
+                ]);
+
+                $stats['kept_pending']++;
+            });
+
+            Log::info("ContentCheck: kept pending message #{$row->msgid} on group #{$row->groupid}", ['reasons' => $reasons]);
+
+            return 'kept_pending';
+        } catch (\Exception $e) {
+            Log::error("ContentCheck: error processing message #{$row->msgid}: " . $e->getMessage());
+            $stats['errors']++;
+
+            return 'error';
+        }
     }
 
     /**
@@ -557,9 +790,18 @@ class ContentCheckService
      *
      * @return array<int, array{check:string, category:null, action:string, detail:string}>
      */
-    private function holdReasons(bool $userModerated, bool $groupModerated, bool $missingLocation): array
+    private function holdReasons(bool $userModerated, bool $groupModerated, bool $missingLocation, bool $lockdownRisky = false): array
     {
         $reasons = [];
+
+        if ($lockdownRisky) {
+            $reasons[] = [
+                'check'    => self::CHECK_LOCKDOWN_RISKY,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => 'Flagged risky during a security incident - a moderator needs to decide, this is never auto-approved',
+            ];
+        }
 
         if ($groupModerated) {
             $reasons[] = [

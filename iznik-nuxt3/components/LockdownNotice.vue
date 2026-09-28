@@ -35,6 +35,14 @@ const variant = computed(() => (notice.value?.key === 'security' ? 'danger' : 'w
 .bottom {
   position: fixed;
   bottom: 0;
+
+  /* Never dismissible and never interactive (no link, no close button - see
+     the comment above), so it must not sit in the way of a click on
+     whatever real, interactive UI happens to be under it - the reply
+     overlay's send button, ChitChat, anything else pinned near the bottom
+     of the viewport. pointer-events: none lets those clicks fall through
+     to what's actually underneath while the notice stays visible. */
+  pointer-events: none;
 }
 
 .lockdown {

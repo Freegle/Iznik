@@ -6,12 +6,18 @@ use App\Helpers\ItemQuality;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\MessageGroup;
+use App\Services\Lockdown\LockdownService;
+use App\Services\Lockdown\LockdownTriageService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class AutoApproveService
 {
+    public function __construct(private readonly ?LockdownService $lockdown = null)
+    {
+    }
+
     /**
      * Messages must be pending for this many hours before auto-approval.
      */
@@ -56,6 +62,16 @@ class AutoApproveService
             'skipped' => 0,
             'errors' => 0,
         ];
+
+        $lockdown = $this->lockdown ?? app(LockdownService::class);
+        $lockdown->ack('auto-approve');
+
+        // Posts held: this run promotes nothing. ContentCheckService owns releasing the
+        // backlog once posts is lifted (plan 11.4) - this guard just keeps this second,
+        // independent promotion path from slipping items through in the meantime.
+        if ($lockdown->held('posts')) {
+            return $stats;
+        }
 
         // V1 query: SELECT msgid, groupid, TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) AS ago
         // FROM messages_groups INNER JOIN messages ON messages.id = messages_groups.msgid
@@ -107,6 +123,26 @@ class AutoApproveService
                     ->whereColumn('messages_outcomes.msgid', 'messages_groups.msgid')
                     ->whereIn('messages_outcomes.outcome', ['Taken', 'Received']);
             })
+            // A post with an open lockdown hold is ContentCheckService's to admit, not this
+            // fallback's (plan 11.4): a risky hold's outcome stays NULL indefinitely, until
+            // a moderator decides by hand, so this exclusion never expires for it. A
+            // low-risk hold's outcome stays NULL only until ContentCheckService's own paced
+            // release (admitHeldPost()) resolves it - racing that with the 48h fallback
+            // would approve it outside the pacing cap and skip the real decision check it
+            // runs. 'approved' (the release class named this post specifically) is excluded
+            // too, for the same reason: it is still waiting on that same admission, not on
+            // this one. Every other outcome (released/review/rejected) is already resolved
+            // and must not stop the row being picked up normally.
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('lockdown_holds as lh')
+                    ->whereColumn('lh.refid', 'messages_groups.msgid')
+                    ->where('lh.kind', LockdownTriageService::KIND_POST)
+                    ->where(function ($q2) {
+                        $q2->whereNull('lh.outcome')
+                            ->orWhere('lh.outcome', 'approved');
+                    });
+            })
             ->where(function ($q) {
                 // Normal posts: the 48h fallback (unchanged).
                 $q->where(function ($q2) {
@@ -147,6 +183,15 @@ class AutoApproveService
             ->groupBy('msgid');
 
         foreach ($candidates as $msgid => $groupRows) {
+            // Re-read per post (section 11.6): a press landing between two posts of this
+            // same run must stop the next one at once, not wait for the next invocation.
+            // held() is a memory read within the five-second cache (see LockdownService),
+            // so checking again here costs nothing beyond the first check every five seconds.
+            $lockdown->ack('auto-approve');
+            if ($lockdown->held('posts')) {
+                break;
+            }
+
             try {
                 // V1 parity: skip auto-approving a message that was recently held/unheld.
                 // Lazy-evaluated so the query only runs when there is at least one non-rippled-in
