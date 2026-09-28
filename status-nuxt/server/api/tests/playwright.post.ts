@@ -97,9 +97,11 @@ async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
     `docker exec ${pfx}-percona sh -c "mysql -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
     { encoding: 'utf8', timeout: 300000 }
   )
+  // Migrating from empty replays every migration; on a loaded host that has measured over
+  // six minutes, so five minutes killed every run before a test started.
   execSync(
     `docker exec ${pfx}-batch php artisan migrate --force --no-interaction`,
-    { encoding: 'utf8', timeout: 300000 }
+    { encoding: 'utf8', timeout: 900000 }
   )
   // Reload captured fixtures (replaces the retired V1 install/testenv.php seeding).
   execSync(
