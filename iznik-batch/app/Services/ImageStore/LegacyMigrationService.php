@@ -50,6 +50,9 @@ class LegacyMigrationService
 
     private ?Filesystem $legacy;
 
+    /** When the current migrate() began, for the bandwidth cap. */
+    private float $runStart = 0.0;
+
     public function __construct(?ObjectStore $store = null, ?Filesystem $legacy = null)
     {
         $this->store = $store;
@@ -98,6 +101,8 @@ class LegacyMigrationService
             'invalid' => 0, 'failed' => 0, 'bytes' => 0,
             'finished' => false, 'budget_exhausted' => false,
         ];
+
+        $this->runStart = microtime(true);
 
         $this->walk($sources, $timeBudgetSeconds, $chunk, $limit, $stats, 'last_id', 'completed_at', $dryRun,
             function (string $uid, array &$stats, array &$row) use ($maxMbps, $dryRun) {
@@ -255,21 +260,13 @@ class LegacyMigrationService
             }
         }
 
-        if (! $stopped) {
-            $stats['finished'] = true;
-            foreach ($sources as $source) {
-                if ($this->cursorRow($source)[$doneColumn] === null && ! $dryRun) {
-                    $stats['finished'] = false;
-                }
-            }
-        }
+        // Not stopped early means every requested source either was already
+        // done or was walked to its last row in this run.
+        $stats['finished'] = ! $stopped;
     }
 
     private function copyOne(string $uid, array &$stats, array &$row, float $maxMbps, bool $dryRun): void
     {
-        static $runStart = null;
-        $runStart ??= microtime(true);
-
         try {
             $existing = $this->store()->sizeOf($uid);
 
@@ -327,7 +324,7 @@ class LegacyMigrationService
             $row['copied']++;
             $row['bytes'] += $length;
 
-            $this->pace($stats['bytes'], $runStart, $maxMbps);
+            $this->pace($stats['bytes'], $this->runStart, $maxMbps);
         } catch (\Throwable $e) {
             $stats['failed']++;
             $row['failed']++;

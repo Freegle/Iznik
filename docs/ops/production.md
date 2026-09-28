@@ -82,8 +82,8 @@ services under the `edge` profile (scale-in-place rather than separate machines)
 - **image delivery** - a weserv-based resizing/caching proxy.
 - **uploads** - tusd, writing to a local spool that the batch scheduler moves into the
   object store within a minute or two. The front nginx answers a read for an upload
-  from the spool, then the object store, then (until the copy is done) the NFS share
-  through a second, read-only tusd.
+  from the spool, then the object store, then (until the copy is done) the NFS share,
+  bound read-only and served as static files.
 - **map tiles** - an OSM tile server (PostGIS + renderd) with its own replication.
 - **wiki** - MediaWiki with its own MySQL.
 

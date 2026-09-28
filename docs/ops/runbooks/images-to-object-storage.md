@@ -29,7 +29,7 @@ flowchart LR
     W[image resizer] -->|GET /id| N
     N -->|1. spool| T
     N -->|2. bucket| B
-    N -->|3. legacy| L[tusd-nfs<br/>NFS share, read-only]
+    N -->|3. legacy, static files| L[NFS share<br/>read-only]
     M[batch: images:migrate-legacy<br/>scheduled slices] -->|copies by id, never lists| L
     M --> B
 ```
@@ -43,9 +43,10 @@ flowchart LR
   the local files. The `.info` never leaves the host. Uploads that never complete are
   deleted after a day.
 - **Reads.** A `GET` for an upload id is answered by the first place that has it: the
-  spool (a local stat), then the bucket, then the legacy share through a second,
-  read-only tusd. Because the URL never says where a file is, the copy of the old store
-  is invisible to members and can take as long as it needs.
+  spool (a local stat), then the bucket, then the legacy share, bound read-only into the
+  front nginx and served as plain static files (not through tusd, which creates a lock
+  file even on a read). Because the URL never says where a file is, the copy of the old
+  store is invisible to members and can take as long as it needs.
 - **The migrator** (`images:migrate-legacy`) walks the eleven tables that hold upload
   ids by primary key, keeps a cursor per source in `image_store_migration`, and copies
   each referenced file that the bucket does not already hold at the right length. It
@@ -84,10 +85,10 @@ tusd takes to restart; a client mid-upload gets a 404 on its next PATCH and tus-
 starts the upload again by itself.
 
 1. Pull the change on the Docker host and bring up the edge services and `batch-prod`
-   (`tusd` gains the spool volume and loses the NFS bind; `tusd-nfs` appears with the
-   share read-only; `frontend-nginx` gets the read chain and the bucket URL;
-   `batch-prod` gains the spool and the read-only share). Recreating `batch-prod` is a
-   production restart of the scheduler: do it at a quiet time and with approval.
+   (`tusd` gains the spool volume and loses the NFS bind; `frontend-nginx` gets the
+   read chain, the bucket URL and the share read-only; `batch-prod` gains the spool and
+   the read-only share). Recreating `batch-prod` is a production restart of the
+   scheduler: do it at a quiet time and with approval.
 2. Upload a photo through the site. Check it is served (`X-Cache-Status: MISS` on the
    first delivery fetch), that the spool holds it, and that an old post's photo still
    renders (that is the legacy hop).
@@ -135,9 +136,9 @@ read chain; keeping it is harmless.
 Only after a clean verify:
 
 1. Remove the `@legacy_store` location and the `error_page 403 404 = @legacy_store`
-   line from the uploads vhost in `frontend-nginx.conf`, and the `tusd-nfs` service and
-   both `/srv/tusd-data` binds from `docker-compose.override.edge.yml` (and the
-   `tusd-nfs` service from `docker-compose.yml`). Bring the edge services up again.
+   line from the uploads vhost in `frontend-nginx.conf`, both `/srv/tusd-data` binds
+   from `docker-compose.override.edge.yml`, and the `tusd-legacy` volume and its mount
+   from `docker-compose.yml`. Bring the edge services up again.
 2. Watch delivery for a day: a rise in 404s from the uploads vhost means a reference the
    verify did not cover.
 3. Unmount the share on the host and delete the file storage volume in the cloud

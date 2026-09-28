@@ -21,7 +21,7 @@
 #   2. tile-server / wiki-* adopt the host's EXISTING data (the unprefixed osm
 #      volumes used by confident_curran + the /var/wiki binds) instead of
 #      creating empty project-scoped volumes and serving nothing.
-#   3. The images tier (frontend-nginx / delivery / tusd / tusd-nfs) runs here
+#   3. The images tier (frontend-nginx / delivery / tusd) runs here
 #      since 2026-07-08. Uploads go to a local spool and on to object storage;
 #      the NFS share is read-only for the legacy copy - see
 #      docs/ops/runbooks/images-to-object-storage.md.
@@ -95,9 +95,14 @@ services:
       - "8180:80"     # HAProxy reaches this with send-proxy (PROXY protocol)
       - "8188:8080"   # plain — the :8080 upload-URL form (apps/Freebie Alerts)
     environment:
-      # The base default is the dev minio, which would silently 502 here. Refuse
+      # The base default is the dev objectstore, which would 502 here. Refuse
       # to start without the real public bucket URL (trailing slash) in .env.
       - IMAGE_STORE_PUBLIC_URL=${IMAGE_STORE_PUBLIC_URL:?set IMAGE_STORE_PUBLIC_URL in .env to the public base URL of the image bucket}
+    volumes:
+      # The legacy share, read-only, served as static files for any GET the
+      # spool and the bucket both 404. Drop this bind, the nginx hop and the
+      # batch-prod bind below once images:migrate-legacy --verify is clean.
+      - /srv/tusd-data:/images:ro
 
   delivery:
     deploy:
@@ -116,12 +121,12 @@ services:
       replicas: 1
     cgroup_parent: interactive.slice
     # Pin to app1's EXACT prod version. Base compose uses tusproject/tusd:latest
-    # (v2.10.0), which creates a per-request <id>.lock file even on GET
-    # downloads (file-locking added after v2.4.0). On the shared NFS that .lock
-    # write is denied → intermittent 500s ("open /images/<id>.lock: permission
-    # denied") serving existing uploads. app1 runs v2.4.0, which does not lock
-    # on GET and serves the same files reliably. Match it. (Found during the
-    # 2026-07-08 cutover; upgrading tusd is separate, tested work.)
+    # (v2.10.0), which on the shared NFS 500d with "open /images/<id>.lock:
+    # permission denied" serving existing uploads (2026-07-08 cutover), while
+    # v2.4.0 served them reliably. NB v2.4.0 ALSO creates <id>.lock on GET
+    # (seen 2026-09-28 against a read-only mount), so the difference was the
+    # lock write being refused, not locking itself; the pin stays until an
+    # upgrade is tested on the spool. Uploads no longer touch NFS at all.
     image: tusproject/tusd:v2.4.0
     # Prod flags as app1 ran them (-behind-proxy, -base-path /, -disable-cors:
     # all tus CORS from HAProxy; NO -hooks-http), except that uploads now land
@@ -131,10 +136,10 @@ services:
     # plans/active/2026-09-28-images-to-object-storage.md and the runbook
     # docs/ops/runbooks/images-to-object-storage.md.
     #
-    # tusd bakes the absolute path into every <id>.info, so the spool path is
-    # /spool inside the container everywhere (base compose too). The .info
+    # /srv/tusd-data is the image's own upload directory, which is what makes
+    # the spool volume writable by tusd (see the base compose). The .info
     # never leaves the host; only the bytes go to the bucket.
-    command: -upload-dir=/spool -behind-proxy -base-path / -disable-cors
+    command: -upload-dir=/srv/tusd-data -behind-proxy -base-path / -disable-cors
     # Base healthcheck probes /tus/ (the dev base-path); prod base-path is /,
     # where tusd returns 405 for GET and 404 at /tus/. Probe / and accept 405.
     healthcheck:
@@ -144,34 +149,23 @@ services:
       retries: 5
       start_period: 15s
     # No NFS bind any more: the base compose mounts the tusd-spool volume at
-    # /spool. The share stays mounted on the host for tusd-nfs and batch-prod
-    # below, read-only, until the legacy copy is verified complete.
-
-  # Legacy uploads, read-only. frontend-nginx reaches this only for a GET the
-  # spool and the object store have both 404d. The host NFS mount is
-  # /srv/tusd-data; it is bound at /images because every legacy <id>.info
-  # records "Storage":{"Path":"/images/<id>"} and tusd honours that path.
-  # Remove this service, the nginx hop and the bind once
-  # images:migrate-legacy --verify reports nothing missing.
-  tusd-nfs:
-    deploy:
-      replicas: 1
-    cgroup_parent: interactive.slice
-    volumes:
-      - /srv/tusd-data:/images:ro
+    # /srv/tusd-data INSIDE the container (the host directory of the same name
+    # is the NFS mount - unrelated, and no longer given to tusd). The share
+    # stays mounted on the host for frontend-nginx and batch-prod below,
+    # read-only, until the legacy copy is verified complete.
 
   # The dev stand-in for the bucket has no place on the prod host.
-  minio:
+  objectstore:
     deploy:
       replicas: 0
-  minio-init:
+  objectstore-init:
     deploy:
       replicas: 0
 
   batch-prod:
     volumes:
       # The legacy share, read-only, for images:migrate-legacy. It reads files by
-      # name only and never lists the directory. Drop with tusd-nfs above.
+      # name only and never lists the directory.
       - /srv/tusd-data:/images:ro
 
 volumes:

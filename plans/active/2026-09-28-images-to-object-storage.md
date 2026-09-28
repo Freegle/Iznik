@@ -44,16 +44,18 @@ fetch. None of that is needed.
    spend runbook. The `.info` never leaves the host.
 3. **frontend-nginx serves a GET for an upload from the first place that has it:**
    the spool (tusd, local stat, sub-millisecond), then the bucket (public read), then
-   the legacy NFS share (a second read-only tusd, `tusd-nfs`). Every other method is
-   tus protocol and goes to tusd unchanged. Because the read path is location-agnostic,
-   the migration has no user-visible state and can take as long as it likes.
+   the legacy NFS share, bound read-only into nginx and served as static files (not a
+   second tusd: v2.4.0 creates a lock file even on GET, found 2026-09-28). Every other
+   method is tus protocol and goes to tusd unchanged. Because the read path is
+   location-agnostic, the migration has no user-visible state and can take as long as
+   it likes.
 4. **A migrator** (`images:migrate-legacy`, scheduled with a time budget and a
    bandwidth cap) walks the eleven tables by id, and for each `freegletusd-` id copies
    the NFS file to the bucket if the bucket does not already have it. It never lists the
    directory and never deletes from NFS. Per-table cursors live in one small table so
    it is resumable and idempotent. `--verify` re-walks and reports anything missing.
-5. **When verify reports nothing missing**, a human removes `tusd-nfs` and the NFS hop
-   from nginx, unmounts the share, and deletes the file storage volume in the console.
+5. **When verify reports nothing missing**, a human removes the NFS hop from nginx and
+   the binds, unmounts the share, and deletes the file storage volume in the console.
    Files the database does not reference are not copied; they are unreachable today and
    go with the volume.
 
@@ -77,7 +79,7 @@ unique, so it is a plain copy), and put the old tusd command and bind back.
 
 | # | Item | Where |
 |---|------|-------|
-| 1 | tusd on a local spool; `tusd-nfs` read-only legacy server; `minio` + `minio-init` for the dev `edge` stack; batch containers see the spool | `docker-compose.yml`, `docker-compose.override.edge.yml` |
+| 1 | tusd on a local spool (mounted over its own directory so uid 1000 can write); the legacy share read-only in nginx; `objectstore` (RustFS) + `objectstore-init` for the dev `edge` stack; batch containers see the spool | `docker-compose.yml`, `docker-compose.override.edge.yml` |
 | 2 | Uploads vhost read chain, bucket URL from env, `.info`/`.part`/`.lock` never served | `frontend-nginx.conf` (now an envsubst template) |
 | 3 | `images` (S3), `tusd-spool` and `tusd-legacy` disks; `freegle.images.object_store` config | `iznik-batch/config/*.php`, `composer.json` (`league/flysystem-aws-s3-v3`) |
 | 4 | `TusInfo`, `SpoolPusherService`, `LegacyMigrationService`; commands `images:push-spool`, `images:migrate-legacy`, `images:object-store-check` | `iznik-batch/app/Services/ImageStore/*`, `app/Console/Commands/Images/*` |
@@ -90,14 +92,14 @@ unique, so it is a plain copy), and put the old tusd command and bind back.
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 1 | Compose: spool volume, tusd-nfs, minio, batch mounts, edge override | ✅ | both configs validate |
+| 1 | Compose: spool volume, legacy bind, objectstore, batch mounts, edge override | ✅ | both configs validate; tusd-nfs dropped after the lock-on-GET finding |
 | 2 | nginx read chain + template | ✅ | renders with the filter, nginx -t ok |
 | 3 | Laravel disks, config, dependency | ✅ | flysystem-aws-s3-v3 ^3.0 |
-| 4 | Services + commands (TDD) | 🔄 | tests written; red run in progress; drafts in scratchpad |
+| 4 | Services + commands (TDD) | ✅ | 41 tests: red 41/159, then green 159/159 |
 | 5 | Migration table | ✅ | + prod SQL |
-| 6 | Schedule | 🔄 | snippet drafted, applied after the red run |
-| 7 | Tests green through the worktree status API | ⬜ | |
-| 8 | Local end-to-end on the edge stack with minio | ⬜ | upload -> spool -> bucket -> served via nginx chain |
+| 6 | Schedule | ✅ | gated with ->when() on the two switches |
+| 7 | Tests green through the worktree status API | 🔄 | filtered run green; full suite still to run |
+| 8 | Local end-to-end on the edge stack with RustFS | ✅ | tus create/patch via nginx; served from spool; pushed (bucket serves image/jpeg, immutable cache header); served from bucket with tusd logging the spool miss; legacy id only on the share served static and resized by delivery; migrate copied it; verify clean; .info 404; unknown id 404 |
 | 9 | Docs | ✅ | runbook, production, spend, architecture, runbooks index, env examples |
 | 10 | PR | ⬜ | |
 
