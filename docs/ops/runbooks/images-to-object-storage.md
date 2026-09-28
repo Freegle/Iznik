@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-28
+last_reviewed: 2026-09-29
 owner: Freegle dev team
 covers:
   - frontend-nginx.conf
@@ -7,16 +7,13 @@ covers:
   - iznik-batch/app/Console/Commands/Images/
 ---
 
-# Images: moving the upload store from NFS to object storage
+# Images: the upload spool and the object store
 
-Uploaded photos used to be written by tusd straight onto a cloud NFS share, one flat
-directory of about two million files. They now go to a **local spool** on the Docker
-host and are moved to an S3-compatible **object store** within a minute or two. The old
-share is read-only and is being copied across in the background. Nothing about upload
-ids, upload URLs, the API or the apps changed.
+Uploaded photos go to a **local spool** on the Docker host and are moved to an
+S3-compatible **object store** within a minute or two. Upload ids, upload URLs, the API
+and the apps know nothing about where a file is kept.
 
-This page is the shape of the change and the order of operations. Host names, bucket
-names and keys are in the ops team's notes, never here.
+Bucket names, hosts and keys are in the ops team's notes, never here.
 
 ## How it works
 
@@ -29,137 +26,67 @@ flowchart LR
     W[image resizer] -->|GET /id| N
     N -->|1. spool| T
     N -->|2. bucket| B
-    N -->|3. legacy, static files| L[NFS share<br/>read-only]
-    M[batch: images:migrate-legacy<br/>scheduled slices] -->|copies by id, never lists| L
-    M --> B
 ```
 
 - **Writes.** Every tus protocol request goes to `tusd`, which writes `<id>` and
   `<id>.info` into the `tusd-spool` volume. tusd knows nothing about the bucket.
-- **The pusher** (`images:push-spool`, scheduled every minute in `batch-prod`) treats an
-  upload as complete when the bytes are exactly as long as the `.info` declared and
-  have not changed for a grace period. It stores the bytes with a sniffed
-  `Content-Type`, confirms the bucket reports the same length, and only then deletes
-  the local files. The `.info` never leaves the host. Uploads that never complete are
-  deleted after a day.
-- **Reads.** A `GET` for an upload id is answered by the first place that has it: the
-  spool (a local stat), then the bucket, then the legacy share, bound read-only into the
-  front nginx and served as plain static files (not through tusd, which creates a lock
-  file even on a read). Because the URL never says where a file is, the copy of the old
-  store is invisible to members and can take as long as it needs.
-- **The migrator** (`images:migrate-legacy`) walks the eleven tables that hold upload
-  ids by primary key, keeps a cursor per source in `image_store_migration`, and copies
-  each referenced file that the bucket does not already hold at the right length. It
-  runs in short scheduled slices with a bandwidth cap, never lists the share (a listing
-  starves uploads) and never deletes from it. `--verify` re-walks and reports anything
-  missing.
+- **The pusher** (`images:push-spool`, scheduled every minute in `batch-prod` while
+  `IMAGE_STORE_ENABLED` is on) treats an upload as complete when the bytes are exactly as
+  long as the `.info` declared and have not changed for a grace period. It stores the
+  bytes with a sniffed `Content-Type`, confirms the bucket reports the same length, and
+  only then deletes the local files. The `.info` never leaves the host. Uploads that
+  never complete are deleted after a day.
+- **Reads.** A `GET` for an upload id is answered from the spool if the file is still
+  there, otherwise from the bucket. The bucket's answer is passed straight back, so a
+  404 means the upload exists nowhere.
 
 Everything that decides where a file lives is in `frontend-nginx.conf` (the uploads
 vhost) and `iznik-batch/app/Services/ImageStore/`.
 
-## Before the cutover
+## Configuration
 
-1. Enable object storage for the organisation in region `uk-lon-1`, create the bucket
-   with `public_read` on (and `public_list` off), and create an access key that can
-   write to it. Public access is a bucket setting in the provider's own API, not an S3
-   ACL or policy, which that provider's S3 interface does not accept. The console does
-   all three, or the Core API does with a token holding the `object_storage` scope:
+The write side is in the batch secrets (`IMAGE_STORE_*`, see `.env.background.example`).
+The front nginx needs only the bucket's public URL, `IMAGE_STORE_PUBLIC_URL` in the
+compose `.env` (see `.env.example`); the edge override refuses to start without it.
 
-   | Step | Call |
-   |---|---|
-   | Enable the service (starts the monthly base fee) | `POST organizations/:organization/object_storage/:object_storage_cluster` |
-   | Create the bucket, `access_control_list.public_read: true` | `POST organizations/:organization/object_storage/:object_storage_cluster/buckets` |
-   | Create an access key | `POST organizations/:organization/object_storage/:object_storage_cluster/access_keys` |
-   | Get its secret, shown once | `POST object_storage/access_keys/:access_key/generate_credentials` |
+The bucket has public read on and listing off. The access key can read and write that
+bucket and nothing else. Both are set in the provider's console or through its Core API
+(`object_storage` scope; the cluster is looked up by region, `uk-lon-1`). Public read is
+a bucket setting there, not an S3 ACL or policy, which the provider's S3 interface does
+not accept.
 
-   The cluster is looked up by `object_storage_cluster[region]=uk-lon-1`. The bucket's
-   `public_url` field is the value for `IMAGE_STORE_PUBLIC_URL`. No CORS origins are
-   needed: only the image resizer reads the bucket, server to server.
-2. On the Docker host, add the write-side settings to the batch secrets file and the
-   public bucket URL to the compose `.env` (see `.env.background.example` and
-   `.env.example`). Leave `IMAGE_STORE_ENABLED` and `IMAGE_STORE_MIGRATE_ENABLED` off.
-3. Apply the production SQL for the cursor table
-   (`2026_09_28_000001_create_image_store_migration_table_migration.sql`).
-4. Prove the bucket from inside the batch container:
+## Checks
 
-   ```
-   php artisan images:object-store-check
-   ```
+From inside `batch-prod`:
 
-   It writes a probe, reads it back **anonymously** at the public URL, and deletes it.
-   A bucket that is not public answers 403; nginx would hide that by falling through to
-   the legacy share, and every new image would 404 with nothing in any log naming the
-   cause. Do not go on until this prints `OK`.
+```
+php artisan images:object-store-check
+```
 
-## Cutover
+It writes a probe, reads it back **anonymously** at the public URL, and deletes it. Run
+it after any change to the bucket or the key. A bucket that has lost public read answers
+403 to every image the spool no longer holds.
 
-Each step is reversible on its own. The upload path is interrupted for the few seconds
-tusd takes to restart; a client mid-upload gets a 404 on its next PATCH and tus-js-client
-starts the upload again by itself.
+```
+php artisan images:push-spool --dry-run
+```
 
-1. Pull the change on the Docker host and bring up the edge services and `batch-prod`
-   (`tusd` gains the spool volume and loses the NFS bind; `frontend-nginx` gets the
-   read chain, the bucket URL and the share read-only; `batch-prod` gains the spool and
-   the read-only share). Recreating `batch-prod` is a production restart of the
-   scheduler: do it at a quiet time and with approval.
-2. Upload a photo through the site. Check it is served (`X-Cache-Status: MISS` on the
-   first delivery fetch), that the spool holds it, and that an old post's photo still
-   renders (that is the legacy hop).
-3. Set `IMAGE_STORE_ENABLED=true` in the batch secrets and restart `batch-prod`. Within
-   two minutes the spool should be empty of completed uploads and the bucket should hold
-   the test photo. Then `docker logs` the `frontend-nginx` container for a GET of that id
-   and confirm it was answered from the bucket (the request no longer reaches `tusd`).
-4. Watch `storage/logs/cron/images_push-spool.log` for a day. `Failed` must stay at 0;
-   `Waiting (grace)` and `Incomplete` are normal.
+Shows what the next pass would push or clean up. `storage/logs/cron/images_push-spool.log`
+has each scheduled pass; `Failed` must be 0. `Waiting (grace)` and `Incomplete` are normal.
 
-**Rollback** at this point: set `IMAGE_STORE_ENABLED=false`, copy the spool's files onto
-the share (`docker cp` the spool volume's contents into the NFS mount; ids are unique so
-nothing collides), and put the previous compose files back. Objects already in the
-bucket are also still served by the previous configuration only if you keep the nginx
-read chain; keeping it is harmless.
+## If the bucket is unreachable
 
-## The legacy copy
+Uploads carry on: they land in the spool, and reads of new photos are served from there.
+The pusher leaves everything in place and retries every minute, so the spool grows until
+the bucket is back. Photos already moved to the bucket fail their origin fetch, and the
+delivery cache serves stale copies where it has them. Nothing needs doing beyond getting
+the bucket back; check afterwards that the spool drains.
 
-1. Set `IMAGE_STORE_MIGRATE_ENABLED=true` and restart `batch-prod`. The migrator runs
-   every five minutes for four minutes at 10 MB/s by default (`IMAGE_STORE_MIGRATE_*`).
-   1.1 TB at that rate is roughly 30 hours of transfer; expect the whole copy to take a
-   few days of slices. It is safe to stop and start at any time.
-2. Progress:
+To stop pushing on purpose, set `IMAGE_STORE_ENABLED=false` and recreate `batch-prod`.
+Uploads then stay in the spool and are served from there indefinitely.
 
-   ```
-   php artisan images:migrate-legacy --status
-   ```
+## What it costs
 
-   `Missing src` counts rows whose file is not on the share at all (deleted years ago,
-   or a row that never had one); those are logged and are not a fault of the copy.
-   `Failed` should stay at 0; a non-zero count means the bucket refused something and
-   the rows will be retried on a `--reset` of that source.
-3. When every source shows a copy-done time, turn the schedule off
-   (`IMAGE_STORE_MIGRATE_ENABLED=false`) and verify:
-
-   ```
-   php artisan images:migrate-legacy --verify --time-budget=3600
-   ```
-
-   Run it until it reports `finished`; it resumes from its own cursor. It must list
-   nothing missing. Anything it does list is a row whose file is on neither store.
-
-## Retiring the share
-
-Only after a clean verify:
-
-1. Remove the `@legacy_store` location and the `error_page 403 404 = @legacy_store`
-   line from the uploads vhost in `frontend-nginx.conf`, both `/srv/tusd-data` binds
-   from `docker-compose.override.edge.yml`, and the `tusd-legacy` volume and its mount
-   from `docker-compose.yml`. Bring the edge services up again.
-2. Watch delivery for a day: a rise in 404s from the uploads vhost means a reference the
-   verify did not cover.
-3. Unmount the share on the host and delete the file storage volume in the cloud
-   console. Files the database did not reference (abandoned uploads, deleted posts) go
-   with it; nothing could reach them.
-
-## What to expect on the bill
-
-Object storage is billed on use at a fraction of the file storage rate, plus a small
-base fee that includes a transfer allowance. The saving arrives when the volume is
-deleted, not as files are copied, which is why the copy never deletes individual files.
+Object storage is billed on use: a small monthly base that includes 250 GB and 1 TB of
+outbound transfer, then a few pence per GB. Uploading is free, and the delivery cache in
+front means the bucket only serves cache misses.

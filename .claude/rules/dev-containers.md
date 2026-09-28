@@ -194,33 +194,17 @@ therefore what production executes, which makes ordinary git operations producti
 Check what production is running by grepping the file, not by recalling what you last did. The
 answer changes under you.
 
-## Never list `/srv/tusd-data` on the FreegleDocker host
-
-The upload store is **one flat NFS directory with millions of entries**. Listing it - `find /`,
-`du -x /`, `ls`, a shell tab-completion - holds the directory lock for every `getdents()`, each of
-which on NFS is a long chain of READDIRPLUS calls, and every tusd upload create, finish and
-delete queues behind it. (Hit 2026-09-18: two orphaned `find / -maxdepth 3 -iname iznik-batch`
-processes, left behind by an ssh command from another session, put 1,036 tusd threads into D
-state; uploads hung for ~25 minutes and the load average reached 1,049 with the CPU idle. The
-NFS server was healthy throughout - `nfsstat` and the admin UI both said so.)
-
-- The repos are under `/var/www/FreegleDocker`; look there, never `find /`.
-- If a whole-filesystem scan is unavoidable: `find / -xdev`, or `-path /srv/tusd-data -prune`.
-- monit (`ops/hosts/monit/batch-host/conf.d/tusd`) kills whatever is scanning once tusd is
-  starved, so a process of yours vanishing mid-scan is that, not a crash.
-
-## An image bucket that is not public fails through to "every new photo is missing"
+## An image bucket that is not public breaks every photo older than a minute
 
 The uploads vhost in `frontend-nginx.conf` answers a GET from the spool, then the object
-store, then the legacy share, and a 403 from the bucket is treated like a 404 so the chain
-can go on. So a bucket whose public read was never switched on in the console does not
-error: every new photo falls through to the legacy share, which has never heard of it, and
-weserv gets a 404 that the delivery cache keeps for five minutes. Nothing logs the 403.
+store. The pusher empties the spool within a minute or two, so a bucket whose public read
+was switched off answers 403 for nearly every photo on the site. Nothing in Laravel notices,
+because the pusher only writes, and writes still succeed with the key. weserv gets the 403
+and the delivery cache keeps it for five minutes.
 
 `php artisan images:object-store-check` reads a probe back anonymously at the public URL
-and is the only thing that proves the bucket is public. Run it before enabling
-`IMAGE_STORE_ENABLED` and after any change to the bucket or its keys
-(`docs/ops/runbooks/images-to-object-storage.md`).
+and is the only thing that proves the bucket is public. Run it after any change to the
+bucket or its keys (`docs/ops/runbooks/images-to-object-storage.md`).
 
 The same file is an envsubst template. Only `${IMAGE_STORE_*}` is substituted, because
 compose sets `NGINX_ENVSUBST_FILTER`; without the filter every nginx `$variable` is

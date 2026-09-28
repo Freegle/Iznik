@@ -22,9 +22,8 @@
 #      volumes used by confident_curran + the /var/wiki binds) instead of
 #      creating empty project-scoped volumes and serving nothing.
 #   3. The images tier (frontend-nginx / delivery / tusd) runs here
-#      since 2026-07-08. Uploads go to a local spool and on to object storage;
-#      the NFS share is read-only for the legacy copy - see
-#      docs/ops/runbooks/images-to-object-storage.md.
+#      since 2026-07-08. Uploads go to a local spool and on to object storage -
+#      see docs/ops/runbooks/images-to-object-storage.md.
 
 services:
   # --- Stage 1: adopted services, come UP on this host ----------------------
@@ -98,11 +97,6 @@ services:
       # The base default is the dev objectstore, which would 502 here. Refuse
       # to start without the real public bucket URL (trailing slash) in .env.
       - IMAGE_STORE_PUBLIC_URL=${IMAGE_STORE_PUBLIC_URL:?set IMAGE_STORE_PUBLIC_URL in .env to the public base URL of the image bucket}
-    volumes:
-      # The legacy share, read-only, served as static files for any GET the
-      # spool and the bucket both 404. Drop this bind, the nginx hop and the
-      # batch-prod bind below once images:migrate-legacy --verify is clean.
-      - /srv/tusd-data:/images:ro
 
   delivery:
     deploy:
@@ -120,21 +114,14 @@ services:
     deploy:
       replicas: 1
     cgroup_parent: interactive.slice
-    # Pin to app1's EXACT prod version. Base compose uses tusproject/tusd:latest
-    # (v2.10.0), which on the shared NFS 500d with "open /images/<id>.lock:
-    # permission denied" serving existing uploads (2026-07-08 cutover), while
-    # v2.4.0 served them reliably. NB v2.4.0 ALSO creates <id>.lock on GET
-    # (seen 2026-09-28 against a read-only mount), so the difference was the
-    # lock write being refused, not locking itself; the pin stays until an
-    # upgrade is tested on the spool. Uploads no longer touch NFS at all.
+    # Pinned to the version production has run since the edge cutover.
+    # Upgrading (base compose uses :latest) is separate, tested work.
     image: tusproject/tusd:v2.4.0
-    # Prod flags as app1 ran them (-behind-proxy, -base-path /, -disable-cors:
-    # all tus CORS from HAProxy; NO -hooks-http), except that uploads now land
-    # in the LOCAL spool volume, not on the NFS share. images:push-spool in
-    # batch-prod moves each completed upload to the object store within a
-    # minute or two; until then frontend-nginx serves it from here. See
-    # plans/active/2026-09-28-images-to-object-storage.md and the runbook
-    # docs/ops/runbooks/images-to-object-storage.md.
+    # Prod flags: -behind-proxy, -base-path /, -disable-cors (all tus CORS from
+    # HAProxy), NO -hooks-http. Uploads land in the local spool volume;
+    # images:push-spool in batch-prod moves each completed upload to the object
+    # store within a minute or two, and until then frontend-nginx serves it from
+    # here. See docs/ops/runbooks/images-to-object-storage.md.
     #
     # /srv/tusd-data is the image's own upload directory, which is what makes
     # the spool volume writable by tusd (see the base compose). The .info
@@ -148,11 +135,8 @@ services:
       timeout: 3s
       retries: 5
       start_period: 15s
-    # No NFS bind any more: the base compose mounts the tusd-spool volume at
-    # /srv/tusd-data INSIDE the container (the host directory of the same name
-    # is the NFS mount - unrelated, and no longer given to tusd). The share
-    # stays mounted on the host for frontend-nginx and batch-prod below,
-    # read-only, until the legacy copy is verified complete.
+    # The base compose mounts the tusd-spool volume at /srv/tusd-data inside
+    # the container.
 
   # The dev stand-in for the bucket has no place on the prod host.
   objectstore:
@@ -161,12 +145,6 @@ services:
   objectstore-init:
     deploy:
       replicas: 0
-
-  batch-prod:
-    volumes:
-      # The legacy share, read-only, for images:migrate-legacy. It reads files by
-      # name only and never lists the directory.
-      - /srv/tusd-data:/images:ro
 
 volumes:
   # Adopt the host's existing unprefixed volumes (created by confident_curran)

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-28
+last_reviewed: 2026-09-29
 owner: Freegle dev team
 ---
 
@@ -37,12 +37,11 @@ being brought into the same Compose stack as batch processing, one step at a tim
 - Roll changes forward one at a time and verify each before the next, so any single step
   can be undone cleanly.
 
-## Images: NFS to object storage
+## Images: the upload spool and the object store
 
-Uploaded photos now go to a local spool and on to an S3-compatible object store; the old
-NFS share is read-only and being copied across in scheduled slices, invisibly to members.
-[The runbook](images-to-object-storage.md) has the order of operations: prove the bucket
-is public, cut tusd over, enable the pusher, run the copy, verify, retire the share.
+Uploaded photos go to a local spool and on to an S3-compatible object store within a
+minute or two. [The runbook](images-to-object-storage.md) covers how reads are answered,
+the bucket check, and what happens if the bucket is unreachable.
 
 ## Deployment spend optimisation
 
