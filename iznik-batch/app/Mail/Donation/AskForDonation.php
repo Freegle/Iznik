@@ -2,6 +2,7 @@
 
 namespace App\Mail\Donation;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
@@ -11,7 +12,7 @@ use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-class AskForDonation extends MjmlMailable
+class AskForDonation extends MjmlMailable implements DescribesMemberContent
 {
     use LoggableEmail;
     use TrackableEmail;
@@ -19,6 +20,10 @@ class AskForDonation extends MjmlMailable
     public User $user;
 
     public ?string $itemSubject;
+
+    public ?int $itemMessageId;
+
+    public ?int $itemPosterId;
 
     public string $userSite;
 
@@ -33,13 +38,25 @@ class AskForDonation extends MjmlMailable
 
     /**
      * Create a new message instance.
+     *
+     * @param string|null $itemSubject   Subject of the Offer the recipient received (display only).
+     * @param int|null    $itemMessageId That Offer's message id, when known (plan section 11.8) -
+     *                                   older callers/tests may omit it.
+     * @param int|null    $itemPosterId  The Offer's poster (not the recipient - they received the
+     *                                   item, someone else gave it), when known.
      */
-    public function __construct(User $user, ?string $itemSubject = null)
-    {
+    public function __construct(
+        User $user,
+        ?string $itemSubject = null,
+        ?int $itemMessageId = null,
+        ?int $itemPosterId = null,
+    ) {
         parent::__construct();
 
         $this->user = $user;
         $this->itemSubject = $itemSubject;
+        $this->itemMessageId = $itemMessageId;
+        $this->itemPosterId = $itemPosterId;
         $this->userSite = config('freegle.sites.user');
         $this->target = config('freegle.donation.target', 2500);
         // Our own Stripe page, not the PayPal shortlink — see DonateLinkService.
@@ -71,6 +88,22 @@ class AskForDonation extends MjmlMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->user->id ?? null;
+    }
+
+    /**
+     * Names the Offer the recipient received and asks about (not authored by the
+     * recipient - the users bucket names its poster, not the recipient) when the
+     * caller passed ids; an older call site or test that omits them simply
+     * contributes nothing to check (plan section 11.8).
+     */
+    public function about(): array
+    {
+        return [
+            'chatmessages' => [],
+            'messages' => $this->itemMessageId !== null ? [$this->itemMessageId] : [],
+            'newsfeed' => [],
+            'users' => $this->itemPosterId !== null ? [$this->itemPosterId] : [],
+        ];
     }
 
     /**

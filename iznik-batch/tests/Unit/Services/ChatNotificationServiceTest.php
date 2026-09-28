@@ -415,6 +415,46 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertFalse($present(), 'a release older than the window is not re-selected');
     }
 
+    public function test_lockdown_released_hold_older_than_window_is_delivered_by_releasedat(): void
+    {
+        // Same problem, same fix as the rippling case above (plan 2026-09-27-lockdown-switch.md,
+        // section 11.4): ChatProcessService releases a chat message held by the lockdown switch
+        // by writing lockdown_holds.outcome = 'released', which can happen well after
+        // chat_messages.date if the message sat through a long hard lockdown.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient, ['latestmessage' => now()]);
+
+        // Held 3 days ago, well outside the 24h look-back window.
+        $msg = $this->createTestChatMessage($room, $sender, ['date' => now()->subDays(3)]);
+
+        $present = function () use ($room, $msg): bool {
+            $method = new \ReflectionMethod($this->service, 'getUnmailedMessages');
+            $method->setAccessible(true);
+            $rows = $method->invoke($this->service, ChatRoom::TYPE_USER2USER, $room->id, 0, 24, false);
+
+            return $rows->contains(fn ($r) => (int) $r->id === (int) $msg->id);
+        };
+
+        $holdId = (int) DB::table('lockdown_holds')->insertGetId([
+            'lockdownid' => 1,
+            'kind' => 'chat',
+            'refid' => $msg->id,
+            'userid' => $sender->id,
+            'created' => now()->subDays(3),
+        ]);
+        $this->assertFalse($present(), 'a hold with no outcome yet is not selectable');
+
+        DB::table('lockdown_holds')->where('id', $holdId)->update([
+            'outcome' => 'released',
+            'releasedat' => now()->subMinutes(5),
+        ]);
+        $this->assertTrue($present(), 'released within the window is delivered despite an old date');
+
+        DB::table('lockdown_holds')->where('id', $holdId)->update(['releasedat' => now()->subDays(3)]);
+        $this->assertFalse($present(), 'a release older than the window is not re-selected');
+    }
+
     public function test_notify_by_email_skips_deleted_messages(): void
     {
         $sender = $this->createTestUser();

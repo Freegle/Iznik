@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\ChatRoom;
 use App\Models\User;
+use App\Services\Lockdown\LockdownService;
 use App\Services\LokiService;
 use App\Services\Ripple\RippleReplyService;
 use App\Support\EmojiUtils;
@@ -137,6 +138,33 @@ class PushNotificationService
     }
 
     /**
+     * Whether a lockdown currently holds the push surface. Checked at the top
+     * of every entry point that would otherwise send FCM notifications, so a
+     * pressed lockdown stops push the same run it takes effect (11.4) - there
+     * is no separate hold/release bookkeeping for push, unlike chat/posts,
+     * because a missed push has no backlog to catch up: the badge and the
+     * in-app notification it points at are still there next time the app
+     * polls, so nothing is lost by skipping the FCM send itself.
+     */
+    private function pushHeldByLockdown(string $context): bool
+    {
+        $lockdown = app(LockdownService::class);
+        // Called once per push, at the top of every entry point (section 11.6 point 3),
+        // so this is the one place to mark the push loop as still running.
+        $lockdown->ack('push');
+
+        if (! $lockdown->held('push')) {
+            return false;
+        }
+
+        $lockdown->count('push');
+
+        Log::info('Push notification held by lockdown', ['context' => $context]);
+
+        return true;
+    }
+
+    /**
      * Notify group moderators of new pending work.
      *
      * Matches legacy PushNotifications::notifyGroupMods().
@@ -181,6 +209,10 @@ class PushNotificationService
      */
     public function notify(int $userId, bool $modtools): int
     {
+        if ($this->pushHeldByLockdown('notify')) {
+            return 0;
+        }
+
         if (! $this->messaging) {
             return $this->messagingUnavailable('notify', ['user_id' => $userId]);
         }
@@ -278,6 +310,10 @@ class PushNotificationService
      */
     public function notifyUser(int $userId): int
     {
+        if ($this->pushHeldByLockdown('notify_user')) {
+            return 0;
+        }
+
         if (! $this->messaging) {
             return $this->messagingUnavailable('notify_user', ['user_id' => $userId]);
         }
@@ -739,6 +775,15 @@ class PushNotificationService
             return 0;
         }
 
+        // Deliberately ungated by the push hold (admin diagnostic tool, not
+        // member-triggered content) - counted so the closing report still shows it
+        // happened (section 11.6 point 4, "leaked since press"), rather than the presser
+        // discovering test pushes went out only from a "0 leaked" figure that missed them.
+        $lockdown = app(LockdownService::class);
+        if ($lockdown->held('push')) {
+            $lockdown->count('leaked:push');
+        }
+
         $apptype = $modtools ? self::APPTYPE_MODTOOLS : 'User';
         $notifs = DB::select(
             "SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?",
@@ -1017,6 +1062,10 @@ class PushNotificationService
      */
     public function notifyChatMessage(int $messageId): int
     {
+        if ($this->pushHeldByLockdown('notify_chat_message')) {
+            return 0;
+        }
+
         // Rippling-out held replies (#3): don't push a reply to the poster while it is held
         // because the post hasn't yet rippled to the replier's area. Until a reply is held
         // the rippling table is empty, so this never fires. The reply is pushed normally
@@ -1347,6 +1396,10 @@ class PushNotificationService
      */
     public function notifyDailyNewPosts(int $userId, array $posts): int
     {
+        if ($this->pushHeldByLockdown('daily_new_posts')) {
+            return 0;
+        }
+
         if (! $this->messaging) {
             return $this->messagingUnavailable('daily_new_posts', ['user_id' => $userId]);
         }

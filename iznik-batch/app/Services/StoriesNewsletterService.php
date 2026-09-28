@@ -116,12 +116,29 @@ class StoriesNewsletterService
                 'photo'      => $photoUrl,
                 'username'   => $userName,
                 'profileurl' => $profileUrl,
+                'userid'     => (int) $story->userid,
             ];
         }
 
         $stats['stories'] = count($storyData);
 
         if ($dryRun) {
+            return $stats;
+        }
+
+        // Lockdown holds `email` (plan 2026-09-27-lockdown-switch.md, section 11.7):
+        // checked here, before the newsletter row is created and stories are marked
+        // mailedtomembers, not down in the per-member loop below. This batch's watermark
+        // is that commit - once it happens these stories can never be selected again by
+        // the `$since`/`mailedtomembers` query above - so a press must stop before it,
+        // the same as the "check before each group" rule for a per-group watermark.
+        // Checking only per-recipient would still let the batch be consumed with nobody
+        // mailed. Counted once for the whole run, not per member - this is one deferred
+        // newsletter round, not N deferred recipients.
+        $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+        $lockdown->ack('mail-loops');
+        if ($lockdown->held('email')) {
+            $lockdown->count('deferred:stories');
             return $stats;
         }
 

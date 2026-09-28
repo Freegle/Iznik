@@ -2,6 +2,7 @@
 
 namespace App\Mail\Chat;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\Contracts\RetryableMailable;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\AmpEmail;
@@ -22,7 +23,7 @@ use Symfony\Component\Mime\Email;
 use App\Services\DonateLinkService;
 use App\Services\UnsubscribeService;
 
-class ChatNotification extends MjmlMailable implements RetryableMailable
+class ChatNotification extends MjmlMailable implements RetryableMailable, DescribesMemberContent
 {
     use AvatarResolver;
     use TrackableEmail;
@@ -285,6 +286,26 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             $descriptor['chattype'] ?? ChatRoom::TYPE_USER2USER,
             $previous
         );
+    }
+
+    /**
+     * The triggering message plus whatever earlier messages the notification quotes for
+     * context, the post it refers to (if any), and the sender who authored them (plan
+     * section 11.8). The recipient is not included - they did not author this content.
+     */
+    public function about(): array
+    {
+        $chatmessages = array_merge(
+            [$this->message->id],
+            $this->previousMessages->pluck('id')->all()
+        );
+
+        return [
+            'chatmessages' => array_values(array_unique($chatmessages)),
+            'messages' => $this->refMessage ? [$this->refMessage->id] : [],
+            'newsfeed' => [],
+            'users' => $this->sender ? [$this->sender->id] : [],
+        ];
     }
 
     /**

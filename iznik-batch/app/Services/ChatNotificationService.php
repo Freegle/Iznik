@@ -8,6 +8,7 @@ use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\ChatRoster;
 use App\Models\User;
+use App\Services\Lockdown\LockdownTriageService;
 use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -139,6 +140,19 @@ class ChatNotificationService
             ->pluck('chatmsgid')
             ->all();
 
+        // Lockdown holds (plan 2026-09-27-lockdown-switch.md, section 11.4): a message held
+        // while chat was locked down is released - low risk, delivered - by ChatProcessService
+        // possibly hours after chat_messages.date, for exactly the same reason as a released
+        // rippling hold above, so it gets exactly the same fix: admit by lockdown_holds.releasedat.
+        $lockdownReleasedRecently = DB::table('lockdown_holds')
+            ->where('kind', LockdownTriageService::KIND_CHAT)
+            ->where('outcome', 'released')
+            ->where('releasedat', '>=', $startTime)
+            ->pluck('refid')
+            ->all();
+
+        $releasedRecently = array_values(array_unique(array_merge($releasedRecently, $lockdownReleasedRecently)));
+
         $query = ChatMessage::query()
             ->join('chat_rooms', 'chat_messages.chatid', '=', 'chat_rooms.id')
             ->join('users', 'chat_messages.userid', '=', 'users.id')
@@ -228,6 +242,27 @@ class ChatNotificationService
 
                 // Check if we should notify this user about this message.
                 if (! $this->shouldNotifyUser($sendingTo, $message, $chatRoom, $chatType, $roster->isModerator ?? false)) {
+                    continue;
+                }
+
+                // Lockdown holds `email` (plan 2026-09-27-lockdown-switch.md, section 11.7):
+                // deliberately AFTER the preference check above, for the same reason as the
+                // suppression check below - a member who has chat notifications off was never
+                // getting this mail, so there is nothing here to defer.
+                //
+                // Stops without touching chat_roster.lastmsgemailed, so this message is still
+                // unmailed on the next run: nothing is dropped, and once email resumes the
+                // ordinary claim-then-send path above picks it up exactly as if it were new.
+                //
+                // Counted once per pass over this recipient, not once per member-mail - unlike
+                // mail_suppressed_counts below, which exists to drive an accurate one-off
+                // catch-up and so guards against recounting the same held mail on every run,
+                // deferred:chat is a coarser "how much of this loop's work is being held right
+                // now" signal, expected to move every time the loop runs while email is held.
+                $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+                $lockdown->ack('mail-loops');
+                if ($lockdown->held('email')) {
+                    $lockdown->count('deferred:chat');
                     continue;
                 }
 

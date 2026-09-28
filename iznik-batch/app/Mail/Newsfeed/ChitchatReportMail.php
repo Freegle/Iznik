@@ -2,6 +2,7 @@
 
 namespace App\Mail\Newsfeed;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use Illuminate\Mail\Mailables\Address;
@@ -12,7 +13,7 @@ use Illuminate\Mail\Mailables\Envelope;
  *
  * Matches the legacy V1 PHP Newsfeed::report() email.
  */
-class ChitchatReportMail extends MjmlMailable
+class ChitchatReportMail extends MjmlMailable implements DescribesMemberContent
 {
     use LoggableEmail;
 
@@ -68,5 +69,19 @@ class ChitchatReportMail extends MjmlMailable
             ]
         )->to($recipients)
             ->applyLogging('ChitchatReport');
+    }
+
+    /**
+     * Names the reported thread; the reporter is not the content's author, so users is
+     * always empty here (plan section 11.8).
+     */
+    public function about(): array
+    {
+        return [
+            'chatmessages' => [],
+            'messages' => [],
+            'newsfeed' => [$this->newsfeedId],
+            'users' => [],
+        ];
     }
 }

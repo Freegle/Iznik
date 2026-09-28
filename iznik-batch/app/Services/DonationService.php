@@ -169,7 +169,12 @@ class DonationService
 
                 if ($recentMessage) {
                     if (!$dryRun) {
-                        app(\App\Services\EmailSpoolerService::class)->spool(new AskForDonation($user, $recentMessage->subject));
+                        app(\App\Services\EmailSpoolerService::class)->spool(new AskForDonation(
+                            $user,
+                            $recentMessage->subject,
+                            (int) $recentMessage->msgid,
+                            $recentMessage->posterid !== null ? (int) $recentMessage->posterid : null,
+                        ));
                         $this->recordAsk($recipient->userid);
                     }
                     $stats['emails_sent']++;
@@ -223,7 +228,7 @@ class DonationService
         $mysqlTime = now()->subDays(90);
 
         return DB::table('messages_by')
-            ->select('messages.id as msgid', 'messages.date', 'messages.subject')
+            ->select('messages.id as msgid', 'messages.date', 'messages.subject', 'messages.fromuser as posterid')
             ->join('messages', 'messages.id', '=', 'messages_by.msgid')
             ->join('chat_messages', function ($join) use ($userId) {
                 $join->on('chat_messages.refmsgid', '=', 'messages.id')

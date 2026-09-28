@@ -1853,6 +1853,25 @@ Schedule::command('backup:database')
     ->sendOutputTo(cronLog('backup:database'))
     ->runInBackground();
 
+// Lockdown switch (plans/active/2026-09-27-lockdown-switch.md, section 11.4): announces
+// any lockdowns row not yet announced, creates/classifies this incident's holds, and
+// releases ChitChat holds once chitchat is lifted. A no-op (bar the announce check) when
+// nothing has ever been pressed, so this is safe to leave running always-on.
+Schedule::command('lockdown:triage')
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->sendOutputTo(cronLog('lockdown:triage'))
+    ->runInBackground();
+
+// Hourly stats mail to geeks@ while a lockdown is active; a no-op once it is closed
+// (the closing summary is sent explicitly, with --closing, from lockdown:off's own
+// runbook step, not from this schedule).
+Schedule::command('lockdown:report')
+    ->hourly()
+    ->withoutOverlapping(15)
+    ->sendOutputTo(cronLog('lockdown:report'))
+    ->runInBackground();
+
 // =============================================================================
 // BACKUP DRAIN (see App\Console\BackupDrain)
 // =============================================================================

@@ -168,6 +168,7 @@ class VolunteeringDigestService
             ->where('volunteering.expired', 0)
             ->select([
                 'volunteering.id',
+                'volunteering.userid',
                 'volunteering.title',
                 'volunteering.location',
                 'volunteering.description',
@@ -242,6 +243,7 @@ class VolunteeringDigestService
 
             $oppsById[$id] = [
                 'id'             => $id,
+                'userid'         => $v->userid !== null ? (int) $v->userid : null,
                 'title'          => $decode($v->title),
                 'location'       => $decode($v->location),
                 'description'    => $decode($v->description),

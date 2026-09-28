@@ -49,6 +49,14 @@ class LockdownTriageService
     /** Floor under RATE_TOLERANCE so a sender with almost no history isn't gated by it. */
     public const RATE_MIN_ALLOWANCE = 3;
 
+    /**
+     * Previously-held ChitChat posts released per lockdown:triage run once chitchat is no
+     * longer held, oldest first. Same reasoning as ChatProcessService::RELEASE_BATCH_LIMIT
+     * and ContentCheckService::POST_RELEASE_BATCH_LIMIT: bounds how much becomes visible at
+     * once the instant a lockdown lifts on a large backlog.
+     */
+    public const CHITCHAT_RELEASE_BATCH_LIMIT = 200;
+
     public function __construct(private readonly ?LockdownService $lockdown = null)
     {
     }
@@ -146,6 +154,69 @@ class LockdownTriageService
         }
 
         return self::RISK_RISKY;
+    }
+
+    /**
+     * Act on this incident's ChitChat holds. The hold row and the newsfeed post's `hidden`
+     * timestamp are both set by the Go API when the post is made (newsfeed.go createPost,
+     * create.go) - this only runs the lift side: a sender Support marks a spammer mid-
+     * incident is deleted on the spot, whatever chitchat's held state, the same hard DELETE
+     * SpamCleanupService::deleteSpamNewsfeedItems already uses for a known spammer's posts,
+     * scoped here to the one flagged item rather than everything they ever posted; once
+     * chitchat is no longer held, a low-risk hold is unhidden (outcome released), paced;
+     * a risky hold is left exactly as Go set it - hidden, for a moderator to decide.
+     */
+    public function releaseChitChatHolds(): array
+    {
+        $lockdown = $this->lockdown ?? app(LockdownService::class);
+        $released = 0;
+        $rejected = 0;
+
+        $spamMarked = DB::table('lockdown_holds')
+            ->where('kind', self::KIND_CHITCHAT)
+            ->where('outcome', 'spam_marked')
+            ->get();
+        foreach ($spamMarked as $hold) {
+            DB::table('newsfeed')->where('id', $hold->refid)->delete();
+            DB::table('lockdown_holds')->where('id', $hold->id)->update([
+                'outcome' => 'rejected',
+                'releasedat' => now(),
+            ]);
+            $rejected++;
+        }
+
+        if (!$lockdown->held(self::KIND_CHITCHAT)) {
+            $releasable = DB::table('lockdown_holds')
+                ->where('kind', self::KIND_CHITCHAT)
+                ->where('risk', self::RISK_LOW)
+                ->whereNull('outcome')
+                ->orderBy('id')
+                ->limit(self::CHITCHAT_RELEASE_BATCH_LIMIT)
+                ->get();
+
+            foreach ($releasable as $hold) {
+                // Re-read per item (section 11.6): a press landing between two releases of
+                // this same batch must stop the next one at once, not wait for the next
+                // invocation (this command runs every minute). held() is a memory read
+                // within the five-second cache (see LockdownService), so this costs
+                // nothing beyond the first check every five seconds.
+                if ($lockdown->held(self::KIND_CHITCHAT)) {
+                    break;
+                }
+
+                DB::table('newsfeed')->where('id', $hold->refid)->update([
+                    'hidden' => null,
+                    'hiddenby' => null,
+                ]);
+                DB::table('lockdown_holds')->where('id', $hold->id)->update([
+                    'outcome' => 'released',
+                    'releasedat' => now(),
+                ]);
+                $released++;
+            }
+        }
+
+        return ['released' => $released, 'rejected' => $rejected];
     }
 
     private function createChatHolds(int $incidentId, Carbon $startedAt): int

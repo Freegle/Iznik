@@ -2,6 +2,7 @@
 
 namespace App\Mail\Notification;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
@@ -15,7 +16,7 @@ use Illuminate\Mail\Mailables\Envelope;
  * (comments on posts, loves, etc.). Migrated from V1 Notifications::sendEmails()
  * via notification_chaseup.php.
  */
-class ChaseUpMail extends MjmlMailable
+class ChaseUpMail extends MjmlMailable implements DescribesMemberContent
 {
     use LoggableEmail;
     use TrackableEmail;
@@ -106,6 +107,31 @@ class ChaseUpMail extends MjmlMailable
         return ($notif['newsfeed'] ?? null)
             ? $this->userSite . '/chitchat/' . $notif['newsfeed']['id']
             : $this->chitchatUrl;
+    }
+
+    /**
+     * Only the ChitChat-linked notifications name a newsfeed item (an Exhort notification
+     * points at a site path, not a post); no author id is preserved in the prepared row
+     * (NotificationChaseUpService::prepare()), so users is always empty here.
+     */
+    public function about(): array
+    {
+        $newsfeed = [];
+        foreach ($this->notifications as $notif) {
+            if (isset($notif['newsfeed']['id'])) {
+                $newsfeed[] = (int) $notif['newsfeed']['id'];
+            }
+            if (isset($notif['newsfeed']['replyto']['id'])) {
+                $newsfeed[] = (int) $notif['newsfeed']['replyto']['id'];
+            }
+        }
+
+        return [
+            'chatmessages' => [],
+            'messages' => [],
+            'newsfeed' => array_values(array_unique($newsfeed)),
+            'users' => [],
+        ];
     }
 
     public function build(): static

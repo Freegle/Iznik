@@ -33,18 +33,20 @@
       class="fw-bold mt-3"
       data-testid="lockdown-press-button"
       :disabled="!reason.trim() || pressing"
-      @click="confirmModal?.show()"
+      @click="showConfirmModal = true"
     >
       <v-icon icon="triangle-exclamation" /> Press: hold everything now
     </b-button>
 
     <ConfirmModal
+      v-if="showConfirmModal"
       ref="confirmModal"
       title="Lock down Freegle?"
       confirm-label="Press"
       confirm-testid="lockdown-confirm-press"
       :confirm-disabled="confirmText.trim() !== 'LOCKDOWN'"
       @confirm="press"
+      @hidden="showConfirmModal = false"
     >
       <div data-testid="lockdown-confirm-modal">
         <ul>
@@ -96,6 +98,11 @@ const reason = ref('')
 const notice = ref(null)
 const pressing = ref(false)
 const confirmModal = ref(null)
+// ConfirmModal is v-if-gated (house pattern - see e.g. ModMember.vue's
+// unbanConfirm) rather than always-mounted: useOurModal() defaults
+// autoShow to true, so an always-mounted ConfirmModal pops open on page
+// load instead of waiting for the Press button.
+const showConfirmModal = ref(false)
 // plans/active/2026-09-27-lockdown-switch.md section 11.6: the Press button
 // inside the confirm dialog stays disabled until this is typed exactly.
 const confirmText = ref('')

@@ -192,9 +192,11 @@ class NewsfeedDigestService
             }
 
             $items[] = [
+                'id' => (int) $post->id,
                 'type' => $post->type,
                 'text' => $this->snip($text),
                 'author' => $this->userName((int) $post->userid),
+                'authorid' => (int) $post->userid,
                 'replies' => $this->repliesFor((int) $post->id),
             ];
 

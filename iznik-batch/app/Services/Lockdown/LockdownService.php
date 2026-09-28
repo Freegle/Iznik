@@ -9,9 +9,18 @@ use Illuminate\Support\Facades\Log;
  * The lockdown switch's state, as the batch sees it.
  *
  * `lockdowns` is append-only: every change is a new row and the current state is the
- * newest one. Every loop reads it at the top of each iteration through held(), so a press
- * reaches the long-running spool daemons and the scheduler within one iteration without a
- * restart. The Go API reads the same table through its own five-second cache.
+ * newest one. current() reads through a five-second in-process cache (section 11.6), the
+ * same as the Go API's own cache, so a per-item gate check - once per recipient, per chat
+ * message, per post, per push - costs a memory read rather than a query. Any write made
+ * through this service (press/setSurfaces/setNotice/setPhrases/close) flushes the cache
+ * immediately, so a press is always felt at once by whatever made it and by every other
+ * caller in the same process; the TTL only bounds how stale a read can be of a change made
+ * some other way, such as the Go API writing the row directly.
+ *
+ * The cache is a static property, not a per-instance one, because a batch command is
+ * normally its own OS process (the natural scope for an "in-process" cache) but may still
+ * construct more than one LockdownService instance within it - every instance must see the
+ * same state.
  *
  * A failed read keeps the last state this process saw. A process that has never read the
  * state treats the site as open; that only happens with the database unreachable, when
@@ -21,6 +30,16 @@ class LockdownService
 {
     /** Surfaces the switch can hold, in the order they are lifted. */
     public const SURFACES = ['mods', 'chat', 'posts', 'chitchat', 'events', 'push', 'email', 'export'];
+
+    /**
+     * The batch loops that call ack() (section 11.6), in the order they appear in the plan.
+     * Named here once so lockdown:report can list every loop, including one that has never
+     * ticked over at all since the press (no lockdown_acks row yet).
+     */
+    public const ACK_LOOPS = [
+        'chat-process', 'content-check', 'auto-approve', 'mail-spool',
+        'mail-loops', 'background-tasks', 'push', 'triage',
+    ];
 
     public const CHAT_HARD = 'hard';
 
@@ -32,22 +51,59 @@ class LockdownService
         'normal' => 'Things are back to normal.',
     ];
 
-    /** The last row read; false until a read has succeeded. */
-    private object|false|null $last = false;
+    /**
+     * How long a read is trusted before the next current() call queries again (section
+     * 11.6: "the same as Go"). This is the whole reason a per-item gate check is cheap
+     * enough to run on every recipient/message/post instead of once per job. Public so
+     * tests can advance Carbon's fake clock past it without repeating the number.
+     */
+    public const CACHE_TTL_SECONDS = 5;
+
+    /** The last row read; false until a read has succeeded. Shared process-wide - see class doc. */
+    private static object|false $cachedRow = false;
+
+    /** When $cachedRow was last set by a real read; null means "never, or just flushed". */
+    private static ?\Illuminate\Support\Carbon $cachedAt = null;
+
+    /** Rows already acknowledged by this process, keyed by loop name (section 11.6): a
+     *  write per state change, not per item. */
+    private static array $ackedRows = [];
 
     /**
-     * The newest row, read now. Null when there has never been a lockdown, or when this
-     * process has never managed to read the state.
+     * The newest row, from the cache if it is still fresh, otherwise read now. Null when
+     * there has never been a lockdown, or when this process has never managed to read the
+     * state.
      */
     public function current(): ?object
     {
+        // Plain timestamp subtraction rather than diffInSeconds(): unambiguous regardless of
+        // Carbon's default sign/direction, and respects Carbon::setTestNow() the same way.
+        if (self::$cachedAt !== null && (now()->getTimestamp() - self::$cachedAt->getTimestamp()) < self::CACHE_TTL_SECONDS) {
+            return self::$cachedRow ?: null;
+        }
+
         try {
-            $this->last = $this->readNewest();
+            self::$cachedRow = $this->readNewest() ?? false;
+            self::$cachedAt = now();
         } catch (\Throwable $e) {
             Log::warning('Lockdown: could not read state, keeping the last one', ['error' => $e->getMessage()]);
         }
 
-        return $this->last ?: null;
+        return self::$cachedRow ?: null;
+    }
+
+    /**
+     * Forces the next current() call (from any instance in this process) to read the
+     * database again, and forgets which rows this process has already acked. Every write
+     * below calls this itself. Tests call it after changing `lockdowns` some other way (a
+     * direct DB write, or between test cases sharing one process) so the next read is not
+     * served from a previous case's cache.
+     */
+    public static function flushCache(): void
+    {
+        self::$cachedRow = false;
+        self::$cachedAt = null;
+        self::$ackedRows = [];
     }
 
     public function active(): bool
@@ -137,6 +193,7 @@ class LockdownService
                 'startedat' => now(),
             ]);
             DB::table('lockdowns')->where('id', $id)->update(['incidentid' => $id]);
+            self::flushCache();
 
             return $id;
         });
@@ -202,6 +259,43 @@ class LockdownService
         ], $by);
     }
 
+    /**
+     * Record that a batch loop has acted on the current lockdowns row. GET
+     * /modtools/lockdown/stats reads lockdown_acks to show the presser each loop ticking
+     * over, and how long it took. Writes once per row id per loop per process (section
+     * 11.6: "a write per state change, not per item") - cheap enough to call from inside a
+     * per-item gate check without an extra query on every item.
+     *
+     * $loop is one of the names in the plan: chat-process, content-check, auto-approve,
+     * mail-spool, mail-loops, background-tasks, push, triage.
+     */
+    public function ack(string $loop): void
+    {
+        $row = $this->current();
+        $rowId = $row ? (int) $row->id : null;
+        if ($rowId === null) {
+            // Nothing has ever been pressed - nothing to acknowledge.
+            return;
+        }
+
+        if ((self::$ackedRows[$loop] ?? null) === $rowId) {
+            // This process already acked this exact row for this loop.
+            return;
+        }
+
+        try {
+            DB::table('lockdown_acks')->upsert(
+                [['loop' => $loop, 'lockdownrowid' => $rowId, 'seenat' => now()]],
+                ['loop'],
+                ['lockdownrowid', 'seenat']
+            );
+            self::$ackedRows[$loop] = $rowId;
+        } catch (\Throwable $e) {
+            // A missed ack only delays the presser's "taking effect" ticks, never the loop.
+            Log::warning('Lockdown: could not ack', ['loop' => $loop, 'error' => $e->getMessage()]);
+        }
+    }
+
     public static function noticeText(?string $notice): ?string
     {
         return $notice ? (self::NOTICES[$notice] ?? null) : null;
@@ -235,7 +329,10 @@ class LockdownService
             'endnote' => $previous->endnote,
         ], $changes, ['changedby' => $by]);
 
-        return DB::table('lockdowns')->insertGetId($row);
+        $id = DB::table('lockdowns')->insertGetId($row);
+        self::flushCache();
+
+        return $id;
     }
 
     private function requireCurrent(): object

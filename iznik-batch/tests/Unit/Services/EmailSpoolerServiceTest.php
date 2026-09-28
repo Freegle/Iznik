@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services;
 
+use App\Mail\Donation\AskForDonation;
 use App\Mail\Welcome\WelcomeMail;
 use App\Models\UserEmail;
 use App\Services\EmailSpoolerService;
@@ -45,6 +46,44 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertEquals($email, $data['to'][0]['address']);
         $this->assertEquals('welcome', $data['email_type']);
         $this->assertEquals(0, $data['attempts']);
+    }
+
+    /**
+     * Section 11.8 (plan 2026-09-27-lockdown-switch.md): a member-content Mailable's
+     * about() is written into the spool file so lockdown:filter-spool can check it later
+     * without re-deriving it from the Mailable. WelcomeMail does not implement
+     * DescribesMemberContent, so it gets a null about - the "sent as normal" passthrough
+     * case LockdownFilterSpoolService relies on.
+     */
+    public function test_spool_writes_the_about_field_for_a_member_content_mailable(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $message = $this->createTestMessage($user, $group);
+        $mailable = new AskForDonation($user, $message->subject, $message->id, $user->id);
+
+        $id = $this->spooler->spool($mailable, $this->uniqueEmail('recipient'), 'ask_for_donation');
+
+        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $this->assertSame([
+            'chatmessages' => [],
+            'messages' => [$message->id],
+            'newsfeed' => [],
+            'users' => [$user->id],
+        ], $data['about']);
+    }
+
+    public function test_spool_writes_a_null_about_for_a_mailable_that_does_not_implement_it(): void
+    {
+        $email = $this->uniqueEmail('recipient');
+        $mailable = new WelcomeMail($email);
+
+        $id = $this->spooler->spool($mailable, $email, 'welcome');
+
+        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $this->assertArrayHasKey('about', $data);
+        $this->assertNull($data['about']);
     }
 
     public function test_spool_stores_email_content(): void

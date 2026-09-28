@@ -154,27 +154,40 @@ describe('ModSupportLockdownPress', () => {
     expect(wrapper.emitted('pressed')).toBeFalsy()
   })
 
+  // ConfirmModal is v-if-gated on the Press button (house pattern - see
+  // ModSupportLockdownPress.vue), so every test below has to open it first
+  // rather than finding it already mounted.
+  async function openConfirmModal(wrapper) {
+    await wrapper
+      .find('[data-testid="lockdown-reason"]')
+      .setValue('Suspected phishing wave')
+    await wrapper.find('[data-testid="lockdown-press-button"]').trigger('click')
+  }
+
   // plans/active/2026-09-27-lockdown-switch.md section 11.6: the confirm
   // dialog must carry the exact consequences text, and its Press button
   // stays disabled until the presser types LOCKDOWN.
   describe('confirm dialog (section 11.6)', () => {
-    it('titles the dialog "Lock down Freegle?" and labels its button "Press"', () => {
+    it('titles the dialog "Lock down Freegle?" and labels its button "Press"', async () => {
       const wrapper = createWrapper()
+      await openConfirmModal(wrapper)
       const modal = wrapper.find('[data-confirm-label]')
       expect(modal.attributes('data-title')).toBe('Lock down Freegle?')
       expect(modal.attributes('data-confirm-label')).toBe('Press')
     })
 
-    it('gives the ConfirmModal the lockdown-confirm-press testid for its Press button', () => {
+    it('gives the ConfirmModal the lockdown-confirm-press testid for its Press button', async () => {
       const wrapper = createWrapper()
+      await openConfirmModal(wrapper)
       const modal = wrapper.find('[data-confirm-label]')
       expect(modal.attributes('data-confirm-testid')).toBe(
         'lockdown-confirm-press'
       )
     })
 
-    it('shows the exact consequences bullets', () => {
+    it('shows the exact consequences bullets', async () => {
       const wrapper = createWrapper()
+      await openConfirmModal(wrapper)
       const dialog = wrapper.find('[data-testid="lockdown-confirm-modal"]')
       const text = dialog.text()
       expect(text).toContain(
@@ -196,6 +209,7 @@ describe('ModSupportLockdownPress', () => {
 
     it('keeps the Press button disabled until LOCKDOWN is typed exactly', async () => {
       const wrapper = createWrapper()
+      await openConfirmModal(wrapper)
       const modal = () => wrapper.find('[data-confirm-label]')
       expect(modal().attributes('data-confirm-disabled')).toBe('true')
 
@@ -213,9 +227,7 @@ describe('ModSupportLockdownPress', () => {
     it('clears the typed confirmation text after a successful press', async () => {
       mockPatch.mockResolvedValue({})
       const wrapper = createWrapper()
-      await wrapper
-        .find('[data-testid="lockdown-reason"]')
-        .setValue('Suspected phishing wave')
+      await openConfirmModal(wrapper)
       await wrapper
         .find('[data-testid="lockdown-confirm-input"]')
         .setValue('LOCKDOWN')
@@ -266,8 +278,9 @@ describe('ModSupportLockdownPress', () => {
       })
     }
 
-    it('renders a real button with data-testid lockdown-confirm-press', () => {
+    it('renders a real button with data-testid lockdown-confirm-press', async () => {
       const wrapper = createWrapperWithRealConfirmModal()
+      await openConfirmModal(wrapper)
       const button = wrapper.find('[data-testid="lockdown-confirm-press"]')
       expect(button.exists()).toBe(true)
       expect(button.text()).toBe('Press')

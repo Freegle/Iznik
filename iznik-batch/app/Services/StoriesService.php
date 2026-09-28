@@ -55,10 +55,12 @@ class StoriesService
             }
 
             $storyData[] = [
+                'id' => $story->id,
                 'headline' => $story->headline,
                 'story' => $story->story,
                 'groupname' => $groupName,
                 'photo' => $photoUrl,
+                'userid' => (int) $story->userid,
             ];
 
             if (!$dryRun) {

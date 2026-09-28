@@ -139,9 +139,15 @@ return [
             'minutes' => (int) env('BACKUP_DRAIN_MINUTES', 45),
             // Artisan command names that run anyway, matched without their arguments.
             // Keep this short: anything here is competing with the backup.
+            //
+            // lockdown:triage and lockdown:report default to always running: a lockdown
+            // is a live security incident, and the announce mail, hold triage and hourly
+            // stats report must not wait out a 45-minute backup window on top of whatever
+            // is actually happening. Override via BACKUP_DRAIN_ALWAYS_RUN if that default
+            // is ever wrong for a specific deployment.
             'always_run' => array_values(array_filter(array_map(
                 'trim',
-                explode(',', (string) env('BACKUP_DRAIN_ALWAYS_RUN', ''))
+                explode(',', (string) env('BACKUP_DRAIN_ALWAYS_RUN', 'lockdown:triage,lockdown:report'))
             ))),
         ],
 
