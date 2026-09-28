@@ -58,6 +58,22 @@ class AutomodFactsService
         ContentCheckService::CHECK_MESSAGING_LINK,
     ];
 
+    /** The spam findings that are links. */
+    private const SPAM_LINK_CHECKS = [
+        ContentCheckService::CHECK_URL,
+        ContentCheckService::CHECK_MESSAGING_LINK,
+        ContentCheckService::CHECK_SPAMHAUS_DBL,
+    ];
+
+    /** The spam findings that are patterns of sending or content. */
+    private const SPAM_PATTERN_CHECKS = [
+        ContentCheckService::CHECK_BULK_MAIL,
+        ContentCheckService::CHECK_SUBJECT_REPEAT,
+        ContentCheckService::CHECK_KNOWN_SPAMMER,
+        ContentCheckService::CHECK_GREETING_SPAM,
+        ContentCheckService::CHECK_IMAGE_SPAM,
+    ];
+
     /** ContentCheckService::CHECK_* constants that map to the "vague" fact. */
     private const VAGUE_CHECKS = [
         ContentCheckService::CHECK_VAGUE,
@@ -92,21 +108,28 @@ class AutomodFactsService
 
         $reasons = $this->contentCheckReasons($msgid, $groupid);
 
-        [$memberVeto, $memberVetoDetail] = $this->memberVeto($msgid, $groupid, $fromuser);
+        $member = $this->memberSignals($msgid, $groupid, $fromuser);
         [$groupDisallows, $groupDisallowsDetail] = $this->groupDisallows($groupid);
         [$spamSignal, $spamSignalDetail] = $this->reasonCategory($reasons, self::SPAM_SIGNAL_CHECKS);
+        [$spamLinks, $spamLinksDetail] = $this->reasonCategory($reasons, self::SPAM_LINK_CHECKS);
+        [$spamPattern, $spamPatternDetail] = $this->reasonCategory($reasons, self::SPAM_PATTERN_CHECKS);
+        [$notEnglish, $notEnglishDetail] = $this->reasonCategory($reasons, [ContentCheckService::CHECK_LANGUAGE]);
+        $otherPosts = $this->otherOpenPosts($msgid, $groupid, $message);
         [$personalInfo, $personalInfoDetail] = $this->reasonCategory($reasons, self::PERSONAL_INFO_CHECKS);
         [$vague, $vagueDetail] = $this->reasonCategory($reasons, self::VAGUE_CHECKS);
         [$concernKeyword, $concernKeywordDetail] = $this->reasonCategory($reasons, self::CONCERN_KEYWORD_CHECKS);
-        [$notEnglish] = $this->reasonCategory($reasons, [ContentCheckService::CHECK_LANGUAGE]);
 
         $noLocation = $this->noLocation($lat, $lng, $type);
         [$duplicate, $duplicateDetail] = $this->duplicate($msgid, $groupid, $message);
 
-        return [
-            'member_veto' => $memberVeto,
-            'member_veto_detail' => $memberVetoDetail,
-            'member_moderated' => $this->memberHasPostingStatus($groupid, $fromuser),
+        $postingStatus = $this->postingStatus($groupid, $fromuser);
+
+        return array_merge($member, [
+            // Any of the member signals, for callers that only need the one answer.
+            'member_veto' => $member['mod_note'] || $member['microvol_reject'] || $member['recent_action'] || $member['spammer'] || $member['membership_review'],
+            'member_veto_detail' => $member['mod_note_detail'] ?? $member['microvol_reject_detail'] ?? $member['recent_action_detail'] ?? $member['spammer_detail'] ?? $member['membership_review_detail'],
+            'member_moderated' => $postingStatus !== null,
+            'member_moderated_detail' => $postingStatus,
             'group_disallows' => $groupDisallows,
             'group_disallows_detail' => $groupDisallowsDetail,
             'no_location' => $noLocation,
@@ -115,16 +138,82 @@ class AutomodFactsService
             'duplicate_detail' => $duplicateDetail,
             'spam_signal' => $spamSignal,
             'spam_signal_detail' => $spamSignalDetail,
+            'spam_links' => $spamLinks,
+            'spam_links_detail' => $spamLinksDetail,
+            'spam_pattern' => $spamPattern,
+            'spam_pattern_detail' => $spamPatternDetail,
+            'has_other_posts' => $otherPosts !== [],
+            'other_posts' => $otherPosts,
             'personal_info' => $personalInfo,
             'personal_info_detail' => $personalInfoDetail,
             'not_english' => $notEnglish,
+            'not_english_detail' => $notEnglishDetail,
             'vague' => $vague,
             'vague_detail' => $vagueDetail,
             'concern_keyword' => $concernKeyword,
             'concern_keyword_detail' => $concernKeywordDetail,
             'is_offer' => $type === 'Offer',
             'is_wanted' => $type === 'Wanted',
-        ];
+        ]);
+    }
+
+    /**
+     * The member's other open posts of the same type on this community in the last 60 days,
+     * one line each, for the duplicate question the model answers by comparing items.
+     *
+     * @return string[]
+     */
+    private function otherOpenPosts(int $msgid, int $groupid, ?object $message): array
+    {
+        if (!$message || !$message->fromuser || !$message->type) {
+            return [];
+        }
+
+        $rows = DB::table('messages as m')
+            ->join('messages_groups as mg', 'mg.msgid', '=', 'm.id')
+            ->where('m.fromuser', $message->fromuser)
+            ->where('m.type', $message->type)
+            ->where('m.id', '<>', $msgid)
+            ->where('mg.groupid', $groupid)
+            ->whereIn('mg.collection', ['Approved', 'Pending'])
+            ->where('mg.deleted', 0)
+            ->whereNull('m.deleted')
+            ->where('m.arrival', '>=', now()->subDays(60))
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))->from('messages_outcomes as mo')
+                    ->whereColumn('mo.msgid', 'm.id')
+                    ->whereIn('mo.outcome', ['Taken', 'Received', 'Withdrawn']);
+            })
+            ->orderByDesc('m.arrival')
+            ->limit(10)
+            ->get(['m.id', 'm.subject', 'm.textbody']);
+
+        return $rows->map(function ($r) {
+            $body = trim(preg_replace('/\s+/', ' ', (string) $r->textbody));
+
+            return "#{$r->id} {$r->subject}" . ($body !== '' ? ': ' . mb_substr($body, 0, 120) : '');
+        })->all();
+    }
+
+    /** The posting status a moderator set on this community, or null for the auto-moderated tier. */
+    private function postingStatus(int $groupid, ?int $fromuser): ?string
+    {
+        if (!$fromuser) {
+            return 'No membership';
+        }
+
+        $membership = DB::table('memberships')
+            ->where('userid', $fromuser)
+            ->where('groupid', $groupid)
+            ->first(['ourPostingStatus']);
+
+        if ($membership === null) {
+            return 'No membership';
+        }
+
+        $status = $membership->ourPostingStatus;
+
+        return $status !== null && $status !== '' ? ucfirst(strtolower($status)) : null;
     }
 
     /**
@@ -236,30 +325,36 @@ class AutomodFactsService
     /**
      * @return array{0: bool, 1: ?string}
      */
-    private function memberVeto(int $msgid, int $groupid, ?int $fromuser): array
+    private function memberSignals(int $msgid, int $groupid, ?int $fromuser): array
     {
+        $out = [];
+        foreach (['mod_note', 'microvol_reject', 'recent_action', 'spammer', 'membership_review'] as $k) {
+            $out[$k] = false;
+            $out["{$k}_detail"] = null;
+        }
         if (!$fromuser) {
-            return [false, null];
+            return $out;
         }
 
-        // A microvolunteer flagged the post as not OK.
-        if (DB::table('microactions')
+        $micro = DB::table('microactions')
             ->where('msgid', $msgid)
             ->where('actiontype', 'CheckMessage')
             ->where('result', 'Reject')
-            ->exists()) {
-            return [true, 'A microvolunteer flagged this post'];
+            ->orderByDesc('timestamp')
+            ->first(['timestamp']);
+        if ($micro) {
+            $out['microvol_reject'] = true;
+            $out['microvol_reject_detail'] = 'A microvolunteer said no on ' . \Carbon\Carbon::parse($micro->timestamp)->format('j M');
         }
 
-        // A moderator has left a note on this member.
-        if (DB::table('users_comments')->where('userid', $fromuser)->exists()) {
-            return [true, 'A moderator has left a note on this member'];
+        $note = DB::table('users_comments')->where('userid', $fromuser)->orderByDesc('date')->first(['date', 'groupid']);
+        if ($note) {
+            $out['mod_note'] = true;
+            $out['mod_note_detail'] = 'Note left ' . \Carbon\Carbon::parse($note->date)->format('j M Y');
         }
 
-        // A recent negative moderation action against this member (rejection, deletion,
-        // modmail, spam classification) - not a self-initiated action.
         $dangerLogDays = (int) config('freegle.autoapprove.danger_log_days', 90);
-        if (DB::table('logs')
+        $log = DB::table('logs')
             ->where('user', $fromuser)
             ->where('timestamp', '>=', now()->subDays($dangerLogDays))
             ->where(function ($q) {
@@ -272,31 +367,36 @@ class AutomodFactsService
                     $q2->where('type', 'User')->whereIn('subtype', ['Mailed', 'Rejected', 'Deleted', 'Suspect', 'ClassifiedSpam']);
                 });
             })
-            ->exists()) {
-            return [true, 'A recent moderation action was taken against this member'];
+            ->orderByDesc('timestamp')
+            ->first(['type', 'subtype', 'timestamp']);
+        if ($log) {
+            $out['recent_action'] = true;
+            $out['recent_action_detail'] = "{$log->type} {$log->subtype} on " . \Carbon\Carbon::parse($log->timestamp)->format('j M');
         }
 
-        // A known or suspected spammer.
-        if (DB::table('spam_users')
+        $spam = DB::table('spam_users')
             ->where('userid', $fromuser)
             ->whereIn('collection', ['Spammer', 'PendingAdd'])
-            ->exists()) {
-            return [true, 'This member is a known or suspected spammer'];
+            ->first(['collection']);
+        if ($spam) {
+            $out['spammer'] = true;
+            $out['spammer_detail'] = $spam->collection === 'Spammer' ? 'Listed as a spammer' : 'Reported as a spammer, waiting for review';
         }
 
-        // A moderation review is outstanding on this membership.
-        if (DB::table('memberships')
+        $review = DB::table('memberships')
             ->where('userid', $fromuser)
             ->where('groupid', $groupid)
             ->whereNotNull('reviewrequestedat')
             ->where(function ($q) {
                 $q->whereNull('reviewedat')->orWhereColumn('reviewedat', '<', 'reviewrequestedat');
             })
-            ->exists()) {
-            return [true, 'A membership review is outstanding for this member'];
+            ->first(['reviewrequestedat']);
+        if ($review) {
+            $out['membership_review'] = true;
+            $out['membership_review_detail'] = 'Review requested ' . \Carbon\Carbon::parse($review->reviewrequestedat)->format('j M');
         }
 
-        return [false, null];
+        return $out;
     }
 
     /**

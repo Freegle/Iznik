@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { WorkflowEngine, TransitionValidator, MemoryStorage } from 'ai-flower';
+import { postText, keywordFlags } from './prompt.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CHART_PATH = path.join(__dirname, '..', 'chart.json');
@@ -97,31 +98,29 @@ function canReachEnd(workflow, stateId, seenOnThisPath) {
 }
 
 /**
- * Build a reviewer bound to one backend. `backend.ask(question, text)` must
- * resolve to `{ p, model }` (see backend.js); everything else about the
- * check (fact lookup, rule short-circuit, when-skip) is decided here so the
- * backend only ever has to answer the narrow text questions.
+ * Build a reviewer bound to one backend. `backend.ask(question, text, opts)` must resolve to
+ * `{ p, model }`, and may add `answer` (a verdict backend's own decision, which wins over the
+ * threshold) and `evidence` (see backend.js). Everything else about a check - fact lookup,
+ * rule gating, when-skips, keyword flags, hints from Freegle's own checks - is decided here,
+ * so a backend only ever has to answer the narrow text questions.
  */
 export function createReviewer({ backend, chartPath } = {}) {
   const chart = loadChart(chartPath);
-  backend?.setQuestions?.(
-    Object.values(chart.states)
-      .filter((s) => s.check?.kind === 'text')
-      .map((s) => s.check.question),
-  );
+  const textNodes = Object.entries(chart.states).filter(([, s]) => s.check?.kind === 'text');
+  backend?.setQuestions?.(textNodes.map(([, s]) => ({ question: s.check.question, flags: s.check.flags || [] })));
   const engine = new WorkflowEngine({
     workflow: chart,
     storageAdapter: new MemoryStorage(),
   });
 
-  async function review({ msgid, groupid, subject, body, type, facts = {}, rules = {}, backend: backendName }) {
-    const text = [
-      type ? `Type: ${type}` : null,
-      subject ? `Subject: ${subject}` : null,
-      body ? `Body: ${body}` : null,
-    ]
-      .filter(Boolean)
-      .join('\n');
+  async function review(request) {
+    const { msgid, groupid, subject, body, type, facts = {}, rules = {}, backend: backendName } = request;
+    const text = postText({ type, subject, body });
+    const flags = keywordFlags(text);
+    // Findings from Freegle's own checks that bear on a text question, told to the model once.
+    const hints = textNodes
+      .filter(([, s]) => s.check.hint && facts[s.check.hint] === true)
+      .map(([, s]) => `${s.description} ${facts[`${s.check.hint}_detail`] ? `(${facts[`${s.check.hint}_detail`]})` : ''}`.trim());
 
     let instance = await engine.createInstance({ msgid, groupid, subject, body, type, facts, rules });
 
@@ -140,8 +139,21 @@ export function createReviewer({ backend, chartPath } = {}) {
     while (chart.states[instance.currentState].nodeType === 'tool') {
       const nodeId = instance.currentState;
       const node = chart.states[nodeId];
-      const step = await evaluateCheck(nodeId, node, { facts, rules, text, backend, backendName });
+      const step = await evaluateCheck(nodeId, node, { facts, rules, text, flags, hints, request, backend, backendName });
       path.push(step);
+
+      // A model that could not answer holds the post, and says so rather than borrowing the
+      // question's own hold reason.
+      if (step.model === 'unavailable') {
+        return {
+          chart: chart.id,
+          version: chart.version,
+          verdict: 'hold',
+          end: 'UNAVAILABLE',
+          reason: 'Automated review could not answer a question, so the post waits for a moderator.',
+          path,
+        };
+      }
 
       const transition = chart.transitions.find(
         (t) => t.from === nodeId && t.metadata?.answer === step.answer,
@@ -169,67 +181,65 @@ export function createReviewer({ backend, chartPath } = {}) {
 // Each step records the node's short description as its question: that is what a moderator
 // reads in ModTools. check.question is the fuller wording, with Freegle's rule, that the model
 // is asked.
-async function evaluateCheck(nodeId, node, { facts, rules, text, backend, backendName }) {
+async function evaluateCheck(nodeId, node, { facts, rules, text, flags, hints, request, backend, backendName }) {
   const check = node.check;
+  const base = { node: nodeId, question: node.description, kind: check.kind };
+
+  // A question that only applies where the community has the rule switched on.
+  if (check.requiresRule && rules[check.requiresRule] !== true) {
+    return { ...base, answer: 'no', threshold: check.threshold, model: 'rule', evidence: 'This community does not restrict it' };
+  }
 
   if (check.kind === 'fact') {
     const value = facts[check.fact] === true;
     return {
-      node: nodeId,
-      question: node.description,
-      kind: 'fact',
+      ...base,
       answer: value ? 'yes' : 'no',
       model: 'fact',
-      // The batch's own detail when it has one (which veto, which spam finding); else none.
+      // The batch's own detail when it has one (which note, which finding); else none.
       evidence: facts[`${check.fact}_detail`] || '',
     };
   }
 
   // check.kind === 'text'
   if (check.rule && rules[check.rule] === true) {
-    return {
-      node: nodeId,
-      question: node.description,
-      kind: 'text',
-      answer: 'no',
-      threshold: check.threshold,
-      model: 'rule',
-      evidence: 'This community allows it',
-    };
+    return { ...base, answer: 'no', threshold: check.threshold, model: 'rule', evidence: 'This community allows it' };
   }
 
   if (check.when && facts[check.when] !== true) {
-    return {
-      node: nodeId,
-      question: node.description,
-      kind: 'text',
-      answer: 'no',
-      threshold: check.threshold,
-      model: 'skipped',
-      evidence: 'Does not apply to this post',
-    };
+    return { ...base, answer: 'no', threshold: check.threshold, model: 'skipped', evidence: 'Does not apply to this post' };
   }
 
-  let p;
-  let model;
-  let evidence;
+  const flagged = (check.flags || []).flatMap((category) => flags[category] || []);
+  const context = check.context && request[check.context] ? contextText(check.context, request[check.context]) : undefined;
+
+  let result;
   try {
-    ({ p, model, evidence } = await backend.ask(check.question, text, backendName || check.backend));
+    result = await backend.ask(check.question, text, { flags: check.flags, flagged, hints, context, backendName });
   } catch {
-    // A backend failure holds the post for a moderator rather than letting
-    // it through unreviewed.
-    p = 1;
-    model = 'unavailable';
+    // A backend failure holds the post for a moderator rather than letting it through.
+    return { ...base, answer: 'yes', p: 1, threshold: check.threshold, model: 'unavailable', evidence: '' };
   }
+
+  const { p, model, evidence } = result;
+  const answer = result.answer || (p >= check.threshold ? 'yes' : 'no');
+  const flagNote = flagged.length ? `Contains ${flagged.map((w) => `"${w}"`).join(', ')}` : '';
 
   return {
-    node: nodeId,
-    question: node.description,
-    kind: 'text',
-    answer: p >= check.threshold ? 'yes' : 'no',
+    ...base,
+    answer,
     p,
     threshold: check.threshold,
     model,
-    evidence: evidence || '',
+    evidence: [evidence, flagNote].filter(Boolean).join('. '),
   };
+}
+
+// Extra text a question needs, from the request, put into words for the model.
+function contextText(field, value) {
+  if (field === 'other_posts') {
+    const list = Array.isArray(value) ? value : [value];
+    return `The member's other open posts on this community:\n${list.map((p) => `- ${p}`).join('\n')}`;
+  }
+  return String(value);
 }

@@ -357,4 +357,54 @@ class AutomodServiceTest extends TestCase
         $this->assertSame(0, DB::table('messages_automod')
             ->where('msgid', $message->id)->where('groupid', $group->id)->count());
     }
+
+    public function test_a_community_that_moderates_everything_is_decided_without_the_service(): void
+    {
+        [$user, $group, $message] = $this->makeCandidate();
+        DB::table("groups")->where("id", $group->id)->update(["settings" => json_encode(["moderated" => 1])]);
+        Http::fake();
+
+        $result = $this->service->review($message->id, $group->id, MessageAutomod::MODE_SHADOW);
+
+        Http::assertNothingSent();
+        $this->assertSame("GROUP_MODERATES_ALL", $result["end"]);
+        $row = $this->automodRow($message->id, $group->id);
+        $this->assertSame(MessageAutomod::VERDICT_HOLD, $row->verdict);
+        $this->assertSame("GROUP_MODERATES_ALL", $row->end_node);
+    }
+
+    public function test_a_decision_the_review_could_not_make_is_tried_again_after_five_minutes(): void
+    {
+        config(['freegle.autoapprove.enabled' => true]);
+        [$user, $group, $message] = $this->makeCandidate();
+        DB::table("messages_automod")->insert([
+            "msgid" => $message->id, "groupid" => $group->id, "mode" => MessageAutomod::MODE_SHADOW,
+            "chart_version" => "", "verdict" => MessageAutomod::VERDICT_HOLD, "end_node" => "UNAVAILABLE",
+            "reason" => "Automated review unavailable", "path" => "[]", "created" => now()->subMinutes(10),
+        ]);
+        $this->fakeReviewResponse(["version" => "5", "verdict" => MessageAutomod::VERDICT_APPROVE, "end" => "APPROVE"]);
+
+        $stats = $this->service->process();
+
+        $this->assertSame(1, $stats["reviewed"]);
+        $this->assertSame("APPROVE", $this->automodRow($message->id, $group->id)->end_node);
+    }
+
+    public function test_the_request_carries_the_members_other_open_posts(): void
+    {
+        [$user, $group, $message] = $this->makeCandidate();
+        $this->createTestMessage($user, $group, ["subject" => "OFFER: Kettle (Leeds)"]);
+        $this->fakeReviewResponse(["version" => "5", "verdict" => MessageAutomod::VERDICT_APPROVE, "end" => "APPROVE"]);
+
+        $this->service->review($message->id, $group->id, MessageAutomod::MODE_SHADOW);
+
+        Http::assertSent(function ($request) {
+            $body = $request->data();
+            $facts = (array) ($body["facts"] ?? []);
+
+            return isset($body["other_posts"][0]) && str_contains($body["other_posts"][0], "Kettle")
+                && ($facts["has_other_posts"] ?? false) === true
+                && !array_key_exists("other_posts", $facts);
+        });
+    }
 }

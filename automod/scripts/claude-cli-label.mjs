@@ -10,14 +10,13 @@ import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SYSTEM, BATCH_JSON, batchPrompt, keywordFlags, postText } from '../src/prompt.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const chart = JSON.parse(readFileSync(join(here, '..', 'chart.json'), 'utf8'));
-const questions = Object.fromEntries(
-  Object.entries(chart.states)
-    .filter(([, s]) => s.check?.kind === 'text')
-    .map(([id, s]) => [id, s.check.question]),
-);
+// Text questions in chart order; the batched prompt numbers them 0.. as production does.
+const nodes = Object.entries(chart.states).filter(([, s]) => s.check?.kind === 'text');
+const questions = nodes.map(([, s]) => s.check.question);
 
 function arg(name, fallback) {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -29,15 +28,10 @@ const model = arg('model', 'opus');
 const parallel = parseInt(arg('parallel', '6'), 10);
 const cwd = mkdtempSync(join(tmpdir(), 'automod-label-'));
 
+// Exactly the words production sends (src/prompt.js), so offline numbers mean something.
 function prompt(post) {
-  return (
-    'You check posts on Freegle, a UK site where people give away and ask for unwanted items for free. ' +
-    'Answer each yes/no question about the post below, about this post as written. Reply with ONLY a JSON ' +
-    'object mapping each question id to {"answer":"yes"|"no","confidence":0..1 (how sure you are the answer is yes),' +
-    '"evidence":"short quote or empty"}. No other text.\n\nQuestions:\n' +
-    Object.entries(questions).map(([id, q]) => `${id}: ${q}`).join('\n') +
-    `\n\nPost:\nType: ${post.type}\nSubject: ${post.subject}\nBody: ${post.body}`
-  );
+  const text = postText(post);
+  return `${SYSTEM}\n\n${BATCH_JSON}\n\n${batchPrompt({ questions, text, flags: keywordFlags(text) })}`;
 }
 
 function ask(post) {
@@ -46,8 +40,13 @@ function ask(post) {
       if (err) return resolve({ error: String(err.message).slice(0, 200) });
       try {
         const text = JSON.parse(stdout).result;
-        const json = text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1);
-        resolve({ answers: JSON.parse(json) });
+        const json = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
+        // Keyed by node id, as before, from the numbered answers.
+        const answers = {};
+        for (const a of json.answers || []) {
+          if (nodes[a.id]) answers[nodes[a.id][0]] = a;
+        }
+        resolve({ answers, features: json.features });
       } catch (e) {
         resolve({ error: `parse: ${String(e.message).slice(0, 100)}` });
       }
@@ -71,7 +70,7 @@ async function worker() {
     for (const [id, a] of Object.entries(res.answers || {})) {
       if (a && (a.answer === 'yes' || a.answer === 'no')) labels[id] = a.answer;
     }
-    appendFileSync(output, JSON.stringify({ ...post, labels, claude: res.answers || null, error: res.error }) + '\n');
+    appendFileSync(output, JSON.stringify({ ...post, labels, claude: res.answers || null, features: res.features || null, error: res.error }) + '\n');
     finished++;
     if (finished % 10 === 0) console.log(`${finished}/${todo.length}`);
   }

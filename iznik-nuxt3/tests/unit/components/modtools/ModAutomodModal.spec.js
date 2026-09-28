@@ -120,4 +120,18 @@ describe('ModAutomodModal', () => {
       'Approved: no question'
     )
   })
+
+  it('quotes evidence from the post, but shows a fact finding plainly', () => {
+    const wrapper = mountModal({
+      ...held,
+      path: [
+        { node: 'MOD_NOTE', question: 'Has a moderator left a note about this member?', kind: 'fact', answer: 'yes', model: 'fact', evidence: 'Note left 3 Sep 2026' },
+        { node: 'LOAN', question: 'Is it a loan?', kind: 'text', answer: 'yes', p: 0.9, threshold: 0.7, model: 'claude', evidence: 'lend me a ladder' },
+      ],
+    })
+    const text = wrapper.text()
+    expect(text).toContain('Note left 3 Sep 2026')
+    expect(text).not.toContain('"Note left')
+    expect(text).toContain('"lend me a ladder"')
+  })
 })

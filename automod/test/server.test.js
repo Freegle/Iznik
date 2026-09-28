@@ -30,7 +30,7 @@ describe('GET /health', () => {
     const res = await fetch(`${baseUrl}/health`);
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.deepEqual(body, { status: 'ok', chart: 'freegle-automod', version: '4' });
+    assert.deepEqual(body, { status: 'ok', chart: 'freegle-automod', version: '5' });
   });
 });
 
@@ -40,8 +40,8 @@ describe('GET /chart', () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.id, 'freegle-automod');
-    assert.equal(body.version, '4');
-    assert.ok(body.states.VETO);
+    assert.equal(body.version, '5');
+    assert.ok(body.states.MOD_NOTE);
   });
 });
 

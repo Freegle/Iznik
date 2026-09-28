@@ -48,6 +48,26 @@ class AutomodService
 
         $facts = $this->factsService()->facts($msgid, $groupid);
         $rules = $this->factsService()->rules($groupid);
+        $otherPosts = $facts['other_posts'] ?? [];
+        unset($facts['other_posts']);
+
+        // A community that has moderators check every post gets no automated decision: the
+        // answer is the community's setting, recorded once so the countdown and the line show it.
+        if (!empty($facts['group_disallows'])) {
+            $decoded = [
+                'chart' => 'freegle-automod',
+                'version' => '',
+                'verdict' => MessageAutomod::VERDICT_HOLD,
+                'end' => 'GROUP_MODERATES_ALL',
+                'reason' => ($facts['group_disallows_detail'] ?? 'This community has moderators check every post') . '.',
+                'path' => [],
+            ];
+            if ($persist) {
+                $this->record($msgid, $groupid, $mode, $decoded);
+            }
+
+            return $decoded;
+        }
 
         $payload = [
             'msgid' => $msgid,
@@ -58,6 +78,7 @@ class AutomodService
             // Objects, not arrays: an empty PHP array encodes as [] and the service wants {}.
             'facts' => (object) $facts,
             'rules' => (object) $rules,
+            'other_posts' => $otherPosts,
         ];
 
         if ($backend) {
@@ -147,8 +168,14 @@ class AutomodService
             ->where('mg.rippled_in', 0)
             ->whereNotNull('mg.contentcheck_checked_at')
             ->where(function ($query) {
-                // No automod row yet, or the post was edited after the row was last written.
-                $query->whereNull('ma.id')->orWhereColumn('m.editedat', '>', 'ma.created');
+                // No automod row yet, the post was edited after the row was last written, or the
+                // review could not answer last time and it is worth another try.
+                $query->whereNull('ma.id')
+                    ->orWhereColumn('m.editedat', '>', 'ma.created')
+                    ->orWhere(function ($q) {
+                        $q->where('ma.end_node', 'UNAVAILABLE')
+                            ->where('ma.created', '<', now()->subMinutes(5));
+                    });
             })
             ->when(
                 $eligibleGroupIds !== null,

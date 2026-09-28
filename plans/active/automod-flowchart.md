@@ -235,7 +235,8 @@ Whole posts, held for any text reason, community rules applied:
 | medicine | 41 | 34 (83%) | 32 (78%) | 34 (83%) |
 | approved | 200 | 3 (2%) | 1 (1%) | 3 (2%) |
 
-Claude holds at least as many as Jev everywhere, and holding when either says yes adds at
+Claude holds at least as many as Jev in every group but borrow/swap (29 to 30) and the six
+"other" posts (3 to 5), and holding when either says yes adds at
 most five posts a group. Claude stays the backend; Jev stays available for comparison.
 
 The vague rejections neither model holds (122) are mostly specific requests: "Washing
@@ -246,3 +247,67 @@ the member does not reply, which is about the member, not the words. So on vague
 models are nearer the written rule than the moderators. This is also why approve-only needs
 shadow numbers per community first: some communities are stricter than the national rule,
 and automated review will not reproduce that.
+
+## Chart version 5 (28 September 2026): cleaner judges, and the results review themselves
+
+Edward's instructions overnight, taken in turn.
+
+**Moderators are a fallible judge, so use the steadier ones.** Over 180 days, 190 moderators
+made 30 or more decisions; the median rejection rate is 1.7% and the middle half sit between
+0.5% and 3.7%. The strictest reject 13 to 17% of what they see. Only rejections and
+approvals by the middle half count now. "Vague" fell from 336 rejections to 49 on the same
+basis: the strict moderators produced most of it, and the "asked for size, no reply"
+templates vanish entirely. A specific item rejected for want of a size or colour is not
+vague. The remaining vague rejections neither model held were mostly Portsmouth-area
+"Wanted: Various" rejections of posts listing several items, a local one-item-per-post rule.
+
+**Read every miss.** With the clean set, chart version 4 held 53% of borrow/swap
+rejections, 63% of money, 81% of not an item, 77% of medicine, 92% of animals, 76% of
+vague, and 3% of approved posts. Reading the misses: the borrow/swap ones are ordinary
+Wanteds for tools rejected with Sheffield's catch-all "Borrow/Swap/Sell/Kind" template, so
+the model was right. The real misses share shapes the questions did not cover: sale
+adverts without a price ("Buyer must remove", "Same Day Transport Avail", copied listing
+formats), a discount code, e-tickets, an appeal to buy new tinned food, hayfever spray and
+lens solution, and two-word posts ("I need cocker").
+
+**Whatever a person can judge in reviewing the results, the results should judge.** Three
+changes, all in `automod/src/prompt.js` and `walk.js`:
+
+1. Extract, then judge (the EEE technique). The one call per post first writes down the
+   post's features: the items named, any money or sale language, borrowing language,
+   animals, medicines, links or codes, and for a very short post its likely readings.
+   Only then does it answer. Research supports it: a two-stage extract-then-judge pipeline
+   gave a 9.7-point accuracy gain in radiology report classification (Sci Rep 2025), and
+   reasoning before classifying helps short emotional texts (arXiv 2507.00214). The same
+   sources warn that example lists bias the output and that plain attribute lists beat
+   heavy prompting, so there are no examples, just plain fields.
+2. Keyword flags. A basic, deliberately broad word list per rule (`KEYWORDS`), matched in
+   code. A flag never decides anything: the model is shown the words and asked to weigh
+   them, they are recorded as evidence, and if the model still answers no to a flagged
+   question, that one question is asked again on its own with the words quoted (the review
+   pass, `ClaudeBackend.ask`).
+3. Adjudication (`scripts/adjudicate.mjs`). For every post where the model and a moderator
+   disagreed, the model is asked what a reviewer would ask: is the moderator's recorded
+   reason true of this post, is the template not about this post, or was a stricter local
+   rule applied? That is the reading I had been doing by eye, made part of the results.
+
+Short text: the system prompt tells the model posts are often a few words, to read a short
+post as a local reader would, to list its likely meanings, and that a short post naming
+one specific item is fine while one naming only a category is not.
+
+**The questions moderators see** (Edward: the modal's explanations were weak) are now
+specific. Each member signal is its own fact with its finding as evidence ("Note left
+3 Sep", "User Mailed on 12 Sep", "Moderated"). Location says which location (the place the
+member gave, mapped; never their IP). The duplicate check compares items against the
+member's other open posts, listed to the model, not subject strings. Spam is split into
+links and sending patterns, each naming the finding. Personal details are a question only
+where the community restricts them. The two vague questions are one. Missing rules are
+added: illegal, counterfeit or stolen; hazardous substances; sale adverts and traders;
+non-prescription medicine, supplements and medical products; animal medicine; contact
+lenses and solution. A community that has moderators check every post is answered by the
+batch without calling the model. A decision the model could not make is retried after
+five minutes rather than holding the post for ever.
+
+Also fixed on the way: production compared the model's confidence with the 0.7 threshold,
+so a "yes" given at 60% confidence was treated as no, while the offline numbers used the
+model's answer. The model's answer now decides; the confidence is shown.
