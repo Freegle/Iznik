@@ -236,10 +236,11 @@
       "check": {
         "kind": "text",
         "threshold": 0.7,
+        "when": "is_offer",
         "flags": [
           "listing"
         ],
-        "question": "Does this post read as a commercial sale advert or a trader's listing rather than a member giving something away: for example a listing copied from a sale site with \"buyer\", \"condition:\", \"model:\" or \"RRP\", paid delivery or transport offered, or a business advertising itself?"
+        "question": "Does this post read as a commercial sale advert or a trader's listing rather than a member giving something away or asking for something for themselves or their family: for example a listing copied from a sale site with \"buyer\", \"condition:\", \"model:\" or \"RRP\", paid delivery or transport offered, or a business or trader collecting stock? A private member asking for items for their own use or a relative is not a listing."
       }
     },
     "HOLD_LISTING": {

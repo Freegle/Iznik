@@ -451,14 +451,16 @@ It runs in two modes, set centrally per community for the trial:
   above. A post it holds waits for you, with the reason shown.
 
 How well it does was measured against real decisions, treating neither the model nor the
-moderator as always right. On 802 posts from the last six months, the questions about the
-words held about two thirds of the posts moderators had rejected as vague, selling or
-borrowing, and most of those rejected for animals, medicines or not being an item. They
-held 3 of 200 posts moderators had approved. Many of the "vague" rejections they did not
-hold name a specific item ("Washing machine", "Bike", "Tent"): by Freegle's rule of naming
-the item those are not vague, and some communities are stricter than that. Most other
-rejections turn on things the words of a post cannot show, such as a duplicate or a
-reason the moderator did not record. That is why the facts come first, and why a
+moderator as always right. Only decisions by moderators in the middle of the range were
+used: over six months the median moderator rejects 1.7% of what they see, and the strictest
+reject 13 to 17%, so those outside the middle half were left out. On 516 such posts, the
+review held about two thirds of the posts rejected as vague, selling or borrowing, and nine
+in ten of those rejected for animals, medicines or not being an item, and held 9 of 300
+posts moderators had approved. Of the rejections it did not hold, most were, on the
+model's own reading, the moderator's error, a standard message naming a rule the post
+did not break, or a stricter local rule such as one item per post. Its own misses were
+five. Many rejections turn on things the words of a post cannot show, such as a duplicate
+or a reason the moderator did not record. That is why the facts come first, and why a
 community runs in shadow before approve-only.
 
 ## What changes for members, and what they notice

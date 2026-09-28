@@ -81,8 +81,10 @@ const NODES = [
       question: 'Everything on Freegle must be given entirely free, with no strings. Does this post ask for or offer money in any form: a price, "ono", a "donation" or "contribution" to the poster, a reward, or payment for delivery, fuel or postage?' }],
   ['LISTING', "Does it read like a sale advert or a trader's listing?",
     "It reads like a sale advert or a trader's listing rather than a member giving something away.",
-    { kind: 'text', threshold: T, flags: ['listing'],
-      question: 'Does this post read as a commercial sale advert or a trader\'s listing rather than a member giving something away: for example a listing copied from a sale site with "buyer", "condition:", "model:" or "RRP", paid delivery or transport offered, or a business advertising itself?' }],
+    // Offers only: a Wanted from a trader collecting stock is allowed where it is declared
+    // (the declareselling rule), and is for moderators, not this question.
+    { kind: 'text', threshold: T, when: 'is_offer', flags: ['listing'],
+      question: 'Does this post read as a commercial sale advert or a trader\'s listing rather than a member giving something away or asking for something for themselves or their family: for example a listing copied from a sale site with "buyer", "condition:", "model:" or "RRP", paid delivery or transport offered, or a business or trader collecting stock? A private member asking for items for their own use or a relative is not a listing.' }],
   ['LOAN', 'Is it a loan or a request to borrow?',
     'Asks to borrow, or offers a loan. This community does not allow loans.',
     { kind: 'text', threshold: T, rule: 'allowloans', flags: ['loan'],

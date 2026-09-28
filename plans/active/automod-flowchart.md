@@ -311,3 +311,61 @@ five minutes rather than holding the post for ever.
 Also fixed on the way: production compared the model's confidence with the 0.7 threshold,
 so a "yes" given at 60% confidence was treated as no, while the offline numbers used the
 model's answer. The model's answer now decides; the confidence is shown.
+
+### Version 5 measured (28 September 2026)
+
+516 posts decided by moderators in the middle rejection-rate band: 216 rejected with a text
+reason (49 vague, 41 money, 36 not an item, 32 borrow or swap, 30 medicine, 26 animals, 2
+other) and 300 approved. Chart version 5, Claude through the CLI with the review pass, and
+Jev on the same questions. Holds by the moderator's reason:
+
+| reason | posts | v4 Claude | v5 Claude | v5 Jev |
+|---|---|---|---|---|
+| vague | 49 | 37 (76%) | 35 (71%) | 35 (71%) |
+| money | 41 | 26 (63%) | 26 (63%) | 17 (41%) |
+| not an item | 36 | 31 (86%) | 33 (92%) | 29 (81%) |
+| borrow/swap | 32 | 18 (56%) | 16 (50%) | 16 (50%) |
+| medicine | 30 | 25 (83%) | 28 (93%) | 24 (80%) |
+| animals | 26 | 24 (92%) | 25 (96%) | 25 (96%) |
+| approved | 300 | 10 (3%) | 9 (3%) | 7 (2%) |
+
+Level overall (165 of 216 rejections held against 163), which is the wrong way to read it,
+because the moderators' labels are what version 5 was built not to copy. The posts it was
+built to catch, it now catches: "I need cocker" (animal wanted), the discount code and
+the e-tickets (not an item), the appeal to buy tinned food (not an item), the copied
+cooker and sofa listings (money, sale advert), the inhaler spacer and lens solution
+(medical products). The hayfever spray is answered yes and then correctly let through,
+because that community allows non-prescription medicine.
+
+`scripts/adjudicate.mjs` then asked the model to judge every disagreement with a
+moderator, the way I had been reading them by eye. The model judging itself is a fallible
+judge too, so these are its opinion, not a score:
+
+| | v4 | v5 |
+|---|---|---|
+| rejections not held: the model's own miss | 10 | 5 |
+| the moderator's error | 18 | 21 |
+| a template naming a rule the post does not break | 20 | 16 |
+| a stricter local rule (one item per post, sizes) | 10 | 8 |
+| approved posts held: the model's error | 7 | 8 |
+| approved posts held: the moderator missed it | 1 | 1 |
+
+The five remaining misses are a copied sale advert with no price and "Buyer must remove"
+(the model reads it as free), a "real bargain" leather suite, a torque wrench wanted on a
+community that rejects most tool requests as loans, one multi-item Wanted, and one medical
+item. The eight false holds are the vagueness boundary (a brand of devices, "clothes for a
+woman" with sizes, "plants and seeds") and Wanteds the sale-advert question read as a
+trader collecting stock. Asked on its own, its evidence shows why: "Items received in
+response to this request will be resold", "trying to make a living upcycling", "We are a
+workshop". Those are traders asking for stock, which Freegle allows where it is declared
+(the declareselling rule) and which is a moderator's call, so the sale-advert question
+now applies to Offers only.
+
+Jev is level with Claude on the item questions and well behind on money and sale adverts.
+It answers no review pass and no features, so its numbers are the plain question. It stays
+the comparison backend.
+
+What is left is mostly not the model. Of the 51 rejections version 5 does not hold, 45
+are, on the model's reading, the moderator's error, a template that names a rule the post
+does not break, or a stricter local rule. Shadow mode on real communities, with the
+step-is-wrong marks, is the way to see how often that reading is right.
