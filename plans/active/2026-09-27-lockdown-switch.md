@@ -950,3 +950,16 @@ Support removed before it drains.
   member-content mail type from lacking one.
 - Background tasks re-read their content when they run (11.7). Mail already at the relay is
   the runbook step (10.14).
+
+### 11.9 Moderators writing to members (27 September, from review)
+
+`POST /memberships` `Leave Member` and `Leave Approved Member` are not a member leaving: they
+send a moderator's mail to the member. 10.5 had them as the member's own action. While
+`mods` is held, a moderator who is not Support or Admin may not start a message to a member:
+
+- `Leave Member`, `Leave Approved Member`: refused.
+- Opening a User2Mod chat to a member from ModTools (the moderator starting it): refused.
+- Replying in a User2Mod chat the member started or has written in: allowed, so reports and
+  questions still get answers. A hijacked moderator can reach only members who wrote to
+  their volunteers, one at a time, and every such message is visible to the other
+  moderators of the group.
