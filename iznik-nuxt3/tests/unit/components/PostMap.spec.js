@@ -1215,6 +1215,59 @@ describe('PostMap', () => {
       expect(refit[1].padding).toEqual([40, 40])
     })
 
+    // Discourse 10091: once the member has dragged the map, a search runs within the map's
+    // bounds. Re-fitting the map to those results (with padding) widened the bounds, the wider
+    // search found posts further out, and the next re-fit widened it again - the map zoomed out
+    // in steps to the whole of England. After a drag the member owns the view, so the results
+    // it produced must not move it.
+    it('does not re-fit the map to a search within the bounds the member dragged to', async () => {
+      const wrapper = await mountNearbyWithMessages(
+        [{ id: 1, lat: 52.0, lng: -1.0, distance: 1, groupid: 1 }],
+        { search: 'bed', browseSearch: true }
+      )
+      const map = wrapper.findComponent({ name: 'LMap' })
+      await new Promise((resolve) => setTimeout(resolve, 260))
+      await flushPromises()
+
+      // Results near the edges of the dragged-to view, as a bounds search returns.
+      mockMessageStore.search.mockResolvedValue([
+        {
+          id: 11,
+          lat: 51.6,
+          lng: -1.4,
+          distance: 90,
+          groupid: 1,
+          type: 'Offer',
+        },
+        {
+          id: 12,
+          lat: 53.4,
+          lng: -0.6,
+          distance: 120,
+          groupid: 1,
+          type: 'Offer',
+        },
+      ])
+      map.vm.leafletObject.fitBounds.mockClear()
+
+      // The drag moves the view somewhere new.
+      map.vm.leafletObject.getBounds.mockReturnValue({
+        getSouthWest: () => ({ lat: 51.5, lng: -1.5 }),
+        getNorthEast: () => ({ lat: 53.5, lng: -0.5 }),
+        contains: vi.fn().mockReturnValue(true),
+        toBBoxString: vi.fn().mockReturnValue('51.5,-1.5,53.5,-0.5'),
+      })
+      await map.vm.$emit('dragend')
+      await flushPromises()
+      await new Promise((resolve) => setTimeout(resolve, 260))
+      await flushPromises()
+
+      expect(mockMessageStore.search).toHaveBeenCalledWith(
+        expect.objectContaining({ search: 'bed', swlat: 51.5, nelat: 53.5 })
+      )
+      expect(map.vm.leafletObject.fitBounds).not.toHaveBeenCalled()
+    })
+
     it('passes only within-distance posts as markers to the primary ClusterMarker', async () => {
       const wrapper = await mountNearbyWithMessages(
         [
