@@ -59,9 +59,22 @@ vhost) and `iznik-batch/app/Services/ImageStore/`.
 
 ## Before the cutover
 
-1. In the cloud console: enable object storage, create the bucket, make it publicly
-   readable, and create an access key. (The provider exposes no ACL or policy through
-   the S3 API; public access and CORS are console settings.)
+1. Enable object storage for the organisation in region `uk-lon-1`, create the bucket
+   with `public_read` on (and `public_list` off), and create an access key that can
+   write to it. Public access is a bucket setting in the provider's own API, not an S3
+   ACL or policy, which that provider's S3 interface does not accept. The console does
+   all three, or the Core API does with a token holding the `object_storage` scope:
+
+   | Step | Call |
+   |---|---|
+   | Enable the service (starts the monthly base fee) | `POST organizations/:organization/object_storage/:object_storage_cluster` |
+   | Create the bucket, `access_control_list.public_read: true` | `POST organizations/:organization/object_storage/:object_storage_cluster/buckets` |
+   | Create an access key | `POST organizations/:organization/object_storage/:object_storage_cluster/access_keys` |
+   | Get its secret, shown once | `POST object_storage/access_keys/:access_key/generate_credentials` |
+
+   The cluster is looked up by `object_storage_cluster[region]=uk-lon-1`. The bucket's
+   `public_url` field is the value for `IMAGE_STORE_PUBLIC_URL`. No CORS origins are
+   needed: only the image resizer reads the bucket, server to server.
 2. On the Docker host, add the write-side settings to the batch secrets file and the
    public bucket URL to the compose `.env` (see `.env.background.example` and
    `.env.example`). Leave `IMAGE_STORE_ENABLED` and `IMAGE_STORE_MIGRATE_ENABLED` off.

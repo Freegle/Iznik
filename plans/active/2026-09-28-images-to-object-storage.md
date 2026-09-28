@@ -65,12 +65,14 @@ unique, so it is a plain copy), and put the old tusd command and bind back.
 ## Storage facts that shaped this
 
 - Katapult object storage is S3-compatible with multipart, presigned URLs, lifecycle
-  and versioning, but **no bucket or object ACLs and no CORS via the S3 API**; public
-  access and CORS are set in the Krystal console. Buckets and keys are console tasks:
-  the Core API has no object storage endpoints. £5/month for 250 GB and 1 TB egress,
-  then £0.02/GB; the NFS share bills ~£0.09/GB used, so the store drops from ~£100 to
-  ~£25 a month once the volume is gone.
-- Endpoint hostname is not documented; it is shown in the console and is config here.
+  and versioning, but **no bucket or object ACLs and no CORS via the S3 API**. Public
+  read, CORS and access keys are set through the Core API (`object_storage` scope;
+  region `uk-lon-1`) or the console. Checked 2026-09-28: the organisation has no
+  object storage account yet. £5/month for 250 GB and 1 TB egress, then £0.02/GB.
+- The file storage volume `images` bills on use: 1,034 GB at £0.09 = £93.15/month
+  (console, 2026-09-28). The bucket holding the same is about £21, so about £72/month
+  saved once the volume is deleted.
+- Endpoint hostname is not documented; the bucket's `public_url` gives the public base.
 - A public bucket that turns out not to be public fails **silently**: nginx falls
   through to the legacy hop and every new image 404s. `images:object-store-check`
   proves an anonymous GET works before the switch is enabled.
@@ -105,8 +107,7 @@ unique, so it is a plain copy), and put the old tusd command and bind back.
 
 ## Open for Edward
 
-- The Katapult API token in git history is rotated; none is on this machine or the
-  prod host. Not needed for the build; the bucket, public access and access key are
-  console steps in the runbook.
+- Creating the object storage account starts the base fee, so it waits for Edward.
+  The calls are in the runbook.
 - Whether the file storage volume can be deleted outright at the end, or must be
   emptied first, is a billing question for the console.
