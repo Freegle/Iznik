@@ -427,8 +427,8 @@ flowchart of plain questions, the same for every community, kept centrally:
    does it name a specific item, or only "anything" or a category; is it about
    something other than a physical item, including codes, e-tickets and appeals to buy
    new goods; does it mention money, selling or buying in any way, even with no price
-   (any mention holds, including "donations" and
-   delivery money); does it read like a sale advert or a trader's listing; a loan;
+   (any mention holds, including "donations" and delivery money, except the poster
+   saying they once bought it or that it was expensive, with no amount given); does it read like a sale advert or a trader's listing; a loan;
    any mention of swapping, even as one option; illegal, counterfeit or stolen; a hazardous substance;
    animals; weapons, firearms, knives; prescription medicine, non-prescription medicine
    and supplements, animal medicine; contact lenses and lens solution; alcohol,
@@ -458,9 +458,10 @@ reject 13 to 17%, so those outside the middle half were left out. Each post was 
 moderator saw it, because members often edit a post after it is rejected. On 516 such posts,
 the review held 97% or more of the posts rejected for money, borrowing or swapping, 94% of
 those rejected as not an item or for medicines, all of those rejected for animals, and 73%
-of those rejected as vague. It held 16 of 300 posts moderators had approved, most of them
-because they mention money in passing ("giving away, not selling"), which it holds on
-purpose. Most of the vague rejections it does not hold name an item, or apply a stricter
+of those rejected as vague. It held 13 of 300 posts moderators had approved, most of them
+because they mention selling in passing ("giving away, not selling"), which it holds on
+purpose. A second set from other months, never used to word the questions, gave the same
+picture: 94% of rejections held and 14 of 400 approved posts. Most of the vague rejections it does not hold name an item, or apply a stricter
 local rule such as one item per post. Many rejections turn on things the words of a post cannot show, such as a duplicate
 or a reason the moderator did not record. That is why the facts come first, and why a
 community runs in shadow before approve-only.

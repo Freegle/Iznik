@@ -78,7 +78,7 @@ const NODES = [
   ['MONEY', 'Does it mention money, selling or buying?',
     'Mentions money, selling or buying. Everything on Freegle must be given entirely free.',
     { kind: 'text', threshold: T, flags: ['money'],
-      question: 'Everything on Freegle must be given entirely free, with no strings, and a post must not leave readers wondering. Any mention counts, even when the item otherwise seems free. Does this post mention money, selling or buying in any way: a price, cash, "ono", what it cost or is worth, a bargain, "selling" or "for sale" (even as a figure of speech, and even with no price), buying or a buyer, a "donation" or "contribution" to the poster, a reward, or payment for delivery, fuel or postage?' }],
+      question: 'Everything on Freegle must be given entirely free, with no strings, and a post must not leave readers wondering. Any mention counts, even when the item otherwise seems free, with one exception: the poster saying they bought it, or that it was expensive, in the past, with no amount of money given, is fine. Does this post mention money, selling or buying in any way: a price, cash, "ono", what it cost or is worth, a bargain, "selling" or "for sale" (even as a figure of speech, and even with no price), buying or a buyer, a "donation" or "contribution" to the poster, a reward, or payment for delivery, fuel or postage?' }],
   ['LISTING', "Does it read like a sale advert or a trader's listing?",
     "It reads like a sale advert or a trader's listing rather than a member giving something away.",
     // Offers only: a Wanted from a trader collecting stock is allowed where it is declared
