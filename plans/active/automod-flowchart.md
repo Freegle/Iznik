@@ -364,3 +364,31 @@ intended. The vague boundary is what is left, and shadow mode on real communitie
 the step-is-wrong marks, is where it gets settled.
 
 Jev is close behind Claude everywhere on this set and stays the comparison backend.
+
+### Checked on posts the questions were never tuned on
+
+The questions above were worded while reading the 516 posts, so they could fit that set and
+nothing else. A second set was drawn from windows the first did not use: steady moderators'
+rejections from 6 to 12 months ago and approvals from 1 to 4 months ago, with every post
+already seen excluded, each read as the moderator saw it. Two things in that data had to go
+first. 35 of the older rejected posts have had their text and photos purged since, so
+nothing can judge them. And 50 approved posts carry a moderators' footer ("-- MODERATORS
+MESSAGE --") added at approval, which is not there when automated review runs; stripping it
+changed one decision.
+
+| reason | tuned set | unseen set |
+|---|---|---|
+| money | 98% (41) | 91% (34) |
+| borrow/swap | 97% (32) | 96% (27) |
+| not an item | 94% (36) | 100% (31) |
+| medicine | 93% (30) | 97% (33) |
+| animals | 100% (26) | 100% (13) |
+| vague | 73% (48) | 81% (21) |
+| all rejections | 91% | 94% |
+| approved posts held | 5% (300) | 5% (400) |
+
+No sign of fitting the first set. The unseen set's approved posts held were mostly the money
+rule doing what it was asked (a poster's own past purchase, "very expensive when new"), and
+the hazardous question holding an empty gas cylinder and used lighters. Gas cylinders have
+their own community rule, so the hazardous question now leaves them, and ordinary household
+items, to it; asked again, both posts pass.
