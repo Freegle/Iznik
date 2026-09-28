@@ -100,7 +100,7 @@ const NODES = [
   ['HAZARDOUS', 'Is it a hazardous or restricted substance?',
     'It is a hazardous or restricted substance.',
     { kind: 'text', threshold: T, flags: ['hazardous'],
-      question: 'Is this post about a hazardous or restricted substance: chemicals, pesticides or weedkiller, fuel, fireworks, asbestos, or anything else dangerous to hand over?' }],
+      question: 'Gas cylinders are not part of this question (each community has its own rule for them), and nor are ordinary household items such as lighters, matches, paint or cleaning products. Is this post about a hazardous or restricted substance: chemicals, pesticides or weedkiller, loose fuel, fireworks, asbestos, or anything else dangerous to hand over?' }],
   ['ANIMALS_OFFER', 'Is it offering a live animal?',
     'Offers a live animal for rehoming. This community does not allow it.',
     { kind: 'text', threshold: T, rule: 'animalsoffer', when: 'is_offer', flags: ['animals'],

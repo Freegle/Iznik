@@ -305,7 +305,7 @@
         "flags": [
           "hazardous"
         ],
-        "question": "Is this post about a hazardous or restricted substance: chemicals, pesticides or weedkiller, fuel, fireworks, asbestos, or anything else dangerous to hand over?"
+        "question": "Gas cylinders are not part of this question (each community has its own rule for them), and nor are ordinary household items such as lighters, matches, paint or cleaning products. Is this post about a hazardous or restricted substance: chemicals, pesticides or weedkiller, loose fuel, fireworks, asbestos, or anything else dangerous to hand over?"
       }
     },
     "HOLD_HAZARDOUS": {
