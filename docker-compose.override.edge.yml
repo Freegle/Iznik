@@ -21,10 +21,10 @@
 #   2. tile-server / wiki-* adopt the host's EXISTING data (the unprefixed osm
 #      volumes used by confident_curran + the /var/wiki binds) instead of
 #      creating empty project-scoped volumes and serving nothing.
-#   3. The not-yet-migrated images tier (frontend-nginx / delivery / tusd —
-#      plan §3) is held at replicas:0 so activating the edge profile does NOT
-#      start it. The ports/NFS bind are retained so step 3 is just a flip to
-#      replicas:1 (plus TUSD_COMMAND + the NFS mount at /srv/tusd-data).
+#   3. The images tier (frontend-nginx / delivery / tusd / tusd-nfs) runs here
+#      since 2026-07-08. Uploads go to a local spool and on to object storage;
+#      the NFS share is read-only for the legacy copy - see
+#      docs/ops/runbooks/images-to-object-storage.md.
 
 services:
   # --- Stage 1: adopted services, come UP on this host ----------------------
@@ -94,6 +94,10 @@ services:
     ports:
       - "8180:80"     # HAProxy reaches this with send-proxy (PROXY protocol)
       - "8188:8080"   # plain — the :8080 upload-URL form (apps/Freebie Alerts)
+    environment:
+      # The base default is the dev minio, which would silently 502 here. Refuse
+      # to start without the real public bucket URL (trailing slash) in .env.
+      - IMAGE_STORE_PUBLIC_URL=${IMAGE_STORE_PUBLIC_URL:?set IMAGE_STORE_PUBLIC_URL in .env to the public base URL of the image bucket}
 
   delivery:
     deploy:
@@ -119,21 +123,18 @@ services:
     # on GET and serves the same files reliably. Match it. (Found during the
     # 2026-07-08 cutover; upgrading tusd is separate, tested work.)
     image: tusproject/tusd:v2.4.0
-    # Prod flags, replicating app1 EXACTLY: -upload-dir=/images (NOT
-    # /srv/tusd-data), -behind-proxy, -base-path /, -disable-cors (all tus CORS
-    # from HAProxy). NO -hooks-http — app1 prod runs without hooks (plan §3/§5).
+    # Prod flags as app1 ran them (-behind-proxy, -base-path /, -disable-cors:
+    # all tus CORS from HAProxy; NO -hooks-http), except that uploads now land
+    # in the LOCAL spool volume, not on the NFS share. images:push-spool in
+    # batch-prod moves each completed upload to the object store within a
+    # minute or two; until then frontend-nginx serves it from here. See
+    # plans/active/2026-09-28-images-to-object-storage.md and the runbook
+    # docs/ops/runbooks/images-to-object-storage.md.
     #
-    # CRITICAL: the NFS is mounted at /images INSIDE the container (matching
-    # app1's -upload-dir=images → /images), even though the HOST mount is
-    # /srv/tusd-data. tusd's filestore bakes the ABSOLUTE storage path into
-    # every <id>.info ("Storage":{"Path":"/images/<id>"}). app1 wrote all
-    # existing .info files with /images/<id>; tusd v2.10.0 honours that recorded
-    # path, so a /srv/tusd-data mount made it 404 every existing upload
-    # (ERR_UPLOAD_NOT_FOUND) — and new edge uploads would have written
-    # /srv/tusd-data/<id>, which app1-as-backup could not serve. Mounting at
-    # /images keeps the recorded paths symmetric across app1 and the edge on the
-    # shared store. (Found + rolled back during the 2026-07-08 cutover.)
-    command: -upload-dir=/images -behind-proxy -base-path / -disable-cors
+    # tusd bakes the absolute path into every <id>.info, so the spool path is
+    # /spool inside the container everywhere (base compose too). The .info
+    # never leaves the host; only the bytes go to the bucket.
+    command: -upload-dir=/spool -behind-proxy -base-path / -disable-cors
     # Base healthcheck probes /tus/ (the dev base-path); prod base-path is /,
     # where tusd returns 405 for GET and 404 at /tus/. Probe / and accept 405.
     healthcheck:
@@ -142,14 +143,36 @@ services:
       timeout: 3s
       retries: 5
       start_period: 15s
+    # No NFS bind any more: the base compose mounts the tusd-spool volume at
+    # /spool. The share stays mounted on the host for tusd-nfs and batch-prod
+    # below, read-only, until the legacy copy is verified complete.
+
+  # Legacy uploads, read-only. frontend-nginx reaches this only for a GET the
+  # spool and the object store have both 404d. The host NFS mount is
+  # /srv/tusd-data; it is bound at /images because every legacy <id>.info
+  # records "Storage":{"Path":"/images/<id>"} and tusd honours that path.
+  # Remove this service, the nginx hop and the bind once
+  # images:migrate-legacy --verify reports nothing missing.
+  tusd-nfs:
+    deploy:
+      replicas: 1
+    cgroup_parent: interactive.slice
     volumes:
-      # Host /srv/tusd-data (the shared-NFS mount
-      # nfs2.nlc.storage.katapult.io:/katapult/fsv_5ivInYUXp22oVueE, rw) is bound
-      # to /images INSIDE the container so tusd's world matches app1's exactly —
-      # see the -upload-dir note above for why the path MUST be /images. rw:
-      # uploads migrate here; a second rw NFS client is the intended shared-store
-      # design and app1/edge use unique tusd IDs so they never collide.
-      - /srv/tusd-data:/images
+      - /srv/tusd-data:/images:ro
+
+  # The dev stand-in for the bucket has no place on the prod host.
+  minio:
+    deploy:
+      replicas: 0
+  minio-init:
+    deploy:
+      replicas: 0
+
+  batch-prod:
+    volumes:
+      # The legacy share, read-only, for images:migrate-legacy. It reads files by
+      # name only and never lists the directory. Drop with tusd-nfs above.
+      - /srv/tusd-data:/images:ro
 
 volumes:
   # Adopt the host's existing unprefixed volumes (created by confident_curran)

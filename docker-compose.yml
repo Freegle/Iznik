@@ -328,11 +328,14 @@ services:
           - tusd.localhost
     ports:
       - "${PORT_TUSD:-1080}:8080"
-    # Default == the dev/CI command. The edge VM overrides it via .env:
-    #   TUSD_COMMAND=-upload-dir=/srv/tusd-data -behind-proxy -base-path / -disable-cors
-    # No -hooks-http: uploaded images are turned into attachments by the apiv2 /api/image
-    # endpoint (client-side finalisation), matching app1 prod which runs without hooks.
-    command: ${TUSD_COMMAND:--base-path=/tus/ -cors-allow-headers=baggage,sentry-trace}
+    # Default == the dev/CI command; docker-compose.override.edge.yml sets the
+    # production flags. Both write to /spool, the tusd-spool volume: every upload
+    # lands on local disk and images:push-spool (batch) moves each completed one
+    # to the object store. No -hooks-http: uploaded images are turned into
+    # attachments by the apiv2 /api/image endpoint (client-side finalisation).
+    command: ${TUSD_COMMAND:--upload-dir=/spool -base-path=/tus/ -cors-allow-headers=baggage,sentry-trace}
+    volumes:
+      - tusd-spool:/spool
     depends_on:
       reverse-proxy:
         condition: service_healthy
@@ -361,6 +364,75 @@ services:
   # docker-compose.override.edge.yml; on dev the stack is validated over the
   # compose network.
   # ===========================================================================
+  # Read-only tusd over the LEGACY upload store, for the migration to object
+  # storage (plans/active/2026-09-28-images-to-object-storage.md). frontend-nginx
+  # asks it for a GET only after the spool and the object store have both said
+  # 404. On the prod host the override binds the NFS share here read-only; on
+  # dev it is an empty volume. Removed, with the nginx hop, once
+  # images:migrate-legacy --verify reports nothing missing.
+  tusd-nfs:
+    # Same pin as tusd on the edge: v2.10.0 creates <id>.lock on GET, which a
+    # read-only mount cannot satisfy. v2.4.0 does not lock on GET.
+    image: tusproject/tusd:v2.4.0
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-tusd-nfs
+    profiles:
+      - edge
+    networks:
+      - default
+    command: -upload-dir=/images -behind-proxy -base-path / -disable-cors
+    volumes:
+      - tusd-legacy:/images
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/ 2>&1 | grep -E '(200|405)' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  # Dev/CI stand-in for the Katapult bucket, so the edge stack can be run end to
+  # end locally: upload -> spool -> images:push-spool -> bucket -> served by
+  # frontend-nginx. The prod override holds both at replicas:0.
+  minio:
+    image: minio/minio:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-minio
+    profiles:
+      - edge
+    networks:
+      - default
+    command: server /data --console-address :9001
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # Creates the images bucket and makes it anonymously readable, which is how the
+  # real bucket is configured in the Krystal console (Katapult exposes no ACL or
+  # policy through the S3 API). Exits when done.
+  minio-init:
+    image: minio/mc:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-minio-init
+    profiles:
+      - edge
+    networks:
+      - default
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mc alias set local http://minio:9000 minioadmin minioadmin
+        mc mb -p local/images
+        mc anonymous set download local/images
+        echo "minio: bucket images ready and publicly readable"
+
   frontend-nginx:
     image: nginx:1.27-alpine
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-frontend-nginx
@@ -373,11 +445,23 @@ services:
         condition: service_started
       tusd:
         condition: service_started
+      tusd-nfs:
+        condition: service_started
       tile-server:
         condition: service_started
         required: false
+    environment:
+      # frontend-nginx.conf is an envsubst template: the image renders it into
+      # /etc/nginx/nginx.conf at start. The FILTER is what makes that safe -
+      # only IMAGE_STORE_* is substituted, every nginx $variable is left alone.
+      - NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx
+      - NGINX_ENVSUBST_FILTER=^IMAGE_STORE_
+      # Public base URL of the image bucket, with a trailing slash. GETs for an
+      # upload that is no longer in the spool are proxied to this + <id>. The
+      # prod override requires it to be set; the default is the dev minio.
+      - IMAGE_STORE_PUBLIC_URL=${IMAGE_STORE_PUBLIC_URL:-http://minio:9000/images/}
     volumes:
-      - ./frontend-nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend-nginx.conf:/etc/nginx/templates/nginx.conf.template:ro
       - delivery-cache:/var/cache/nginx/wsrv_cache
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8081/healthz || exit 1"]
@@ -1611,6 +1695,9 @@ services:
       # drift from the source of truth silently).
       - ./tools/orm-migration/services/laravel:/var/www/orm-migration-manifest:ro
       - apiv2_logs:/var/log/freegle
+      # tusd's upload spool, so images:push-spool can be run against the dev
+      # edge stack (minio) the same way batch-prod runs it against the bucket.
+      - tusd-spool:/spool
     depends_on:
       percona:
         condition: service_healthy
@@ -1758,6 +1845,9 @@ services:
       # monitoring key above on purpose: that one is a root shell across the
       # estate, this one only reads the outbound relay's mail queue.
       - ${MAIL_DEFERRALS_SSH_KEY_HOST_PATH:-/dev/null}:/etc/mail-deferrals-ssh-key:ro
+      # tusd's upload spool: images:push-spool (scheduled) moves completed
+      # uploads from here to the object store. Same volume tusd writes to.
+      - tusd-spool:/spool
     extra_hosts:
       - "db-host:${DB_HOST_IP:-127.0.0.1}"
       # Read replica for the DB read/write split. Falls back to the write host
@@ -1968,8 +2058,12 @@ volumes:
   # edge profile (front-end host) — see plans/2026-06-25-frontend-server-migration.md
   delivery-cache:
     driver: local   # frontend-nginx wsrv_cache (mirror of app1's 41 GB delivery cache)
-  tusd-data:
-    driver: local   # Docker-managed tusd upload dir; the VM override points /srv/tusd-data at NFS instead
+  tusd-spool:
+    driver: local   # tusd's local upload spool; images:push-spool drains it to the object store
+  tusd-legacy:
+    driver: local   # empty stand-in for the legacy NFS share (the edge override binds the real one)
+  minio-data:
+    driver: local   # dev/CI object store
   osm-data:
     driver: local   # tile-server PostGIS (osm-data, ~56 GB once imported)
   osm-tiles:
