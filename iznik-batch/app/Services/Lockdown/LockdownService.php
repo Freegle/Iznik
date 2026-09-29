@@ -148,6 +148,29 @@ class LockdownService
     }
 
     /**
+     * Record a reading against the latest incident, replacing the last one rather than
+     * adding to it - such as how many emails are waiting to send. Unlike count() this also
+     * works after a close, so the Lockdown tab can show the queue emptying afterwards.
+     */
+    public function record(string $kind, int $value): void
+    {
+        $incidentId = $this->incidentId();
+        if ($incidentId === null) {
+            return;
+        }
+
+        try {
+            DB::table('lockdown_counters')->upsert(
+                [['lockdownid' => $incidentId, 'kind' => substr($kind, 0, 64), 'count' => max(0, $value)]],
+                ['lockdownid', 'kind'],
+                ['count']
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Lockdown: could not record', ['kind' => $kind, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /**
      * Press the switch: every surface held. $notice is the member notice text, or null for none.
      */
     public function press(?int $by, ?string $reason, ?string $notice = null): int

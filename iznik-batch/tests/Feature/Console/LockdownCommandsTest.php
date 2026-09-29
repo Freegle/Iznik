@@ -352,6 +352,21 @@ class LockdownCommandsTest extends TestCase
         $this->assertFileDoesNotExist($this->testSpoolDir.'/pending/bad.json');
     }
 
+    public function test_tick_records_the_email_queue_after_close(): void
+    {
+        Mail::fake();
+        $incidentId = $this->lockdown->press(null, 'test reason');
+        $this->lockdown->close(null, 'done');
+        $this->writePendingSpoolFile('one', null);
+        $this->writePendingSpoolFile('two', null);
+
+        $this->artisan('lockdown:tick')
+            ->expectsOutputToContain('Emails queued 2.')
+            ->assertSuccessful();
+
+        $this->assertEquals(2, DB::table('lockdown_counters')->where(['lockdownid' => $incidentId, 'kind' => 'queue:email'])->value('count'));
+    }
+
     public function test_tick_does_not_run_filter_spool_when_email_is_not_held(): void
     {
         Mail::fake();

@@ -73,6 +73,10 @@ describe('ModSupportLockdown', () => {
           ModSupportLockdownHeld: {
             template: '<div class="mod-support-lockdown-held" />',
           },
+          ModSupportLockdownRelease: {
+            template: '<div class="mod-support-lockdown-release" />',
+            props: ['stats'],
+          },
           'b-tabs': { template: '<div><slot /></div>' },
           'b-tab': {
             template: '<div class="b-tab"><slot name="title" /><slot /></div>',
@@ -116,17 +120,75 @@ describe('ModSupportLockdown', () => {
     vi.useFakeTimers()
   })
 
-  it('fetches mod state and history on mount, and stats only while active', async () => {
+  it('fetches mod state and history on mount, and stats only once there has been a lockdown', async () => {
     createWrapper()
     await flushPromises()
     expect(mockFetchMod).toHaveBeenCalled()
     expect(mockFetchHistory).toHaveBeenCalled()
     expect(mockFetchStats).not.toHaveBeenCalled()
 
-    store.active = true
+    store.history = [
+      { id: 1, incidentid: 1, active: false, created: '2026-01-01' },
+    ]
     createWrapper()
     await flushPromises()
     expect(mockFetchStats).toHaveBeenCalled()
+  })
+
+  it('shows the release view while active', async () => {
+    store.active = true
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(wrapper.find('.mod-support-lockdown-release').exists()).toBe(true)
+  })
+
+  it('shows the drain after a close while anything is still held or queued', async () => {
+    store.history = [
+      { id: 2, incidentid: 1, active: false, created: '2020-01-01' },
+    ]
+    store.stats = { release: { chat: { held: 3 } }, queue: { email: 0 } }
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(wrapper.find('.mod-support-lockdown-release').exists()).toBe(true)
+
+    store.stats = { release: { chat: { held: 0 } }, queue: { email: 12 } }
+    await flushPromises()
+    expect(wrapper.find('.mod-support-lockdown-release').exists()).toBe(true)
+  })
+
+  it('keeps the finished drain up for a day after the close, then hides it', async () => {
+    store.stats = { release: { chat: { held: 0 } }, queue: { email: 0 } }
+    store.history = [
+      {
+        id: 2,
+        incidentid: 1,
+        active: false,
+        created: new Date().toISOString(),
+      },
+    ]
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(wrapper.find('.mod-support-lockdown-release').exists()).toBe(true)
+
+    store.history = [
+      { id: 2, incidentid: 1, active: false, created: '2020-01-01' },
+    ]
+    await flushPromises()
+    expect(wrapper.find('.mod-support-lockdown-release').exists()).toBe(false)
+  })
+
+  it('polls every 5 seconds after a close while draining', async () => {
+    store.history = [
+      { id: 2, incidentid: 1, active: false, created: '2020-01-01' },
+    ]
+    store.stats = { release: { post: { held: 1 } }, queue: { email: 0 } }
+    createWrapper()
+    await flushPromises()
+    mockFetchStats.mockClear()
+
+    vi.advanceTimersByTime(5000)
+    await flushPromises()
+    expect(mockFetchStats).toHaveBeenCalledTimes(1)
   })
 
   it('shows only the press form and the history before any lockdown', async () => {

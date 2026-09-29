@@ -97,6 +97,51 @@ func TestGetModtoolsLockdownStatsCounts(t *testing.T) {
 	assert.Equal(t, float64(5), api["delayseconds"])
 }
 
+// TestGetModtoolsLockdownStatsRelease: after a close, Support can still watch what was held
+// drain - how many are still held, what became of the rest, and the email queue.
+func TestGetModtoolsLockdownStatsRelease(t *testing.T) {
+	prefix := uniquePrefix("ld_release")
+	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	_, token := CreateTestSession(t, supportID)
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+
+	incidentID := pressLockdown(t, token, "release "+prefix)
+	defer cleanupIncident(t, incidentID)
+
+	addHold(t, incidentID, "chat", 910000001, senderID, "")
+	addHold(t, incidentID, "chat", 910000002, senderID, "released")
+	addHold(t, incidentID, "chat", 910000003, senderID, "rejected")
+	addHold(t, incidentID, "post", 910000004, senderID, "review")
+	addHold(t, incidentID, "post", 910000005, senderID, "gone")
+	require.NoError(t, database.DBConn.Table("lockdown_counters").Create(map[string]interface{}{
+		"lockdownid": incidentID, "kind": "queue:email", "count": 42,
+	}).Error)
+
+	resp, _ := patchLockdown(t, token, map[string]interface{}{"action": "close", "endnote": "done"})
+	require.Equal(t, 200, resp.StatusCode)
+
+	status, result := getLockdownJSON(t, "/api/modtools/lockdown/stats?jwt="+token)
+	require.Equal(t, 200, status, "%v", result)
+
+	release, ok := result["release"].(map[string]interface{})
+	require.True(t, ok, "release must be present after close: %v", result)
+	chat := release["chat"].(map[string]interface{})
+	assert.Equal(t, float64(1), chat["held"])
+	assert.Equal(t, float64(1), chat["released"])
+	assert.Equal(t, float64(1), chat["rejected"])
+	post := release["post"].(map[string]interface{})
+	assert.Equal(t, float64(0), post["held"])
+	assert.Equal(t, float64(1), post["review"])
+	assert.Equal(t, float64(1), post["gone"])
+	chitchat := release["chitchat"].(map[string]interface{})
+	assert.Equal(t, float64(0), chitchat["held"])
+
+	queue := result["queue"].(map[string]interface{})
+	assert.Equal(t, float64(42), queue["email"])
+	counts := result["counts"].(map[string]interface{})
+	assert.Equal(t, float64(0), counts["email"], "the queue reading is not a count of emails held")
+}
+
 func TestGetModtoolsLockdownStatsAcksListEveryLoop(t *testing.T) {
 	prefix := uniquePrefix("ld_acks")
 	db := database.DBConn

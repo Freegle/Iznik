@@ -192,12 +192,13 @@ func GetModtoolsLockdownHistory(c *fiber.Ctx) error {
 	return c.JSON(rows)
 }
 
-// GetModtoolsLockdownStats is what the Lockdown tab shows while a lockdown is on: how many of
-// each kind of thing are held, what got out after the press, and whether each batch loop has
-// picked up the latest change.
+// GetModtoolsLockdownStats is what the Lockdown tab shows for the latest lockdown, while it is
+// on and after it closes: how many of each kind of thing were held, how many are still held and
+// what became of the rest, how many emails are waiting to send, what got out after the press,
+// and whether each batch loop has picked up the latest change.
 //
 // @Summary Get lockdown stats
-// @Description Counts of what is held, what leaked, and batch loop acknowledgements. Support/Admin only.
+// @Description Counts of what is held and released, the email queue, what leaked, and batch loop acknowledgements. Support/Admin only.
 // @Tags lockdown
 // @Produce json
 // @Security BearerAuth
@@ -219,10 +220,63 @@ func GetModtoolsLockdownStats(c *fiber.Ctx) error {
 		"rowid":         s.ID,
 		"changedat":     rowCreatedAt(s.ID),
 		"counts":        heldCounts(s.IncidentID),
+		"release":       releaseProgress(s.IncidentID),
+		"queue":         fiber.Map{"email": counterValue(s.IncidentID, "queue:email")},
 		"leaked":        leakedSince(s.IncidentID, s.StartedAt),
 		"acks":          acksStatus(s.ID),
 		"api":           fiber.Map{"delayseconds": int(TTL.Seconds())},
 	})
+}
+
+// releaseKinds are the kinds of item that have hold rows, and so can be watched draining.
+var releaseKinds = []string{"chat", "post", "chitchat"}
+
+// releaseProgress says, for each kind of held item, how many are still held and what became
+// of the rest: released, rejected (dropped by the usual checks, such as a sender marked as a
+// spammer), review (left for a moderator) or gone (deleted or dealt with in the meantime).
+func releaseProgress(incidentID uint64) fiber.Map {
+	out := fiber.Map{}
+	for _, k := range releaseKinds {
+		out[k] = fiber.Map{"held": int64(0), "released": int64(0), "rejected": int64(0), "review": int64(0), "gone": int64(0)}
+	}
+	if incidentID == 0 {
+		return out
+	}
+
+	var rows []struct {
+		Kind    string  `gorm:"column:kind"`
+		Outcome *string `gorm:"column:outcome"`
+		Count   int64   `gorm:"column:count"`
+	}
+	database.DBConn.Table("lockdown_holds").
+		Select("kind, outcome, COUNT(*) AS count").
+		Where("lockdownid = ?", incidentID).
+		Group("kind, outcome").Scan(&rows)
+
+	for _, r := range rows {
+		m, ok := out[r.Kind].(fiber.Map)
+		if !ok {
+			continue
+		}
+		key := "held"
+		if r.Outcome != nil {
+			key = *r.Outcome
+		}
+		if _, known := m[key]; known {
+			m[key] = m[key].(int64) + r.Count
+		}
+	}
+	return out
+}
+
+// counterValue is one lockdown_counters reading for the incident, or 0.
+func counterValue(incidentID uint64, kind string) int64 {
+	var v int64
+	if incidentID != 0 {
+		database.DBConn.Table("lockdown_counters").Select("count").
+			Where("lockdownid = ? AND kind = ?", incidentID, kind).Limit(1).Scan(&v)
+	}
+	return v
 }
 
 // rowCreatedAt is a lockdowns row's own "created" timestamp. Nil before anything has ever been

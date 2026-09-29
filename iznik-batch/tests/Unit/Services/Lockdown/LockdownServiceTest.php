@@ -217,6 +217,22 @@ class LockdownServiceTest extends TestCase
         $this->service->setSurfaces(['chat_mode' => 'soft'], null);
     }
 
+    public function test_record_replaces_the_reading_and_works_after_close(): void
+    {
+        DB::table('lockdown_counters')->delete();
+        $this->service->record('queue:email', 5);
+        $this->assertSame(0, DB::table('lockdown_counters')->count(), 'nothing to record against before any lockdown');
+
+        $id = $this->service->press(null, 'wave');
+        $this->service->record('queue:email', 40);
+        $this->service->record('queue:email', 12);
+        $this->assertEquals(12, DB::table('lockdown_counters')->where(['lockdownid' => $id, 'kind' => 'queue:email'])->value('count'));
+
+        $this->service->close(null, 'done');
+        $this->service->record('queue:email', 3);
+        $this->assertEquals(3, DB::table('lockdown_counters')->where(['lockdownid' => $id, 'kind' => 'queue:email'])->value('count'), 'still recorded after close, against the same incident');
+    }
+
     public function test_ack_is_a_noop_before_anything_is_pressed(): void
     {
         $this->service->ack('chat-process');

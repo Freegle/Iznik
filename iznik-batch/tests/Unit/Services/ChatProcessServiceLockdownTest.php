@@ -149,6 +149,7 @@ class ChatProcessServiceLockdownTest extends TestCase
         $this->assertEquals(0, $spamRow->processingrequired);
         $this->assertEquals(0, $spamRow->processingsuccessful, "the spammer's message is not delivered");
         $this->assertSame(ChatMessage::PROCESSFAIL_SPAMMER, $spamRow->processingfailreason);
+        $this->assertSame('rejected', $this->holdFor($spamMsg->id)->outcome, 'counted as dropped, not released');
 
         $okRow = DB::table('chat_messages')->where('id', $okMsg->id)->first();
         $this->assertEquals(1, $okRow->processingsuccessful, 'the genuine message is delivered');

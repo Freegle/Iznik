@@ -138,7 +138,10 @@ class ChatProcessService
                 if ($this->processMessage($message)) {
                     $count++;
                     if (array_key_exists($message->id, $held)) {
-                        $this->recordHoldOutcome((int) $message->id, 'released');
+                        // The ordinary checks may have refused it (a sender marked as a
+                        // spammer, a blocked phrase), which leaves it unsuccessful.
+                        $delivered = (int) DB::table('chat_messages')->where('id', $message->id)->value('processingsuccessful') === 1;
+                        $this->recordHoldOutcome((int) $message->id, $delivered ? 'released' : 'rejected');
                     }
                 }
             }

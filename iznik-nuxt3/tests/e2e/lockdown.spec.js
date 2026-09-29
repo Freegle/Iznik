@@ -617,6 +617,19 @@ test.describe('Lockdown switch', () => {
     })
     console.log('[Lockdown] Lifted and closed')
 
+    // The drain stays visible after the close: the held reply is released by
+    // the next chat-processing pass, and "Still held" for chat reaches 0.
+    await expect(modPage.getByTestId('lockdown-release')).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
+    await expect(modPage.getByTestId('lockdown-release-held-chat')).toHaveText(
+      '0',
+      { timeout: timeouts.background }
+    )
+    console.log(
+      '[Lockdown] Drain shown after close; nothing still held in chat'
+    )
+
     await modPage.screenshot({
       path: path.join(PR_SCREENSHOTS_DIR, 'lockdown-8-support-tab-closed.png'),
       fullPage: true,

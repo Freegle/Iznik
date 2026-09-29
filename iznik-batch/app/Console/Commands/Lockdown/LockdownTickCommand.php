@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Lockdown;
 
+use App\Services\EmailSpoolerService;
 use App\Services\Lockdown\LockdownFilterSpoolService;
 use App\Services\Lockdown\LockdownHoldsService;
 use App\Services\Lockdown\LockdownService;
@@ -15,7 +16,8 @@ use Illuminate\Support\Facades\Mail;
  * 11.11): announces any `lockdowns` row not yet announced (mail to geeks@ and a Sentry
  * message, sent directly rather than through shouldSkip()/spool(), since this must reach
  * geeks@ even while email itself is held), writes this incident's hold rows, closes holds
- * whose item has gone, and unhides held ChitChat posts once ChitChat is lifted.
+ * whose item has gone, unhides held ChitChat posts once ChitChat is lifted, and records how
+ * many emails are waiting to send.
  *
  * Chat and posts release through their own per-minute crons (chats:process-incoming and
  * messages:contentcheck) once their areas lift. ChitChat has no such cron of its own, which
@@ -34,7 +36,8 @@ class LockdownTickCommand extends Command
     public function handle(
         LockdownService $lockdown,
         LockdownHoldsService $holds,
-        LockdownFilterSpoolService $filterSpool
+        LockdownFilterSpoolService $filterSpool,
+        EmailSpoolerService $spooler
     ): int {
         $announced = $this->announceUnannounced($lockdown);
 
@@ -56,13 +59,18 @@ class LockdownTickCommand extends Command
             $filtered = $filterSpool->filter();
         }
 
+        // So the Lockdown tab can show the queue emptying once email is lifted.
+        $queued = $spooler->queuedCount();
+        $lockdown->record('queue:email', $queued);
+
         $this->info(sprintf(
-            'Announced %d. Holds created: chat %d, post %d. Gone %d. ChitChat released %d.%s',
+            'Announced %d. Holds created: chat %d, post %d. Gone %d. ChitChat released %d. Emails queued %d.%s',
             $announced,
             $created['chat'] ?? 0,
             $created['post'] ?? 0,
             $gone,
             $chitchat,
+            $queued,
             $filtered !== null
                 ? sprintf(' Filtered spool: checked %d, removed %d.', $filtered['checked'], $filtered['removed'])
                 : ''

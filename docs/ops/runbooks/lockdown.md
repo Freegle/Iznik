@@ -94,3 +94,13 @@ held again on its own if the wave comes back.
    close it shows for a day and then stops by itself.
 
 For a false alarm, "Lift everything" lifts every area in this order.
+
+## Watching it drain
+
+"Releasing" shows, for chat messages, posts and ChitChat posts, how many are still held, and
+what became of the rest: released, dropped by the usual checks (a sender marked as a spammer,
+say), waiting for a moderator, or already gone. It also shows how many emails are waiting in
+the send queue, updated every minute. It is on the Controls subtab while the lockdown is on,
+and at the top of the tab after closing, until everything has drained and for a day after.
+"Still held" should reach nothing within a minute or two of an area being lifted; the send
+queue takes longer, because the send daemons work through it at their usual rate.

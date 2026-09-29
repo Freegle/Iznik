@@ -1,6 +1,13 @@
 <template>
   <div>
     <div v-if="!store.active">
+      <!-- After a close, what was held keeps draining through the usual checks
+           and the send queue empties; show it until that is done. -->
+      <ModSupportLockdownRelease
+        v-if="showDrain"
+        class="mb-4"
+        :stats="store.stats"
+      />
       <ModSupportLockdownPress @pressed="refreshAll" />
       <!-- Only once there has been a lockdown: before the first one, the
            press form's own notice box is the only one that means anything. -->
@@ -55,6 +62,8 @@
           </div>
 
           <ModSupportLockdownStats class="mt-4" :stats="store.stats" />
+
+          <ModSupportLockdownRelease class="mt-4" :stats="store.stats" />
 
           <ModSupportLockdownNotice
             class="mt-4"
@@ -146,8 +155,8 @@ import { timeago } from '~/composables/useTimeFormat'
 // the change at once.
 //
 // Stats poll cadence (11.6): every 5 seconds while any batch loop hasn't
-// caught up with the latest change, then every 60 seconds once they all
-// have. A tick runs every 5 seconds regardless; whether it actually
+// caught up with the latest change, or while anything is still draining,
+// then every 60 seconds. A tick runs every 5 seconds regardless; whether it actually
 // refetches depends on how long it's been since the last refresh.
 const store = useLockdownStore()
 
@@ -167,6 +176,28 @@ const allCaughtUp = computed(() => {
   return acks.every((a) => a.caughtup)
 })
 
+const DAY_MS = 24 * 60 * 60 * 1000
+
+// Something the last lockdown held is still waiting, or email is still queued.
+const draining = computed(() => {
+  const release = store.stats?.release ?? {}
+  const held = Object.values(release).some((r) => (r?.held ?? 0) > 0)
+  return held || (store.stats?.queue?.email ?? 0) > 0
+})
+
+// Once closed, the release view stays up while anything is draining, and for
+// a day after the close so the finished result can be seen.
+const closedRecently = computed(() => {
+  const last = store.history?.[0]
+  if (!last || last.active) return false
+  const at = new Date(last.created).getTime()
+  return !Number.isNaN(at) && Date.now() - at < DAY_MS
+})
+
+const showDrain = computed(
+  () => !!store.stats && (draining.value || closedRecently.value)
+)
+
 const anyHeld = computed(() =>
   Object.values(store.surfaces ?? {}).some(Boolean)
 )
@@ -184,7 +215,7 @@ onUnmounted(() => {
 })
 
 async function tick() {
-  const due = allCaughtUp.value ? POLL_IDLE_MS : POLL_TICK_MS
+  const due = allCaughtUp.value && !draining.value ? POLL_IDLE_MS : POLL_TICK_MS
   if (Date.now() - lastRefreshAt >= due) {
     await refreshStats()
   }
@@ -197,10 +228,12 @@ async function refreshAll() {
 
 async function refreshStats() {
   lastRefreshAt = Date.now()
-  if (store.active) {
+  await store.fetchHistory()
+  // Stats are for the latest lockdown, so they are worth fetching after a
+  // close too - that is how the drain is watched.
+  if (store.active || store.history?.length) {
     await store.fetchStats()
   }
-  await store.fetchHistory()
 }
 
 async function patchAndRefresh(data) {

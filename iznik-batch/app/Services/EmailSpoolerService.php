@@ -976,6 +976,18 @@ class EmailSpoolerService
     }
 
     /**
+     * How many emails are waiting to be sent or are being sent now. File counts only, so it
+     * is cheap enough to take every minute however long the queue is; getBacklogStats()
+     * reads every waiting file to find the oldest.
+     */
+    public function queuedCount(): int
+    {
+        return count(glob($this->pendingDir . '/*.json') ?: [])
+            + count(glob($this->spoolDir . '/sending/*.json') ?: [])
+            + count(glob($this->spoolDir . '/sending/w*/*.json') ?: []);
+    }
+
+    /**
      * Get backlog statistics.
      */
     public function getBacklogStats(): array
