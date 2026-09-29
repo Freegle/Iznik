@@ -65,6 +65,36 @@ describe('ModSupportLockdownTakingEffect', () => {
     expect(row.text()).toContain('took 3 seconds')
   })
 
+  it('shrinks to one line once every loop has caught up', () => {
+    const keys = [
+      'chat-process',
+      'content-check',
+      'auto-approve',
+      'mail-spool',
+      'mail-loops',
+      'background-tasks',
+      'push',
+      'tick',
+    ]
+    const wrapper = createWrapper({
+      stats: {
+        api: { delayseconds: 5 },
+        acks: keys.map((loop) => ({ loop, caughtup: true, seconds: 2 })),
+        leaked: { chat: 0 },
+      },
+    })
+    expect(
+      wrapper.find('[data-testid="lockdown-taking-effect-done"]').text()
+    ).toBe('Every part of Freegle has picked up the latest change.')
+    expect(wrapper.find('h5').exists()).toBe(false)
+    expect(
+      wrapper
+        .find('[data-testid="lockdown-taking-effect-chat-process"]')
+        .exists()
+    ).toBe(false)
+    expect(wrapper.find('[data-testid="lockdown-leaked"]').exists()).toBe(true)
+  })
+
   it('shows a spinner and "waiting" for a loop with no ack yet', () => {
     const wrapper = createWrapper({
       stats: {

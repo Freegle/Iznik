@@ -1,28 +1,37 @@
 <template>
   <div data-testid="lockdown-taking-effect">
-    <h5>Taking effect</h5>
-    <p data-testid="lockdown-taking-effect-api">
-      <v-icon icon="check" class="text-success" /> API: within
-      {{ apiDelaySeconds }} seconds
+    <!-- Once every job has acted on the latest change there is nothing left
+         to watch, so one line says so instead of the list. -->
+    <p v-if="allCaughtUp" data-testid="lockdown-taking-effect-done">
+      <v-icon icon="check" class="text-success" /> Every part of Freegle has
+      picked up the latest change.
     </p>
-    <p
-      v-for="loop in loops"
-      :key="loop.key"
-      :data-testid="'lockdown-taking-effect-' + loop.key"
-      :class="{ 'text-warning': isStale(loop) }"
-    >
-      <template v-if="loop.ack?.caughtup">
-        <v-icon icon="check" class="text-success" /> {{ loop.label }}: took
-        {{ loop.ack.seconds }} seconds
-      </template>
-      <template v-else-if="isStale(loop)">
-        <v-icon icon="triangle-exclamation" /> {{ loop.label }}: Has not picked
-        this up. The loop may be stopped or stuck. Check the batch host.
-      </template>
-      <template v-else>
-        <b-spinner small /> {{ loop.label }}: waiting
-      </template>
-    </p>
+    <template v-else>
+      <h5>Taking effect</h5>
+      <p data-testid="lockdown-taking-effect-api">
+        <v-icon icon="check" class="text-success" /> API: within
+        {{ apiDelaySeconds }} seconds
+      </p>
+      <p
+        v-for="loop in loops"
+        :key="loop.key"
+        :data-testid="'lockdown-taking-effect-' + loop.key"
+        :class="{ 'text-warning': isStale(loop) }"
+      >
+        <template v-if="loop.ack?.caughtup">
+          <v-icon icon="check" class="text-success" /> {{ loop.label }}: took
+          {{ loop.ack.seconds }} seconds
+        </template>
+        <template v-else-if="isStale(loop)">
+          <v-icon icon="triangle-exclamation" /> {{ loop.label }}: Has not
+          picked this up. The loop may be stopped or stuck. Check the batch
+          host.
+        </template>
+        <template v-else>
+          <b-spinner small /> {{ loop.label }}: waiting
+        </template>
+      </p>
+    </template>
     <p
       data-testid="lockdown-leaked"
       :class="{ 'text-danger fw-bold': leakedTotal > 0 }"
@@ -71,6 +80,8 @@ function ackFor(key) {
 const loops = computed(() =>
   loopDefs.map((l) => ({ ...l, ack: ackFor(l.key) }))
 )
+
+const allCaughtUp = computed(() => loops.value.every((l) => l.ack?.caughtup))
 
 // Ticks every second purely so a loop can flip to amber live, without
 // waiting for the next stats poll.

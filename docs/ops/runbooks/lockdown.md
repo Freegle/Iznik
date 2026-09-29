@@ -88,19 +88,22 @@ held again on its own if the wave comes back.
    digests and notifications are generated from where they stopped. Members get what they
    would have had, a few hours late. Nothing is dropped.
 7. Lift **downloads**.
-8. **Close**, with a note. This removes the member notice, and geeks@ gets the closing
-   report.
+8. **Close**, with a note, once it is offered: every area lifted and caught up. This removes
+   the member notice, and geeks@ gets the closing report.
 9. If members were told about it, set the notice to "Things are back to normal". After a
    close it shows for a day and then stops by itself.
 
 For a false alarm, "Lift everything" lifts every area in this order.
 
-## Watching it drain
+## Watching it catch up
 
-"Releasing" shows, for chat messages, posts and ChitChat posts, how many are still held, and
-what became of the rest: released, dropped by the usual checks (a sender marked as a spammer,
-say), waiting for a moderator, or already gone. It also shows how many emails are waiting in
-the send queue, updated every minute. It is on the Controls subtab while the lockdown is on,
-and at the top of the tab after closing, until everything has drained and for a day after.
-"Still held" should reach nothing within a minute or two of an area being lifted; the send
-queue takes longer, because the send daemons work through it at their usual rate.
+The tab only shows what matters at each stage. Once an area is lifted, "Releasing" appears
+and shows, for each lifted area that held anything, how far it has got ("412 of 452 gone
+through"), until it says "Caught up". That should take a minute or two. Once email is lifted
+it also shows how many emails are waiting in the send queue; that is all mail, not only what
+the lockdown held, so it never reaches nothing, and the send daemons work through it at
+their usual rate.
+
+Close only appears once every area is lifted and everything held has gone through. If
+anything is still going through after a close, "Releasing" stays at the top of the tab until
+it has.

@@ -1,54 +1,42 @@
 <template>
   <div data-testid="lockdown-release">
     <h4>Releasing</h4>
-    <p class="small text-muted">
-      When an area is lifted, what it held goes through the usual checks
-      straight away. Watch "Still held" count down to nothing.
-    </p>
-    <table class="table table-sm w-auto">
-      <thead>
-        <tr>
-          <th></th>
-          <th class="text-end">Still held</th>
-          <th class="text-end">Released</th>
-          <th class="text-end">Dropped by the usual checks</th>
-          <th class="text-end">Waiting for a moderator</th>
-          <th class="text-end">Already gone</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr
-          v-for="row in rows"
-          :key="row.key"
-          :data-testid="'lockdown-release-' + row.key"
-        >
-          <td>{{ row.label }}</td>
-          <td
-            class="text-end"
-            :class="{ 'fw-bold': row.held > 0 }"
-            :data-testid="'lockdown-release-held-' + row.key"
-          >
-            {{ row.held }}
-          </td>
-          <td class="text-end">{{ row.released }}</td>
-          <td class="text-end">{{ row.rejected }}</td>
-          <td class="text-end">{{ row.review }}</td>
-          <td class="text-end">{{ row.gone }}</td>
-        </tr>
-      </tbody>
-    </table>
-    <p data-testid="lockdown-release-email">
-      Emails waiting to send: <strong>{{ emailQueued }}</strong>
-      <span class="small text-muted">
-        (the whole send queue, updated every minute)
-      </span>
-    </p>
     <p
-      v-if="drained"
+      v-if="caughtUp"
       class="text-success fw-bold"
       data-testid="lockdown-release-done"
     >
-      Nothing is still held, and the send queue is empty.
+      Caught up: everything held has gone through the usual checks.
+    </p>
+    <p v-else class="small text-muted">
+      What was held goes through the usual checks, oldest first. This fills up
+      as it catches up.
+    </p>
+    <div
+      v-for="row in rows"
+      :key="row.key"
+      class="mb-2"
+      :data-testid="'lockdown-release-' + row.key"
+    >
+      <div>
+        {{ row.label }}:
+        <span :data-testid="'lockdown-release-progress-' + row.key">
+          {{ row.done }} of {{ row.total }} gone through
+        </span>
+      </div>
+      <b-progress
+        :value="row.done"
+        :max="row.total || 1"
+        :variant="row.done === row.total ? 'success' : 'primary'"
+        height="0.5rem"
+        style="max-width: 30rem"
+      />
+    </div>
+    <p v-if="showEmail" class="mt-2" data-testid="lockdown-release-email">
+      Emails waiting to send: <strong>{{ emailQueued }}</strong>
+      <span class="small text-muted">
+        (all mail, not only what the lockdown held; updated every minute)
+      </span>
     </p>
   </div>
 </template>
@@ -56,39 +44,50 @@
 <script setup>
 import { computed } from 'vue'
 
-// plans/active/2026-09-27-lockdown-switch.md section 11.11: watching what was
-// held drain, while the lockdown is on and after it closes. From stats.release
-// (per kind: held, released, rejected, review, gone) and stats.queue.email.
+// plans/active/2026-09-27-lockdown-switch.md section 11.11: once an area is
+// lifted, what matters is when its backlog has caught up. An area that held
+// nothing has nothing to show. From stats.release
+// (per kind: held, and what became of the rest) and stats.queue.email. Only
+// lifted areas are shown; with no surfaces given (after a close) every area
+// counts as lifted.
 const props = defineProps({
   stats: {
+    type: Object,
+    default: null,
+  },
+  surfaces: {
     type: Object,
     default: null,
   },
 })
 
 const KINDS = [
-  { key: 'chat', label: 'Chat messages' },
-  { key: 'post', label: 'Posts' },
-  { key: 'chitchat', label: 'ChitChat posts' },
+  { key: 'chat', surface: 'chat', label: 'Chat messages' },
+  { key: 'post', surface: 'posts', label: 'Posts' },
+  { key: 'chitchat', surface: 'chitchat', label: 'ChitChat posts' },
 ]
 
+const lifted = (surface) => !props.surfaces || !props.surfaces[surface]
+
 const rows = computed(() =>
-  KINDS.map((k) => {
-    const r = props.stats?.release?.[k.key] ?? {}
-    return {
-      ...k,
-      held: r.held ?? 0,
-      released: r.released ?? 0,
-      rejected: r.rejected ?? 0,
-      review: r.review ?? 0,
-      gone: r.gone ?? 0,
-    }
-  })
+  KINDS.filter((k) => lifted(k.surface))
+    .map((k) => {
+      const r = props.stats?.release?.[k.key] ?? {}
+      const held = r.held ?? 0
+      const total =
+        held +
+        (r.released ?? 0) +
+        (r.rejected ?? 0) +
+        (r.review ?? 0) +
+        (r.gone ?? 0)
+      return { ...k, total, done: total - held }
+    })
+    .filter((r) => r.total > 0)
 )
+
+const showEmail = computed(() => lifted('email'))
 
 const emailQueued = computed(() => props.stats?.queue?.email ?? 0)
 
-const drained = computed(
-  () => rows.value.every((r) => r.held === 0) && emailQueued.value === 0
-)
+const caughtUp = computed(() => rows.value.every((r) => r.done === r.total))
 </script>

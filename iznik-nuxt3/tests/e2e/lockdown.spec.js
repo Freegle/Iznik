@@ -583,13 +583,12 @@ test.describe('Lockdown switch', () => {
         }
       )
       .toBeGreaterThan(0)
-    await modPage.screenshot({
-      path: path.join(PR_SCREENSHOTS_DIR, 'lockdown-7-controls-held.png'),
-      fullPage: true,
-    })
-    console.log('[Lockdown screenshots] Controls with areas and held counts')
+    // Nothing has been lifted yet, so there is no Releasing and no Close.
+    await expect(modPage.getByTestId('lockdown-release')).toHaveCount(0)
+    await expect(modPage.getByTestId('lockdown-close')).toHaveCount(0)
 
-    // Lift one area on its own: its status changes in words.
+    // Lift one area on its own: its status changes in words, and Releasing
+    // appears and fills up until chat has caught up.
     await modPage.getByTestId('lockdown-surface-button-chat').click()
     await expect(
       modPage.getByTestId('lockdown-surface-status-chat')
@@ -599,13 +598,27 @@ test.describe('Lockdown switch', () => {
     ).toHaveText('Hold again')
     console.log('[Lockdown] Lifted chat on its own')
 
+    await expect(
+      modPage.getByTestId('lockdown-release-progress-chat')
+    ).toHaveText(/^(\d+) of \1 gone through$/, {
+      timeout: timeouts.background,
+    })
+    await expect(modPage.getByTestId('lockdown-release-done')).toBeVisible()
+    await modPage.screenshot({
+      path: path.join(PR_SCREENSHOTS_DIR, 'lockdown-7-controls-held.png'),
+      fullPage: true,
+    })
+    console.log('[Lockdown] Releasing shows chat caught up')
+
     await modPage.getByTestId('lockdown-liftall-button').click()
     await confirmVisibleModal(modPage, 'lockdown-liftall-confirm')
 
+    // Close only appears once every area is lifted and the held post has
+    // gone through the content check too.
     const closeNote = modPage.getByTestId('lockdown-close-note')
     await closeNote.waitFor({
       state: 'visible',
-      timeout: timeouts.ui.appearance,
+      timeout: timeouts.background,
     })
     await closeNote.fill('Lockdown e2e drill complete')
     await modPage.getByTestId('lockdown-close-button').click()
@@ -617,18 +630,10 @@ test.describe('Lockdown switch', () => {
     })
     console.log('[Lockdown] Lifted and closed')
 
-    // The drain stays visible after the close: the held reply is released by
-    // the next chat-processing pass, and "Still held" for chat reaches 0.
-    await expect(modPage.getByTestId('lockdown-release')).toBeVisible({
-      timeout: timeouts.ui.appearance,
-    })
-    await expect(modPage.getByTestId('lockdown-release-held-chat')).toHaveText(
-      '0',
-      { timeout: timeouts.background }
-    )
-    console.log(
-      '[Lockdown] Drain shown after close; nothing still held in chat'
-    )
+    // Everything had gone through before Close was offered, so there is no
+    // Releasing left to show.
+    await expect(modPage.getByTestId('lockdown-release')).toHaveCount(0)
+    console.log('[Lockdown] Closed with nothing left releasing')
 
     await modPage.screenshot({
       path: path.join(PR_SCREENSHOTS_DIR, 'lockdown-8-support-tab-closed.png'),

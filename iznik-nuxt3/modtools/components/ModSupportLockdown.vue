@@ -1,18 +1,17 @@
 <template>
   <div>
     <div v-if="!store.active">
-      <!-- After a close, what was held keeps draining through the usual checks
-           and the send queue empties; show it until that is done. -->
+      <!-- After a close, only while something is still going through. -->
       <ModSupportLockdownRelease
-        v-if="showDrain"
+        v-if="stillReleasing"
         class="mb-4"
         :stats="store.stats"
       />
       <ModSupportLockdownPress @pressed="refreshAll" />
-      <!-- Only once there has been a lockdown: before the first one, the
-           press form's own notice box is the only one that means anything. -->
+      <!-- Only for a day after a close: that is as long as a notice set now
+           is shown to members. -->
       <ModSupportLockdownNotice
-        v-if="store.history?.length"
+        v-if="closedRecently"
         class="mt-4"
         :notice="store.notice"
         :active="false"
@@ -50,10 +49,10 @@
             @set-surface="onSetSurface"
           />
 
-          <div class="mt-3 d-flex flex-wrap gap-2">
+          <div v-if="heldAreas > 1" class="mt-3">
             <b-button
               variant="primary"
-              :disabled="busy || !anyHeld"
+              :disabled="busy"
               data-testid="lockdown-liftall-button"
               @click="showLiftAllModal = true"
             >
@@ -61,9 +60,15 @@
             </b-button>
           </div>
 
-          <ModSupportLockdownStats class="mt-4" :stats="store.stats" />
+          <!-- Only once something has been lifted. -->
+          <ModSupportLockdownRelease
+            v-if="anyLifted"
+            class="mt-4"
+            :stats="store.stats"
+            :surfaces="store.surfaces"
+          />
 
-          <ModSupportLockdownRelease class="mt-4" :stats="store.stats" />
+          <ModSupportLockdownStats class="mt-4" :stats="store.stats" />
 
           <ModSupportLockdownNotice
             class="mt-4"
@@ -73,26 +78,37 @@
             @save="onNotice"
           />
 
-          <h4 class="mt-4">Close the lockdown</h4>
-          <p class="small text-muted">
-            Closing lifts anything still held, ends the lockdown and removes the
-            member notice.
-          </p>
-          <b-form-group label="Closing note (goes on the history)">
-            <b-form-textarea
-              v-model="endNote"
-              rows="2"
-              data-testid="lockdown-close-note"
-            />
-          </b-form-group>
-          <b-button
-            variant="secondary"
-            :disabled="busy"
-            data-testid="lockdown-close-button"
-            @click="showCloseModal = true"
+          <!-- Only once every area is lifted and what was held has caught up. -->
+          <div v-if="canClose" data-testid="lockdown-close">
+            <h4 class="mt-4">Close the lockdown</h4>
+            <p class="small text-muted">
+              Everything is lifted and caught up. Closing ends the lockdown and
+              removes the member notice.
+            </p>
+            <b-form-group label="Closing note (goes on the history)">
+              <b-form-textarea
+                v-model="endNote"
+                rows="2"
+                data-testid="lockdown-close-note"
+              />
+            </b-form-group>
+            <b-button
+              variant="secondary"
+              :disabled="busy"
+              data-testid="lockdown-close-button"
+              @click="showCloseModal = true"
+            >
+              Close
+            </b-button>
+          </div>
+          <p
+            v-else
+            class="small text-muted mt-4"
+            data-testid="lockdown-close-later"
           >
-            Close
-          </b-button>
+            You can close the lockdown once every area is lifted and everything
+            held has gone through.
+          </p>
 
           <ModSupportLockdownHistory class="mt-4" :history="store.history" />
         </b-tab>
@@ -130,8 +146,8 @@
       >
         <div data-testid="lockdown-close-confirm">
           <p>
-            Anything still held is released straight away, through the usual
-            checks, and the member notice is removed.
+            The lockdown ends and the member notice is removed. Everything held
+            has already gone through.
           </p>
         </div>
       </ConfirmModal>
@@ -178,15 +194,19 @@ const allCaughtUp = computed(() => {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-// Something the last lockdown held is still waiting, or email is still queued.
-const draining = computed(() => {
-  const release = store.stats?.release ?? {}
-  const held = Object.values(release).some((r) => (r?.held ?? 0) > 0)
-  return held || (store.stats?.queue?.email ?? 0) > 0
-})
+// Something the latest lockdown held has not yet gone through. The send queue
+// is not part of this: ordinary mail keeps it busy whatever the lockdown did.
+const draining = computed(() =>
+  Object.values(store.stats?.release ?? {}).some((r) => (r?.held ?? 0) > 0)
+)
 
-// Once closed, the release view stays up while anything is draining, and for
-// a day after the close so the finished result can be seen.
+const stillReleasing = computed(() => !!store.stats && draining.value)
+
+// Every area lifted, and what was held has all gone through.
+const canClose = computed(
+  () => heldAreas.value === 0 && !!store.stats && !draining.value
+)
+
 const closedRecently = computed(() => {
   const last = store.history?.[0]
   if (!last || last.active) return false
@@ -194,12 +214,12 @@ const closedRecently = computed(() => {
   return !Number.isNaN(at) && Date.now() - at < DAY_MS
 })
 
-const showDrain = computed(
-  () => !!store.stats && (draining.value || closedRecently.value)
+const heldAreas = computed(
+  () => Object.values(store.surfaces ?? {}).filter(Boolean).length
 )
 
-const anyHeld = computed(() =>
-  Object.values(store.surfaces ?? {}).some(Boolean)
+const anyLifted = computed(() =>
+  Object.values(store.surfaces ?? {}).some((held) => !held)
 )
 
 onMounted(async () => {

@@ -135,14 +135,19 @@ describe('ModSupportLockdown', () => {
     expect(mockFetchStats).toHaveBeenCalled()
   })
 
-  it('shows the release view while active', async () => {
+  it('shows Releasing only once an area has been lifted', async () => {
     store.active = true
+    store.surfaces = { mods: true, chat: true }
     const wrapper = createWrapper()
+    await flushPromises()
+    expect(wrapper.find('.mod-support-lockdown-release').exists()).toBe(false)
+
+    store.surfaces = { mods: true, chat: false }
     await flushPromises()
     expect(wrapper.find('.mod-support-lockdown-release').exists()).toBe(true)
   })
 
-  it('shows the drain after a close while anything is still held or queued', async () => {
+  it('after a close, shows Releasing only while something is still going through', async () => {
     store.history = [
       { id: 2, incidentid: 1, active: false, created: '2020-01-01' },
     ]
@@ -151,30 +156,58 @@ describe('ModSupportLockdown', () => {
     await flushPromises()
     expect(wrapper.find('.mod-support-lockdown-release').exists()).toBe(true)
 
+    // The send queue does not count: ordinary mail keeps it busy anyway.
     store.stats = { release: { chat: { held: 0 } }, queue: { email: 12 } }
     await flushPromises()
-    expect(wrapper.find('.mod-support-lockdown-release').exists()).toBe(true)
+    expect(wrapper.find('.mod-support-lockdown-release').exists()).toBe(false)
   })
 
-  it('keeps the finished drain up for a day after the close, then hides it', async () => {
-    store.stats = { release: { chat: { held: 0 } }, queue: { email: 0 } }
-    store.history = [
-      {
-        id: 2,
-        incidentid: 1,
-        active: false,
-        created: new Date().toISOString(),
+  it('offers Close only once every area is lifted and nothing is still held', async () => {
+    store.active = true
+    store.surfaces = {
+      ...{
+        mods: false,
+        chat: false,
+        posts: false,
+        chitchat: false,
+        events: false,
+        push: false,
+        email: false,
+        export: false,
       },
-    ]
+      email: true,
+    }
+    store.stats = { release: { chat: { held: 0 } } }
     const wrapper = createWrapper()
     await flushPromises()
-    expect(wrapper.find('.mod-support-lockdown-release').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="lockdown-close"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="lockdown-close-later"]').exists()).toBe(
+      true
+    )
 
-    store.history = [
-      { id: 2, incidentid: 1, active: false, created: '2020-01-01' },
-    ]
+    store.surfaces = {
+      mods: false,
+      chat: false,
+      posts: false,
+      chitchat: false,
+      events: false,
+      push: false,
+      email: false,
+      export: false,
+    }
+    store.stats = { release: { chat: { held: 4 } } }
     await flushPromises()
-    expect(wrapper.find('.mod-support-lockdown-release').exists()).toBe(false)
+    expect(
+      wrapper.find('[data-testid="lockdown-close"]').exists(),
+      'still going through'
+    ).toBe(false)
+
+    store.stats = { release: { chat: { held: 0 } } }
+    await flushPromises()
+    expect(wrapper.find('[data-testid="lockdown-close"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="lockdown-close-later"]').exists()).toBe(
+      false
+    )
   })
 
   it('polls every 5 seconds after a close while draining', async () => {
@@ -199,8 +232,22 @@ describe('ModSupportLockdown', () => {
     expect(wrapper.find('.mod-support-lockdown-notice').exists()).toBe(false)
   })
 
-  it('offers the after-lockdown notice once there has been a lockdown', async () => {
-    store.history = [{ id: 2, incidentid: 1, active: false }]
+  it('offers the after-lockdown notice only for a day after a close', async () => {
+    store.history = [
+      { id: 2, incidentid: 1, active: false, created: '2020-01-01' },
+    ]
+    const old = createWrapper()
+    await flushPromises()
+    expect(old.find('.mod-support-lockdown-notice').exists()).toBe(false)
+
+    store.history = [
+      {
+        id: 2,
+        incidentid: 1,
+        active: false,
+        created: new Date().toISOString(),
+      },
+    ]
     const wrapper = createWrapper()
     await flushPromises()
     const notice = wrapper.findComponent('.mod-support-lockdown-notice')
@@ -364,7 +411,14 @@ describe('ModSupportLockdown', () => {
   })
 
   it('saves a notice after close too', async () => {
-    store.history = [{ id: 2, incidentid: 1, active: false }]
+    store.history = [
+      {
+        id: 2,
+        incidentid: 1,
+        active: false,
+        created: new Date().toISOString(),
+      },
+    ]
     const wrapper = createWrapper()
     await flushPromises()
     await wrapper
@@ -377,21 +431,25 @@ describe('ModSupportLockdown', () => {
     })
   })
 
-  it('disables Lift everything once nothing is held', async () => {
+  it('offers Lift everything only while two or more areas are held', async () => {
     store.active = true
-    store.surfaces = { mods: false, chat: false }
+    store.surfaces = { mods: false, chat: true }
     const wrapper = createWrapper()
     await flushPromises()
     expect(
-      wrapper
-        .find('[data-testid="lockdown-liftall-button"]')
-        .attributes('disabled')
-    ).toBeDefined()
+      wrapper.find('[data-testid="lockdown-liftall-button"]').exists()
+    ).toBe(false)
+
+    store.surfaces = { mods: true, chat: true }
+    await flushPromises()
+    expect(
+      wrapper.find('[data-testid="lockdown-liftall-button"]').exists()
+    ).toBe(true)
   })
 
   it('patches liftall after the dialog confirms', async () => {
     store.active = true
-    store.surfaces = { chat: true }
+    store.surfaces = { mods: true, chat: true }
     const wrapper = createWrapper()
     await flushPromises()
     await wrapper
@@ -406,6 +464,17 @@ describe('ModSupportLockdown', () => {
 
   it('patches close with the trimmed end note, then clears it', async () => {
     store.active = true
+    store.surfaces = {
+      mods: false,
+      chat: false,
+      posts: false,
+      chitchat: false,
+      events: false,
+      push: false,
+      email: false,
+      export: false,
+    }
+    store.stats = { release: { chat: { held: 0 } } }
     const wrapper = createWrapper()
     await flushPromises()
     await wrapper
@@ -430,7 +499,7 @@ describe('ModSupportLockdown', () => {
   // of waiting for its button.
   it('does not mount the lift-everything or close confirm modals until their buttons are clicked', async () => {
     store.active = true
-    store.surfaces = { chat: true }
+    store.surfaces = { mods: true, chat: true }
     const wrapper = createWrapper()
     await flushPromises()
     expect(
@@ -450,6 +519,18 @@ describe('ModSupportLockdown', () => {
       wrapper.find('[data-testid="lockdown-close-confirm"]').exists()
     ).toBe(false)
 
+    store.surfaces = {
+      mods: false,
+      chat: false,
+      posts: false,
+      chitchat: false,
+      events: false,
+      push: false,
+      email: false,
+      export: false,
+    }
+    store.stats = { release: { chat: { held: 0 } } }
+    await flushPromises()
     await wrapper.find('[data-testid="lockdown-close-button"]').trigger('click')
     expect(
       wrapper.find('[data-testid="lockdown-close-confirm"]').exists()
@@ -458,7 +539,20 @@ describe('ModSupportLockdown', () => {
 
   it('disables the buttons while a change is being saved', async () => {
     store.active = true
-    store.surfaces = { chat: true }
+    store.surfaces = {
+      ...{
+        mods: false,
+        chat: false,
+        posts: false,
+        chitchat: false,
+        events: false,
+        push: false,
+        email: false,
+        export: false,
+      },
+      chat: true,
+    }
+    store.stats = { release: { chat: { held: 0 } } }
     let resolvePatch
     mockPatch.mockReturnValue(
       new Promise((resolve) => {
@@ -474,10 +568,8 @@ describe('ModSupportLockdown', () => {
       wrapper.findComponent('.mod-support-lockdown-surfaces').props('busy')
     ).toBe(true)
     expect(
-      wrapper
-        .find('[data-testid="lockdown-close-button"]')
-        .attributes('disabled')
-    ).toBeDefined()
+      wrapper.findComponent('.mod-support-lockdown-notice').props('busy')
+    ).toBe(true)
 
     resolvePatch({})
     await pending
