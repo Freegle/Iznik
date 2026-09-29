@@ -189,9 +189,19 @@ func buildDBSpecs(userID int64, chatIDs, recentChatIDs, msgIDs, trackIDs []inter
 	// rooms active within the window - the window the dump already documents
 	// via ?since= - collapses the query while losing nothing anyone asked for.
 	// The (chatid, date) index serves exactly this shape.
+	//
+	// The roster is the member's own row in every room, plus everyone's rows
+	// in the rooms active in the window. The other members of the moderator's
+	// old mod chats are not about this member, and pulling them made
+	// chat_roster the biggest section: 112,609 rows for one real moderator,
+	// against about 19,000 of their own.
 	if in, args := inClause(chatIDs); in != "" {
 		add("chat_rooms", "id IN "+in, args, 0)
-		add("chat_roster", "chatid IN "+in, args, 0)
+	}
+	if in, args := inClause(recentChatIDs); in != "" {
+		add("chat_roster", "userid = ? OR chatid IN "+in, append([]interface{}{userID}, args...), 0)
+	} else {
+		add("chat_roster", "userid = ?", u, 0)
 	}
 	// chat_messages_held has no chatid - its msgid references chat_messages.id
 	// (which mod is holding a chat message for review). Anchor on userid: the

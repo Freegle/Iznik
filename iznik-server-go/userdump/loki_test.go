@@ -1,7 +1,9 @@
 package userdump
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 // keyed by a substring of the query, so tests can assert on the SHAPE of the
 // queries the dump issues - which is where the cost lives.
 type fakeLoki struct {
+	mu      sync.Mutex
 	queries []string
 	starts  []int64
 	ends    []int64
@@ -20,6 +23,8 @@ type fakeLoki struct {
 }
 
 func (f *fakeLoki) query(logql string, startNs, endNs int64, limit int) ([]lokiEntry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.queries = append(f.queries, logql)
 	f.starts = append(f.starts, startNs)
 	f.ends = append(f.ends, endNs)
@@ -87,8 +92,16 @@ func TestCollectLoki_PassAUsesLabelSelector(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 1, n)
 
-	assert.Contains(t, f.queries[0], `{app="freegle", user_id="42"}`)
-	assert.NotContains(t, f.queries[0], "| json",
+	// Passes run concurrently, so find the label query rather than assume it
+	// went first.
+	var labelled string
+	for _, q := range f.queries {
+		if strings.HasPrefix(q, `{app="freegle", user_id="42"}`) {
+			labelled = q
+		}
+	}
+	assert.NotEmpty(t, labelled)
+	assert.NotContains(t, labelled, "| json",
 		"the labelled sources must be an index lookup, not a parse of every line")
 }
 
@@ -139,8 +152,9 @@ func TestCollectLoki_UnlabelledSourcesAreQueriedSeparatelyAndNarrowly(t *testing
 		if strings.Contains(q, "source=~") && strings.Contains(q, "| json") {
 			jsonPass = q
 		}
-		// escapeLokiRegex escapes the dot, so the address appears as a@b\.com.
-		if strings.Contains(q, "|~") && strings.Contains(q, `a@b\.com`) {
+		// escapeLokiRegex escapes the dot for the regex and the backslash for
+		// the string, so the address appears as a@b\\.com.
+		if strings.Contains(q, "|~") && strings.Contains(q, `a@b\\.com`) {
 			emailPass = q
 		}
 	}
@@ -279,7 +293,7 @@ func TestCollectLoki_SessionsUseLabelledAndAnonLegs(t *testing.T) {
 
 	var labelled, anon bool
 	for i, q := range f.queries {
-		if !strings.Contains(q, `session_id="sess-1"`) {
+		if !strings.Contains(q, `session_id=~"sess-1"`) {
 			continue
 		}
 		if strings.Contains(q, `user_id="42"`) {
@@ -336,4 +350,121 @@ func TestCollectLoki_BothLegsReturningTheSameEntryDedupes(t *testing.T) {
 	n, err := collectLoki(b, f, 42, nil, end-int64(24*time.Hour), end)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, n, "the same entry from both legs must collapse to one")
+}
+
+// Every address goes into one query per half-window rather than one each: a
+// member with 23 addresses used to spend the whole section budget on pass B.
+func TestCollectLoki_AllEmailsInOneQueryPerHalf(t *testing.T) {
+	f := &fakeLoki{byMatch: map[string][]lokiEntry{
+		`|~ "(?i)(`: {{tsNs: 7, source: "email", line: "to Two@b.com"}},
+	}}
+	b, err := NewBuilder()
+	assert.NoError(t, err)
+	defer b.Remove()
+
+	end := time.Now().UnixNano()
+	n, err := collectLoki(b, f, 42, []string{"one@a.com", "Two@b.com", " "}, end-int64(maxLokiRange), end)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, n, "the same line found by both halves is stored once")
+
+	var emailQueries []string
+	for _, q := range f.queries {
+		if strings.Contains(q, "|~") {
+			emailQueries = append(emailQueries, q)
+		}
+	}
+	assert.Len(t, emailQueries, len(splitRange(end-int64(maxLokiRange), end, int64(halfSpan))))
+	for _, q := range emailQueries {
+		assert.Contains(t, q, `|= "one@a.com" or "two@b.com" |~ "(?i)(one@a\\.com|Two@b\\.com)"`)
+	}
+}
+
+func TestLokiEmailQuery_NoEmails(t *testing.T) {
+	assert.Equal(t, "", lokiEmailQuery(nil))
+	assert.Equal(t, "", lokiEmailQuery([]string{" "}))
+}
+
+// The regex sits inside a LogQL double-quoted string, so a regex escape must be
+// string-escaped again: Loki rejects "\." with a 400.
+func TestEscapeLokiRegex_IsValidInsideALogQLString(t *testing.T) {
+	assert.Equal(t, `a\\.b\\+c@d\\.com`, escapeLokiRegex("a.b+c@d.com"))
+	assert.Equal(t, `say\"hi\"`, escapeLokiRegex(`say"hi"`))
+}
+
+// Sessions are asked about in groups, not one query per session per leg: Loki's
+// queriers are the bottleneck, and 60 small queries took three times as long
+// as the same legs over every session at once.
+func TestCollectLoki_SessionsAreGroupedIntoFewQueries(t *testing.T) {
+	var lines []lokiEntry
+	for i := 0; i < 23; i++ {
+		lines = append(lines, lokiEntry{tsNs: int64(i + 1), source: "api", line: fmt.Sprintf(`{"session_id":"s%02d"}`, i)})
+	}
+	f := &fakeLoki{byMatch: map[string][]lokiEntry{`{app="freegle", user_id="42"}`: lines}}
+	b, err := NewBuilder()
+	assert.NoError(t, err)
+	defer b.Remove()
+
+	end := time.Now().UnixNano()
+	_, err = collectLoki(b, f, 42, nil, end-int64(maxLokiRange), end)
+	assert.NoError(t, err)
+
+	var sessionQueries []string
+	for _, q := range f.queries {
+		if strings.Contains(q, "session_id=~") {
+			sessionQueries = append(sessionQueries, q)
+		}
+	}
+	groups := (23 + sessionsPerQuery - 1) / sessionsPerQuery
+	assert.Len(t, sessionQueries, 3*groups, "three legs per group of sessions")
+
+	// Every session is asked about, in both the line filter and the regex.
+	for i := 0; i < 23; i++ {
+		sid := fmt.Sprintf("s%02d", i)
+		n := 0
+		for _, q := range sessionQueries {
+			if strings.Contains(q, `"`+sid+`"`) {
+				n++
+			}
+		}
+		assert.Equal(t, 3, n, "session %s is in exactly one group, for each leg", sid)
+	}
+}
+
+// flakyLoki fails the first query matching failOnce, then behaves like fakeLoki.
+type flakyLoki struct {
+	*fakeLoki
+	failOnce string
+	failed   bool
+}
+
+func (f *flakyLoki) query(logql string, startNs, endNs int64, limit int) ([]lokiEntry, error) {
+	f.mu.Lock()
+	fail := !f.failed && strings.Contains(logql, f.failOnce)
+	if fail {
+		f.failed = true
+	}
+	f.mu.Unlock()
+	if fail {
+		return nil, assert.AnError
+	}
+	return f.fakeLoki.query(logql, startNs, endNs, limit)
+}
+
+// Pass A is fatal, so one timeout on a heavy member's labelled query must not
+// empty the whole section: it is tried a second time.
+func TestCollectLoki_PassAIsRetriedOnce(t *testing.T) {
+	f := &flakyLoki{
+		fakeLoki: &fakeLoki{byMatch: map[string][]lokiEntry{
+			`{app="freegle", user_id="42"}`: {{tsNs: 5, source: "api", line: `{"user_id":42}`}},
+		}},
+		failOnce: `{app="freegle", user_id="42"}`,
+	}
+	b, err := NewBuilder()
+	assert.NoError(t, err)
+	defer b.Remove()
+
+	end := time.Now().UnixNano()
+	n, err := collectLoki(b, f, 42, nil, end-int64(24*time.Hour), end)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, n)
 }

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-23
+last_reviewed: 2026-09-29
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -12,6 +12,10 @@ covers:
   - iznik-nuxt3/composables/useClientLog.js
   - claude-agent-sdk/referral-mjml.js
   - claude-agent-sdk/referral-email.js
+  - iznik-server-go/userdump/userdump.go
+  - iznik-server-go/userdump/collect_db.go
+  - iznik-server-go/userdump/loki.go
+  - iznik-server-go/userdump/sentry.go
   - iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue
 ---
 
@@ -100,13 +104,20 @@ a real bound, not a hint:
   Mod2Mod and User2Mod chat on their groups (one real admin: 18,664 rooms, of which 332
   had any activity in 90 days), and pulling every message for all of them could not finish
   inside the caller's timeout — so that member could not be investigated at all.
+  The **roster** is the member's own row in every room plus everyone's rows in the
+  active rooms; the other members of old mod chats are left out (they were 112,609 of
+  one moderator's rows).
+- **Sections are collected concurrently** (`dumpWorkers` in `userdump.go`), heaviest
+  first, so the snapshot takes as long as its slowest section rather than the sum of
+  them. `_sections` rows are in completion order.
 - **Loki logs are clamped to 30 days** whatever `since` says, because production Loki
   rejects any `query_range` longer than `30d1h` outright.
-- **Loki collection runs in value order under a time budget** (`userdump/loki.go`):
-  the indexed member-id passes first, then the slim unlabelled sources and email passes
-  (each `|=`-prefiltered before any `| json`/regex, in 15-day halves), then two-leg
-  session lookups, and finally `api_headers` — the ~67GB/7d firehose — newest-first in
-  budget-capped 1.5-day slices. Anything the caps drop is recorded in `_sections` as
+- **Loki collection runs its passes concurrently under a time budget**
+  (`userdump/loki.go`, at most `lokiParallel` queries in flight): the indexed member-id
+  passes, the slim unlabelled sources, all the member's emails in **one** query (each
+  `|=`-prefiltered before any `| json`/regex, in 15-day halves), session lookups once
+  the id passes have supplied session ids, and `api_headers` — the ~67GB/7d firehose —
+  newest-first in budget-capped 1.5-day slices. Anything the caps drop is recorded in `_sections` as
   `loki_bounds`. The same prefilter-before-parse rule applies to every LogQL the helper
   or `systemlogs` builds.
 - **A member's logs are addressed two ways, and both are asked** (changed 2026-08-23).
@@ -120,6 +131,9 @@ a real bound, not a hint:
 - Anything the dump had to bound is recorded in its **`_sections`** table with
   `status='warning'` and a note. Read it before concluding "there is nothing there" — an
   empty table can mean *not collected*, not *did not happen*.
+- **Sentry is two org-wide searches**, by `user.id` and by all emails as one
+  `user.email:[a,b]` list, across every project. Freegle's Sentry events do not
+  currently set `user.email` at all, so in practice matches come from the id.
 - The helper downloads the dump with **`format=framed`** (see
   `iznik-server-go/userdump/frame.go`): the server flushes a progress frame per section
   plus a 15s heartbeat during long sections, so the prod API LB's 50s idle timeout never

@@ -41,11 +41,11 @@ Sources:
   memberships, posts and their child tables, **both sides of every chat**, moderation,
   logs, email tracking, donations, newsfeed/stories/community, location/activity, …).
 - **loki_logs** — the user's Loki logs. `user_id` is a JSON field (not a label), so it
-  is filtered after `| json`. Three passes: by `user_id` across all sources; by each
-  email address (full text); and client-side logs via `session_id`s harvested from the
-  api logs (client logs carry no user id).
+  is filtered after `| json`. Passes, run concurrently: by `user_id` across all
+  sources; by all the email addresses in one query (full text); client-side logs via
+  `session_id`s harvested from the api logs; and `api_headers`.
 - **sentry_issues** — Sentry issues affecting the user, by `user.id` and `user.email`
-  across the Freegle projects. Requires `SENTRY_AUTH_TOKEN`.
+  (one org-wide search each, across every project). Requires `SENTRY_AUTH_TOKEN`.
 
 ### Excluded / redacted
 
