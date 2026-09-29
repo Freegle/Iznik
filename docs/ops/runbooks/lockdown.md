@@ -36,9 +36,9 @@ incident. Sign-in, lost password, unsubscribing and deleting an account keep wor
 
 ## Pressing
 
-- **From ModTools:** Support tools, the red Lockdown tab. Give a reason, choose whether
-  members see a notice (none, "running slowly", or the spam warning), read the consequences
-  and type `LOCKDOWN`.
+- **From ModTools:** Support tools, the red Lockdown tab at the end. The page says what
+  pressing does. Give a reason, choose whether members see a notice and write it (two
+  wordings are offered to start from), then type `LOCKDOWN` to confirm.
 - **From the batch host**, when ModTools or the API is broken or in the wrong hands:
   `php artisan lockdown:on --reason="..."`. `lockdown:status` shows the state.
 
@@ -61,31 +61,33 @@ releasing it (the host-specific steps are in the ops team's operational notes).
 
 ## While it is on
 
-- Held chat is sorted every minute into spam, low risk and risky. Nobody reads a held chat
-  message unless it is classed risky or the recipient reports it.
-- Switch chat from hard to soft once the sorting looks right: low-risk messages are then
-  delivered with a minute's delay, risky ones go to moderators, spam is dropped.
-- Add the wave's phrases and addresses under incident phrases; they sharpen the sorting and
-  are cleared when the lockdown is closed.
+The lockdown only holds. Working out who is behind the wave and dealing with them happens
+with the Support tools that already exist, not in the Lockdown tab.
+
+- "What is held" lists the held chat messages, posts and ChitChat posts, newest first, and
+  searches their text and the sender's name and email. Each sender links to Support tools,
+  where they can be marked as a spammer.
+- "Held so far" counts each kind of thing held, and what was not sent or was refused.
+- The member notice can be changed or removed at any time, and saved.
 
 ## Lifting
 
-In this order, from the Lockdown tab. Each step is its own switch with its count beside it,
-and a surface can be held again on its own if the wave resumes.
+From the Lockdown tab, one area at a time. Each area has its own Lift button, and can be
+held again on its own if the wave comes back.
 
 1. Understand the cause and fix whatever the wave used.
-2. Check the spam and risky samples, and add phrases until the spam set looks right.
-3. **Mark spam set.** Its senders become spammers and their held items are removed.
-4. Lift **mods**, so moderators are in the queues before they fill.
-5. Lift **chat**, **posts**, **ChitChat** and **events**. Low-risk items are released at a
-   paced rate, a few hundred a minute; risky ones wait for a moderator. Nothing held is
-   released without a person deciding.
-6. Lift **push**.
-7. **Resume email.** The send queue is first filtered against what was removed in step 3,
-   then digests and notifications are generated from where they stopped. Members get what
-   they would have had, a few hours late, without the removed content. Nothing is dropped.
-8. Lift **export**.
-9. Change the notice to "Things are back to normal", or turn it off.
-10. **Close**, with a note. geeks@ gets the closing report.
+2. Mark the accounts behind the wave as spammers in Support tools.
+3. Lift **moderator actions**, so moderators are in their queues before they fill.
+4. Lift **chat**, **posts**, **ChitChat** and **events**. Everything held goes through the
+   checks that would have run on the day, oldest first, a few hundred a minute. Messages
+   from accounts marked as spammers are dropped; posts from moderated members or groups
+   wait for a moderator as usual.
+5. Lift **app notifications**.
+6. Lift **email**. The send queue is first cleared of mail about anything removed, then
+   digests and notifications are generated from where they stopped. Members get what they
+   would have had, a few hours late. Nothing is dropped.
+7. Lift **downloads**.
+8. Change the member notice to "Things are back to normal", or remove it.
+9. **Close**, with a note. geeks@ gets the closing report.
 
-For a false alarm, "Lift everything" runs steps 4 to 8 in order.
+For a false alarm, "Lift everything" lifts every area in this order.

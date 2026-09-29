@@ -174,14 +174,13 @@ While Freegle is in a [lockdown](../ops/runbooks/lockdown.md), most of the membe
 on this page are switched off on purpose. You keep the plain **Approve** button; Ban,
 Remove, Merge, and the **Mail** and **Leave** standard-message buttons are refused, and
 you cannot start a new chat with a member. A lockdown is a response to a spam or
-phishing wave, and the tools that write to a member or open a conversation with one are
+phishing wave, and the tools that write to a member or open a chat with one are
 exactly the ones worth taking away while an incident is live.
 
-Chat review changes shape too. Held messages are triaged every minute by
-`ChatProcessService`, not queued for a moderator straight away: spam is dropped, low
-risk is delivered after a short delay and never read by anyone, and only messages
-classed risky reach **Chats > Review**, marked with reason "Lockdown". Nothing held is
-released without a person deciding it.
+Chat between members is held while the lockdown is on, and nobody reads it. When Support
+lifts it, the held messages go through the usual checks: messages from accounts marked as
+spammers are dropped, and anything the checks would normally send to **Chats > Review**
+still goes there.
 
 ## Notes about members
 
