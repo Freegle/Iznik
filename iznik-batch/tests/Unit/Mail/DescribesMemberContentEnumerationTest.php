@@ -50,6 +50,7 @@ class DescribesMemberContentEnumerationTest extends TestCase
         \App\Mail\Event\EventsDigestMail::class,
         \App\Mail\Donation\AskForDonation::class,
         \App\Mail\Tryst\TrystCalendarInviteMail::class,
+        \App\Mail\Admin\AdminMail::class,
     ];
 
     private const EXEMPT = [
@@ -70,7 +71,6 @@ class DescribesMemberContentEnumerationTest extends TestCase
         \App\Mail\Stories\AskMail::class,
         \App\Mail\Chat\ChatReviewPendingMail::class,
         \App\Mail\AI\AIImageReviewDigestMail::class,
-        \App\Mail\Admin\AdminMail::class,
         \App\Mail\Admin\ChaseAdminMail::class,
         \App\Mail\Admin\ModNotifMail::class,
         \App\Mail\Alert\AlertMail::class,
