@@ -12,7 +12,7 @@ use Illuminate\Console\Command;
  * manual/scripted fallback, so a reason is required here too rather than trusting a caller
  * to have gone through that dialog.
  *
- * The announce mail to geeks@ is not sent here - lockdown:triage picks up the new row
+ * The announce mail to geeks@ is not sent here - lockdown:tick picks up the new row
  * (announcedat IS NULL) on its next run and sends it, the same path every later change
  * (a lift, a close) is announced through.
  */
@@ -20,7 +20,7 @@ class LockdownOnCommand extends Command
 {
     protected $signature = 'lockdown:on
                             {--reason= : Why the switch is being pressed (required)}
-                            {--notice= : Member-facing notice key: delay, security or normal}
+                            {--notice= : Member notice text (leave out for no notice)}
                             {--by= : User id of whoever pressed it, if known}';
 
     protected $description = 'Press the lockdown switch: hold every surface';
@@ -50,7 +50,7 @@ class LockdownOnCommand extends Command
         }
 
         $this->info("Lockdown pressed: id {$id}. Every surface is now held, chat is hard.");
-        $this->info('geeks@ will be emailed by the next lockdown:triage run (within a minute).');
+        $this->info('geeks@ will be emailed by the next lockdown:tick run (within a minute).');
 
         return self::SUCCESS;
     }

@@ -48,7 +48,6 @@ class LockdownStatusCommand extends Command
                 LockdownService::SURFACES
             )
         );
-        $this->line('Chat mode: '.($surfaces['chat_mode'] ?? LockdownService::CHAT_HARD));
 
         $counters = DB::table('lockdown_counters')
             ->where('lockdownid', (int) $row->incidentid)

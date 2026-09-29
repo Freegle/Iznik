@@ -10,8 +10,8 @@ use Illuminate\Console\Command;
  * Lift some or all surfaces, or close the incident outright (plan
  * 2026-09-27-lockdown-switch.md, section 11.4). "Lifting releases held messages at a paced
  * rate" (11.5) - that pacing lives in the same loops that created the holds
- * (ContentCheckService, ChatProcessService, LockdownTriageService::releaseChitChatHolds via
- * lockdown:triage), not here; this command only flips the surface switch that those loops
+ * (ContentCheckService, ChatProcessService, LockdownHoldsService::releaseChitChatHolds via
+ * lockdown:tick), not here; this command only flips the surface switch that those loops
  * read.
  *
  * Email works differently (decided 27 September, plan sections 11.7-11.8): while held,
@@ -53,7 +53,7 @@ class LockdownOffCommand extends Command
             }
 
             $id = $lockdown->close($by, $this->option('note'));
-            $this->info("Lockdown closed: id {$id}. Every surface lifted, incident phrases cleared.");
+            $this->info("Lockdown closed: id {$id}. Every surface lifted, member notice cleared.");
 
             return self::SUCCESS;
         }

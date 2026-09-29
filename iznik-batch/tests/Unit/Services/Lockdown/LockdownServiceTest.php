@@ -36,22 +36,21 @@ class LockdownServiceTest extends TestCase
         }
     }
 
-    public function test_press_holds_every_surface_hard(): void
+    public function test_press_holds_every_surface(): void
     {
         $user = $this->createTestUser();
-        $id = $this->service->press($user->id, 'Voucher wave', 'security');
+        $id = $this->service->press($user->id, 'Voucher wave', '  Messages may be delayed.  ');
 
         $this->assertTrue($this->service->active());
         foreach (LockdownService::SURFACES as $surface) {
             $this->assertTrue($this->service->held($surface), $surface);
         }
-        $this->assertSame('hard', $this->service->chatMode());
 
         $row = DB::table('lockdowns')->find($id);
         $this->assertEquals($id, $row->incidentid);
         $this->assertEquals($user->id, $row->startedby);
         $this->assertNotNull($row->startedat);
-        $this->assertSame('security', $row->notice);
+        $this->assertSame('Messages may be delayed.', $row->notice, 'the notice text is stored trimmed');
         $this->assertSame($id, $this->service->incidentId());
     }
 
@@ -65,13 +64,12 @@ class LockdownServiceTest extends TestCase
     public function test_set_surfaces_appends_a_row_carrying_the_incident(): void
     {
         $first = $this->service->press(null, 'wave');
-        $second = $this->service->setSurfaces(['mods' => false, 'chat_mode' => 'soft'], null);
+        $second = $this->service->setSurfaces(['mods' => false], null);
 
         $this->assertGreaterThan($first, $second);
         $this->assertSame(2, DB::table('lockdowns')->count());
         $this->assertFalse($this->service->held('mods'));
         $this->assertTrue($this->service->held('chat'));
-        $this->assertSame('soft', $this->service->chatMode());
 
         $row = DB::table('lockdowns')->find($second);
         $this->assertEquals($first, $row->incidentid);
@@ -88,9 +86,7 @@ class LockdownServiceTest extends TestCase
 
     public function test_close_ends_the_incident(): void
     {
-        $this->service->press(null, 'wave');
-        $this->service->setPhrases(['Voucher ', 'voucher', ''], null);
-        $this->assertSame(['voucher'], $this->service->phrases());
+        $this->service->press(null, 'wave', 'Spam attack in progress.');
 
         $id = $this->service->close(null, 'drill over');
 
@@ -99,8 +95,7 @@ class LockdownServiceTest extends TestCase
         $row = DB::table('lockdowns')->find($id);
         $this->assertSame('drill over', $row->endnote);
         $this->assertNotNull($row->endedat);
-        $this->assertSame([], json_decode($row->phrases, true));
-        $this->assertSame([], $this->service->phrases());
+        $this->assertNull($row->notice, "close clears the incident's member notice");
     }
 
     public function test_state_is_read_fresh_each_call(): void
@@ -199,17 +194,27 @@ class LockdownServiceTest extends TestCase
         $this->assertSame(0, DB::table('lockdown_counters')->count());
     }
 
-    public function test_notice_text(): void
+    public function test_blank_notice_means_no_notice(): void
     {
-        $this->assertStringContainsString('vouchers', LockdownService::noticeText('security'));
-        $this->assertStringContainsString('running slowly', LockdownService::noticeText('delay'));
-        $this->assertNull(LockdownService::noticeText(null));
+        $id = $this->service->press(null, 'wave', '   ');
+        $this->assertNull(DB::table('lockdowns')->find($id)->notice);
+
+        $this->service->setNotice('Back soon.', null);
+        $cleared = $this->service->setNotice(null, null);
+        $this->assertNull(DB::table('lockdowns')->find($cleared)->notice);
     }
 
-    public function test_unknown_notice_rejected(): void
+    public function test_overlong_notice_rejected(): void
     {
         $this->expectException(\InvalidArgumentException::class);
-        $this->service->press(null, 'wave', 'panic');
+        $this->service->press(null, 'wave', str_repeat('a', LockdownService::MAX_NOTICE_LENGTH + 1));
+    }
+
+    public function test_chat_mode_is_not_a_surface(): void
+    {
+        $this->service->press(null, 'wave');
+        $this->expectException(\InvalidArgumentException::class);
+        $this->service->setSurfaces(['chat_mode' => 'soft'], null);
     }
 
     public function test_ack_is_a_noop_before_anything_is_pressed(): void
@@ -260,13 +265,11 @@ class LockdownServiceTest extends TestCase
     private function insertLockdownRow(array $overrides = []): int
     {
         $surfaces = array_fill_keys(LockdownService::SURFACES, true);
-        $surfaces['chat_mode'] = LockdownService::CHAT_HARD;
 
         return DB::table('lockdowns')->insertGetId(array_merge([
             'active' => 1,
             'surfaces' => json_encode($surfaces),
             'reason' => 'external write',
-            'phrases' => json_encode([]),
             'startedat' => now(),
         ], $overrides));
     }

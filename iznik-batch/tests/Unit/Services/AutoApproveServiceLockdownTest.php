@@ -5,7 +5,7 @@ namespace Tests\Unit\Services;
 use App\Models\MessageGroup;
 use App\Services\AutoApproveService;
 use App\Services\Lockdown\LockdownService;
-use App\Services\Lockdown\LockdownTriageService;
+use App\Services\Lockdown\LockdownHoldsService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -148,13 +148,11 @@ class AutoApproveServiceLockdownTest extends TestCase
     }
 
     /**
-     * A risky hold is never resolved by the batch (ContentCheckLockdownTest::
-     * test_risky_held_post_left_pending_for_a_moderator_when_posts_lifted) - its
-     * lockdown_holds row stays outcome NULL indefinitely, until a moderator approves or
-     * rejects it by hand. AutoApproveService's own 48h fallback must not slip it through
-     * in the meantime, even long after posts is generally lifted.
+     * A hold not yet resolved (outcome still NULL) is ContentCheckService's to admit through
+     * the ordinary decision (admitHeldPost(), plan 11.11) - AutoApproveService's separate 48h
+     * fallback must not approve it directly and skip that check.
      */
-    public function test_never_auto_approves_a_risky_held_post_even_after_posts_lifted(): void
+    public function test_never_auto_approves_a_still_open_held_post(): void
     {
         $this->lockdown->press(null, 'test');
         $this->lockdown->setSurfaces(['posts' => false], null);
@@ -175,61 +173,15 @@ class AutoApproveServiceLockdownTest extends TestCase
 
         DB::table('lockdown_holds')->insert([
             'lockdownid' => $this->lockdown->incidentId(),
-            'kind' => LockdownTriageService::KIND_POST,
+            'kind' => LockdownHoldsService::KIND_POST,
             'refid' => $message->id,
             'userid' => $user->id,
-            'risk' => LockdownTriageService::RISK_RISKY,
             'created' => now(),
         ]);
 
         $stats = $this->service->process();
 
-        $this->assertEquals(0, $stats['approved'], 'a risky hold is left for a moderator, not the 48h fallback');
-
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->first();
-        $this->assertEquals(MessageGroup::COLLECTION_PENDING, $mg->collection);
-    }
-
-    /**
-     * A low-risk hold not yet resolved (outcome still NULL) is ContentCheckService's own
-     * paced backlog to admit through the real decision path (admitHeldPost(), plan 10.7 /
-     * 11.4) - AutoApproveService's independent 48h fallback must not race ahead of that
-     * pacing and approve it directly.
-     */
-    public function test_never_auto_approves_a_still_open_low_risk_held_post(): void
-    {
-        $this->lockdown->press(null, 'test');
-        $this->lockdown->setSurfaces(['posts' => false], null);
-
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['added' => now()->subHours(72)]);
-
-        $message = $this->createTestMessage($user, $group);
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
-
-        DB::table('lockdown_holds')->insert([
-            'lockdownid' => $this->lockdown->incidentId(),
-            'kind' => LockdownTriageService::KIND_POST,
-            'refid' => $message->id,
-            'userid' => $user->id,
-            'risk' => LockdownTriageService::RISK_LOW,
-            'created' => now(),
-        ]);
-
-        $stats = $this->service->process();
-
-        $this->assertEquals(0, $stats['approved'], 'still ContentCheckService\'s to admit, paced, not auto-approve\'s');
+        $this->assertEquals(0, $stats['approved'], 'still ContentCheckService\'s to admit, not auto-approve\'s');
 
         $mg = DB::table('messages_groups')
             ->where('msgid', $message->id)

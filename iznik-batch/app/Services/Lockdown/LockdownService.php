@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Log;
  * newest one. current() reads through a five-second in-process cache (section 11.6), the
  * same as the Go API's own cache, so a per-item gate check - once per recipient, per chat
  * message, per post, per push - costs a memory read rather than a query. Any write made
- * through this service (press/setSurfaces/setNotice/setPhrases/close) flushes the cache
+ * through this service (press/setSurfaces/setNotice/close) flushes the cache
  * immediately, so a press is always felt at once by whatever made it and by every other
  * caller in the same process; the TTL only bounds how stale a read can be of a change made
  * some other way, such as the Go API writing the row directly.
@@ -38,18 +38,11 @@ class LockdownService
      */
     public const ACK_LOOPS = [
         'chat-process', 'content-check', 'auto-approve', 'mail-spool',
-        'mail-loops', 'background-tasks', 'push', 'triage',
+        'mail-loops', 'background-tasks', 'push', 'tick',
     ];
 
-    public const CHAT_HARD = 'hard';
-
-    public const CHAT_SOFT = 'soft';
-
-    public const NOTICES = [
-        'delay' => 'Freegle is running slowly today. Messages and posts may take longer than usual to reach people.',
-        'security' => "We're dealing with a spam attack. Messages may be delayed. If you received a message about vouchers or payments, please don't click the link.",
-        'normal' => 'Things are back to normal.',
-    ];
+    /** The longest member notice the presser may write. Matches the Go API. */
+    public const MAX_NOTICE_LENGTH = 500;
 
     /**
      * How long a read is trusted before the next current() call queries again (section
@@ -123,13 +116,6 @@ class LockdownService
         return (bool) ($this->surfacesOf($row)[$surface] ?? false);
     }
 
-    public function chatMode(): string
-    {
-        $row = $this->current();
-
-        return $row ? ($this->surfacesOf($row)['chat_mode'] ?? self::CHAT_HARD) : self::CHAT_HARD;
-    }
-
     /**
      * The incident the newest row belongs to, active or closed. Null if there has never been one.
      */
@@ -138,13 +124,6 @@ class LockdownService
         $row = $this->current();
 
         return $row ? (int) $row->incidentid : null;
-    }
-
-    public function phrases(): array
-    {
-        $row = $this->current();
-
-        return $row && $row->phrases ? (json_decode($row->phrases, true) ?: []) : [];
     }
 
     /**
@@ -169,17 +148,16 @@ class LockdownService
     }
 
     /**
-     * Press the switch: every surface held, chat hard.
+     * Press the switch: every surface held. $notice is the member notice text, or null for none.
      */
     public function press(?int $by, ?string $reason, ?string $notice = null): int
     {
         if ($this->active()) {
             throw new \RuntimeException('A lockdown is already active.');
         }
-        $this->validateNotice($notice);
+        $notice = $this->cleanNotice($notice);
 
         $surfaces = array_fill_keys(self::SURFACES, true);
-        $surfaces['chat_mode'] = self::CHAT_HARD;
 
         return DB::transaction(function () use ($by, $reason, $notice, $surfaces) {
             $id = DB::table('lockdowns')->insertGetId([
@@ -187,7 +165,6 @@ class LockdownService
                 'surfaces' => json_encode($surfaces),
                 'reason' => $reason,
                 'notice' => $notice,
-                'phrases' => json_encode([]),
                 'changedby' => $by,
                 'startedby' => $by,
                 'startedat' => now(),
@@ -200,7 +177,7 @@ class LockdownService
     }
 
     /**
-     * Hold or lift any subset of surfaces, and switch chat between hard and soft.
+     * Hold or lift any subset of surfaces.
      */
     public function setSurfaces(array $changes, ?int $by): int
     {
@@ -208,51 +185,36 @@ class LockdownService
         $surfaces = $this->surfacesOf($row);
 
         foreach ($changes as $key => $value) {
-            if ($key === 'chat_mode') {
-                if (!in_array($value, [self::CHAT_HARD, self::CHAT_SOFT], true)) {
-                    throw new \InvalidArgumentException("Unknown chat mode $value");
-                }
-                $surfaces['chat_mode'] = $value;
-            } elseif (in_array($key, self::SURFACES, true)) {
-                $surfaces[$key] = (bool) $value;
-            } else {
+            if (!in_array($key, self::SURFACES, true)) {
                 throw new \InvalidArgumentException("Unknown surface $key");
             }
+            $surfaces[$key] = (bool) $value;
         }
 
         return $this->append($row, ['surfaces' => json_encode($surfaces)], $by);
     }
 
+    /**
+     * Set the member notice text, or clear it with null or blank text.
+     */
     public function setNotice(?string $notice, ?int $by): int
     {
-        $this->validateNotice($notice);
-
-        return $this->append($this->requireCurrent(), ['notice' => $notice], $by);
-    }
-
-    public function setPhrases(array $phrases, ?int $by): int
-    {
-        $clean = array_values(array_unique(array_filter(array_map(
-            fn ($p) => mb_strtolower(trim((string) $p)),
-            $phrases
-        ))));
-
-        return $this->append($this->requireActive(), ['phrases' => json_encode($clean)], $by);
+        return $this->append($this->requireCurrent(), ['notice' => $this->cleanNotice($notice)], $by);
     }
 
     /**
-     * End the incident. Surfaces all lifted, incident phrases cleared.
+     * End the incident. Every surface lifted, and the incident's member notice cleared: a
+     * notice written for the incident must not outlive it.
      */
     public function close(?int $by, ?string $note): int
     {
         $row = $this->requireActive();
         $surfaces = array_fill_keys(self::SURFACES, false);
-        $surfaces['chat_mode'] = $this->surfacesOf($row)['chat_mode'] ?? self::CHAT_HARD;
 
         return $this->append($row, [
             'active' => 0,
             'surfaces' => json_encode($surfaces),
-            'phrases' => json_encode([]),
+            'notice' => null,
             'endedby' => $by,
             'endedat' => now(),
             'endnote' => $note,
@@ -267,7 +229,7 @@ class LockdownService
      * per-item gate check without an extra query on every item.
      *
      * $loop is one of the names in the plan: chat-process, content-check, auto-approve,
-     * mail-spool, mail-loops, background-tasks, push, triage.
+     * mail-spool, mail-loops, background-tasks, push, tick.
      */
     public function ack(string $loop): void
     {
@@ -296,11 +258,6 @@ class LockdownService
         }
     }
 
-    public static function noticeText(?string $notice): ?string
-    {
-        return $notice ? (self::NOTICES[$notice] ?? null) : null;
-    }
-
     public function surfacesOf(object $row): array
     {
         $decoded = $row->surfaces ? json_decode($row->surfaces, true) : [];
@@ -321,7 +278,6 @@ class LockdownService
             'surfaces' => $previous->surfaces,
             'reason' => $previous->reason,
             'notice' => $previous->notice,
-            'phrases' => $previous->phrases,
             'startedby' => $previous->startedby,
             'startedat' => $previous->startedat,
             'endedby' => $previous->endedby,
@@ -355,10 +311,19 @@ class LockdownService
         return $row;
     }
 
-    private function validateNotice(?string $notice): void
+    /**
+     * Trim a notice. Null or blank means no notice; longer than MAX_NOTICE_LENGTH is refused.
+     */
+    private function cleanNotice(?string $notice): ?string
     {
-        if ($notice !== null && !array_key_exists($notice, self::NOTICES)) {
-            throw new \InvalidArgumentException("Unknown notice $notice");
+        $notice = trim((string) $notice);
+        if ($notice === '') {
+            return null;
         }
+        if (mb_strlen($notice) > self::MAX_NOTICE_LENGTH) {
+            throw new \InvalidArgumentException('The notice is limited to ' . self::MAX_NOTICE_LENGTH . ' characters.');
+        }
+
+        return $notice;
     }
 }

@@ -5,13 +5,13 @@ namespace Tests\Feature\Message;
 use App\Models\MessageGroup;
 use App\Services\ContentCheckService;
 use App\Services\Lockdown\LockdownService;
-use App\Services\Lockdown\LockdownTriageService;
+use App\Services\Lockdown\LockdownHoldsService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
  * ContentCheckService::processUnprocessed under the lockdown switch (plan
- * 2026-09-27-lockdown-switch.md, sections 10.6, 10.9, 11.4). Ordinary (no lockdown)
+ * 2026-09-27-lockdown-switch.md, section 11.11). Ordinary (no lockdown)
  * promotion behaviour is covered by ContentCheckTest; this file is only the lockdown branch.
  */
 class ContentCheckLockdownTest extends TestCase
@@ -104,19 +104,18 @@ class ContentCheckLockdownTest extends TestCase
         $this->assertNotNull($row->contentcheck_checked_at, 'checking is not acting - it is still checked');
     }
 
-    // --- Lifting: paced release of the low-risk backlog ---
+    // --- Lifting: everything held goes through the normal decision, straight away ---
 
-    public function test_low_risk_held_post_promoted_when_posts_lifted(): void
+    public function test_held_post_promoted_when_posts_lifted(): void
     {
         $this->lockdown->press(null, 'test');
         [$msgid, $groupid, $userid] = $this->makePendingPost();
 
         $holdId = DB::table('lockdown_holds')->insertGetId([
             'lockdownid' => $this->lockdown->incidentId(),
-            'kind' => LockdownTriageService::KIND_POST,
+            'kind' => LockdownHoldsService::KIND_POST,
             'refid' => $msgid,
             'userid' => $userid,
-            'risk' => LockdownTriageService::RISK_LOW,
             'created' => now(),
         ]);
 
@@ -134,45 +133,18 @@ class ContentCheckLockdownTest extends TestCase
         $this->assertNotNull($hold->releasedat);
     }
 
-    public function test_risky_held_post_left_pending_for_a_moderator_when_posts_lifted(): void
+    public function test_held_post_in_moderated_group_stays_pending_after_lift(): void
     {
         $this->lockdown->press(null, 'test');
-        [$msgid, $groupid, $userid] = $this->makePendingPost();
-
-        $holdId = DB::table('lockdown_holds')->insertGetId([
-            'lockdownid' => $this->lockdown->incidentId(),
-            'kind' => LockdownTriageService::KIND_POST,
-            'refid' => $msgid,
-            'userid' => $userid,
-            'risk' => LockdownTriageService::RISK_RISKY,
-            'created' => now(),
-        ]);
-
-        $this->lockdown->setSurfaces(['posts' => false], null);
-
-        $this->service->processUnprocessed();
-
-        $row = $this->groupRow($msgid, $groupid);
-        $this->assertSame(MessageGroup::COLLECTION_PENDING, $row->collection, 'risky is never auto-promoted - a moderator decides');
-
-        $hold = DB::table('lockdown_holds')->where('id', $holdId)->first();
-        $this->assertNull($hold->outcome, 'batch does not resolve a risky hold either way');
-    }
-
-    public function test_low_risk_held_post_in_moderated_group_stays_pending_after_lift(): void
-    {
-        $this->lockdown->press(null, 'test');
-        // The member themselves is unmoderated - only the group is (plan 10.7: lifting
-        // re-decides through the normal path, and a moderated group still holds a post
-        // whatever risk the lockdown triage gave it).
+        // The member themselves is unmoderated - only the group is. Lifting re-decides
+        // through the normal path, so a moderated group still holds the post.
         [$msgid, $groupid, $userid] = $this->makePendingPost(['settings' => ['moderated' => true]]);
 
         $holdId = DB::table('lockdown_holds')->insertGetId([
             'lockdownid' => $this->lockdown->incidentId(),
-            'kind' => LockdownTriageService::KIND_POST,
+            'kind' => LockdownHoldsService::KIND_POST,
             'refid' => $msgid,
             'userid' => $userid,
-            'risk' => LockdownTriageService::RISK_LOW,
             'created' => now(),
         ]);
 
@@ -189,7 +161,7 @@ class ContentCheckLockdownTest extends TestCase
         $this->assertNotNull($hold->releasedat);
     }
 
-    public function test_low_risk_backlog_release_is_paced_at_the_batch_limit(): void
+    public function test_whole_backlog_released_in_one_run(): void
     {
         $this->lockdown->press(null, 'test');
 
@@ -202,11 +174,8 @@ class ContentCheckLockdownTest extends TestCase
         // missing item name, so this is a genuinely clean, promotable post through the real
         // decision path, just without the overhead of createTestGroup()/createTestUser()
         // per row that the other tests here use.
-        // POST_RELEASE_BATCH_LIMIT is private on the service, so the pacing cap is
-        // duplicated here as a literal; if that constant ever changes, this test's own
-        // arithmetic (limit + 5, and the two assertions below) still holds regardless.
-        $limit = 200;
-        $total = $limit + 5;
+        // More than one batch, so the release has to go round more than once in one run.
+        $total = LockdownHoldsService::RELEASE_BATCH_SIZE + 5;
         $msgids = [];
         for ($i = 0; $i < $total; $i++) {
             $msgid = DB::table('messages')->insertGetId([
@@ -232,10 +201,9 @@ class ContentCheckLockdownTest extends TestCase
 
             DB::table('lockdown_holds')->insert([
                 'lockdownid' => $this->lockdown->incidentId(),
-                'kind' => LockdownTriageService::KIND_POST,
+                'kind' => LockdownHoldsService::KIND_POST,
                 'refid' => $msgid,
                 'userid' => $user->id,
-                'risk' => LockdownTriageService::RISK_LOW,
                 'created' => now(),
             ]);
 
@@ -246,41 +214,14 @@ class ContentCheckLockdownTest extends TestCase
 
         $this->service->processUnprocessed();
 
-        $resolved = DB::table('lockdown_holds')->where('kind', LockdownTriageService::KIND_POST)->whereNotNull('outcome')->count();
-        $stillOpen = DB::table('lockdown_holds')->where('kind', LockdownTriageService::KIND_POST)->whereNull('outcome')->count();
+        $resolved = DB::table('lockdown_holds')->where('kind', LockdownHoldsService::KIND_POST)->whereNotNull('outcome')->count();
+        $stillOpen = DB::table('lockdown_holds')->where('kind', LockdownHoldsService::KIND_POST)->whereNull('outcome')->count();
 
-        $this->assertEquals($limit, $resolved, 'one run admits at most POST_RELEASE_BATCH_LIMIT held posts');
-        $this->assertEquals($total - $limit, $stillOpen, 'the rest wait for the next run');
+        $this->assertEquals($total, $resolved, 'one run admits every held post, not a few hundred at a time');
+        $this->assertEquals(0, $stillOpen);
 
         $approvedCount = DB::table('messages_groups')->whereIn('msgid', $msgids)->where('collection', MessageGroup::COLLECTION_APPROVED)->count();
-        $this->assertEquals($limit, $approvedCount, 'every admitted post in this clean backlog is promoted');
-    }
-
-    // --- Support marking a sender spam mid-incident ---
-
-    public function test_spam_marked_held_post_moved_to_spam_whatever_the_held_state(): void
-    {
-        $this->lockdown->press(null, 'test'); // still held - must not wait for a lift
-        [$msgid, $groupid, $userid] = $this->makePendingPost();
-
-        $holdId = DB::table('lockdown_holds')->insertGetId([
-            'lockdownid' => $this->lockdown->incidentId(),
-            'kind' => LockdownTriageService::KIND_POST,
-            'refid' => $msgid,
-            'userid' => $userid,
-            'risk' => LockdownTriageService::RISK_SPAM,
-            'outcome' => 'spam_marked',
-            'created' => now(),
-        ]);
-
-        $this->service->processUnprocessed();
-
-        $row = $this->groupRow($msgid, $groupid);
-        $this->assertSame(MessageGroup::COLLECTION_SPAM, $row->collection);
-
-        $hold = DB::table('lockdown_holds')->where('id', $holdId)->first();
-        $this->assertSame('rejected', $hold->outcome, 'spam_marked is a to-do for the batch, not a final state');
-        $this->assertNotNull($hold->releasedat);
+        $this->assertEquals($total, $approvedCount, 'every post in this clean backlog is promoted');
     }
 
     // --- Mid-run press (section 11.6 point 2) ---

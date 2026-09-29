@@ -6,7 +6,7 @@ use App\Models\BackgroundTask;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Services\Lockdown\LockdownService;
-use App\Services\Lockdown\LockdownTriageService;
+use App\Services\Lockdown\LockdownHoldsService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Nitotm\Eld\LanguageDetector;
@@ -18,14 +18,6 @@ class ContentCheckService
         private readonly ?MessageSpatialService $messageSpatialService = null,
         private readonly ?LockdownService $lockdown = null,
     ) {}
-
-    /**
-     * Previously-held Pending posts released per processUnprocessed() run once posts is
-     * no longer held, oldest first. Bounds how many freebie-alert/spatial-index writes a
-     * single run triggers the instant a lockdown lifts on a large backlog; the rest waits
-     * for the next run. Mirrors ChatProcessService::RELEASE_BATCH_LIMIT for chat.
-     */
-    private const POST_RELEASE_BATCH_LIMIT = 200;
 
     /**
      * A block keyword whose alphanumeric skeleton is at least this long also
@@ -59,7 +51,6 @@ class ContentCheckService
     public const CHECK_MEMBER_MODERATED  = 'MemberModerated';
     public const CHECK_GROUP_MODERATED   = 'GroupModerated';
     public const CHECK_NO_LOCATION       = 'NoLocation';
-    public const CHECK_LOCKDOWN_RISKY    = 'LockdownRisky';
 
     /**
      * Candidate languages for the content-check language detector. Restricted to
@@ -308,35 +299,15 @@ class ContentCheckService
 
         $lockdown = $this->lockdown ?? app(LockdownService::class);
 
-        // Risky holds are never auto-promoted, even once posts is no longer held (11.4) -
-        // unlike the posts hold re-read per row below, this stays true for these specific
-        // posts indefinitely, until a moderator approves or rejects them by hand. Fetched
-        // once per run as a set: the backlog a lockdown leaves behind is at most a few
-        // thousand rows, far cheaper than a query per candidate below. Also handed to
-        // releasePostHolds() below, so a held post admitted via the release class or the
-        // low-risk backlog is judged by the same set.
-        // Cast explicitly: the driver can hand back refid as a numeric string,
-        // and in_array(..., true) below would then silently never match.
-        $riskyHeldMsgids = array_map('intval', DB::table('lockdown_holds')
-            ->where('kind', LockdownTriageService::KIND_POST)
-            ->where('risk', LockdownTriageService::RISK_RISKY)
-            ->whereNull('outcome')
-            ->pluck('refid')
-            ->all());
-
-        // A sender Support marks a spammer mid-incident is moved to Spam on the spot,
-        // whatever the posts surface's held state - it doesn't wait for a lift. A post the
-        // release class approved by name is admitted regardless of the held state too. A
-        // previously-held low-risk backlog is promoted, paced, once posts is no longer
-        // held - all three run through the same normal decision admitHeldPost() calls, so
-        // a moderated group or a missing location still holds them. Risky holds are left
-        // exactly where they are; a moderator decides.
+        // Once posts is lifted, everything the lockdown held goes through the same decision
+        // as any other post, straight away (plan 11.11). A moderated group, a moderated
+        // member or a missing location still holds it.
         if (!$dryRun) {
-            $this->releasePostHolds($lockdown, $riskyHeldMsgids, $stats);
+            $this->releasePostHolds($lockdown, $stats);
         }
 
         // Per-row processing, shared by the two candidate queries below.
-        $processChunk = function ($candidates) use (&$stats, $dryRun, $lockdown, $riskyHeldMsgids) {
+        $processChunk = function ($candidates) use (&$stats, $dryRun, $lockdown) {
                 foreach ($candidates as $row) {
                     // Re-read per post (section 11.6): a press between two posts of this
                     // same chunk must stop the next one being promoted at once, not wait
@@ -346,7 +317,7 @@ class ContentCheckService
                     $lockdown->ack('content-check');
                     $postsHeld = $lockdown->held('posts');
 
-                    $this->decideAndApply($row, $riskyHeldMsgids, $postsHeld, $dryRun, $stats);
+                    $this->decideAndApply($row, $postsHeld, $dryRun, $stats);
                 }
         };
 
@@ -386,25 +357,16 @@ class ContentCheckService
             ->whereNull('m.deleted')
             ->whereNotNull('m.fromuser')
             ->whereNull('u.deleted')
-            // A post with an open low-risk hold, or one the release class approved by
-            // name, is only ever admitted through releasePostHolds()/admitHeldPost() -
-            // that is what enforces POST_RELEASE_BATCH_LIMIT pacing across a whole
-            // backlog at once. Left out of this exclusion: a risky hold (still handled
-            // per-row below via $riskyHeldMsgids, since it must keep blocking promotion
-            // in the normal walk too, not just skip it) and every other outcome
-            // (released/review/rejected), which is a hold already resolved and must not
-            // stop the row being picked up normally again.
+            // A post the lockdown is still holding is left alone here and admitted only by
+            // releasePostHolds()/admitHeldPost() once posts is lifted, which records the
+            // hold's outcome and brings it to the top of Browse. A hold already resolved
+            // does not stop the row being picked up normally again.
             ->whereNotExists(function ($q) {
                 $q->select(DB::raw(1))
                     ->from('lockdown_holds as lh')
                     ->whereColumn('lh.refid', 'mg.msgid')
-                    ->where('lh.kind', LockdownTriageService::KIND_POST)
-                    ->where(function ($q2) {
-                        $q2->where(function ($q3) {
-                            $q3->whereNull('lh.outcome')
-                                ->where('lh.risk', LockdownTriageService::RISK_LOW);
-                        })->orWhere('lh.outcome', 'approved');
-                    });
+                    ->where('lh.kind', LockdownHoldsService::KIND_POST)
+                    ->whereNull('lh.outcome');
             })
             ->orderBy('mg.msgid')
             ->orderBy('mg.groupid');
@@ -429,52 +391,25 @@ class ContentCheckService
     }
 
     /**
-     * Act on this incident's post holds: spam_marked moves the post to Spam on the spot
-     * (Support marked the sender, whatever the posts surface's held state). A hold the
-     * release class marked 'approved' is admitted by name, also whatever the held state -
-     * Support named this one post specifically. Once posts is no longer held, the
-     * low-risk backlog still waiting (outcome NULL) is admitted too, oldest first, both
-     * capped together at POST_RELEASE_BATCH_LIMIT per run. A risky hold is never touched
-     * here - it stays Pending, exactly where the normal mod queue already shows it, until
-     * a moderator acts (11.4).
+     * Once posts is no longer held, admit every post the lockdown held, oldest first, in
+     * batches with no pause between them, stopping at once if posts is held again.
      */
-    private function releasePostHolds(LockdownService $lockdown, array $riskyHeldMsgids, array &$stats): void
+    private function releasePostHolds(LockdownService $lockdown, array &$stats): void
     {
-        $kind = LockdownTriageService::KIND_POST;
+        while (!$lockdown->held('posts')) {
+            $batch = DB::table('lockdown_holds')
+                ->where('kind', LockdownHoldsService::KIND_POST)
+                ->whereNull('outcome')
+                ->orderBy('id')
+                ->limit(LockdownHoldsService::RELEASE_BATCH_SIZE)
+                ->get();
+            if ($batch->isEmpty()) {
+                break;
+            }
 
-        $spamMarked = DB::table('lockdown_holds')
-            ->where('kind', $kind)
-            ->where('outcome', 'spam_marked')
-            ->get();
-        foreach ($spamMarked as $hold) {
-            $this->moveHeldPostToSpam((int) $hold->refid);
-            DB::table('lockdown_holds')->where('id', $hold->id)->update([
-                'outcome' => 'rejected',
-                'releasedat' => now(),
-            ]);
-        }
-
-        // Called exactly once per run, whether or not there is anything to release -
-        // ContentCheckLockdownTest::test_second_pending_post_stops_promoting_once_
-        // pressed_mid_run counts this call.
-        $postsHeld = $lockdown->held('posts');
-
-        $releasable = DB::table('lockdown_holds')
-            ->where('kind', $kind)
-            ->where('outcome', 'approved')
-            ->when(!$postsHeld, function ($q) use ($kind) {
-                $q->orWhere(function ($q2) use ($kind) {
-                    $q2->where('kind', $kind)
-                        ->where('risk', LockdownTriageService::RISK_LOW)
-                        ->whereNull('outcome');
-                });
-            })
-            ->orderBy('id')
-            ->limit(self::POST_RELEASE_BATCH_LIMIT)
-            ->get();
-
-        foreach ($releasable as $hold) {
-            $this->admitHeldPost($hold, $riskyHeldMsgids, $stats);
+            foreach ($batch as $hold) {
+                $this->admitHeldPost($hold, $stats);
+            }
         }
     }
 
@@ -486,18 +421,13 @@ class ContentCheckService
      * a moderated group, a moderated member or a missing location still holds it exactly
      * as it would a brand new post.
      *
-     * $postsHeld is always false here - by the time a hold reaches this method it has
-     * already been resolved individually, either because posts is no longer generally
-     * held (the low-risk backlog) or because the release class approved this one post by
-     * name regardless of the general held state.
-     *
      * A held post can have more than one still-Pending messages_groups row (rippled to
      * several groups before the lockdown pressed). The hold's own outcome is the worst
      * thing that happened to any of them: 'rejected' if any was blocked, else 'review' if
      * any is still waiting on a moderator (or errored - left untouched, so it still needs
      * a look), else 'released'.
      */
-    private function admitHeldPost(object $hold, array $riskyHeldMsgids, array &$stats): void
+    private function admitHeldPost(object $hold, array &$stats): void
     {
         $rows = DB::table('messages_groups as mg')
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
@@ -513,7 +443,7 @@ class ContentCheckService
 
         $worst = 'released';
         foreach ($rows as $row) {
-            $outcome = $this->decideAndApply($row, $riskyHeldMsgids, false, false, $stats, true);
+            $outcome = $this->decideAndApply($row, false, false, $stats, true);
 
             if ($outcome === 'blocked') {
                 $worst = 'rejected';
@@ -528,25 +458,6 @@ class ContentCheckService
         ]);
 
         Log::info("ContentCheck: lockdown admitted held post #{$hold->refid}", ['outcome' => $worst]);
-    }
-
-    /**
-     * Move every still-Pending group row of a held post to Spam - the same collection
-     * change the block-keyword path (processUnprocessed's $hasBlock branch) already makes,
-     * triggered here by Support marking the sender rather than by a keyword match.
-     */
-    private function moveHeldPostToSpam(int $msgid): void
-    {
-        DB::table('messages_groups')
-            ->where('msgid', $msgid)
-            ->where('collection', MessageGroup::COLLECTION_PENDING)
-            ->where('deleted', 0)
-            ->update([
-                'collection'              => MessageGroup::COLLECTION_SPAM,
-                'contentcheck_checked_at' => now(),
-            ]);
-
-        Log::info("ContentCheck: lockdown spam-marked post #{$msgid} moved to Spam");
     }
 
     /**
@@ -568,7 +479,7 @@ class ContentCheckService
      *        queue the moment it reappears (plan 11.4).
      * @return string One of 'approved', 'blocked', 'kept_pending', 'error'.
      */
-    private function decideAndApply(object $row, array $riskyHeldMsgids, bool $postsHeld, bool $dryRun, array &$stats, bool $refreshArrival = false): string
+    private function decideAndApply(object $row, bool $postsHeld, bool $dryRun, array &$stats, bool $refreshArrival = false): string
     {
         try {
             $reasons = $this->checkMessage((int) $row->msgid, (int) $row->groupid);
@@ -599,15 +510,10 @@ class ContentCheckService
             // postcode via the "add a postcode" prompt (Discourse #9865).
             $missingLocation = $row->lat === null
                             && in_array($row->msgtype, ['Offer', 'Wanted'], true);
-            // A lockdown flagged this exact post risky and nobody has resolved
-            // that hold yet - never auto-promoted, whether or not posts is still
-            // held, until a moderator approves or rejects it by hand (11.4).
-            $lockdownRisky = in_array((int) $row->msgid, $riskyHeldMsgids, true);
             // While posts is held, nothing promotes - it waits in the mod queue
-            // exactly as a moderator-held post does, until the lockdown lifts (the
-            // triage cron's holds and this service's own release below are what act
-            // on it after that; the check runs and is recorded either way).
-            $promote     = empty($reasons) && !$isModerated && !$missingLocation && !$postsHeld && !$lockdownRisky;
+            // exactly as a moderator-held post does, until the lockdown lifts and
+            // releasePostHolds() admits it (the check runs and is recorded either way).
+            $promote     = empty($reasons) && !$isModerated && !$missingLocation && !$postsHeld;
             $hasBlock    = !$promote && !empty(array_filter(
                 $reasons,
                 fn($r) => ($r['action'] ?? 'flag') === 'block'
@@ -621,7 +527,7 @@ class ContentCheckService
             if (!$promote && !$hasBlock) {
                 $reasons = array_merge(
                     $reasons,
-                    $this->holdReasons($userModerated, $groupModerated, $missingLocation, $lockdownRisky)
+                    $this->holdReasons($userModerated, $groupModerated, $missingLocation)
                 );
             }
 
@@ -790,18 +696,9 @@ class ContentCheckService
      *
      * @return array<int, array{check:string, category:null, action:string, detail:string}>
      */
-    private function holdReasons(bool $userModerated, bool $groupModerated, bool $missingLocation, bool $lockdownRisky = false): array
+    private function holdReasons(bool $userModerated, bool $groupModerated, bool $missingLocation): array
     {
         $reasons = [];
-
-        if ($lockdownRisky) {
-            $reasons[] = [
-                'check'    => self::CHECK_LOCKDOWN_RISKY,
-                'category' => null,
-                'action'   => 'flag',
-                'detail'   => 'Flagged risky during a security incident - a moderator needs to decide, this is never auto-approved',
-            ];
-        }
 
         if ($groupModerated) {
             $reasons[] = [

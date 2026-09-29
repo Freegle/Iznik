@@ -11,8 +11,8 @@ use Tests\TestCase;
 /**
  * The lockdown:* console commands (plan 2026-09-27-lockdown-switch.md, section 11.4):
  * lockdown:on presses the switch, lockdown:off lifts surfaces or closes the incident,
- * lockdown:status reports the current state, lockdown:triage announces new rows and runs
- * the triage pipeline, lockdown:filter-spool removes waiting mail whose member content is
+ * lockdown:status reports the current state, lockdown:tick announces new rows and records
+ * what is held, lockdown:filter-spool removes waiting mail whose member content is
  * no longer fit to send (section 11.8), lockdown:report mails geeks@ a stats summary.
  */
 class LockdownCommandsTest extends TestCase
@@ -238,18 +238,18 @@ class LockdownCommandsTest extends TestCase
             ->assertSuccessful();
     }
 
-    // --- lockdown:triage ---
+    // --- lockdown:tick ---
 
-    public function test_triage_is_a_no_op_with_no_lockdown_ever(): void
+    public function test_tick_is_a_no_op_with_no_lockdown_ever(): void
     {
         Mail::fake();
 
-        $this->artisan('lockdown:triage')->assertSuccessful();
+        $this->artisan('lockdown:tick')->assertSuccessful();
 
         Mail::assertNothingSent();
     }
 
-    public function test_triage_announces_a_new_row_once(): void
+    public function test_tick_announces_a_new_row_once(): void
     {
         // Mail::raw() is a no-op under Mail::fake() (MailFake::raw() has an empty body,
         // confirmed by reading vendor/laravel/framework's MailFake), so it never shows up
@@ -258,7 +258,7 @@ class LockdownCommandsTest extends TestCase
         Mail::fake();
         $this->lockdown->press(null, 'test reason');
 
-        $this->artisan('lockdown:triage')
+        $this->artisan('lockdown:tick')
             ->expectsOutputToContain('Announced 1.')
             ->assertSuccessful();
 
@@ -266,26 +266,26 @@ class LockdownCommandsTest extends TestCase
         $this->assertNotNull($row->announcedat);
 
         // A second run with nothing new must not announce again.
-        $this->artisan('lockdown:triage')
+        $this->artisan('lockdown:tick')
             ->expectsOutputToContain('Announced 0.')
             ->assertSuccessful();
     }
 
-    public function test_triage_announces_each_later_change_separately(): void
+    public function test_tick_announces_each_later_change_separately(): void
     {
         Mail::fake();
         $this->lockdown->press(null, 'test reason');
-        $this->artisan('lockdown:triage')
+        $this->artisan('lockdown:tick')
             ->expectsOutputToContain('Announced 1.')
             ->assertSuccessful();
 
         $this->lockdown->setSurfaces(['posts' => false], null);
-        $this->artisan('lockdown:triage')
+        $this->artisan('lockdown:tick')
             ->expectsOutputToContain('Announced 1.')
             ->assertSuccessful();
     }
 
-    public function test_triage_runs_the_pipeline_while_active(): void
+    public function test_tick_records_holds_while_active(): void
     {
         Mail::fake();
         $sender = $this->createTestUser();
@@ -303,38 +303,38 @@ class LockdownCommandsTest extends TestCase
 
         $this->lockdown->press(null, 'test reason');
 
-        $this->artisan('lockdown:triage')->assertSuccessful();
+        $this->artisan('lockdown:tick')->assertSuccessful();
 
         $this->assertSame(
             1,
             DB::table('lockdown_holds')->where('kind', 'chat')->count(),
-            'triage should have created a hold for the unprocessed User2User message'
+            'tick should have created a hold for the unprocessed User2User message'
         );
     }
 
-    public function test_triage_acks_once_a_lockdown_exists(): void
+    public function test_tick_acks_once_a_lockdown_exists(): void
     {
         Mail::fake();
         $incidentId = $this->lockdown->press(null, 'test reason');
 
-        $this->artisan('lockdown:triage')->assertSuccessful();
+        $this->artisan('lockdown:tick')->assertSuccessful();
 
-        $ack = DB::table('lockdown_acks')->where('loop', 'triage')->first();
-        $this->assertNotNull($ack, 'triage must ack so the presser sees this loop take effect');
+        $ack = DB::table('lockdown_acks')->where('loop', 'tick')->first();
+        $this->assertNotNull($ack, 'tick must ack so the presser sees this loop take effect');
         $this->assertSame($this->lockdown->current()->id, (int) $ack->lockdownrowid);
         $this->assertSame($incidentId, $this->lockdown->current()->incidentid);
     }
 
-    public function test_triage_does_not_ack_with_no_lockdown_ever(): void
+    public function test_tick_does_not_ack_with_no_lockdown_ever(): void
     {
         Mail::fake();
 
-        $this->artisan('lockdown:triage')->assertSuccessful();
+        $this->artisan('lockdown:tick')->assertSuccessful();
 
-        $this->assertNull(DB::table('lockdown_acks')->where('loop', 'triage')->first());
+        $this->assertNull(DB::table('lockdown_acks')->where('loop', 'tick')->first());
     }
 
-    public function test_triage_runs_filter_spool_while_email_is_held(): void
+    public function test_tick_runs_filter_spool_while_email_is_held(): void
     {
         Mail::fake();
         $this->lockdown->press(null, 'test reason');
@@ -345,21 +345,21 @@ class LockdownCommandsTest extends TestCase
             'chatmessages' => [$badMessage->id], 'messages' => [], 'newsfeed' => [], 'users' => [],
         ]);
 
-        $this->artisan('lockdown:triage')
+        $this->artisan('lockdown:tick')
             ->expectsOutputToContain('Filtered spool: checked 1, removed 1.')
             ->assertSuccessful();
 
         $this->assertFileDoesNotExist($this->testSpoolDir.'/pending/bad.json');
     }
 
-    public function test_triage_does_not_run_filter_spool_when_email_is_not_held(): void
+    public function test_tick_does_not_run_filter_spool_when_email_is_not_held(): void
     {
         Mail::fake();
         $this->lockdown->press(null, 'test reason');
         $this->lockdown->setSurfaces(['email' => false], null);
         $path = $this->writePendingSpoolFile('untouched', null);
 
-        $this->artisan('lockdown:triage')
+        $this->artisan('lockdown:tick')
             ->doesntExpectOutputToContain('Filtered spool')
             ->assertSuccessful();
 
@@ -435,7 +435,7 @@ class LockdownCommandsTest extends TestCase
 
     public function test_report_mails_geeks_while_active(): void
     {
-        // Mail::raw() is a no-op under Mail::fake() (see test_triage_announces_a_new_row_once),
+        // Mail::raw() is a no-op under Mail::fake() (see test_tick_announces_a_new_row_once),
         // so the positive case is checked via the command's own output, matching
         // DeprecatedEndpointsCommandTest's convention for the same Mail::raw() pattern.
         Mail::fake();

@@ -8,8 +8,7 @@ use App\Models\ChatRoom;
 use App\Models\ChatRoster;
 use App\Services\ContentCheckService;
 use App\Services\Lockdown\LockdownService;
-use App\Services\Lockdown\LockdownTriageService;
-use Illuminate\Support\Carbon;
+use App\Services\Lockdown\LockdownHoldsService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -61,133 +60,87 @@ class ChatProcessService
         return self::CHECK_TO_REPORTREASON[$check] ?? self::REVIEW_SPAM;
     }
 
-    /** kind value lockdown_holds uses for chat rows (LockdownTriageService::KIND_CHAT). */
-    private const HOLD_KIND = LockdownTriageService::KIND_CHAT;
-
-    /**
-     * Previously-held backlog released per processIncoming() run once chat is no longer
-     * held, oldest first. Bounds how much mail/push a single run can trigger the instant
-     * a hard lockdown lifts on a large backlog; the rest waits for the next run.
-     */
-    private const RELEASE_BATCH_LIMIT = 300;
-
-    /**
-     * Email of the system modtools user, used as reviewedby when a lockdown release
-     * approves a held chat message on Support's behalf. Same constant, same lookup, as
-     * ChatReviewPendingService::SYSTEM_MOD_EMAIL and friends.
-     */
-    public const SYSTEM_MOD_EMAIL = 'modtools@modtools.org';
+    /** kind value lockdown_holds uses for chat rows. */
+    private const HOLD_KIND = LockdownHoldsService::KIND_CHAT;
 
     private ContentCheckService $contentCheck;
 
     private LockdownService $lockdown;
-
-    private LockdownTriageService $triage;
 
     /** Messages dropped by a block keyword during the current processIncoming(). */
     private int $dropped = 0;
 
     public function __construct(
         ?ContentCheckService $contentCheck = null,
-        ?LockdownService $lockdown = null,
-        ?LockdownTriageService $triage = null
+        ?LockdownService $lockdown = null
     ) {
         // Resolve from the container when not injected (keeps `new ChatProcessService()` working).
         $this->contentCheck = $contentCheck ?? app(ContentCheckService::class);
         $this->lockdown = $lockdown ?? app(LockdownService::class);
-        $this->triage = $triage ?? app(LockdownTriageService::class);
     }
 
     /**
-     * Process all pending chat messages (processingrequired = 1).
+     * Process all pending chat messages (processingrequired = 1), oldest first.
+     *
+     * While a lockdown holds chat, member-to-member messages wait here unprocessed; chat
+     * with the volunteers keeps flowing. Once chat is lifted they are simply pending again,
+     * so this processes everything the lockdown held, straight away, through the same
+     * checks as any other message: a sender Support has since marked as a spammer is
+     * dropped by the spammer check. Work goes in batches only to keep each query small.
      *
      * @return int Number of messages processed.
      */
     public function processIncoming(): int
     {
-        $chatHeld = $this->lockdown->held('chat');
-        $hardHeld = $chatHeld && $this->lockdown->chatMode() === LockdownService::CHAT_HARD;
         // Ticks over even on a quiet run with no messages, so the presser sees this loop
         // still running (section 11.6 point 3).
         $this->lockdown->ack('chat-process');
 
-        // A sender Support marks a spammer mid-incident is dropped on the spot, whatever
-        // the chat surface's held state - it doesn't wait for a lift.
-        $this->dropSpamMarkedHolds();
+        $count = 0;
+        $this->dropped = 0;
+        $lastId = 0;
 
-        // Support's release class (Go PATCH /lockdown releaseclass, decision release) sets
-        // a risky chat hold's outcome to 'approved', whatever the chat surface's held
-        // state - it doesn't wait for a lift either.
-        $this->releaseApprovedHolds();
+        while (true) {
+            $chatHeld = $this->lockdown->held('chat');
+            $messages = DB::table('chat_messages')
+                ->join('chat_rooms', 'chat_messages.chatid', '=', 'chat_rooms.id')
+                ->where('chat_messages.processingrequired', 1)
+                ->where('chat_messages.id', '>', $lastId)
+                ->when($chatHeld, fn ($query) => $query->where('chat_rooms.chattype', '!=', ChatRoom::TYPE_USER2USER))
+                ->orderBy('chat_messages.id', 'asc')
+                ->limit(LockdownHoldsService::RELEASE_BATCH_SIZE)
+                ->select('chat_messages.*', 'chat_rooms.chattype', 'chat_rooms.user1', 'chat_rooms.user2')
+                ->get();
+            if ($messages->isEmpty()) {
+                break;
+            }
+            $lastId = (int) $messages->last()->id;
 
-        $messages = DB::table('chat_messages')
-            ->join('chat_rooms', 'chat_messages.chatid', '=', 'chat_rooms.id')
-            ->where('chat_messages.processingrequired', 1)
-            // Hard: member-to-member traffic stays queued (processingrequired untouched).
-            // User2Mod/Mod2Mod always flow, lockdown or not.
-            ->when($hardHeld, fn ($query) => $query->where('chat_rooms.chattype', '!=', ChatRoom::TYPE_USER2USER))
-            ->orderBy('chat_messages.id', 'asc')
-            ->select('chat_messages.*', 'chat_rooms.chattype', 'chat_rooms.user1', 'chat_rooms.user2')
-            ->get();
-
-        // A previously-held backlog is released oldest-first, capped per run, once chat
-        // is no longer held - see the cap's own doc comment (RELEASE_BATCH_LIMIT).
-        $releasable = [];
-        if (!$chatHeld && $messages->isNotEmpty()) {
-            $releasable = DB::table('lockdown_holds')
+            // Which of this batch the lockdown held, so their holds can be closed once they
+            // go through. One query per batch; nothing at all if there has never been a lockdown.
+            $held = $this->lockdown->incidentId() === null ? [] : DB::table('lockdown_holds')
                 ->where('kind', self::HOLD_KIND)
                 ->whereNull('outcome')
-                ->orderBy('id')
-                ->limit(self::RELEASE_BATCH_LIMIT)
+                ->whereIn('refid', $messages->pluck('id'))
                 ->pluck('refid')
                 ->flip()
                 ->all();
-        }
 
-        // One query for every hold touching this batch, keyed by refid, instead of one
-        // query per message - so ordinary traffic (no incident, ever) costs nothing extra
-        // and even a live incident costs one query, not N.
-        $everLockedDown = $this->lockdown->incidentId() !== null;
-        $holds = [];
-        if (($chatHeld || $everLockedDown) && $messages->isNotEmpty()) {
-            $holds = DB::table('lockdown_holds')
-                ->where('kind', self::HOLD_KIND)
-                ->whereIn('refid', $messages->pluck('id'))
-                ->get()
-                ->keyBy('refid')
-                ->all();
-        }
+            foreach ($messages as $message) {
+                // Re-read per message (section 11.6 point 2): a press landing between two
+                // messages of this run stops the next member-to-member one at once. held()
+                // is a memory read within the five-second cache, so this costs nothing.
+                if ($message->chattype === ChatRoom::TYPE_USER2USER && $this->lockdown->held('chat')) {
+                    continue;
+                }
+                $this->lockdown->ack('chat-process');
 
-        $count = 0;
-        $this->dropped = 0;
-
-        foreach ($messages as $message) {
-            // Re-read per message (section 11.6 point 2): a press landing between two
-            // messages of this same run must stop the next one at once, not wait for the
-            // next invocation. held() and chatMode() are memory reads within the
-            // five-second cache (see LockdownService), so this costs nothing extra beyond
-            // the first check every five seconds.
-            $chatHeld = $this->lockdown->held('chat');
-            $hardHeld = $chatHeld && $this->lockdown->chatMode() === LockdownService::CHAT_HARD;
-            $this->lockdown->ack('chat-process');
-
-            if ($hardHeld && $message->chattype === ChatRoom::TYPE_USER2USER) {
-                // Hard lockdown pressed since this batch was fetched: member-to-member
-                // traffic stays queued for the next run, exactly as if it had never been
-                // fetched (processingrequired is untouched).
-                continue;
-            }
-
-            $hold = $holds[$message->id] ?? null;
-
-            if (!$chatHeld && $hold !== null && $hold->outcome === null
-                && !array_key_exists($message->id, $releasable)) {
-                // Backlog row that didn't make this run's release batch - leave it queued.
-                continue;
-            }
-
-            if ($this->processMessage($message, $chatHeld, $hold)) {
-                $count++;
+                if ($this->processMessage($message)) {
+                    $count++;
+                    if (array_key_exists($message->id, $held)) {
+                        $this->recordHoldOutcome((int) $message->id, 'released');
+                    }
+                }
             }
         }
 
@@ -211,7 +164,7 @@ class ChatProcessService
      *
      * @return bool True if the message was processed (success or failure), false if skipped.
      */
-    private function processMessage(object $message, bool $chatHeld, ?object $hold): bool
+    private function processMessage(object $message): bool
     {
         $id = $message->id;
         $chatid = $message->chatid;
@@ -271,67 +224,6 @@ class ChatProcessService
             if ($bannedInCommon) {
                 $this->processFailed($id, ChatMessage::PROCESSFAIL_BANNED_IN_COMMON);
                 return true;
-            }
-
-            // Lockdown: resolve a message that either arrived while chat is held (soft -
-            // hard-held rows never reach this method at all, see processIncoming) or is a
-            // backlog row this run picked to release. Needs handling when either there is
-            // no hold yet and chat is currently held (a brand new message, classified on
-            // the spot rather than waiting for lockdown:triage's next minute), or a hold
-            // exists and is still unresolved (outcome null - being resolved now, whether
-            // that's live soft-mode traffic or a paced backlog release).
-            if (($hold === null && $chatHeld) || ($hold !== null && $hold->outcome === null)) {
-                $risk = $hold->risk ?? null;
-                if ($risk === null) {
-                    $risk = $this->triage->classify(
-                        LockdownTriageService::KIND_CHAT,
-                        $userid,
-                        (string) ($message->message ?? ''),
-                        Carbon::parse($message->date),
-                        $id
-                    );
-                    if ($hold === null) {
-                        DB::table('lockdown_holds')->insertOrIgnore([[
-                            'lockdownid' => $this->lockdown->incidentId(),
-                            'kind' => self::HOLD_KIND,
-                            'refid' => $id,
-                            'userid' => $userid,
-                            'created' => now(),
-                        ]]);
-                        $hold = DB::table('lockdown_holds')
-                            ->where('kind', self::HOLD_KIND)->where('refid', $id)->first();
-                    }
-                    DB::table('lockdown_holds')->where('id', $hold->id)->update(['risk' => $risk]);
-                }
-
-                if ($risk === LockdownTriageService::RISK_SPAM) {
-                    $this->dropForLockdown($message);
-                    $this->recordHoldOutcome($id, 'rejected');
-
-                    return true;
-                }
-
-                if ($risk === LockdownTriageService::RISK_RISKY) {
-                    DB::table('chat_messages')
-                        ->where('id', $id)
-                        ->update([
-                            'reviewrequired' => 1,
-                            'reportreason' => 'Lockdown',
-                            'reviewrejected' => 0,
-                            'processingrequired' => 0,
-                            'processingsuccessful' => 1,
-                        ]);
-                    $this->updateSenderRoster($id, $chatid, $userid, $platform);
-                    $this->recordHoldOutcome($id, 'review');
-
-                    // Held for review: same as any other message that lands in the review
-                    // queue - no push task, no latestmessage bump, no roster reopening.
-                    return true;
-                }
-
-                // Low risk: processed exactly as ordinary traffic below; only the hold's
-                // outcome marks it as something this incident looked at and let through.
-                $this->recordHoldOutcome($id, 'released');
             }
 
             // Check if sender's messages should be held for review.
@@ -523,140 +415,6 @@ class ChatProcessService
             'userid' => $message->userid,
             'keyword' => $hit['keyword'] ?? null,
         ]);
-    }
-
-    /**
-     * Drop a chat message the lockdown triage classed spam, or that Support marked the
-     * sender of after the fact (see dropSpamMarkedHolds). Same row shape as dropBlocked
-     * (reviewrequired = 0, reviewrejected = 1, processed) - see that method's comment for
-     * why the shape is what it is. reportreason is 'Lockdown', not the block-keyword
-     * reasons, so a moderator opening the chat can tell the two apart.
-     */
-    private function dropForLockdown(object $message): void
-    {
-        DB::table('chat_messages')
-            ->where('id', $message->id)
-            ->update([
-                'reviewrequired' => 0,
-                'reviewrejected' => 1,
-                'reportreason' => 'Lockdown',
-                'processingrequired' => 0,
-                'processingsuccessful' => 1,
-            ]);
-
-        $this->updateSenderRoster($message->id, $message->chatid, $message->userid, (bool) $message->platform);
-
-        Log::info('ChatProcess: message dropped by lockdown triage', [
-            'chatmsgid' => $message->id,
-            'userid' => $message->userid,
-        ]);
-    }
-
-    /**
-     * Reject every chat message whose lockdown_holds row Support has set to spam_marked
-     * (PATCH /lockdown markspam or releaseclass), whatever the chat surface's held state -
-     * a sender Support has just marked a spammer is dropped on the spot, not queued for the
-     * next lift. Idempotent: once dropped the outcome moves to 'rejected', so a hold this
-     * method has already handled is never picked up again.
-     */
-    private function dropSpamMarkedHolds(): void
-    {
-        $marked = DB::table('lockdown_holds')
-            ->where('kind', self::HOLD_KIND)
-            ->where('outcome', 'spam_marked')
-            ->get();
-
-        foreach ($marked as $hold) {
-            $message = DB::table('chat_messages')->where('id', $hold->refid)->first();
-            if ($message !== null) {
-                $this->dropForLockdown($message);
-            }
-            $this->recordHoldOutcome((int) $hold->refid, 'rejected');
-        }
-    }
-
-    /**
-     * Approve every chat message whose lockdown_holds row Support has set to 'approved'
-     * (PATCH /lockdown releaseclass, decision release) - the counterpart of
-     * dropSpamMarkedHolds() above. Nothing else ever acts on that outcome: a risky chat
-     * hold is only ever written 'review' by the soft-mode classification in
-     * processMessage(), so without this the message stayed reviewrequired = 1 forever.
-     * Approved exactly as a moderator's chat approve does (chat/chatmessage.go
-     * approveChatMessage): reviewrequired 0, reviewedby the system modtools user. The
-     * message was never delivered while it sat in review, so it also gets the same
-     * roster/latestmessage/notification effects processMessage()'s own delivery tail
-     * gives an ordinary message. Paced like dropSpamMarkedHolds()'s sibling releases,
-     * oldest first, so a large backlog cannot flood mods/recipients in one run.
-     */
-    private function releaseApprovedHolds(): void
-    {
-        $systemUserId = $this->getSystemUserId();
-
-        $approved = DB::table('lockdown_holds')
-            ->where('kind', self::HOLD_KIND)
-            ->where('outcome', 'approved')
-            ->orderBy('id')
-            ->limit(self::RELEASE_BATCH_LIMIT)
-            ->get();
-
-        foreach ($approved as $hold) {
-            $message = DB::table('chat_messages')->where('id', $hold->refid)->first();
-
-            // Still exactly the shape the risky-hold path left it in: a moderator has not
-            // already actioned it by hand in the meantime. If they have, there is nothing
-            // left for this to do beyond closing out the hold below.
-            if ($message !== null
-                && (int) $message->reviewrequired === 1
-                && $message->reportreason === 'Lockdown') {
-                DB::table('chat_messages')
-                    ->where('id', $message->id)
-                    ->update([
-                        'reviewrequired' => 0,
-                        'reviewedby' => $systemUserId,
-                    ]);
-
-                $this->updateSenderRoster($message->id, $message->chatid, $message->userid, (bool) $message->platform);
-
-                DB::table('chat_roster')
-                    ->where('chatid', $message->chatid)
-                    ->where('status', ChatRoster::STATUS_CLOSED)
-                    ->update(['status' => ChatRoster::STATUS_OFFLINE]);
-
-                BackgroundTask::create([
-                    'task_type' => BackgroundTask::TASK_PUSH_NOTIFY_CHAT_MESSAGE,
-                    'data' => ['message_id' => $message->id],
-                    'created_at' => now(),
-                    'attempts' => 0,
-                ]);
-
-                // keep-raw: GREATEST() has no query-builder equivalent; same statement,
-                // same reason, as processMessage()'s own latestmessage bump above.
-                DB::update(
-                    'UPDATE chat_rooms SET latestmessage = GREATEST(COALESCE(latestmessage, ?), ?) WHERE id = ?',
-                    [$message->date, $message->date, $message->chatid]
-                );
-
-                Log::info('ChatProcess: released approved lockdown hold', [
-                    'chatmsgid' => $message->id,
-                    'userid' => $message->userid,
-                ]);
-            }
-
-            $this->recordHoldOutcome((int) $hold->refid, 'released');
-        }
-    }
-
-    /**
-     * Resolve the system modtools user's id, the same way
-     * ChatReviewPendingService::getSystemUserId() does.
-     */
-    private function getSystemUserId(): ?int
-    {
-        $row = DB::table('users_emails')
-            ->where('email', self::SYSTEM_MOD_EMAIL)
-            ->value('userid');
-
-        return $row ? (int) $row : null;
     }
 
     /**

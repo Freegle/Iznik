@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Mail;
  * Hourly stats mail to geeks@ while a lockdown is active, and a final summary once after
  * close via --closing (plan 2026-09-27-lockdown-switch.md, section 11.4: "every hour it is
  * on delays thousands of genuine messages"). Sent direct with Mail::raw, the same as
- * lockdown:triage's announce, not through spool()/shouldSkip() - this must reach geeks@
+ * lockdown:tick's announce, not through spool()/shouldSkip() - this must reach geeks@
  * regardless of whether email itself is held.
  */
 class LockdownReportCommand extends Command
@@ -44,23 +44,16 @@ class LockdownReportCommand extends Command
             ->orderByDesc('count')
             ->get(['kind', 'count']);
 
-        // Grouped in PHP rather than a raw COUNT(*) select: an incident's hold count is
-        // bounded (paced releases, one row per held item) so pulling three columns is
-        // cheap, and this keeps the query builder free of a raw aggregate.
+        // Grouped in PHP rather than a raw COUNT(*) select: one row per held item, two
+        // columns, and it keeps the query builder free of a raw aggregate.
         $holdCounts = DB::table('lockdown_holds')
             ->where('lockdownid', $incidentId)
-            ->get(['kind', 'risk', 'outcome'])
-            ->groupBy(fn ($h) => $h->kind.'|'.($h->risk ?? '').'|'.($h->outcome ?? ''))
-            ->map(function ($group) {
-                $first = $group->first();
-
-                return (object) [
-                    'kind' => $first->kind,
-                    'risk' => $first->risk,
-                    'outcome' => $first->outcome,
-                    'n' => $group->count(),
-                ];
-            })
+            ->get(['kind', 'outcome'])
+            ->groupBy(fn ($h) => $h->kind.'|'.($h->outcome === null ? 'held' : $h->outcome))
+            ->map(fn ($group, $key) => (object) [
+                'label' => str_replace('|', ': ', $key),
+                'n' => $group->count(),
+            ])
             ->values();
 
         // Counters share one table for both "refused" (email:<type>, push) and "leaked"
@@ -121,16 +114,10 @@ class LockdownReportCommand extends Command
 
         $body .= "\nLoops (caught up to the current state?):\n" . implode("\n", $ackLines) . "\n";
 
-        $body .= "\nHolds by kind/risk/outcome:\n";
+        $body .= "\nHeld items (still held, or what happened on release):\n";
         $body .= $holdCounts->isEmpty()
-            ? "  (no holds)\n"
-            : $holdCounts->map(fn ($h) => sprintf(
-                '  %s / risk=%s / outcome=%s: %d',
-                $h->kind,
-                $h->risk ?? '(unclassified)',
-                $h->outcome ?? '(none)',
-                $h->n
-            ))->implode("\n")."\n";
+            ? "  (nothing held)\n"
+            : $holdCounts->map(fn ($h) => "  {$h->label}: {$h->n}")->implode("\n")."\n";
 
         $subject = $closing
             ? "Lockdown incident {$incidentId}: closing report"

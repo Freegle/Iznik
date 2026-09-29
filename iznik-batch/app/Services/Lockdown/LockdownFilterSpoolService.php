@@ -137,7 +137,7 @@ class LockdownFilterSpoolService
     }
 
     /**
-     * Mirrors LockdownTriageService::isSpammer()'s exact query shape, so the two checks
+     * Uses the same spam_users query shape as the rest of the lockdown code, so the checks
      * cannot quietly drift apart.
      */
     private function isSpammer(int $id): bool

@@ -8,7 +8,7 @@ use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\ChatRoster;
 use App\Models\User;
-use App\Services\Lockdown\LockdownTriageService;
+use App\Services\Lockdown\LockdownHoldsService;
 use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -145,7 +145,7 @@ class ChatNotificationService
         // possibly hours after chat_messages.date, for exactly the same reason as a released
         // rippling hold above, so it gets exactly the same fix: admit by lockdown_holds.releasedat.
         $lockdownReleasedRecently = DB::table('lockdown_holds')
-            ->where('kind', LockdownTriageService::KIND_CHAT)
+            ->where('kind', LockdownHoldsService::KIND_CHAT)
             ->where('outcome', 'released')
             ->where('releasedat', '>=', $startTime)
             ->pluck('refid')
