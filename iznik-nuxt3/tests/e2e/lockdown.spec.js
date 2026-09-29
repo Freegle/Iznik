@@ -600,7 +600,7 @@ test.describe('Lockdown switch', () => {
 
     await expect(
       modPage.getByTestId('lockdown-release-progress-chat')
-    ).toHaveText(/^(\d+) of \1 gone through$/, {
+    ).toHaveText(/^\s*(\d+) of \1 gone through\s*$/, {
       timeout: timeouts.background,
     })
     await expect(modPage.getByTestId('lockdown-release-done')).toBeVisible()
