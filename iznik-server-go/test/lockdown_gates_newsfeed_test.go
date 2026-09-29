@@ -148,7 +148,7 @@ func TestLockdownRefusesNewsfeedConvertToStory(t *testing.T) {
 }
 
 // --- "chitchat": a new post or reply is created hidden, not refused, with a
-// lockdown_holds row so it surfaces in the moderators' triage queue. ---
+// lockdown_holds row so it can be counted, browsed and released. ---
 
 func TestLockdownHoldsNewNewsfeedPostWhenChitchatHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_nf_create")
@@ -172,7 +172,7 @@ func TestLockdownHoldsNewNewsfeedPostWhenChitchatHeld(t *testing.T) {
 
 	var holdCount int64
 	db.Raw("SELECT COUNT(*) FROM lockdown_holds WHERE kind = 'chitchat' AND refid = ?", id).Scan(&holdCount)
-	assert.Equal(t, int64(1), holdCount, "must record a lockdown_holds row so the post shows up in triage")
+	assert.Equal(t, int64(1), holdCount, "must record a lockdown_holds row so the post can be counted, browsed and released")
 }
 
 // --- "chitchat": PATCH /newsfeed is refused outright, for the poster's own edit. ---

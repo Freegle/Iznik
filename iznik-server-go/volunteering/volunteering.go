@@ -415,6 +415,10 @@ func Create(c *fiber.Ctx) error {
 	if err := db.Table("volunteering").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create volunteering")
 	}
+	// New opportunities always wait for approval; while events are held this one is also counted.
+	if lockdown.Held("events") {
+		lockdown.Count("held:events")
+	}
 	idInt, _ := row["@id"].(int64)
 	id := uint64(idInt)
 

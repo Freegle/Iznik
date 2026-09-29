@@ -34,10 +34,8 @@ type State struct {
 	IncidentID uint64
 	Active     bool
 	Surfaces   map[string]bool
-	ChatMode   string
 	Reason     string
 	Notice     string
-	Phrases    []string
 	StartedAt  *time.Time
 	StartedBy  uint64
 	EndedAt    *time.Time
@@ -128,16 +126,6 @@ func Held(surface string) bool {
 	return s.Active && s.Surfaces[surface]
 }
 
-// ChatMode returns the chat hold mode ("hard" or "soft") when chat is currently held, or ""
-// when it is not.
-func ChatMode() string {
-	s := Current()
-	if !s.Active || !s.Surfaces["chat"] {
-		return ""
-	}
-	return s.ChatMode
-}
-
 // Count increments the counter for kind against the current incident. It is a no-op when
 // the site is not locked down, since there is then no incident to attach the count to.
 //
@@ -164,32 +152,23 @@ func Count(kind string) {
 }
 
 // InsertHold records a held chat message, post or ChitChat post against the current
-// incident so it can be triaged and released later. It is a no-op when the site is not
-// locked down.
+// incident so it can be counted, browsed and released later. It is a no-op when the site is
+// not locked down.
 //
 // Keyed on IncidentID rather than ID for the same reason as Count above.
-func InsertHold(kind string, refid uint64, userid uint64, risk string) {
+func InsertHold(kind string, refid uint64, userid uint64) {
 	s := Current()
 	if !s.Active || s.IncidentID == 0 {
 		return
 	}
 
-	var riskVal interface{}
-	if risk != "" {
-		riskVal = risk
-	}
-
-	database.DBConn.Table("lockdown_holds").Clauses(clause.OnConflict{
-		DoUpdates: clause.Assignments(map[string]interface{}{
-			"risk": riskVal,
-		}),
-	}).Create(map[string]interface{}{
-		"lockdownid": s.IncidentID,
-		"kind":       kind,
-		"refid":      refid,
-		"userid":     userid,
-		"risk":       riskVal,
-	})
+	database.DBConn.Table("lockdown_holds").Clauses(clause.Insert{Modifier: "IGNORE"}).
+		Create(map[string]interface{}{
+			"lockdownid": s.IncidentID,
+			"kind":       kind,
+			"refid":      refid,
+			"userid":     userid,
+		})
 }
 
 // Refuse writes the 409 response for an action refused during lockdown. Support and Admin
@@ -265,11 +244,11 @@ func GateDownload(c *fiber.Ctx) bool {
 }
 
 // ItemHeld reports whether a chat message, post or ChitChat post (kind "chat", "post" or
-// "chitchat", refid the item's own id) is currently held pending triage: a lockdown_holds
+// "chitchat", refid the item's own id) is currently held: a lockdown_holds
 // row exists for it with no outcome recorded yet. This is a plain, uncached read of the
 // unique (kind, refid) key - unlike Held, it is not a surface-level in-memory state, so a
 // caller always sees a hold recorded moments ago by another process (e.g. the Laravel batch
-// triage service, which inserts kind='post' rows Go never writes itself) without waiting out
+// lockdown:tick, which inserts kind='post' rows Go never writes itself) without waiting out
 // Current's TTL.
 //
 // For labelling a card "held by lockdown" on read (section 10.6/10.12) - never for gating a
@@ -306,7 +285,6 @@ func loadStateFrom(db *gorm.DB) (State, error) {
 		Surfaces   *string
 		Reason     *string
 		Notice     *string
-		Phrases    *string
 		Startedby  *uint64
 		Startedat  *time.Time
 		Endedby    *uint64
@@ -315,7 +293,7 @@ func loadStateFrom(db *gorm.DB) (State, error) {
 	}
 
 	result := db.Table("lockdowns").
-		Select("id, incidentid, active, surfaces, reason, notice, phrases, startedby, startedat, endedby, endedat, endnote").
+		Select("id, incidentid, active, surfaces, reason, notice, startedby, startedat, endedby, endedat, endnote").
 		Order("id DESC").
 		Limit(1).
 		Scan(&row)
@@ -357,22 +335,10 @@ func loadStateFrom(db *gorm.DB) (State, error) {
 		var raw map[string]interface{}
 		if err := json.Unmarshal([]byte(*row.Surfaces), &raw); err == nil {
 			for k, v := range raw {
-				switch vv := v.(type) {
-				case bool:
+				if vv, ok := v.(bool); ok {
 					s.Surfaces[k] = vv
-				case string:
-					if k == "chat_mode" {
-						s.ChatMode = vv
-					}
 				}
 			}
-		}
-	}
-
-	if row.Phrases != nil && *row.Phrases != "" {
-		var phrases []string
-		if err := json.Unmarshal([]byte(*row.Phrases), &phrases); err == nil {
-			s.Phrases = phrases
 		}
 	}
 

@@ -145,26 +145,6 @@ func TestHeldIsFalseForASurfaceNotCovered(t *testing.T) {
 	assert.False(t, Held("chitchat"))
 }
 
-func TestChatModeIsEmptyUnlessChatIsHeld(t *testing.T) {
-	reset()
-	loadLatest = func() (State, error) {
-		return State{Active: true, Surfaces: map[string]bool{"posts": true}, ChatMode: "hard"}, nil
-	}
-	defer func() { loadLatest = loadLatestFromDB }()
-
-	assert.Equal(t, "", ChatMode(), "chat_mode must be ignored when chat itself is not held")
-}
-
-func TestChatModeReflectsTheHeldMode(t *testing.T) {
-	reset()
-	loadLatest = func() (State, error) {
-		return State{Active: true, Surfaces: map[string]bool{"chat": true}, ChatMode: "soft"}, nil
-	}
-	defer func() { loadLatest = loadLatestFromDB }()
-
-	assert.Equal(t, "soft", ChatMode())
-}
-
 // loadLatestFromDB is the one function the mocked tests above never exercise, so its
 // SQL/JSON round trip is covered separately, directly against the real database.
 func TestLoadLatestFromDBRoundTrip(t *testing.T) {
@@ -175,8 +155,7 @@ func TestLoadLatestFromDBRoundTrip(t *testing.T) {
 		"incidentid": 12345,
 		"surfaces":   `{"chat":true,"chat_mode":"hard","posts":true,"chitchat":false}`,
 		"reason":     "test incident",
-		"notice":     "security",
-		"phrases":    `["buy now","click here"]`,
+		"notice":     "We're dealing with a spam attack.",
 		"startedby":  1,
 		"startedat":  time.Now(),
 	})
@@ -197,10 +176,8 @@ func TestLoadLatestFromDBRoundTrip(t *testing.T) {
 	assert.True(t, s.Surfaces["chat"])
 	assert.True(t, s.Surfaces["posts"])
 	assert.False(t, s.Surfaces["chitchat"])
-	assert.Equal(t, "hard", s.ChatMode)
 	assert.Equal(t, "test incident", s.Reason)
-	assert.Equal(t, "security", s.Notice)
-	assert.Equal(t, []string{"buy now", "click here"}, s.Phrases)
+	assert.Equal(t, "We're dealing with a spam attack.", s.Notice)
 	assert.Equal(t, uint64(1), s.StartedBy)
 	require.NotNil(t, s.StartedAt)
 }

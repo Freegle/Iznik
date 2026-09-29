@@ -1495,7 +1495,7 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 	// Section 11.3 of the lockdown plan: while "chitchat" is held, a new post or
 	// reply is created hidden (same mechanism as a suppressed poster) rather than
 	// refused, and a lockdown_holds row is inserted below once the id is known, so
-	// it shows up in the moderators' triage queue instead of vanishing.
+	// it can be counted, browsed and released when ChitChat is lifted.
 	chitchatHeld := lockdown.Held("chitchat")
 	hidden := newsfeedmodstatus == utils.NEWSFEED_MODSTATUS_SUPPRESSED || chitchatHeld
 
@@ -1580,7 +1580,7 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 	id := uint64(idInt)
 
 	if chitchatHeld && id > 0 {
-		lockdown.InsertHold("chitchat", id, myid, "")
+		lockdown.InsertHold("chitchat", id, myid)
 	}
 
 	// If this is a reply and not hidden, bump the thread

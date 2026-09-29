@@ -1533,7 +1533,7 @@ func handleNudge(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 	// While "chat" is held, route the nudge through the same
 	// chats:process-incoming pipeline (ChatProcessService, iznik-batch) that
 	// every ordinary chat message already always uses - that pipeline, not
-	// this handler, is where the chat surface's hold-and-triage logic lives,
+	// this handler, is where the chat surface's hold-and-release logic lives,
 	// and it only ever looks at rows with processingrequired = 1. Left at its
 	// schema default (0) the rest of the time, so an ordinary day's nudge
 	// keeps being delivered instantly rather than picking up a minute's delay

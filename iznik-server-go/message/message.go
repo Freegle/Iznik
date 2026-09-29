@@ -274,7 +274,7 @@ type Message struct {
 	// past the per-group frontend.
 	Heldby           *uint64          `json:"heldby"`
 	// Lockdownheld: section 10.6/10.12 of the lockdown plan. True while this post has an
-	// unresolved lockdown_holds row (kind='post') - inserted by the Laravel batch triage
+	// unresolved lockdown_holds row (kind='post') - inserted by the Laravel batch lockdown:tick
 	// service, not by this API - so ModTools can label the pending card "held by lockdown"
 	// rather than showing it as an ordinary pending post. See lockdown.ItemHeld.
 	Lockdownheld     bool             `json:"lockdownheld" gorm:"-"`
@@ -5342,7 +5342,7 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 
 		// Section 11.3 of the lockdown plan: while "posts" is held, the direct-approve
 		// path above for an unmoderated (trusted) member is forced back to Pending, same
-		// as a moderated member. No Go hold row - posts are triaged by the batch.
+		// as a moderated member. No Go hold row - the batch writes post holds.
 		if lockdown.Held("posts") {
 			collection = utils.COLLECTION_PENDING
 		}

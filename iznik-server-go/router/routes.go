@@ -1449,6 +1449,7 @@ func SetupRoutes(app *fiber.App) {
 		rg.Get("/modtools/lockdown", lockdown.GetModtoolsLockdown)
 		rg.Get("/modtools/lockdown/stats", config.RequireSupportOrAdminMiddleware(), lockdown.GetModtoolsLockdownStats)
 		rg.Get("/modtools/lockdown/history", config.RequireSupportOrAdminMiddleware(), lockdown.GetModtoolsLockdownHistory)
+		rg.Get("/modtools/lockdown/held", config.RequireSupportOrAdminMiddleware(), lockdown.GetModtoolsLockdownHeld)
 
 		// Trysts (handover arrangements)
 		rg.Get("/tryst", tryst.GetTryst)
