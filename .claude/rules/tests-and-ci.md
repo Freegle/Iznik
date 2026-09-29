@@ -43,6 +43,14 @@ test, both invisible in CI.
 
 ## A green run that did not finish
 
+- **The status API reports the last run's result while a new one starts.** For the first
+  minute or so after a POST, `/api/tests/<suite>/status` can still say `completed` with the
+  previous run's message and logs, and it can flip back to that between polls. A poll loop that
+  stops on the first non-`running` answer reports a run that has not happened. The Playwright
+  container's `/app/test-results/junit.xml` is no better on its own: a restart can bring back
+  an old one for a moment before the runner deletes it. Believe a Playwright result only from a
+  `junit.xml` written after you started the run whose `tests=` count matches the run you
+  asked for.
 - **Vitest through the status API.** A run that dies partway still reports
   `status=completed` with "All tests passed (N passed)". Always check that
   `progress.completed` equals `progress.total` before believing it.
