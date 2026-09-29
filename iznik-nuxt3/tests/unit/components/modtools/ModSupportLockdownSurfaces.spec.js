@@ -1,54 +1,37 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ModSupportLockdownSurfaces from '~/modtools/components/ModSupportLockdownSurfaces.vue'
+import { LOCKDOWN_AREAS } from '~/modtools/utils/lockdownAreas'
 
-// plans/active/2026-09-27-lockdown-switch.md section 10.9: lifting order is
-// mods, chat (hard/soft), posts, chitchat, events, push, email, export -
-// people before content, content before mail, downloads last.
+// plans/active/2026-09-27-lockdown-switch.md section 11.11: one row per area
+// with what is held and what still works, its status in words, and one
+// button - Lift while held, Hold again while running. No toggles.
 describe('ModSupportLockdownSurfaces', () => {
   function createWrapper(props = {}) {
     return mount(ModSupportLockdownSurfaces, {
-      props: {
-        surfaces: {
-          mods: true,
-          chat: true,
-          chat_mode: 'hard',
-          posts: true,
-          chitchat: true,
-          events: true,
-          push: true,
-          email: true,
-          export: true,
-        },
-        heldCounts: {
-          chat: { count: 42 },
-          post: { count: 7 },
-          chitchat: { count: 1 },
-        },
-        ...props,
-      },
+      props,
       global: {
         stubs: {
-          'b-form-checkbox': {
-            template:
-              '<span><input type="checkbox" v-bind="$attrs" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" /><slot /></span>',
-            props: ['modelValue', 'switch'],
-            inheritAttrs: false,
-          },
-          'b-form-select': {
-            template:
-              '<select :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><option v-for="o in options" :key="o.value" :value="o.value">{{ o.text }}</option></select>',
-            props: ['modelValue', 'options'],
-          },
           'b-badge': { template: '<span><slot /></span>' },
+          'b-button': {
+            template:
+              '<button :disabled="disabled" @click="$emit(\'click\')"><slot /></button>',
+            props: ['disabled', 'variant', 'size'],
+            emits: ['click'],
+          },
         },
       },
     })
   }
 
-  it('renders one row per surface in lift order', () => {
+  it('lists every area in lifting order', () => {
     const wrapper = createWrapper()
-    const order = [
+    const keys = wrapper
+      .findAll('[data-testid^="lockdown-surface-"]')
+      .map((r) => r.attributes('data-testid'))
+      .filter((id) => /^lockdown-surface-[a-z]+$/.test(id))
+      .map((id) => id.replace('lockdown-surface-', ''))
+    expect(keys).toEqual([
       'mods',
       'chat',
       'posts',
@@ -57,158 +40,81 @@ describe('ModSupportLockdownSurfaces', () => {
       'push',
       'email',
       'export',
-    ]
-    const rendered = order.map((k) =>
-      wrapper.find(`[data-testid="lockdown-surface-${k}"]`).exists()
-    )
-    expect(rendered.every(Boolean)).toBe(true)
+    ])
+  })
 
-    // And in that order in the DOM.
-    const html = wrapper.html()
-    const positions = order.map((k) => html.indexOf(`lockdown-surface-${k}"`))
-    for (let i = 1; i < positions.length; i++) {
-      expect(positions[i]).toBeGreaterThan(positions[i - 1])
+  it('says exactly what each area holds and what still works', () => {
+    const wrapper = createWrapper()
+    const chat = wrapper.find('[data-testid="lockdown-surface-chat"]').text()
+    expect(chat).toContain('Chat between members')
+    expect(chat).toContain(
+      'Messages one member sends another wait. Chat with the volunteers keeps working both ways.'
+    )
+    const mods = wrapper.find('[data-testid="lockdown-surface-mods"]').text()
+    expect(mods).toContain(
+      'Replies to members who wrote to the volunteers still work.'
+    )
+    const posts = wrapper.find('[data-testid="lockdown-surface-posts"]').text()
+    expect(posts).toContain('the member sees it as live. Nobody else sees it.')
+    for (const area of LOCKDOWN_AREAS) {
+      expect(
+        wrapper.find(`[data-testid="lockdown-surface-${area.key}"]`).text()
+      ).toContain(area.description)
     }
   })
 
-  it('shows held counts beside chat, posts and chitchat', () => {
-    const wrapper = createWrapper()
+  it('shows Held and a Lift button for a held area', () => {
+    const wrapper = createWrapper({ surfaces: { chat: true } })
     expect(
-      wrapper.find('[data-testid="lockdown-surface-chat"]').text()
-    ).toContain('42')
+      wrapper.find('[data-testid="lockdown-surface-status-chat"]').text()
+    ).toBe('Held')
     expect(
-      wrapper.find('[data-testid="lockdown-surface-posts"]').text()
-    ).toContain('7')
-    expect(
-      wrapper.find('[data-testid="lockdown-surface-chitchat"]').text()
-    ).toContain('1')
+      wrapper.find('[data-testid="lockdown-surface-button-chat"]').text()
+    ).toBe('Lift')
   })
 
-  // A switch that is ON means held. Every row must say so in words rather
-  // than leaving the reader to infer it from the switch position, and the
-  // action shown must match: "Lift" while held, "Hold" while running.
-  it('states each row\'s status in words: "held" while on, "running" while off', () => {
-    const held = createWrapper()
-    expect(held.find('[data-testid="lockdown-surface-chat"]').text()).toContain(
-      'Chat - held'
-    )
-
-    const running = createWrapper({
-      surfaces: {
-        mods: false,
-        chat: false,
-        chat_mode: 'hard',
-        posts: false,
-        chitchat: false,
-        events: false,
-        push: false,
-        email: false,
-        export: false,
-      },
-    })
+  it('shows Running and a Hold again button for a lifted area', () => {
+    const wrapper = createWrapper({ surfaces: { chat: false } })
     expect(
-      running.find('[data-testid="lockdown-surface-chat"]').text()
-    ).toContain('Chat - running')
+      wrapper.find('[data-testid="lockdown-surface-status-chat"]').text()
+    ).toBe('Running')
+    expect(
+      wrapper.find('[data-testid="lockdown-surface-button-chat"]').text()
+    ).toBe('Hold again')
   })
 
-  it("shows the Lift/Hold action matching each row's state", () => {
-    const held = createWrapper()
+  it('uses Lift for email, the same as every other area', () => {
+    const wrapper = createWrapper({ surfaces: { email: true } })
     expect(
-      held.find('[data-testid="lockdown-surface-action-chat"]').text()
-    ).toContain('Lift')
-
-    const running = createWrapper({
-      surfaces: {
-        mods: false,
-        chat: false,
-        chat_mode: 'hard',
-        posts: false,
-        chitchat: false,
-        events: false,
-        push: false,
-        email: false,
-        export: false,
-      },
-    })
-    expect(
-      running.find('[data-testid="lockdown-surface-action-chat"]').text()
-    ).toContain('Hold')
+      wrapper.find('[data-testid="lockdown-surface-button-email"]').text()
+    ).toBe('Lift')
   })
 
-  // plans/active/2026-09-27-lockdown-switch.md section 11.7: member email is
-  // not generated while held and resumes on lift. The row is labelled
-  // "Email" like every other row is labelled for its surface - "held"/
-  // "running" already says what state it is in - and only its lift action
-  // carries the special wording, since that is the one that needs it.
-  it('labels the email row "Email", and names its lift action "Resume email"', () => {
-    const wrapper = createWrapper()
-    const row = wrapper.find('[data-testid="lockdown-surface-email"]')
-    expect(row.text()).toContain('Email - held')
-    expect(row.text()).not.toContain('Resume email - held')
-    expect(
-      wrapper.find('[data-testid="lockdown-surface-action-email"]').text()
-    ).toContain('Resume email')
-  })
-
-  it('names the email row\'s hold action plainly, not "Resume email"', () => {
-    const wrapper = createWrapper({
-      surfaces: {
-        mods: false,
-        chat: false,
-        chat_mode: 'hard',
-        posts: false,
-        chitchat: false,
-        events: false,
-        push: false,
-        email: false,
-        export: false,
-      },
-    })
-    expect(
-      wrapper.find('[data-testid="lockdown-surface-email"]').text()
-    ).toContain('Email - running')
-    expect(
-      wrapper.find('[data-testid="lockdown-surface-action-email"]').text()
-    ).toContain('Hold')
-  })
-
-  it('shows no held count for surfaces with no triage kind', () => {
-    const wrapper = createWrapper()
-    expect(
-      wrapper.find('[data-testid="lockdown-surface-mods"]').text()
-    ).not.toMatch(/\d+ held/)
-  })
-
-  it('emits toggle-surface with the surface key and new value', async () => {
-    const wrapper = createWrapper()
+  it('emits set-surface false to lift, and true to hold again', async () => {
+    const wrapper = createWrapper({ surfaces: { chat: true, posts: false } })
     await wrapper
-      .find('[data-testid="lockdown-surface-toggle-posts"]')
-      .setValue(false)
-    expect(wrapper.emitted('toggle-surface')).toEqual([['posts', false]])
+      .find('[data-testid="lockdown-surface-button-chat"]')
+      .trigger('click')
+    await wrapper
+      .find('[data-testid="lockdown-surface-button-posts"]')
+      .trigger('click')
+    expect(wrapper.emitted('set-surface')).toEqual([
+      ['chat', false],
+      ['posts', true],
+    ])
   })
 
-  it('shows the chat mode selector only while chat is held', () => {
-    const wrapper = createWrapper({
-      surfaces: {
-        mods: false,
-        chat: false,
-        chat_mode: 'hard',
-        posts: false,
-        chitchat: false,
-        events: false,
-        push: false,
-        email: false,
-        export: false,
-      },
-    })
-    expect(wrapper.find('[data-testid="lockdown-chat-mode"]').exists()).toBe(
-      false
-    )
+  it('disables the buttons while busy', () => {
+    const wrapper = createWrapper({ surfaces: { chat: true }, busy: true })
+    expect(
+      wrapper
+        .find('[data-testid="lockdown-surface-button-chat"]')
+        .attributes('disabled')
+    ).toBeDefined()
   })
 
-  it('emits set-chat-mode when the chat mode selector changes', async () => {
-    const wrapper = createWrapper()
-    await wrapper.find('[data-testid="lockdown-chat-mode"]').setValue('soft')
-    expect(wrapper.emitted('set-chat-mode')).toEqual([['soft']])
+  it('has no toggle switches', () => {
+    const wrapper = createWrapper({ surfaces: { chat: true } })
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
   })
 })

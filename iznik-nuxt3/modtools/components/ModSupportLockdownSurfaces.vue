@@ -1,110 +1,56 @@
 <template>
   <div>
+    <h4>Areas</h4>
     <div
-      v-for="s in surfaceOrder"
-      :key="s.key"
-      class="d-flex align-items-center gap-2 mb-2"
-      :data-testid="'lockdown-surface-' + s.key"
+      v-for="area in LOCKDOWN_AREAS"
+      :key="area.key"
+      class="lockdown-area d-flex align-items-start gap-3 py-2 border-bottom"
+      :data-testid="'lockdown-surface-' + area.key"
     >
-      <b-form-checkbox
-        switch
-        :model-value="!!surfaces[s.key]"
-        :data-testid="'lockdown-surface-toggle-' + s.key"
-        @update:model-value="(v) => onToggle(s.key, v)"
-      >
-        {{ s.label }} - {{ surfaces[s.key] ? 'held' : 'running' }}
-      </b-form-checkbox>
-
-      <b-badge
-        :variant="surfaces[s.key] ? 'warning' : 'secondary'"
-        :data-testid="'lockdown-surface-action-' + s.key"
-      >
-        {{ actionFor(s) }}
-      </b-badge>
-
-      <b-badge v-if="countFor(s.key) !== null" variant="secondary">
-        {{ countFor(s.key) }} held
-      </b-badge>
-
-      <b-form-select
-        v-if="s.key === 'chat' && surfaces.chat"
-        :model-value="surfaces.chat_mode"
-        :options="chatModeOptions"
+      <div class="flex-grow-1">
+        <div class="fw-bold">
+          {{ area.label }}
+          <b-badge
+            :variant="surfaces[area.key] ? 'danger' : 'success'"
+            class="ms-2"
+            :data-testid="'lockdown-surface-status-' + area.key"
+          >
+            {{ surfaces[area.key] ? 'Held' : 'Running' }}
+          </b-badge>
+        </div>
+        <div class="small text-muted">{{ area.description }}</div>
+      </div>
+      <b-button
+        :variant="surfaces[area.key] ? 'primary' : 'outline-danger'"
         size="sm"
-        style="width: 220px"
-        data-testid="lockdown-chat-mode"
-        @update:model-value="onChatMode"
-      />
+        class="text-nowrap"
+        :disabled="busy"
+        :data-testid="'lockdown-surface-button-' + area.key"
+        @click="emit('set-surface', area.key, !surfaces[area.key])"
+      >
+        {{ surfaces[area.key] ? 'Lift' : 'Hold again' }}
+      </b-button>
     </div>
   </div>
 </template>
 
 <script setup>
-// plans/active/2026-09-27-lockdown-switch.md section 10.9: lifting order is
-// people before content, content before mail, downloads last - "mods" is
-// first because moderators need to be back in their queues before the
-// queues fill (step 4), "export" is last (step 9). Held counts (10.9's "each
-// with its held count from stats beside it") only exist for the three kinds
-// the batch triages - chat, posts, chitchat (lockdown_holds.kind) - so mods,
-// events, push, email and export never show one.
-const props = defineProps({
+import { LOCKDOWN_AREAS } from '~/modtools/utils/lockdownAreas'
+
+// plans/active/2026-09-27-lockdown-switch.md section 11.11: one row per area,
+// in lifting order, saying exactly what is held and what still works, its
+// status in words, and one button. Lifting an area releases everything it
+// held straight away, through the ordinary checks.
+defineProps({
   surfaces: {
     type: Object,
     default: () => ({}),
   },
-  heldCounts: {
-    type: Object,
-    default: () => ({}),
+  busy: {
+    type: Boolean,
+    default: false,
   },
 })
 
-const emit = defineEmits(['toggle-surface', 'set-chat-mode'])
-
-const surfaceOrder = [
-  { key: 'mods', label: 'Moderators' },
-  { key: 'chat', label: 'Chat' },
-  { key: 'posts', label: 'Posts' },
-  { key: 'chitchat', label: 'ChitChat' },
-  { key: 'events', label: 'Events, noticeboards, stories' },
-  { key: 'push', label: 'Push' },
-  // plans/active/2026-09-27-lockdown-switch.md section 11.7: member email is
-  // not generated while held and resumes from the watermarks on lift. The
-  // row itself is named for the surface, like every other row - "held"/
-  // "running" already says which state it is in - and only the lift action
-  // carries the special wording, because that is the one that needs it.
-  { key: 'email', label: 'Email', liftAction: 'Resume email' },
-  { key: 'export', label: 'Export / downloads' },
-]
-
-const kindForSurface = {
-  chat: 'chat',
-  posts: 'post',
-  chitchat: 'chitchat',
-}
-
-const chatModeOptions = [
-  { value: 'hard', text: 'Hard - nothing processed, nobody reads anything' },
-  { value: 'soft', text: 'Soft - triaged every minute' },
-]
-
-function countFor(key) {
-  const kind = kindForSurface[key]
-  if (!kind) return null
-  return props.heldCounts?.[kind]?.count ?? 0
-}
-
-// The action a press on this row's switch would now take: held rows lift
-// (email's lift resumes the mail queue, so it says that instead), running
-// rows hold.
-function actionFor(s) {
-  return props.surfaces[s.key] ? s.liftAction || 'Lift' : 'Hold'
-}
-
-function onToggle(key, value) {
-  emit('toggle-surface', key, value)
-}
-
-function onChatMode(value) {
-  emit('set-chat-mode', value)
-}
+const emit = defineEmits(['set-surface'])
 </script>

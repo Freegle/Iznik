@@ -15,12 +15,9 @@
  * this file alongside the rest of the suite in a shared environment without
  * checking first that nothing else is using it.
  *
- * This spec was written against the client-side Pinia store, ModTools
- * components and page copy in this branch. The authenticated moderator
- * endpoints it drives (press/surfaces/notice/phrases/markspam/releaseclass/
- * liftall/close, stats, history) have not been independently verified here -
- * only the public, unauthenticated `GET /api/lockdown` has been confirmed
- * live. Confirm the Go API is complete before running this for real.
+ * It runs as the teardown of the lockdown-order project in
+ * playwright.config.js, so every other project has finished before it
+ * presses.
  */
 
 const fs = require('fs')
@@ -63,9 +60,8 @@ if (!fs.existsSync(PR_SCREENSHOTS_DIR)) {
   fs.mkdirSync(PR_SCREENSHOTS_DIR, { recursive: true })
 }
 
-// iznik-server-go/lockdown/handlers.go noticeText['security'] - the exact
-// member-facing wording, kept in sync by hand. If this assertion starts
-// failing on wording alone, check that file before assuming the feature broke.
+// The notice is free text; this is the "Spam attack" starting wording from
+// modtools/utils/lockdownAreas.js, typed in as Support would.
 const SECURITY_NOTICE_TEXT =
   "We're dealing with a spam attack. Messages may be delayed. If you received a " +
   "message about vouchers or payments, please don't click the link."
@@ -238,7 +234,19 @@ test.describe('Lockdown switch', () => {
     })
     await reasonBox.fill('Lockdown e2e drill - security incident simulation')
 
-    await modPage.getByTestId('lockdown-press-notice').selectOption('security')
+    await modPage
+      .getByTestId('lockdown-press-notice')
+      .fill(SECURITY_NOTICE_TEXT)
+
+    // Before pressing, the page itself says what will happen.
+    await expect(
+      modPage.getByTestId('lockdown-press-explanation')
+    ).toContainText('Messages one member sends another wait.')
+    await modPage.screenshot({
+      path: path.join(PR_SCREENSHOTS_DIR, 'lockdown-0-before-pressing.png'),
+      fullPage: true,
+    })
+    console.log('[Lockdown screenshots] what will happen, before pressing')
 
     const pressButton = modPage.getByTestId('lockdown-press-button')
     await expect(pressButton).toBeEnabled({ timeout: timeouts.ui.appearance })
@@ -258,12 +266,11 @@ test.describe('Lockdown switch', () => {
 
     // ConfirmModal's b-modal is `scrollable` (its own internal modal-body
     // scroll, independent of the page), and the confirm input sits below the
-    // five consequence bullets. Filling it a moment ago auto-scrolled that
-    // internal scroll box to keep the input in view, which leaves the first
-    // bullet ("Members will think they have been sent") scrolled out of the
-    // modal before the screenshot - fullPage captures the outer document, not
-    // the modal's own scroll position, so it does not help. Scroll the first
-    // bullet back into view so every bullet is visible in the shot.
+    // list of areas. Filling it a moment ago auto-scrolled that internal
+    // scroll box to keep the input in view, which leaves the first area
+    // scrolled out of the modal before the screenshot - fullPage captures the
+    // outer document, not the modal's own scroll position, so it does not
+    // help. Scroll the first area back into view for the shot.
     await modPage
       .getByTestId('lockdown-confirm-modal')
       .locator('li')
@@ -461,9 +468,8 @@ test.describe('Lockdown switch', () => {
 
     // The "only Approve" gating above is instant (modsHeld, set synchronously
     // by the press). The "Held by lockdown" label is not: it depends on
-    // lockdown:triage risk-assessing this post and writing its lockdown_holds
-    // row, which - like the chat processor - runs on its own per-minute
-    // schedule, not on press. Wait for it with the same background timeout
+    // lockdown:tick writing this post's lockdown_holds row, which - like the
+    // chat processor - runs on its own per-minute schedule, not on press. Wait for it with the same background timeout
     // used for the "Taking effect" loops above, rather than assuming it is
     // already there by the time the pending queue is checked.
     // The pending queue does not refetch a post it already has, so reload
@@ -529,6 +535,70 @@ test.describe('Lockdown switch', () => {
     })
     await dismissAllModals(modPage)
 
+    // What is held: A's reply is listed, searchable, with its sender. The
+    // hold row is written by lockdown:tick, so search again until it lands.
+    await modPage.getByTestId('lockdown-subtab-held').click()
+    const heldRow = modPage
+      .getByTestId('lockdown-held-row')
+      .filter({ hasText: replyText })
+    await modPage.getByTestId('lockdown-held-search').fill(replyText)
+    await expect
+      .poll(
+        async () => {
+          await modPage.getByTestId('lockdown-held-search-button').click()
+          return heldRow
+            .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+            .then(() => true)
+            .catch(() => false)
+        },
+        {
+          message: "Waiting for A's reply to be listed under What is held",
+          timeout: timeouts.background,
+          intervals: [5000, 10000],
+        }
+      )
+      .toBe(true)
+    await modPage.getByTestId('lockdown-held-search').fill('')
+    await modPage.getByTestId('lockdown-held-search-button').click()
+    await expect(heldRow).toBeVisible({ timeout: timeouts.ui.appearance })
+    await modPage.screenshot({
+      path: path.join(PR_SCREENSHOTS_DIR, 'lockdown-6-what-is-held.png'),
+      fullPage: true,
+    })
+    console.log('[Lockdown screenshots] What is held subtab')
+
+    // Controls: the chat count includes A's reply.
+    await modPage.getByTestId('lockdown-subtab-controls').click()
+    await expect
+      .poll(
+        async () => {
+          const text = await modPage
+            .getByTestId('lockdown-count-chat')
+            .textContent()
+          return Number((text || '').replace(/\D/g, ''))
+        },
+        {
+          message: 'Waiting for the held chat count to include the reply',
+          timeout: timeouts.background,
+        }
+      )
+      .toBeGreaterThan(0)
+    await modPage.screenshot({
+      path: path.join(PR_SCREENSHOTS_DIR, 'lockdown-7-controls-held.png'),
+      fullPage: true,
+    })
+    console.log('[Lockdown screenshots] Controls with areas and held counts')
+
+    // Lift one area on its own: its status changes in words.
+    await modPage.getByTestId('lockdown-surface-button-chat').click()
+    await expect(
+      modPage.getByTestId('lockdown-surface-status-chat')
+    ).toHaveText('Running', { timeout: timeouts.ui.appearance })
+    await expect(
+      modPage.getByTestId('lockdown-surface-button-chat')
+    ).toHaveText('Hold again')
+    console.log('[Lockdown] Lifted chat on its own')
+
     await modPage.getByTestId('lockdown-liftall-button').click()
     await confirmVisibleModal(modPage, 'lockdown-liftall-confirm')
 
@@ -548,7 +618,7 @@ test.describe('Lockdown switch', () => {
     console.log('[Lockdown] Lifted and closed')
 
     await modPage.screenshot({
-      path: path.join(PR_SCREENSHOTS_DIR, 'lockdown-6-support-tab-lifted.png'),
+      path: path.join(PR_SCREENSHOTS_DIR, 'lockdown-8-support-tab-closed.png'),
       fullPage: true,
     })
     console.log('[Lockdown screenshots] Support tab, lifted and closed')

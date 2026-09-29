@@ -5,13 +5,12 @@ import BaseAPI from '@/api/BaseAPI'
 const notALockdownConflict = (data) => !data?.lockdown
 
 export default class LockdownAPI extends BaseAPI {
-  // Public: just the notice, if any. Never surfaces or active.
+  // Public: just the notice, as {text}, or null. Never surfaces or active.
   fetch() {
     return this.$getv2('/lockdown')
   }
 
-  // Any moderator: full state (phrases only present for Support/Admin - the
-  // Go API decides that, not us).
+  // Any moderator: the state, with the notice as its text or null.
   fetchMod() {
     return this.$getv2('/modtools/lockdown')
   }
@@ -26,9 +25,15 @@ export default class LockdownAPI extends BaseAPI {
     return this.$getv2('/modtools/lockdown/history')
   }
 
+  // Support/Admin only. Items still held, newest first, 50 a page. params:
+  // kind (chat, post or chitchat), q (searches the text and the sender's name
+  // and email), userid, before (the `next` of the previous page).
+  fetchHeld(params) {
+    return this.$getv2('/modtools/lockdown/held', params)
+  }
+
   // Support/Admin only. data carries an `action` field (press, surfaces,
-  // notice, phrases, markspam, releaseclass, liftall, close) plus that
-  // action's own fields.
+  // notice, liftall, close) plus that action's own fields.
   patch(data) {
     return this.$patchv2('/lockdown', data, notALockdownConflict)
   }

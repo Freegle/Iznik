@@ -157,7 +157,6 @@ func TestGetModtoolsLockdownAnyModerator(t *testing.T) {
 	assert.Nil(t, result["notice"], "no notice was set")
 }
 
-
 func TestGetModtoolsLockdownRefusesPlainMember(t *testing.T) {
 	prefix := uniquePrefix("ld_mt_member")
 	userID := CreateTestUser(t, prefix, "User")
@@ -349,7 +348,6 @@ func TestPatchLockdownSurfacesMergesFromFreshRowNotStaleCache(t *testing.T) {
 
 // --- PATCH /lockdown action=notice ---
 
-
 func TestPatchLockdownNoticeAllowedAfterClose(t *testing.T) {
 	prefix := uniquePrefix("ld_notice_afterclose")
 	supportID := CreateTestUser(t, prefix, "Support")
@@ -529,6 +527,34 @@ func TestGetModtoolsLockdownHistory(t *testing.T) {
 	assert.True(t, seenNotice, "history must include the notice row")
 }
 
+// TestGetModtoolsLockdownHistorySurfaces: each row carries what was held after it, so the tab
+// can say which area a row lifted.
+func TestGetModtoolsLockdownHistorySurfaces(t *testing.T) {
+	prefix := uniquePrefix("ld_histsurf")
+	supportID := CreateTestUser(t, prefix, "Support")
+	_, token := CreateTestSession(t, supportID)
+
+	incidentID := pressLockdown(t, token, "history surfaces "+prefix)
+	defer cleanupIncident(t, incidentID)
+	presp, _ := patchLockdown(t, token, map[string]interface{}{"action": "surfaces", "surfaces": map[string]bool{"chat": false}})
+	require.Equal(t, 200, presp.StatusCode)
+
+	req := httptest.NewRequest("GET", "/api/modtools/lockdown/history?jwt="+token, nil)
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var rows []map[string]interface{}
+	json.Unmarshal(rsp(resp), &rows)
+	require.GreaterOrEqual(t, len(rows), 2)
+
+	// Newest first: the lift, then the press.
+	lift := rows[0]["surfaces"].(map[string]interface{})
+	press := rows[1]["surfaces"].(map[string]interface{})
+	assert.Equal(t, false, lift["chat"])
+	assert.Equal(t, true, lift["posts"])
+	assert.Equal(t, true, press["chat"])
+}
+
 // TestGetModtoolsLockdownHistoryEndedByName covers plan 11.6/11.7's "endedbyname" addition:
 // the closing row must name who closed it, not just their id, the same way pressedbyname does
 // for GET /modtools/lockdown/stats.
@@ -573,8 +599,6 @@ func TestGetModtoolsLockdownHistoryRefusesPlainModerator(t *testing.T) {
 }
 
 // --- GET /modtools/lockdown/stats ---
-
-
 
 // TestGetModtoolsLockdownStatsLeakedChatExcludesReleasedHolds is finding 8: leakedChatCount used
 // to count every User2User message processed since the press, including ones the lockdown's own

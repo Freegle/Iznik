@@ -57,14 +57,14 @@ func TestGetModtoolsLockdownStatsCounts(t *testing.T) {
 	addHold(t, incidentID, "chitchat", 900000004, senderID, "")
 
 	for kind, count := range map[string]int{
-		"held:events":        2,
-		"deferred:digest":    4,
-		"spooled_held:chat":  1,
-		"push":               3,
-		"export":             1,
-		"refused_member":     2,
+		"held:events":                        2,
+		"deferred:digest":                    4,
+		"spooled_held:chat":                  1,
+		"push":                               3,
+		"export":                             1,
+		"refused_member":                     2,
 		fmt.Sprintf("refused:%d", supportID): 5,
-		"email:digest":       99, // an old-style counter no longer summed anywhere
+		"email:digest":                       99, // an old-style counter no longer summed anywhere
 	} {
 		require.NoError(t, db.Table("lockdown_counters").Create(map[string]interface{}{
 			"lockdownid": incidentID, "kind": kind, "count": count,

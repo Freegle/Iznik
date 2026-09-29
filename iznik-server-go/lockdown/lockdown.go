@@ -331,16 +331,27 @@ func loadStateFrom(db *gorm.DB) (State, error) {
 		s.EndedBy = *row.Endedby
 	}
 
-	if row.Surfaces != nil && *row.Surfaces != "" {
-		var raw map[string]interface{}
-		if err := json.Unmarshal([]byte(*row.Surfaces), &raw); err == nil {
-			for k, v := range raw {
-				if vv, ok := v.(bool); ok {
-					s.Surfaces[k] = vv
-				}
-			}
-		}
+	for k, v := range decodeSurfaces(row.Surfaces) {
+		s.Surfaces[k] = v
 	}
 
 	return s, nil
+}
+
+// decodeSurfaces reads a lockdowns.surfaces JSON column, keeping only boolean values. A
+// missing or unreadable column is an empty map.
+func decodeSurfaces(col *string) map[string]bool {
+	out := map[string]bool{}
+	if col == nil || *col == "" {
+		return out
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(*col), &raw); err == nil {
+		for k, v := range raw {
+			if vv, ok := v.(bool); ok {
+				out[k] = vv
+			}
+		}
+	}
+	return out
 }

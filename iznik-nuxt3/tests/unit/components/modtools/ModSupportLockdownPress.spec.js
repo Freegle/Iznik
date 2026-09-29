@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import ModSupportLockdownPress from '~/modtools/components/ModSupportLockdownPress.vue'
 import ConfirmModal from '~/components/ConfirmModal.vue'
+import ModSupportLockdownWhatHappens from '~/modtools/components/ModSupportLockdownWhatHappens.vue'
 
 const mockPatch = vi.fn()
 
@@ -24,14 +25,15 @@ vi.mock('~/composables/useOurModal', () => ({
   }),
 }))
 
-// plans/active/2026-09-27-lockdown-switch.md section 10.9/11.2: the not-yet-
-// pressed state of the Support Lockdown tab. Reason is required (it's what
-// geeks@ and the closing report explain the incident with); notice is an
-// optional choice, never a default.
+// plans/active/2026-09-27-lockdown-switch.md section 11.11: the not-yet-
+// pressed state of the Support Lockdown tab. The page says what will happen
+// before the button. Reason is required (it's what geeks@ and the history
+// explain the incident with); the notice is optional free text.
 describe('ModSupportLockdownPress', () => {
   function createWrapper() {
     return mount(ModSupportLockdownPress, {
       global: {
+        components: { ModSupportLockdownWhatHappens },
         stubs: {
           NoticeMessage: { template: '<div><slot /></div>' },
           'b-form-group': { template: '<div><slot /></div>' },
@@ -91,7 +93,23 @@ describe('ModSupportLockdownPress', () => {
     expect(button.attributes('disabled')).toBeUndefined()
   })
 
-  it('presses with the reason and no notice key when none is chosen', async () => {
+  it('says what will happen before the Press button, without opening the dialog', () => {
+    const wrapper = createWrapper()
+    const text = wrapper
+      .find('[data-testid="lockdown-press-explanation"]')
+      .text()
+    expect(text).toContain('Chat between members')
+    expect(text).toContain(
+      'Messages one member sends another wait. Chat with the volunteers keeps working both ways.'
+    )
+    expect(text).toContain('Moderators can only use the basic Approve button.')
+    expect(text).toContain('Nothing lifts on its own.')
+    expect(
+      wrapper.find('[data-testid="lockdown-confirm-modal"]').exists()
+    ).toBe(false)
+  })
+
+  it('presses with the reason and no notice when none is written', async () => {
     mockPatch.mockResolvedValue({})
     const wrapper = createWrapper()
     await wrapper
@@ -104,7 +122,7 @@ describe('ModSupportLockdownPress', () => {
     })
   })
 
-  it('presses with the chosen notice included', async () => {
+  it('presses with the written notice, trimmed', async () => {
     mockPatch.mockResolvedValue({})
     const wrapper = createWrapper()
     await wrapper
@@ -112,13 +130,38 @@ describe('ModSupportLockdownPress', () => {
       .setValue('Suspected phishing wave')
     await wrapper
       .find('[data-testid="lockdown-press-notice"]')
-      .setValue('security')
+      .setValue('  Messages may be delayed.  ')
     await wrapper.vm.press()
     expect(mockPatch).toHaveBeenCalledWith({
       action: 'press',
       reason: 'Suspected phishing wave',
-      notice: 'security',
+      notice: 'Messages may be delayed.',
     })
+  })
+
+  it('offers the earlier wordings as starting text, and No notice clears it', async () => {
+    const wrapper = createWrapper()
+    const buttons = wrapper.findAll('button')
+    await buttons.find((b) => b.text() === 'Spam attack').trigger('click')
+    expect(
+      wrapper.find('[data-testid="lockdown-press-notice"]').element.value
+    ).toContain("We're dealing with a spam attack")
+
+    await wrapper
+      .find('[data-testid="lockdown-press-notice-none"]')
+      .trigger('click')
+    expect(
+      wrapper.find('[data-testid="lockdown-press-notice"]').element.value
+    ).toBe('')
+  })
+
+  it('sends no notice when the notice box is only spaces', async () => {
+    mockPatch.mockResolvedValue({})
+    const wrapper = createWrapper()
+    await wrapper.find('[data-testid="lockdown-reason"]').setValue('Wave')
+    await wrapper.find('[data-testid="lockdown-press-notice"]').setValue('   ')
+    await wrapper.vm.press()
+    expect(mockPatch).toHaveBeenCalledWith({ action: 'press', reason: 'Wave' })
   })
 
   it('trims the reason before sending', async () => {
@@ -164,8 +207,8 @@ describe('ModSupportLockdownPress', () => {
     await wrapper.find('[data-testid="lockdown-press-button"]').trigger('click')
   }
 
-  // plans/active/2026-09-27-lockdown-switch.md section 11.6: the confirm
-  // dialog must carry the exact consequences text, and its Press button
+  // plans/active/2026-09-27-lockdown-switch.md sections 11.6 and 11.11: the
+  // confirm dialog carries the same words as the page, and its Press button
   // stays disabled until the presser types LOCKDOWN.
   describe('confirm dialog (section 11.6)', () => {
     it('titles the dialog "Lock down Freegle?" and labels its button "Press"', async () => {
@@ -185,26 +228,22 @@ describe('ModSupportLockdownPress', () => {
       )
     })
 
-    it('shows the exact consequences bullets', async () => {
+    it('shows the same words as the page', async () => {
       const wrapper = createWrapper()
+      const onPage = wrapper
+        .find(
+          '[data-testid="lockdown-press-explanation"] [data-testid="lockdown-what-happens"]'
+        )
+        .text()
       await openConfirmModal(wrapper)
-      const dialog = wrapper.find('[data-testid="lockdown-confirm-modal"]')
-      const text = dialog.text()
-      expect(text).toContain(
-        "Every member's chat messages, posts and ChitChat posts will stop reaching anyone. Members will think they have been sent."
-      )
-      expect(text).toContain(
-        'No emails or app notifications will go to members, except sign-in and password emails.'
-      )
-      expect(text).toContain(
-        'Moderators will only be able to use the basic Approve button. Downloads will stop.'
-      )
-      expect(text).toContain(
-        'Nothing lifts on its own. Someone with Support tools has to lift it, step by step, and every hour it is on delays thousands of genuine messages.'
-      )
-      expect(text).toContain(
-        'geeks@ will be emailed now, and every hour until it is lifted.'
-      )
+      const inDialog = wrapper
+        .find(
+          '[data-testid="lockdown-confirm-modal"] [data-testid="lockdown-what-happens"]'
+        )
+        .text()
+      expect(inDialog).toBe(onPage)
+      expect(inDialog).toContain('Email to members')
+      expect(inDialog).toContain('geeks@ is emailed now')
     })
 
     it('keeps the Press button disabled until LOCKDOWN is typed exactly', async () => {
@@ -245,7 +284,7 @@ describe('ModSupportLockdownPress', () => {
     function createWrapperWithRealConfirmModal() {
       return mount(ModSupportLockdownPress, {
         global: {
-          components: { ConfirmModal },
+          components: { ConfirmModal, ModSupportLockdownWhatHappens },
           stubs: {
             NoticeMessage: { template: '<div><slot /></div>' },
             'b-form-group': { template: '<div><slot /></div>' },

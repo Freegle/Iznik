@@ -1,13 +1,16 @@
 <template>
   <div>
-    <NoticeMessage variant="danger" class="mb-3">
-      Freegle stays up. Members can still post, reply and chat - it looks sent,
-      but reaches nobody until it's lifted, surface by surface. Moderators still
-      see and approve everything. This lasts hours, not days, and nothing lifts
-      itself.
-    </NoticeMessage>
+    <div class="mb-3" data-testid="lockdown-press-explanation">
+      <p>
+        Use this when spam or abuse is getting past the usual checks and has to
+        be stopped now. Pressing holds everything below at once. Freegle stays
+        up: members can still post, reply and chat, and what they send waits
+        until it is lifted.
+      </p>
+      <ModSupportLockdownWhatHappens />
+    </div>
 
-    <b-form-group label="Why (goes to geeks@ and the closing report)">
+    <b-form-group label="Why (goes to geeks@ and the history)">
       <b-form-textarea
         v-model="reason"
         rows="2"
@@ -17,12 +20,33 @@
     </b-form-group>
 
     <b-form-group
-      label="Member notice - a choice for the day, not a default"
+      label="Member notice (optional, shown across the top of the member site)"
       class="mt-2"
     >
-      <b-form-select
+      <div class="d-flex flex-wrap gap-2 mb-2">
+        <b-button
+          variant="outline-secondary"
+          size="sm"
+          data-testid="lockdown-press-notice-none"
+          @click="notice = ''"
+        >
+          No notice
+        </b-button>
+        <b-button
+          v-for="w in LOCKDOWN_NOTICE_WORDINGS"
+          :key="w.label"
+          variant="outline-secondary"
+          size="sm"
+          @click="notice = w.text"
+        >
+          {{ w.label }}
+        </b-button>
+      </div>
+      <b-form-textarea
         v-model="notice"
-        :options="noticeOptions"
+        rows="2"
+        :maxlength="LOCKDOWN_NOTICE_MAX"
+        placeholder="No notice"
         data-testid="lockdown-press-notice"
       />
     </b-form-group>
@@ -49,28 +73,7 @@
       @hidden="showConfirmModal = false"
     >
       <div data-testid="lockdown-confirm-modal">
-        <ul>
-          <li>
-            Every member's chat messages, posts and ChitChat posts will stop
-            reaching anyone. Members will think they have been sent.
-          </li>
-          <li>
-            No emails or app notifications will go to members, except sign-in
-            and password emails.
-          </li>
-          <li>
-            Moderators will only be able to use the basic Approve button.
-            Downloads will stop.
-          </li>
-          <li>
-            Nothing lifts on its own. Someone with Support tools has to lift it,
-            step by step, and every hour it is on delays thousands of genuine
-            messages.
-          </li>
-          <li>
-            geeks@ will be emailed now, and every hour until it is lifted.
-          </li>
-        </ul>
+        <ModSupportLockdownWhatHappens />
         <b-form-group label="Type LOCKDOWN to confirm">
           <b-form-input
             v-model="confirmText"
@@ -85,17 +88,21 @@
 <script setup>
 import { ref } from 'vue'
 import { useLockdownStore } from '~/stores/lockdown'
+import {
+  LOCKDOWN_NOTICE_MAX,
+  LOCKDOWN_NOTICE_WORDINGS,
+} from '~/modtools/utils/lockdownAreas'
 
-// plans/active/2026-09-27-lockdown-switch.md section 10.1/10.9/11.2: the
-// not-yet-pressed state of the Support Lockdown tab. Any Support or Admin
-// user presses; reason is required (it's the record); notice defaults to
-// none because "a choice on the day, not a default" (10.8).
+// plans/active/2026-09-27-lockdown-switch.md section 11.11: the not-yet-
+// pressed state of the Support Lockdown tab. The page says what will happen
+// before the button, in the same words as the confirm dialog. A reason is
+// required (it's the record); the notice is optional and free text.
 const emit = defineEmits(['pressed'])
 
 const lockdownStore = useLockdownStore()
 
 const reason = ref('')
-const notice = ref(null)
+const notice = ref('')
 const pressing = ref(false)
 const confirmModal = ref(null)
 // ConfirmModal is v-if-gated (house pattern - see e.g. ModMember.vue's
@@ -103,28 +110,17 @@ const confirmModal = ref(null)
 // autoShow to true, so an always-mounted ConfirmModal pops open on page
 // load instead of waiting for the Press button.
 const showConfirmModal = ref(false)
-// plans/active/2026-09-27-lockdown-switch.md section 11.6: the Press button
-// inside the confirm dialog stays disabled until this is typed exactly.
+// The Press button inside the confirm dialog stays disabled until this is
+// typed exactly.
 const confirmText = ref('')
-
-const noticeOptions = [
-  { value: null, text: 'None' },
-  {
-    value: 'delay',
-    text: 'Delay: "Freegle is running slowly today..."',
-  },
-  {
-    value: 'security',
-    text: 'Security: "We\'re dealing with a spam attack..."',
-  },
-]
 
 async function press() {
   pressing.value = true
 
   try {
     const data = { action: 'press', reason: reason.value.trim() }
-    if (notice.value) data.notice = notice.value
+    const text = notice.value.trim()
+    if (text) data.notice = text
 
     await lockdownStore.patch(data)
     confirmText.value = ''

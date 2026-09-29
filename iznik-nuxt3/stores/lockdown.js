@@ -4,11 +4,11 @@ import api from '~/api'
 // Central state for the site-wide lockdown switch (see
 // plans/active/2026-09-27-lockdown-switch.md section 11). Used by both the
 // member site (just `notice`, via fetch()) and ModTools (the full state, via
-// fetchMod()/fetchStats()/fetchHistory()/patch()).
+// fetchMod()/fetchStats()/fetchHistory()/fetchHeld()/patch()).
 export const useLockdownStore = defineStore('lockdown', {
   state: () => ({
-    // Public: the notice to show visitors, or null. Never surfaces/active -
-    // those are only ever populated for a logged-in moderator.
+    // The member site holds the public notice here as {text}, or null.
+    // ModTools holds the notice text itself (fetchMod), or null.
     notice: null,
 
     // Moderator-only state, from GET /modtools/lockdown.
@@ -21,7 +21,6 @@ export const useLockdownStore = defineStore('lockdown', {
     startedbyname: null,
 
     // Support/Admin only.
-    phrases: [],
     stats: null,
     history: [],
   }),
@@ -46,7 +45,6 @@ export const useLockdownStore = defineStore('lockdown', {
       this.startedat = ret?.startedat ?? null
       this.startedby = ret?.startedby ?? null
       this.startedbyname = ret?.startedbyname ?? null
-      this.phrases = ret?.phrases ?? []
       return ret
     },
 
@@ -64,9 +62,17 @@ export const useLockdownStore = defineStore('lockdown', {
       return ret
     },
 
-    // data carries an `action` field (press, surfaces, notice, phrases,
-    // markspam, releaseclass, liftall, close) plus that action's own fields.
-    // Refreshes the full moderator state afterwards so callers don't have to.
+    // One page of what is held: {items, next}. Not kept in the store - the
+    // "What is held" subtab owns its own list, so it is only fetched when
+    // somebody opens it.
+    async fetchHeld(params) {
+      const ret = await api(this.config).lockdown.fetchHeld(params)
+      return { items: ret?.items ?? [], next: ret?.next ?? null }
+    },
+
+    // data carries an `action` field (press, surfaces, notice, liftall,
+    // close) plus that action's own fields. Refreshes the full moderator
+    // state afterwards so callers don't have to.
     async patch(data) {
       const ret = await api(this.config).lockdown.patch(data)
       await this.fetchMod()

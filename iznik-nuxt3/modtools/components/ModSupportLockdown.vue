@@ -1,6 +1,16 @@
 <template>
   <div>
-    <ModSupportLockdownPress v-if="!store.active" @pressed="refreshAll" />
+    <div v-if="!store.active">
+      <ModSupportLockdownPress @pressed="refreshAll" />
+      <ModSupportLockdownNotice
+        class="mt-4"
+        :notice="store.notice"
+        :active="false"
+        :busy="busy"
+        @save="onNotice"
+      />
+      <ModSupportLockdownHistory class="mt-4" :history="store.history" />
+    </div>
 
     <div v-else>
       <NoticeMessage
@@ -15,67 +25,73 @@
         </span>
       </NoticeMessage>
 
-      <ModSupportLockdownSurfaces
-        :surfaces="store.surfaces"
-        :held-counts="heldByKind"
-        @toggle-surface="onToggleSurface"
-        @set-chat-mode="onSetChatMode"
-      />
+      <b-tabs v-model="subTab" content-class="mt-3">
+        <b-tab>
+          <template #title>
+            <span data-testid="lockdown-subtab-controls">Controls</span>
+          </template>
 
-      <b-form-group label="Member notice">
-        <b-form-select
-          :model-value="store.notice"
-          :options="noticeOptions"
-          data-testid="lockdown-notice-select"
-          @update:model-value="onNotice"
-        />
-      </b-form-group>
+          <ModSupportLockdownTakingEffect :stats="store.stats" />
 
-      <b-form-group
-        label="Incident phrases (one per line, saved as you leave the box)"
-      >
-        <b-form-textarea
-          :model-value="phrasesText"
-          rows="3"
-          data-testid="lockdown-phrases"
-          @update:model-value="onPhrasesInput"
-          @change="onPhrasesSave"
-        />
-      </b-form-group>
+          <ModSupportLockdownSurfaces
+            class="mt-3"
+            :surfaces="store.surfaces"
+            :busy="busy"
+            @set-surface="onSetSurface"
+          />
 
-      <ModSupportLockdownStats
-        :stats="store.stats"
-        @markspam="onMarkSpam"
-        @releaseclass="onReleaseClass"
-      />
+          <div class="mt-3 d-flex flex-wrap gap-2">
+            <b-button
+              variant="primary"
+              :disabled="busy || !anyHeld"
+              data-testid="lockdown-liftall-button"
+              @click="showLiftAllModal = true"
+            >
+              Lift everything
+            </b-button>
+          </div>
 
-      <ModSupportLockdownTakingEffect :stats="store.stats" />
+          <ModSupportLockdownStats class="mt-4" :stats="store.stats" />
 
-      <b-button
-        variant="warning"
-        class="mt-3"
-        data-testid="lockdown-liftall-button"
-        @click="showLiftAllModal = true"
-      >
-        Lift everything
-      </b-button>
+          <ModSupportLockdownNotice
+            class="mt-4"
+            :notice="store.notice"
+            :active="true"
+            :busy="busy"
+            @save="onNotice"
+          />
 
-      <b-form-group label="Closing note (goes on the history row)" class="mt-3">
-        <b-form-textarea
-          v-model="endNote"
-          rows="2"
-          data-testid="lockdown-close-note"
-        />
-      </b-form-group>
-      <b-button
-        variant="secondary"
-        data-testid="lockdown-close-button"
-        @click="showCloseModal = true"
-      >
-        Close
-      </b-button>
+          <h4 class="mt-4">Close the lockdown</h4>
+          <p class="small text-muted">
+            Closing lifts anything still held, ends the lockdown and removes the
+            member notice.
+          </p>
+          <b-form-group label="Closing note (goes on the history)">
+            <b-form-textarea
+              v-model="endNote"
+              rows="2"
+              data-testid="lockdown-close-note"
+            />
+          </b-form-group>
+          <b-button
+            variant="secondary"
+            :disabled="busy"
+            data-testid="lockdown-close-button"
+            @click="showCloseModal = true"
+          >
+            Close
+          </b-button>
 
-      <ModSupportLockdownHistory :history="store.history" />
+          <ModSupportLockdownHistory class="mt-4" :history="store.history" />
+        </b-tab>
+
+        <b-tab lazy>
+          <template #title>
+            <span data-testid="lockdown-subtab-held">What is held</span>
+          </template>
+          <ModSupportLockdownHeld />
+        </b-tab>
+      </b-tabs>
 
       <ConfirmModal
         v-if="showLiftAllModal"
@@ -86,8 +102,9 @@
       >
         <div data-testid="lockdown-liftall-confirm">
           <p>
-            Lifting releases held messages at a paced rate, and moderators will
-            see the risky ones in their queues.
+            Everything held is released straight away, through the usual checks.
+            The lockdown stays open until you close it, so any area can be held
+            again.
           </p>
         </div>
       </ConfirmModal>
@@ -100,7 +117,10 @@
         @hidden="showCloseModal = false"
       >
         <div data-testid="lockdown-close-confirm">
-          <p>Closing ends the incident and clears the incident phrases.</p>
+          <p>
+            Anything still held is released straight away, through the usual
+            checks, and the member notice is removed.
+          </p>
         </div>
       </ConfirmModal>
     </div>
@@ -112,16 +132,15 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useLockdownStore } from '~/stores/lockdown'
 import { timeago } from '~/composables/useTimeFormat'
 
-// plans/active/2026-09-27-lockdown-switch.md sections 10.9, 10.10, 11.2, 11.6
-// - the Support Lockdown tab's orchestrator. Not active: just the press
-// form. Active: status line, the lift-order surface switches, notice choice
-// (including "Things are back to normal" once closed), incident phrases,
-// live stats, a "Taking effect" list, "Lift everything" and "Close" with an
-// end note, and history. Every write goes through store.patch(), which
-// refetches the moderator state itself (stores/lockdown.js) - so the page
-// updates for the presser immediately, without waiting for any poll - and
-// this component additionally refreshes stats/history right after every
-// patch, so the "Taking effect" list reflects the change at once too.
+// plans/active/2026-09-27-lockdown-switch.md sections 11.6 and 11.11 - the
+// Support Lockdown tab. Not active: the press form with what will happen,
+// the member notice (for "Things are back to normal" after close) and the
+// history. Active: two subtabs. Controls has "Taking effect", one row per
+// area with Lift or Hold again, Lift everything, the counts held so far, the
+// notice and Close. "What is held" browses held items, fetched only when it
+// is opened. Every write goes through store.patch(), which refetches the
+// state itself, and then refreshes stats and history so the page reflects
+// the change at once.
 //
 // Stats poll cadence (11.6): every 5 seconds while any batch loop hasn't
 // caught up with the latest change, then every 60 seconds once they all
@@ -135,6 +154,9 @@ const POLL_IDLE_MS = 60000
 let refreshTimer = null
 let lastRefreshAt = 0
 
+const subTab = ref(0)
+const busy = ref(false)
+
 const allCaughtUp = computed(() => {
   if (!store.active) return true
   const acks = store.stats?.acks
@@ -142,18 +164,9 @@ const allCaughtUp = computed(() => {
   return acks.every((a) => a.caughtup)
 })
 
-// GET /modtools/lockdown/stats' `held` is a flat array of
-// {kind,count,distinctusers,oldest,newlast10min} (unresolved holds only),
-// one entry per kind - not an object keyed by kind. ModSupportLockdownSurfaces
-// indexes its heldCounts prop by kind, so build that lookup here rather than
-// passing the array straight through.
-const heldByKind = computed(() => {
-  const map = {}
-  for (const h of store.stats?.held ?? []) {
-    map[h.kind] = h
-  }
-  return map
-})
+const anyHeld = computed(() =>
+  Object.values(store.surfaces ?? {}).some(Boolean)
+)
 
 onMounted(async () => {
   await refreshAll()
@@ -181,65 +194,28 @@ async function refreshAll() {
 
 async function refreshStats() {
   lastRefreshAt = Date.now()
-  await store.fetchStats()
+  if (store.active) {
+    await store.fetchStats()
+  }
   await store.fetchHistory()
 }
 
-// Every action that changes lockdown state re-fetches stats/history right
-// away, so the "Taking effect" list doesn't wait for the next poll tick.
 async function patchAndRefresh(data) {
-  await store.patch(data)
-  await refreshStats()
+  busy.value = true
+  try {
+    await store.patch(data)
+    await refreshStats()
+  } finally {
+    busy.value = false
+  }
 }
 
-const noticeOptions = [
-  { value: null, text: 'None' },
-  { value: 'delay', text: 'Delay: "Freegle is running slowly today..."' },
-  {
-    value: 'security',
-    text: 'Security: "We\'re dealing with a spam attack..."',
-  },
-  { value: 'normal', text: 'Things are back to normal' },
-]
-
-async function onNotice(value) {
-  await patchAndRefresh({ action: 'notice', notice: value })
+function onSetSurface(key, held) {
+  return patchAndRefresh({ action: 'surfaces', surfaces: { [key]: held } })
 }
 
-// Phrases are typed as free text, one per line, and saved on blur/change
-// (b-form-textarea's @change) rather than on every keystroke - a phrase list
-// is read by the batch on its next run (11.1), so there's no reason to spam
-// the API mid-sentence.
-const phrasesText = computed(() => (store.phrases ?? []).join('\n'))
-const pendingPhrases = ref(null)
-
-function onPhrasesInput(value) {
-  pendingPhrases.value = value
-}
-
-async function onPhrasesSave() {
-  const raw = pendingPhrases.value ?? phrasesText.value
-  const phrases = raw
-    .split('\n')
-    .map((p) => p.trim().toLowerCase())
-    .filter(Boolean)
-  await patchAndRefresh({ action: 'phrases', phrases })
-}
-
-async function onToggleSurface(key, value) {
-  await patchAndRefresh({ action: 'surfaces', surfaces: { [key]: value } })
-}
-
-async function onSetChatMode(mode) {
-  await patchAndRefresh({ action: 'surfaces', surfaces: {}, chat_mode: mode })
-}
-
-async function onMarkSpam() {
-  await patchAndRefresh({ action: 'markspam' })
-}
-
-async function onReleaseClass({ kind, risk, decision }) {
-  await patchAndRefresh({ action: 'releaseclass', kind, risk, decision })
+function onNotice(text) {
+  return patchAndRefresh({ action: 'notice', notice: text })
 }
 
 const liftAllModal = ref(null)
@@ -248,8 +224,8 @@ const liftAllModal = ref(null)
 // always-mounted ConfirmModal pops open the instant the active-state page
 // mounts instead of waiting for its button.
 const showLiftAllModal = ref(false)
-async function onLiftAll() {
-  await patchAndRefresh({ action: 'liftall' })
+function onLiftAll() {
+  return patchAndRefresh({ action: 'liftall' })
 }
 
 const closeModal = ref(null)
@@ -257,16 +233,12 @@ const showCloseModal = ref(false)
 const endNote = ref('')
 async function onClose() {
   await patchAndRefresh({ action: 'close', endnote: endNote.value.trim() })
+  endNote.value = ''
 }
 
 defineExpose({
-  onToggleSurface,
-  onSetChatMode,
+  onSetSurface,
   onNotice,
-  onPhrasesInput,
-  onPhrasesSave,
-  onMarkSpam,
-  onReleaseClass,
   onLiftAll,
   onClose,
 })

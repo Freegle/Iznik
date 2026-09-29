@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-27
+last_reviewed: 2026-09-29
 owner: Freegle dev team
 covers:
   - iznik-server-go/lockdown
@@ -64,9 +64,10 @@ releasing it (the host-specific steps are in the ops team's operational notes).
 The lockdown only holds. Working out who is behind the wave and dealing with them happens
 with the Support tools that already exist, not in the Lockdown tab.
 
-- "What is held" lists the held chat messages, posts and ChitChat posts, newest first, and
-  searches their text and the sender's name and email. Each sender links to Support tools,
-  where they can be marked as a spammer.
+- The "What is held" subtab lists the held chat messages, posts and ChitChat posts, newest
+  first, and searches their text and the sender's name and email. Each sender links to
+  Support tools, where they can be marked as a spammer. There are no actions on held items
+  in the Lockdown tab itself.
 - "Held so far" counts each kind of thing held, and what was not sent or was refused.
 - The member notice can be changed or removed at any time, and saved.
 
@@ -79,15 +80,17 @@ held again on its own if the wave comes back.
 2. Mark the accounts behind the wave as spammers in Support tools.
 3. Lift **moderator actions**, so moderators are in their queues before they fill.
 4. Lift **chat**, **posts**, **ChitChat** and **events**. Everything held goes through the
-   checks that would have run on the day, oldest first, straight away. Messages
-   from accounts marked as spammers are dropped; posts from moderated members or groups
-   wait for a moderator as usual.
+   checks that would have run on the day, oldest first, straight away. Chat messages and
+   ChitChat posts from accounts marked as spammers are dropped; posts from moderated
+   members or groups wait for a moderator as usual.
 5. Lift **app notifications**.
 6. Lift **email**. The send queue is first cleared of mail about anything removed, then
    digests and notifications are generated from where they stopped. Members get what they
    would have had, a few hours late. Nothing is dropped.
 7. Lift **downloads**.
-8. Change the member notice to "Things are back to normal", or remove it.
-9. **Close**, with a note. geeks@ gets the closing report.
+8. **Close**, with a note. This removes the member notice, and geeks@ gets the closing
+   report.
+9. If members were told about it, set the notice to "Things are back to normal". After a
+   close it shows for a day and then stops by itself.
 
 For a false alarm, "Lift everything" lifts every area in this order.

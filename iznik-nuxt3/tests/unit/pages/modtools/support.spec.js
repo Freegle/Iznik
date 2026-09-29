@@ -181,18 +181,18 @@ describe('support/[[id]].vue page', () => {
       expect(wrapper.find('.mod-support-find-user').exists()).toBe(true)
     })
 
-    // plans/active/2026-09-27-lockdown-switch.md section 10.9/10.12: the
-    // Lockdown tab is first and red, so it's the thing a Support user
-    // reaches fastest during an incident.
+    // plans/active/2026-09-27-lockdown-switch.md section 11.11: the Lockdown
+    // tab is last and red.
     it('renders the Lockdown tab component', () => {
       const wrapper = mountComponent()
       expect(wrapper.find('.mod-support-lockdown').exists()).toBe(true)
     })
 
-    it('renders the Lockdown tab title in red, before User', () => {
+    it('renders the Lockdown tab title in red, after every other tab', () => {
       const wrapper = mountComponent()
       const titles = wrapper.findAll('.b-tab').map((t) => t.text())
-      expect(titles[0]).toContain('Lockdown')
+      expect(titles[titles.length - 1]).toContain('Lockdown')
+      expect(titles[0]).not.toContain('Lockdown')
       const lockdownTitle = wrapper.find('[data-testid="lockdown-tab-title"]')
       expect(lockdownTitle.exists()).toBe(true)
       expect(lockdownTitle.classes()).toContain('text-danger')
@@ -275,21 +275,19 @@ describe('support/[[id]].vue page', () => {
 
   describe('tab query parameter handling', () => {
     it('sets activeTab from query param', async () => {
-      // The Lockdown tab was inserted first (index 0), so every other tab's
-      // index shifted up by one - community is now 2, not 1.
       mockRouteQuery.value = { tab: 'community' }
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
       await flushPromises()
-      expect(wrapper.vm.activeTab).toBe(2)
+      expect(wrapper.vm.activeTab).toBe(1)
     })
 
-    it('sets activeTab to 0 for the lockdown tab', async () => {
+    it('sets activeTab to 5 for the lockdown tab', async () => {
       mockRouteQuery.value = { tab: 'lockdown' }
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
       await flushPromises()
-      expect(wrapper.vm.activeTab).toBe(0)
+      expect(wrapper.vm.activeTab).toBe(5)
     })
   })
 
@@ -300,7 +298,7 @@ describe('support/[[id]].vue page', () => {
   describe('default tab', () => {
     it('defaults to the User tab when no lockdown is active and no tab query param is set', () => {
       const wrapper = mountComponent()
-      expect(wrapper.vm.activeTab).toBe(1)
+      expect(wrapper.vm.activeTab).toBe(0)
     })
 
     it('defaults to the Lockdown tab when a lockdown is active', () => {
@@ -308,7 +306,7 @@ describe('support/[[id]].vue page', () => {
       setActivePinia(pinia)
       useLockdownStore().active = true
       const wrapper = mountComponent(pinia)
-      expect(wrapper.vm.activeTab).toBe(0)
+      expect(wrapper.vm.activeTab).toBe(5)
     })
   })
 })

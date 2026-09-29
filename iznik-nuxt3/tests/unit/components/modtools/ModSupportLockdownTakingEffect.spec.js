@@ -89,7 +89,7 @@ describe('ModSupportLockdownTakingEffect', () => {
         leaked: {},
       },
     })
-    const row = wrapper.find('[data-testid="lockdown-taking-effect-triage"]')
+    const row = wrapper.find('[data-testid="lockdown-taking-effect-tick"]')
     expect(row.text()).toContain(
       'Has not picked this up. The loop may be stopped or stuck. Check the batch host.'
     )
@@ -106,7 +106,7 @@ describe('ModSupportLockdownTakingEffect', () => {
         leaked: {},
       },
     })
-    const row = wrapper.find('[data-testid="lockdown-taking-effect-triage"]')
+    const row = wrapper.find('[data-testid="lockdown-taking-effect-tick"]')
     expect(row.text()).toContain('waiting')
     expect(row.text()).not.toContain('Has not picked this up')
   })
@@ -123,7 +123,7 @@ describe('ModSupportLockdownTakingEffect', () => {
       'mail-loops',
       'background-tasks',
       'push',
-      'triage',
+      'tick',
     ]) {
       expect(
         wrapper.find(`[data-testid="lockdown-taking-effect-${key}"]`).exists()

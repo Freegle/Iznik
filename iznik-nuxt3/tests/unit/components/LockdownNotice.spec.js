@@ -36,10 +36,9 @@ describe('LockdownNotice', () => {
     expect(render().find('.notice').exists()).toBe(false)
   })
 
-  it('shows the security notice text', () => {
+  it('shows the text Support wrote', () => {
     useLockdownStore.mockReturnValue({
       notice: {
-        key: 'security',
         text: "We're dealing with a spam attack. Messages may be delayed. If you received a message about vouchers or payments, please don't click the link.",
       },
     })
@@ -51,39 +50,9 @@ describe('LockdownNotice', () => {
     expect(wrapper.text()).toContain("please don't click the link")
   })
 
-  it('uses the danger variant for a security notice', () => {
+  it('uses the warning variant whatever the text', () => {
     useLockdownStore.mockReturnValue({
-      notice: { key: 'security', text: 'Security text' },
-    })
-
-    expect(render().find('.notice').attributes('data-variant')).toBe('danger')
-  })
-
-  it('shows the delay notice text', () => {
-    useLockdownStore.mockReturnValue({
-      notice: {
-        key: 'delay',
-        text: 'Freegle is running slowly today. Messages and posts may take longer than usual to reach people.',
-      },
-    })
-
-    const wrapper = render()
-
-    expect(wrapper.find('.notice').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Freegle is running slowly today')
-  })
-
-  it('uses the warning variant for a delay notice', () => {
-    useLockdownStore.mockReturnValue({
-      notice: { key: 'delay', text: 'Delay text' },
-    })
-
-    expect(render().find('.notice').attributes('data-variant')).toBe('warning')
-  })
-
-  it('uses the warning variant for the back-to-normal notice', () => {
-    useLockdownStore.mockReturnValue({
-      notice: { key: 'normal', text: 'Things are back to normal.' },
+      notice: { text: 'Things are back to normal.' },
     })
 
     expect(render().find('.notice').attributes('data-variant')).toBe('warning')
@@ -91,7 +60,7 @@ describe('LockdownNotice', () => {
 
   it('has no dismiss button', () => {
     useLockdownStore.mockReturnValue({
-      notice: { key: 'security', text: 'Security text' },
+      notice: { text: 'Some notice text' },
     })
 
     expect(render().find('.test-dismiss').exists()).toBe(false)
@@ -108,7 +77,7 @@ describe('LockdownNotice', () => {
     // layout engine, so this can only check the class list, not real pixel
     // positions - the actual proof is the Playwright run over a browser.
     useLockdownStore.mockReturnValue({
-      notice: { key: 'security', text: 'Security text' },
+      notice: { text: 'Some notice text' },
     })
 
     const wrapper = render()

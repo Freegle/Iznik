@@ -5,6 +5,7 @@ const mockFetch = vi.fn()
 const mockFetchMod = vi.fn()
 const mockFetchStats = vi.fn()
 const mockFetchHistory = vi.fn()
+const mockFetchHeld = vi.fn()
 const mockPatch = vi.fn()
 
 vi.mock('~/api', () => ({
@@ -14,6 +15,7 @@ vi.mock('~/api', () => ({
       fetchMod: mockFetchMod,
       fetchStats: mockFetchStats,
       fetchHistory: mockFetchHistory,
+      fetchHeld: mockFetchHeld,
       patch: mockPatch,
     },
   }),
@@ -35,7 +37,6 @@ describe('lockdown store', () => {
       expect(store.notice).toBeNull()
       expect(store.active).toBe(false)
       expect(store.surfaces).toEqual({})
-      expect(store.phrases).toEqual([])
       expect(store.stats).toBeNull()
       expect(store.history).toEqual([])
     })
@@ -46,25 +47,21 @@ describe('lockdown store', () => {
       const store = useLockdownStore()
       store.init({ public: {} })
       mockFetch.mockResolvedValue({
-        notice: {
-          key: 'security',
-          text: 'We are dealing with a security incident.',
-        },
+        notice: { text: 'We are dealing with a spam attack.' },
       })
 
       await store.fetch()
 
       expect(mockFetch).toHaveBeenCalledTimes(1)
       expect(store.notice).toEqual({
-        key: 'security',
-        text: 'We are dealing with a security incident.',
+        text: 'We are dealing with a spam attack.',
       })
     })
 
     it('clears the notice when the server returns null', async () => {
       const store = useLockdownStore()
       store.init({ public: {} })
-      store.notice = { key: 'security', text: 'old notice' }
+      store.notice = { text: 'old notice' }
       mockFetch.mockResolvedValue({ notice: null })
 
       await store.fetch()
@@ -82,14 +79,12 @@ describe('lockdown store', () => {
         incidentid: 5,
         surfaces: { mods: true, posts: true },
         reason: 'spam wave',
-        // GET /modtools/lockdown returns notice as a bare string (e.g.
-        // "security"/"delay"/"normal"), unlike the public GET /lockdown
-        // endpoint, which wraps it as {key, text}.
-        notice: 'security',
+        // GET /modtools/lockdown returns the notice text itself, unlike
+        // the public GET /lockdown endpoint, which wraps it as {text}.
+        notice: 'Messages may be delayed.',
         startedat: '2026-09-27 10:00:00',
         startedby: 1,
         startedbyname: 'Support',
-        phrases: ['free stuff', 'click here'],
       })
 
       await store.fetchMod()
@@ -98,11 +93,10 @@ describe('lockdown store', () => {
       expect(store.incidentid).toBe(5)
       expect(store.surfaces).toEqual({ mods: true, posts: true })
       expect(store.reason).toBe('spam wave')
-      expect(store.notice).toBe('security')
+      expect(store.notice).toBe('Messages may be delayed.')
       expect(store.startedat).toBe('2026-09-27 10:00:00')
       expect(store.startedby).toBe(1)
       expect(store.startedbyname).toBe('Support')
-      expect(store.phrases).toEqual(['free stuff', 'click here'])
     })
 
     it('resets to inactive when the server reports no lockdown', async () => {
@@ -123,11 +117,35 @@ describe('lockdown store', () => {
     it('fetches and stores stats', async () => {
       const store = useLockdownStore()
       store.init({ public: {} })
-      mockFetchStats.mockResolvedValue({ held: { posts: 12 } })
+      mockFetchStats.mockResolvedValue({ counts: { post: 12 } })
 
       await store.fetchStats()
 
-      expect(store.stats).toEqual({ held: { posts: 12 } })
+      expect(store.stats).toEqual({ counts: { post: 12 } })
+    })
+  })
+
+  describe('fetchHeld', () => {
+    it('passes the search through and returns one page', async () => {
+      const store = useLockdownStore()
+      store.init({ public: {} })
+      mockFetchHeld.mockResolvedValue({ items: [{ id: 1 }], next: 1 })
+
+      const page = await store.fetchHeld({ kind: 'chat', q: 'voucher' })
+
+      expect(mockFetchHeld).toHaveBeenCalledWith({ kind: 'chat', q: 'voucher' })
+      expect(page).toEqual({ items: [{ id: 1 }], next: 1 })
+    })
+
+    it('returns an empty page when the server returns nothing', async () => {
+      const store = useLockdownStore()
+      store.init({ public: {} })
+      mockFetchHeld.mockResolvedValue(null)
+
+      expect(await store.fetchHeld({ kind: 'post' })).toEqual({
+        items: [],
+        next: null,
+      })
     })
   })
 

@@ -156,6 +156,7 @@ func GetModtoolsLockdownHistory(c *fiber.Ctx) error {
 		Active     int        `gorm:"column:active"`
 		Reason     *string    `gorm:"column:reason"`
 		Notice     *string    `gorm:"column:notice"`
+		Surfaces   *string    `gorm:"column:surfaces"`
 		Changedby  *uint64    `gorm:"column:changedby"`
 		Created    time.Time  `gorm:"column:created"`
 		Startedby  *uint64    `gorm:"column:startedby"`
@@ -165,7 +166,7 @@ func GetModtoolsLockdownHistory(c *fiber.Ctx) error {
 		Endnote    *string    `gorm:"column:endnote"`
 	}
 	database.DBConn.Table("lockdowns").
-		Select("id, incidentid, active, reason, notice, changedby, created, startedby, startedat, endedby, endedat, endnote").
+		Select("id, incidentid, active, reason, notice, surfaces, changedby, created, startedby, startedat, endedby, endedat, endnote").
 		Order("id DESC").Limit(50).Scan(&raw)
 
 	rows := make([]fiber.Map, 0, len(raw))
@@ -176,6 +177,7 @@ func GetModtoolsLockdownHistory(c *fiber.Ctx) error {
 			"active":        r.Active == 1,
 			"reason":        derefString(r.Reason),
 			"notice":        derefString(r.Notice),
+			"surfaces":      surfacesMap(State{Surfaces: decodeSurfaces(r.Surfaces)}),
 			"changedby":     derefUint(r.Changedby),
 			"changedbyname": userFullname(derefUint(r.Changedby)),
 			"created":       r.Created,

@@ -3,21 +3,6 @@
     <div v-if="supportOrAdmin">
       <div>
         <b-tabs v-model="activeTab" content-class="mt-3" card>
-          <!-- Lockdown Tab: first, red - see plans/active/2026-09-27-lockdown-switch.md
-               section 10.9. Whether to press, and everything about lifting once
-               pressed, needs to be the thing a Support user reaches fastest. -->
-          <b-tab>
-            <template #title>
-              <h2
-                class="ms-2 me-2 text-danger fw-bold"
-                data-testid="lockdown-tab-title"
-              >
-                Lockdown
-              </h2>
-            </template>
-            <ModSupportLockdown />
-          </b-tab>
-
           <!-- User Tab -->
           <b-tab>
             <template #title>
@@ -133,6 +118,20 @@
             </template>
             <ModSupportConcernKeywords />
           </b-tab>
+
+          <!-- Lockdown Tab: last, in red - see plans/active/2026-09-27-lockdown-switch.md
+               section 11.11. Support opens on it only while a lockdown is on. -->
+          <b-tab>
+            <template #title>
+              <h2
+                class="ms-2 me-2 text-danger fw-bold"
+                data-testid="lockdown-tab-title"
+              >
+                Lockdown
+              </h2>
+            </template>
+            <ModSupportLockdown />
+          </b-tab>
         </b-tabs>
       </div>
     </div>
@@ -175,20 +174,16 @@ const communitySubTab = ref(0)
 
 // Tab name to index mapping
 const topTabMap = {
-  lockdown: 0,
-  user: 1,
-  community: 2,
-  message: 3,
-  ai: 4,
-  spam: 5,
+  user: 0,
+  community: 1,
+  message: 2,
+  ai: 3,
+  spam: 4,
+  lockdown: 5,
 }
 
-// Lockdown stays first in the tab row always (plans/active/2026-09-27-lockdown-switch.md
-// section 10.9/10.12: it's the thing a Support user reaches fastest during an
-// incident). But it's only the DEFAULT tab while there's actually an incident to
-// react to, or the caller asked for it by link (?tab=lockdown) - otherwise Support
-// Tools opens on User, same as before this tab existed. A moderator's bookmarked
-// or shared /support link with no ?tab must still land on User.
+// Support Tools opens on Lockdown only while a lockdown is on, or when the link asks
+// for it (?tab=lockdown); otherwise on User, as before the tab existed.
 const activeTab = ref(
   route.query.tab === 'lockdown' || lockdownStore.active
     ? topTabMap.lockdown

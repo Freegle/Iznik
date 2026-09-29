@@ -1,123 +1,165 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ModSupportLockdownHistory from '~/modtools/components/ModSupportLockdownHistory.vue'
 
-// plans/active/2026-09-27-lockdown-switch.md section 10.9/10.10/11.2 (GET
-// /modtools/lockdown/history - "last 50 rows"). Real shape confirmed against
-// the Go handler (iznik-server-go/lockdown/handlers.go, GetModtoolsLockdownHistory):
-// a bare array, one row PER CHANGE, not one row per incident - an incident
-// that presses, has its notice edited and is then lifted is three rows
-// sharing one incidentid. `created` is the one field every row always has;
-// `startedby`/`startedat` are carried forward onto every row of an incident
-// once it is pressed (writeStateRow copies `next := fresh`), so they are not
-// unique to a "start" row, and `endedby`/`endedbyname`/`endedat`/`endnote`
-// are only non-null on the row that closed the incident - null on every row
-// before that, including every row of an incident still active. A row is
-// identified by its own `id`; `incidentid` repeats across an incident's rows
-// so it cannot be used as a v-for key (rows would collide).
-describe('ModSupportLockdownHistory', () => {
-  const history = [
-    {
-      id: 30,
-      incidentid: 28,
-      reason: 'Phishing wave via chat',
-      notice: null,
-      changedby: 1,
-      created: '2026-09-20T14:00:00Z',
-      startedby: 1,
-      startedat: '2026-09-20T10:00:00Z',
-      endedby: 1,
-      endedbyname: 'Jane Mod',
-      endedat: '2026-09-20T14:00:00Z',
-      endnote: 'All clear, spam senders banned',
-    },
-    {
-      id: 29,
-      incidentid: 28,
-      reason: null,
-      notice: 'security',
-      changedby: 2,
-      created: '2026-09-20T11:00:00Z',
-      startedby: 1,
-      startedat: '2026-09-20T10:00:00Z',
-      endedby: 0,
-      endedbyname: '',
-      endedat: null,
-      endnote: null,
-    },
-    {
-      id: 28,
-      incidentid: 28,
-      reason: 'Phishing wave via chat',
-      notice: null,
-      changedby: 1,
-      created: '2026-09-20T10:00:00Z',
-      startedby: 1,
-      startedat: '2026-09-20T10:00:00Z',
-      endedby: 0,
-      endedbyname: '',
-      endedat: null,
-      endnote: null,
-    },
-  ]
+vi.mock('~/composables/useTimeFormat', () => ({
+  dateshort: (d) => 'date:' + d,
+}))
 
-  function createWrapper(props = {}) {
-    return mount(ModSupportLockdownHistory, {
-      props: { history, ...props },
-    })
+const ALL_HELD = {
+  mods: true,
+  chat: true,
+  posts: true,
+  chitchat: true,
+  events: true,
+  push: true,
+  email: true,
+  export: true,
+}
+
+// plans/active/2026-09-27-lockdown-switch.md section 11.11: history rows said
+// in words - what each row changed, and who did it.
+describe('ModSupportLockdownHistory', () => {
+  function createWrapper(history) {
+    return mount(ModSupportLockdownHistory, { props: { history } })
   }
 
-  it('renders one row per change, not one row per incident', () => {
-    const wrapper = createWrapper()
-    const rows = wrapper.findAll('[data-testid="lockdown-history-row"]')
-    // All three rows share incidentid 28, and must all still render.
-    expect(rows).toHaveLength(3)
+  function rowTexts(wrapper) {
+    return wrapper
+      .findAll('[data-testid="lockdown-history-row"]')
+      .map((r) => r.findAll('td').map((td) => td.text()))
+  }
+
+  it('says so when there are no lockdowns', () => {
+    const wrapper = createWrapper([])
+    expect(wrapper.text()).toContain('No lockdowns yet.')
   })
 
-  it('shows when the change happened from created, and who by', () => {
-    const wrapper = createWrapper()
-    const rows = wrapper.findAll('[data-testid="lockdown-history-row"]')
-    expect(rows[0].text()).toContain('Sep 20, 2026')
-    expect(rows[0].text()).toContain('#1')
-    expect(rows[1].text()).toContain('#2')
+  it('describes a press, a lift, a notice change and a close, newest first', () => {
+    const wrapper = createWrapper([
+      {
+        id: 13,
+        incidentid: 10,
+        active: false,
+        surfaces: {},
+        notice: '',
+        endnote: 'drill over',
+        created: 'd13',
+        changedbyname: 'Closer',
+        endedbyname: 'Closer',
+      },
+      {
+        id: 12,
+        incidentid: 10,
+        active: true,
+        surfaces: { ...ALL_HELD, chat: false },
+        notice: 'Back soon.',
+        created: 'd12',
+        changedbyname: 'Lifter',
+      },
+      {
+        id: 11,
+        incidentid: 10,
+        active: true,
+        surfaces: { ...ALL_HELD, chat: false },
+        notice: '',
+        created: 'd11',
+        changedbyname: 'Lifter',
+      },
+      {
+        id: 10,
+        incidentid: 10,
+        active: true,
+        surfaces: ALL_HELD,
+        reason: 'voucher wave',
+        notice: '',
+        created: 'd10',
+        changedbyname: 'Presser',
+      },
+    ])
+
+    expect(rowTexts(wrapper)).toEqual([
+      ['date:d13', 'Closed: drill over', 'Closer'],
+      ['date:d12', 'Member notice set', 'Lifter'],
+      ['date:d11', 'Lifted Chat between members', 'Lifter'],
+      ['date:d10', 'Pressed: voucher wave', 'Presser'],
+    ])
   })
 
-  it('never shows Invalid Date for a row that has not ended', () => {
-    const wrapper = createWrapper()
-    const rows = wrapper.findAll('[data-testid="lockdown-history-row"]')
-    // Rows 1 and 2 belong to a still-active incident: endedat is null on
-    // both, even though startedat is set on every row of the incident.
-    expect(rows[1].text()).not.toContain('Invalid Date')
-    expect(rows[2].text()).not.toContain('Invalid Date')
+  it('describes holding an area again and removing the notice', () => {
+    const wrapper = createWrapper([
+      {
+        id: 3,
+        incidentid: 1,
+        active: true,
+        surfaces: { ...ALL_HELD, chat: true },
+        notice: '',
+        created: 'd3',
+        changedbyname: 'S',
+      },
+      {
+        id: 2,
+        incidentid: 1,
+        active: true,
+        surfaces: { ...ALL_HELD, chat: false },
+        notice: 'Back soon.',
+        created: 'd2',
+        changedbyname: 'S',
+      },
+    ])
+    expect(rowTexts(wrapper)[0][1]).toBe(
+      'Held again Chat between members; Member notice removed'
+    )
   })
 
-  it('shows who ended it and the end note only on the row that closed it', () => {
-    const wrapper = createWrapper()
-    const rows = wrapper.findAll('[data-testid="lockdown-history-row"]')
-    expect(rows[0].text()).toContain('Jane Mod')
-    expect(rows[0].text()).toContain('All clear, spam senders banned')
-    expect(rows[1].text()).not.toContain('Jane Mod')
-    expect(rows[2].text()).not.toContain('Jane Mod')
+  it('treats a notice set after closing as a notice change, not a second close', () => {
+    const wrapper = createWrapper([
+      {
+        id: 21,
+        incidentid: 20,
+        active: false,
+        surfaces: {},
+        notice: 'Things are back to normal.',
+        created: 'd21',
+        changedbyname: 'S',
+      },
+      {
+        id: 20,
+        incidentid: 20,
+        active: false,
+        surfaces: {},
+        notice: '',
+        endnote: '',
+        created: 'd20',
+        changedbyname: 'S',
+      },
+    ])
+    expect(rowTexts(wrapper).map((r) => r[1])).toEqual([
+      'Member notice set',
+      'Closed',
+    ])
   })
 
-  it('falls back to the notice when a row has no reason of its own', () => {
-    const wrapper = createWrapper()
-    const rows = wrapper.findAll('[data-testid="lockdown-history-row"]')
-    expect(rows[1].text()).toContain('security')
-  })
-
-  it('renders nothing alarming with an empty history', () => {
-    const wrapper = createWrapper({ history: [] })
-    expect(
-      wrapper.findAll('[data-testid="lockdown-history-row"]')
-    ).toHaveLength(0)
-    expect(wrapper.text()).toContain('No previous lockdowns')
-  })
-
-  it('renders sensibly when history prop is not supplied', () => {
-    const wrapper = mount(ModSupportLockdownHistory)
-    expect(
-      wrapper.findAll('[data-testid="lockdown-history-row"]')
-    ).toHaveLength(0)
+  it('does not compare rows from different lockdowns', () => {
+    const wrapper = createWrapper([
+      {
+        id: 30,
+        incidentid: 30,
+        active: true,
+        surfaces: ALL_HELD,
+        reason: 'second',
+        created: 'd30',
+        changedbyname: 'S',
+      },
+      {
+        id: 29,
+        incidentid: 25,
+        active: false,
+        surfaces: {},
+        created: 'd29',
+        changedbyname: 'S',
+      },
+    ])
+    expect(rowTexts(wrapper)[0][1]).toBe('Pressed: second')
   })
 })

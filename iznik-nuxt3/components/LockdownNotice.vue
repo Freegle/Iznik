@@ -1,7 +1,7 @@
 <template>
   <b-row v-if="notice" class="lockdown">
     <b-col cols="12" xl="6" offset-xl="3">
-      <NoticeMessage :variant="variant" class="mb-3 text-center">
+      <NoticeMessage variant="warning" class="mb-3 text-center">
         <v-icon icon="triangle-exclamation" />
         {{ notice.text }}
       </NoticeMessage>
@@ -16,22 +16,15 @@ const NoticeMessage = defineAsyncComponent(
 )
 
 // Fed by GET /lockdown on the navbar's sixty-second pass (see useNavbar.js).
-// Nothing by default - Support has to have deliberately chosen a notice
-// during a pressed lockdown (plans/active/2026-09-27-lockdown-switch.md
-// section 10.8). Unlike MailDelayed this is never dismissible: the choice
+// Nothing by default - Support has to have deliberately written a notice
+// (plans/active/2026-09-27-lockdown-switch.md section 11.11), which is shown
+// as it was written. Unlike MailDelayed this is never dismissible: the choice
 // to show it was made once, on purpose, for everyone, and it should stay
 // up for as long as that choice stands rather than for as long as nobody
 // has clicked it away.
 const lockdownStore = useLockdownStore()
 
 const notice = computed(() => lockdownStore.notice)
-
-// The security notice is a warning not to click a link - worth the red.
-// Everything else (delay, and the "back to normal" notice shown for a day
-// after close) is informational.
-const variant = computed(() =>
-  notice.value?.key === 'security' ? 'danger' : 'warning'
-)
 </script>
 <style scoped lang="scss">
 /*

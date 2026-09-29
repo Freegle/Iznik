@@ -59,7 +59,7 @@ const loopDefs = [
   { key: 'mail-loops', label: 'Mail loops' },
   { key: 'background-tasks', label: 'Background tasks' },
   { key: 'push', label: 'Push' },
-  { key: 'triage', label: 'Triage' },
+  { key: 'tick', label: 'Recording what is held' },
 ]
 
 const apiDelaySeconds = computed(() => props.stats?.api?.delayseconds ?? 5)

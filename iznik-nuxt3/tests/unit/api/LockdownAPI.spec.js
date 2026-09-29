@@ -72,9 +72,9 @@ describe('LockdownAPI', () => {
         incidentid: 5,
         surfaces: { mods: true },
         reason: 'spam wave',
-        // GET /modtools/lockdown returns notice as a bare string, unlike the
-        // public GET /lockdown endpoint, which wraps it as {key, text}.
-        notice: 'security',
+        // GET /modtools/lockdown returns the notice text itself, unlike the
+        // public GET /lockdown endpoint, which wraps it as {text}.
+        notice: 'Messages may be delayed.',
         startedat: '2026-09-27 10:00:00',
         startedby: 1,
         startedbyname: 'Support',
@@ -92,7 +92,7 @@ describe('LockdownAPI', () => {
   })
 
   it('fetches stats from GET /modtools/lockdown/stats', async () => {
-    mockFetch.mockResolvedValue([200, { held: {} }])
+    mockFetch.mockResolvedValue([200, { counts: {} }])
 
     await createApi().fetchStats()
 
@@ -110,6 +110,19 @@ describe('LockdownAPI', () => {
     expect(mockFetch.mock.calls[0][0]).toContain(
       'https://api.test.com/modtools/lockdown/history'
     )
+    expect(mockFetch.mock.calls[0][1].method).toBe('GET')
+  })
+
+  it('fetches held items from GET /modtools/lockdown/held with the search', async () => {
+    mockFetch.mockResolvedValue([200, { items: [], next: null }])
+
+    await createApi().fetchHeld({ kind: 'post', q: 'voucher', before: 10 })
+
+    const url = mockFetch.mock.calls[0][0]
+    expect(url).toContain('https://api.test.com/modtools/lockdown/held')
+    expect(url).toContain('kind=post')
+    expect(url).toContain('q=voucher')
+    expect(url).toContain('before=10')
     expect(mockFetch.mock.calls[0][1].method).toBe('GET')
   })
 
