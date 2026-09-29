@@ -40,10 +40,12 @@ Sources:
 - **db** — a superset of the V1 GDPR export: every user-linked table (identity,
   memberships, posts and their child tables, **both sides of every chat**, moderation,
   logs, email tracking, donations, newsfeed/stories/community, location/activity, …).
-- **loki_logs** — the user's Loki logs. `user_id` is a JSON field (not a label), so it
-  is filtered after `| json`. Passes, run concurrently: by `user_id` across all
-  sources; by all the email addresses in one query (full text); client-side logs via
-  `session_id`s harvested from the api logs; and `api_headers`.
+- **loki_logs** — the user's Loki logs, last 30 days. Passes, run concurrently: the
+  member's labelled lines by `user_bucket` and `user_id`, one query per source group; the
+  slim sources that carry `user_id` only in the JSON, filtered after `| json`; all the email
+  addresses in one query (full text); and `api_headers`, searched only in the minutes the
+  member's api lines show activity. Logged-out client lines are not collected (a full-text
+  scan of 7 days of logs); `_sections` records that.
 - **sentry_issues** — Sentry issues affecting the user, by `user.id` and `user.email`
   (one org-wide search each, across every project). Requires `SENTRY_AUTH_TOKEN`.
 

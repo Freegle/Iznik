@@ -112,21 +112,31 @@ a real bound, not a hint:
   them. `_sections` rows are in completion order.
 - **Loki logs are clamped to 30 days** whatever `since` says, because production Loki
   rejects any `query_range` longer than `30d1h` outright.
-- **Loki collection runs its passes concurrently under a time budget**
-  (`userdump/loki.go`, at most `lokiParallel` queries in flight): the indexed member-id
-  passes, the slim unlabelled sources, all the member's emails in **one** query (each
-  `|=`-prefiltered before any `| json`/regex, in 15-day halves), session lookups once
-  the id passes have supplied session ids, and `api_headers` — the ~67GB/7d firehose —
-  newest-first in budget-capped 1.5-day slices. Anything the caps drop is recorded in `_sections` as
-  `loki_bounds`. The same prefilter-before-parse rule applies to every LogQL the helper
-  or `systemlogs` builds.
-- **A member's logs are addressed two ways, and both are asked** (changed 2026-08-23).
-  Entries written before that carry `user_id` as a Loki stream label; later ones carry a
-  coarse `user_bucket` label plus the exact `user_id` as structured metadata, because
-  `user_id` had far too many values to be a label and was silently discarding entries.
-  Both the dump and the helper query both forms and merge; they are disjoint, so nothing
-  double-counts. Until nothing older than the change is left in retention, **dropping
-  either leg silently returns a partial answer**. See
+- **Loki collection runs every pass at once under a time budget** (`userdump/loki.go`,
+  at most `lokiParallel` queries in flight): the member's labelled lines by `user_bucket`
+  plus `user_id`, one query per source group (`api`, `client`, the rest) so the busiest
+  source cannot fill the line cap and crowd out the others; the slim unlabelled sources;
+  and all the member's emails in **one** query (each `|=`-prefiltered before any
+  `| json`/regex, in 15-day halves). The same prefilter-before-parse rule applies to every
+  LogQL the helper or `systemlogs` builds. Anything the caps drop is recorded in
+  `_sections` as `loki_bounds`.
+- **`api_headers` is searched only where the member was active.** It has no member label,
+  so a 7-day search of the ~67GB firehose was a full-text scan (~40-50s). But each request
+  writes exactly one `api` line and one `api_headers` line, together, and the dump has
+  just fetched the member's `api` lines by index: they give the minutes to search and how
+  many header lines each window holds. An ordinary member measured 27s -> 1s with nothing
+  missed. A member active all week fills the `api` line cap, so their headers cover only
+  the period of their newest 5,000 requests, and the dump says so.
+- **Logged-out client lines are not in the dump.** They carry no user at all, so finding
+  them is a full-text scan of seven days of client logs. The dump says so in `_sections`
+  (`loki_not_collected`), and the system prompt points the agent at `loki_search`.
+- **A member's logs are addressed two ways** (changed 2026-08-23). Entries written before
+  that carry `user_id` as a Loki stream label; later ones carry a coarse `user_bucket`
+  label plus the exact `user_id` as structured metadata, because `user_id` had far too
+  many values to be a label and was silently discarding entries. The dump asks only for
+  the bucketed form: it reads the last 30 days, all written after the change, and the
+  old-form queries returned nothing for 3-5s each. The helper's `loki_search`, which can
+  look further back, still asks for both. See
   [../../ops/reference/logging.md](../../ops/reference/logging.md).
 - Anything the dump had to bound is recorded in its **`_sections`** table with
   `status='warning'` and a note. Read it before concluding "there is nothing there" — an
