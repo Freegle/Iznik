@@ -174,6 +174,36 @@ describe('ModSupportLockdownHeld', () => {
     )
   })
 
+  it('shows only the latest answer when searches overlap', async () => {
+    let answerSlow
+    mockFetchHeld.mockResolvedValueOnce({ items: [], next: null })
+    mockFetchHeld.mockReturnValueOnce(
+      new Promise((resolve) => {
+        answerSlow = resolve
+      })
+    )
+    mockFetchHeld.mockResolvedValueOnce({
+      items: [item(7, { kind: 'post', text: 'A held post' })],
+      next: null,
+    })
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    const slow = wrapper.vm.search()
+    const fast = wrapper.vm.search()
+    await fast
+    answerSlow({ items: [item(8, { text: 'A stale chat' })], next: 5 })
+    await slow
+    await flushPromises()
+
+    const rows = wrapper.findAll('[data-testid="lockdown-held-row"]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].text()).toContain('A held post')
+    expect(wrapper.find('[data-testid="lockdown-held-more"]').exists()).toBe(
+      false
+    )
+  })
+
   it('replaces the list on a new search rather than appending', async () => {
     mockFetchHeld.mockResolvedValueOnce({ items: [item(2)], next: 2 })
     mockFetchHeld.mockResolvedValueOnce({ items: [item(3)], next: null })

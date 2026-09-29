@@ -111,6 +111,51 @@ class LockdownHoldsService
         return $released;
     }
 
+    /**
+     * Close every open hold whose item is no longer waiting: a chat message deleted or
+     * already processed, a post withdrawn or no longer pending anywhere (a moderator may
+     * still approve it during a lockdown), a ChitChat post deleted or no longer hidden.
+     * These are marked 'gone', so they stop counting as held and are not listed. Runs
+     * whether or not anything is held, so nothing is left open after a close.
+     */
+    public function closeGoneHolds(): int
+    {
+        $gone = ['outcome' => 'gone', 'releasedat' => now()];
+
+        $closed = DB::table('lockdown_holds')
+            ->where('kind', self::KIND_CHAT)
+            ->whereNull('outcome')
+            ->whereNotExists(function ($q) {
+                $q->from('chat_messages')
+                    ->whereColumn('chat_messages.id', 'lockdown_holds.refid')
+                    ->where('chat_messages.processingrequired', 1);
+            })
+            ->update($gone);
+
+        $closed += DB::table('lockdown_holds')
+            ->where('kind', self::KIND_POST)
+            ->whereNull('outcome')
+            ->whereNotExists(function ($q) {
+                $q->from('messages_groups')
+                    ->whereColumn('messages_groups.msgid', 'lockdown_holds.refid')
+                    ->where('messages_groups.collection', MessageGroup::COLLECTION_PENDING)
+                    ->where('messages_groups.deleted', 0);
+            })
+            ->update($gone);
+
+        $closed += DB::table('lockdown_holds')
+            ->where('kind', self::KIND_CHITCHAT)
+            ->whereNull('outcome')
+            ->whereNotExists(function ($q) {
+                $q->from('newsfeed')
+                    ->whereColumn('newsfeed.id', 'lockdown_holds.refid')
+                    ->whereNotNull('newsfeed.hidden');
+            })
+            ->update($gone);
+
+        return $closed;
+    }
+
     private function createChatHolds(int $incidentId, Carbon $startedAt): int
     {
         $rows = DB::table('chat_messages')

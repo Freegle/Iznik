@@ -129,11 +129,18 @@ describe('ModSupportLockdown', () => {
     expect(mockFetchStats).toHaveBeenCalled()
   })
 
-  it('shows the press form, the notice and the history when not active', async () => {
+  it('shows only the press form and the history before any lockdown', async () => {
     const wrapper = createWrapper()
     await flushPromises()
     expect(wrapper.find('.mod-support-lockdown-press').exists()).toBe(true)
     expect(wrapper.find('.mod-support-lockdown-history').exists()).toBe(true)
+    expect(wrapper.find('.mod-support-lockdown-notice').exists()).toBe(false)
+  })
+
+  it('offers the after-lockdown notice once there has been a lockdown', async () => {
+    store.history = [{ id: 2, incidentid: 1, active: false }]
+    const wrapper = createWrapper()
+    await flushPromises()
     const notice = wrapper.findComponent('.mod-support-lockdown-notice')
     expect(notice.exists()).toBe(true)
     expect(notice.props('active')).toBe(false)
@@ -295,6 +302,7 @@ describe('ModSupportLockdown', () => {
   })
 
   it('saves a notice after close too', async () => {
+    store.history = [{ id: 2, incidentid: 1, active: false }]
     const wrapper = createWrapper()
     await flushPromises()
     await wrapper

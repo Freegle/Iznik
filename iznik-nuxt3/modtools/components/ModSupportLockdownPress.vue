@@ -44,7 +44,7 @@
       </div>
       <b-form-textarea
         v-model="notice"
-        rows="2"
+        rows="3"
         :maxlength="LOCKDOWN_NOTICE_MAX"
         placeholder="No notice"
         data-testid="lockdown-press-notice"

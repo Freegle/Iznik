@@ -110,6 +110,40 @@ class LockdownHoldsServiceTest extends TestCase
         $this->assertEquals($user->id, $hold->userid);
     }
 
+    public function test_holds_whose_item_has_gone_are_closed(): void
+    {
+        $this->lockdown->press(null, 'wave');
+        $member = $this->createTestUser();
+        $room = $this->createTestChatRoom($member, $this->createTestUser());
+        $deleted = $this->createTestChatMessage($room, $member, ['processingrequired' => 1]);
+        $waiting = $this->createTestChatMessage($room, $member, ['processingrequired' => 1]);
+        $this->assertSame(2, $this->holds->createHolds()['chat']);
+        DB::table('chat_messages')->where('id', $deleted->id)->delete();
+
+        $group = $this->createTestGroup();
+        $this->createMembership($member, $group);
+        $approved = $this->createTestMessage($member, $group);
+        DB::table('messages_groups')->where('msgid', $approved->id)->update([
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now()->addSecond(),
+        ]);
+        $this->assertSame(1, $this->holds->createHolds()['post']);
+        // A moderator can still approve during a lockdown.
+        DB::table('messages_groups')->where('msgid', $approved->id)->update(['collection' => MessageGroup::COLLECTION_APPROVED]);
+
+        $nfid = $this->makeNewsfeedPost($member);
+        $this->holdChitChat($nfid, $member->id);
+        DB::table('newsfeed')->where('id', $nfid)->delete();
+
+        $this->assertSame(3, $this->holds->closeGoneHolds());
+
+        $this->assertSame('gone', DB::table('lockdown_holds')->where('kind', 'chat')->where('refid', $deleted->id)->value('outcome'));
+        $this->assertNull(DB::table('lockdown_holds')->where('kind', 'chat')->where('refid', $waiting->id)->value('outcome'), 'still waiting, so still held');
+        $this->assertSame('gone', DB::table('lockdown_holds')->where('kind', 'post')->value('outcome'));
+        $this->assertSame('gone', DB::table('lockdown_holds')->where('kind', 'chitchat')->value('outcome'));
+        $this->assertSame(0, $this->holds->closeGoneHolds(), 'a second pass closes nothing more');
+    }
+
     public function test_chitchat_stays_hidden_while_held(): void
     {
         $this->lockdown->press(null, 'wave');

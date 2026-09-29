@@ -1,11 +1,11 @@
 <template>
   <div data-testid="lockdown-notice">
-    <h4>Member notice</h4>
+    <h4>{{ active ? 'Member notice' : 'Member notice after the lockdown' }}</h4>
     <p class="small text-muted">
       Shown across the top of every page on the member site. Leave it empty for
       no notice.
       <template v-if="!active">
-        After a lockdown closes, a notice set here shows for a day.
+        Set after a lockdown has closed, it shows for a day and then stops.
       </template>
     </p>
     <div class="d-flex flex-wrap gap-2 mb-2">

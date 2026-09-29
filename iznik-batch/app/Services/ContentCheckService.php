@@ -357,17 +357,11 @@ class ContentCheckService
             ->whereNull('m.deleted')
             ->whereNotNull('m.fromuser')
             ->whereNull('u.deleted')
-            // A post the lockdown is still holding is left alone here and admitted only by
-            // releasePostHolds()/admitHeldPost() once posts is lifted, which records the
-            // hold's outcome and brings it to the top of Browse. A hold already resolved
-            // does not stop the row being picked up normally again.
-            ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('lockdown_holds as lh')
-                    ->whereColumn('lh.refid', 'mg.msgid')
-                    ->where('lh.kind', LockdownHoldsService::KIND_POST)
-                    ->whereNull('lh.outcome');
-            })
+            // A post the lockdown is holding IS checked here, and kept Pending by the
+            // per-post held('posts') check below. ModTools only lists a Pending post once
+            // it has been checked (or after 30 minutes), so skipping held posts hid them
+            // from the moderators who can still approve them. Once posts is lifted,
+            // releasePostHolds() above admits them before this walk runs.
             ->orderBy('mg.msgid')
             ->orderBy('mg.groupid');
 
@@ -425,7 +419,7 @@ class ContentCheckService
      * several groups before the lockdown pressed). The hold's own outcome is the worst
      * thing that happened to any of them: 'rejected' if any was blocked, else 'review' if
      * any is still waiting on a moderator (or errored - left untouched, so it still needs
-     * a look), else 'released'.
+     * a look), else 'released'. 'gone' if nothing of it is still pending.
      */
     private function admitHeldPost(object $hold, array &$stats): void
     {
@@ -441,7 +435,8 @@ class ContentCheckService
             ->whereNull('u.deleted')
             ->get();
 
-        $worst = 'released';
+        // Withdrawn, deleted, or dealt with by a moderator in the meantime.
+        $worst = $rows->isEmpty() ? 'gone' : 'released';
         foreach ($rows as $row) {
             $outcome = $this->decideAndApply($row, false, false, $stats, true);
 

@@ -14,8 +14,8 @@ use Illuminate\Support\Facades\Mail;
  * Runs every minute while a lockdown exists (plan 2026-09-27-lockdown-switch.md, section
  * 11.11): announces any `lockdowns` row not yet announced (mail to geeks@ and a Sentry
  * message, sent directly rather than through shouldSkip()/spool(), since this must reach
- * geeks@ even while email itself is held), writes this incident's hold rows, and unhides
- * held ChitChat posts once ChitChat is lifted.
+ * geeks@ even while email itself is held), writes this incident's hold rows, closes holds
+ * whose item has gone, and unhides held ChitChat posts once ChitChat is lifted.
  *
  * Chat and posts release through their own per-minute crons (chats:process-incoming and
  * messages:contentcheck) once their areas lift. ChitChat has no such cron of its own, which
@@ -48,6 +48,7 @@ class LockdownTickCommand extends Command
         $lockdown->ack('tick');
 
         $created = $holds->createHolds();
+        $gone = $holds->closeGoneHolds();
         $chitchat = $holds->releaseChitChatHolds();
 
         $filtered = null;
@@ -56,10 +57,11 @@ class LockdownTickCommand extends Command
         }
 
         $this->info(sprintf(
-            'Announced %d. Holds created: chat %d, post %d. ChitChat released %d.%s',
+            'Announced %d. Holds created: chat %d, post %d. Gone %d. ChitChat released %d.%s',
             $announced,
             $created['chat'] ?? 0,
             $created['post'] ?? 0,
+            $gone,
             $chitchat,
             $filtered !== null
                 ? sprintf(' Filtered spool: checked %d, removed %d.', $filtered['checked'], $filtered['removed'])

@@ -2,7 +2,10 @@
   <div>
     <div v-if="!store.active">
       <ModSupportLockdownPress @pressed="refreshAll" />
+      <!-- Only once there has been a lockdown: before the first one, the
+           press form's own notice box is the only one that means anything. -->
       <ModSupportLockdownNotice
+        v-if="store.history?.length"
         class="mt-4"
         :notice="store.notice"
         :active="false"
@@ -20,8 +23,8 @@
       >
         <strong>Lockdown on.</strong>
         <span data-testid="lockdown-status-line">
-          Pressed {{ timeago(store.startedat) }} by {{ store.startedbyname
-          }}{{ store.reason ? ': ' + store.reason : '' }}
+          Pressed {{ timeago(store.startedat, true) }} by
+          {{ store.startedbyname }}{{ store.reason ? ': ' + store.reason : '' }}
         </span>
       </NoticeMessage>
 

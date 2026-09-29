@@ -90,6 +90,7 @@ describe('ModSupportLockdownNotice', () => {
 
   it('offers Things are back to normal once closed', async () => {
     const wrapper = createWrapper({ active: false })
+    expect(wrapper.find('h4').text()).toBe('Member notice after the lockdown')
     expect(button(wrapper, 'Spam attack')).toBeUndefined()
     await button(wrapper, 'Back to normal').trigger('click')
     await save(wrapper).trigger('click')

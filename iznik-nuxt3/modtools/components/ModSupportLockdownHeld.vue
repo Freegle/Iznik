@@ -53,7 +53,7 @@
           :key="item.id"
           data-testid="lockdown-held-row"
         >
-          <td class="text-nowrap">{{ timeago(item.created) }}</td>
+          <td class="text-nowrap">{{ timeago(item.created, true) }}</td>
           <td>
             <nuxt-link
               :to="'/support/' + item.userid"
@@ -111,7 +111,13 @@ const items = ref([])
 const next = ref(null)
 const loading = ref(false)
 
+// Changing the kind or searching again while a fetch is in flight starts
+// another; only the latest one's answer is shown, so a slow earlier answer
+// can't put posts under the chat heading.
+let latest = 0
+
 async function load(before) {
+  const mine = ++latest
   loading.value = true
   try {
     const params = { kind: kind.value }
@@ -119,10 +125,11 @@ async function load(before) {
     if (term) params.q = term
     if (before) params.before = before
     const page = await store.fetchHeld(params)
+    if (mine !== latest) return
     items.value = before ? [...items.value, ...page.items] : page.items
     next.value = page.next
   } finally {
-    loading.value = false
+    if (mine === latest) loading.value = false
   }
 }
 

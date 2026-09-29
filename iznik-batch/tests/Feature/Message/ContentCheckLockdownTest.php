@@ -104,6 +104,26 @@ class ContentCheckLockdownTest extends TestCase
         $this->assertNotNull($row->contentcheck_checked_at, 'checking is not acting - it is still checked');
     }
 
+    public function test_post_with_an_open_hold_is_still_checked_while_held(): void
+    {
+        $this->lockdown->press(null, 'test');
+        [$msgid, $groupid, $userid] = $this->makePendingPost();
+        DB::table('lockdown_holds')->insert([
+            'lockdownid' => $this->lockdown->incidentId(),
+            'kind' => LockdownHoldsService::KIND_POST,
+            'refid' => $msgid,
+            'userid' => $userid,
+            'created' => now(),
+        ]);
+
+        $this->service->processUnprocessed();
+
+        $row = $this->groupRow($msgid, $groupid);
+        $this->assertSame(MessageGroup::COLLECTION_PENDING, $row->collection);
+        $this->assertNotNull($row->contentcheck_checked_at, 'moderators only see a pending post once it has been checked');
+        $this->assertNull(DB::table('lockdown_holds')->where('refid', $msgid)->value('outcome'), 'still held');
+    }
+
     // --- Lifting: everything held goes through the normal decision, straight away ---
 
     public function test_held_post_promoted_when_posts_lifted(): void
@@ -158,6 +178,28 @@ class ContentCheckLockdownTest extends TestCase
 
         $hold = DB::table('lockdown_holds')->where('id', $holdId)->first();
         $this->assertSame('review', $hold->outcome, 'resolved by admitting it, even though the normal decision kept it pending');
+        $this->assertNotNull($hold->releasedat);
+    }
+
+    public function test_withdrawn_held_post_is_closed_as_gone_on_lift(): void
+    {
+        $this->lockdown->press(null, 'test');
+        [$msgid, $groupid, $userid] = $this->makePendingPost();
+
+        $holdId = DB::table('lockdown_holds')->insertGetId([
+            'lockdownid' => $this->lockdown->incidentId(),
+            'kind' => LockdownHoldsService::KIND_POST,
+            'refid' => $msgid,
+            'userid' => $userid,
+            'created' => now(),
+        ]);
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['deleted' => 1]);
+
+        $this->lockdown->setSurfaces(['posts' => false], null);
+        $this->service->processUnprocessed();
+
+        $hold = DB::table('lockdown_holds')->where('id', $holdId)->first();
+        $this->assertSame('gone', $hold->outcome, 'resolved, so the release does not pick it up again');
         $this->assertNotNull($hold->releasedat);
     }
 
