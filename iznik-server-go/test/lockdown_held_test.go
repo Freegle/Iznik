@@ -115,6 +115,7 @@ func TestGetModtoolsLockdownStatsRelease(t *testing.T) {
 	addHold(t, incidentID, "chat", 910000003, senderID, "rejected")
 	addHold(t, incidentID, "post", 910000004, senderID, "review")
 	addHold(t, incidentID, "post", 910000005, senderID, "gone")
+	addHold(t, incidentID, "post", 910000006, senderID, "releasing")
 	require.NoError(t, database.DBConn.Table("lockdown_counters").Create(map[string]interface{}{
 		"lockdownid": incidentID, "kind": "queue:email", "count": 42,
 	}).Error)
@@ -132,7 +133,7 @@ func TestGetModtoolsLockdownStatsRelease(t *testing.T) {
 	assert.Equal(t, float64(1), chat["released"])
 	assert.Equal(t, float64(1), chat["rejected"])
 	post := release["post"].(map[string]interface{})
-	assert.Equal(t, float64(0), post["held"])
+	assert.Equal(t, float64(1), post["held"], "a post claimed by a release that has not finished is still held")
 	assert.Equal(t, float64(1), post["review"])
 	assert.Equal(t, float64(1), post["gone"])
 	chitchat := release["chitchat"].(map[string]interface{})

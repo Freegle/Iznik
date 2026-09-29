@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Lockdown;
 
+use App\Services\ContentCheckService;
 use App\Services\EmailSpoolerService;
 use App\Services\Lockdown\LockdownFilterSpoolService;
 use App\Services\Lockdown\LockdownHoldsService;
@@ -19,9 +20,9 @@ use Illuminate\Support\Facades\Mail;
  * whose item has gone, unhides held ChitChat posts once ChitChat is lifted, and records how
  * many emails are waiting to send.
  *
- * Chat and posts release through their own per-minute crons (chats:process-incoming and
- * messages:contentcheck) once their areas lift. ChitChat has no such cron of its own, which
- * is why its release lives here.
+ * Chat releases through chats:process-incoming once chat lifts. Posts release here as well
+ * as in messages:contentcheck, so the backlog does not wait on the content check's own
+ * schedule. ChitChat has no cron of its own, so its release lives here only.
  *
  * While email is held, this also runs lockdown:filter-spool's check (section 11.8) on every
  * pass, so the send queue is kept clear of mail about removed content throughout, not only
@@ -37,7 +38,8 @@ class LockdownTickCommand extends Command
         LockdownService $lockdown,
         LockdownHoldsService $holds,
         LockdownFilterSpoolService $filterSpool,
-        EmailSpoolerService $spooler
+        EmailSpoolerService $spooler,
+        ContentCheckService $contentCheck
     ): int {
         $announced = $this->announceUnannounced($lockdown);
 
@@ -54,6 +56,11 @@ class LockdownTickCommand extends Command
         $withdrawn = $holds->withdrawAdmins();
         $gone = $holds->closeGoneHolds();
         $chitchat = $holds->releaseChitChatHolds();
+        $posts = 0;
+        if (!$lockdown->held('posts')) {
+            $released = $contentCheck->releaseHeldPosts();
+            $posts = $released['approved'] + $released['blocked'] + $released['kept_pending'];
+        }
 
         $filtered = null;
         if ($lockdown->held('email')) {
@@ -65,13 +72,14 @@ class LockdownTickCommand extends Command
         $lockdown->record('queue:email', $queued);
 
         $this->info(sprintf(
-            'Announced %d. Holds created: chat %d, post %d. Admins withdrawn %d. Gone %d. ChitChat released %d. Emails queued %d.%s',
+            'Announced %d. Holds created: chat %d, post %d. Admins withdrawn %d. Gone %d. ChitChat released %d. Posts released %d. Emails queued %d.%s',
             $announced,
             $created['chat'] ?? 0,
             $created['post'] ?? 0,
             $withdrawn,
             $gone,
             $chitchat,
+            $posts,
             $queued,
             $filtered !== null
                 ? sprintf(' Filtered spool: checked %d, removed %d.', $filtered['checked'], $filtered['removed'])

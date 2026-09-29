@@ -385,6 +385,28 @@ class ContentCheckService
     }
 
     /**
+     * Admit every post the lockdown held, once posts is no longer held. lockdown:tick calls
+     * this every minute as well as processUnprocessed() does, so the release does not wait
+     * on the content check's own schedule. Returns the run's stats.
+     */
+    public function releaseHeldPosts(): array
+    {
+        $stats = [
+            'approved'         => 0,
+            'kept_pending'     => 0,
+            'blocked'          => 0,
+            'checked_approved' => 0,
+            'flagged_approved' => 0,
+            'checked_held'     => 0,
+            'flagged_held'     => 0,
+            'errors'           => 0,
+        ];
+        $this->releasePostHolds($this->lockdown ?? app(LockdownService::class), $stats);
+
+        return $stats;
+    }
+
+    /**
      * Once posts is no longer held, admit every post the lockdown held, oldest first, in
      * batches with no pause between them, stopping at once if posts is held again.
      */
@@ -423,6 +445,16 @@ class ContentCheckService
      */
     private function admitHeldPost(object $hold, array &$stats): void
     {
+        // Claim it first: lockdown:tick and messages:contentcheck can both be releasing at
+        // once, and each post must be admitted once.
+        $claimed = DB::table('lockdown_holds')
+            ->where('id', $hold->id)
+            ->whereNull('outcome')
+            ->update(['outcome' => 'releasing']);
+        if ($claimed === 0) {
+            return;
+        }
+
         $rows = DB::table('messages_groups as mg')
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
             ->join('users as u', 'u.id', '=', 'm.fromuser')

@@ -258,8 +258,9 @@ func releaseProgress(incidentID uint64) fiber.Map {
 		if !ok {
 			continue
 		}
+		// 'releasing' is a post claimed by a release that has not finished: still held.
 		key := "held"
-		if r.Outcome != nil {
+		if r.Outcome != nil && *r.Outcome != "releasing" {
 			key = *r.Outcome
 		}
 		if _, known := m[key]; known {

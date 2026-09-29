@@ -352,6 +352,30 @@ class LockdownCommandsTest extends TestCase
         $this->assertFileDoesNotExist($this->testSpoolDir.'/pending/bad.json');
     }
 
+    public function test_tick_releases_held_posts_once_posts_is_lifted(): void
+    {
+        Mail::fake();
+        $this->lockdown->press(null, 'test reason');
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $message = $this->createTestMessage($user, $group);
+        DB::table('messages_groups')->where('msgid', $message->id)->update([
+            'collection' => \App\Models\MessageGroup::COLLECTION_PENDING,
+            'arrival' => now()->addSecond(),
+        ]);
+
+        $this->artisan('lockdown:tick')->expectsOutputToContain('Posts released 0.')->assertSuccessful();
+        $this->assertNull(DB::table('lockdown_holds')->where('kind', 'post')->value('outcome'), 'still held while posts is held');
+
+        $this->lockdown->setSurfaces(['posts' => false], null);
+        $this->artisan('lockdown:tick')->assertSuccessful();
+
+        $this->assertNotNull(DB::table('lockdown_holds')->where('kind', 'post')->value('outcome'),
+            'the tick admits held posts itself, without waiting for messages:contentcheck');
+        $this->assertNotSame('releasing', DB::table('lockdown_holds')->where('kind', 'post')->value('outcome'));
+    }
+
     public function test_tick_records_the_email_queue_after_close(): void
     {
         Mail::fake();

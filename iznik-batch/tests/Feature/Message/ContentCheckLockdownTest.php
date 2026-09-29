@@ -181,6 +181,26 @@ class ContentCheckLockdownTest extends TestCase
         $this->assertNotNull($hold->releasedat);
     }
 
+    public function test_a_hold_already_claimed_by_another_release_is_left_alone(): void
+    {
+        $this->lockdown->press(null, 'test');
+        [$msgid, $groupid, $userid] = $this->makePendingPost();
+        $holdId = DB::table('lockdown_holds')->insertGetId([
+            'lockdownid' => $this->lockdown->incidentId(),
+            'kind' => LockdownHoldsService::KIND_POST,
+            'refid' => $msgid,
+            'userid' => $userid,
+            'outcome' => 'releasing',
+            'created' => now(),
+        ]);
+        $this->lockdown->setSurfaces(['posts' => false], null);
+
+        $this->service->releaseHeldPosts();
+
+        $this->assertSame('releasing', DB::table('lockdown_holds')->where('id', $holdId)->value('outcome'),
+            'the other release finishes it; this one does not admit it twice');
+    }
+
     public function test_withdrawn_held_post_is_closed_as_gone_on_lift(): void
     {
         $this->lockdown->press(null, 'test');
