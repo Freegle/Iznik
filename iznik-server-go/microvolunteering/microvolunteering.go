@@ -11,6 +11,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	flog "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/modmessaging"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -39,17 +40,10 @@ type EEELabelChallenge struct {
 type Challenge struct {
 	Type     string             `json:"type"`
 	Msgid    *uint64            `json:"msgid,omitempty"`
-	Terms    []SearchTerm       `json:"terms,omitempty"`
 	Photos   []Photo            `json:"photos,omitempty"`
 	URL      *string            `json:"url,omitempty"`
 	AIImage  *AIImageChallenge  `json:"aiimage,omitempty"`
 	EEELabel *EEELabelChallenge `json:"eeelabel,omitempty"`
-}
-
-// SearchTerm represents a search term for matching
-type SearchTerm struct {
-	ID   uint64 `json:"id"`
-	Term string `json:"term"`
 }
 
 // Photo represents a photo for rotation challenge
@@ -61,7 +55,6 @@ type Photo struct {
 // Challenge types
 const (
 	ChallengeCheckMessage  = "CheckMessage"
-	ChallengeSearchTerm    = "SearchTerm"
 	ChallengePhotoRotate   = "PhotoRotate"
 	ChallengeSurvey        = "Survey2"
 	ChallengeInvite        = "Invite"
@@ -257,69 +250,9 @@ func GetChallenge(c *fiber.Ctx) error {
 		}
 	}
 
-	// Try search term challenge
-	if contains(challengeTypes, ChallengeSearchTerm) {
-		// Check if user is in a group with word matching enabled.
-		//
-		// groupID>0
-		// is the only toggle - 2 possible rendered forms, both proven by the
-		// retired ormharness (shapes.json / TestTier3Shapes_80c36f2da91e,
-		// removed in d22ba1d6c).
-		// WHERE built as a single string for ONE Where() call: GORM's
-		// clause.Where wraps any fragment containing "AND"/"OR" in an extra
-		// paren pair once there is more than one Where expression to
-		// combine (clause/where.go buildExprs), which would diverge from
-		// the golden.
-		enabledWhereSQL := "memberships.userid = ?"
-		enabledWhereArgs := []interface{}{userID}
-		if groupID > 0 {
-			// Filter to specific group if provided
-			enabledWhereSQL += " AND memberships.groupid = ?"
-			enabledWhereArgs = append(enabledWhereArgs, groupID)
-		}
-		enabledWhereSQL += " AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.wordmatch') = 1)"
-
-		var enabled int
-		db.Table("memberships").
-			Select("COUNT(*)").
-			Joins("INNER JOIN `groups` ON memberships.groupid = `groups`.id").
-			Where(enabledWhereSQL, enabledWhereArgs...).
-			Scan(&enabled)
-
-		if enabled > 0 {
-			// Get 10 random popular items
-			type ItemTerm struct {
-				ID   uint64 `json:"id"`
-				Term string `json:"term"`
-			}
-			var terms []ItemTerm
-
-			// Derived-table trick: GORM's
-			// Table() passes its name argument through verbatim (no quoting) once it
-			// contains a space, so a parenthesized subquery can be given as the
-			// "table name".
-			db.Table("(SELECT id, name FROM items WHERE LENGTH(name) > 2 ORDER BY popularity DESC LIMIT 300) t").
-				Select("DISTINCT id, name AS term").
-				Order("RAND()").
-				Limit(10).
-				Scan(&terms)
-
-			if len(terms) > 0 {
-				var searchTerms []SearchTerm
-				for _, t := range terms {
-					searchTerms = append(searchTerms, SearchTerm{
-						ID:   t.ID,
-						Term: t.Term,
-					})
-				}
-
-				return c.JSON(Challenge{
-					Type:  ChallengeSearchTerm,
-					Terms: searchTerms,
-				})
-			}
-		}
-	}
+	// (Retired) The SearchTerm challenge built a keyword-similarity dataset for
+	// the old keyword search index. Search is now served from vector embeddings,
+	// so the challenge is gone.
 
 	// If no challenge found, return empty object
 	return c.JSON(fiber.Map{})
@@ -381,7 +314,9 @@ func getPendingMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine
 	// (clause/where.go buildExprs), which would diverge from the golden.
-	pendingWhereSQL := "messages_groups.groupid IN (?) AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
+	// messages_groups.deleted = 0: a copy retracted from a group keeps its row, and
+	// PostResponse refuses a vote from a member whose only copy is gone (SR-DYS36).
+	pendingWhereSQL := "messages_groups.groupid IN (?) AND messages_groups.deleted = 0 AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
 		"AND microvolunteering = 1 AND messages.deleted IS NULL AND microactions.id IS NULL " +
 		"AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1) " +
 		"AND collection = ? AND autoreposts = 0"
@@ -424,7 +359,8 @@ func getApprovedMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) 
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine
 	// (clause/where.go buildExprs), which would diverge from the golden.
-	approvedWhereSQL := "messages_groups.groupid IN (?) AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
+	// messages_groups.deleted = 0 for the same reason as getPendingMessageChallenge.
+	approvedWhereSQL := "messages_groups.groupid IN (?) AND messages_groups.deleted = 0 AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
 		"AND microvolunteering = 1 AND messages_outcomes.id IS NULL AND messages.deleted IS NULL AND microactions.id IS NULL " +
 		"AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1) " +
 		"AND collection = ? AND autoreposts = 0"
@@ -627,8 +563,6 @@ type PostResponseRequest struct {
 	MsgCategory    *string `json:"msgcategory,omitempty"`
 	Response       *string `json:"response,omitempty"`
 	Comments       *string `json:"comments,omitempty"`
-	Searchterm1    uint64  `json:"searchterm1"`
-	Searchterm2    uint64  `json:"searchterm2"`
 	Photoid        uint64  `json:"photoid"`
 	Invite         bool    `json:"invite"`
 	Deg            int     `json:"deg"`
@@ -719,43 +653,26 @@ func PostResponse(c *fiber.Ctx) error {
 				"score_negative": gorm.Expr("0"),
 			})
 
-			// If rejection, check if we have quorum to send for review
+			// If rejection, check if we have quorum to act.
 			if response == "Reject" {
-				var rejectCount int64
-				db.Table("microactions").
-					Where("msgid = ? AND result = 'Reject' AND comments IS NOT NULL AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')", req.Msgid).
-					Count(&rejectCount)
-
-				if rejectCount >= int64(ApprovalQuorum) {
-					// Quorum reached — pull the post back to Pending on ALL the
-					// groups it is live on (home + rippled-out copies), so every
-					// affected community's moderators review it, not only the group
-					// where this vote happened, then freeze the ripple.
-					SendForReviewAllGroups(db, req.Msgid, "Members think there is something wrong with this message.", nil, nil)
-					FreezeReachIfOriginPending(db, req.Msgid)
+				if distinctRejectCount(db, req.Msgid) >= int64(ApprovalQuorum) {
+					if modmessaging.PostIsUnaddressed(db, req.Msgid) {
+						// Same reasoning as the report route in RecordReportVerdict:
+						// an unaddressed post has no community whose moderators could
+						// work a Pending queue, so pending it would strand it live in
+						// browse forever. At quorum it comes off the platform instead.
+						modmessaging.RemoveUnaddressedPost(db, req.Msgid)
+					} else {
+						// Quorum reached — pull the post back to Pending on ALL the
+						// groups it is live on (home + rippled-out copies), so every
+						// affected community's moderators review it, not only the group
+						// where this vote happened, then freeze the ripple.
+						SendForReviewAllGroups(db, req.Msgid, "Members think there is something wrong with this message.", nil, nil)
+						FreezeReachIfOriginPending(db, req.Msgid)
+					}
 				}
 			}
 		}
-
-		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
-
-	} else if req.Searchterm1 > 0 && req.Searchterm2 > 0 {
-		// Response to a SearchTerm challenge.
-		// The result column is enum('Approve','Reject') NOT NULL with no default.
-		// Set to 'Approve' since search term responses don't map to approve/reject.
-		db.Table("microactions").Clauses(clause.OnConflict{
-			DoUpdates: clause.Assignments(map[string]interface{}{
-				"userid": gorm.Expr("userid"), "version": Version,
-			}),
-		}).Create(map[string]interface{}{
-			"actiontype":     ChallengeSearchTerm,
-			"userid":         myid,
-			"item1":          req.Searchterm1,
-			"item2":          req.Searchterm2,
-			"version":        Version,
-			"result":         gorm.Expr("'Approve'"),
-			"score_negative": gorm.Expr("0"),
-		})
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
@@ -1036,6 +953,20 @@ func reporterIsModOf(db *gorm.DB, reporterID uint64, groupid uint64) bool {
 	return c > 0
 }
 
+// distinctRejectCount counts the PEOPLE who have said "shouldn't be here" about a post,
+// across both routes into the quorum: the report button and the in-app CheckMessage task.
+// microactions carries a unique key on (userid, msgid) (`userid_2`), so one person's repeat
+// verdict updates their single row rather than adding a vote - COUNT(DISTINCT userid) says
+// that out loud and stays correct if that key ever changes.
+func distinctRejectCount(db *gorm.DB, msgid uint64) int64 {
+	var c int64
+	db.Table("microactions").
+		Select("COUNT(DISTINCT userid)").
+		Where("msgid = ? AND result = 'Reject' AND comments IS NOT NULL AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')", msgid).
+		Scan(&c)
+	return c
+}
+
 // RecordReportVerdict treats a report of a post (the User2Mod chat message the website
 // report flow sends, targeted at `groupid`) as a microvolunteering "Reject" verdict, so
 // website reports feed the SAME review quorum as in-app CheckMessage checks:
@@ -1084,17 +1015,26 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 
 	const reason = "Members or moderators think there is something wrong with this message."
 
+	// An unaddressed TN post has no community that can act on it - which is why the report
+	// never reached a moderator in the first place - so sending it for review would strand
+	// it live in browse forever. It is removed from the platform instead, on the SAME
+	// quorum of two distinct reporters. The mod-is-quorum shortcut below deliberately does
+	// NOT apply to it: a moderator who wants one of these gone has Delete, and one click
+	// should not silently delete a post network-wide with nobody able to see it happen.
+	if modmessaging.PostIsUnaddressed(db, msgid) {
+		if distinctRejectCount(db, msgid) >= int64(ApprovalQuorum) {
+			modmessaging.RemoveUnaddressedPost(db, msgid)
+		}
+		return
+	}
+
 	// A moderator's report is quorum on its own: pull the post to Pending everywhere.
 	if reporterIsModOf(db, reporterID, groupid) {
 		SendForReviewAllGroups(db, msgid, reason, nil, nil)
 	} else {
 		// Aggregate quorum (all distinct Reject verdicts, reports or in-app checks)
 		// pulls the post to Pending on every community it is on.
-		var rejectCount int64
-		db.Table("microactions").
-			Where("msgid = ? AND result = 'Reject' AND comments IS NOT NULL AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')", msgid).
-			Count(&rejectCount)
-		if rejectCount >= int64(ApprovalQuorum) {
+		if distinctRejectCount(db, msgid) >= int64(ApprovalQuorum) {
 			SendForReviewAllGroups(db, msgid, reason, nil, nil)
 		}
 	}

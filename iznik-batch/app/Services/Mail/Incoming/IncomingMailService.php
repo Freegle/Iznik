@@ -2616,6 +2616,11 @@ class IncomingMailService
 
     /**
      * Handle group posts.
+     *
+     * MIRRORED BY HAND in GroupPostIngestionService (the TN API ingestion
+     * path). If you change anything here, decide whether the change applies
+     * there too — EmailPathMirrorDriftTest fails on any edit to this method
+     * precisely so that decision gets made rather than skipped.
      */
     private function handleGroupPost(ParsedEmail $email): RoutingResult
     {
@@ -2624,12 +2629,18 @@ class IncomingMailService
             'subject' => $email->subject,
         ]);
 
-        // Find the group
+        $postId = $email->getTrashNothingPostId();
+        $tnType = strtolower((string) Message::determineType($email->subject));
+
+        // Find the group before logging so we can emit the numeric group ID to match the API path.
         $group = $this->findGroup($email->targetGroupName);
+        Log::info('TN-SYNC-TRACE [POST] post_id=' . $postId . ' type=' . $tnType . ' group_id=' . ($group?->id ?? $email->targetGroupName) . ' date=' . ($email->date?->format('Y-m-d\TH:i:s\Z')) . ' title=' . substr((string) $email->subject, 0, 60));
+
         if ($group === null) {
             Log::warning('Post to unknown group', [
                 'group' => $email->targetGroupName,
             ]);
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=unknown-group group_id=' . $email->targetGroupName . ' post_id=' . $postId);
 
             return $this->dropped("Post to unknown group");
         }
@@ -2640,11 +2651,14 @@ class IncomingMailService
             Log::info('Post from unknown user - dropping', [
                 'from' => $email->fromAddress,
             ]);
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=unknown-user post_id=' . $postId);
+            Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=skipped');
 
             return $this->dropped("Post from unknown user");
         }
 
         // Update user's last access
+        Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastaccess=now()');
         DB::table('users')
             ->where('id', $user->id)
             ->update(['lastaccess' => now()]);
@@ -2660,6 +2674,8 @@ class IncomingMailService
                 'user_id' => $user->id,
                 'group_id' => $group->id,
             ]);
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=non-member tnpostid=' . $postId . ' user_id=' . $user->id . ' group_id=' . $group->id);
+            Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=skipped');
 
             return $this->dropped("Post from non-member");
         }
@@ -2669,6 +2685,7 @@ class IncomingMailService
             Log::info('TAKEN/RECEIVED post swallowed', [
                 'subject' => $email->subject,
             ]);
+            Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=swallowed-taken-received');
 
             return RoutingResult::TO_SYSTEM;
         }
@@ -2696,6 +2713,7 @@ class IncomingMailService
                     $this->lastRoutingContext['spam_reason'] = $spamReason;
 
                     // #23: Log spam classification to logs table (matches legacy MailRouter)
+                    Log::info('TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Message,subtype=ClassifiedSpam,msgid=' . $messageId . ',groupid=' . $group->id);
                     DB::table('logs')->insert([
                         'timestamp' => now(),
                         'type' => 'Message',
@@ -2706,6 +2724,7 @@ class IncomingMailService
                     ]);
 
                     // #12: Record posting in messages_postings even for spam
+                    Log::info('TN-SYNC-TRACE [WRITE] table=messages_postings op=insert set=msgid=' . $messageId . ',groupid=' . $group->id . ',repost=0,autorepost=0');
                     DB::table('messages_postings')->insert([
                         'msgid' => $messageId,
                         'groupid' => $group->id,
@@ -2723,6 +2742,8 @@ class IncomingMailService
                         'spam_reason' => $spamReason,
                     ]);
                 }
+
+                Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=spam');
 
                 return RoutingResult::INCOMING_SPAM;
             }
@@ -2804,6 +2825,9 @@ class IncomingMailService
 
         // For DROPPED messages, don't create a record
         if ($routingResult === RoutingResult::DROPPED) {
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=prohibited tnpostid=' . $postId . ' user_id=' . $user->id);
+            Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=dropped');
+
             return RoutingResult::DROPPED;
         }
 
@@ -2814,6 +2838,7 @@ class IncomingMailService
             $this->lastRoutingContext['message_id'] = $messageId;
 
             // #12: Record posting in messages_postings (for repost logic)
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages_postings op=insert set=msgid=' . $messageId . ',groupid=' . $group->id . ',repost=0,autorepost=0');
             DB::table('messages_postings')->insert([
                 'msgid' => $messageId,
                 'groupid' => $group->id,
@@ -2834,8 +2859,10 @@ class IncomingMailService
             // already promoted it (Discourse 10142).
             if ($routingResult === RoutingResult::APPROVED) {
                 // Message is approved - update collection to Approved
+                Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Approved,approvedat=now()');
                 MessageGroup::where('msgid', $messageId)
                     ->where('groupid', $group->id)
+                    ->where('needs_moderator', 0)
                     ->update([
                         'collection' => MessageGroup::COLLECTION_APPROVED,
                         'approvedat' => now(),
@@ -2848,12 +2875,14 @@ class IncomingMailService
                     'message_id' => $messageId,
                     'group_id' => $group->id,
                 ]);
+                Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=approved');
             } elseif ($awaitingContentCheck) {
                 // Unmoderated member: start Pending and let the content-check job
                 // promote it (clean) or hold and notify mods (flagged). We do NOT
                 // notify mods or add to the spatial index here - that is the
                 // content-check job's responsibility, so clean posts create no mod
                 // work and flagged posts never go live unchecked.
+                Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Pending reason=' . ($pendingReason ?? 'posting-status'));
                 MessageGroup::where('msgid', $messageId)
                     ->where('groupid', $group->id)
                     ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
@@ -2862,10 +2891,12 @@ class IncomingMailService
                     'message_id' => $messageId,
                     'group_id' => $group->id,
                 ]);
+                Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=pending');
             } else {
                 // Message is pending for a moderator reason (moderated user/group,
                 // worry words, unmapped user, Big Switch) - collection is already
                 // Incoming, update to Pending and notify mods now.
+                Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Pending reason=' . ($pendingReason ?? 'posting-status'));
                 MessageGroup::where('msgid', $messageId)
                     ->where('groupid', $group->id)
                     ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
@@ -2878,6 +2909,7 @@ class IncomingMailService
                     'group_id' => $group->id,
                     'reason' => $pendingReason ?? 'posting status',
                 ]);
+                Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=pending');
             }
         }
 
@@ -2889,6 +2921,9 @@ class IncomingMailService
      *
      * This stores the message in the database with appropriate collection status.
      * For spam messages, sets spamtype/spamreason and collection=Pending for moderator review.
+     *
+     * MIRRORED BY HAND in GroupPostIngestionService::createMessage() (the TN API
+     * ingestion path) — see the note on handleGroupPost() above.
      *
      * @param  ParsedEmail  $email  The parsed email
      * @param  User  $user  The sender user
@@ -2969,8 +3004,22 @@ class IncomingMailService
                 $locationId = $this->findClosestPostcodeId($lat, $lng);
             }
 
+            // The id came from the spatial index, which is a separate store and can
+            // outlive the row it points at - a purged or renumbered location leaves a
+            // stale entry behind. users.lastlocation is a foreign key, so writing an id
+            // that is no longer in `locations` throws, and because that happens inside
+            // this method the whole post is lost rather than just its location. A post
+            // with no location is still worth having, so verify before trusting it.
+            // The API path (GroupPostIngestionService) makes the same check.
+            if ($locationId !== null && !DB::table('locations')->where('id', $locationId)->exists()) {
+                Log::info('TN-SYNC-TRACE [LOCATION-STALE] spatial index returned locationid=' . $locationId
+                    . ' which is not in locations; ingesting without a location');
+                $locationId = null;
+            }
+
             // Update user's lastlocation if we found a location
             if ($locationId && $user->id) {
+                Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastlocation=' . $locationId);
                 DB::table('users')
                     ->where('id', $user->id)
                     ->update(['lastlocation' => $locationId]);
@@ -2983,6 +3032,17 @@ class IncomingMailService
             $cleanedTextBody = $this->stripTnPicLinks($email->textBody);
 
             // Create the message record
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages op=insert set=' . json_encode([
+                'messageid' => $messageId,
+                'tnpostid' => $email->getTrashNothingPostId(),
+                'groupid' => $group->id,
+                'fromuser' => $user->id,
+                'type' => $type,
+                'subject' => $email->subject,
+                'lat' => $lat,
+                'lng' => $lng,
+                'locationid' => $locationId,
+            ]));
             $message = Message::create([
                 'date' => now(),
                 'source' => Message::SOURCE_EMAIL ?? 'Email',
@@ -3048,6 +3108,7 @@ class IncomingMailService
                 ? MessageGroup::COLLECTION_PENDING
                 : MessageGroup::COLLECTION_INCOMING;
 
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=insert set=msgid=' . $message->id . ',groupid=' . $group->id . ',msgtype=' . $type . ',collection=' . $collection);
             MessageGroup::create([
                 'msgid' => $message->id,
                 'groupid' => $group->id,
@@ -3063,6 +3124,7 @@ class IncomingMailService
             $this->itemService->recordFromSubject($message->id, $email->subject ?? '');
 
             // Add to message history for spam checking
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages_history op=insert set=msgid=' . $message->id . ',groupid=' . $group->id . ',fromuser=' . $user->id);
             DB::table('messages_history')->insert([
                 'groupid' => $group->id,
                 'source' => Message::SOURCE_EMAIL ?? 'Email',
@@ -3079,6 +3141,7 @@ class IncomingMailService
             ]);
 
             // Log receipt — matches Go API logMessageReceived() and V1 Message::submit().
+            Log::info('TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Message,subtype=Received,msgid=' . $message->id . ',groupid=' . $group->id);
             DB::table('logs')->insert([
                 'timestamp' => now(),
                 'type' => 'Message',
@@ -4196,6 +4259,7 @@ class IncomingMailService
      */
     public function createTnImageAttachments(int $messageId, array $imageUrls): int
     {
+        Log::info('TN-SYNC-TRACE [WRITE] table=message_attachments op=insert set=msgid=' . $messageId . ' count=' . count($imageUrls));
         $tusService = app(\App\Services\TusService::class);
         $created = 0;
         $isFirst = true;

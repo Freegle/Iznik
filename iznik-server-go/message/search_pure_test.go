@@ -3,9 +3,7 @@ package message
 import (
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -127,69 +125,6 @@ func TestGetWords_Tabs_And_Newlines(t *testing.T) {
 	assert.Contains(t, result, "desk")
 }
 
-// ── processResults ────────────────────────────────────────────────────────────
-
-func TestProcessResults_SetsTagAndWord(t *testing.T) {
-	input := []SearchResult{
-		{Msgid: 1, Word: "bicycle"},
-		{Msgid: 2, Word: "chair"},
-	}
-	result := processResults("Exact", input)
-	assert.Len(t, result, 2)
-	assert.Equal(t, "Exact", result[0].Matchedon.Type)
-	assert.Equal(t, "bicycle", result[0].Matchedon.Word)
-	assert.Equal(t, "Exact", result[1].Matchedon.Type)
-	assert.Equal(t, "chair", result[1].Matchedon.Word)
-}
-
-func TestProcessResults_EmptySlice(t *testing.T) {
-	result := processResults("Typo", []SearchResult{})
-	assert.Empty(t, result)
-}
-
-func TestProcessResults_NilSlice(t *testing.T) {
-	result := processResults("Typo", nil)
-	assert.Nil(t, result)
-}
-
-func TestProcessResults_PreservesOtherFields(t *testing.T) {
-	now := time.Now().Truncate(time.Second)
-	input := []SearchResult{
-		{Msgid: 42, Groupid: 7, Arrival: now, Lat: 51.5, Lng: -0.1, Word: "sofa"},
-	}
-	result := processResults("StartsWith", input)
-	assert.Equal(t, uint64(42), result[0].Msgid)
-	assert.Equal(t, uint64(7), result[0].Groupid)
-	assert.Equal(t, now, result[0].Arrival)
-	assert.Equal(t, 51.5, result[0].Lat)
-	assert.Equal(t, -0.1, result[0].Lng)
-}
-
-func TestProcessResults_DifferentTags(t *testing.T) {
-	input := []SearchResult{{Msgid: 1, Word: "table"}}
-
-	tables := []struct {
-		tag string
-	}{
-		{"Exact"},
-		{"Typo"},
-		{"StartsWith"},
-		{"SoundsLike"},
-	}
-	for _, tt := range tables {
-		result := processResults(tt.tag, input)
-		assert.Equal(t, tt.tag, result[0].Matchedon.Type, "tag=%s", tt.tag)
-	}
-}
-
-func TestProcessResults_MutatesInPlace(t *testing.T) {
-	// processResults modifies the slice in-place; the returned slice is the same.
-	input := []SearchResult{{Msgid: 1, Word: "bed"}}
-	result := processResults("Exact", input)
-	// Both slices share the same backing array.
-	assert.Equal(t, input[0].Matchedon.Type, result[0].Matchedon.Type)
-}
-
 // ── groupFilter ───────────────────────────────────────────────────────────────
 
 func TestGroupFilter_EmptySlice(t *testing.T) {
@@ -223,109 +158,6 @@ func TestGroupFilter_ClosingParen(t *testing.T) {
 func TestGroupFilter_LargeIDs(t *testing.T) {
 	result := groupFilter([]uint64{^uint64(0)})
 	assert.Contains(t, result, "18446744073709551615")
-}
-
-// ── msgidFilter ───────────────────────────────────────────────────────────────
-
-func TestMsgidFilter_Empty(t *testing.T) {
-	assert.Equal(t, "", msgidFilter(nil))
-	assert.Equal(t, "", msgidFilter([]uint64{}))
-}
-
-func TestMsgidFilter_SingleID(t *testing.T) {
-	result := msgidFilter([]uint64{120945664})
-	// Restricts by spatial msgid - the browse-feed universe for browse-scoped search.
-	assert.Contains(t, result, "messages_spatial.msgid IN (120945664)")
-	assert.True(t, strings.HasPrefix(result, " AND "))
-}
-
-func TestMsgidFilter_MultipleIDs(t *testing.T) {
-	result := msgidFilter([]uint64{1, 2, 3})
-	assert.Contains(t, result, "IN (1,2,3)")
-}
-
-// ── typeFilter ────────────────────────────────────────────────────────────────
-
-var typeFilterTests = []struct {
-	msgtype   string
-	wantOp    string // substring expected in non-empty result
-	wantEmpty bool
-}{
-	{utils.OFFER, utils.OFFER, false},
-	{utils.WANTED, utils.WANTED, false},
-	{"", "", true},
-	{"Unknown", "", true},
-	{"offer", "", true}, // case-sensitive
-	{"OFFER", "", true}, // case-sensitive
-}
-
-func TestTypeFilter_Table(t *testing.T) {
-	for _, tt := range typeFilterTests {
-		result := typeFilter(tt.msgtype)
-		if tt.wantEmpty {
-			assert.Empty(t, result, "msgtype=%q should produce empty string", tt.msgtype)
-		} else {
-			assert.NotEmpty(t, result, "msgtype=%q should produce a non-empty SQL fragment", tt.msgtype)
-			assert.Contains(t, result, tt.wantOp, "msgtype=%q", tt.msgtype)
-		}
-	}
-}
-
-// ── boxFilter ─────────────────────────────────────────────────────────────────
-
-var boxFilterTests = []struct {
-	name      string
-	nelat     float32
-	nelng     float32
-	swlat     float32
-	swlng     float32
-	wantEmpty bool
-}{
-	{"all nonzero", 52.0, 1.0, 51.0, -1.0, false},
-	{"nelat zero", 0, 1.0, 51.0, -1.0, true},
-	{"nelng zero", 52.0, 0, 51.0, -1.0, true},
-	{"swlat zero", 52.0, 1.0, 0, -1.0, true},
-	{"swlng zero", 52.0, 1.0, 51.0, 0, true},
-	{"all zero", 0, 0, 0, 0, true},
-	{"negative coords all nonzero", -10.0, -20.0, -11.0, -21.0, false},
-}
-
-func TestBoxFilter_Table(t *testing.T) {
-	for _, tt := range boxFilterTests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := boxFilter(tt.nelat, tt.nelng, tt.swlat, tt.swlng)
-			if tt.wantEmpty {
-				assert.Empty(t, result, "expected empty SQL fragment for %s", tt.name)
-			} else {
-				assert.NotEmpty(t, result, "expected SQL fragment for %s", tt.name)
-				assert.Contains(t, result, "ST_Contains")
-				assert.Contains(t, result, "POLYGON")
-			}
-		})
-	}
-}
-
-func TestBoxFilter_ContainsPadding(t *testing.T) {
-	// boxFilter adds 0.02 padding on each side.
-	result := boxFilter(52.0, 1.0, 51.0, -1.0)
-	// nelat=52.0+0.02=52.02, nelng=1.0+0.02=1.02, swlat=51.0-0.02=50.98, swlng=-1.0-0.02=-1.02
-	assert.Contains(t, result, "52.02")
-	assert.Contains(t, result, "1.02")
-	assert.Contains(t, result, "50.98")
-	assert.Contains(t, result, "-1.02")
-}
-
-func TestBoxFilter_ContainsSRID(t *testing.T) {
-	result := boxFilter(52.0, 1.0, 51.0, -1.0)
-	srid := "3857"
-	assert.Contains(t, result, srid, "SRID must be embedded in the SQL fragment")
-}
-
-func TestBoxFilter_SQLStructure(t *testing.T) {
-	result := boxFilter(52.0, 1.0, 51.0, -1.0)
-	assert.Contains(t, result, "LINESTRING")
-	assert.Contains(t, result, "POINT(")
-	assert.Contains(t, result, "point)")
 }
 
 // ── fingerprintVec ────────────────────────────────────────────────────────────

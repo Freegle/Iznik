@@ -17,6 +17,7 @@ use App\Mail\Message\ModStdMessageMail;
 use App\Models\BackgroundTask;
 use App\Models\ChatRoom;
 use App\Models\User;
+use App\Services\BlockedKeywordBackfillService;
 use App\Services\EmailSpoolerService;
 use App\Services\HousekeeperService;
 use App\Services\PostcodeRemapService;
@@ -241,6 +242,7 @@ class ProcessBackgroundTasksCommand extends Command
             BackgroundTask::TASK_FREEBIE_ALERTS_ADD      => $this->handleFreebieAlertsAdd($data),
             BackgroundTask::TASK_FREEBIE_ALERTS_REMOVE   => $this->handleFreebieAlertsRemove($data),
             BackgroundTask::TASK_HOUSEKEEPER_NOTIFY      => $this->handleHousekeeperNotify($data),
+            BackgroundTask::TASK_CONCERN_KEYWORD_BACKFILL => $this->handleConcernKeywordBackfill($data),
             BackgroundTask::TASK_REMAP_POSTCODES         => $this->handleRemapPostcodes($data),
             BackgroundTask::TASK_USER_FORGET             => $this->handleUserForget($data),
             BackgroundTask::TASK_TN_SYNC                 => $this->handleTnSyncCommand($data),
@@ -494,6 +496,57 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
+     * Whether a post is a TN post that was never addressed to the Freegle community it
+     * landed on, and so has a poster no moderator here may write to.
+     *
+     * The origin row (rippled_in = 0) is the one that carries the answer: the rippling
+     * engine inserts its copies without the column, so they take the table default
+     * (allowed) and would mask it. Mirrors modmessaging.PostIsUnaddressed in
+     * iznik-server-go, which is where the interactive paths enforce the same rule.
+     */
+    protected function postIsUnaddressed(int $msgId): bool
+    {
+        if ($msgId <= 0) {
+            return false;
+        }
+
+        return DB::table('messages_groups')
+            ->where('msgid', $msgId)
+            ->where('rippled_in', 0)
+            ->where('mod_messaging_allowed', 0)
+            ->exists();
+    }
+
+    /**
+     * Whether every post this person has made is a TN post matched to a Freegle community
+     * they never chose - so they have not opted in to Freegle and cannot be written to.
+     *
+     * A "mixed" poster (one such post AND an ordinary one) is a real member and is not
+     * restricted. Mirrors modmessaging.UserIsUnaddressedOnly in iznik-server-go.
+     */
+    protected function userIsUnaddressedOnly(int $userId): bool
+    {
+        if ($userId <= 0) {
+            return false;
+        }
+
+        // Two questions, not one aggregate: has this person any post of that kind, and
+        // have they any post that is NOT of that kind. Someone who has never posted at all
+        // answers no to the first and is unrestricted, which is what we want.
+        $originRows = fn () => DB::table('messages as m')
+            ->join('messages_groups as mg', function ($join) {
+                $join->on('mg.msgid', '=', 'm.id')->where('mg.rippled_in', 0);
+            })
+            ->where('m.fromuser', $userId);
+
+        if (!$originRows()->where('mg.mod_messaging_allowed', 0)->exists()) {
+            return false;
+        }
+
+        return !$originRows()->where('mg.mod_messaging_allowed', 1)->exists();
+    }
+
+    /**
      * Handle mod standard message emails (approve, reject, reply).
      *
      * Looks up the message poster, group, and mod info, then:
@@ -568,6 +621,20 @@ class ProcessBackgroundTasksCommand extends Command
         // No subject/body means no stdmsg email to send (e.g. plain approve without message).
         if ($subject === '' && $body === '') {
             Log::info("Mod action {$taskType} without stdmsg content, skipping email", [
+                'msgid' => $msgId,
+                'byuser' => $byUser,
+            ]);
+            return;
+        }
+
+        // A TN post placed on a Freegle community its poster never chose (the origin
+        // messages_groups row's mod_messaging_allowed = 0) carries no agreement to hear
+        // from that community's volunteers. ModTools offers no standard messages for these
+        // and the Go API refuses them, so a task reaching here with content came from a
+        // stale client - the log and the mods' push above still stand, but nothing is sent
+        // to the poster and no modmail thread is opened with them.
+        if ($this->postIsUnaddressed($msgId)) {
+            Log::info("Mod action {$taskType} on an unaddressed TN post, sending nothing to the poster", [
                 'msgid' => $msgId,
                 'byuser' => $byUser,
             ]);
@@ -715,6 +782,18 @@ class ProcessBackgroundTasksCommand extends Command
 
         if ($subject === '' && $body === '') {
             Log::info('Mod stdmsg for member without content, skipping email', [
+                'userid' => $userId,
+                'byuser' => $byUser,
+            ]);
+            return;
+        }
+
+        // Someone whose only presence on Freegle is TN posts matched to communities they
+        // never chose has not opted in, and their volunteers have no standing to write to
+        // them. ModTools offers nothing that would and the Go API refuses it, so a task
+        // reaching here came from a stale client.
+        if ($this->userIsUnaddressedOnly($userId)) {
+            Log::info('Mod stdmsg for a member who has not opted in to Freegle, sending nothing', [
                 'userid' => $userId,
                 'byuser' => $byUser,
             ]);
@@ -1253,6 +1332,37 @@ class ProcessBackgroundTasksCommand extends Command
     {
         $service = app(HousekeeperService::class);
         $service->process($data);
+    }
+
+    /**
+     * A Freegle-wide block keyword was just created: apply it to the last 24 hours
+     * of chat messages and posts, which arrived before it existed. Queued by the Go
+     * API's CreateConcernKeyword. A keyword that no longer qualifies (deleted, or
+     * not a global block) is a no-op, so a retried task cannot act on the wrong row.
+     */
+    protected function handleConcernKeywordBackfill(array $data): void
+    {
+        $keywordId = (int) ($data['keyword_id'] ?? 0);
+        if ($keywordId === 0) {
+            throw new \RuntimeException('concern_keyword_backfill requires keyword_id');
+        }
+
+        $keyword = DB::table('concern_keywords')->where('id', $keywordId)->first();
+        if (!$keyword || $keyword->action !== 'block' || $keyword->scope !== 'global') {
+            Log::info('Concern keyword backfill skipped: not a global block keyword', ['keyword_id' => $keywordId]);
+            return;
+        }
+
+        $result = app(BlockedKeywordBackfillService::class)->run(now()->subDay(), [$keywordId]);
+
+        Log::info('Concern keyword backfill complete', [
+            'keyword_id' => $keywordId,
+            'keyword' => $keyword->keyword,
+            'chat_matched' => $result['chat']['matched'],
+            'chat_changed' => $result['chat']['changed'],
+            'posts_matched' => $result['posts']['matched'],
+            'posts_changed' => $result['posts']['changed'],
+        ]);
     }
 
     /**

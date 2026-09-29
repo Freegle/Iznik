@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-05
+last_reviewed: 2026-09-21
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Console/Commands/Integrations

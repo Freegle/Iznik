@@ -1,5 +1,5 @@
 global
-  log 127.0.0.1 local0
+  log /dev/log local0
   maxconn 100000
   daemon
   uid 99
@@ -32,6 +32,8 @@ frontend https_frontend
   mode http
 
   bind *:443 ssl crt-list /etc/haproxy/haproxy.crtlist alpn h2,http/1.1
+  option httplog
+  option dontlognull
 
   # Define ACLs early so we can use them for rate limit exemptions.
   acl new_modtools hdr(host) -i modtools.org
@@ -86,6 +88,8 @@ frontend https_frontend
   # Per-IP hard limit: 200 req/s (fallback for anonymous or as absolute cap)
   http-request deny deny_status 429 if { sc0_http_req_rate gt 200 } api_path !is_privileged
   http-request deny deny_status 429 if { sc0_http_req_rate gt 200 } api_host !is_privileged
+  # Log API writes and refusals only: reads and preflights are almost all requests and the API records them itself.
+  http-request set-log-level silent if !api_host || METH_GET || METH_OPTIONS
 
   # ModTools is now on Netlify, as a branch deployment of the ILF site.  We can't manage to get certificates working on there,
   # but we can proxy to it from here.
@@ -247,7 +251,7 @@ backend api_server_backend
   stick-table type ip size 200k expire 30m
   stick on src
   option redispatch
-  option forwardfor
+  http-request set-header X-Forwarded-For %[src]
   http-request set-header X-Real-IP %[src]
 
   # Apply graduated delay on response for heavy users.
@@ -276,7 +280,7 @@ backend tusd_backend
   stick on src
   option redispatch
   http-request set-header X-Forwarded-Proto "https"
-  http-request add-header X-Forwarded-For %[src]
+  http-request set-header X-Forwarded-For %[src]
   http-response add-header Access-Control-Allow-Origin *
   http-response add-header Access-Control-Allow-Headers 'Authorization, Origin, X-Requested-With, X-Request-ID, X-HTTP-Method-Override, Content-Type, Upload-Length, Upload-Offset, Tus-Resumable, Upload-Metadata, Upload-Defer-Length, Upload-Concat, Upload-Complete, Upload-Draft-Interop-Version, x-token, baggage, sentry-trace'
   http-response add-header Access-Control-Allow-Methods 'POST, HEAD, PATCH, OPTIONS, GET, DELETE'
@@ -317,7 +321,7 @@ listen stats
 
 backend spatial_backend
   mode http
-  option forwardfor
+  http-request set-header X-Forwarded-For %[src]
   option httpchk GET /health
   http-request set-header X-Real-IP %[src]
   server db3-katapult __IP_db3-katapult__:8196 check
@@ -330,7 +334,7 @@ backend spatial_backend
 # hence the extended server/tunnel timeouts (global timeout server is 50s).
 backend ai_support_backend
   mode http
-  option forwardfor
+  http-request set-header X-Forwarded-For %[src]
   option httpchk GET /health
   http-request set-header X-Real-IP %[src]
   http-request replace-path ^/api/ai-support(/.*)$ \1

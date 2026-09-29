@@ -220,8 +220,9 @@ describe('PhotoUploader', () => {
             emits: ['remove', 'rotate', 'retry', 'showQuality', 'select'],
           },
           OurUploadedImage: {
-            template: '<img class="our-uploaded-image" :src="src" />',
-            props: ['src', 'width'],
+            template:
+              '<img class="our-uploaded-image" :src="src" :data-rotate="modifiers?.rotate" />',
+            props: ['src', 'width', 'modifiers'],
           },
           'b-modal': {
             template:
@@ -487,7 +488,10 @@ describe('PhotoUploader', () => {
   })
 
   describe('photo selection', () => {
-    it('selectPhoto function reorders photos correctly', async () => {
+    // Tapping a thumbnail is how you look at a photo, for instance to see whether it
+    // needs rotating. It used to make that photo the main one as well, so checking
+    // the photos reordered the post.
+    it('shows a tapped thumbnail without reordering the photos', async () => {
       createWrapper({
         modelValue: [
           { id: 1, ouruid: 'uid1' },
@@ -495,17 +499,71 @@ describe('PhotoUploader', () => {
           { id: 3, ouruid: 'uid3' },
         ],
       })
+      await vi.waitFor(() =>
+        expect(wrapper.findAll('.thumbnail').length).toBeGreaterThan(0)
+      )
+      const before = wrapper.emitted('update:modelValue')?.length || 0
 
-      // Access component's internal method via vm
-      // When selecting photo at index 2, it should move to front
-      wrapper.vm.selectPhoto(2)
+      await wrapper.findAll('.thumbnail')[2].trigger('click')
       await flushPromises()
 
-      // Check emitted update
-      const emitted = wrapper.emitted('update:modelValue')
-      expect(emitted).toBeTruthy()
-      // The clicked photo (id: 3) should now be first
-      expect(emitted[emitted.length - 1][0][0].id).toBe(3)
+      expect(wrapper.vm.selectedPhoto.id).toBe(3)
+      expect(wrapper.vm.photos.map((p) => p.id)).toEqual([1, 2, 3])
+      expect(wrapper.emitted('update:modelValue')?.length || 0).toBe(before)
+    })
+
+    it('shows every photo in the strip, marking the one being shown', async () => {
+      createWrapper({
+        modelValue: [
+          { id: 1, ouruid: 'uid1' },
+          { id: 2, ouruid: 'uid2' },
+        ],
+      })
+      await vi.waitFor(() =>
+        expect(wrapper.findAll('.thumbnail').length).toBeGreaterThan(0)
+      )
+
+      await wrapper.findAll('.thumbnail')[1].trigger('click')
+
+      const thumbs = wrapper.findAll('.thumbnail')
+      expect(thumbs).toHaveLength(2)
+      expect(thumbs[1].classes()).toContain('thumbnail--selected')
+      expect(thumbs[0].classes()).not.toContain('thumbnail--selected')
+    })
+
+    it('shows each thumbnail with its rotation', async () => {
+      createWrapper({
+        modelValue: [
+          { id: 1, ouruid: 'uid1', externalmods: { rotate: 90 } },
+          { id: 2, ouruid: 'uid2' },
+        ],
+      })
+      await vi.waitFor(() =>
+        expect(wrapper.findAll('.thumbnail').length).toBeGreaterThan(0)
+      )
+
+      const imgs = wrapper.findAll('.thumbnail .our-uploaded-image')
+      expect(imgs[0].attributes('data-rotate')).toBe('90')
+    })
+
+    it('rotates the photo being shown, not the main one', async () => {
+      createWrapper({
+        modelValue: [
+          { id: 1, ouruid: 'uid1' },
+          { id: 2, ouruid: 'uid2' },
+        ],
+      })
+      await vi.waitFor(() =>
+        expect(wrapper.findAll('.thumbnail').length).toBeGreaterThan(0)
+      )
+
+      await wrapper.findAll('.thumbnail')[1].trigger('click')
+      await wrapper.find('.featured-photo .rotate-btn').trigger('click')
+      await flushPromises()
+
+      expect(mockImageStore.post).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 2, rotate: 90 })
+      )
     })
 
     it('does not reorder when selecting first photo', async () => {
@@ -821,6 +879,23 @@ describe('PhotoUploader', () => {
       expect(container.exists()).toBe(true)
     })
 
+    it('dropping a thumbnail on the big photo makes it the main photo', async () => {
+      createWrapper({
+        modelValue: [
+          { id: 1, ouruid: 'uid1' },
+          { id: 2, ouruid: 'uid2' },
+          { id: 3, ouruid: 'uid3' },
+        ],
+      })
+
+      wrapper.vm.onDragStart({ oldIndex: 2 })
+      wrapper.vm.onDropFeatured()
+      await flushPromises()
+
+      expect(wrapper.vm.photos.map((p) => p.id)).toEqual([3, 1, 2])
+      expect(wrapper.vm.selectedPhoto.id).toBe(3)
+    })
+
     it('onDragStart suppresses modelValue sync', () => {
       createWrapper({
         modelValue: [
@@ -866,7 +941,7 @@ describe('PhotoUploader', () => {
         ],
       })
 
-      // Simulate drag start (oldIndex 0 = first visible thumbnail = photos[1])
+      // Simulate drag start on the second thumbnail (every photo is in the strip)
       wrapper.vm.onDragStart({ oldIndex: 0 })
 
       // Simulate vuedraggable reordering the array (swap index 1 and 2)

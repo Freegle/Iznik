@@ -29,6 +29,18 @@ A genuine failure names a test. If nothing is named, look at the status containe
 the diff - and treat the unreachability itself as the bug to chase, because every suite polls
 that one container and they all go red together.
 
+## A red Go suite that names no test
+
+When the Go step fails and neither the status message nor `test-output/go.out` names a
+test, look for a `[condenseCrashDumps: N chars elided]` marker in the log. The condenser
+keeps the head and tail of a large log and cuts the middle; a suite with no crash marker
+but more than 300,000 characters of output loses whatever failed in the middle, including
+its `--- FAIL` line. The parallel step still says `FAIL-FAST: Go tests failed`, so the
+red is real and the cut suites beside it are not. Get the names by running the suite
+locally with `?coverage=true` (CI's `-race -p 1` variant) and reading the status
+message, which lists them. Seen twice on 2026-09-21: a swagger drift guard and a search
+test, both invisible in CI.
+
 ## A green run that did not finish
 
 - **Vitest through the status API.** A run that dies partway still reports
@@ -77,6 +89,19 @@ Coverage checks fail on deltas no change caused, and chasing them wastes days:
 - The Playwright flag wanders between builds and has discrete states it flips between.
 - A major version upgrade of a test runner re-baselines its measurement, so the first comparison
   against master is meaningless.
+- **A decrease on a branch that DOES change files of that language is still not automatically
+  yours.** Measure the changed file itself, both sides. Put the base version in the tree, run the
+  suite filtered to its spec with coverage on, and read `LF/LH`, `BRF/BRH`, `FNF/FNH` for that
+  file out of `coverage/lcov.info` in the runner container; then do the same for the branch
+  version. A file fully covered on **both** sides cannot have lowered anything, because every
+  line the branch adds is a covered one. On the slider fix the component was 28/28 lines and
+  11/11 branches before, 33/33 and 17/17 after, and the check still said -0.007%. Without that
+  measurement the only moves left are padding the branch with unrelated tests or waiving the
+  check, and both are wrong. When it really is wandering, run the whole suite twice with
+  coverage on the SAME code and diff the per-file `LH` counts: the culprit is usually a spec that
+  never waits for a timer its component schedules, so the lines behind that timer are covered
+  only when the timing happens to suit. `PostMap.vue`'s 200ms re-fit debounce was one, worth six
+  lines and 0.014% on its own.
 
 Read what the build uploaded before believing what it reports. Do not make coverage optional to
 get past it.

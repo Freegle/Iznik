@@ -2321,6 +2321,52 @@ func TestPostUserMergeByEmail(t *testing.T) {
 	assert.Equal(t, int64(1), cntU2, "id2 (kept) must still exist")
 }
 
+func TestPostUserMergeByEmailKeepsChosenDominantEmail(t *testing.T) {
+	// UI text: "the second user's preferred email will be the preferred
+	// email of the merged user" - id2's own email must stay dominant even
+	// when id2's preferred flag was never (re)set, which is reachable
+	// independently of the merge itself.
+	prefix := uniquePrefix("mergemailpref")
+	db := database.DBConn
+
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	email1 := prefix + "_u1@test.com"
+	email2 := prefix + "_u2@test.com"
+	CreateTestUserWithEmail(t, prefix+"_u1", email1)
+	user2ID := CreateTestUserWithEmail(t, prefix+"_u2", email2)
+
+	// Simulate id2's email having no preferred flag set.
+	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", user2ID)
+
+	payload := map[string]interface{}{
+		"action": "Merge",
+		"email1": email1,
+		"email2": email2,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+adminToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// id2's own email (the moderator's chosen dominant email) must be the
+	// merged account's preferred email, not id1's.
+	var preferredEmail string
+	db.Raw("SELECT email FROM users_emails WHERE userid = ? AND preferred = 1", user2ID).Scan(&preferredEmail)
+	assert.Equal(t, email2, preferredEmail, "id2's own email must be the merged account's preferred email")
+
+	var preferredCount int64
+	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND preferred = 1", user2ID).Scan(&preferredCount)
+	assert.Equal(t, int64(1), preferredCount, "exactly one preferred email must survive the merge")
+}
+
 func TestPostUserMergeByModerator(t *testing.T) {
 	// V1 parity: a moderator who moderates both users can merge them.
 	prefix := uniquePrefix("mergemod")
@@ -5234,4 +5280,81 @@ func TestPrivateLocationName_FallsBackToClosestPostcode(t *testing.T) {
 		assert.Empty(t, privatePositionName(farID),
 			"privateposition.name should stay empty when the nearest postcode is outside the guard box")
 	}
+}
+
+func TestPostUserMergeByIdKeptUserWithoutEmailInheritsBest(t *testing.T) {
+	// Merge-by-id can keep a user that has no email of its own. The merged
+	// account must not be left with zero preferred emails: the discarded
+	// user's best email becomes the kept user's preferred one.
+	prefix := uniquePrefix("mergenoemail")
+	db := database.DBConn
+
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	email1 := prefix + "_u1@test.com"
+	user1ID := CreateTestUserWithEmail(t, prefix+"_u1", email1)
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+
+	// The kept user has no email rows at all.
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", user2ID)
+
+	payload := map[string]interface{}{
+		"action": "Merge",
+		"id1":    user1ID,
+		"id2":    user2ID,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+adminToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	var preferredEmail string
+	db.Raw("SELECT email FROM users_emails WHERE userid = ? AND preferred = 1", user2ID).Scan(&preferredEmail)
+	assert.Equal(t, email1, preferredEmail, "the discarded user's email becomes the kept user's preferred email")
+
+	var preferredCount int64
+	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND preferred = 1", user2ID).Scan(&preferredCount)
+	assert.Equal(t, int64(1), preferredCount, "exactly one preferred email after the merge")
+}
+
+// Freegle's own mailboxes (support@, mentors@, ...) are ordinary users, not
+// mods, and their names ("Freegle Support") are exactly what the impersonation
+// check exists to catch. A user holding one of the configured Freegle
+// addresses is genuine, so it keeps its name; anyone else using that name is
+// still rewritten.
+func TestGetUserKeepsNameOfOfficialFreegleAddress(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("official_name")
+
+	officialEmail := prefix + "-support@ilovefreegle.org"
+	t.Setenv("FREEGLE_SUPPORT_ADDR", officialEmail)
+
+	officialID := CreateTestUserWithEmail(t, prefix+"_official", officialEmail)
+	db.Exec("UPDATE users SET fullname = 'Freegle Support', firstname = NULL, lastname = NULL WHERE id = ?", officialID)
+
+	impostorID := CreateTestUserWithEmail(t, prefix+"_impostor", prefix+"-impostor@example.com")
+	db.Exec("UPDATE users SET fullname = 'Freegle Support', firstname = NULL, lastname = NULL WHERE id = ?", impostorID)
+
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	_, viewerToken := CreateTestSession(t, viewerID)
+
+	displayName := func(id uint64) string {
+		url := fmt.Sprintf("/api/user/%d?jwt=%s", id, viewerToken)
+		resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+		require.NoError(t, err)
+		require.Equal(t, 200, resp.StatusCode)
+		var u user2.User
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&u))
+		return u.Displayname
+	}
+
+	assert.Equal(t, "Freegle Support", displayName(officialID), "a configured Freegle address keeps its name")
+	assert.Equal(t, "A freegler", displayName(impostorID), "the same name on any other address is still rewritten")
 }

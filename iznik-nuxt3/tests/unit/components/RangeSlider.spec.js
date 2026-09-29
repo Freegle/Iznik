@@ -178,7 +178,9 @@ describe('RangeSlider', () => {
     it('gives the input its share of the axis and the stub the rest', () => {
       // 5..20 of a 5..45 axis is 15/40 = 37.5%.
       const wrapper = createWrapper({ min: 5, max: 20, axisMax: 45 })
-      expect(wrapper.find('input').attributes('style')).toContain('37.5')
+      expect(
+        wrapper.find('.range-slider__input-wrap').attributes('style')
+      ).toContain('37.5')
       expect(wrapper.find('.range-slider__deadzone').exists()).toBe(true)
     })
 
@@ -201,17 +203,83 @@ describe('RangeSlider', () => {
   })
 
   // Members reported the ChitChat distance slider changing by itself while they scrolled the
-  // page (touch or mouse wheel) past it - the value must only move on a deliberate drag of the
-  // handle. The input must therefore tell the browser to treat a touch pan over the track as
-  // page scroll (not a drag), and must block the wheel-spin some engines apply to range inputs.
-  describe('scroll past the track must not change the value', () => {
-    it('marks the track pan-y, so a vertical touch scroll over it is not captured as a drag', () => {
+  // page past it. The cause is the native range input's own behaviour: a press ANYWHERE on the
+  // track jumps the thumb to that point, so a tap that was the start of a scroll moved the
+  // distance. The value must move only when the member deliberately drags the handle, so the
+  // track either side of the handle is covered by inert shields and the handle is the only part
+  // of the control a press can reach.
+  describe('only a drag of the handle may change the value', () => {
+    it('covers the track either side of the handle', () => {
+      const wrapper = createWrapper()
+      expect(wrapper.findAll('.range-slider__shield')).toHaveLength(2)
+    })
+
+    it('leaves the shields inert - a press on the track reaches nothing that can emit', async () => {
+      const wrapper = createWrapper()
+      for (const shield of wrapper.findAll('.range-slider__shield')) {
+        await shield.trigger('mousedown')
+        await shield.trigger('click')
+        await shield.trigger('touchstart')
+      }
+      expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+      expect(wrapper.emitted('change')).toBeFalsy()
+    })
+
+    it('hides the shields from assistive tech - they are not part of the control', () => {
+      const wrapper = createWrapper()
+      for (const shield of wrapper.findAll('.range-slider__shield')) {
+        expect(shield.attributes('aria-hidden')).toBe('true')
+      }
+    })
+
+    // The gap the shields leave is positioned from the handle's own fraction along the track, so
+    // it cannot drift away from the handle it has to expose.
+    it('places the gap at the handle, as a fraction of the track', () => {
+      const style = (v) =>
+        createWrapper({ min: 0, max: 10, modelValue: v })
+          .find('.range-slider__input-wrap')
+          .attributes('style')
+      expect(style(5)).toContain('--range-slider-fraction: 0.5')
+      expect(style(0)).toContain('--range-slider-fraction: 0')
+      expect(style(10)).toContain('--range-slider-fraction: 1')
+    })
+
+    it('moves the gap with the handle as it is dragged', async () => {
+      const wrapper = createWrapper({ min: 0, max: 10, modelValue: 2 })
+      const input = wrapper.find('input')
+      input.element.value = '8'
+      await input.trigger('input')
+      expect(
+        wrapper.find('.range-slider__input-wrap').attributes('style')
+      ).toContain('--range-slider-fraction: 0.8')
+    })
+
+    it('keeps the gap on the track when the value is outside the range', () => {
+      // A clamp can briefly hand us a value beyond the maximum. The gap must stay at the end of
+      // the track rather than run off it, or the handle becomes unreachable.
+      const wrapper = createWrapper({ min: 0, max: 10, modelValue: 25 })
+      expect(
+        wrapper.find('.range-slider__input-wrap').attributes('style')
+      ).toContain('--range-slider-fraction: 1')
+    })
+
+    it('keeps the gap on the handle when the range collapses to a single value', () => {
+      // A member's band can cap their maximum right down to the minimum, leaving a slider with
+      // nowhere to travel. Dividing by that empty range would put NaN in the custom property,
+      // the gap would go missing, and the handle could not be grabbed at all.
+      const wrapper = createWrapper({ min: 5, max: 5, modelValue: 5 })
+      expect(
+        wrapper.find('.range-slider__input-wrap').attributes('style')
+      ).toContain('--range-slider-fraction: 0')
+    })
+
+    it('marks the handle pan-y, so a vertical touch scroll from it is page scroll, not a drag', () => {
       const wrapper = createWrapper()
       const style = wrapper.find('input').attributes('style') || ''
       expect(style).toContain('touch-action: pan-y')
     })
 
-    it('prevents the default wheel-spin so scrolling the mouse wheel over the track leaves the value untouched', async () => {
+    it('prevents the default wheel-spin so a mouse wheel over the handle leaves the value untouched', async () => {
       const wrapper = createWrapper()
       const input = wrapper.find('input')
       const event = new Event('wheel', { bubbles: true, cancelable: true })

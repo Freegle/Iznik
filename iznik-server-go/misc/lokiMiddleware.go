@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -116,8 +117,19 @@ func NewLokiMiddleware(config LokiMiddlewareConfig) fiber.Handler {
 			}
 		}
 
-		// Capture response headers and status after processing.
+		// Capture response headers and status after processing. A handler that
+		// returned an error has not written its status yet - fiber's ErrorHandler
+		// does that after this middleware returns - so take the status from the
+		// error, or every refusal is logged here as a 200.
 		statusCode := c.Response().StatusCode()
+		if err != nil {
+			var fe *fiber.Error
+			if errors.As(err, &fe) {
+				statusCode = fe.Code
+			} else {
+				statusCode = fiber.StatusInternalServerError
+			}
+		}
 		responseHeaders := make(map[string]string)
 		c.Response().Header.VisitAll(func(key, value []byte) {
 			responseHeaders[string(key)] = string(value)

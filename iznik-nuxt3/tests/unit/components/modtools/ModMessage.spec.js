@@ -283,6 +283,10 @@ describe('ModMessage', () => {
             template: '<div class="mod-diff"><slot /></div>',
             props: ['old', 'new'],
           },
+          ModMessageTnNotice: {
+            template: '<div class="tn-notice" />',
+            props: ['modMessagingAllowed', 'live', 'groupName'],
+          },
           ModMessageDuplicate: {
             template: '<div class="mod-message-duplicate"><slot /></div>',
             props: ['messageid'],

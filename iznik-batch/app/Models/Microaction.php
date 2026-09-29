@@ -15,8 +15,6 @@ use OwenIt\Auditing\Contracts\Auditable;
  * @property string $result
  * @property \Illuminate\Support\Carbon $timestamp
  * @property string|null $comments
- * @property int|null $searchterm1
- * @property int|null $searchterm2
  * @property int $version For when we make changes which affect the validity of the data
  * @property int|null $item1
  * @property int|null $item2
@@ -39,8 +37,6 @@ use OwenIt\Auditing\Contracts\Auditable;
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Microaction whereRotatedimage($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Microaction whereScoreNegative($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Microaction whereScorePositive($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Microaction whereSearchterm1($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Microaction whereSearchterm2($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Microaction whereTimestamp($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Microaction whereUserid($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Microaction whereVersion($value)

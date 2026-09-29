@@ -95,7 +95,7 @@ In one sentence each:
   covers a point, how long it takes to drive somewhere, and how far a post should reach.
 - **Mail** - both directions. A large amount of Freegle happens over email, including all
   TrashNothing traffic.
-- **Database** - one Percona XtraDB Cluster (three nodes), with reads and writes routed
+- **Database** - one Percona XtraDB Cluster (two data nodes and an arbitrator), with reads and writes routed
   differently.
 
 It is a **monorepo**: all of those live in this one repository, versioned together.

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 covers:
   - docker-compose.override.edge.yml
@@ -20,11 +20,13 @@ flowchart TD
     U["Members and moderators<br/>web + mobile apps"]
     NET["Netlify<br/>member site + ModTools<br/>static Nuxt builds"]
     LB["Load balancer 'applb'<br/>HAProxy, TLS, rate limits"]
-    subgraph DBN["Database nodes db1 / db2 / db3"]
+    subgraph DBN["Database nodes db2 / db3"]
         GAL[("Percona XtraDB Cluster<br/>multi-master")]
         API["v2 Go API"]
         SPR["spatial + routing"]
     end
+    ARB["db1: Galera arbitrator<br/>(garbd, votes, no data)"]
+    ARB -.-> GAL
     subgraph DKR["Docker host"]
         BATCH["Laravel batch<br/>scheduled jobs"]
         MAILIN["incoming mail<br/>+ spam filtering"]
@@ -57,7 +59,8 @@ host serves the content hostnames directly and does all the background work.
 | Machine | Role |
 |---------|------|
 | **Load balancer** ("applb") | HAProxy. TLS termination and the public front door for everything that is not served by Netlify or directly by the Docker host. Chooses backends per hostname/path (table below), terminates the old-domain redirects, and applies per-user API rate limits. |
-| **Database nodes** ("db1", "db2", "db3") | A **Percona XtraDB Cluster** - all three are equal masters; there is no primary/replica. Each node **also** runs, natively under monit: the **v2 Go API**, the **spatial (KNN)** server and the **routing** server. |
+| **Database nodes** ("db2", "db3") | A **Percona XtraDB Cluster** - both are equal masters; there is no primary/replica. Each node **also** runs, natively under monit: the **v2 Go API**, the **spatial (KNN)** server and the **routing** server. |
+| **Arbitrator** ("db1") | Runs **garbd**, the Galera arbitrator: a third vote so the cluster keeps quorum if one data node fails, holding no data. Its Percona, API, spatial and routing installs are still present but stopped, masked at boot and left unmonitored by monit, and it stays listed in the load balancer as a backup that health-checks down. Bringing it back as a full member is [a runbook](runbooks/database-node-restart-and-rejoin.md#bringing-the-arbitrator-machine-back-as-a-full-member): grow the disk, stop garbd, start Percona for a full state transfer, rebuild the reach artefacts, re-enable the monit checks. |
 | **Docker host** ("docker", the FreegleDocker host) | One machine running the production Docker Compose stack (profiles `backend,production,mail,edge`): the **batch** scheduler (Laravel jobs), **incoming mail** processing, **Loki** log aggregation, Redis, MJML email rendering, the embedding sidecar (semantic search), the AI support helper, the status monitor, and the **spatial** service that answers place search for `geocode.ilovefreegle.org` - plus the user-facing **edge tier** (below). Natively under monit: a host nginx. |
 | **Outbound mail** ("bulk2") | Postfix relay that sends the bulk mail (digests, notifications) - of the order of 200k messages/day. |
 | **app1** (being retired) | The old frontend server. Carries **no live HTTP traffic**; it remains only as a warm backup backend behind the load balancer until decommissioned. |
@@ -65,7 +68,9 @@ host serves the content hostnames directly and does all the background work.
 
 Other external services: **Sentry** (error tracking), **Discourse** (volunteer forum,
 externally hosted), Google Workspace (staff `@ilovefreegle.org` mail). Image originals
-live on a cloud **NFS share** mounted by the Docker host (and app1 as backup).
+live in a cloud **object store** (S3-compatible, publicly readable). Older originals are
+still on the cloud **NFS share** the Docker host mounts read-only while they are copied
+across - see [the images runbook](runbooks/images-to-object-storage.md).
 
 ## The edge tier
 
@@ -75,7 +80,10 @@ services under the `edge` profile (scale-in-place rather than separate machines)
 
 - **front nginx** - single front door for the edge vhosts.
 - **image delivery** - a weserv-based resizing/caching proxy.
-- **uploads** - tusd, storing onto the NFS share.
+- **uploads** - tusd, writing to a local spool that the batch scheduler moves into the
+  object store within a minute or two. The front nginx answers a read for an upload
+  from the spool, then the object store, then (until the copy is done) the NFS share,
+  bound read-only and served as static files.
 - **map tiles** - an OSM tile server (PostGIS + renderd) with its own replication.
 - **wiki** - MediaWiki with its own MySQL.
 
@@ -91,7 +99,7 @@ spatial container, behind the same host nginx.
 | `modtools.org` | Load balancer → Netlify static build; `/api/ai-support` → AI support helper (Docker host); API calls → v2 API. |
 | `api.ilovefreegle.org` | Load balancer → **v2 Go API on the database nodes**. One node is the active backend; the others are backups. |
 | Shortlinks (`freegle.in`, `freegle.it`, `frgl.it`) | Load balancer → v2 API. |
-| `uploads.ilovefreegle.org` | Load balancer → tusd on the Docker host (app1 backup). |
+| `uploads.ilovefreegle.org` | Load balancer → edge front nginx on the Docker host: tus protocol to tusd; reads from the spool, the object store or the legacy share (app1 backup). |
 | `delivery.ilovefreegle.org` | Load balancer → image delivery cache on the Docker host (app1 backup). |
 | `images.ilovefreegle.org`, `users.ilovefreegle.org` (web) | Load balancer → edge front nginx on the Docker host (legacy image URLs resolve via the v2 API; `users` 302s to the member site). |
 | `spatial.ilovefreegle.org` | Load balancer → routing server on the database nodes (one active, one backup). |

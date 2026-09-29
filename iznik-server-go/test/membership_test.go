@@ -4760,3 +4760,126 @@ func TestGetMembershipsMailDelayedClearedOnCatchUp(t *testing.T) {
 
 	t.Fatal("member not found in list")
 }
+
+// The name-search branch pins its access path with FORCE INDEX, so these tests are
+// also the guard that the named index still exists: MySQL refuses a FORCE INDEX
+// naming an index it cannot find, and the endpoint would 500 on every name search.
+// A behaviour test cannot read the query plan, but it can prove the hinted SQL runs.
+//
+// Left to itself the optimiser reads the LIMIT with ORDER BY m.id and walks the
+// primary key backwards hoping to fill a page quickly. For a rare name it never
+// does, so it walks the whole table: a two-hit search of one community measured
+// 13.0s on production against 0.9s with the group index pinned. The searches
+// moderators actually run are the rare ones. (Discourse 10179)
+func TestGetMembershipsSearchAllMyCommunities(t *testing.T) {
+	prefix := uniquePrefix("mod_allcomm")
+
+	// Two communities, both moderated by the same person - the "-- Please choose --"
+	// case, where the search fans out across every community they moderate.
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// The member is only on the second community, so a search of the first alone
+	// would miss them.
+	targetID := CreateTestUser(t, prefix+"_findme", "User")
+	CreateTestMembership(t, targetID, groupB, "Member")
+
+	// No groupid: search every community this moderator covers.
+	url := fmt.Sprintf("/api/memberships?search=%s_findme&jwt=%s", prefix, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
+
+	found := false
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
+		if uint64(m["userid"].(float64)) == targetID {
+			found = true
+			assert.Equal(t, float64(groupB), m["groupid"], "should be found on the community they are actually on")
+		}
+	}
+	assert.True(t, found, "a name search with no community should reach every community the mod covers")
+}
+
+// A member on a community the searcher does not moderate stays invisible to them,
+// however they search. This is the behaviour behind Discourse 10179 - the report
+// reads as a broken search, and it is the rule working.
+func TestGetMembershipsSearchExcludesUnmoderatedCommunity(t *testing.T) {
+	prefix := uniquePrefix("mod_notmine")
+
+	mine := CreateTestGroup(t, prefix+"_mine")
+	theirs := CreateTestGroup(t, prefix+"_theirs")
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, mine, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Member of a community our moderator has nothing to do with.
+	strangerID := CreateTestUser(t, prefix+"_findme", "User")
+	CreateTestMembership(t, strangerID, theirs, "Member")
+
+	// By name, across all my communities.
+	byName := fmt.Sprintf("/api/memberships?search=%s_findme&jwt=%s", prefix, token)
+	req := httptest.NewRequest("GET", byName, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	var nameResponse map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&nameResponse)
+	nameMembers, _ := nameResponse["members"].([]interface{})
+	for _, raw := range nameMembers {
+		m := raw.(map[string]interface{})
+		assert.NotEqual(t, float64(strangerID), m["userid"], "name search must not cross into a community the mod does not moderate")
+	}
+
+	// And by id, which is how a reported member usually arrives.
+	byID := fmt.Sprintf("/api/memberships?search=%d&jwt=%s", strangerID, token)
+	idReq := httptest.NewRequest("GET", byID, nil)
+	idResp, err := getApp().Test(idReq, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, idResp.StatusCode)
+	var idResponse map[string]interface{}
+	json.NewDecoder(idResp.Body).Decode(&idResponse)
+	idMembers, _ := idResponse["members"].([]interface{})
+	assert.Equal(t, 0, len(idMembers), "id search must not reveal a member of a community the mod does not moderate")
+}
+
+// The filtered name search goes through the same hinted SQL with an extra WHERE
+// fragment spliced in, so it needs its own run to prove that shape is valid too.
+func TestGetMembershipsSearchWithFilterUsesHintedPath(t *testing.T) {
+	prefix := uniquePrefix("mod_srchfilt")
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_findme", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	// filter=2 is the moderation team, so the member must drop out and the
+	// moderator (whose name also carries the prefix) must remain.
+	url := fmt.Sprintf("/api/memberships?groupid=%d&search=%s&filter=2&jwt=%s", groupID, prefix, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
+		assert.NotEqual(t, float64(memberID), m["userid"], "plain member must not survive the moderation-team filter")
+	}
+}

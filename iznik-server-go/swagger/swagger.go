@@ -2352,7 +2352,7 @@ type messagesResponse struct {
 //
 // Handles message actions: Promise, Renege, OutcomeIntended, Outcome, AddBy, RemoveBy, View,
 // Approve, Reject, Delete, Spam, Hold, Release, ApproveEdits, RevertEdits, PartnerConsent,
-// Reply, JoinAndPost, Move, BackToPending, RejectToDraft.
+// Reply, JoinAndPost, Move, BackToPending, RejectToDraft, Report.
 //
 // When tnpostid is supplied instead of id, the action is applied to ALL Freegle messages
 // sharing that TN post ID (a TN post can be submitted to multiple Freegle groups, each

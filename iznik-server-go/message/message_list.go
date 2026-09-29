@@ -26,6 +26,10 @@ type MessageGroupInfo struct {
 	// RippledIn marks a row created by the rippling engine; the mod queue uses it to show
 	// the rippled-in banner authoritatively (see MessageGroup.RippledIn). (9808/303)
 	RippledIn uint8 `json:"rippled_in"`
+	// ModMessagingAllowed: see MessageGroup.ModMessagingAllowed. Carried here so the mod
+	// queue can work out, without a second fetch per post, which posts it must not offer
+	// Edit / Blank Reply / standard messages for.
+	ModMessagingAllowed bool `json:"mod_messaging_allowed"`
 }
 
 type PaginationContext struct {
@@ -48,6 +52,9 @@ type ListMessageItem struct {
 	Groups             []MessageGroupInfo  `json:"groups"`
 	Attachments        []MessageAttachment `json:"attachments,omitempty"`
 	Replycount         int                 `json:"replycount"`
+	// ModMessagingAllowed: see Message.ModMessagingAllowed. Reduced from Groups by
+	// modMessagingAllowed() so the queue does not have to re-derive it per card.
+	ModMessagingAllowed bool `json:"mod_messaging_allowed"`
 }
 
 type ListMessagesResponse struct {
@@ -257,7 +264,7 @@ func ListMessages(c *fiber.Ctx) error {
 
 			go func() {
 				defer wg.Done()
-				db.Table("messages_groups").Select("groupid, collection, arrival, heldby, rippled_in").
+				db.Table("messages_groups").Select("groupid, collection, arrival, heldby, rippled_in, mod_messaging_allowed").
 					Where("msgid = ? AND deleted = 0", msgID).Scan(&groups)
 			}()
 
@@ -278,6 +285,7 @@ func ListMessages(c *fiber.Ctx) error {
 			wg.Wait()
 
 			msg.Groups = groups
+			msg.ModMessagingAllowed = listModMessagingAllowed(groups)
 			msg.Replycount = int(replycount)
 
 			// Compute expiresat from group settings.

@@ -5,13 +5,14 @@ namespace Tests\Feature\Chat;
 use App\Models\ChatMessage;
 use App\Services\ChatProcessService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 class ProcessIncomingChatCommandTest extends TestCase
 {
     use DatabaseTransactions;
 
-    /** @test */
+    #[Test]
     public function test_dry_run_reports_pending_count(): void
     {
         $this->artisan('chats:process-incoming', ['--dry-run' => true])
@@ -19,7 +20,7 @@ class ProcessIncomingChatCommandTest extends TestCase
             ->assertExitCode(0);
     }
 
-    /** @test */
+    #[Test]
     public function test_command_runs_with_mocked_service(): void
     {
         $mock = $this->createMock(ChatProcessService::class);
@@ -36,9 +37,8 @@ class ProcessIncomingChatCommandTest extends TestCase
      * bump chat_rooms.latestmessage on processing, so the room resurfaces in the
      * recipient's chat list immediately - matching when the notification email fires -
      * rather than waiting up to an hour for the chats:update-counts recompute.
-     *
-     * @test
      */
+    #[Test]
     public function test_deliverable_reply_bumps_latestmessage_for_dormant_room(): void
     {
         $user1 = $this->createTestUser();
@@ -71,9 +71,8 @@ class ProcessIncomingChatCommandTest extends TestCase
      * A message held for review must NOT bump latestmessage: the dormant room must stay
      * out of the recipient's list until a moderator approves it (which bumps latestmessage
      * via updateMessageCounts). Otherwise the room surfaces with a gated, unreadable message.
-     *
-     * @test
      */
+    #[Test]
     public function test_held_reply_does_not_bump_latestmessage(): void
     {
         $user1 = $this->createTestUser();

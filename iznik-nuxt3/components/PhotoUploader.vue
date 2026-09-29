@@ -27,8 +27,8 @@
       {{ photoError }}
     </b-alert>
 
-    <!-- Featured photo - always shows first photo (the primary one for post) -->
-    <!-- Drop target: dragging a thumbnail here makes it the primary photo -->
+    <!-- Featured photo - the one being looked at, the main one until another is tapped -->
+    <!-- Drop target: dragging a thumbnail here makes it the main photo -->
     <Transition name="fade">
       <div
         v-if="selectedPhoto && !compact"
@@ -60,7 +60,8 @@
       </div>
     </Transition>
 
-    <!-- Thumbnail carousel (excluding selected photo) -->
+    <!-- Thumbnail strip: every photo, in post order, the one being shown marked.
+         Tapping one shows it; dragging reorders. -->
     <div v-if="photos.length > 1 && !compact" class="thumbnail-carousel">
       <draggable
         v-model="photos"
@@ -73,13 +74,14 @@
       >
         <template #item="{ element, index }">
           <div
-            v-if="selectedIndex !== index"
             class="thumbnail"
+            :class="{ 'thumbnail--selected': selectedIndex === index }"
             @click="selectPhoto(index)"
           >
             <OurUploadedImage
               v-if="element.ouruid"
               :src="element.ouruid"
+              :modifiers="element.externalmods"
               class="thumbnail-image"
               alt="Photo"
               :width="80"
@@ -316,27 +318,37 @@ const showQualityModal = ref(false)
 const qualityModalTitle = ref('')
 const qualityModalMessage = ref('')
 const pendingPhoto = ref(null)
-// Always show first photo as the featured/primary one
-const selectedIndex = ref(0)
+// The photo being shown large, by identity rather than position so that reordering,
+// adding or removing photos does not switch it. tempId first: a photo keeps it after
+// its upload assigns the id. Null, or a photo since removed, means the main photo.
+const selectedKey = ref(null)
+const photoKey = (p) => p?.tempId ?? p?.id
 let uploadInstance = null
 let tempIdCounter = 0
 
-// Computed property for the selected photo
-const selectedPhoto = computed(() => {
-  if (selectedIndex.value !== null && photos.value[selectedIndex.value]) {
-    return photos.value[selectedIndex.value]
-  }
-  return null
+const selectedIndex = computed(() => {
+  const index = photos.value.findIndex(
+    (p) => selectedKey.value != null && photoKey(p) === selectedKey.value
+  )
+  return index === -1 ? 0 : index
 })
 
-// Select a photo as primary - moves it to front of array
+const selectedPhoto = computed(() => photos.value[selectedIndex.value] || null)
+
+// Show a photo large. It does not change the order: tapping through the photos to check
+// them, for instance whether they need rotating, must not reshuffle the post.
 function selectPhoto(index) {
+  if (index >= 0 && index < photos.value.length) {
+    selectedKey.value = photoKey(photos.value[index])
+  }
+}
+
+// Make a photo the main one (first in the post) and show it.
+function makePrimary(index) {
   if (index > 0 && index < photos.value.length) {
-    // Move the clicked photo to the front (making it primary)
     const photo = photos.value.splice(index, 1)[0]
     photos.value.unshift(photo)
-    // Keep selectedIndex at 0 (always show first photo as featured)
-    selectedIndex.value = 0
+    selectedKey.value = photoKey(photo)
   }
 }
 
@@ -692,11 +704,9 @@ let draggedPhoto = null
 function onDragStart(evt) {
   dragging.value = true
   suppressModelValueSync.value = true
-  // evt.oldIndex is the SortableJS DOM index among visible thumbnails.
-  // The featured photo (index 0) is hidden from the strip via v-if, so
-  // SortableJS indices are offset by 1 from the photos array indices.
-  const arrayIndex = evt.oldIndex + 1
-  draggedPhoto = photos.value[arrayIndex] ?? null
+  // evt.oldIndex is the SortableJS DOM index, which is the photos index now that
+  // every photo is in the strip.
+  draggedPhoto = photos.value[evt.oldIndex] ?? null
 }
 
 function onDragEnd() {
@@ -711,12 +721,12 @@ function onDragEnd() {
 }
 
 // Handle a thumbnail being dropped onto the featured photo area.
-// This makes the dragged photo the primary (moves it to position 0).
+// This makes the dragged photo the main one (moves it to position 0).
 function onDropFeatured() {
   if (draggedPhoto) {
     const index = photos.value.indexOf(draggedPhoto)
     if (index > 0) {
-      selectPhoto(index)
+      makePrimary(index)
     }
   }
 
@@ -1049,6 +1059,11 @@ defineExpose({ processPhoto })
   &::-webkit-scrollbar {
     display: none; /* Chrome/Safari */
   }
+}
+
+.thumbnail--selected {
+  outline: 3px solid $color-green-background;
+  outline-offset: 1px;
 }
 
 .thumbnail {

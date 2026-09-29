@@ -6,6 +6,7 @@ use App\Services\LokiService;
 use App\Services\Mail\Incoming\IncomingArchiveService;
 use App\Services\Mail\Incoming\IncomingMailService;
 use App\Services\Mail\Incoming\MailParserService;
+use App\Services\TrashNothing\Verify\TnEmailRoutingGate;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
@@ -40,8 +41,12 @@ class IncomingMailCommand extends Command
 
     private const EX_TEMPFAIL = 75;
 
-    public function handle(MailParserService $parser, IncomingMailService $service, IncomingArchiveService $archiveService): int
-    {
+    public function handle(
+        MailParserService $parser,
+        IncomingMailService $service,
+        IncomingArchiveService $archiveService,
+        TnEmailRoutingGate $routingGate,
+    ): int {
         $sender = $this->argument('sender');
         $recipient = $this->argument('recipient');
 
@@ -57,6 +62,20 @@ class IncomingMailCommand extends Command
         try {
             // Parse the email
             $parsed = $parser->parse($rawEmail, $sender, $recipient);
+
+            // Post-cutover: TN group posts are ingested via the API instead, so
+            // don't route them through the (frozen) email path. Archiving above
+            // already happened, which is what tn:verify-email-coverage checks
+            // against. See plans/tn-api-post-ingestion.md section S.2.
+            if ($routingGate->shouldSkipRouting($parsed)) {
+                if ($archivePath) {
+                    $archiveService->recordOutcome($archivePath, TnEmailRoutingGate::OUTCOME_SKIPPED);
+                }
+
+                $this->line(TnEmailRoutingGate::OUTCOME_SKIPPED);
+
+                return self::EX_OK;
+            }
 
             // Log verbose info if requested
             if ($this->output->isVerbose()) {
