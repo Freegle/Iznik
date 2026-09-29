@@ -118,6 +118,36 @@ class ScheduledOutcomeRegistry
                 ->enabledWhen(fn () => trim((string) config('freegle.digest.daily_allowlist', '')) !== '')
                 ->activeBetween(13, 24, $tz),
 
+            // tn:sync (every minute) ingests TrashNothing posts into `messages`,
+            // stamping messages.tnpostid. TN is a high-volume feed, so a window
+            // with NO post at all means either TN is down/returning nothing or
+            // our ingestion is failing every cycle — the two cases this alert
+            // exists for. TNSyncCommand::alertIfSyncStale() covers the same
+            // ground from the inside, but only fires if the command completes a
+            // run; this check fires from a separate command, so it still alerts
+            // when tn:sync is crashing in a loop, wedged on its lock, or not
+            // being scheduled at all.
+            //
+            // ProducedSinceCheck (not FreshnessCheck) so the query is bounded:
+            // `messages` is huge and `WHERE tnpostid IS NOT NULL` matches years
+            // of rows, so a MAX(arrival) over it is expensive. Counting inside
+            // the window lets the (arrival, ...) index do the work.
+            //
+            // Gated on the API-ingestion flag: while it is off, posts arrive via
+            // the V1 email path, which this app does not own.
+            (new ProducedSinceCheck(
+                'tn:sync (posts)',
+                'messages',
+                'arrival',
+                fn (CarbonInterface $now) => $now->copy()->subHours(
+                    (int) config('freegle.monitoring.tn_posts_max_age_hours', 6)
+                ),
+                (int) config('freegle.monitoring.tn_posts_min_expected', 1),
+                fn ($q) => $q->whereNotNull('tnpostid'),
+            ))
+                ->describedAs('TrashNothing posts still being ingested from the TN API')
+                ->inCategory('cursor-staleness')
+                ->enabledWhen(fn () => (bool) config('freegle.trashnothing.ingest_posts_via_api')),
             // The check above asks only "did ANY daily digest go out today?", floor 1. That is
             // a liveness check, and a liveness check cannot see a collapse. On 2026-09-15..17
             // the daily run fell to a thirteenth of its throughput and ran around the clock -

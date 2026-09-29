@@ -18,6 +18,7 @@ const mockModal = ref(null)
 
 const mockMessageStore = {
   byId: vi.fn().mockReturnValue(mockMessage),
+  report: vi.fn().mockResolvedValue({}),
 }
 
 const mockChatStore = {
@@ -80,6 +81,7 @@ describe('MessageReportModal', () => {
     }))
     mockChatStore.openChatToMods.mockResolvedValue(123)
     mockChatStore.send.mockResolvedValue({})
+    mockMessageStore.report.mockResolvedValue({})
   })
 
   function createWrapper(props = {}) {
@@ -454,6 +456,63 @@ describe('MessageReportModal', () => {
       wrapper.vm.selectedReason = 'spam'
       wrapper.vm.selectedGroupIds = []
       expect(wrapper.vm.canSubmit).toBe(false)
+    })
+  })
+
+  // A TN post placed on a Freegle community its poster never chose has no volunteer team
+  // that could act on a report, so the report must not be sent to one. It becomes a vote
+  // to take the post down, counted server-side.
+  describe('a post with no community to report to', () => {
+    function unaddressedWrapper() {
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        mod_messaging_allowed: false,
+      })
+      return createWrapper()
+    }
+
+    it('says nobody will see the report and what happens instead', () => {
+      const wrapper = unaddressedWrapper()
+      expect(wrapper.text()).toContain('Trash Nothing')
+      expect(wrapper.text()).toContain('two people report it')
+      expect(wrapper.text()).not.toContain('local volunteers')
+    })
+
+    it('records the report without opening a chat to any mod team', async () => {
+      const wrapper = unaddressedWrapper()
+      wrapper.vm.selectedReason = 'spam'
+      await wrapper.vm.report()
+
+      expect(mockChatStore.openChatToMods).not.toHaveBeenCalled()
+      expect(mockChatStore.send).not.toHaveBeenCalled()
+      expect(mockMessageStore.report).toHaveBeenCalledTimes(1)
+      expect(mockMessageStore.report.mock.calls[0][0]).toBe(1)
+      expect(mockMessageStore.report.mock.calls[0][1]).toBe(100)
+      expect(mockMessageStore.report.mock.calls[0][2]).toContain(
+        'Spam or advertising'
+      )
+      expect(wrapper.vm.submitted).toBe(true)
+    })
+
+    it('shows an error and stays on the form when recording the report fails', async () => {
+      const wrapper = unaddressedWrapper()
+      mockMessageStore.report.mockRejectedValue(new Error('boom'))
+      wrapper.vm.selectedReason = 'spam'
+      await wrapper.vm.report()
+
+      expect(wrapper.vm.submitted).toBe(false)
+      expect(wrapper.vm.submitError).toBe(true)
+    })
+
+    it('offers a mod no multi-community selector - there is no team on any of them', () => {
+      mockMe.value = { systemrole: 'Moderator' }
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        mod_messaging_allowed: false,
+        groups: [{ groupid: 100 }, { groupid: 300 }],
+      })
+      const wrapper = createWrapper()
+      expect(wrapper.vm.showGroupSelector).toBe(false)
     })
   })
 })

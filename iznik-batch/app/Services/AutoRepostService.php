@@ -56,10 +56,8 @@ class AutoRepostService
      *   - UPDATE lastautopostwarning for warning emails (home posting only; stamped on all groups)
      *   - Warning email: "Will Repost: {subject}" with completed/withdraw/promise buttons
      *
-     * V1 side effects NOT included:
-     *   - Search index bump: V1 calls $this->s->bump() to update arrival in
-     *     messages_index. Not critical: Go API search sorts by wordmatch/popularity,
-     *     not arrival. messages_groups.arrival IS updated (the source of truth).
+     * V1 also bumped the keyword search index; search is now served from vector
+     * embeddings, so there is no index to bump.
      */
     public function process(bool $dryRun = false): array
     {

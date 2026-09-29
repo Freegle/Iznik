@@ -240,6 +240,11 @@ async function realRedPRCheck(skipPRNumbers: Set<number> = new Set()): Promise<R
         // A PR red ONLY on Coveralls coverage-delta checks (tests pass) is not a
         // hard CI failure — the coverage booster handles it. Don't force the
         // instance back to CHECK_CI for coverage jitter.
+        //
+        // Nor is a PR red only on the blocking-label guard, which fails because
+        // somebody marked the PR do-not-merge. That one goes nowhere at all: it
+        // is not work, and the label is the answer. Counting it as red spent the
+        // iteration's one fix slot on it three times before giving up.
         const { realFailed } = partitionFailedChecks(failed)
         if (realFailed.length > 0) redPRs.push({ number: pr.number, title: pr.title, url: pr.url, failedChecks: failed })
       }

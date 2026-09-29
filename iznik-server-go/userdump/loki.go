@@ -2,13 +2,16 @@ package userdump
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/freegle/iznik-server-go/misc"
@@ -20,8 +23,8 @@ type lokiEntry struct {
 	line   string
 }
 
-// lokiQuerier issues a LogQL query_range and returns log entries. Abstracted so
-// tests can substitute a fake without an HTTP round trip.
+// lokiQuerier issues a LogQL query_range and returns log entries, newest
+// first. Abstracted so tests can substitute a fake without an HTTP round trip.
 type lokiQuerier interface {
 	query(logql string, startNs, endNs int64, limit int) ([]lokiEntry, error)
 }
@@ -82,13 +85,63 @@ func (l *httpLoki) query(logql string, startNs, endNs int64, limit int) ([]lokiE
 	return out, nil
 }
 
+// activityWindows turns the minutes a member was active (the start of each
+// minute, in ns) into the time ranges to search, newest first: minutes less than activityGap apart are merged, and
+// each range is padded by activityPad either side.
+func activityWindows(minutes []int64, startNs, endNs int64) []nsRange {
+	sorted := append([]int64(nil), minutes...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+
+	var out []nsRange
+	for _, m := range sorted {
+		s, e := m-int64(activityPad), m+int64(time.Minute)+int64(activityPad)
+		if s < startNs {
+			s = startNs
+		}
+		if e > endNs {
+			e = endNs
+		}
+		if s >= e {
+			continue
+		}
+		if n := len(out); n > 0 && s <= out[n-1].end+int64(activityGap) {
+			if e > out[n-1].end {
+				out[n-1].end = e
+			}
+			continue
+		}
+		out = append(out, nsRange{start: s, end: e})
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+const (
+	activityGap = 5 * time.Minute
+	activityPad = time.Minute
+
+	// apiHeadersRetention is how long prod Loki keeps api_headers; there is
+	// nothing to find further back.
+	apiHeadersRetention = 7 * 24 * time.Hour
+	// apiHeadersSlice splits a long active window so the newest part arrives
+	// first and each query fits the client timeout.
+	apiHeadersSlice = 12 * time.Hour
+	// apiHeadersLineCap bounds the pass for a member who is active all week:
+	// fetching and storing 40,000 of an admin's header lines was most of a
+	// 55s snapshot.
+	apiHeadersLineCap = 5000
+)
+
 // Sources whose lines carry user_id only inside the JSON payload, not as an
 // indexed stream label. Confirmed against production: api, chat_reply and
 // client label it; these do not. Keeping the expensive `| json` / regex passes
 // pinned to this set is what makes them affordable - it excludes the api and
 // client firehose, which pass A has already covered by label. api_headers is
 // deliberately NOT here: it is ~67GB per 7 days on prod - the dominant cost of
-// the old 7-source pass - so it gets its own bounded, lowest-priority pass.
+// the old 7-source pass - so it gets its own pass, pass D, confined to the
+// minutes the member was active.
 const unlabelledSources = "batch|batch_event|email|incoming_mail|similar_posts|vector_search"
 
 // maxLokiRange is how far back a single query_range may reach. Production Loki
@@ -96,27 +149,15 @@ const unlabelledSources = "batch|batch_event|email|incoming_mail|similar_posts|v
 // not "get less back", it is "get nothing back".
 const maxLokiRange = 30 * 24 * time.Hour
 
-// shortRetention is how long prod Loki keeps the api_headers and client
-// sources. Querying them further back returns nothing at real cost.
-const shortRetention = 7 * 24 * time.Hour
-
 // halfSpan splits the parse/regex passes over the unlabelled sources into
 // sub-windows: a 30d single shot measured 9.8-26s cold against prod, which
 // leaves no headroom under the 30s HTTP client timeout; 15d halves measured
 // 9.3-10.1s each.
 const halfSpan = 15 * 24 * time.Hour
 
-// api_headers is searched newest-first in 1.5d slices (~16s each cold, so one
-// slice always fits the client timeout), capped by count and by the section
-// budget below.
-const apiHeadersSlice = 36 * time.Hour
-
-const apiHeadersMaxSlices = 5
-
-// lokiSectionBudget bounds the whole section's wall time. The passes run in
-// value order (labelled, six-source, emails, sessions, api_headers last), so
-// when the budget bites it is the least valuable coverage that is dropped -
-// and every truncation is recorded in _sections rather than silently lost.
+// lokiSectionBudget bounds the whole section's wall time: a query that has not
+// started by then is skipped, and every skip is recorded in _sections rather
+// than silently lost.
 const lokiSectionBudget = 100 * time.Second
 
 // clampLokiStart pulls start forward if the requested window is longer than
@@ -128,11 +169,13 @@ func clampLokiStart(startNs, endNs int64) int64 {
 	return startNs
 }
 
+// escapeLokiRegex makes a literal safe inside a LogQL regex (`|~ "…"`). That is
+// two layers: a regex escape, then a string escape, because the regex sits in a
+// double-quoted string whose own escapes are Go's. A bare `\.` is not a valid
+// string escape, so Loki rejected every email query with a 400 - every address
+// has a dot - and pass B never returned anything.
 func escapeLokiRegex(s string) string {
-	for _, c := range []string{`\`, `.`, `+`, `*`, `?`, `^`, `$`, `(`, `)`, `[`, `]`, `{`, `}`, `|`, `"`} {
-		s = strings.ReplaceAll(s, c, `\`+c)
-	}
-	return s
+	return escapeLokiString(regexp.QuoteMeta(s))
 }
 
 // escapeLokiString makes a value safe inside a LogQL double-quoted string
@@ -158,26 +201,43 @@ func splitRange(startNs, endNs, span int64) []nsRange {
 	return out
 }
 
-// collectLoki gathers a user's Loki logs into the loki_logs table, in value
-// order so the section budget drops the least valuable coverage first:
+// collectLoki gathers a user's Loki logs into the loki_logs table:
 //
-//	A1: user_id STREAM LABEL across api/chat_reply/client - an index lookup.
+//	A:  the member's lines in the labelled sources (api, client, chat_reply,
+//	    logs_table), by the coarse user_bucket label plus the exact user_id -
+//	    an index lookup. One query per source group, so the busiest source
+//	    cannot use up the line cap and crowd out the rest: one query across all
+//	    of them returned an admin's 5,000 newest api lines and no client lines.
 //	A2: the six slim unlabelled sources, `|=` prefiltered then `| json`
 //	    post-filtered, in 15d halves.
-//	B:  each email address, `|=` prefiltered then case-insensitive regex,
-//	    over the same slim sources in 15d halves.
-//	C:  client session logs, two legs per session id: the indexed user_id
-//	    label over the full window, plus the anonymous (pre-login) streams
-//	    capped to the client source's 7d retention.
-//	D:  api_headers (the ~67GB/7d firehose that used to dominate the whole
-//	    section), newest-first in 1.5d slices, slice- and budget-capped.
+//	B:  every email address at once, `|= "a" or "b"` prefiltered then a
+//	    case-insensitive regex, over the same slim sources in 15d halves.
+//	D:  api_headers, searched only in the minutes the member's own (indexed)
+//	    api lines show they were active.
+//
+// All of it runs at once, at most lokiParallel queries at a time. Nothing waits
+// on anything else: client lines used to be found through the session ids pass
+// A turned up, one query per group of sessions after A finished, which cost an
+// admin 24s for 514 lines. They are the member's own labelled lines, so pass A
+// asks for them directly - 0.7s for 3,031.
+//
+// Two kinds of line are deliberately NOT asked for:
+//
+//   - Lines labelled with user_id itself rather than user_bucket. That form
+//     was written until 2026-08-23 (see misc.UserBucket) and Loki is only asked
+//     for the last 30 days, so nothing in range has it; the queries for it
+//     returned nothing and cost 3-5s each.
+//   - A member's logged-out client lines. They carry no user at all, so
+//     finding them is a full-text scan of seven days of client logs (30-40s
+//     against prod). lokiNotCollected says so in the dump, and loki_search
+//     can still run it.
 //
 // Every line filter comes BEFORE any `| json`: the parser is the expensive
 // stage, and the substring filter skips the lines that can't match. The exact
 // `| json | field="…"` post-filter stays because a bare substring has false
 // positives. Anything the budget or the caps drop is recorded in _sections.
 //
-// Pass A1 failing is fatal for the section (the caller records a warning);
+// Pass A failing is fatal for the section (the caller records a warning);
 // everything else is best effort.
 func collectLoki(b *Builder, q lokiQuerier, userID uint64, emails []string, startNs, endNs int64) (int, error) {
 	const perQuery = 5000
@@ -190,11 +250,20 @@ func collectLoki(b *Builder, q lokiQuerier, userID uint64, emails []string, star
 	// for something that can only fail.
 	startNs = clampLokiStart(startNs, endNs)
 	deadline := time.Now().Add(lokiSectionBudget)
+
+	var mu sync.Mutex
 	var bounds []string
+	bound := func(s string) {
+		mu.Lock()
+		bounds = append(bounds, s)
+		mu.Unlock()
+	}
 
 	seen := map[string]bool{}
 	var all []lokiEntry
 	add := func(entries []lokiEntry) {
+		mu.Lock()
+		defer mu.Unlock()
 		for _, e := range entries {
 			key := strconv.FormatInt(e.tsNs, 10) + "|" + e.line
 			if seen[key] {
@@ -205,31 +274,66 @@ func collectLoki(b *Builder, q lokiQuerier, userID uint64, emails []string, star
 		}
 	}
 
-	// A1: user_id covers api, chat_reply and client, which is the bulk of the
-	// volume. It is addressed in TWO forms and we must ask for both, because a
-	// 30-day window straddles the change:
-	//
-	//   - entries written before 2026-08-23 carry user_id as a stream label;
-	//   - entries written after carry a coarse user_bucket label plus the exact
-	//     user_id as structured metadata (see misc.UserBucket for why).
-	//
-	// Both are index-narrowed, so both are cheap, and add() dedupes the overlap.
-	// Once nothing older than the change is still inside retention, the first
-	// query can go.
-	uidStr := strconv.FormatUint(userID, 10)
-	entries, err := q.query(fmt.Sprintf(`{app="freegle", user_id="%s"}`, uidStr), startNs, endNs, perQuery)
-	if err != nil {
-		return 0, err
+	// The deadline is checked once a query has its slot, not before it queues:
+	// a query that waited out the budget in the queue must not start then.
+	slots := make(chan struct{}, lokiParallel)
+	skipped, capped := 0, 0
+	runLimit := func(logql string, s, e int64, limit int) ([]lokiEntry, error) {
+		slots <- struct{}{}
+		defer func() { <-slots }()
+		if time.Now().After(deadline) {
+			mu.Lock()
+			skipped++
+			mu.Unlock()
+			return nil, errLokiBudget
+		}
+		entries, err := q.query(logql, s, e, limit)
+		if len(entries) >= limit {
+			mu.Lock()
+			capped++
+			mu.Unlock()
+		}
+		return entries, err
 	}
-	add(entries)
+	run := func(logql string, s, e int64) ([]lokiEntry, error) {
+		return runLimit(logql, s, e, perQuery)
+	}
+	var wg sync.WaitGroup
+	goRun := func(f func()) {
+		wg.Add(1)
+		go func() { defer wg.Done(); f() }()
+	}
 
-	bucketed, err := q.query(
-		fmt.Sprintf(`{app="freegle", user_bucket="%s"} | user_id="%s"`, misc.UserBucket(userID), uidStr),
-		startNs, endNs, perQuery)
-	if err != nil {
-		return 0, err
+	uidStr := strconv.FormatUint(userID, 10)
+	bucket := misc.UserBucket(userID)
+
+	// Pass A goes first so it has slots before the rest queue, and each query is
+	// tried twice: they are the only fatal ones, and one lost to a timeout would
+	// empty the whole section. The api group's lines are also pass D's index,
+	// handed over on apiLines.
+	var aErr error
+	apiLines := make(chan []lokiEntry, 1)
+	for i, sources := range labelledSourceGroups {
+		logql := fmt.Sprintf(`{app="freegle", source%s, user_bucket="%s"} | user_id="%s"`, sources, bucket, uidStr)
+		goRun(func() {
+			e, err := run(logql, startNs, endNs)
+			if err != nil && err != errLokiBudget {
+				e, err = run(logql, startNs, endNs)
+			}
+			if i == 0 {
+				apiLines <- e
+			}
+			if err != nil {
+				mu.Lock()
+				if aErr == nil {
+					aErr = err
+				}
+				mu.Unlock()
+				return
+			}
+			add(e)
+		})
 	}
-	add(bucketed)
 
 	// A2: the slim unlabelled sources still need the parse, but the `|=`
 	// prefilter means only lines containing the id get parsed, and the 15d
@@ -237,145 +341,147 @@ func collectLoki(b *Builder, q lokiQuerier, userID uint64, emails []string, star
 	// ~10s per half cold against prod, vs 68s for the old single-shot -
 	// which always timed out and contributed nothing).
 	for _, r := range splitRange(startNs, endNs, int64(halfSpan)) {
-		if e1b, err := q.query(
-			fmt.Sprintf(`{app="freegle", source=~"%s"} |= "%s" | json | user_id="%s"`, unlabelledSources, uidStr, uidStr),
-			r.start, r.end, perQuery); err == nil {
-			add(e1b)
-		}
-	}
-
-	// Harvest session ids from api lines.
-	sessions := map[string]bool{}
-	for _, e := range all {
-		if e.source != "api" && e.source != "api_headers" {
-			continue
-		}
-		var m map[string]interface{}
-		if json.Unmarshal([]byte(e.line), &m) == nil {
-			if sid, ok := m["session_id"].(string); ok && sid != "" {
-				sessions[sid] = true
+		r := r
+		goRun(func() {
+			if e, err := run(
+				fmt.Sprintf(`{app="freegle", source=~"%s"} |= "%s" | json | user_id="%s"`, unlabelledSources, uidStr, uidStr),
+				r.start, r.end); err == nil {
+				add(e)
 			}
-		}
+		})
 	}
 
 	// Pass B: catch lines that name the member by email rather than by id -
-	// mail delivery, incoming mail, batch jobs. The case-sensitive `|=` on the
-	// lowercased address prefilters for the case-insensitive regex (measured
-	// ~9-13s per half cold, vs 69s unprefiltered single-shot). Still pinned to
-	// the slim sources: emails verifiably never appear in api_headers lines.
-	// The deadline is checked per HALF, not just per email: a member can have
-	// many addresses, and a per-email gate lets the last one overshoot by two
-	// full queries (observed pushing the section to 149s against its 100s
-	// budget on prod).
-	for _, em := range emails {
-		em = strings.TrimSpace(em)
-		if em == "" {
-			continue
-		}
+	// mail delivery, incoming mail, batch jobs. All addresses go in one query
+	// per half: the case-sensitive `|= "a" or "b"` on the lowercased addresses
+	// prefilters for the case-insensitive regex. One query per address per half
+	// was ~2-10s each, so a member with 23 addresses ran out of budget; all 23
+	// together measured 5-7s per half against prod. Still pinned to the slim
+	// sources: emails verifiably never appear in api_headers lines.
+	if logql := lokiEmailQuery(emails); logql != "" {
 		for _, r := range splitRange(startNs, endNs, int64(halfSpan)) {
-			if time.Now().After(deadline) {
-				bounds = append(bounds, fmt.Sprintf("emails: section budget exhausted at %q", em))
-				break
-			}
-			if e2, err := q.query(
-				fmt.Sprintf(`{app="freegle", source=~"%s"} |= "%s" |~ "(?i)%s"`,
-					unlabelledSources, escapeLokiString(strings.ToLower(em)), escapeLokiRegex(em)),
-				r.start, r.end, perQuery); err == nil {
-				add(e2)
-			}
-		}
-		if time.Now().After(deadline) {
-			break
+			r := r
+			goRun(func() {
+				if e, err := run(logql, r.start, r.end); err == nil {
+					add(e)
+				}
+			})
 		}
 	}
 
-	// Pass C (cap the number of sessions queried). Two legs per session id:
-	// the user_id label makes the logged-in leg an index lookup over the full
-	// window; the anonymous leg (pre-login lines have user_id="") has to
-	// touch the client firehose's tiny chunks, so it is capped to that
-	// source's 7d retention - beyond which there is nothing to find anyway.
-	// Measured ~5s per session cold, vs 77s for the old unlabelled scan.
-	sids := make([]string, 0, len(sessions))
-	for sid := range sessions {
-		sids = append(sids, sid)
-	}
-	sort.Strings(sids)
-	if len(sids) > 25 {
-		bounds = append(bounds, fmt.Sprintf("sessions: only 25 of %d session ids searched", len(sids)))
-		sids = sids[:25]
-	}
-	anonStart := endNs - int64(shortRetention)
-	if startNs > anonStart {
-		anonStart = startNs
-	}
-	for i, sid := range sids {
-		if time.Now().After(deadline) {
-			bounds = append(bounds, fmt.Sprintf("sessions: section budget exhausted after %d of %d", i, len(sids)))
-			break
+	// Pass D: api_headers. It has no member label, so searching it for 7 days
+	// is a full-text scan of the ~67GB firehose (~40-50s against prod). But
+	// every request writes exactly one api line and one api_headers line, at the
+	// same moment - and pass A has just fetched the member's api lines by index.
+	// They say which minutes to search, and how many header lines each window
+	// holds, so each query can ask for that many: the queries run in parallel
+	// without overshooting the cap. Measured against prod: 27s -> 1s for an
+	// ordinary member, with every request the full scan found.
+	//
+	// A member active all week (an admin with tabs open) has more api lines than
+	// pass A's line cap, so the window covers only the period of their newest
+	// ones - which is also where the newest headers, the ones apiHeadersLineCap
+	// keeps, are.
+	goRun(func() {
+		api := <-apiLines
+		hdrStart := endNs - int64(apiHeadersRetention)
+		if hdrStart < startNs {
+			hdrStart = startNs
 		}
-		sidEsc := escapeLokiString(sid)
-		// Pre-bucket form, for entries still in retention from before the change.
-		if e3, err := q.query(
-			fmt.Sprintf(`{app="freegle", source="client", user_id="%s"} |= "%s" | json | session_id="%s"`, uidStr, sidEsc, sidEsc),
-			startNs, endNs, perQuery); err == nil {
-			add(e3)
+		if len(api) >= perQuery {
+			bound(fmt.Sprintf("api_headers: only for the period of the member's newest %d api lines", perQuery))
 		}
-		// Bucketed form. The user_id filter runs BEFORE | json deliberately: json
-		// would extract a user_id from the line body too, and the parsed one gets
-		// renamed rather than replacing the structured-metadata value.
-		if e3, err := q.query(
-			fmt.Sprintf(`{app="freegle", source="client", user_bucket="%s"} |= "%s" | user_id="%s" | json | session_id="%s"`, misc.UserBucket(userID), sidEsc, uidStr, sidEsc),
-			startNs, endNs, perQuery); err == nil {
-			add(e3)
-		}
-		// Anonymous sessions carry no user at all, so neither label is set and
-		// this one form covers both eras.
-		if e3, err := q.query(
-			fmt.Sprintf(`{app="freegle", source="client"} | user_id="" |= "%s" | json | session_id="%s"`, sidEsc, sidEsc),
-			anonStart, endNs, perQuery); err == nil {
-			add(e3)
-		}
-	}
 
-	// Pass D: api_headers, last because it costs the most per line of value
-	// (~16s per 1.5d slice cold). Newest-first so whatever the caps keep is
-	// the most recent; its retention is 7d so older slices cannot exist.
-	hdrOldest := endNs - int64(shortRetention)
-	if startNs > hdrOldest {
-		hdrOldest = startNs
+		var minutes, stamps []int64
+		for _, e := range api {
+			if e.tsNs >= hdrStart && e.tsNs < endNs {
+				stamps = append(stamps, e.tsNs)
+				minutes = append(minutes, e.tsNs-e.tsNs%int64(time.Minute))
+			}
+		}
+		type piece struct {
+			nsRange
+			expect int
+		}
+		var pieces []piece
+		for _, w := range activityWindows(minutes, hdrStart, endNs) {
+			sl := splitRange(w.start, w.end, int64(apiHeadersSlice))
+			for i := len(sl) - 1; i >= 0; i-- {
+				n := 0
+				for _, t := range stamps {
+					if t >= sl[i].start && t < sl[i].end {
+						n++
+					}
+				}
+				if n > 0 {
+					pieces = append(pieces, piece{nsRange: sl[i], expect: n})
+				}
+			}
+		}
+
+		// A query only starts if the lines it expects still fit under the cap
+		// alongside the queries already running. Headers and api lines are one
+		// each per request, so a little headroom covers the edges of a window.
+		hq := fmt.Sprintf(`{app="freegle", source="api_headers"} |= "%s" | json | user_id="%s"`, uidStr, uidStr)
+		var hmu sync.Mutex
+		cond := sync.NewCond(&hmu)
+		next, got, reserved, full := 0, 0, 0, false
+		var wgD sync.WaitGroup
+		for w := 0; w < lokiParallel; w++ {
+			wgD.Add(1)
+			go func() {
+				defer wgD.Done()
+				for {
+					hmu.Lock()
+					for next < len(pieces) && got < apiHeadersLineCap && got+reserved >= apiHeadersLineCap {
+						cond.Wait()
+					}
+					if next >= len(pieces) || got >= apiHeadersLineCap {
+						full = full || next < len(pieces)
+						hmu.Unlock()
+						return
+					}
+					p := pieces[next]
+					next++
+					limit := min(p.expect+p.expect/10+10, apiHeadersLineCap-got-reserved)
+					reserved += limit
+					hmu.Unlock()
+
+					e, err := runLimit(hq, p.start, p.end, limit)
+					if err == nil {
+						add(e)
+					}
+					hmu.Lock()
+					reserved -= limit
+					if err == nil {
+						got += len(e)
+					}
+					cond.Broadcast()
+					hmu.Unlock()
+				}
+			}()
+		}
+		wgD.Wait()
+		if full {
+			bound(fmt.Sprintf("api_headers: stopped at %d lines, newest first", apiHeadersLineCap))
+		}
+	})
+
+	wg.Wait()
+	if aErr != nil {
+		return 0, aErr
 	}
-	slices := 0
-	e := endNs
-	for e > hdrOldest && slices < apiHeadersMaxSlices {
-		if time.Now().After(deadline) {
-			bounds = append(bounds, fmt.Sprintf("api_headers: section budget exhausted after %d slices (newest-first)", slices))
-			break
-		}
-		s := e - int64(apiHeadersSlice)
-		if s < hdrOldest {
-			s = hdrOldest
-		}
-		hs, err := q.query(
-			fmt.Sprintf(`{app="freegle", source="api_headers"} |= "%s" | json | user_id="%s"`, uidStr, uidStr),
-			s, e, perQuery)
-		if err != nil {
-			// Slices get SLOWER going deeper (measured 21s, 18s, then 40s+
-			// timeouts walking back through a heavy user's headers), so after
-			// one failure the rest can only burn the budget for nothing.
-			bounds = append(bounds, fmt.Sprintf("api_headers: stopped after %d slices (query failed: %v)", slices, err))
-			break
-		}
-		add(hs)
-		e = s
-		slices++
+	if skipped > 0 {
+		bound(fmt.Sprintf("section budget exhausted: %d queries skipped", skipped))
 	}
-	if e > hdrOldest && slices >= apiHeadersMaxSlices {
-		bounds = append(bounds, fmt.Sprintf("api_headers: capped at %d newest slices", apiHeadersMaxSlices))
+	if capped > 0 {
+		bound(fmt.Sprintf("%d queries hit the %d-line cap, so may be missing older lines", capped, perQuery))
 	}
 
 	for _, note := range bounds {
 		b.AddSection("loki_bounds", "warning", 0, note, 0)
 	}
+	b.AddSection("loki_not_collected", "skipped", 0, lokiNotCollected, 0)
 
 	if err := b.EnsureTable("loki_logs", `"ts" TEXT, "ts_ns" INTEGER, "source" TEXT, "line" TEXT`); err != nil {
 		return 0, err
@@ -388,4 +494,41 @@ func collectLoki(b *Builder, q lokiQuerier, userID uint64, emails []string, star
 		}
 	}
 	return len(all), nil
+}
+
+// labelledSourceGroups splits pass A by source, as LogQL matchers. api and
+// client are the two big ones; everything else labelled by member (chat_reply,
+// logs_table) is small and shares a query. api must stay first: pass D reads
+// the first group's lines as its index.
+var labelledSourceGroups = []string{`="api"`, `="client"`, `!~"api|client"`}
+
+// lokiNotCollected is recorded in _sections on every dump, so whoever reads it
+// knows these logs were never asked for rather than absent.
+const lokiNotCollected = "logged-out client lines are not in this dump: they carry no user, so " +
+	"finding them is a full-text scan of 7 days of logs. Use loki_search if a question needs them."
+
+// errLokiBudget is returned for a query the section budget stopped from starting.
+var errLokiBudget = errors.New("section budget exhausted")
+
+// lokiParallel caps how many Loki queries one dump has in flight, so a single
+// snapshot cannot swamp the Loki queriers.
+const lokiParallel = 6
+
+// lokiEmailQuery is pass B's single query for all of a member's addresses, or
+// "" when they have none.
+func lokiEmailQuery(emails []string) string {
+	var pre, alt []string
+	for _, em := range emails {
+		em = strings.TrimSpace(em)
+		if em == "" {
+			continue
+		}
+		pre = append(pre, `"`+escapeLokiString(strings.ToLower(em))+`"`)
+		alt = append(alt, escapeLokiRegex(em))
+	}
+	if len(pre) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(`{app="freegle", source=~"%s"} |= %s |~ "(?i)(%s)"`,
+		unlabelledSources, strings.Join(pre, " or "), strings.Join(alt, "|"))
 }

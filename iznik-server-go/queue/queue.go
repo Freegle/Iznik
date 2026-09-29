@@ -45,6 +45,11 @@ const (
 	// TaskUserForget immediately wipes a user's personal data (GDPR erasure).
 	// Queued by admin/support DELETE /user; processed by iznik-batch UserManagementService::forgetUser().
 	TaskUserForget = "user_forget"
+
+	// TaskConcernKeywordBackfill applies a newly created Freegle-wide 'block' concern keyword to the
+	// last 24 hours of chat messages and posts, which arrived before the keyword existed.
+	// Queued by CreateConcernKeyword; processed by iznik-batch BlockedKeywordBackfillService.
+	TaskConcernKeywordBackfill = "concern_keyword_backfill"
 )
 
 // QueueTask inserts a task into the background_tasks table for async processing by iznik-batch.

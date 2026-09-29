@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-06
+last_reviewed: 2026-09-29
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -12,6 +12,10 @@ covers:
   - iznik-nuxt3/composables/useClientLog.js
   - claude-agent-sdk/referral-mjml.js
   - claude-agent-sdk/referral-email.js
+  - iznik-server-go/userdump/userdump.go
+  - iznik-server-go/userdump/collect_db.go
+  - iznik-server-go/userdump/loki.go
+  - iznik-server-go/userdump/sentry.go
   - iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue
 ---
 
@@ -100,26 +104,46 @@ a real bound, not a hint:
   Mod2Mod and User2Mod chat on their groups (one real admin: 18,664 rooms, of which 332
   had any activity in 90 days), and pulling every message for all of them could not finish
   inside the caller's timeout — so that member could not be investigated at all.
+  The **roster** is the member's own row in every room plus everyone's rows in the
+  active rooms; the other members of old mod chats are left out (they were 112,609 of
+  one moderator's rows).
+- **Sections are collected concurrently** (`dumpWorkers` in `userdump.go`), heaviest
+  first, so the snapshot takes as long as its slowest section rather than the sum of
+  them. `_sections` rows are in completion order.
 - **Loki logs are clamped to 30 days** whatever `since` says, because production Loki
   rejects any `query_range` longer than `30d1h` outright.
-- **Loki collection runs in value order under a time budget** (`userdump/loki.go`):
-  the indexed member-id passes first, then the slim unlabelled sources and email passes
-  (each `|=`-prefiltered before any `| json`/regex, in 15-day halves), then two-leg
-  session lookups, and finally `api_headers` — the ~67GB/7d firehose — newest-first in
-  budget-capped 1.5-day slices. Anything the caps drop is recorded in `_sections` as
-  `loki_bounds`. The same prefilter-before-parse rule applies to every LogQL the helper
-  or `systemlogs` builds.
-- **A member's logs are addressed two ways, and both are asked** (changed 2026-08-23).
-  Entries written before that carry `user_id` as a Loki stream label; later ones carry a
-  coarse `user_bucket` label plus the exact `user_id` as structured metadata, because
-  `user_id` had far too many values to be a label and was silently discarding entries.
-  Both the dump and the helper query both forms and merge; they are disjoint, so nothing
-  double-counts. Until nothing older than the change is left in retention, **dropping
-  either leg silently returns a partial answer**. See
+- **Loki collection runs every pass at once under a time budget** (`userdump/loki.go`,
+  at most `lokiParallel` queries in flight): the member's labelled lines by `user_bucket`
+  plus `user_id`, one query per source group (`api`, `client`, the rest) so the busiest
+  source cannot fill the line cap and crowd out the others; the slim unlabelled sources;
+  and all the member's emails in **one** query (each `|=`-prefiltered before any
+  `| json`/regex, in 15-day halves). The same prefilter-before-parse rule applies to every
+  LogQL the helper or `systemlogs` builds. Anything the caps drop is recorded in
+  `_sections` as `loki_bounds`.
+- **`api_headers` is searched only where the member was active.** It has no member label,
+  so a 7-day search of the ~67GB firehose was a full-text scan (~40-50s). But each request
+  writes exactly one `api` line and one `api_headers` line, together, and the dump has
+  just fetched the member's `api` lines by index: they give the minutes to search and how
+  many header lines each window holds. An ordinary member measured 27s -> 1s with nothing
+  missed. A member active all week fills the `api` line cap, so their headers cover only
+  the period of their newest 5,000 requests, and the dump says so.
+- **Logged-out client lines are not in the dump.** They carry no user at all, so finding
+  them is a full-text scan of seven days of client logs. The dump says so in `_sections`
+  (`loki_not_collected`), and the system prompt points the agent at `loki_search`.
+- **A member's logs are addressed two ways** (changed 2026-08-23). Entries written before
+  that carry `user_id` as a Loki stream label; later ones carry a coarse `user_bucket`
+  label plus the exact `user_id` as structured metadata, because `user_id` had far too
+  many values to be a label and was silently discarding entries. The dump asks only for
+  the bucketed form: it reads the last 30 days, all written after the change, and the
+  old-form queries returned nothing for 3-5s each. The helper's `loki_search`, which can
+  look further back, still asks for both. See
   [../../ops/reference/logging.md](../../ops/reference/logging.md).
 - Anything the dump had to bound is recorded in its **`_sections`** table with
   `status='warning'` and a note. Read it before concluding "there is nothing there" — an
   empty table can mean *not collected*, not *did not happen*.
+- **Sentry is two org-wide searches**, by `user.id` and by all emails as one
+  `user.email:[a,b]` list, across every project. Freegle's Sentry events do not
+  currently set `user.email` at all, so in practice matches come from the id.
 - The helper downloads the dump with **`format=framed`** (see
   `iznik-server-go/userdump/frame.go`): the server flushes a progress frame per section
   plus a 15s heartbeat during long sections, so the prod API LB's 50s idle timeout never
@@ -177,7 +201,10 @@ yet), then again from `stores/mobile.js` (which also owns deep-link handling, se
 app page) `logAppSession()` once `App.getInfo()` and
 `Device.getInfo()` have answered. Both carry the same `session_id`, so `dedupeSessions()`
 merges them into one record — keeping the session count honest and making the app version
-independent of the order Loki returns the lines in.
+independent of the order Loki returns the lines in. The same native answers are set as
+Sentry tags (`os.version.exact`, `device.model.exact`, `app.version`, `app.build`), because
+the user agent only gives Sentry the OS minor version and a device-specific fault needs the
+patch level and model.
 
 ## Refer to geeks
 
@@ -189,8 +216,9 @@ investigation over by email, so nobody has to retype the story.
 the member, the device summary, every message, the running totals and the volunteer's
 **referral text** — which is required, because a transcript with no statement of what the
 volunteer wants doing about it is not a referral. It emails `GEEKS_EMAIL`
-(`geeks@ilovefreegle.org`) with **Reply-To set to the referring volunteer**, so a reply
-goes back to the person who actually saw the problem.
+(`geeks@ilovefreegle.org`) with **Reply-To set to `SUPPORT_ADDR`** (`support@ilovefreegle.org`),
+so a reply lands in the support mailbox where the whole support team sees it, rather than
+in one volunteer's personal inbox. The referring volunteer is named in the email body.
 
 Every referral gets a short reference — `SR-XXXXX`, generated **server-side** so the client
 cannot choose or reuse one. It appears in the subject line, the email body, an

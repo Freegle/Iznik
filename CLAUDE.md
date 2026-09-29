@@ -21,7 +21,7 @@ are plain markdown and worth reading directly if you are new to an area.
 | `.claude/rules/frontend-traps.md` | `iznik-nuxt3/**/*.{vue,js,mjs}` |
 | `.claude/rules/tests-and-ci.md` | `.circleci/**`, the four test trees, `status-nuxt/**` |
 | `.claude/rules/dev-containers.md` | `docker-compose*.yml`, `scripts/**`, `freegle`, `.env*` |
-| `.claude/rules/rippling.md` | the Ripple services and commands, `iznik-server-go/rippling/**` |
+| `.claude/rules/rippling.md` | the Ripple services and commands, `iznik-server-go/rippling/**`, the content check and auto-approve |
 | `.claude/rules/modtools.md` | `iznik-nuxt3/modtools/**`, the Go user and chat packages |
 | `.claude/rules/browse-and-search.md` | the Browse pages and map, `isochrone/**`, `message/**` |
 | `.claude/rules/mail-and-data.md` | `iznik-batch/app/Mail/**`, the digest services, mail views |
@@ -55,6 +55,7 @@ Canonical documentation lives in **[`docs/`](docs/README.md)**, organised by aud
 - **Status container**: Restart after code changes (`docker restart status`).
 - **Compose check**: Stop all containers, prune, rebuild, restart, monitor via status container.
 - **Profiles**: Set `COMPOSE_PROFILES` in `.env`. Local dev: `frontend,database,backend,dev,monitoring`. See `docker-compose.yml` for profile definitions.
+- **Database in memory**: `PERCONA_STORAGE=ram` (the default) keeps percona's data in a memory-backed volume, because schema changes on the WSL disk are about 85x slower. Anything that stops percona empties it: rerun `scripts/setup-test-database.sh` (about 30s). `PERCONA_STORAGE=disk` uses the persistent volume. Yesterday is always on disk.
 - **Networking**: No hardcoded IPs. Traefik handles `.localhost` routing via network aliases. Playwright uses Docker default network.
 - **Playwright tests**: Run against **production container**. If debugging failures, check for container reload triggers — add to pre-optimization in `nuxt.config.js`.
 - Container changes are lost on restart — always make changes locally too.

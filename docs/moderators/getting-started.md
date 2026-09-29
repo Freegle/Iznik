@@ -1,14 +1,17 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-25
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/index.vue
+  - iznik-nuxt3/modtools/pages/discourse.vue
+  - iznik-server-go/sso/discourse.go
   - iznik-nuxt3/modtools/layouts/**
   - iznik-nuxt3/modtools/composables/useMe.js
   - iznik-nuxt3/modtools/pages/teams.vue
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-modtools-login.spec.js
   - iznik-nuxt3/tests/e2e/test-modtools-dashboard.spec.js
+  - iznik-server-go/test/discourse_sso_test.go
 ---
 
 # Getting started as a moderator
@@ -92,6 +95,12 @@ This is separate from a community's settings, which are covered in
 The **Us** link in ModTools signs you into the volunteers' **Discourse** forum, where
 moderators discuss issues, share advice and keep up with Freegle-wide news. For anything
 urgent, `mentors@ilovefreegle.org` reaches experienced volunteers who can help.
+
+The forum is for moderators only, so the sign-in checks that your account holds an owner or
+moderator role on at least one community. If it does not - for example after you have stepped
+down from your only community - the link shows a message saying so instead of signing you in;
+ask an owner of your community to restore your role. If ModTools cannot verify your session,
+it asks you to log out and log in again before trying the link again.
 
 ## Next steps
 

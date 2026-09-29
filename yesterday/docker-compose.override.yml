@@ -139,8 +139,14 @@ services:
     # Access controlled via GCP firewall rules
     ports:
       - "3306:3306"
+    # Always on disk. The base file defaults percona to an in-memory data directory
+    # (PERCONA_STORAGE=ram), which would lose the restored production database and
+    # could not hold it anyway. These two mounts replace the base ones by target, so
+    # this holds whatever PERCONA_STORAGE is set to in .env.
     volumes:
+      - freegle_db:/var/lib/mysql
       - ./conf/percona-my.cnf:/etc/my.cnf:ro
+      - ./conf/percona-disk.cnf:/etc/mysql/my.cnf:ro
 
   phpmyadmin:
     networks:
@@ -290,20 +296,6 @@ services:
       - "traefik.http.services.modtools-prod.loadbalancer.server.port=3000"
     environment:
       - USER_SITE=https://${YESTERDAY_HOSTNAME}:3013
-    deploy:
-      replicas: 0
-
-  # MCP containers disabled on Yesterday - port 8084 conflicts with 2FA gateway
-  # and MCP functionality is not needed for the Yesterday backup/restore system
-  mcp-query-sanitizer:
-    deploy:
-      replicas: 0
-
-  mcp-pseudonymizer:
-    deploy:
-      replicas: 0
-
-  mcp-interface:
     deploy:
       replicas: 0
 

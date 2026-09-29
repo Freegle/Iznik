@@ -47,6 +47,26 @@ It is not working around a fixed iOS bug. With `autocapitalize="sentences"`, iOS
 at the start of a sentence, so Return reports `shiftKey: true` and our send-on-enter handlers
 treat it as a newline. The keyboard is behaving as designed; the attribute is the fix.
 
+## A range input moves its value on a press anywhere on the track
+
+`<input type="range">` jumps the handle to wherever the track is pressed. On a phone that makes
+the beginning of a scroll indistinguishable from a deliberate adjustment, so members found their
+ChitChat distance had changed and nothing said why.
+
+It is easy to fix the wrong half of this. `touch-action: pan-y` and a `preventDefault` on wheel
+both look like the cause, both are worth having, and neither stops a plain press on the track
+from moving the handle. The suite passed after that first attempt and the complaint stayed.
+
+`RangeSlider.vue` covers the track either side of the handle with two inert divs, leaving a gap
+around the handle, so the only press the input can receive is one on the handle itself. The gap
+is positioned from the same fraction the browser lays the handle out with, and sized from the
+same custom property that sizes the handle, so the two cannot drift apart. Change the handle
+size in `--range-slider-thumb` and nowhere else.
+
+Unit tests cannot see any of this: jsdom has no layout, so the covers are in the DOM in the
+right order whatever their geometry would really be. Check it in a browser, with
+`document.elementFromPoint` at the handle and at both ends of the track.
+
 ## Enter bound twice sends twice
 
 A comment box bound `keydown.enter` on the wrapping element **and** `keyup.enter` on the
@@ -83,6 +103,36 @@ too. Check before adding a watcher, an observer, or an interval.
 Chat has three header implementations and the one members actually see is inline markup, not the
 component named `ChatHeader`, which is ModTools only. Changing the obvious file changes nothing
 for members.
+
+## A widget a third party draws for us can fail without saying so
+
+`LoginModal` leaves an empty element for Google to draw the sign-in button into, and Facebook's
+SDK decides whether its button is usable. Neither tells us when it goes wrong, and both go wrong
+in the field: Facebook login was dead on the iOS app for five days in August 2026, and in
+September 2026 a member's login screen had no Google button at all, because Google's script never
+delivered one.
+
+The shape to avoid is asking a third party to draw something and then trusting that it did.
+**Check the result, retry, and report**: `drawGoogleButton` measures the element afterwards, so a
+button never drawn and a button drawn too small to use are both caught. Code that only checks the
+call returned cannot tell either from success.
+
+Three things make this worse than it sounds:
+
+- **An empty container is not necessarily blank.** `.social-button--google` carries
+  `border: 1px solid` and `min-height: 42px`, and sits in a centred column, so an empty one
+  shrink-wraps to a **1px wide, 42px tall grey line**. That is what the member photographed. It
+  reads as a broken button rather than a missing one, which sends you looking for why Google drew
+  it wrong instead of why Google drew nothing. Reproduce the empty state and measure it before
+  believing either story.
+
+- **A flag that nothing ever sets reads as "never blocked".** `showSocialLoginBlocked` was
+  declared, read in two computed properties, and assigned nowhere, so the "social sign in
+  blocked" warning could not appear for Google however broken it was.
+
+- **Waiting is not failing.** The script is deliberately held back until the browser is idle for
+  a first-time visitor, so a retry loop that counts those ticks as attempts will report every
+  slow visitor as broken. Only count an attempt when we actually asked.
 
 ## Libraries and packaging
 

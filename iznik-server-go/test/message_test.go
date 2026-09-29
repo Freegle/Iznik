@@ -13,6 +13,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/queue"
@@ -254,14 +255,31 @@ func TestCrossPost_FullReadSurface(t *testing.T) {
 	// Posted + approved on group A (helper adds messages_groups/spatial/index for A).
 	msgID := CreateTestMessage(t, posterID, groupA, subject, lat, lng)
 
-	// Cross-post to group B: approved messages_groups + per-group word index. Under the
-	// one-row spatial model messages_spatial keeps a single row per message (UNIQUE(msgid));
-	// the cross-post's group membership lives in messages_groups, which browse/search join through.
+	// Cross-post to group B. Under the one-row spatial model messages_spatial keeps
+	// a single row per message (UNIQUE(msgid)); the cross-post's group membership
+	// lives in messages_groups, which browse/search join through.
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
-	indexMessageWords(t, db, msgID, groupB, subject)
+
+	// Seed the embedding store so the pure-vector search can find the post. The
+	// store holds one entry per message keyed to its single spatial group (A) —
+	// search is spatial-reach based, so the post is found via group A's area, not
+	// via its group-B cross-post membership.
+	embedding.ResetQueryCache()
+	crossVec := makeTestVec(1.0)
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: msgID, Groupid: groupA, Msgtype: "Offer", Lat: lat, Lng: lng,
+			Subject: subject, Arrival: time.Now(), SubjectVec: crossVec},
+	})
+	crossSidecar := mockSidecarReturning(t, crossVec[:])
+	embedding.SetSidecarURL(crossSidecar.URL)
+	t.Cleanup(func() {
+		embedding.Global.SetEntries(nil)
+		embedding.SetSidecarURL("")
+		embedding.ResetQueryCache()
+		crossSidecar.Close()
+	})
 
 	defer func() {
-		db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
@@ -306,11 +324,12 @@ func TestCrossPost_FullReadSurface(t *testing.T) {
 	}
 	assert.Equal(t, 1, browseCount, "cross-post should appear once in mygroups browse")
 
-	// 4. Search must find the cross-post when filtering by EITHER group — this is the
-	//    crux of the per-group spatial fix: before it, only one group had a spatial row,
-	//    so a search filtered to the OTHER group returned nothing. The endpoint dedups by
-	//    msgid (across its exact + starts-with passes and across per-group spatial rows),
-	//    so the message must be returned exactly once each time.
+	// 4. Search is spatial-reach based (Edward, 2026-07): a post is found via the
+	//    area of its single spatial group, not on every group it was cross-posted
+	//    or rippled into. The store holds one entry keyed to group A (the spatial
+	//    group), so a search filtered to group A finds it exactly once, and a
+	//    search filtered to group B (a non-spatial cross-post membership) does not.
+	//    This replaces the retired keyword index's per-(msgid,groupid) behaviour.
 	searchCount := func(groupid uint64) int {
 		u := fmt.Sprintf("/api/message/search/%s?groupids=%d&jwt=%s", searchWord, groupid, viewerToken)
 		r, e := getApp().Test(httptest.NewRequest("GET", u, nil))
@@ -326,8 +345,8 @@ func TestCrossPost_FullReadSurface(t *testing.T) {
 		}
 		return c
 	}
-	assert.Equal(t, 1, searchCount(groupA), "cross-post must be searchable on group A exactly once")
-	assert.Equal(t, 1, searchCount(groupB), "cross-post must be searchable on group B exactly once (via the messages_groups join)")
+	assert.Equal(t, 1, searchCount(groupA), "cross-post is searchable on its spatial group A exactly once")
+	assert.Equal(t, 0, searchCount(groupB), "cross-post is NOT searchable on the non-spatial group B (spatial-reach search)")
 }
 
 // TestCrossPost_SingleGroupBrowse verifies a message cross-posted to group B still appears in
@@ -4519,6 +4538,79 @@ func TestPostMessageAddBy(t *testing.T) {
 	var availNow int
 	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&availNow)
 	assert.Equal(t, 3, availNow)
+}
+
+// An ordinary post no longer asks how many each person took, so AddBy arrives with no
+// count. Recording a taker must not invent one: the old default of 1 decremented
+// availablenow per taker, which drifted away from reality one person at a time and was
+// invisible because the badge stopped showing the number.
+func TestPostMessageAddByWithoutCountLeavesTheNumberAlone(t *testing.T) {
+	prefix := uniquePrefix("msgw_addby_nocount")
+	db := database.DBConn
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	db.Exec("UPDATE messages SET availableinitially = 5, availablenow = 5 WHERE id = ?", msgID)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "AddBy",
+		"userid": takerID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var availNow int
+	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&availNow)
+	assert.Equal(t, 5, availNow, "an uncounted taker must not change the number left")
+
+	var rows int
+	db.Raw("SELECT COUNT(*) FROM messages_by WHERE msgid = ? AND userid = ?", msgID, takerID).Scan(&rows)
+	assert.Equal(t, 1, rows, "the taker is still recorded")
+}
+
+// A post part-taken under the old flow carries a count somebody entered deliberately.
+// Recording that person again without a count must not rewrite it to nothing.
+func TestPostMessageAddByWithoutCountKeepsAnEarlierCount(t *testing.T) {
+	prefix := uniquePrefix("msgw_addby_keep")
+	db := database.DBConn
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	db.Exec("UPDATE messages SET availableinitially = 5, availablenow = 3 WHERE id = ?", msgID)
+	db.Exec("INSERT INTO messages_by (userid, msgid, count) VALUES (?, ?, 2)", takerID, msgID)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "AddBy",
+		"userid": takerID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var byCount int
+	db.Raw("SELECT count FROM messages_by WHERE msgid = ? AND userid = ?", msgID, takerID).Scan(&byCount)
+	assert.Equal(t, 2, byCount, "a count entered under the old flow is left as it was")
+
+	var availNow int
+	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&availNow)
+	assert.Equal(t, 3, availNow, "and the number left is untouched")
 }
 
 func TestPostMessageAddByUpdate(t *testing.T) {
@@ -9129,6 +9221,28 @@ func TestPostMessageBackToPendingPullsAllGroups(t *testing.T) {
 			msgID, gid, modID).Scan(&holdLogs)
 		assert.Equal(t, int64(1), holdLogs, "group %d should carry exactly one Hold log for the back to pending", gid)
 	}
+
+	// Every copy pulled back waits for a moderator: the flag stops the content check and
+	// auto-approve putting it back live (122011064, 121796333).
+	for _, gid := range []uint64{groupA, groupB} {
+		var needs int
+		db.Raw("SELECT needs_moderator FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, gid).Scan(&needs)
+		assert.Equal(t, 1, needs, "group %d copy should need a moderator after back to pending", gid)
+	}
+
+	// A moderator approving a copy clears its flag, and only that copy's.
+	approveBody, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Approve", "groupid": groupB})
+	req3 := httptest.NewRequest("POST", url2, bytes.NewBuffer(approveBody))
+	req3.Header.Set("Content-Type", "application/json")
+	resp3, err3 := getApp().Test(req3)
+	assert.NoError(t, err3)
+	assert.Equal(t, 200, resp3.StatusCode)
+
+	var needsA, needsB int
+	db.Raw("SELECT needs_moderator FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&needsA)
+	db.Raw("SELECT needs_moderator FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&needsB)
+	assert.Equal(t, 1, needsA, "group A still waits for its own moderator")
+	assert.Equal(t, 0, needsB, "approving group B clears its flag")
 }
 
 func TestPostMessageHoldPerGroupLogsCorrectGroup(t *testing.T) {

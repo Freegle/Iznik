@@ -231,6 +231,8 @@ class ExpandService
             'initialized' => 0, 'expanded' => 0, 'completed' => 0,
             'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0, 'mailed' => 0,
             'memberships_added' => 0, 'pulled_on_leave' => 0,
+            'pulled_on_removal' => 0, 'memberships_removed' => 0,
+            'tn_duplicate_sat_out' => 0,
             'pulled_on_removal' => 0, 'memberships_removed' => 0, 'timeboxed' => 0,
         ];
 
@@ -1100,6 +1102,78 @@ class ExpandService
         return $stats;
     }
 
+    /**
+     * When each reposted post first went live, for posts whose reach should carry on across a
+     * member's own repost.
+     *
+     * The repost turns the post back into a draft, which removes every copy and then the reach
+     * row, so there is nothing left to resume from; the post's log is the only record of how
+     * long it has been live. Walked in order, a "run" of the post starts at its first Received
+     * and continues through reposts that come within repost_keeps_reach_days of it last being
+     * live (Received, Approved, Autoapproved or Autoreposted). A longer gap starts a new run.
+     * The run starts at its first approval, or at its first Received on a community that does
+     * not moderate and so logs no approval.
+     *
+     * @param  int[]  $msgids
+     * @return array<int, Carbon> msgid => start, only for posts reposted within the current run
+     */
+    private function repostCarriedArrivals(array $msgids): array
+    {
+        $days = (int) config('freegle.ripple.repost_keeps_reach_days', 7);
+        if ($days <= 0 || empty($msgids)) {
+            return [];
+        }
+
+        $events = DB::table('logs')
+            ->whereIn('msgid', $msgids)
+            ->where('type', 'Message')
+            ->whereIn('subtype', ['Received', 'Approved', 'Autoapproved', 'Autoreposted', 'Repost'])
+            ->orderBy('msgid')
+            ->orderBy('timestamp')
+            ->orderBy('id')
+            ->get(['msgid', 'subtype', 'timestamp'])
+            ->groupBy('msgid');
+
+        $carried = [];
+        foreach ($events as $msgid => $list) {
+            $received = null;
+            $approved = null;
+            $lastLive = null;
+            $repostedInRun = false;
+
+            foreach ($list as $e) {
+                $at = Carbon::parse($e->timestamp);
+                if ($e->subtype === 'Repost') {
+                    if ($lastLive === null || $lastLive->lt($at->copy()->subDays($days))) {
+                        // Not live for too long: this repost begins a new run.
+                        $received = null;
+                        $approved = null;
+                        $repostedInRun = false;
+                    } else {
+                        $repostedInRun = true;
+                    }
+                    continue;
+                }
+
+                $lastLive = $at;
+                if ($e->subtype === 'Received') {
+                    $received ??= $at;
+                } elseif (!$repostedInRun && in_array($e->subtype, ['Approved', 'Autoapproved'], true)) {
+                    // Only the approval that first put the run live; a re-approval after a
+                    // repost is exactly the restart this undoes.
+                    $approved ??= $at;
+                }
+            }
+
+            $start = $approved ?? $received;
+            if ($repostedInRun && $start !== null) {
+                $carried[(int) $msgid] = $start;
+            }
+        }
+
+        return $carried;
+    }
+
     private function initialiseNew(bool $dryRun, int $limit, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
     {
         // Go-live flood guard: only posts that arrived on or after the configured
@@ -1166,11 +1240,26 @@ class ExpandService
                     MIN(ms.arrival) AS arrival
              FROM messages_spatial ms
              LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid
-             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . $satSql . $optOutSql . '
+             WHERE mr.msgid IS NULL
+               AND EXISTS (
+                   SELECT 1 FROM messages_groups o
+                    WHERE o.msgid = ms.msgid AND o.rippled_in = 0
+                      AND o.deleted = 0 AND o.collection = \'Approved\'
+               )' . $scopeSql . $cutoffSql . $satSql . $optOutSql . '
              GROUP BY ms.msgid
              LIMIT ?',
             $params
         );
+
+        // A member's own repost is re-approved as if new, so without this its reach would start
+        // again at tick 1 and hide it from people it had already reached.
+        $carried = $this->repostCarriedArrivals(array_map(fn ($r) => (int) $r->msgid, $rows));
+        foreach ($rows as $row) {
+            $start = $carried[(int) $row->msgid] ?? null;
+            if ($start !== null && $row->arrival !== null && $start->lt(Carbon::parse($row->arrival))) {
+                $row->arrival = $start->format('Y-m-d H:i:s');
+            }
+        }
 
         // ── Phase 1: compute reach schedules CONCURRENTLY, deduped by blurred origin ──
         //
@@ -1578,7 +1667,7 @@ class ExpandService
                     $satStop = (int) config('freegle.ripple.reply_saturation_stop', 5);
                     if ($satStop > 0 && $this->distinctReplierCount((int) $row->msgid) >= $satStop) {
                         if (!$dryRun) {
-                            DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                            DB::table('rippling_reach')->where('msgid', $row->msgid)->where('status', '<>', 'held')->update([
                                 'status' => 'done',
                                 'next_expansion_at' => null,
                                 'updated_at' => now(),
@@ -1597,7 +1686,7 @@ class ExpandService
                     // keeps rippling into new groups for a tick or two after the outcome is recorded.
                     if ($this->hasTerminalOutcome((int) $row->msgid)) {
                         if (!$dryRun) {
-                            DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                            DB::table('rippling_reach')->where('msgid', $row->msgid)->where('status', '<>', 'held')->update([
                                 'status' => 'done',
                                 'next_expansion_at' => null,
                                 'updated_at' => now(),
@@ -1628,7 +1717,7 @@ class ExpandService
                         // Not actually due for a new tick yet — reschedule and move on.
                         if (!$dryRun) {
                             $next = $this->reach->nextExpansionAfter($arrival, (int) $row->tick, $total);
-                            DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                            DB::table('rippling_reach')->where('msgid', $row->msgid)->where('status', '<>', 'held')->update([
                                 'next_expansion_at' => $next,
                                 'status' => $next === null ? 'done' : 'expanding',
                                 'updated_at' => now(),
@@ -1734,7 +1823,7 @@ class ExpandService
                          SET updated_at = NOW()' . $gridSet . $set . ',
                              reachable_group_ids = COALESCE(?, reachable_group_ids),
                              tick = ?, next_expansion_at = ?, status = ?
-                         WHERE msgid = ?';
+                         WHERE msgid = ? AND status <> \'held\'';
                     $advanceTail = [$this->tickReachableIdsJson($entry), $target, $next, $status, $row->msgid];
                     $advanceStore = function (string $wkt) use ($advanceSql, $advanceTail, $retired): void {
                         if ($retired) {
@@ -1892,12 +1981,28 @@ class ExpandService
                 return;
             }
 
+            // Only a post that is live and Approved on its home group ripples. messages_spatial
+            // keeps a post for up to five minutes after it is moved back to Pending, and a
+            // freeze is a no-op on a post whose reach has not been created yet, so neither
+            // can be trusted to stop an unapproved post going out (121999685).
+            if (!$this->originIsApproved($msgid)) {
+                return;
+            }
+
             // A TrashNothing item cross-posted to several groups is one message, so it
             // ripples like any other. Copies predating that are still in the database and
             // would each ripple on their own account, reaching people once per copy, so a
             // message sharing its post id with another live one sits out until
             // tn:merge-crossposts has collapsed the set. Self-limiting: once a set is
             // merged there is nothing to match and this never fires again.
+            //
+            // Note this is decided by what the database holds, NOT by
+            // freegle.trashnothing.ingest_posts_via_api: during the cutover an API-ingested
+            // message can land beside unmerged email-era copies of the same item and sits out
+            // exactly like any other member of such a set - flipping the flag does not release
+            // it, collapsing the set does. Counted as tn_duplicate_sat_out so a cutover window
+            // where that is happening at volume shows up in `ripple:expand complete` rather
+            // than being invisible; the fix is to run tn:merge-crossposts, not to change this.
             $sharesTnPostId = DB::table('messages')
                 ->join('messages as other', function ($join) {
                     $join->on('other.tnpostid', '=', 'messages.tnpostid')
@@ -1910,6 +2015,7 @@ class ExpandService
                 ->exists();
 
             if ($sharesTnPostId) {
+                $stats['tn_duplicate_sat_out'] = ($stats['tn_duplicate_sat_out'] ?? 0) + 1;
                 return;
             }
 
@@ -3031,6 +3137,20 @@ class ExpandService
             "SELECT COUNT(DISTINCT userid) AS n FROM chat_messages WHERE refmsgid = ? AND type = 'Interested'",
             [$msgid]
         )->n ?? 0);
+    }
+
+    /**
+     * True when the post has a live Approved copy on a group it was posted to directly (not
+     * rippled into). Same test as FreezeReachIfOriginPending in iznik-server-go.
+     */
+    private function originIsApproved(int $msgid): bool
+    {
+        return DB::table('messages_groups')
+            ->where('msgid', $msgid)
+            ->where('rippled_in', 0)
+            ->where('deleted', 0)
+            ->where('collection', \App\Models\MessageGroup::COLLECTION_APPROVED)
+            ->exists();
     }
 
     /**

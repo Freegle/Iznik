@@ -22,8 +22,9 @@
       </li>
       <li>
         The <strong>distance slider</strong> lets you limit how far away posts
-        can come from - drag it towards "Nearer" to see only closer posts, or
-        leave it at "Further" to see everything that reaches you.
+        can come from, by road rather than as the crow flies - drag it towards
+        "Nearer" to see only closer posts, or leave it at "Further" to see
+        everything that reaches you.
       </li>
     </ul>
     <p>
@@ -47,9 +48,12 @@
       <strong>distance slider</strong>
       - both here above the map and in your
       <nuxt-link no-prefetch to="/settings">settings</nuxt-link> under
-      <strong>Feed</strong>. Anything further away than that won't show up on
-      Browse or in the emails we send you. Drag towards "Further" to cast a
-      wider net, or "Nearer" to keep things local.
+      <strong>Feed</strong>. Distance is measured by road, as how long it takes
+      to get there, not in a straight line: somewhere across a river or an
+      estuary can be close as the crow flies but a long way round. Anything
+      further away than that won't show up on Browse or in the emails we send
+      you. Drag towards "Further" to cast a wider net, or "Nearer" to keep
+      things local.
     </p>
     <h5>Why is my post shown to only some people nearby?</h5>
     <p>

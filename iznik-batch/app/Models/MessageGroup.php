@@ -25,6 +25,7 @@ use OwenIt\Auditing\Contracts\Auditable;
  * @property \Illuminate\Support\Carbon|null $approvedat
  * @property \Illuminate\Support\Carbon|null $rejectedat
  * @property string|null $msgtype In here for performance optimisation
+ * @property bool $mod_messaging_allowed Whether mods on this group may message the poster of this message directly; defaults to true, false only for e.g. non-consenting TN posters
  * @property-read \App\Models\User|null $approvedBy
  * @property-read \App\Models\Group $group
  * @property-read \App\Models\Message $message
@@ -43,6 +44,7 @@ use OwenIt\Auditing\Contracts\Auditable;
  * @method static Builder<static>|MessageGroup whereGroupid($value)
  * @method static Builder<static>|MessageGroup whereLastautopostwarning($value)
  * @method static Builder<static>|MessageGroup whereLastchaseup($value)
+ * @method static Builder<static>|MessageGroup whereModMessagingAllowed($value)
  * @method static Builder<static>|MessageGroup whereMsgid($value)
  * @method static Builder<static>|MessageGroup whereMsgtype($value)
  * @method static Builder<static>|MessageGroup whereRejectedat($value)
@@ -79,6 +81,7 @@ class MessageGroup extends Model implements Auditable
         'rejectedat' => 'datetime',
         'deleted' => 'boolean',
         'senttoyahoo' => 'boolean',
+        'mod_messaging_allowed' => 'boolean',
         'autoreposts' => 'integer',
     ];
 

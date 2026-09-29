@@ -41,8 +41,11 @@ func buildAMPURL(path string, userID uint64, chatID uint64, exp int64, token str
 func CreateTestEmailTracking(t *testing.T, userID uint64) uint64 {
 	db := database.DBConn
 
-	// Generate unique tracking ID
-	trackingUUID := fmt.Sprintf("test_%d_%d", userID, time.Now().UnixNano())
+	// Generate unique tracking ID. tracking_id is VARCHAR(32); base36-encode
+	// so it stays short even as test userIDs and nanosecond timestamps grow.
+	trackingUUID := fmt.Sprintf("t%s%s",
+		strconv.FormatUint(userID, 36),
+		strconv.FormatInt(time.Now().UnixNano(), 36))
 
 	result := db.Exec(`
 		INSERT INTO email_tracking (tracking_id, userid, email_type, recipient_email, sent_at)
@@ -562,119 +565,6 @@ func TestAMPChatRosterMembershipScan(t *testing.T) {
 	assert.Equal(t, uint64(0), notMemberUserID, "Should return 0 for non-member")
 }
 
-// TestAMPPostChatReply_ProcessingRequired verifies that a message inserted via
-// PostChatReply has processingrequired=1 and processingsuccessful=0 so
-// ChatProcessService picks it up and queues push/mobile notifications.
-// Before the fix the INSERT set processingsuccessful=1 and omitted
-// processingrequired, causing push notifications to be silently dropped.
-func TestAMPPostChatReply_ProcessingRequired(t *testing.T) {
-	ampSecret := os.Getenv("AMP_SECRET")
-	if ampSecret == "" {
-		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
-	}
-	if ampSecret == "" {
-		t.Fatal("AMP_SECRET not set")
-	}
-
-	prefix := uniquePrefix("ampprocreq")
-	groupID := CreateTestGroup(t, prefix)
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
-
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
-	CreateTestChatRoster(t, chatID, user1ID)
-	CreateTestChatRoster(t, chatID, user2ID)
-
-	exp := time.Now().Unix() + 3600
-	token := generateAMPToken(user1ID, chatID, exp, ampSecret)
-
-	body := map[string]string{"message": "AMP reply for processing check"}
-	bodyBytes, _ := json2.Marshal(body)
-
-	url := fmt.Sprintf("/amp/chat/%d/reply?rt=%s&uid=%d&exp=%d", chatID, token, user1ID, exp)
-	request := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
-	request.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(request)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var response amp.ReplyResponse
-	json2.Unmarshal(rsp(resp), &response)
-	assert.True(t, response.Success)
-
-	// Verify the inserted message has processingrequired=1 and processingsuccessful=0.
-	db := database.DBConn
-	type msgFlags struct {
-		Processingrequired   bool
-		Processingsuccessful bool
-	}
-	var flags msgFlags
-	db.Raw(
-		"SELECT processingrequired, processingsuccessful FROM chat_messages "+
-			"WHERE chatid = ? AND message = ? ORDER BY id DESC LIMIT 1",
-		chatID, "AMP reply for processing check",
-	).Scan(&flags)
-
-	assert.True(t, flags.Processingrequired, "processingrequired should be 1 so ChatProcessService queues push notifications")
-	assert.False(t, flags.Processingsuccessful, "processingsuccessful should be 0 (not yet processed)")
-}
-
-// TestAMPPostChatReply_ClosedRosterReopened verifies that posting an AMP chat
-// reply reopens CLOSED roster entries so the reply becomes visible in the
-// recipient's chat list.  Before the fix PostChatReply omitted the UPDATE,
-// leaving a CLOSED status unchanged.
-func TestAMPPostChatReply_ClosedRosterReopened(t *testing.T) {
-	ampSecret := os.Getenv("AMP_SECRET")
-	if ampSecret == "" {
-		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
-	}
-	if ampSecret == "" {
-		t.Fatal("AMP_SECRET not set")
-	}
-
-	prefix := uniquePrefix("amprosterreopen")
-	groupID := CreateTestGroup(t, prefix)
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
-
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
-	CreateTestChatRoster(t, chatID, user1ID)
-	CreateTestChatRoster(t, chatID, user2ID)
-
-	// Set the recipient's (user2) roster status to Closed before the AMP reply.
-	db := database.DBConn
-	db.Exec("UPDATE chat_roster SET status = 'Closed' WHERE chatid = ? AND userid = ?", chatID, user2ID)
-
-	var statusBefore string
-	db.Raw("SELECT status FROM chat_roster WHERE chatid = ? AND userid = ?", chatID, user2ID).Scan(&statusBefore)
-	assert.Equal(t, "Closed", statusBefore, "pre-condition: user2 roster should be Closed before AMP reply")
-
-	// user1 sends an AMP reply.
-	exp := time.Now().Unix() + 3600
-	token := generateAMPToken(user1ID, chatID, exp, ampSecret)
-
-	body := map[string]string{"message": "AMP reply to reopen closed chat"}
-	bodyBytes, _ := json2.Marshal(body)
-
-	url := fmt.Sprintf("/amp/chat/%d/reply?rt=%s&uid=%d&exp=%d", chatID, token, user1ID, exp)
-	request := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
-	request.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(request)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var response amp.ReplyResponse
-	json2.Unmarshal(rsp(resp), &response)
-	assert.True(t, response.Success)
-
-	// Verify user2's roster status was flipped from Closed to Offline.
-	var statusAfter string
-	db.Raw("SELECT status FROM chat_roster WHERE chatid = ? AND userid = ?", chatID, user2ID).Scan(&statusAfter)
-	assert.Equal(t, "Offline", statusAfter, "CLOSED roster should be reopened to Offline after AMP reply")
-}
-
 func TestAMPAllowedSenderDomains(t *testing.T) {
 	// Test various sender domains
 	testCases := []struct {
@@ -701,4 +591,68 @@ func TestAMPAllowedSenderDomains(t *testing.T) {
 			assert.NotEqual(t, fiber.StatusForbidden, resp.StatusCode, "Sender %s should be allowed", tc.sender)
 		}
 	}
+}
+
+// A reply sent from inside a chat notification email is created exactly as a reply made
+// on the site is: flagged for chats:process-incoming, invisible to the other party until
+// the batch has processed it, and with chat_rooms.latestmessage left for the processor to
+// bump when it delivers. The handler used to write the row as already processed, so the
+// reply skipped every spam check and reached the recipient at once.
+func TestAMPPostChatReplyIsHeldForProcessing(t *testing.T) {
+	ampSecret := os.Getenv("AMP_SECRET")
+	if ampSecret == "" {
+		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
+	}
+	if ampSecret == "" {
+		t.Fatal("AMP_SECRET not set")
+	}
+
+	prefix := uniquePrefix("ampreplyheld")
+	groupID := CreateTestGroup(t, prefix)
+	user1ID := CreateTestUser(t, prefix+"_1", "User")
+	user2ID := CreateTestUser(t, prefix+"_2", "User")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	CreateTestChatRoster(t, chatID, user1ID)
+	CreateTestChatRoster(t, chatID, user2ID)
+
+	db := database.DBConn
+	db.Exec("UPDATE chat_rooms SET latestmessage = '2020-01-01 00:00:00' WHERE id = ?", chatID)
+
+	exp := time.Now().Unix() + 3600
+	token := generateAMPToken(user1ID, chatID, exp, ampSecret)
+	text := "Held reply from AMP email"
+	bodyBytes, _ := json2.Marshal(map[string]string{"message": text})
+
+	url := fmt.Sprintf("/amp/chat/%d/reply?rt=%s&uid=%d&exp=%d", chatID, token, user1ID, exp)
+	request := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var response amp.ReplyResponse
+	json2.Unmarshal(rsp(resp), &response)
+	assert.True(t, response.Success, "the sender is still told it was sent")
+
+	var processingrequired, processingsuccessful int
+	err := db.Raw("SELECT processingrequired, processingsuccessful FROM chat_messages WHERE chatid = ? AND message = ?",
+		chatID, text).Row().Scan(&processingrequired, &processingsuccessful)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, processingrequired, "flagged for chats:process-incoming")
+	assert.Equal(t, 0, processingsuccessful, "not delivered until processed")
+
+	var latest string
+	db.Raw("SELECT COALESCE(latestmessage, '') FROM chat_rooms WHERE id = ?", chatID).Scan(&latest)
+	assert.Equal(t, "2020-01-01 00:00:00", latest, "latestmessage is bumped by the processor when it delivers, not by the handler")
+
+	// The other party's own AMP view of the chat shows nothing yet.
+	token2 := generateAMPToken(user2ID, chatID, exp, ampSecret)
+	url2 := fmt.Sprintf("/amp/chat/%d?rt=%s&uid=%d&exp=%d", chatID, token2, user2ID, exp)
+	resp2, _ := getApp().Test(httptest.NewRequest("GET", url2, nil))
+	assert.Equal(t, 200, resp2.StatusCode)
+	var view amp.AMPChatResponse
+	json2.Unmarshal(rsp(resp2), &view)
+	assert.Equal(t, 0, len(view.Items), "held reply must not be shown to the recipient")
 }

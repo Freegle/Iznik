@@ -60,6 +60,9 @@ class ChatProcessService
 
     private ContentCheckService $contentCheck;
 
+    /** Messages dropped by a block keyword during the current processIncoming(). */
+    private int $dropped = 0;
+
     public function __construct(?ContentCheckService $contentCheck = null)
     {
         // Resolve from the container when not injected (keeps `new ChatProcessService()` working).
@@ -81,6 +84,7 @@ class ChatProcessService
             ->get();
 
         $count = 0;
+        $this->dropped = 0;
 
         foreach ($messages as $message) {
             if ($this->processMessage($message)) {
@@ -88,9 +92,19 @@ class ChatProcessService
             }
         }
 
-        Log::info("ChatProcess: processed {$count} messages");
+        Log::info("ChatProcess: processed {$count} messages", ['dropped' => $this->dropped]);
 
         return $count;
+    }
+
+    /**
+     * How many of the messages processed by the last processIncoming() were
+     * dropped by a block keyword. Those count as processed, so this is the
+     * figure the run summary needs alongside the total.
+     */
+    public function droppedCount(): int
+    {
+        return $this->dropped;
     }
 
     /**
@@ -163,6 +177,23 @@ class ChatProcessService
             // Check if sender's messages should be held for review.
             $user = DB::table('users')->where('id', $userid)->first();
             $chatmodstatus = $user?->chatmodstatus ?? 'Moderated';
+
+            // A Freegle-wide concern keyword whose action is 'block' drops the
+            // message outright: reviewrequired = 0, reviewrejected = 1, the shape a
+            // moderator's Reject writes. It is never delivered, never emailed, and
+            // never enters the Chat Review queue - a wave of scam mail must not
+            // land thousands of items on the volunteers. V1 (ChatMessage::process,
+            // Spam::checkSpam) did the same, and let a spam keyword beat 'Fully'
+            // moderation, so this runs before the hold decision for every checked
+            // sender. Unmoderated senders skip content checks altogether, as in V1.
+            if ($chatmodstatus !== 'Unmoderated' && $this->isContentCheckable($message->type)) {
+                $blockHit = $this->contentCheck->checkBlockKeywords('', (string) ($message->message ?? ''));
+                if ($blockHit !== null) {
+                    $this->dropBlocked($message, $blockHit);
+
+                    return true;
+                }
+            }
 
             if ($chatmodstatus === 'Fully') {
                 // Fully moderated: every message goes to review (shadow ban).
@@ -295,6 +326,42 @@ class ChatProcessService
         Log::info('ChatProcess: message suppressed', [
             'chatmsgid' => $messageId,
             'reason' => $reason,
+        ]);
+    }
+
+    /**
+     * Drop a message that matched a block keyword.
+     *
+     * Same row shape as a moderator's Reject in the Go API (chat/chatmessage.go
+     * rejectChatMessage): reviewrequired = 0, reviewrejected = 1; reviewedby stays
+     * NULL because nobody reviewed it. The reportreason is kept so a moderator
+     * opening the chat can see why. Processing is complete (processingsuccessful
+     * = 1) - the row is not a failure, it is a decision - but nothing that follows
+     * delivery happens: no push task, no chat_rooms.latestmessage bump, no
+     * reopening of closed rosters. The sender's own roster still moves, exactly as
+     * for any message they wrote. Because reviewrequired is 0, the hold chain that
+     * follows a held predecessor does not count a dropped message, as in V1.
+     */
+    private function dropBlocked(object $message, array $hit): void
+    {
+        DB::table('chat_messages')
+            ->where('id', $message->id)
+            ->update([
+                'reviewrequired' => 0,
+                'reviewrejected' => 1,
+                'reportreason' => $this->reportReasonForCheck($hit),
+                'processingrequired' => 0,
+                'processingsuccessful' => 1,
+            ]);
+
+        $this->updateSenderRoster($message->id, $message->chatid, $message->userid, (bool) $message->platform);
+
+        $this->dropped++;
+
+        Log::info('ChatProcess: message dropped by block keyword', [
+            'chatmsgid' => $message->id,
+            'userid' => $message->userid,
+            'keyword' => $hit['keyword'] ?? null,
         ]);
     }
 

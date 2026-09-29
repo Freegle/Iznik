@@ -260,7 +260,16 @@ func buildPlan(gdb *gorm.DB, targetID int64, emails []string, include map[string
 	return plan, warnings
 }
 
+// dumpWorkers is how many sections are collected at once. Sections are
+// independent reads, and run one at a time a big member's snapshot took minutes:
+// Loki and Sentry are slow network waits, and a heavy moderator has several DB
+// sections of seconds each. Six keeps one dump to a handful of concurrent
+// queries against the cluster. The SQLite builder has a single connection, so
+// its writes are serialised whatever this is.
+const dumpWorkers = 6
+
 // onSection is called after each section completes, for progress reporting.
+// buildDump serialises the calls, in completion order.
 type onSection func(done, total, totalWeight, doneWeight int, sec section, rows int, secErr error)
 
 // buildDump runs every section into the builder, recording outcomes in
@@ -282,24 +291,58 @@ func buildDump(b *Builder, targetID int64, include map[string]bool, startNs, end
 		b.AddSection("plan", "warning", 0, w, 0)
 	}
 
-	doneWeight := 0
-	for i, sec := range plan {
-		t0 := time.Now()
-		rows, secErr := sec.run(b)
-		ms := time.Since(t0).Milliseconds()
-		doneWeight += sec.weight
+	return runSections(b, plan, totalWeight, warnings, cb)
+}
 
-		status, note := "done", ""
-		if secErr != nil {
-			status, note = "warning", secErr.Error()
-			warnings = append(warnings, sec.name+": "+secErr.Error())
-		}
-		b.AddSection(sec.name, status, rows, note, ms)
-
-		if cb != nil {
-			cb(i+1, len(plan), totalWeight, doneWeight, sec, rows, secErr)
-		}
+// runSections collects every section on dumpWorkers goroutines, recording each
+// outcome in _sections, and returns warnings plus any section failures.
+func runSections(b *Builder, plan []section, totalWeight int, warnings []string, cb onSection) []string {
+	// Heaviest first, so the slow external calls start straight away and
+	// overlap the DB sections rather than queueing behind them.
+	order := make([]int, len(plan))
+	for i := range order {
+		order[i] = i
 	}
+	sort.SliceStable(order, func(x, y int) bool { return plan[order[x]].weight > plan[order[y]].weight })
+
+	var mu sync.Mutex
+	done, doneWeight := 0, 0
+	next := make(chan int)
+	var wg sync.WaitGroup
+	for w := 0; w < dumpWorkers && w < len(plan); w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				sec := plan[i]
+				t0 := time.Now()
+				rows, secErr := sec.run(b)
+				ms := time.Since(t0).Milliseconds()
+
+				status, note := "done", ""
+				if secErr != nil {
+					status, note = "warning", secErr.Error()
+				}
+				b.AddSection(sec.name, status, rows, note, ms)
+
+				mu.Lock()
+				done++
+				doneWeight += sec.weight
+				if secErr != nil {
+					warnings = append(warnings, sec.name+": "+secErr.Error())
+				}
+				if cb != nil {
+					cb(done, len(plan), totalWeight, doneWeight, sec, rows, secErr)
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	for _, i := range order {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
 	return warnings
 }
 

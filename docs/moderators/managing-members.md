@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-18
+last_reviewed: 2026-09-25
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -13,6 +13,7 @@ covers:
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-modtools-member-review.spec.js
   - iznik-nuxt3/tests/e2e/test-modtools-spammers.spec.js
+  - iznik-server-go/test/modmessaging_test.go
 ---
 
 # Managing members
@@ -34,8 +35,27 @@ From here you can:
 - **Ban** a member by id, with a reason.
 - **Merge** two accounts that are the same person (irreversible; you choose which email
   survives).
-- **Export** the members list.
 - Change a member's **role** (Member, Moderator, Owner).
+
+### How far a search reaches
+
+A search only ever looks at the communities **you** moderate. That is true whichever way
+you search - by name, by email, or by the member's number.
+
+- With a community chosen in the box at the top left, you search that community.
+- With **-- Please choose --** selected, you search every community you moderate at once.
+  This is the one to use when somebody reports a member and you do not know which
+  community they are on.
+
+So a search that finds nobody does not mean the account does not exist. It usually means
+that freegler has only ever joined communities you do not moderate, and rippling makes
+that more common: a post can reach your community from a freegler who is not on it.
+
+Someone with **Support** access can look up any freegler on the system, on any community,
+so ask them when you need to see an account that is outside your own communities. See
+[Support Tools](https://wiki.ilovefreegle.org/Support_Tools) on the wiki.
+
+You can type the member's number with or without a `#` in front of it. Both work.
 
 ## "Email delayed" is not the same as "bouncing"
 
@@ -116,6 +136,13 @@ Some chats are held because a post has not yet rippled out to the member who rep
 Those release automatically; you do not need to do anything. See
 [./rippling-out.md](./rippling-out.md).
 
+A message that matches a Freegle-wide **block** keyword does not come to this queue at
+all. It is dropped: the other person never receives it, and it is marked rejected with
+the reason recorded, exactly as if you had rejected it yourself. That applies whatever
+the sender's chat moderation setting, apart from Unmoderated. Block keywords are
+Freegle-wide scam signatures kept by support; the words that bring a message here for
+you to judge are flag keywords.
+
 ### Putting one member's chat under review
 
 A member's own **Support** record has a **Chat Moderation** setting, which decides what
@@ -153,6 +180,17 @@ banned whom and why. Notes are how the team keeps a shared memory of a member.
 - Use the **Mail** or **Leave** standard-message buttons on a member row.
 - Or open **Chats** (`/chats`), which lists your conversations with members and with other
   moderators, with a chat pane and search.
+
+### Trash Nothing members who didn't choose your community
+
+Some members exist here only because posts of theirs came in from Trash Nothing and we
+matched them to a community from where they are - they never chose your community. Those
+members carry a warning on their member row saying so, and the **Chat**, **Mail** and
+standard-message buttons are not offered, because there is no relationship to use and no
+way for them to reply to you. You can still remove or ban them.
+
+If the same person also posts to a community they've chosen, the warning disappears on its own and
+they become an ordinary member you can contact as usual.
 
 ## Banning and removing
 
