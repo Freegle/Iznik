@@ -976,3 +976,82 @@ send a moderator's mail to the member. 10.5 had them as the member's own action.
 - **Images** attached straight to content that is already live are an edit of that content
   and are treated as its surface's edit. Rotating an image is allowed.
 - **Nudges** are created held while chat is held, like any other chat message.
+
+### 11.11 Simplified after review (29 September)
+
+Edward's review of PR #1636. The lockdown only holds. Working out who the spammers are,
+removing them and protecting against them happens out of band, with the Support tools that
+already exist. The Lockdown tab does not try to manage that. This supersedes the triage, soft
+mode, incident phrases, samples, clusters, mark spam and release class parts of 10.6, 10.7,
+10.9, 10.10 and 11.2 to 11.4.
+
+**Removed**
+
+- Risk classes (spam, low, risky), `LockdownTriageService` classification, soft chat mode,
+  incident phrases, samples, clusters, "Mark spam set", "Release class", reportreason
+  `Lockdown` reviews. The automated checks have already missed whatever caused the lockdown,
+  so another automated guess adds nothing.
+- `lockdown_holds.risk` stays in the table (the migration is not rewritten) but nothing
+  writes or reads it.
+
+**Holding**
+
+- Unchanged: each area is held per item, checked with the five-second cache, acknowledged
+  in `lockdown_acks`. `lockdown_holds` rows are still written, one per held chat message,
+  post and ChitChat post, so held items can be counted, browsed and released in order.
+  `lockdown:triage` becomes `lockdown:tick`: announce changes, write hold rows, release.
+- Chat has one mode: member-to-member messages wait.
+
+**Lifting**
+
+- Lifting an area releases everything it held, oldest first, a few hundred a minute,
+  through the normal processing that would have run on the day. The normal checks still
+  apply, so a sender Support has since marked as a spammer is dropped by the existing
+  spammer handling, and a post from a moderated member or group still waits for a
+  moderator. Nothing is released while its area is held.
+
+**Browsing what is held (Support and Admin only)**
+
+- `GET /modtools/lockdown/held?kind=chat|post|chitchat&q=&userid=&before=` returns held
+  items newest first, 50 a page: id, kind, created, sender id, name and email, the text
+  (chat message, post subject and body, ChitChat text), and for chat the recipient.
+  `q` searches the text and the sender's name and email. Only items still held.
+- Each row links to the sender in Support tools (existing member search), which is where
+  someone is marked as a spammer. No actions on held items in the Lockdown tab.
+
+**Stats**
+
+- One table: for each kind of thing held (chat messages, posts, ChitChat posts, events and
+  noticeboards and stories, emails not sent, app notifications not sent, downloads refused,
+  moderator actions refused), how many so far. Plus "Sent since the press". Nothing else.
+- "Taking effect" stays as it is.
+
+**The Lockdown tab**
+
+- It is the last tab in Support tools, still red. Support opens on it only while a lockdown
+  is active.
+- Before pressing, the page itself says what will happen, in the same words as the confirm
+  dialog, above the button. The dialog then asks for LOCKDOWN.
+- One row per area, with a plain description of exactly what is held and what still works,
+  its status in words ("Held" or "Running"), and one button ("Lift" or "Hold again").
+  No toggles. Email uses the same words as the others.
+  - Moderator actions: moderators can only use the basic Approve button. Rejecting, editing,
+    holding, banning, standard messages, mailing members and starting chats with members
+    are refused. Replies to members who wrote to the volunteers still work.
+  - Chat between members: messages one member sends another wait. Chat with the volunteers
+    keeps working both ways.
+  - New posts and edits: members can still post and edit; the post waits as pending and the
+    member sees it as live. Nobody else sees it.
+  - ChitChat: new posts and replies are hidden from everyone but the author.
+  - Events, volunteering, noticeboards and stories: new ones wait for approval; edits are
+    refused.
+  - App notifications: none are sent.
+  - Email to members: none is generated; sign-in, password, verification, unsubscribe and
+    account deletion emails still go. On lifting, digests and notifications carry on from
+    where they stopped.
+  - Downloads: member data exports, the Support user dump, the spammer list and partnership
+    stats files are refused, for everyone.
+- Member notice: "No notice" or custom text, edited in a text box with a Save button. The
+  two earlier wordings are offered as starting text to pick and edit. `lockdowns.notice`
+  holds the text itself (widen to TEXT); `GET /lockdown` returns it as is. "Things are back
+  to normal" after close stays as a quick choice.
