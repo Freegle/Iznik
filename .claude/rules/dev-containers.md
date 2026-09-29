@@ -212,10 +212,18 @@ NFS server was healthy throughout - `nfsstat` and the admin UI both said so.)
 ## An image bucket that is not public fails through to "every new photo is missing"
 
 The uploads vhost in `frontend-nginx.conf` answers a GET from the spool, then the object
-store, then the legacy share, and a 403 from the bucket is treated like a 404 so the chain
-can go on. So a bucket whose public read was never switched on in the console does not
-error: every new photo falls through to the legacy share, which has never heard of it, and
-weserv gets a 404 that the delivery cache keeps for five minutes. Nothing logs the 403.
+store, then the legacy share, and any error from the bucket (401, 403, 404, 5xx, no answer)
+is treated like a 404 so the chain can go on. So a bucket whose public read is off does not
+error: every photo that exists only in the bucket falls through to the legacy share, which
+has never heard of it, and weserv gets a 404 that the delivery cache keeps for five minutes.
+Nothing logs the bucket's answer.
+
+The fall-through list must stay complete. On 2026-09-28 it was `403 404` and the bucket
+started answering 401 (a Swift auth challenge to every key: public read and the access key
+revoked together, provider side). nginx passed the 401 straight to the resizer, so every
+image not in the spool was broken for an hour, and nothing alerted because the pusher and
+migrator only logged warnings per object. The scheduled `images:object-store-check --report`
+and `ObjectStoreUnavailable` in Sentry exist because of that hour.
 
 `php artisan images:object-store-check` reads a probe back anonymously at the public URL
 and is the only thing that proves the bucket is public. Run it before enabling
@@ -225,6 +233,18 @@ and is the only thing that proves the bucket is public. Run it before enabling
 The same file is an envsubst template. Only `${IMAGE_STORE_*}` is substituted, because
 compose sets `NGINX_ENVSUBST_FILTER`; without the filter every nginx `$variable` is
 blanked and `nginx -t` fails, so that one at least is loud.
+
+## `sed -i` on a bind-mounted file edits nothing the container can see
+
+A single file bound into a container (`frontend-nginx.conf`, `firebase.json`, the SSH
+keys) is bound by inode. `sed -i`, and any editor that writes a new file and renames it
+over the old one, gives the host path a new inode; the container keeps the old one and
+reads the old content forever, with no error. After a live edit, compare
+`stat -c %i` on the host with `stat -c %i` inside the container. To get the new content in
+without a restart, `docker cp` the file to another path inside the container and use it
+from there (render, `nginx -t -c`, `nginx -s reload`); a `docker compose up -d` recreate
+picks up the new inode. `nginx -t -c` on a copy must sit in `/etc/nginx`, because the
+relative `mime.types` include resolves against the config's own directory.
 
 ## Branches, clones and the tools around them
 

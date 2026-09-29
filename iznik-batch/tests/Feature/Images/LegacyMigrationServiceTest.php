@@ -4,6 +4,7 @@ namespace Tests\Feature\Images;
 
 use App\Services\ImageStore\LegacyMigrationService;
 use App\Services\ImageStore\ObjectStore;
+use App\Services\ImageStore\ObjectStoreUnavailable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
@@ -266,5 +267,87 @@ class LegacyMigrationServiceTest extends TestCase
         $users = array_values(array_filter($status, fn ($r) => $r['source'] === 'users_images'))[0];
         $this->assertSame(1, $users['copied']);
         $this->assertNotNull($users['completed_at']);
+    }
+    public function test_an_unavailable_store_stops_the_walk_before_the_row_and_counts_nothing_failed(): void
+    {
+        $this->legacyFile('i1');
+        $this->legacyFile('i2');
+        $this->legacyFile('i3');
+        $first = $this->userImage('freegletusd-i1');
+        $this->userImage('freegletusd-i2');
+        $this->userImage('freegletusd-i3');
+
+        // The store goes dark at i2: everything from there on would get the
+        // same answer, so the run stops, the cursor stays on i1, and i2 is not
+        // a failed row but the first row of the next run.
+        $store = new class(Storage::disk('images')) extends ObjectStore {
+            public bool $down = true;
+
+            public function sizeOf(string $key): ?int
+            {
+                if ($this->down && $key === 'i2') {
+                    throw new ObjectStoreUnavailable('Object store unavailable: HeadObject i2 got HTTP 403');
+                }
+
+                return parent::sizeOf($key);
+            }
+        };
+        $migrator = new LegacyMigrationService($store, Storage::disk('tusd-legacy'));
+
+        $stats = $migrator->migrate(['users_images'], timeBudgetSeconds: 60, chunk: 100);
+
+        $this->assertStringContainsString('HTTP 403', (string) $stats['unavailable']);
+        $this->assertSame(1, $stats['copied']);
+        $this->assertSame(0, $stats['failed']);
+        $this->assertSame(1, $stats['scanned']);
+        $this->assertFalse($stats['finished']);
+        Storage::disk('images')->assertExists('i1');
+        Storage::disk('images')->assertMissing('i2');
+        Storage::disk('images')->assertMissing('i3');
+
+        $row = DB::table('image_store_migration')->where('source', 'users_images')->first();
+        $this->assertSame($first, (int) $row->last_id);
+        $this->assertSame(0, (int) $row->failed);
+        $this->assertNull($row->completed_at);
+
+        // The store is back: the next run carries on from i2.
+        $store->down = false;
+        $stats = $migrator->migrate(['users_images'], timeBudgetSeconds: 60, chunk: 100);
+
+        $this->assertNull($stats['unavailable']);
+        $this->assertSame(2, $stats['copied']);
+        $this->assertTrue($stats['finished']);
+        Storage::disk('images')->assertExists('i2');
+        Storage::disk('images')->assertExists('i3');
+    }
+
+    public function test_verify_stops_on_an_unavailable_store_and_reports_nothing_missing(): void
+    {
+        Storage::disk('images')->put('i1', self::JPEG);
+        $first = $this->userImage('freegletusd-i1');
+        $this->userImage('freegletusd-i2');
+
+        $store = new class(Storage::disk('images')) extends ObjectStore {
+            public function sizeOf(string $key): ?int
+            {
+                if ($key === 'i2') {
+                    throw new ObjectStoreUnavailable('Object store unavailable: HeadObject i2 got no answer');
+                }
+
+                return parent::sizeOf($key);
+            }
+        };
+
+        $stats = (new LegacyMigrationService($store, Storage::disk('tusd-legacy')))
+            ->verify(['users_images'], timeBudgetSeconds: 60, chunk: 100);
+
+        $this->assertStringContainsString('no answer', (string) $stats['unavailable']);
+        $this->assertSame(1, $stats['present']);
+        $this->assertSame(0, $stats['missing']);
+        $this->assertFalse($stats['finished']);
+
+        $row = DB::table('image_store_migration')->where('source', 'users_images')->first();
+        $this->assertSame($first, (int) $row->verify_last_id);
+        $this->assertSame(0, (int) $row->verify_missing);
     }
 }
