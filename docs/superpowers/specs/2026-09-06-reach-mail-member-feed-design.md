@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-06
 **Status:** DESIGN. Nothing implemented.
-**Supersedes:** proposal A in `plans/2026-09-02-db2-cpu-reduction.md`, which shortens the
+**Supersedes:** proposal A of the 2026-09-02 db2 CPU plan (now summarised in `plans/2026-09-29-perf-backlog.md`), which shortens the
 post-side window instead.
 
 ## The problem

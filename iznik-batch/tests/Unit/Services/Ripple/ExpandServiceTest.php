@@ -4140,7 +4140,7 @@ class ExpandServiceTest extends TestCase
 
     /**
      * Every reach write must leave a verified sandwich-bounds row behind
-     * (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md): outer_bound ⊇ reach and
+     * (docs/developers/reference/rippling-algorithm.md section 11): outer_bound ⊇ reach and
      * inner_bound ⊆ reach (or NULL), derived from the FINAL stored grid.
      *
      * The check runs against the grid's bounding box (its header, no network):

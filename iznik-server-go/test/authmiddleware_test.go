@@ -82,7 +82,7 @@ func TestLastaccessNotBumpedWhenFresh(t *testing.T) {
 	// lastaccess is throttled to every 10 minutes: a request must NOT bump a
 	// fresh (5 minutes old) value. The throttle lives in the SQL guard so that
 	// concurrent requests can't all write the same row (Galera certification
-	// conflicts - see plans/2026-07-17-db3-cpu-reach-sql-prefilter.md).
+	// conflicts - measured on db3, July 2026).
 	uid, token := CreateFullTestUser(t, uniquePrefix("la_fresh"))
 	db := database.DBConn
 	db.Exec("UPDATE users SET lastaccess = DATE_SUB(NOW(), INTERVAL 5 MINUTE) WHERE id = ?", uid)

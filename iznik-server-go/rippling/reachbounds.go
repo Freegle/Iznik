@@ -1,7 +1,7 @@
 package rippling
 
 // Shared sandwich-bounds SQL for the reach containment tests
-// (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md). The bounds live as
+// (docs/developers/reference/rippling-algorithm.md section 11). The bounds live as
 // SAME-ROW columns (outer_bound NOT NULL and spatially indexed, inner_bound
 // nullable), written in the same statement as the reach grid so no timing
 // window can exist between them.
