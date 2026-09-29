@@ -226,7 +226,7 @@ test.describe('Lockdown switch', () => {
 
     pressedModEmail = testEnv.mod.email
     await loginViaModTools(modPage, testEnv.mod.email)
-    await modPage.goto(`${MODTOOLS_URL}/support`, {
+    await modPage.goto(`${MODTOOLS_URL}/support?tab=lockdown`, {
       timeout: timeouts.navigation.initial,
     })
     await dismissAllModals(modPage)
@@ -466,9 +466,38 @@ test.describe('Lockdown switch', () => {
     // schedule, not on press. Wait for it with the same background timeout
     // used for the "Taking effect" loops above, rather than assuming it is
     // already there by the time the pending queue is checked.
-    await expect(heldCard.getByText(/Held by lockdown/)).toBeVisible({
-      timeout: timeouts.background,
-    })
+    // The pending queue does not refetch a post it already has, so reload
+    // until the card is rendered from a fetch made after the hold row exists.
+    await expect
+      .poll(
+        async () => {
+          if (await heldCard.getByText(/Held by lockdown/).isVisible()) {
+            return true
+          }
+          await modPage.reload({ timeout: timeouts.navigation.default })
+          await selectGroupByName(
+            modPage,
+            modPage.locator('#communitieslist'),
+            environment.testgroup
+          )
+          await heldCard
+            .waitFor({
+              state: 'visible',
+              timeout: timeouts.navigation.slowPage,
+            })
+            .catch(() => {})
+          return heldCard
+            .getByText(/Held by lockdown/)
+            .isVisible()
+            .catch(() => false)
+        },
+        {
+          message: 'Waiting for the Held by lockdown label on the pending card',
+          timeout: timeouts.background,
+          intervals: [10000, 15000, 20000],
+        }
+      )
+      .toBe(true)
     console.log(
       '[Lockdown] Held-by-lockdown label appeared on the pending card'
     )
@@ -495,7 +524,7 @@ test.describe('Lockdown switch', () => {
     // the Support/Admin moderator who pressed it before going there.
     await logoutIfLoggedIn(modPage)
     await loginViaModTools(modPage, pressedModEmail)
-    await modPage.goto(`${MODTOOLS_URL}/support`, {
+    await modPage.goto(`${MODTOOLS_URL}/support?tab=lockdown`, {
       timeout: timeouts.navigation.initial,
     })
     await dismissAllModals(modPage)
