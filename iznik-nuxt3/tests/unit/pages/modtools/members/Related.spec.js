@@ -17,6 +17,11 @@ const mockCollection = ref('')
 const mockContext = ref(null)
 const mockShow = ref(0)
 const mockLoadMore = vi.fn()
+const mockLoggedIn = ref(true)
+
+vi.mock('~/composables/useMe', () => ({
+  useMe: () => ({ loggedIn: mockLoggedIn }),
+}))
 
 vi.mock('~/stores/member', () => ({
   useMemberStore: () => mockMemberStore,
@@ -35,6 +40,19 @@ vi.mock('~/composables/useModMembers', () => ({
 }))
 
 describe('Related Page', () => {
+  describe('waiting for sign-in', () => {
+    it('does not start loading members until the moderator is known', async () => {
+      mockLoggedIn.value = false
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.find('.infinite-loading').exists()).toBe(false)
+
+      mockLoggedIn.value = true
+      await nextTick()
+      expect(wrapper.find('.infinite-loading').exists()).toBe(true)
+    })
+  })
+
   // Track mounted wrappers so watchers are torn down between tests.
   // The composable uses module-level refs; if wrappers aren't unmounted their
   // watchers keep firing on subsequent ref changes across tests.
@@ -48,6 +66,7 @@ describe('Related Page', () => {
     mockCollection.value = ''
     mockContext.value = null
     mockShow.value = 0
+    mockLoggedIn.value = true
   })
 
   afterEach(() => {
