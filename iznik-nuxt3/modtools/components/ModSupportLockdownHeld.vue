@@ -148,6 +148,7 @@ defineExpose({ search, more })
 
 <style scoped>
 .held-text {
+  width: 50%;
   white-space: pre-wrap;
   word-break: break-word;
 }
