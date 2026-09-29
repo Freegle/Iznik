@@ -1604,7 +1604,7 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
-     * Negative memoization (Phase 0, plans/routing-performance-step-change.md): a definitive
+     * Negative memoization: a definitive
      * "not quicker" answer writes a rippling_proximity_checked marker, so the row is never
      * re-queried. Previously these rows were recomputed on every 5-minute run for the whole
      * 8-day candidate window (the 2026-07-06 group-21521 Sentry storm's standing tax).
