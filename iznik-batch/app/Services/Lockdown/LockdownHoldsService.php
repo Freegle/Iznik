@@ -7,6 +7,7 @@ use App\Models\MessageGroup;
 use App\Models\User;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Records what an active lockdown is holding, and releases held ChitChat posts once ChitChat
@@ -109,6 +110,43 @@ class LockdownHoldsService
         }
 
         return $released;
+    }
+
+    /**
+     * While moderator actions are held, send every admin a moderator approved before the
+     * press but that has not gone out yet back to pending, so nothing a moderator queued
+     * is sent without being approved again after the lockdown. Admins written by Support or
+     * Admin are left alone. Returns how many were withdrawn.
+     */
+    public function withdrawAdmins(): int
+    {
+        $lockdown = $this->lockdown ?? app(LockdownService::class);
+        if (!$lockdown->active() || !$lockdown->held('mods')) {
+            return 0;
+        }
+
+        $startedAt = Carbon::parse($lockdown->current()->startedat);
+
+        $ids = DB::table('admins')
+            ->leftJoin('users', 'users.id', '=', 'admins.createdby')
+            ->whereNull('admins.complete')
+            ->where('admins.pending', 0)
+            ->where('admins.created', '<', $startedAt)
+            ->where(function ($q) {
+                $q->whereNull('users.systemrole')
+                    ->orWhereNotIn('users.systemrole', [User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN]);
+            })
+            ->pluck('admins.id');
+
+        if ($ids->isEmpty()) {
+            return 0;
+        }
+
+        DB::table('admins')->whereIn('id', $ids)->update(['pending' => 1]);
+        $lockdown->count('admins_withdrawn', $ids->count());
+        Log::info('Lockdown: sent unsent admins back to pending', ['ids' => $ids->all()]);
+
+        return $ids->count();
     }
 
     /**

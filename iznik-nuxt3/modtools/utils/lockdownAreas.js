@@ -12,7 +12,7 @@ export const LOCKDOWN_AREAS = [
     label: 'Moderator actions',
     kind: 'refused',
     description:
-      'Moderators can only use the basic Approve button. Rejecting, editing, holding, banning, standard messages, mailing members and starting chats with members are refused. Replies to members who wrote to the volunteers still work.',
+      'Moderators can only use the basic Approve button. Rejecting, editing, holding, banning, standard messages, mailing members, admins and starting chats with members are refused. Admins a moderator approved that have not gone out yet go back to pending, and have to be approved again after the lockdown. Replies to members who wrote to the volunteers still work.',
   },
   {
     key: 'chat',

@@ -55,6 +55,12 @@ amber, which usually means it is stopped or stuck on the batch host.
 "Sent since the press" should read 0. Anything there got out between the press and the job
 noticing it, and is the real cost of the delay.
 
+Admins are stopped, not delayed. While moderator actions are held, moderators cannot create,
+edit or approve one, and any admin a moderator approved before the press that has not gone
+out yet goes back to pending. Copies of it already waiting in the send queue are removed. A
+moderator approves it again after the lockdown if it should still go. Admins written by
+Support or Admin are not touched, and go once email is lifted.
+
 Mail already accepted by the outbound relay is not reached by the switch. If the wave used
 email, hold the relay queue by hand and remove what is from the marked accounts before
 releasing it (the host-specific steps are in the ops team's operational notes).

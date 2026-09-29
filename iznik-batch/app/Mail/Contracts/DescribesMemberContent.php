@@ -26,7 +26,10 @@ interface DescribesMemberContent
      * that kind). Deliberately only ids, never Eloquent models - filter-spool re-reads current
      * state from the ids rather than trusting anything captured when the mail was built.
      *
-     * @return array{chatmessages: int[], messages: int[], newsfeed: int[], users: int[]}
+     * A mail sent on behalf of an admin may also give `admins`: the admin ids it carries,
+     * so the queued copy can be dropped if the admin is withdrawn during a lockdown.
+     *
+     * @return array{chatmessages: int[], messages: int[], newsfeed: int[], users: int[], admins?: int[]}
      */
     public function about(): array;
 }

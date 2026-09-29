@@ -85,6 +85,74 @@ class LockdownFilterSpoolServiceTest extends TestCase
 
     // --- passthrough: nothing to check ---
 
+    private function writeAdminMail(string $id, int $adminId, int $userId): string
+    {
+        $path = $this->testSpoolDir.'/pending/'.$id.'.json';
+        file_put_contents($path, json_encode([
+            'id' => $id,
+            'email_type' => 'Admin',
+            'mailable_class' => 'App\\Mail\\Admin\\AdminMail',
+            'headers' => ['X-Freegle-User-Id' => (string) $userId],
+            'about' => ['chatmessages' => [], 'messages' => [], 'newsfeed' => [], 'users' => [], 'admins' => [$adminId]],
+        ]));
+
+        return $path;
+    }
+
+    private function makeAdmin(int $pending, ?int $parentId = null): int
+    {
+        return (int) DB::table('admins')->insertGetId([
+            'groupid' => $this->createTestGroup()->id,
+            'subject' => 'Admin',
+            'text' => 'Admin text',
+            'pending' => $pending,
+            'parentid' => $parentId,
+        ]);
+    }
+
+    public function test_removes_a_queued_admin_mail_once_its_admin_is_withdrawn(): void
+    {
+        $this->lockdown->press(null, 'wave');
+        $user = $this->createTestUser();
+        $adminId = $this->makeAdmin(1);
+        DB::table('admins_users')->insert(['userid' => $user->id, 'adminid' => $adminId]);
+        $path = $this->writeAdminMail('admin_withdrawn', $adminId, $user->id);
+
+        $stats = $this->filter->filter();
+
+        $this->assertSame(1, $stats['removed']);
+        $this->assertFileDoesNotExist($path);
+        $this->assertSame(0, DB::table('admins_users')->where(['userid' => $user->id, 'adminid' => $adminId])->count(),
+            'forgotten as sent, so the member gets it if it is approved again');
+    }
+
+    public function test_forgets_a_suggested_admin_against_its_parent(): void
+    {
+        $this->lockdown->press(null, 'wave');
+        $user = $this->createTestUser();
+        $parentId = $this->makeAdmin(0);
+        $copyId = $this->makeAdmin(1, $parentId);
+        DB::table('admins_users')->insert(['userid' => $user->id, 'adminid' => $parentId]);
+        $this->writeAdminMail('admin_copy', $copyId, $user->id);
+
+        $this->filter->filter();
+
+        $this->assertSame(0, DB::table('admins_users')->where(['userid' => $user->id, 'adminid' => $parentId])->count());
+    }
+
+    public function test_keeps_a_queued_admin_mail_whose_admin_is_still_approved(): void
+    {
+        $this->lockdown->press(null, 'wave');
+        $user = $this->createTestUser();
+        $adminId = $this->makeAdmin(0);
+        $path = $this->writeAdminMail('admin_ok', $adminId, $user->id);
+
+        $stats = $this->filter->filter();
+
+        $this->assertSame(0, $stats['removed']);
+        $this->assertFileExists($path);
+    }
+
     public function test_a_file_with_no_about_key_is_left_alone_and_not_counted(): void
     {
         $path = $this->testSpoolDir.'/pending/no_about.json';

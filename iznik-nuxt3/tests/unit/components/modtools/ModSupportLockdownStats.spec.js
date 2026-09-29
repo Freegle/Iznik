@@ -24,6 +24,7 @@ describe('ModSupportLockdownStats', () => {
         push: 90,
         export: 1,
         refused: 5,
+        admins: 2,
       },
     })
     expect(count(wrapper, 'chat')).toBe('Chat messages12')
@@ -34,7 +35,8 @@ describe('ModSupportLockdownStats', () => {
     expect(count(wrapper, 'push')).toBe('App notifications not sent90')
     expect(count(wrapper, 'export')).toBe('Downloads refused1')
     expect(count(wrapper, 'refused')).toContain('5')
-    expect(wrapper.findAll('tr')).toHaveLength(8)
+    expect(count(wrapper, 'admins')).toBe('Admins sent back to pending2')
+    expect(wrapper.findAll('tr')).toHaveLength(9)
   })
 
   it('shows zeros before any stats have arrived', () => {

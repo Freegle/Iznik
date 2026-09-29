@@ -65,6 +65,7 @@ func TestGetModtoolsLockdownStatsCounts(t *testing.T) {
 		"refused_member":                     2,
 		fmt.Sprintf("refused:%d", supportID): 5,
 		"email:digest":                       99, // an old-style counter no longer summed anywhere
+		"admins_withdrawn":                   3,
 	} {
 		require.NoError(t, db.Table("lockdown_counters").Create(map[string]interface{}{
 			"lockdownid": incidentID, "kind": kind, "count": count,
@@ -84,6 +85,7 @@ func TestGetModtoolsLockdownStatsCounts(t *testing.T) {
 	assert.Equal(t, float64(3), counts["push"])
 	assert.Equal(t, float64(1), counts["export"])
 	assert.Equal(t, float64(7), counts["refused"], "moderator and member refusals together")
+	assert.Equal(t, float64(3), counts["admins"], "moderators' unsent admins sent back to pending")
 
 	for _, gone := range []string{"held", "triage", "samples", "clusters", "accountscreated", "outcomes", "waiting", "counters"} {
 		_, present := result[gone]

@@ -38,6 +38,7 @@ const LABELS = [
   { key: 'push', label: 'App notifications not sent' },
   { key: 'export', label: 'Downloads refused' },
   { key: 'refused', label: 'Moderator and member actions refused' },
+  { key: 'admins', label: 'Admins sent back to pending' },
 ]
 
 const rows = computed(() =>

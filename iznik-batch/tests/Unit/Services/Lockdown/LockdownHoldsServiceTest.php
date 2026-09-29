@@ -144,6 +144,58 @@ class LockdownHoldsServiceTest extends TestCase
         $this->assertSame(0, $this->holds->closeGoneHolds(), 'a second pass closes nothing more');
     }
 
+    private function makeAdmin(array $overrides = []): int
+    {
+        return (int) DB::table('admins')->insertGetId(array_merge([
+            'createdby' => null,
+            'groupid' => $this->createTestGroup()->id,
+            'created' => now()->subHour(),
+            'subject' => 'Admin',
+            'text' => 'Admin text',
+            'pending' => 0,
+        ], $overrides));
+    }
+
+    public function test_withdraws_unsent_moderator_admins_from_before_the_press(): void
+    {
+        DB::table('lockdown_counters')->delete();
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $support = $this->createTestUser(['systemrole' => User::SYSTEMROLE_SUPPORT]);
+
+        $queued = $this->makeAdmin(['createdby' => $mod->id]);
+        $sent = $this->makeAdmin(['createdby' => $mod->id, 'complete' => now()->subMinutes(5)]);
+        $stillPending = $this->makeAdmin(['createdby' => $mod->id, 'pending' => 1]);
+        $bySupport = $this->makeAdmin(['createdby' => $support->id]);
+
+        $this->assertSame(0, $this->holds->withdrawAdmins(), 'nothing is withdrawn without a lockdown');
+
+        $incidentId = $this->lockdown->press(null, 'wave');
+        $afterPress = $this->makeAdmin(['createdby' => $support->id, 'created' => now()->addSecond()]);
+
+        $this->assertSame(1, $this->holds->withdrawAdmins());
+
+        $pending = fn (int $id) => (int) DB::table('admins')->where('id', $id)->value('pending');
+        $this->assertSame(1, $pending($queued), "a moderator's unsent admin goes back to pending");
+        $this->assertSame(0, $pending($sent), 'one already sent is left alone');
+        $this->assertSame(1, $pending($stillPending));
+        $this->assertSame(0, $pending($bySupport), 'Support and Admin admins are left alone');
+        $this->assertSame(0, $pending($afterPress));
+        $this->assertEquals(1, DB::table('lockdown_counters')->where(['lockdownid' => $incidentId, 'kind' => 'admins_withdrawn'])->value('count'));
+
+        $this->assertSame(0, $this->holds->withdrawAdmins(), 'a second pass finds nothing more');
+    }
+
+    public function test_does_not_withdraw_admins_once_moderator_actions_are_lifted(): void
+    {
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $queued = $this->makeAdmin(['createdby' => $mod->id]);
+        $this->lockdown->press(null, 'wave');
+        $this->lockdown->setSurfaces(['mods' => false], null);
+
+        $this->assertSame(0, $this->holds->withdrawAdmins());
+        $this->assertSame(0, (int) DB::table('admins')->where('id', $queued)->value('pending'));
+    }
+
     public function test_chitchat_stays_hidden_while_held(): void
     {
         $this->lockdown->press(null, 'wave');

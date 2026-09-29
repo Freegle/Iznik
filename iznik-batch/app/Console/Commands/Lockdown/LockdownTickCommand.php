@@ -51,6 +51,7 @@ class LockdownTickCommand extends Command
         $lockdown->ack('tick');
 
         $created = $holds->createHolds();
+        $withdrawn = $holds->withdrawAdmins();
         $gone = $holds->closeGoneHolds();
         $chitchat = $holds->releaseChitChatHolds();
 
@@ -64,10 +65,11 @@ class LockdownTickCommand extends Command
         $lockdown->record('queue:email', $queued);
 
         $this->info(sprintf(
-            'Announced %d. Holds created: chat %d, post %d. Gone %d. ChitChat released %d. Emails queued %d.%s',
+            'Announced %d. Holds created: chat %d, post %d. Admins withdrawn %d. Gone %d. ChitChat released %d. Emails queued %d.%s',
             $announced,
             $created['chat'] ?? 0,
             $created['post'] ?? 0,
+            $withdrawn,
             $gone,
             $chitchat,
             $queued,

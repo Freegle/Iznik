@@ -7,6 +7,7 @@ use App\Models\MessageGroup;
 use App\Models\Newsfeed;
 use App\Models\SpamUser;
 use App\Services\EmailSpoolerService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -103,7 +104,42 @@ class LockdownFilterSpoolService
             }
         }
 
+        foreach ($about['admins'] ?? [] as $id) {
+            if ($this->adminIsWithdrawn((int) $id)) {
+                return true;
+            }
+        }
+
         return false;
+    }
+
+    /**
+     * Withdrawn means sent back to pending (as the lockdown does to moderators' unsent
+     * admins, LockdownHoldsService::withdrawAdmins()) or deleted.
+     */
+    private function adminIsWithdrawn(int $id): bool
+    {
+        $admin = DB::table('admins')->where('id', $id)->first(['pending']);
+
+        return $admin === null || (int) $admin->pending === 1;
+    }
+
+    /**
+     * A removed admin mail was recorded as sent to its member. Forget that, so the member
+     * gets it if a moderator approves the admin again.
+     */
+    private function forgetAdminDelivery(array $data): void
+    {
+        $userId = (int) ($data['headers']['X-Freegle-User-Id'] ?? 0);
+        if ($userId === 0) {
+            return;
+        }
+
+        foreach ($data['about']['admins'] ?? [] as $id) {
+            $admin = DB::table('admins')->where('id', (int) $id)->first(['id', 'parentid']);
+            $dedupId = $admin ? ((int) $admin->parentid ?: (int) $admin->id) : (int) $id;
+            DB::table('admins_users')->where('adminid', $dedupId)->where('userid', $userId)->delete();
+        }
     }
 
     /**
@@ -160,6 +196,10 @@ class LockdownFilterSpoolService
         }
 
         $type = $data['email_type'] ?? 'unknown';
+
+        if (!empty($data['about']['admins'])) {
+            $this->forgetAdminDelivery($data);
+        }
 
         Log::info('lockdown:filter-spool removed a waiting file', [
             'file' => basename($path),

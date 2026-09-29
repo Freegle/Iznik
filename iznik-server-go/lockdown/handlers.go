@@ -300,6 +300,7 @@ func heldCounts(incidentID uint64) fiber.Map {
 	out := fiber.Map{
 		"chat": int64(0), "post": int64(0), "chitchat": int64(0), "events": int64(0),
 		"email": int64(0), "push": int64(0), "export": int64(0), "refused": int64(0),
+		"admins": int64(0),
 	}
 	if incidentID == 0 {
 		return out
@@ -328,7 +329,7 @@ func heldCounts(incidentID uint64) fiber.Map {
 		Where("lockdownid = ?", incidentID).
 		Scan(&counters)
 
-	var events, email, push, export, refused int64
+	var events, email, push, export, refused, admins int64
 	for _, r := range counters {
 		switch {
 		case r.Kind == "held:events":
@@ -341,6 +342,8 @@ func heldCounts(incidentID uint64) fiber.Map {
 			export += r.Count
 		case r.Kind == "refused_member", strings.HasPrefix(r.Kind, "refused:"):
 			refused += r.Count
+		case r.Kind == "admins_withdrawn":
+			admins += r.Count
 		}
 	}
 	out["events"] = events
@@ -348,6 +351,7 @@ func heldCounts(incidentID uint64) fiber.Map {
 	out["push"] = push
 	out["export"] = export
 	out["refused"] = refused
+	out["admins"] = admins
 	return out
 }
 

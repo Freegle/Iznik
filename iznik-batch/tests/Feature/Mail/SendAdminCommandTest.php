@@ -58,6 +58,28 @@ class SendAdminCommandTest extends TestCase
         $this->assertNotNull($admin->complete);
     }
 
+    public function test_nothing_is_sent_while_a_lockdown_holds_email(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+        DB::table('lockdowns')->delete();
+        \App\Services\Lockdown\LockdownService::flushCache();
+        (new \App\Services\Lockdown\LockdownService())->press(null, 'wave');
+
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['lastaccess' => now()]);
+        $this->createMembership($user, $group);
+        $adminId = $this->createAdmin($group);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])
+            ->expectsOutputToContain('Email is held by the lockdown')
+            ->assertSuccessful();
+
+        Mail::assertNothingSent();
+        $this->assertNull(DB::table('admins')->where('id', $adminId)->value('complete'), 'not marked sent');
+        \App\Services\Lockdown\LockdownService::flushCache();
+    }
+
     /**
      * Test: Pending admin sends 0 emails.
      * Mirrors V1 testBasic.
