@@ -97,6 +97,18 @@ Schedule::command('images:migrate-legacy')
     ->sendOutputTo(cronLog('images:migrate-legacy'))
     ->runInBackground();
 
+// Proves the bucket is still writable and, above all, still PUBLICLY readable:
+// the read chain in frontend-nginx falls through to the legacy share on any
+// bucket error, so a bucket that stops answering (public read switched off, key
+// revoked, service disabled) shows up only as every image that exists solely
+// in the bucket going missing. --report raises ObjectStoreUnavailable in Sentry.
+Schedule::command('images:object-store-check --report')
+    ->everyTenMinutes()
+    ->withoutOverlapping(10)
+    ->when(fn () => (bool) config('freegle.image_store.enabled', false))
+    ->sendOutputTo(cronLog('images:object-store-check'))
+    ->runInBackground();
+
 // Record the deployed Laravel commit so /api/version reports the live build
 // (the monitor-fsm "verified-live" reply gate compares it against merged PRs).
 // Lightweight (just a config upsert) — safe to run frequently; deploy:watch is

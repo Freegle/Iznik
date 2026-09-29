@@ -87,9 +87,11 @@ vhost) and `iznik-batch/app/Services/ImageStore/`.
    ```
 
    It writes a probe, reads it back **anonymously** at the public URL, and deletes it.
-   A bucket that is not public answers 403; nginx would hide that by falling through to
-   the legacy share, and every new image would 404 with nothing in any log naming the
-   cause. Do not go on until this prints `OK`.
+   A bucket that is not public answers 401 or 403; nginx falls through to the legacy
+   share, and every image that exists only in the bucket 404s with nothing in any log
+   naming the cause. Do not go on until this prints `OK`. Once the store is enabled the
+   same check runs every ten minutes with `--report`, which raises
+   `ObjectStoreUnavailable` in Sentry when it fails.
 
 ## Cutover
 
@@ -111,6 +113,24 @@ starts the upload again by itself.
    and confirm it was answered from the bucket (the request no longer reaches `tusd`).
 4. Watch `storage/logs/cron/images_push-spool.log` for a day. `Failed` must stay at 0;
    `Waiting (grace)` and `Incomplete` are normal.
+
+## If the bucket goes dark
+
+The read chain treats any answer from the bucket other than the bytes (401, 403, 404,
+a 5xx, no answer) as "not here" and goes on to the legacy share, so everything still on
+the share keeps serving. What breaks is every upload that exists only in the bucket:
+those 404 until the bucket answers again. Nothing can be done about them locally; the
+pusher deleted each local copy only after the bucket confirmed it held the object.
+
+The pusher and the migrator stop at the first object that meets an unavailable store,
+report `ObjectStoreUnavailable` to Sentry, and count nothing as failed: uploads stay in
+the spool, where the chain serves them, and the copy cursor stays before the row that
+met the outage. The scheduled `images:object-store-check --report` raises the same
+error within ten minutes. When the bucket is back, `images:object-store-check` by hand
+must print `OK` before anything else; the next pusher pass then drains the spool and
+the next slice carries on. Rows a slice counted as `Failed` are retried by
+`--reset` of that source, which re-walks it from the start and skips what the store
+already holds.
 
 **Rollback** at this point: set `IMAGE_STORE_ENABLED=false`, copy the spool's files onto
 the share (`docker cp` the spool volume's contents into the NFS mount; ids are unique so
@@ -148,7 +168,7 @@ read chain; keeping it is harmless.
 
 Only after a clean verify:
 
-1. Remove the `@legacy_store` location and the `error_page 403 404 = @legacy_store`
+1. Remove the `@legacy_store` location and the `error_page 401 403 404 500 502 503 504 = @legacy_store`
    line from the uploads vhost in `frontend-nginx.conf`, both `/srv/tusd-data` binds
    from `docker-compose.override.edge.yml`, and the `tusd-legacy` volume and its mount
    from `docker-compose.yml`. Bring the edge services up again.
