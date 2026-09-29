@@ -79,7 +79,7 @@ held again on its own if the wave comes back.
 2. Mark the accounts behind the wave as spammers in Support tools.
 3. Lift **moderator actions**, so moderators are in their queues before they fill.
 4. Lift **chat**, **posts**, **ChitChat** and **events**. Everything held goes through the
-   checks that would have run on the day, oldest first, a few hundred a minute. Messages
+   checks that would have run on the day, oldest first, straight away. Messages
    from accounts marked as spammers are dropped; posts from moderated members or groups
    wait for a moderator as usual.
 5. Lift **app notifications**.

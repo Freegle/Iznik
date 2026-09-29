@@ -1004,13 +1004,18 @@ mode, incident phrases, samples, clusters, mark spam and release class parts of 
 
 **Lifting**
 
-- Lifting an area releases everything it held, oldest first, a few hundred a minute,
-  through the normal processing that would have run on the day. The normal checks still
+- Lifting an area releases everything it held, oldest first, as fast as the normal
+  processing runs, through the processing that would have run on the day. It works in
+  batches of a few hundred with no pause between them, only to keep each query small.
+  Mail needs no pacing here: it goes through the spool, whose daemons send at their usual
+  rate however much arrives at once. The normal checks still
   apply, so a sender Support has since marked as a spammer is dropped by the existing
   spammer handling, and a post from a moderated member or group still waits for a
   moderator. Nothing is released while its area is held.
 
 **Browsing what is held (Support and Admin only)**
+
+- On its own subtab of the Lockdown tab, "What is held", so the controls stay short.
 
 - `GET /modtools/lockdown/held?kind=chat|post|chitchat&q=&userid=&before=` returns held
   items newest first, 50 a page: id, kind, created, sender id, name and email, the text
