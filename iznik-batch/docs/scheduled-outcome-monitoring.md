@@ -230,7 +230,7 @@ would false-alarm constantly:
 - **Cleanup / purge / dedup** (delete nothing when there's nothing to delete):
   `cleanup:search-duplicates`, `cleanup:chat-duplicates`,
   `cleanup:archive-profile-images`, `cleanup:sessions`, `purge:chats`,
-  `purge:logs`, `purge:messages`, `emails:validate`, `messages:deindex`,
+  `purge:logs`, `purge:messages`, `emails:validate`,
   `mail:spool:process` (filesystem), `mail:cleanup-archive` (filesystem),
   `users:remove-spammers`.
 - **In-place recomputes with no advancing timestamp** (UPDATE existing rows):

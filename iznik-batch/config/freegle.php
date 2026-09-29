@@ -652,6 +652,30 @@ return [
         'mmdb_path' => env('GEOIP_MMDB_PATH', base_path('resources/geoip/GeoLite2-Country.mmdb')),
     ],
 
+    // The image object store. Uploads keep going through tusd; what changes is
+    // where a finished upload is kept. Off by default: the schedule only runs
+    // the pusher and the migrator when this is on, and it is turned on in
+    // production once images:object-store-check has passed against the real
+    // bucket (docs/ops/runbooks/images-to-object-storage.md).
+    'image_store' => [
+        'enabled' => (bool) env('IMAGE_STORE_ENABLED', false),
+        // A completed upload is pushed only after it has been unchanged this
+        // long, so a client that is still reading its own upload back through
+        // the delivery cache never sees a gap.
+        'push_grace_seconds' => (int) env('IMAGE_STORE_PUSH_GRACE_SECONDS', 60),
+        'push_limit' => (int) env('IMAGE_STORE_PUSH_LIMIT', 500),
+        // An upload that never reaches its declared length is deleted after this.
+        'abandon_hours' => (int) env('IMAGE_STORE_ABANDON_HOURS', 24),
+        // The legacy copy runs in short scheduled slices. Off until the edge
+        // has the read chain in place; then on until verify reports nothing missing.
+        'migrate_enabled' => (bool) env('IMAGE_STORE_MIGRATE_ENABLED', false),
+        'migrate_time_budget' => (int) env('IMAGE_STORE_MIGRATE_TIME_BUDGET', 240),
+        'migrate_chunk' => (int) env('IMAGE_STORE_MIGRATE_CHUNK', 500),
+        // Upload bandwidth cap for the copy, MB/s. 1.1 TB at 10 MB/s is about 30
+        // hours of transfer spread over however many slices it takes.
+        'migrate_max_mbps' => (float) env('IMAGE_STORE_MIGRATE_MAX_MBPS', 10),
+    ],
+
     // TUS uploader for AI-generated images
     'tus_uploader' => env('TUS_UPLOADER', 'https://uploads.ilovefreegle.org:8080'),
 
@@ -1520,6 +1544,19 @@ return [
         // data:update-cpi (monthly) — alert if its config timestamp is older
         // than this many days.
         'cpi_max_age_days' => (int) env('FREEGLE_MONITORING_CPI_MAX_AGE_DAYS', 40),
+    ],
+
+    // CookieYes watchdog (cookieyes:check): talks to CookieYes's MCP server over
+    // OAuth. The login itself is stored in the `config` table by
+    // cookieyes:authorize, not here. See docs/developers/reference/cookieyes-watchdog.md.
+    'cookieyes' => [
+        // Off stops the weekly schedule, for a deployment with no CookieYes account.
+        'enabled' => (bool) env('COOKIEYES_ENABLED', true),
+        'base_url' => env('COOKIEYES_BASE_URL', 'https://app.cookieyes.com'),
+        // Trigger a new scan once the latest is this old.
+        'rescan_after_days' => (int) env('COOKIEYES_RESCAN_AFTER_DAYS', 30),
+        // Fail the check once the latest scan is this old.
+        'stale_after_days' => (int) env('COOKIEYES_STALE_AFTER_DAYS', 45),
     ],
 
     'lovejunk' => [

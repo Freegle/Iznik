@@ -189,7 +189,7 @@ class RefreshCommand extends Command
         // Read the deployed git commit SHA from the working-directory checkout.
         // This is more reliable than BUILD_INFO (which isn't set in production deploys)
         // and allows the Go API to query the DB to find out what Laravel commit is running.
-        $commit = $this->readGitHead(base_path());
+        $commit = $this->readGitHead($this->repositoryPath());
         if ($commit) {
             DB::table('config')->upsert(
                 [['key' => 'deploy.laravel_commit', 'value' => $commit]],
@@ -198,6 +198,15 @@ class RefreshCommand extends Command
             );
             $this->line("  <info>✓</info> Recorded Laravel deploy commit: {$commit}");
         }
+    }
+
+    /**
+     * The checkout whose HEAD is the deployed commit. Overridable so a test can
+     * point it at a checkout it made itself.
+     */
+    protected function repositoryPath(): string
+    {
+        return base_path();
     }
 
     /**

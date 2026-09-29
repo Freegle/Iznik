@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Services\ContentCheckService;
 use App\Services\ContentEmbeddingService;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class ContentCheckTest extends TestCase
@@ -652,9 +653,7 @@ class ContentCheckTest extends TestCase
         $this->assertNull($noMatch, 'unrelated word must not match');
     }
 
-    /**
-     * @dataProvider shortFuzzyFalsePositiveProvider
-     */
+    #[DataProvider('shortFuzzyFalsePositiveProvider')]
     public function test_fuzzy_match_rejects_short_keyword_neighbours(string $keyword, string $body): void
     {
         $group = $this->createTestGroup();
@@ -684,9 +683,7 @@ class ContentCheckTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider shortFuzzyInflectionProvider
-     */
+    #[DataProvider('shortFuzzyInflectionProvider')]
     public function test_fuzzy_match_still_catches_inflections_for_short_keywords(string $keyword, string $body): void
     {
         $group = $this->createTestGroup();
@@ -755,9 +752,7 @@ class ContentCheckTest extends TestCase
         $this->assertNull($this->service->checkVagueItem('   '));
     }
 
-    /**
-     * @dataProvider vagueItemFalsePositiveProvider
-     */
+    #[DataProvider('vagueItemFalsePositiveProvider')]
     public function test_specific_noun_rescues_a_vague_modifier(string $itemName): void
     {
         $this->assertNull(
@@ -782,9 +777,7 @@ class ContentCheckTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider vagueItemTruePositiveProvider
-     */
+    #[DataProvider('vagueItemTruePositiveProvider')]
     public function test_genuinely_vague_names_are_flagged(string $itemName): void
     {
         $result = $this->service->checkVagueItem($itemName);

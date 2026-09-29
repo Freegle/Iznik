@@ -68,9 +68,17 @@ services:
       - default
     image: percona:8.0.43-34
     restart: always
+    # PERCONA_STORAGE=ram (the default) keeps the data directory in memory. Every
+    # schema change forces several disk syncs, and on WSL each sync costs 10-13ms, so
+    # the 511 migrations took about 12 minutes on disk and 9 seconds in memory. The
+    # data is lost when the container stops: the batch container migrates again when
+    # it starts, and scripts/setup-test-database.sh reloads the fixtures.
+    # PERCONA_STORAGE=disk uses the on-disk volume instead. Yesterday pins disk in its
+    # own override files, because it restores the production database.
     volumes:
-      - freegle_db:/var/lib/mysql
+      - freegle_db_${PERCONA_STORAGE:-ram}:/var/lib/mysql
       - ./conf/percona-my.cnf:/etc/my.cnf:ro
+      - ./conf/percona-${PERCONA_STORAGE:-ram}.cnf:/etc/mysql/my.cnf:ro
     environment:
       MYSQL_ROOT_PASSWORD: iznik
       MYSQL_DATABASE: iznik
@@ -328,11 +336,20 @@ services:
           - tusd.localhost
     ports:
       - "${PORT_TUSD:-1080}:8080"
-    # Default == the dev/CI command. The edge VM overrides it via .env:
-    #   TUSD_COMMAND=-upload-dir=/srv/tusd-data -behind-proxy -base-path / -disable-cors
-    # No -hooks-http: uploaded images are turned into attachments by the apiv2 /api/image
-    # endpoint (client-side finalisation), matching app1 prod which runs without hooks.
-    command: ${TUSD_COMMAND:--base-path=/tus/ -cors-allow-headers=baggage,sentry-trace}
+    # Default == the dev/CI command; docker-compose.override.edge.yml sets the
+    # production flags. Both write to /srv/tusd-data, the tusd-spool volume:
+    # every upload lands on local disk and images:push-spool (batch) moves each
+    # completed one to the object store. No -hooks-http: uploaded images are
+    # turned into attachments by the apiv2 /api/image endpoint.
+    #
+    # The volume is mounted over the image's OWN upload directory on purpose.
+    # tusd runs as uid 1000, and a new named volume takes the ownership of the
+    # directory it is mounted over: /srv/tusd-data is tusd's in the image, so
+    # the volume is writable. Mounted at a path the image does not have (say
+    # /spool) it is root's, and every upload fails with "permission denied".
+    command: ${TUSD_COMMAND:--upload-dir=/srv/tusd-data -base-path=/tus/ -cors-allow-headers=baggage,sentry-trace}
+    volumes:
+      - tusd-spool:/srv/tusd-data
     depends_on:
       reverse-proxy:
         condition: service_healthy
@@ -361,6 +378,50 @@ services:
   # docker-compose.override.edge.yml; on dev the stack is validated over the
   # compose network.
   # ===========================================================================
+  # Dev/CI stand-in for the Katapult bucket, so the edge stack can be run end to
+  # end locally: upload -> spool -> images:push-spool -> bucket -> served by
+  # frontend-nginx. RustFS rather than MinIO: MinIO's images stopped being
+  # publicly pullable in 2025 (Docker Hub repo gone, quay unauthorised). The
+  # prod override holds both services at replicas:0.
+  objectstore:
+    image: rustfs/rustfs:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-objectstore
+    profiles:
+      - edge
+    networks:
+      - default
+    environment:
+      - RUSTFS_ACCESS_KEY=rustfsadmin
+      - RUSTFS_SECRET_KEY=rustfsadmin
+    volumes:
+      - objectstore-data:/data
+
+  # Creates the images bucket and makes it anonymously readable, which is how the
+  # real bucket is configured in the Krystal console (Katapult exposes no ACL or
+  # policy through the S3 API; RustFS takes a plain bucket policy). Exits when
+  # done; safe to run again.
+  objectstore-init:
+    image: amazon/aws-cli:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-objectstore-init
+    profiles:
+      - edge
+    networks:
+      - default
+    depends_on:
+      objectstore:
+        condition: service_started
+    environment:
+      - AWS_ACCESS_KEY_ID=rustfsadmin
+      - AWS_SECRET_ACCESS_KEY=rustfsadmin
+      - AWS_DEFAULT_REGION=us-east-1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until aws --endpoint-url http://objectstore:9000 s3api list-buckets >/dev/null 2>&1; do sleep 2; done
+        aws --endpoint-url http://objectstore:9000 s3api create-bucket --bucket images 2>/dev/null || true
+        aws --endpoint-url http://objectstore:9000 s3api put-bucket-policy --bucket images --policy '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::images/*"]}]}'
+        echo "objectstore: bucket images ready and publicly readable"
+
   frontend-nginx:
     image: nginx:1.27-alpine
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-frontend-nginx
@@ -376,9 +437,26 @@ services:
       tile-server:
         condition: service_started
         required: false
+    environment:
+      # frontend-nginx.conf is an envsubst template: the image renders it into
+      # /etc/nginx/nginx.conf at start. The FILTER is what makes that safe -
+      # only IMAGE_STORE_* is substituted, every nginx $variable is left alone.
+      - NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx
+      - NGINX_ENVSUBST_FILTER=^IMAGE_STORE_
+      # Public base URL of the image bucket, with a trailing slash. GETs for an
+      # upload that is no longer in the spool are proxied to this + <id>. The
+      # prod override requires it to be set; the default is the dev objectstore.
+      - IMAGE_STORE_PUBLIC_URL=${IMAGE_STORE_PUBLIC_URL:-http://objectstore:9000/images/}
     volumes:
-      - ./frontend-nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend-nginx.conf:/etc/nginx/templates/nginx.conf.template:ro
       - delivery-cache:/var/cache/nginx/wsrv_cache
+      # The LEGACY upload store, read-only: nginx serves a GET from here only
+      # after the spool and the object store have both said 404. Static files,
+      # no tusd in front (tusd creates a lock file even on GET, which a
+      # read-only mount refuses). On the prod host the edge override binds the
+      # NFS share here; on dev it is an empty volume. Dropped, with the nginx
+      # hop, once images:migrate-legacy --verify reports nothing missing.
+      - tusd-legacy:/images:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8081/healthz || exit 1"]
       interval: 10s
@@ -780,10 +858,6 @@ services:
       - DONATION_TARGET=${DONATION_TARGET:-}
       - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
-      # Rollback lever for the vector-search default: set to "keyword" to revert
-      # all callers (no searchmode param) to the legacy keyword cascade. Default
-      # (unset) = vector-hybrid search. Removed once keyword search is retired.
-      - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
       # Native ONNX pool: set both vars to bypass the HTTP sidecar for queries.
       # Model cache volume is shared with embedding-sidecar so no re-download needed.
       - EMBEDDING_ONNX_MODEL_PATH=${EMBEDDING_ONNX_MODEL_PATH:-}
@@ -1615,6 +1689,9 @@ services:
       # drift from the source of truth silently).
       - ./tools/orm-migration/services/laravel:/var/www/orm-migration-manifest:ro
       - apiv2_logs:/var/log/freegle
+      # tusd's upload spool, so images:push-spool can be run against the dev
+      # edge stack (objectstore) the same way batch-prod runs it against the bucket.
+      - tusd-spool:/spool
     depends_on:
       percona:
         condition: service_healthy
@@ -1701,10 +1778,6 @@ services:
       - LOKI_URL=http://loki:3100
       - MJML_URL=http://mjml/
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
-      # Rollback lever for the vector-search default: set to "keyword" to revert
-      # all callers (no searchmode param) to the legacy keyword cascade. Default
-      # (unset) = vector-hybrid search. Removed once keyword search is retired.
-      - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
       - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/avatar
       - SPATIAL_KNN_URL=http://spatial-knn:8194
       - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter,Reengage,CommunityNews
@@ -1766,6 +1839,9 @@ services:
       # monitoring key above on purpose: that one is a root shell across the
       # estate, this one only reads the outbound relay's mail queue.
       - ${MAIL_DEFERRALS_SSH_KEY_HOST_PATH:-/dev/null}:/etc/mail-deferrals-ssh-key:ro
+      # tusd's upload spool: images:push-spool (scheduled) moves completed
+      # uploads from here to the object store. Same volume tusd writes to.
+      - tusd-spool:/spool
     extra_hosts:
       - "db-host:${DB_HOST_IP:-127.0.0.1}"
       # Read replica for the DB read/write split. Falls back to the write host
@@ -1950,7 +2026,18 @@ services:
 volumes:
   rebuild-requests:
     driver: local
-  freegle_db: {}
+  # On disk. Named explicitly so it is the volume the key freegle_db created before
+  # PERCONA_STORAGE existed, and existing data carries over.
+  freegle_db_disk:
+    name: ${COMPOSE_PROJECT_NAME:-freegle}_freegle_db
+  # In memory. uid and gid are the mysql user in the percona image. The size is a
+  # ceiling, not an allocation: a worktree's databases use about 350MB.
+  freegle_db_ram:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=${PERCONA_RAM_SIZE:-4g},uid=1001,gid=1001,mode=0750"
   phpmyadmin-sessions:
     driver: local
   geoip_data:
@@ -1976,8 +2063,12 @@ volumes:
   # edge profile (front-end host) — see plans/2026-06-25-frontend-server-migration.md
   delivery-cache:
     driver: local   # frontend-nginx wsrv_cache (mirror of app1's 41 GB delivery cache)
-  tusd-data:
-    driver: local   # Docker-managed tusd upload dir; the VM override points /srv/tusd-data at NFS instead
+  tusd-spool:
+    driver: local   # tusd's local upload spool; images:push-spool drains it to the object store
+  tusd-legacy:
+    driver: local   # empty stand-in for the legacy NFS share (the edge override binds the real one into frontend-nginx)
+  objectstore-data:
+    driver: local   # dev/CI object store
   osm-data:
     driver: local   # tile-server PostGIS (osm-data, ~56 GB once imported)
   osm-tiles:

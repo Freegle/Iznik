@@ -7,6 +7,7 @@ use App\Services\EeeComponentService;
 use App\Services\EeeProductionStore;
 use App\Services\EeeSqliteService;
 use App\Services\EeeVisionService;
+use PHPUnit\Framework\Attributes\DataProvider;
 use ReflectionMethod;
 use Tests\TestCase;
 
@@ -44,9 +45,7 @@ class EeeClassificationServiceTest extends TestCase
     // extractTextSignals — public, no DB/HTTP
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * @dataProvider provideExtractTextSignalsCases
-     */
+    #[DataProvider('provideExtractTextSignalsCases')]
     public function test_extract_text_signals(string $text, array $expectedEee, array $expectedNonEee): void
     {
         $result = $this->service->extractTextSignals($text);

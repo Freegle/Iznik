@@ -114,6 +114,29 @@ func TestStoreSearchAllowedIDs(t *testing.T) {
 	assert.Len(t, results, 3)
 }
 
+func TestStoreLexicalMatchAllowedIDs(t *testing.T) {
+	// LexicalMatch is the exact-match guarantee that backs browse-scoped search
+	// (restricted to the viewer's Nearby feed universe) alongside the cosine path
+	// tested by TestStoreSearchAllowedIDs above. It must apply the same allowedIDs
+	// restriction, or a post outside the universe could still surface via the
+	// lexical fallback.
+	s := &Store{}
+
+	s.entries = []Entry{
+		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "OFFER: Zorbnak sofa in reach"},
+		{Msgid: 2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "OFFER: Zorbnak sofa out of reach"},
+	}
+
+	allowed := map[uint64]bool{1: true}
+	results := s.LexicalMatch([]string{"zorbnak"}, "", nil, allowed, 0, 0, 0, 0)
+	assert.Len(t, results, 1)
+	assert.Equal(t, uint64(1), results[0].Msgid)
+
+	// nil allowlist = no restriction.
+	results = s.LexicalMatch([]string{"zorbnak"}, "", nil, nil, 0, 0, 0, 0)
+	assert.Len(t, results, 2)
+}
+
 func TestStoreSearchSortOrder(t *testing.T) {
 	// Verify results are sorted by score even when count <= limit
 	s := &Store{}
@@ -404,5 +427,23 @@ func TestStoreSearchFindsMessageRippledIntoSearchedGroup(t *testing.T) {
 
 	results := s.Search(vec[:], 10, "", []uint64{200}, nil, 0, 0, 0, 0)
 	require.Len(t, results, 1, "message rippled into group 200 must be findable when a mod searches that group")
+	assert.Equal(t, uint64(1), results[0].Msgid)
+}
+
+func TestStoreLexicalMatchFindsMessageRippledIntoSearchedGroup(t *testing.T) {
+	// The exact-match guarantee must honour the same group scope as the cosine
+	// path (TestStoreSearchFindsMessageRippledIntoSearchedGroup above). A mod of
+	// the receiving group 200 searching for a word in the subject must find a
+	// message posted on origin group 100 that rippled into 200, even when its
+	// cosine is too low for the semantic path to surface it.
+	s := &Store{}
+
+	s.entries = []Entry{
+		{Msgid: 1, Groupid: 100, GroupIDs: []uint64{100, 200}, Msgtype: "Offer", Subject: "OFFER: Zorbnak sofa"},
+		{Msgid: 2, Groupid: 300, GroupIDs: []uint64{300}, Msgtype: "Offer", Subject: "OFFER: Zorbnak table"},
+	}
+
+	results := s.LexicalMatch([]string{"zorbnak"}, "", []uint64{200}, nil, 0, 0, 0, 0)
+	require.Len(t, results, 1, "message rippled into group 200 must be an exact match when a mod searches that group")
 	assert.Equal(t, uint64(1), results[0].Msgid)
 }

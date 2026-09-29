@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-20
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 ---
 
@@ -36,6 +36,13 @@ being brought into the same Compose stack as batch processing, one step at a tim
   **human-gated**.
 - Roll changes forward one at a time and verify each before the next, so any single step
   can be undone cleanly.
+
+## Images: NFS to object storage
+
+Uploaded photos now go to a local spool and on to an S3-compatible object store; the old
+NFS share is read-only and being copied across in scheduled slices, invisibly to members.
+[The runbook](images-to-object-storage.md) has the order of operations: prove the bucket
+is public, cut tusd over, enable the pusher, run the copy, verify, retire the share.
 
 ## Deployment spend optimisation
 
@@ -85,6 +92,20 @@ stop and start makes a rejoin slower.
 - Stop with the service, never a kill; do not remove the data directory or touch the state
   file; a joining node refusing connections for 10 to 18 minutes is a full copy in
   progress, not a hang.
+
+## CookieYes watchdog says the login is lost
+
+The weekly `cookieyes:check` job (see
+[the developer page](../../developers/reference/cookieyes-watchdog.md)) emails Geeks and
+fails the `cookieyes` housekeeping task when its CookieYes login has expired or been
+revoked. Nothing member-facing is affected: the cookie banner keeps working. Only the
+weekly checks and monthly scans stop until someone logs in again.
+
+- The CookieYes account owner runs `php artisan cookieyes:authorize` on the batch host,
+  opens the link it prints, clicks Allow, and then runs it again with `--callback` set to
+  the address the browser landed on.
+- To verify, run `php artisan cookieyes:check`, which should record a result for the
+  `cookieyes` task on the ModTools Sysadmin housekeeping list.
 
 ## Adding a runbook
 

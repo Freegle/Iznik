@@ -728,6 +728,11 @@ func GetUserById(id uint64, myid uint64) User {
 					isGroupMod = true
 				}
 				isExempt := IsExemptBySystemroleAndMod(user.Systemrole, isGroupMod)
+				if !isExempt && isSuspiciousName(user.Displayname) {
+					// Only now worth the lookup: Freegle's own mailboxes keep names
+					// like "Freegle Support".
+					isExempt = IsOfficialFreegleUser(db, id)
+				}
 				user.Displayname = SanitizeDisplayName(user.Displayname, isExempt)
 			} else {
 				// Censor name for deleted user when viewed by non-mod.

@@ -201,7 +201,10 @@ yet), then again from `stores/mobile.js` (which also owns deep-link handling, se
 app page) `logAppSession()` once `App.getInfo()` and
 `Device.getInfo()` have answered. Both carry the same `session_id`, so `dedupeSessions()`
 merges them into one record — keeping the session count honest and making the app version
-independent of the order Loki returns the lines in.
+independent of the order Loki returns the lines in. The same native answers are set as
+Sentry tags (`os.version.exact`, `device.model.exact`, `app.version`, `app.build`), because
+the user agent only gives Sentry the OS minor version and a device-specific fault needs the
+patch level and model.
 
 ## Refer to geeks
 

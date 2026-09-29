@@ -217,6 +217,30 @@ class HousekeeperServiceTest extends TestCase
     /**
      * Helper: assertStringContains (works like assertStringContainsString).
      */
+    public function test_record_run_sets_registry_fields_for_a_server_side_task(): void
+    {
+        $taskKey = 'test-task-' . uniqid();
+
+        $this->service->recordRun($taskKey, 'failure', 'Banner not live', "line 1\nline 2", [
+            'name' => 'Server-side check',
+            'description' => 'Runs in batch',
+            'interval_hours' => 192,
+            'enabled' => 1,
+            'placeholder' => 0,
+        ]);
+
+        $row = DB::table('housekeeper_tasks')->where('task_key', $taskKey)->first();
+
+        $this->assertSame('Server-side check', $row->name);
+        $this->assertSame('Runs in batch', $row->description);
+        $this->assertEquals(192, $row->interval_hours);
+        $this->assertEquals(1, $row->enabled);
+        $this->assertEquals(0, $row->placeholder);
+        $this->assertSame('failure', $row->last_status);
+        $this->assertSame('Banner not live', $row->last_summary);
+        $this->assertSame("line 1\nline 2", $row->last_log);
+    }
+
     private function assertStringContains(string $needle, string $haystack): void
     {
         $this->assertStringContainsString($needle, $haystack);
