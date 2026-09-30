@@ -2,6 +2,8 @@ package message
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
+	"github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -272,25 +275,65 @@ func ListMessagesMT(c *fiber.Ctx) error {
 			listErr = db.Raw(sql, args...).Pluck("msgid", &msgIDs).Error
 		}
 		if len(msgIDs) == 0 {
-			// Fall back to name/email LIKE search.  The LEFT JOIN to
-			// users_emails can produce duplicate msgids for users with
-			// multiple emails; SELECT DISTINCT inside each UNION branch
-			// collapses them before the outer LIMIT is applied.
+			// Name/email search: find the matching MEMBERS first, then their posts
+			// through the poster index. That is how v1 did it (messages.php
+			// searchmemb -> Group::getMembers -> MessageCollection::get by userids).
+			//
+			// This used to scan the community's posts newest-first, testing each
+			// poster's name against the term and stopping once LIMIT rows matched.
+			// That never stops early: a moderator looking for one person names
+			// somebody with fewer posts in the community than the page size - often
+			// one, and none at all when the term is a typo - so the scan has to reach
+			// the end of the community to know it is done, joining every approved row
+			// to messages, users and users_emails on the way. Measured on production
+			// for one community of 47k approved rows: 14-20s whether the term matched
+			// a recent poster or nobody, so every member search there hit
+			// MAX_EXECUTION_TIME and 500ed (16 a day in the week before this change).
+			// The SELECT DISTINCT that de-duplicated multiple emails made it worse,
+			// but was not the cause.
+			//
+			// Candidates come from the memberships of the queried communities,
+			// driven from the group index exactly as the ModTools member search is:
+			// see membership.go searchTx for why FORCE INDEX is load-bearing there,
+			// and equally here. Measured: 2-4s for one community, about 10s across a
+			// moderator's sixteen; the posts then come from the fromuser index in
+			// milliseconds. The candidate cap of 1000 is v1's. Somebody who has left
+			// the community is no longer a candidate, as in v1; their posts are still
+			// reachable by member id (the numeric branch above, or ?fromuser=).
+			//
+			// The candidate query carries its own MAX_EXECUTION_TIME and the posts
+			// query carries buildMTUnionAllMsgIDQuery's, so the request stays inside
+			// the gateway's 50s server timeout either way; a hit on either cap is
+			// reported as a 503 below, never as an empty result.
 			searchTerm := "%" + search + "%"
-			branchSQL := "SELECT DISTINCT mg.msgid, mg.arrival FROM messages_groups mg " +
-				"INNER JOIN messages m ON m.id = mg.msgid " +
-				"INNER JOIN users u ON u.id = m.fromuser " +
-				"LEFT JOIN users_emails ue ON ue.userid = u.id " +
-				"WHERE mg.groupid = %GID% AND mg.collection = ? AND mg.deleted = 0 " +
-				"AND m.deleted IS NULL AND u.deleted IS NULL " +
-				// Same fullname/firstname/lastname/concat matching as the non-union branch
-				// above - see the comment there (Discourse 9518/379).
-				"AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? " +
-				"OR CONCAT_WS(' ', u.firstname, u.lastname) LIKE ? OR ue.email LIKE ?) " +
-				contentcheckFilter +
-				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
-			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm}, groupIDs, limit)
-			listErr = db.Raw(sql, args...).Pluck("msgid", &msgIDs).Error
+			var candidateIDs []uint64
+			candErr := db.Table("memberships mem FORCE INDEX (memberships_groupid_collection_emailfrequency)").
+				Select("/*+ MAX_EXECUTION_TIME(20000) */ DISTINCT mem.userid").
+				Joins("INNER JOIN users u ON u.id = mem.userid").
+				Joins("LEFT JOIN users_emails ue ON ue.userid = mem.userid").
+				// Same fullname/firstname/lastname/concat matching as the member search
+				// (Discourse 9518/371, 9518/379). One Where() call: GORM wraps a
+				// fragment containing AND/OR in extra parentheses when it combines
+				// several, which would change nothing here but is easier to read as one.
+				Where("mem.groupid IN ? AND u.deleted IS NULL "+
+					"AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? "+
+					"OR CONCAT_WS(' ', u.firstname, u.lastname) LIKE ? OR ue.email LIKE ?)",
+					groupIDs, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm).
+				Limit(1000).
+				Pluck("userid", &candidateIDs).Error
+			if candErr != nil {
+				listErr = candErr
+			} else if len(candidateIDs) > 0 {
+				branchSQL := "SELECT mg.msgid, mg.arrival FROM messages m " +
+					"INNER JOIN messages_groups mg ON mg.msgid = m.id " +
+					"WHERE m.fromuser IN ? AND mg.groupid = %GID% AND mg.collection = ? AND mg.deleted = 0 " +
+					"AND m.deleted IS NULL " +
+					contentcheckFilter +
+					" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
+				sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{candidateIDs, collection}, groupIDs, limit)
+				// keep-raw: per-community UNION ALL assembled by buildMTUnionAllMsgIDQuery, as every branch of this handler does
+				listErr = db.Raw(sql, args...).Pluck("msgid", &msgIDs).Error
+			}
 		}
 	} else {
 		// When listing the Pending review queue, also include Spam-collection messages.
@@ -331,6 +374,20 @@ func ListMessagesMT(c *fiber.Ctx) error {
 	}
 
 	if listErr != nil {
+		// A search that hits MAX_EXECUTION_TIME is answered with a 400, not a 5xx.
+		// The client retries every 5xx up to ten times (useFetchRetry), and a
+		// search that took 20s to give up will take 20s to give up again, so a
+		// 500 here turned one too-broad search into ten copies of it on the
+		// read node: one moderator's single term shows 17 such runs in a week's
+		// logs. The plain queue listing keeps the 500 below on purpose - there a
+		// slow replica is the usual cause and a retry can succeed (Discourse
+		// 10037). ModTools shows "Nothing found" for any failed search and does
+		// not display the body; the message is there for a client that does.
+		var mysqlErr *mysql.MySQLError
+		if errors.As(listErr, &mysqlErr) && mysqlErr.Number == 3024 && subaction != "" && search != "" {
+			log.Printf("ListMessagesMT: %s search exceeded MAX_EXECUTION_TIME (groups=%d search=%q)", subaction, len(groupIDs), search)
+			return fiber.NewError(fiber.StatusBadRequest, "That search took too long. Try a more specific term, or choose a community.")
+		}
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to list messages")
 	}
 
