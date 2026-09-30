@@ -16,39 +16,11 @@ package main
 //
 // Health check
 //
-// Returns the health status of the spatial service.
+// Returns {"status":"ok"} when the service is up. Used by Docker healthchecks.
 //
 // Responses:
 //
 //	200: genericResponse
-
-// swagger:route GET /v1/datasets spatial listDatasets
-//
-// List datasets
-//
-// Returns all available datasets with their names, record counts, and readiness status.
-//
-// Responses:
-//
-//	200: genericResponse
-
-// swagger:route GET /v1/{dataset}/status spatial getDatasetStatus
-//
-// Get dataset status
-//
-// Returns the readiness, record count and last-sync time for a named dataset.
-//
-// Parameters:
-//   + name: dataset
-//     in: path
-//     description: Dataset name (e.g. locations, messages, userapproxlocs)
-//     required: true
-//     type: string
-//
-// Responses:
-//
-//	200: genericResponse
-//	404: errorResponse
 
 // swagger:route GET /v1/{dataset}/knn spatial knnQuery
 //
@@ -56,11 +28,12 @@ package main
 //
 // Returns the nearest records in a dataset to a given lat/lng point.
 // Optionally filtered by feature type and/or a polygon boundary.
+// Response: {"results": [{"id": int64, "distance": float64, "extra": {...}}]}
 //
 // Parameters:
 //   + name: dataset
 //     in: path
-//     description: Dataset name
+//     description: Dataset name (e.g. locations, messages, userapproxlocs, jobs, groups, postcodes, newsfeed)
 //     required: true
 //     type: string
 //   + name: lng
@@ -84,12 +57,12 @@ package main
 //     maximum: 1000
 //   + name: type
 //     in: query
-//     description: Optional feature-type filter
+//     description: Optional feature-type filter (dataset-specific, e.g. "Postcode" for locations)
 //     required: false
 //     type: string
 //   + name: polygon
 //     in: query
-//     description: WKT polygon to restrict results to (optional)
+//     description: WKT polygon to restrict results to (optional; use POST /within_coords for large polygons)
 //     required: false
 //     type: string
 //
@@ -98,91 +71,252 @@ package main
 //	200: genericResponse
 //	400: errorResponse
 //	404: errorResponse
+//	500: errorResponse
 //	503: errorResponse
 
-// swagger:route GET /v1/{dataset}/within spatial withinQuery
+// swagger:route GET /v1/{dataset}/containing spatial containingQuery
 //
-// Within polygon — return IDs
+// Point containment query
 //
-// Returns the IDs of all records whose geometry falls inside the given WKT polygon.
+// Returns every item in the dataset whose geometry contains the given point.
+// Only datasets implementing PointContainer (currently reach) support it.
+// `in` are items the point is definitely inside; `partial` items sit in the
+// boundary band of a rasterised geometry and the caller must resolve them
+// against the exact source geometry to be sure.
+// Response: {"in": [int64...], "partial": [int64...]}
 //
 // Parameters:
 //   + name: dataset
 //     in: path
-//     description: Dataset name
+//     description: Dataset name (must implement PointContainer, e.g. reach)
 //     required: true
 //     type: string
-//   + name: polygon
+//   + name: lng
 //     in: query
-//     description: WKT polygon (required)
+//     description: Longitude of query point
 //     required: true
-//     type: string
+//     type: number
+//     format: double
+//   + name: lat
+//     in: query
+//     description: Latitude of query point
+//     required: true
+//     type: number
+//     format: double
 //
 // Responses:
 //
 //	200: genericResponse
 //	400: errorResponse
 //	404: errorResponse
-//	503: errorResponse
-
-// swagger:route GET /v1/{dataset}/within_coords spatial withinCoordsGet
-//
-// Within polygon — return items with coordinates (GET)
-//
-// Returns full item objects (including coordinates) for records inside the polygon.
-// Use POST for large polygons that exceed URL length limits.
-//
-// Parameters:
-//   + name: dataset
-//     in: path
-//     description: Dataset name
-//     required: true
-//     type: string
-//   + name: polygon
-//     in: query
-//     description: WKT polygon (required)
-//     required: true
-//     type: string
-//
-// Responses:
-//
-//	200: genericResponse
-//	400: errorResponse
-//	404: errorResponse
+//	500: errorResponse
+//	501: errorResponse
 //	503: errorResponse
 
 // swagger:route POST /v1/{dataset}/within_coords spatial withinCoordsPost
 //
 // Within polygon — return items with coordinates (POST)
 //
-// Same as GET /within_coords but accepts the polygon in the request body to
-// avoid URL length limits for large isochrone polygons.
-// Body may be raw WKT (Content-Type: text/plain) or form-encoded (polygon=WKT).
+// Returns full item objects (including extra fields such as coordinates) for all
+// records whose geometry falls inside the given WKT polygon.
+// Use this POST form for large isochrone polygons that exceed safe URL length limits.
+// Response: {"results": [{"extra": {...}}]}
+//
+// Accepts Content-Type: text/plain (raw WKT body) or
+// application/x-www-form-urlencoded with field polygon=<WKT>.
+//
+// Binds to SPATIAL_PORT (default 8194).
 //
 // Parameters:
 //   + name: dataset
 //     in: path
-//     description: Dataset name
+//     description: Dataset name (e.g. userapproxlocs)
 //     required: true
 //     type: string
+//   + name: body
+//     in: body
+//     description: WKT polygon as raw text body (Content-Type text/plain) or polygon=<WKT> form field
+//     required: true
+//     schema:
+//       type: string
 //
 // Responses:
 //
 //	200: genericResponse
 //	400: errorResponse
 //	404: errorResponse
+//	413: errorResponse
+//	500: errorResponse
 //	503: errorResponse
+
+// swagger:route POST /v1/reach/vectorize spatial reachVectorize
+//
+// Vectorize an encoded reach cell set
+//
+// The inverse of rasterising: encoded cell bytes in (Content-Type
+// application/octet-stream), a traced boundary out, for the few places that need
+// a vector now the grid is the stored form (the map overlay; re-deriving the
+// sandwich bounds after a clip). Response: {"wkt": "...", "geojson": {...}}.
+//
+// Binds to SPATIAL_PORT (default 8194).
+//
+// Parameters:
+//   + name: tolerance
+//     in: query
+//     description: Simplification tolerance in degrees. 0 (the default) keeps the exact lattice outline, whose rasterisation reproduces the input grid bit for bit; positive values simplify for display.
+//     required: false
+//     type: number
+//   + name: body
+//     in: body
+//     description: Encoded cell set bytes (Content-Type application/octet-stream)
+//     required: true
+//     schema:
+//       type: string
+//       format: binary
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	500: errorResponse
+
+// swagger:route GET /api places placesSearch
+//
+// Photon-compatible forward geocoding over the places index
+//
+// The place search behind the app's location pickers and the map geocoder. Full UK
+// postcodes are answered from the platform's own locations table; anything else is
+// searched in the OSM places index. The response is a GeoJSON FeatureCollection in
+// the shape Photon returns, so the existing consumers parse it unchanged.
+//
+// Binds to SPATIAL_PORT (default 8194).
+//
+// Parameters:
+//   + name: q
+//     in: query
+//     description: Search term (a place name or a full UK postcode)
+//     required: true
+//     type: string
+//   + name: limit
+//     in: query
+//     description: Maximum number of features to return
+//     required: false
+//     type: integer
+//   + name: bbox
+//     in: query
+//     description: Bounding box swlng,swlat,nelng,nelat to restrict results to
+//     required: false
+//     type: string
+//   + name: lat
+//     in: query
+//     description: Map-centre latitude to bias results towards
+//     required: false
+//     type: number
+//   + name: lon
+//     in: query
+//     description: Map-centre longitude to bias results towards
+//     required: false
+//     type: number
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	503: errorResponse
+
+// swagger:route POST /v1/reach/rasterize spatial reachRasterize
+//
+// Rasterize a reach polygon to its stored cell set
+//
+// WKT in (raw text/plain body), the compact cell set out (application/octet-stream).
+// This is the only place a rippling reach polygon is converted to its canonical
+// stored form; callers store the returned bytes verbatim and never rasterise
+// themselves.
+//
+// Binds to SPATIAL_PORT (default 8194).
+//
+// Parameters:
+//   + name: body
+//     in: body
+//     description: WKT polygon as raw text body (Content-Type text/plain)
+//     required: true
+//     schema:
+//       type: string
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	500: errorResponse
+
+// swagger:route POST /v1/reachoverflow/admits spatial reachOverflowAdmits
+//
+// Which candidate members does a post's ring admit
+//
+// The ring question from the mail's end: one post, many candidate members.
+// Body: {"msgid": N, "points": [{"lng": x, "lat": y, "lanes": ["$.rural.sparse"]}]}.
+// Returns the indexes of the admitted points, so the caller keeps whatever it had
+// attached to them: {"in": [...], "partial": bool, "filtered": bool}.
+//
+// Binds to SPATIAL_PORT (default 8194).
+//
+// Parameters:
+//   + name: body
+//     in: body
+//     description: JSON with msgid and the candidate points, each with lng, lat and optional lanes
+//     required: true
+//     schema:
+//       type: object
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	404: errorResponse
+//	500: errorResponse
+
+// swagger:route POST /v1/groups/intersecting spatial groupsIntersecting
+//
+// Groups whose area shares a cell with an encoded reach
+//
+// Encoded cell bytes in (Content-Type application/octet-stream); out come the
+// groups whose area shares at least one covered cell, each flagged with whether
+// the grid lies entirely within that group. The cell form of the ST_Intersects and
+// ST_Within pair, answered on the same lattice as the reach itself.
+//
+// Binds to SPATIAL_PORT (default 8194).
+//
+// Parameters:
+//   + name: body
+//     in: body
+//     description: Encoded cell set bytes (Content-Type application/octet-stream)
+//     required: true
+//     schema:
+//       type: string
+//       format: binary
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	404: errorResponse
+//	500: errorResponse
 
 // swagger:route POST /v1/{dataset}/rebuild admin rebuildDataset
 //
 // Rebuild dataset (admin)
 //
 // Triggers an asynchronous full rebuild of the named dataset from MySQL.
+// The rebuild runs in a background goroutine; the endpoint returns immediately.
+// Response on 200: {"status":"rebuilding","dataset":"<name>"}
+//
+// IMPORTANT: this route is served on SPATIAL_ADMIN_PORT (default 8195), not the
+// public SPATIAL_PORT (default 8194). It must not be exposed to the public network.
 //
 // Parameters:
 //   + name: dataset
 //     in: path
-//     description: Dataset name
+//     description: Dataset name (e.g. locations, messages, userapproxlocs)
 //     required: true
 //     type: string
 //
@@ -192,21 +326,16 @@ package main
 //	404: errorResponse
 //	409: errorResponse
 
-// swagger:route POST /v1/rebuild admin rebuildAllDatasets
-//
-// Rebuild all datasets (admin)
-//
-// Triggers an asynchronous full rebuild of every dataset from MySQL.
-//
-// Responses:
-//
-//	200: genericResponse
-
 // swagger:route POST /v1/{dataset}/remove admin removeDatasetIDs
 //
 // Remove IDs from dataset (admin)
 //
 // Performs an incremental hard-delete of specific record IDs from the spatial index.
+// Request body: {"ids": [<int64>, ...]}
+// Response on 200: {"removed": <count>}
+//
+// IMPORTANT: this route is served on SPATIAL_ADMIN_PORT (default 8195), not the
+// public SPATIAL_PORT (default 8194). It must not be exposed to the public network.
 //
 // Parameters:
 //   + name: dataset
@@ -214,6 +343,18 @@ package main
 //     description: Dataset name
 //     required: true
 //     type: string
+//   + name: body
+//     in: body
+//     description: JSON object with an "ids" array of int64 IDs to remove
+//     required: true
+//     schema:
+//       type: object
+//       properties:
+//         ids:
+//           type: array
+//           items:
+//             type: integer
+//             format: int64
 //
 // Responses:
 //
@@ -222,14 +363,66 @@ package main
 //	404: errorResponse
 //	503: errorResponse
 
-// genericResponse is a generic JSON response
+// swagger:route POST /v1/{dataset}/upsert admin upsertDatasetItems
+//
+// Upsert items into dataset (admin)
+//
+// Inserts or replaces specific items in the spatial index by WKT geometry.
+// Intended for integration tests: seeds a known geometry into the live index
+// (decoupled from the nightly MySQL rebuild) and removes it afterwards.
+// Request body: {"items": [{"id": <int64>, "wkt": "<WKT string>", "extra": {...}}]}
+// Response on 200: {"upserted": <count>}
+// Returns 400 if the request body is malformed or the WKT is invalid.
+// Returns 500 if the index cannot be lazily created.
+// Returns 503 if the dataset is not ready (should not normally occur for this endpoint
+// since it lazily ensures an index exists).
+//
+// IMPORTANT: this route is served on SPATIAL_ADMIN_PORT (default 8195), not the
+// public SPATIAL_PORT (default 8194). It must not be exposed to the public network.
+//
+// Parameters:
+//   + name: dataset
+//     in: path
+//     description: Dataset name (e.g. locations, messages, userapproxlocs)
+//     required: true
+//     type: string
+//   + name: body
+//     in: body
+//     description: JSON object with an "items" array; each item has id (int64), wkt (WKT polygon or point string), and optional extra (arbitrary JSON object)
+//     required: true
+//     schema:
+//       type: object
+//       properties:
+//         items:
+//           type: array
+//           items:
+//             type: object
+//             properties:
+//               id:
+//                 type: integer
+//                 format: int64
+//               wkt:
+//                 type: string
+//               extra:
+//                 type: object
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	404: errorResponse
+//	500: errorResponse
+//	503: errorResponse
+
+// genericResponse is a generic JSON response.
+// The actual fields depend on the endpoint; see each route's description for the exact shape.
 // swagger:response genericResponse
 type genericResponse struct {
 	// in:body
 	Body interface{}
 }
 
-// errorResponse is a JSON error response
+// errorResponse is a JSON error response containing a single "error" field.
 // swagger:response errorResponse
 type errorResponse struct {
 	// in:body

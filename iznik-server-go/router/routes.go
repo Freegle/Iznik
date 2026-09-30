@@ -69,7 +69,6 @@ import (
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/session"
 	"github.com/freegle/iznik-server-go/shortlink"
-	"github.com/freegle/iznik-server-go/simulation"
 	"github.com/freegle/iznik-server-go/spammers"
 	"github.com/freegle/iznik-server-go/src"
 	"github.com/freegle/iznik-server-go/sso"
@@ -121,15 +120,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Accept json
 		// @Produce json
 		rg.Post("/scrolldepth", browse.RecordScrollDepth)
-
-		// Message Activity
-		// @Router /activity [get]
-		// @Summary Get recent activity
-		// @Description Returns the most recent activity in groups
-		// @Tags message
-		// @Produce json
-		// @Success 200 {array} message.Activity
-		rg.Get("/activity", deprecation.Marker("GET /activity", "2026-08-01"), message.GetRecentActivity)
 
 		// Lists the endpoints currently wrapped in deprecation.Marker() + their
 		// sunset dates, for the nightly monitor:deprecated-endpoints report.
@@ -196,7 +186,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Param id path integer true "Alert ID"
 		// @Success 200 {object} map[string]interface{}
-		rg.Get("/modtools/alert/:id", deprecation.Marker("GET /modtools/alert/:id", "2026-08-01"), alert.GetAlert)
+		rg.Get("/modtools/alert/:id", alert.GetAlert)
 
 		// @Router /alert [put]
 		// @Summary Create a new alert
@@ -207,19 +197,11 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {object} map[string]interface{}
 		rg.Put("/modtools/alert", alert.CreateAlert)
-
-		// @Router /alert [post]
-		// @Summary Record alert click
-		// @Description Records a click on an alert tracking entry (public access)
-		// @Tags alert
-		// @Accept json
-		// @Produce json
-		// @Success 200 {object} map[string]interface{}
 		rg.Post("/modtools/alert", alert.RecordAlert)
 
 		// Admin
 		rg.Get("/modtools/admin", admin.ListAdmins)
-		rg.Get("/modtools/admin/:id", deprecation.Marker("GET /modtools/admin/:id", "2026-08-01"), admin.GetAdmin)
+		rg.Get("/modtools/admin/:id", admin.GetAdmin)
 		rg.Post("/modtools/admin", admin.PostAdmin)
 		rg.Patch("/modtools/admin", admin.PatchAdmin)
 		rg.Delete("/modtools/admin", admin.DeleteAdmin)
@@ -636,7 +618,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Accept json
 		// @Produce json
 		// @Security BearerAuth
-		adminConfig.Patch("", deprecation.Marker("PATCH /config/admin", "2026-08-01"), config.PatchAdminConfig)
+		adminConfig.Patch("", config.PatchAdminConfig)
 
 		// Groups
 		// @Router /group [get]
@@ -743,29 +725,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Param id path integer true "Noticeboard ID"
 		// @Security BearerAuth
 		// @Success 200 {object} fiber.Map
-		rg.Delete("/noticeboard/:id", deprecation.Marker("DELETE /noticeboard/:id", "2026-08-01"), noticeboard.DeleteNoticeboard)
-
-		// Isochrones
-		//
-		// DEPRECATED: the per-user isochrone editor was removed in the rippling-out
-		// "Nearby = reach" flip (PR #921). No current client (Freegle or ModTools) calls
-		// these four CRUD endpoints - the isochrone store/editor that used them was
-		// deleted (stores/isochrone.js -> stores/nearby.js; components/IsoChrone.vue
-		// removed). Kept only for backward compatibility with any older deployed clients;
-		// safe to remove once those have aged out. NOTE: /isochrone/message and
-		// /message/count below are NOT deprecated - they still back the Nearby feed and
-		// its unseen count.
-		// @Router /isochrone [get]
-		// @Summary List isochrones
-		// @Description [DEPRECATED - no current client calls this; see PR #921] Returns all isochrones
-		// @Tags isochrone
-		// @Produce json
-		// @Deprecated
-		// @Success 200 {array} isochrone.Isochrone
-		rg.Get("/isochrone", deprecation.Marker("GET /isochrone", "2026-08-01"), isochrone.ListIsochrones)
-		rg.Put("/isochrone", deprecation.Marker("PUT /isochrone", "2026-08-01"), isochrone.CreateIsochrone)
-		rg.Patch("/isochrone", deprecation.Marker("PATCH /isochrone", "2026-08-01"), isochrone.EditIsochrone)
-		rg.Delete("/isochrone", deprecation.Marker("DELETE /isochrone", "2026-08-01"), isochrone.DeleteIsochrone)
+		rg.Delete("/noticeboard/:id", noticeboard.DeleteNoticeboard)
 
 		// Isochrone Messages
 		// @Router /isochrone/message [get]
@@ -904,11 +864,6 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/locations/kml", location.ConvertKML)
 		rg.Post("/locations", location.ExcludeLocation)
 
-		// Message List (moderation queue + public listing)
-		// @Router /messages [get]
-		// @Summary List messages with moderation queue support
-		// @Tags message
-		rg.Get("/messages", deprecation.Marker("GET /messages", "2026-08-01"), message.ListMessages)
 		rg.Get("/modtools/messages", message.ListMessagesMT)
 
 		// Message Sitemap
@@ -1021,6 +976,13 @@ func SetupRoutes(app *fiber.App) {
 		// Members whose SAVED SEARCH matches this post, at the same
 		// MinMatchedPostScore the matched-posts email uses - both compare stored
 		// document embeddings, so the number means the same thing on both.
+		// @Router /message/{id}/searchmatches [get]
+		// @Summary Members whose saved search matches a given post (matched-posts email)
+		// @Tags message
+		// @Produce json
+		// @Param id path int true "Message ID"
+		// @Param limit query int false "Max results (default 10, max 100)"
+		// @Success 200 {array} message.SearchMatch
 		rg.Get("/message/:id/searchmatches", message.SearchMatchesForPost)
 
 		rg.Get("/message/:ids", message.GetMessagesWithHistory)
@@ -1077,7 +1039,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {object} map[string]interface{}
 		rg.Patch("/message/tn/:tnpostid", message.PatchMessageByTN)
 		rg.Put("/message", message.PutMessage)
-		rg.Delete("/message/:id", deprecation.Marker("DELETE /message/:id", "2026-08-01"), message.DeleteMessageEndpoint)
+		rg.Delete("/message/:id", message.DeleteMessageEndpoint)
 
 		// Bulk-offer ("clearance") logged-out update page: an external item-owner
 		// toggles item available/taken and edits counts via an unguessable secret
@@ -1324,13 +1286,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		rg.Patch("/story", story.UpdateStory)
 
-		// @Router /story [post]
-		// @Summary Story actions (Like/Unlike)
-		// @Tags story
-		// @Accept json
-		// @Produce json
-		rg.Post("/story", deprecation.Marker("POST /story", "2026-08-01"), story.PostStory)
-
 		// @Router /story/like [post]
 		// @Summary Like a story
 		// @Tags story
@@ -1350,7 +1305,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Tags story
 		// @Param id path integer true "Story ID"
 		// @Produce json
-		rg.Delete("/story/:id", deprecation.Marker("DELETE /story/:id", "2026-08-01"), story.DeleteStory)
+		rg.Delete("/story/:id", story.DeleteStory)
 
 		// Session Actions
 		// @Router /session [post]
@@ -1407,9 +1362,9 @@ func SetupRoutes(app *fiber.App) {
 
 		// Teams
 		rg.Get("/team", team.GetTeam)
-		rg.Post("/team", deprecation.Marker("POST /team", "2026-08-01"), team.PostTeam)
+		rg.Post("/team", team.PostTeam)
 		rg.Patch("/team", team.PatchTeam)
-		rg.Delete("/team", deprecation.Marker("DELETE /team", "2026-08-01"), team.DeleteTeam)
+		rg.Delete("/team", team.DeleteTeam)
 
 		// Partnerships (ModTools). The literal paths must be registered before
 		// /partnership/:id, or "summary" and "statsjob" would be matched as ids.
@@ -1761,7 +1716,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Security BearerAuth
 		// @Success 200 {object} fiber.Map
-		rg.Patch("/microvolunteering", deprecation.Marker("PATCH /microvolunteering", "2026-08-01"), microvolunteering.ModFeedback)
+		rg.Patch("/microvolunteering", microvolunteering.ModFeedback)
 
 		// User by Email
 
@@ -1947,9 +1902,6 @@ func SetupRoutes(app *fiber.App) {
 		rg.Put("/merge", merge.CreateMerge)
 		rg.Post("/merge", merge.PostMerge)
 		rg.Delete("/merge", merge.DeleteMerge)
-
-		// Simulation
-		rg.Get("/simulation", deprecation.Marker("GET /simulation", "2026-08-01"), simulation.GetSimulation)
 
 		// Domains
 		rg.Get("/domains", domain.GetDomain)
