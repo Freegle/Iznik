@@ -5879,42 +5879,6 @@
    }
   },
   "/partnership/{id}/group": {
-   "get": {
-    "description": "Returns the groups a partnership covers, alongside the groups the authority's\nboundary suggests, so a mistake in the overlap can be corrected by hand.\nPartnerships team, Support or Admin only.",
-    "tags": [
-     "partnerships"
-    ],
-    "summary": "List the groups a partnership covers",
-    "operationId": "getPartnershipGroups",
-    "parameters": [
-     {
-      "type": "integer",
-      "description": "Partnership ID",
-      "name": "id",
-      "in": "path",
-      "required": true
-     }
-    ],
-    "responses": {
-     "200": {
-      "$ref": "#/responses/successResponse"
-     },
-     "401": {
-      "$ref": "#/responses/errorResponse"
-     },
-     "403": {
-      "$ref": "#/responses/errorResponse"
-     },
-     "404": {
-      "$ref": "#/responses/errorResponse"
-     }
-    },
-    "security": [
-     {
-      "BearerAuth": []
-     }
-    ]
-   },
    "patch": {
     "description": "Adds or removes a group from a partnership, or re-derives the whole list from\nthe authority boundary. Partnerships team, Support or Admin only.",
     "tags": [
