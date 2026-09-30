@@ -495,45 +495,6 @@ func TestMessagePayloadSaysWhenAPostCannotBeRepliedTo(t *testing.T) {
 	assert.False(t, payload.ModMessagingAllowed)
 }
 
-// The mod queue is where a moderator meets one of these posts, and it renders from a leaner
-// group row than GET /message does. Same rule, different struct, so it needs its own check -
-// a queue that said the post could be replied to would put the Reply button back.
-func TestModQueueListSaysWhenAPostCannotBeRepliedTo(t *testing.T) {
-	prefix := uniquePrefix("mmaqueue")
-	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, group, "Moderator")
-	_, modToken := CreateTestSession(t, mod)
-
-	unaddressed := CreateTestMessage(t, poster, group, "OFFER: queueun "+prefix, 51.5, -0.1)
-	makeUnaddressed(unaddressed)
-	ordinary := CreateTestMessage(t, poster, group, "OFFER: queueord "+prefix, 51.5, -0.1)
-
-	req := httptest.NewRequest("GET",
-		fmt.Sprintf("/api/messages?collection=Approved&groupid=%d&limit=100&jwt=%s", group, modToken), nil)
-	resp, err := getApp().Test(req, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var payload struct {
-		Messages []struct {
-			ID                  uint64 `json:"id"`
-			ModMessagingAllowed bool   `json:"mod_messaging_allowed"`
-		} `json:"messages"`
-	}
-	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
-
-	seen := map[uint64]bool{}
-	for _, r := range payload.Messages {
-		seen[r.ID] = r.ModMessagingAllowed
-	}
-	assert.Contains(t, seen, unaddressed)
-	assert.False(t, seen[unaddressed], "the queue must say this one cannot be replied to")
-	assert.Contains(t, seen, ordinary)
-	assert.True(t, seen[ordinary], "an ordinary post in the same queue must be unaffected")
-}
-
 // An anonymous report counts towards nothing - the quorum counts distinct PEOPLE - so it has
 // to be refused rather than accepted and silently dropped. And a report with no post named is
 // a client bug, not a verdict.

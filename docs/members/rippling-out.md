@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-23
+last_reviewed: 2026-09-30
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/components/DistanceSliders.vue
@@ -174,7 +174,7 @@ from close by, drag it towards "Nearer" at any time; drag it back whenever you l
 **"Further" means further in the countryside than it does in a city**, because it should. If
 you live somewhere with few people nearby, the nearest town is probably somewhere you already
 drive to, and its posts are the ones most worth showing you - so the slider reaches further out
-for you, and the "Max ... miles by road" note under it will say a bigger number than it would
+for you, and the "Up to about ... miles by road" note under it will say a bigger number than it would
 for someone in a city centre. In a busy area there is usually someone much closer, so reaching
 half an hour across town mostly means being emailed about things you would not travel for.
 Freegle works out which of these applies to you from how spread out other freeglers are around

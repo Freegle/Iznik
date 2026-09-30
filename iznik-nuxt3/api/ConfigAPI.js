@@ -10,10 +10,6 @@ export default class ConfigAPI extends BaseAPI {
     return this.$getv2('/config/admin/' + key)
   }
 
-  patchAdminv2(data) {
-    return this.$patchv2('/config/admin', data)
-  }
-
   // Individual worry word management
   addWorrywordv2(data) {
     return this.$postv2('/config/admin/worry_words', data)

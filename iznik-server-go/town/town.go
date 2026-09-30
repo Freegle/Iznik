@@ -1,11 +1,14 @@
 package town
 
-// The "Near: ..." hint under the browse/feed distance slider. Given the user's location and the
-// slider's TRAVEL TIME (minutes), list up to 5 towns the setting reaches - by REAL travel (drive-time
-// via the routing server's ripple-eval), not crow-flies. We show place NAMES only, never any distance
-// or time units: the user just sees which places their setting covers, and the list changes as they
-// drag. The slider is time-based end to end - the minutes go straight to the isochrone's max_minutes,
-// with no hardcoded miles<->minutes conversion anywhere.
+// The "e.g. ..." hint under the browse/feed distance slider. Given the user's location and the
+// slider's TRAVEL TIME (minutes), list up to 5 places the setting reaches - by REAL travel (drive-time
+// via the routing server's ripple-eval), not crow-flies - so the member sees which places their
+// setting covers, and the list changes as they drag. The slider is time-based end to end - the
+// minutes go straight to the isochrone's max_minutes, with no hardcoded miles<->minutes conversion.
+//
+// Places come from the GeoNames `places` gazetteer, not the 234-row curated `towns` list. With
+// `towns`, many members had no named place near them: Wellingborough, Kettering and
+// Rushden are not in it, so all three were told "Close to Northampton" at a 1-mile reach.
 
 import (
 	"bytes"
@@ -19,6 +22,8 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/density"
+	"github.com/freegle/iznik-server-go/driving"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -59,41 +64,102 @@ func reachRadiusMiles(frontierMedianMiles float64) float64 {
 	return radius
 }
 
-// TownCand is a candidate town with its drive-time from the user (nil = unreachable in the budget).
+// placesMinPopulation is the smallest place the hint will name. It keeps the routing call to a
+// few hundred points at the widest setting (about 800 around Wellingborough at 45 minutes), and
+// keeps hamlets nobody would recognise out of the examples.
+const placesMinPopulation = 3000
+
+// TownCand is a candidate place with its drive-time from the user (nil = unreachable in the budget).
 type TownCand struct {
-	ID       uint64
-	Name     string
-	DriveMin *float64
+	ID         uint64
+	Name       string
+	Population uint64
+	DriveMin   *float64
 }
 
-// SelectNear picks the FURTHEST towns reachable within maxMinutes (so the list changes as the range
-// widens, rather than always showing the same nearest places), then returns their names ordered by
-// population. The towns table is curated in descending-population order by ascending id, so a
-// smaller id is a bigger place. Returns up to `limit` names.
+// SelectNear picks the BIGGEST places in the outer half of the reach (drive-time between
+// maxMinutes/2 and maxMinutes), so the list moves outwards as the slider widens while still naming
+// places people know - the furthest places alone would be villages on the edge. When nothing lies
+// in the outer half (a short reach from a town centre), it names the biggest reachable places
+// instead, usually the member's own town. Returns up to `limit` names, biggest first.
 func SelectNear(cands []TownCand, maxMinutes float64, limit int) []string {
-	reachable := make([]TownCand, 0, len(cands))
+	var reachable, outer []TownCand
 	for _, c := range cands {
 		if c.DriveMin != nil && *c.DriveMin <= maxMinutes {
 			reachable = append(reachable, c)
+			if *c.DriveMin >= maxMinutes/2 {
+				outer = append(outer, c)
+			}
 		}
 	}
-	// Furthest first (largest drive-time); tie-break by bigger population (smaller id) for stability.
+	if len(outer) > 0 {
+		reachable = outer
+	}
+	// Biggest first; tie-break on id so the order is stable.
 	sort.Slice(reachable, func(i, j int) bool {
-		if *reachable[i].DriveMin != *reachable[j].DriveMin {
-			return *reachable[i].DriveMin > *reachable[j].DriveMin
+		if reachable[i].Population != reachable[j].Population {
+			return reachable[i].Population > reachable[j].Population
 		}
 		return reachable[i].ID < reachable[j].ID
 	})
 	if len(reachable) > limit {
 		reachable = reachable[:limit]
 	}
-	// Display order: population descending (ascending id).
-	sort.Slice(reachable, func(i, j int) bool { return reachable[i].ID < reachable[j].ID })
 	out := make([]string, 0, len(reachable))
 	for _, c := range reachable {
 		out = append(out, c.Name)
 	}
 	return out
+}
+
+// nearestPlaceCandidates is how many of the crow-flies nearest places are measured by road. The
+// nearest by road is often not the nearest as the crow flies (an estuary, a hill with one road
+// over it), and the drive-metrics lookup is one label query plus a table read per place.
+const nearestPlaceCandidates = 5
+
+// nearestPlaceByRoad names the place nearest to (lat, lng) by road, with its road miles. When the
+// routing server cannot say (down, or no road to any of them), it returns the crow-flies nearest
+// name and nil miles: a straight-line figure would read as a road distance beside the reach,
+// which is shown in road miles, so the client shows the name alone instead.
+func nearestPlaceByRoad(lat, lng float64) (string, *float64) {
+	type near struct {
+		ID   int64
+		Name string
+		Lat  float64
+		Lng  float64
+	}
+	var cands []near
+	// Order() itself takes no bind args, so the ST_Distance_Sphere binds go through
+	// clause.OrderBy{Expression: gorm.Expr(...)} instead - same technique as message/message.go's
+	// ResolveOnBehalfPosting (site ecaf3f90bee2).
+	database.DBConn.Table("places").
+		Select("id, name, lat, lng").
+		Where("population >= ?", placesMinPopulation).
+		Order(clause.OrderBy{Expression: gorm.Expr("ST_Distance_Sphere(POINT(lng, lat), POINT(?, ?))", lng, lat)}).
+		Limit(nearestPlaceCandidates).
+		Scan(&cands)
+	if len(cands) == 0 {
+		return "", nil
+	}
+
+	targets := make([]driving.Target, len(cands))
+	for i, p := range cands {
+		targets[i] = driving.Target{ID: p.ID, Lat: p.Lat, Lng: p.Lng}
+	}
+	name := cands[0].Name
+	var best *float64
+	for _, r := range driving.FetchDriveMetrics(roadblur.RoutingURL(), lat, lng, targets) {
+		if r.Miles == nil || (best != nil && *r.Miles >= *best) {
+			continue
+		}
+		for _, p := range cands {
+			if p.ID == r.ID {
+				name = p.Name
+				best = r.Miles
+			}
+		}
+	}
+	return name, best
 }
 
 type rippleEvalReq struct {
@@ -151,7 +217,7 @@ const reachPolygonSimplifyM = 100
 // never has to guess; it falls back to the flat cap whenever density cannot be measured.
 //
 // @Router /town/near [get]
-// @Summary Up to 5 towns the browse/feed distance slider reaches (by drive-time), names only
+// @Summary Up to 5 places the browse/feed distance slider reaches (by drive-time), names only
 // @Tags location
 // @Param lat query number true "Latitude to measure the travel time from"
 // @Param lng query number true "Longitude to measure the travel time from"
@@ -179,32 +245,34 @@ func Near(c *fiber.Ctx) error {
 		maxMin = 120 // cap so "no limit" never routes the whole country
 	}
 
-	// Candidate towns within a generous crow-flies box: fast roads can cover well over a mile a
+	// Candidate places within a generous crow-flies box: fast roads can cover well over a mile a
 	// minute, so size the box off the time budget (~1.5 mi/min plus slack) to be sure we don't miss
-	// a reachable town. The towns table is tiny (~234 rows), so a generous box stays cheap.
+	// a reachable place. Each candidate costs the routing server a nearest-node lookup after its
+	// one sweep, so a few hundred of them are cheap next to the sweep itself.
 	boxMiles := maxMin*1.5 + 5
 	latDeg := boxMiles / 69.0
 	lngDeg := boxMiles / (69.0 * math.Cos(lat*math.Pi/180))
 	db := database.DBConn
 	type row struct {
-		ID   uint64
-		Name string
-		Lat  float64
-		Lng  float64
+		ID         uint64
+		Name       string
+		Lat        float64
+		Lng        float64
+		Population uint64
 	}
 	var rows []row
-	db.Table("towns").
-		Select("id, name, lat, lng").
-		Where("lat IS NOT NULL AND lng IS NOT NULL AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
-			lat-latDeg, lat+latDeg, lng-lngDeg, lng+lngDeg).
+	db.Table("places").
+		Select("id, name, lat, lng, population").
+		Where("population >= ? AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+			placesMinPopulation, lat-latDeg, lat+latDeg, lng-lngDeg, lng+lngDeg).
 		Order("id").
 		Scan(&rows)
 
-	// An empty box is not a reason to stop. The town names are display material for the
-	// "Near: ..." hint, while reach_radius_miles comes from the isochrone frontier and
+	// An empty box is not a reason to stop. The place names are display material for the
+	// "e.g. ..." hint, while reach_radius_miles comes from the isochrone frontier and
 	// reach_polygon from its shape - neither depends on a town falling inside the box. A member
-	// whose nearest curated town is 27 miles away (Hastings; the table holds only ~234 major
-	// places) still needs a radius at the narrow end of the slider, and a missing one reads to
+	// with no place of any size within the box (open sea, the far north-west)
+	// still needs a radius at the narrow end of the slider, and a missing one reads to
 	// the client as a failed derivation, which stores "no limit" and switches every distance
 	// filter off. One routing call produces all three answers, so it runs whether or not there
 	// are candidates and SelectNear simply returns nothing.
@@ -235,7 +303,7 @@ func Near(c *fiber.Ctx) error {
 	}
 	cands := make([]TownCand, len(rows))
 	for i, rw := range rows {
-		cands[i] = TownCand{ID: rw.ID, Name: rw.Name, DriveMin: r.Results[i].DriveMin}
+		cands[i] = TownCand{ID: rw.ID, Name: rw.Name, Population: rw.Population, DriveMin: r.Results[i].DriveMin}
 	}
 
 	// The road-distance reach range ("reaches median..max miles by road"), shown alongside the town
@@ -278,20 +346,15 @@ func Near(c *fiber.Ctx) error {
 		return c.JSON(out)
 	}
 
-	// Nothing within reach: return the single nearest town so the UI can say "Closer than: X"
-	// instead of showing nothing - useful for rural users whose nearest town is beyond the reach.
-	var closer string
-	// Order() itself
-	// takes no bind args, so the two ST_Distance_Sphere binds go through
-	// clause.OrderBy{Expression: gorm.Expr(...)} instead - same technique as
-	// message/message.go's ResolveOnBehalfPosting (site ecaf3f90bee2).
-	db.Table("towns").
-		Select("name").
-		Where("lat IS NOT NULL AND lng IS NOT NULL").
-		Order(clause.OrderBy{Expression: gorm.Expr("ST_Distance_Sphere(POINT(lng, lat), POINT(?, ?))", lng, lat)}).
-		Limit(1).
-		Scan(&closer)
+	// Nothing within reach: name the nearest place and how far it is BY ROAD, so the UI can say
+	// "Nearest town: X, N miles by road" instead of showing nothing - useful for rural members whose
+	// nearest town is beyond the reach. The distance goes with the name because a bare "Close to X"
+	// read as the reach extending to X.
+	name, miles := nearestPlaceByRoad(lat, lng)
 	out["towns"] = []string{}
-	out["closer_than"] = closer
+	out["closer_than"] = name
+	if miles != nil {
+		out["closer_miles"] = *miles
+	}
 	return c.JSON(out)
 }

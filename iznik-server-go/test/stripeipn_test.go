@@ -307,3 +307,113 @@ func TestStripeIPN_MatchByCanon(t *testing.T) {
 	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", chargeID)
 	db.Exec("DELETE FROM users_emails WHERE userid = ? AND email = ?", userID, storedEmail)
 }
+
+// TestStripeIPN_GiftAid_SoftDeletedDeclarationGetsNotification proves the
+// AND deleted IS NULL fix in triggerGiftAidNotification: a donor whose ONLY
+// giftaid record has been soft-deleted (deleted IS NOT NULL) must still receive a
+// GiftAid notification via the Stripe path, because the deleted record must be
+// ignored and the donor treated as having no live declaration.
+//
+// Before the fix, handleGiftAidNotification queried without AND deleted IS NULL, so
+// the deleted 'All' record was found and its period suppressed the notification — a
+// silent regression for donors who had previously opted in but later withdrew.
+func TestStripeIPN_GiftAid_SoftDeletedDeclarationGetsNotification(t *testing.T) {
+	prefix := uniquePrefix("stripegadel")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_donor", "User")
+	email := prefix + "_donor@test.com"
+
+	// Insert a soft-deleted 'All' declaration: the donor previously opted in for
+	// ongoing gift aid but the record has since been removed.
+	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress, deleted) VALUES (?, 'All', 'Test', 'Test', NOW())",
+		userID)
+
+	chargeID := "ch_test_sfdel_" + prefix
+	body := makeChargeEvent(chargeID, 1000, map[string]string{"uid": fmt.Sprint(userID)}, email, "")
+
+	req := httptest.NewRequest("POST", "/api/stripeipn", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// With AND deleted IS NULL, the soft-deleted record is invisible. The query
+	// finds nothing, period is nil, and the notification IS created.
+	var notifCount int64
+	db.Raw("SELECT COUNT(*) FROM users_notifications WHERE touser = ? AND type = 'GiftAid'", userID).Scan(&notifCount)
+	assert.Greater(t, notifCount, int64(0),
+		"GiftAid notification must be created when only giftaid declaration is soft-deleted")
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", chargeID)
+	db.Exec("DELETE FROM users_notifications WHERE touser = ? AND type = 'GiftAid'", userID)
+	db.Exec("DELETE FROM giftaid WHERE userid = ?", userID)
+}
+
+// TestStripeIPN_GiftAid_LiveDeclarationSuppressesNotification proves that a
+// donor with a live (non-deleted) giftaid declaration with period != PERIOD_THIS
+// does NOT receive a GiftAid notification — their agreement is still valid.
+func TestStripeIPN_GiftAid_LiveDeclarationSuppressesNotification(t *testing.T) {
+	prefix := uniquePrefix("stripegalive")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_donor", "User")
+	email := prefix + "_donor@test.com"
+
+	// Live 'All' declaration — donor has an ongoing gift aid agreement.
+	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress) VALUES (?, 'All', 'Test', 'Test')",
+		userID)
+
+	chargeID := "ch_test_sflive_" + prefix
+	body := makeChargeEvent(chargeID, 1000, map[string]string{"uid": fmt.Sprint(userID)}, email, "")
+
+	req := httptest.NewRequest("POST", "/api/stripeipn", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var notifCount int64
+	db.Raw("SELECT COUNT(*) FROM users_notifications WHERE touser = ? AND type = 'GiftAid'", userID).Scan(&notifCount)
+	assert.Equal(t, int64(0), notifCount,
+		"GiftAid notification must NOT be created when a live non-This declaration exists")
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", chargeID)
+	db.Exec("DELETE FROM giftaid WHERE userid = ?", userID)
+}
+
+// TestStripeIPN_GiftAid_DuplicateInsertNoError proves that INSERT IGNORE makes
+// calling the gift-aid notification path twice for the same user (two consecutive
+// charges) produce no database error, even though users_notifications has no
+// UNIQUE constraint on (touser, type) and a second row is silently inserted.
+func TestStripeIPN_GiftAid_DuplicateInsertNoError(t *testing.T) {
+	prefix := uniquePrefix("stripegadup")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_donor", "User")
+	email := prefix + "_donor@test.com"
+
+	// First charge — creates a GiftAid notification.
+	chargeID1 := "ch_dup1_" + prefix
+	body1 := makeChargeEvent(chargeID1, 1000, map[string]string{"uid": fmt.Sprint(userID)}, email, "")
+	req1 := httptest.NewRequest("POST", "/api/stripeipn", bytes.NewBuffer(body1))
+	req1.Header.Set("Content-Type", "application/json")
+	resp1, err := getApp().Test(req1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp1.StatusCode)
+
+	// Second charge for the same user — INSERT IGNORE must not error even though
+	// a notification row already exists (no unique constraint, so a second row is
+	// inserted, but there is no FK or uniqueness violation).
+	chargeID2 := "ch_dup2_" + prefix
+	body2 := makeChargeEvent(chargeID2, 1000, map[string]string{"uid": fmt.Sprint(userID)}, email, "")
+	req2 := httptest.NewRequest("POST", "/api/stripeipn", bytes.NewBuffer(body2))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := getApp().Test(req2)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode,
+		"second charge.succeeded for the same user must not error on duplicate notification")
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID IN (?, ?)", chargeID1, chargeID2)
+	db.Exec("DELETE FROM users_notifications WHERE touser = ? AND type = 'GiftAid'", userID)
+}

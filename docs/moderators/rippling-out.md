@@ -200,7 +200,7 @@ member's nearest town is usually somewhere they already drive to, so its posts a
 ones worth showing them - whereas in a busy area there is nearly always someone closer, and
 reaching across town mostly generates email for journeys nobody makes. So if a rural member
 and a city member both say they are set to "Further", they are correctly seeing different
-distances, and the "Max ... miles by road" note under the slider will differ between them.
+distances, and the "Up to about ... miles by road" note under the slider will differ between them.
 
 Importantly, this preference now applies in **three** ways:
 

@@ -520,7 +520,7 @@ describe('PostFilters', () => {
     })
 
     // The slider is a TRAVEL-TIME range in MINUTES, not a miles scale tied to the feed - so the
-    // "Max X-Y miles by road" reach hint stays stable instead of jumping as the feed reloads
+    // "Up to about N miles by road" reach hint stays stable instead of jumping as the feed reloads
     // (Discourse 9808). Its top is the member's own density-sized reach cap; until the server
     // answers, the flat cap applies.
     it('starts on the flat travel-time cap with 5-minute steps', () => {

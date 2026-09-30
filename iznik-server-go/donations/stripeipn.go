@@ -10,8 +10,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 	stripe "github.com/stripe/stripe-go/v82"
 	stripecustomer "github.com/stripe/stripe-go/v82/customer"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // MANUAL_THANKS is the minimum one-off donation amount (GBP) that triggers a thank-you request.
@@ -237,25 +235,10 @@ func matchDonorUser(charge *stripe.Charge) (uint64, string, string) {
 	return userID, userName, userEmail
 }
 
-// handleGiftAidNotification checks if the user needs a gift aid notification.
+// handleGiftAidNotification delegates to the canonical triggerGiftAidNotification
+// helper (donations.go) which applies the correct AND deleted IS NULL filter and
+// uniform INSERT IGNORE column set shared with the admin-entry path (AddDonation).
 func handleGiftAidNotification(userID uint64) {
-	gdb := database.DBConn
-
-	type GiftAidRecord struct {
-		Period string
-	}
-
-	var giftaid GiftAidRecord
-	gdb.Table("giftaid").Select("period").Where("userid = ?", userID).Order("id DESC").Limit(1).Scan(&giftaid)
-
-	if giftaid.Period == "" || giftaid.Period == PERIOD_THIS {
-		// No gift aid declaration or only a temporary one — prompt them.
-		gdb.Table("users_notifications").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
-			"fromuser":  gorm.Expr("NULL"),
-			"touser":    userID,
-			"type":      gorm.Expr("'GiftAid'"),
-			"timestamp": gorm.Expr("NOW()"),
-		})
-		log.Printf("[StripeIPN] Created gift aid notification for user %d (period=%s)", userID, giftaid.Period)
-	}
+	triggerGiftAidNotification(userID)
+	log.Printf("[StripeIPN] Processed gift aid notification for user %d", userID)
 }

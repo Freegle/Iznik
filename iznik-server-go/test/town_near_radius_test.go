@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// Open sea west of the Hebrides: nothing the curated towns table (~234 major places) could
-// ever put inside the handler's candidate box, at any slider position.
+// Open sea west of the Hebrides, with no places row seeded near it: nothing falls inside the
+// handler's candidate box, at any slider position.
 const townNearNoTowns = "lat=57.0&lng=-8.0&minutes=5"
 
 // The distance slider is a travel-time budget, and the client converts it to the mile radius

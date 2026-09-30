@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-28
+last_reviewed: 2026-09-30
 owner: Freegle dev team
 covers:
   - frontend-nginx.conf
@@ -42,7 +42,8 @@ flowchart LR
   `Content-Type`, confirms the bucket reports the same length, and only then deletes
   the local files. The `.info` never leaves the host. Uploads that never complete are
   deleted after a day.
-- **Reads.** A `GET` for an upload id is answered by the first place that has it: the
+- **Reads.** A `GET` for an upload id is answered by the first place that has it. A
+  trailing slash after the id is accepted, because partner sites send one: the
   spool (a local stat), then the bucket, then the legacy share, bound read-only into the
   front nginx and served as plain static files (not through tusd, which creates a lock
   file even on a read). Because the URL never says where a file is, the copy of the old

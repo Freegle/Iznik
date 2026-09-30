@@ -368,7 +368,7 @@ const sort = computed({
 // Distance slider (#D) - TIME-based.
 //
 // The slider is a travel-time budget in MINUTES (matching the reach system's drive-time isochrones),
-// not miles - so the "Max X-Y miles by road" hint stays stable and meaningful instead of jumping as
+// not miles - so the "Up to about N miles by road" hint stays stable and meaningful instead of jumping as
 // the feed reloads (Discourse 9808). The shared useReachDistance composable converts the chosen
 // minutes to a crow-flies mile radius via real routing (location-aware, no hardcoded conversion) and
 // persists both settings.browseMaxMinutes (source of truth) and settings.browseMaxDistance (the value
@@ -511,7 +511,7 @@ const hasNonDefaultFilters = computed(() => {
     grid-column: 1 / 2;
     grid-row: 2 / 3;
     /* Grid cells default to min-width:auto, so the NearbyTowns single-line hint
-       ("Max X-Y miles by road, e.g. ...") expanded this cell past its track and spilled
+       ("Up to about N miles by road, e.g. ...") expanded this cell past its track and spilled
        out of the filter panel. min-width:0 lets the cell hold its track width so the hint
        ellipsis-truncates inside the panel instead of overflowing. */
     min-width: 0;

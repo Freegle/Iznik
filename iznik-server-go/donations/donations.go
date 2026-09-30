@@ -115,6 +115,32 @@ func MatchUserByEmailOrPriorDonation(email string) uint64 {
 	return userID
 }
 
+// triggerGiftAidNotification inserts a GiftAid prompt notification for userID when
+// they have no live (non-deleted) giftaid declaration or their most recent live
+// declaration is PERIOD_THIS (a per-payment temporary one). This is the single
+// source of truth shared by the Stripe IPN path (stripeipn.go) and the
+// admin-entry path (AddDonation), replacing previously divergent copies that
+// disagreed on the AND deleted IS NULL filter and INSERT vs INSERT IGNORE.
+//
+// INSERT IGNORE is used to suppress FK violations if touser is somehow not in
+// users; it does not prevent duplicate rows since users_notifications has no
+// UNIQUE constraint on (touser, type).
+func triggerGiftAidNotification(userID uint64) {
+	db := database.DBConn
+	var period *string
+	db.Table("giftaid").Select("period").Where("userid = ? AND deleted IS NULL", userID).
+		Order("id DESC").Limit(1).Scan(&period)
+	if period == nil || *period == PERIOD_THIS {
+		db.Table("users_notifications").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"fromuser":  gorm.Expr("NULL"),
+			"touser":    userID,
+			"type":      gorm.Expr("'GiftAid'"),
+			"timestamp": gorm.Expr("NOW()"),
+			"seen":      gorm.Expr("0"),
+		})
+	}
+}
+
 // GetDonations returns donation target and amount raised for the current month
 // @Summary Get donations summary
 // @Description Returns the donation target and amount raised for the current month, optionally filtered by group
@@ -323,18 +349,7 @@ func AddDonation(c *fiber.Ctx) error {
 	// For non-zero amounts: create a Gift Aid prompt. Thanking is handled by
 	// the daily mail:donations:thank-prep digest, not a per-donation email.
 	if req.Amount > 0 {
-		var giftAidPeriod *string
-		db.Table("giftaid").Select("period").Where("userid = ? AND deleted IS NULL", req.UserID).Limit(1).Scan(&giftAidPeriod)
-
-		if giftAidPeriod == nil || *giftAidPeriod == PERIOD_THIS {
-			// Create a GiftAid notification for the user.
-			db.Table("users_notifications").Create(map[string]interface{}{
-				"touser":    req.UserID,
-				"type":      gorm.Expr("'GiftAid'"),
-				"timestamp": gorm.Expr("NOW()"),
-				"seen":      gorm.Expr("0"),
-			})
-		}
+		triggerGiftAidNotification(req.UserID)
 	}
 
 	return c.JSON(fiber.Map{
@@ -418,11 +433,13 @@ func BulkUploadDonations(c *fiber.Ctx) error {
 			source = "Facebook"
 		}
 
-		// Try to match donor email to an existing user.
+		// Try to match donor email to an existing user, using the same canonical
+		// matching (gmail dot/plus variants, prior-donation fallback) as the IPN
+		// paths so recurring donors whose Freegle email uses a dot variant are
+		// correctly linked rather than left unmatched.
 		var userID *uint64
 		if d.Email != "" {
-			var uid uint64
-			db.Table("users_emails").Select("userid").Where("email = ? AND userid IS NOT NULL", d.Email).Limit(1).Scan(&uid)
+			uid := MatchUserByEmailOrPriorDonation(d.Email)
 			if uid > 0 {
 				userID = &uid
 			}
