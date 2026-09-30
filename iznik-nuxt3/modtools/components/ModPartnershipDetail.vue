@@ -1,48 +1,76 @@
 <template>
   <div v-if="detail" class="border-start ps-3 mt-2">
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      <div class="factbox">
+        <div class="small text-muted">Deal</div>
+        <strong>{{ length || '-' }}</strong>
+        <div class="small">
+          {{ formatDate(p.startdate) }} to {{ formatDate(p.enddate) }}
+        </div>
+      </div>
+      <div class="factbox">
+        <div class="small text-muted">Received</div>
+        <strong>£{{ formatMoney(p.paid) }}</strong>
+        <div class="small">of £{{ formatMoney(p.amount) }} due</div>
+      </div>
+      <div v-if="discount" class="factbox">
+        <div class="small text-muted">Bulk discount</div>
+        <strong>{{ discount }}</strong>
+        <div class="small">off £{{ formatMoney(p.fullprice) }}</div>
+      </div>
+      <div class="factbox">
+        <div class="small text-muted">Renewal</div>
+        <ModPartnershipRenewal :renewal="p.renewal" show-text />
+        <div class="small">asked about by {{ formatDate(renewalAsk) }}</div>
+      </div>
+    </div>
+
     <b-row>
       <b-col cols="12" lg="6">
         <h5>Communities covered</h5>
         <p class="text-muted small">
-          Worked out from the council boundary. Each one gets a sponsor entry
-          showing the tagline and link above.
+          Every community inside the council boundary is covered, including any
+          set up later. The percentage is how much of it lies inside the
+          boundary; the statistics count that share of it. These are the
+          communities the statistics report on.
         </p>
-        <NoticeMessage v-if="!detail.groups.length" variant="warning">
+        <NoticeMessage v-if="!covered.length" variant="warning">
           No communities are covered, so nothing is showing to members.
         </NoticeMessage>
         <ul v-else class="list-unstyled mb-2">
           <li
-            v-for="g in detail.groups"
+            v-for="g in covered"
             :key="'pg-' + g.groupid"
             class="d-flex align-items-center justify-content-between"
           >
-            <span>{{ g.namedisplay }}</span>
+            <span>
+              <ExternalLink :href="exploreUrl(g)">{{
+                g.namedisplay
+              }}</ExternalLink>
+              <span class="small text-muted ms-1">
+                {{
+                  g.source === 'Added'
+                    ? 'added by hand'
+                    : Math.round((g.overlap || 0) * 100) + '% inside'
+                }}
+              </span>
+            </span>
             <b-button
               variant="link"
               size="sm"
               class="text-danger"
               @click="removeGroup(g.groupid)"
             >
-              Remove
+              Leave out
             </b-button>
           </li>
         </ul>
 
-        <SpinButton
-          variant="secondary"
-          icon-name="sync"
-          label="Re-check the boundary"
-          size="sm"
-          @handle="redetect"
-        />
-
-        <div v-if="missing.length" class="mt-2">
-          <p class="small mb-1">
-            Inside the boundary but not covered by this deal:
-          </p>
+        <div v-if="leftOut.length" class="mb-2">
+          <p class="small mb-1">Inside the boundary but left out:</p>
           <b-button
-            v-for="g in missing"
-            :key="'avail-' + g.groupid"
+            v-for="g in leftOut"
+            :key="'out-' + g.groupid"
             variant="white"
             size="sm"
             class="me-1 mb-1"
@@ -51,10 +79,37 @@
             + {{ g.namedisplay }}
           </b-button>
         </div>
+
+        <ModPartnershipGroupPicker
+          class="mb-2"
+          label="Add a community outside the boundary"
+          :exclude="detail.groups.map((g) => g.groupid)"
+          @pick="(g) => addGroup(g.id)"
+        />
+
+        <SpinButton
+          variant="secondary"
+          icon-name="sync"
+          label="Re-check the boundary"
+          size="sm"
+          @handle="redetect"
+        />
       </b-col>
 
       <b-col cols="12" lg="6">
-        <h5>Financial years</h5>
+        <h5>Council contacts</h5>
+        <p v-if="!detail.contacts.length" class="text-muted small">
+          None yet. Add them with Edit.
+        </p>
+        <ul v-else class="list-unstyled">
+          <li v-for="c in detail.contacts" :key="'c-' + c.id">
+            {{ c.name }}
+            <a v-if="c.email" :href="'mailto:' + c.email">{{ c.email }}</a>
+            <span class="small text-muted ms-1">({{ roleText(c.role) }})</span>
+          </li>
+        </ul>
+
+        <h5 class="mt-3">Financial years</h5>
         <p class="text-muted small">
           {{
             hasExplicitYears
@@ -102,9 +157,9 @@
           />
         </div>
         <p v-if="yearsTotal !== null" class="small mt-1 mb-0">
-          Split totals £{{ formatMoney(yearsTotal) }} against a deal value of
-          £{{ formatMoney(detail.partnership.amount) }}.
-          <span v-if="Math.abs(yearsTotal - detail.partnership.amount) > 0.01">
+          Split totals £{{ formatMoney(yearsTotal, true) }} against a deal value
+          of £{{ formatMoney(p.amount, true) }}.
+          <span v-if="Math.abs(yearsTotal - p.amount) > 0.01">
             <strong class="text-danger">These don't match.</strong>
           </span>
         </p>
@@ -123,18 +178,18 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="p in detail.payments" :key="'pay-' + p.id">
-          <td>{{ p.date }}</td>
-          <td class="text-end">£{{ formatMoney(p.amount) }}</td>
-          <td>{{ p.reference }}</td>
+        <tr v-for="pay in detail.payments" :key="'pay-' + pay.id">
+          <td>{{ pay.date }}</td>
+          <td class="text-end">£{{ formatMoney(pay.amount, true) }}</td>
+          <td>{{ pay.reference }}</td>
           <td>
-            <span v-if="p.paid" class="text-success">{{ p.paid }}</span>
+            <span v-if="pay.paid" class="text-success">{{ pay.paid }}</span>
             <b-button
               v-else
               variant="link"
               size="sm"
               class="p-0"
-              @click="markPaid(p)"
+              @click="markPaid(pay)"
             >
               Mark paid today
             </b-button>
@@ -144,7 +199,7 @@
               variant="link"
               size="sm"
               class="text-danger p-0"
-              @click="removePayment(p)"
+              @click="deletingPayment = pay"
             >
               Delete
             </b-button>
@@ -185,11 +240,62 @@
         />
       </b-col>
     </b-row>
+
+    <h5 class="mt-4">History with this council</h5>
+    <table class="table table-sm">
+      <thead>
+        <tr>
+          <th>Runs</th>
+          <th>Length</th>
+          <th class="text-end">Value</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr
+          v-for="h in detail.history"
+          :key="'h-' + h.id"
+          :class="{ 'fw-bold': h.id === id }"
+        >
+          <td>{{ formatDate(h.startdate) }} to {{ formatDate(h.enddate) }}</td>
+          <td>{{ dealLength(h.startdate, h.enddate) }}</td>
+          <td class="text-end">£{{ formatMoney(h.amount) }}</td>
+          <td>
+            <b-badge :variant="statusInfo(h.status).variant">
+              {{ statusInfo(h.status).text }}
+            </b-badge>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <ConfirmModal
+      v-if="deletingPayment"
+      title="Delete this invoice?"
+      :message="
+        'The £' +
+        formatMoney(deletingPayment.amount, true) +
+        ' invoice dated ' +
+        deletingPayment.date +
+        ' will be removed.'
+      "
+      @confirm="removePayment"
+      @hidden="deletingPayment = null"
+    />
   </div>
 </template>
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { usePartnershipsStore } from '~/stores/partnerships'
+import {
+  CONTACT_ROLES,
+  bulkDiscount,
+  dealLength,
+  formatDate,
+  formatMoney,
+  renewalAskDate,
+  statusInfo,
+} from '~/modtools/composables/usePartnershipFormat'
 
 const props = defineProps({
   id: {
@@ -199,24 +305,28 @@ const props = defineProps({
 })
 
 const partnershipsStore = usePartnershipsStore()
+const runtimeConfig = useRuntimeConfig()
 
-const available = ref([])
 const years = ref([])
 const hasExplicitYears = ref(false)
 const newPayment = ref({ date: '', amount: null, reference: '', paid: '' })
+const deletingPayment = ref(null)
 
 const detail = computed(() => partnershipsStore.byId(props.id))
+const p = computed(() => detail.value.partnership)
 
-// Groups inside the council boundary that this deal doesn't currently cover - usually
-// because someone removed them by hand, occasionally because the boundary has moved.
-const missing = computed(() => {
-  if (!detail.value) {
-    return []
-  }
+const covered = computed(() =>
+  detail.value.groups.filter((g) => g.source !== 'Removed')
+)
+const leftOut = computed(() =>
+  detail.value.groups.filter((g) => g.source === 'Removed')
+)
 
-  const covered = new Set(detail.value.groups.map((g) => g.groupid))
-  return available.value.filter((g) => !covered.has(g.groupid))
-})
+const length = computed(() => dealLength(p.value.startdate, p.value.enddate))
+const discount = computed(() => bulkDiscount(p.value.fullprice, p.value.amount))
+
+// The point to ask the council about next year.
+const renewalAsk = computed(() => renewalAskDate(p.value.enddate))
 
 const yearsTotal = computed(() => {
   if (!years.value.length) {
@@ -226,19 +336,18 @@ const yearsTotal = computed(() => {
   return years.value.reduce((t, y) => t + (parseFloat(y.amount) || 0), 0)
 })
 
-function formatMoney(v) {
-  return (parseFloat(v) || 0).toLocaleString('en-GB', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
+function exploreUrl(g) {
+  const site = runtimeConfig.public.USER_SITE || 'https://www.ilovefreegle.org'
+  return site.replace(/\/$/, '') + '/explore/' + g.nameshort
+}
+
+function roleText(role) {
+  return CONTACT_ROLES.find((r) => r.value === role)?.text || role
 }
 
 async function load() {
   const ret = await partnershipsStore.fetchOne(props.id)
   syncYears(ret)
-
-  const groups = await partnershipsStore.fetchGroups(props.id)
-  available.value = groups.available
 }
 
 // The API returns the pro-rata split when no year-by-year split has been agreed, and says
@@ -299,7 +408,16 @@ async function markPaid(payment) {
   })
 }
 
-async function removePayment(payment) {
-  await partnershipsStore.removePayment(props.id, payment.id)
+async function removePayment() {
+  await partnershipsStore.removePayment(props.id, deletingPayment.value.id)
+  deletingPayment.value = null
 }
 </script>
+<style scoped lang="scss">
+.factbox {
+  border: 1px solid $color-gray--light;
+  border-radius: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  min-width: 10rem;
+}
+</style>

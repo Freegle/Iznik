@@ -42,7 +42,8 @@ const partnership = (overrides = {}) => ({
   amount: 6000,
   paid: 3000,
   groupcount: 4,
-  agreed: true,
+  status: 'Confirmed',
+  renewal: 'Likely',
   visible: true,
   expiring: false,
   expired: false,
@@ -79,6 +80,17 @@ function stubs() {
       name: 'ModPartnershipTotal',
       template: '<div class="total">{{ label }}:{{ value }}</div>',
       props: ['label', 'value', 'money', 'variant'],
+    },
+    ModPartnershipTimeline: {
+      name: 'ModPartnershipTimeline',
+      template: '<div class="timeline" />',
+      props: ['partnerships'],
+      emits: ['select'],
+    },
+    ModPartnershipRenewal: {
+      name: 'ModPartnershipRenewal',
+      template: '<span class="renewal">{{ renewal }}</span>',
+      props: ['renewal'],
     },
     ModPartnershipDetail: {
       name: 'ModPartnershipDetail',
@@ -149,11 +161,13 @@ describe('modtools partnerships page', () => {
 
   it('shows the headline totals', async () => {
     store.summary = {
-      total: 10000,
-      agreed: 6000,
+      quoted: 1000,
+      inprinciple: 3000,
+      committed: 6000,
+      overdue: 0,
       invoiced: 5000,
-      paid: 3000,
-      outstanding: 2000,
+      received: 3000,
+      tocome: 3000,
       active: 2,
       years: [],
     }
@@ -161,11 +175,70 @@ describe('modtools partnerships page', () => {
     const wrapper = mountPage()
     await flushPromises()
 
+    // One box per stage of the pipeline, so hoped-for money never reads as money we have.
     const totals = wrapper.findAll('.total').map((t) => t.text())
-    expect(totals).toContain('Agreed income:6000')
-    // Anything not yet agreed is money we hope for, not money we have.
-    expect(totals).toContain('In discussion:4000')
-    expect(totals).toContain('Outstanding:2000')
+    expect(totals).toEqual([
+      'Quoted:1000',
+      'Agreed in principle:3000',
+      'Confirmed:6000',
+      'Received:3000',
+      'Still to come:3000',
+      'Live deals:2',
+    ])
+  })
+
+  it('shows overdue money only when there is some', async () => {
+    store.summary = {
+      quoted: 0,
+      inprinciple: 0,
+      committed: 6000,
+      overdue: 2500,
+      received: 0,
+      tocome: 6000,
+      active: 1,
+      years: [],
+    }
+
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.findAll('.total').map((t) => t.text())).toContain(
+      'Overdue:2500'
+    )
+  })
+
+  it('shows the timeline and opens a deal picked on it', async () => {
+    store.list = [partnership()]
+
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const timeline = wrapper.findComponent({ name: 'ModPartnershipTimeline' })
+    expect(timeline.props('partnerships')).toHaveLength(1)
+
+    await timeline.vm.$emit('select', 1)
+    await flushPromises()
+
+    expect(wrapper.find('.detail').exists()).toBe(true)
+  })
+
+  it('opens a new deal once it is saved, so its communities can be checked', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Add partnership'))
+      .trigger('click')
+    store.list = [partnership({ id: 5 })]
+    await wrapper
+      .findComponent({ name: 'ModPartnershipEditModal' })
+      .vm.$emit('saved', 5)
+    await flushPromises()
+
+    expect(
+      wrapper.findComponent({ name: 'ModPartnershipDetail' }).props('id')
+    ).toBe(5)
   })
 
   it('lists a deal with its council, term and money', async () => {
@@ -176,18 +249,25 @@ describe('modtools partnerships page', () => {
 
     const text = wrapper.text()
     expect(text).toContain('Northshire Council')
-    expect(text).toContain('2026-04-01 to 2027-03-31')
+    expect(text).toContain('1 Apr 2026 to 31 Mar 2027')
+    expect(text).toContain('1 year')
+    expect(text).toContain('Confirmed')
+    expect(wrapper.find('.renewal').text()).toBe('Likely')
     expect(text).toContain('£6,000')
     expect(text).toContain('£3,000')
   })
 
-  it('marks a deal that has not been agreed', async () => {
-    store.list = [partnership({ agreed: false })]
+  it('shows where each deal is in the pipeline', async () => {
+    store.list = [
+      partnership({ id: 1, status: 'InPrinciple' }),
+      partnership({ id: 2, status: 'Overdue' }),
+    ]
 
     const wrapper = mountPage()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('In discussion')
+    expect(wrapper.text()).toContain('Agreed in principle')
+    expect(wrapper.text()).toContain('Overdue')
   })
 
   it('marks a deal that has ended', async () => {
@@ -224,20 +304,32 @@ describe('modtools partnerships page', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('sponsorship runs')
-    expect(wrapper.text()).toContain('Northshire Council (2027-03-31)')
+    expect(wrapper.text()).toContain('Northshire Council (31 Mar 2027)')
   })
 
   it('draws the income graph split by financial year', async () => {
     store.summary = {
-      total: 9000,
-      agreed: 9000,
-      invoiced: 0,
-      paid: 0,
-      outstanding: 0,
+      quoted: 200,
+      inprinciple: 500,
+      committed: 6000,
+      received: 0,
+      tocome: 6000,
       active: 1,
       years: [
-        { financialyear: 2026, label: '2026/27', agreed: 3000, pipeline: 0 },
-        { financialyear: 2027, label: '2027/28', agreed: 3000, pipeline: 500 },
+        {
+          financialyear: 2026,
+          label: '2026/27',
+          committed: 3000,
+          inprinciple: 0,
+          quoted: 200,
+        },
+        {
+          financialyear: 2027,
+          label: '2027/28',
+          committed: 3000,
+          inprinciple: 500,
+          quoted: 0,
+        },
       ],
     }
 
@@ -247,9 +339,9 @@ describe('modtools partnerships page', () => {
     const chart = wrapper.findComponent({ name: 'GChart' })
     expect(chart.exists()).toBe(true)
     expect(chart.props('data')).toEqual([
-      ['Financial year', 'Agreed', 'In discussion'],
-      ['2026/27', 3000, 0],
-      ['2027/28', 3000, 500],
+      ['Financial year', 'Confirmed', 'Agreed in principle', 'Quoted'],
+      ['2026/27', 3000, 0, 200],
+      ['2027/28', 3000, 500, 0],
     ])
   })
 
@@ -362,7 +454,9 @@ describe('modtools partnerships page', () => {
         paid: 3000,
         outstanding: 0,
         active: 1,
-        years: [{ label: '2026/27', agreed: 6000, pipeline: 0 }],
+        years: [
+          { label: '2026/27', committed: 6000, inprinciple: 0, quoted: 0 },
+        ],
       }
 
       const withoutChart = stubs()

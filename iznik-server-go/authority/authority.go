@@ -151,8 +151,9 @@ func Single(c *fiber.Ctx) error {
 
 // GroupsForAuthority returns the live Freegle groups whose catchment meaningfully
 // overlaps an authority's boundary. "Meaningfully" means at least 5% of the group sits
-// inside the authority, or the authority is at least 5% of the group - so a small
-// authority inside a big group still counts.
+// inside the authority (overlap), or the group covers at least 5% of the authority
+// (overlap2) - so a small authority inside a big group still counts. A group that only
+// grazes the boundary, such as Southend against Essex County, passes neither.
 //
 // Shared with the Partnerships page, which uses it to work out which groups a council
 // sponsorship covers.
@@ -190,7 +191,7 @@ func GroupsForAuthority(id uint64) []Group {
 			"CASE WHEN NOT ("+polygonal+") THEN 0 "+
 			"WHEN ST_GeometryType(St_intersection(polyindex, Coalesce(simplified, polygon))) != 'GEOMCOLLECTION' THEN "+
 			"CASE WHEN polyindex = Coalesce(simplified, polygon) THEN 1 "+
-			"ELSE St_area(polyindex) / St_area(St_intersection(polyindex, Coalesce(simplified, polygon))) "+
+			"ELSE St_area(St_intersection(polyindex, Coalesce(simplified, polygon))) / St_area(Coalesce(simplified, polygon)) "+
 			"END "+
 			"ELSE 0 "+
 			"END AS overlap2").

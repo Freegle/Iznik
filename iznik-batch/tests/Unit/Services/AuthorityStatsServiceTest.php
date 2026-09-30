@@ -4,6 +4,7 @@ namespace Tests\Unit\Services;
 
 use App\Services\AuthorityStatsService;
 use App\Support\ReuseBenefit;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\SeedsAuthorityStats;
 use Tests\TestCase;
 
@@ -165,6 +166,60 @@ class AuthorityStatsServiceTest extends TestCase
         // Stories and postcode breakdown carried through.
         $this->assertSame(['Newer inside', 'Older inside'], array_column($report['stories'], 'headline'));
         $this->assertSame(2, $report['postcodes']['AB1 2']['Offer']);
+    }
+
+    public function test_get_authority_ignores_a_group_that_only_grazes_the_boundary(): void
+    {
+        $this->seedAuthorityScenario();
+
+        // 2% of this group is inside the authority, and it covers 0.1% of the authority -
+        // Southend against Essex County. Neither is enough to count it.
+        $this->insertGroup(900104, 'grazegrp', 'Graze Group', 'POLYGON((0.98 10.5, 1.98 10.5, 1.98 10.6, 0.98 10.6, 0.98 10.5))');
+
+        $names = array_column($this->service->getAuthority($this->authorityId)['groups'], 'namedisplay');
+
+        $this->assertNotContains('Graze Group', $names);
+        $this->assertContains('Half Group', $names);
+    }
+
+    public function test_compute_report_for_a_partnership_reports_exactly_its_communities(): void
+    {
+        $this->seedAuthorityScenario();
+
+        // A community well outside the boundary that the council sponsors anyway.
+        $outsideId = 900105;
+        $this->insertGroup($outsideId, 'outsidegrp', 'Outside Group', 'POLYGON((5 10.5, 6 10.5, 6 11.5, 5 11.5, 5 10.5))');
+        $this->stat($outsideId, self::AMC, '2025-06-30', 30);
+        $this->stat($outsideId, self::WEIGHT, '2025-06-15', 10);
+
+        $partnershipId = DB::table('partnerships')->insertGetId([
+            'authorityid' => $this->authorityId,
+            'name' => 'Test Authority',
+            'startdate' => '2025-01-01',
+            'enddate' => '2025-12-31',
+            'status' => 'Confirmed',
+        ]);
+        DB::table('partnerships_groups')->insert([
+            ['partnershipid' => $partnershipId, 'groupid' => $this->groupFullId, 'source' => 'Boundary', 'overlap' => 1],
+            ['partnershipid' => $partnershipId, 'groupid' => $this->groupHalfId, 'source' => 'Removed', 'overlap' => 0.5],
+            ['partnershipid' => $partnershipId, 'groupid' => $this->groupTrivialId, 'source' => 'Boundary', 'overlap' => 1],
+            ['partnershipid' => $partnershipId, 'groupid' => $outsideId, 'source' => 'Added', 'overlap' => null],
+        ]);
+
+        $report = $this->service->computeReport($this->authorityId, $this->quarterStart, $partnershipId);
+
+        $groups = [];
+        foreach ($report['groups'] as $g) {
+            $groups[$g['namedisplay']] = $g;
+        }
+
+        // The page's list, no more and no less: the left-out community is gone, and the
+        // trivial one stays because the council was told it is covered.
+        $this->assertSame(['Full Group', 'Outside Group', 'Trivial Group'], array_keys($groups));
+        // Added by hand counts in full.
+        $this->assertSame([0, 0, 30], $groups['Outside Group']['members']);
+        $this->assertSame([0.0, 0.0, 10.0], $groups['Outside Group']['weight']);
+        $this->assertSame(['members' => 160, 'weight' => 160.0, 'outcomes' => 15.0], $report['totals'][2]);
     }
 
     public function test_compute_report_returns_null_for_unknown_authority(): void
