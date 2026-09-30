@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-26
+last_reviewed: 2026-09-30
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -939,6 +939,16 @@ rows, its latest row states its outcome.
   whether or not there are candidate towns, and `useReachDistance.loadCap` repairs the stored
   pair on sight - the sentinel below a member's own cap cannot be a choice, because only the
   top stop means "no limit" and only at the ceiling does it store the sentinel.
+
+  The hint's place names no longer come from `towns` at all. They come from the `places`
+  gazetteer (GeoNames, places of 3,000+ people), because with `towns` a Wellingborough member
+  at the 5-minute stop read "Max 1-2 miles by road. Close to Northampton": Wellingborough,
+  Kettering and Rushden are not curated towns, so the nearest one was 12 miles away. The
+  examples are the biggest places in the outer half of the reach, so they move outwards as the
+  slider widens. When nothing is in reach, the nearest place comes back with its
+  road distance (`closer_miles`, from the drive-metrics lookup, omitted rather than replaced by a straight line when routing cannot say), shown as "Nearest town: X, N miles by road". The reach itself is one
+  figure, "Up to about N miles by road", the median frontier. `towns` still anchors Community
+  News areas, which is now its only reader.
 
   *It decays.* Nothing else writes the key, so a member who joins after a run has no band
   limit, ever - and a member who moves, or an area that grows denser, drifts away from the band
