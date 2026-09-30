@@ -5541,30 +5541,6 @@ type housekeeperTasksResponse struct {
 //	401: errorResponse
 //	403: errorResponse
 
-// swagger:route GET /partnership/{id}/group partnerships getPartnershipGroups
-// List the groups a partnership covers
-//
-// Returns the groups a partnership covers, alongside the groups the authority's
-// boundary suggests, so a mistake in the overlap can be corrected by hand.
-// Partnerships team, Support or Admin only.
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: Partnership ID
-//     required: true
-//     type: integer
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: successResponse
-//	401: errorResponse
-//	403: errorResponse
-//	404: errorResponse
-
 // swagger:route PATCH /partnership/{id}/group partnerships patchPartnershipGroups
 // Change the groups a partnership covers
 //

@@ -1378,7 +1378,6 @@ func SetupRoutes(app *fiber.App) {
 		rg.Get("/partnership/:id", partnerships.Single)
 		rg.Patch("/partnership/:id", partnerships.Update)
 		rg.Delete("/partnership/:id", partnerships.Delete)
-		rg.Get("/partnership/:id/group", partnerships.Groups)
 		rg.Patch("/partnership/:id/group", partnerships.PatchGroups)
 		rg.Put("/partnership/:id/year", partnerships.PutYears)
 		rg.Post("/partnership/:id/payment", partnerships.CreatePayment)

@@ -14,30 +14,43 @@
 
       <template v-else>
         <div v-if="summary" class="d-flex flex-wrap gap-3 mb-3">
+          <ModPartnershipTotal label="Quoted" :value="summary.quoted" money />
           <ModPartnershipTotal
-            label="Agreed income"
-            :value="summary.agreed"
+            label="Agreed in principle"
+            :value="summary.inprinciple"
             money
           />
           <ModPartnershipTotal
-            label="In discussion"
-            :value="summary.total - summary.agreed"
+            label="Confirmed"
+            :value="summary.committed"
+            money
+            variant="success"
+          />
+          <ModPartnershipTotal
+            label="Received"
+            :value="summary.received"
             money
           />
           <ModPartnershipTotal
-            label="Invoiced"
-            :value="summary.invoiced"
+            label="Still to come"
+            :value="summary.tocome"
             money
+            :variant="summary.tocome > 0 ? 'warning' : null"
           />
-          <ModPartnershipTotal label="Paid" :value="summary.paid" money />
           <ModPartnershipTotal
-            label="Outstanding"
-            :value="summary.outstanding"
+            v-if="summary.overdue > 0"
+            label="Overdue"
+            :value="summary.overdue"
             money
-            :variant="summary.outstanding > 0 ? 'warning' : null"
+            variant="danger"
           />
           <ModPartnershipTotal label="Live deals" :value="summary.active" />
         </div>
+        <p v-if="summary" class="small text-muted">
+          A deal moves from quoted, to agreed in principle, to confirmed.
+          Members see the sponsor once it is confirmed. Still to come is
+          confirmed money we have not received yet.
+        </p>
 
         <NoticeMessage v-if="expiring.length" variant="warning" class="mb-3">
           <strong>
@@ -47,15 +60,30 @@
             }}
             out within three months:
           </strong>
-          {{ expiring.map((p) => p.name + ' (' + p.enddate + ')').join(', ') }}.
-          The Partnerships team gets an email about each one too.
+          {{
+            expiring
+              .map((p) => p.name + ' (' + formatDate(p.enddate) + ')')
+              .join(', ')
+          }}. The Partnerships team gets an email about each one too.
         </NoticeMessage>
+
+        <div v-if="partnerships.length" class="mb-4">
+          <h3>Timeline</h3>
+          <p class="text-muted small">
+            Each bar is a deal; click one to see it. The dark tick is three
+            months before it ends, when we ask the council about next year.
+          </p>
+          <ModPartnershipTimeline
+            :partnerships="partnerships"
+            @select="showDeal"
+          />
+        </div>
 
         <div v-if="chartData.length > 1" class="mb-4">
           <h3>Income by financial year</h3>
           <p class="text-muted small">
             Multi-year deals are spread across the years they cover, so a
-            three-year deal shows in three bars rather than all in the year it
+            three-year deal shows in three years rather than all in the year it
             was signed.
           </p>
           <GChart
@@ -78,15 +106,17 @@
             <tr>
               <th>Council</th>
               <th>Runs</th>
+              <th>Length</th>
               <th class="text-end">Value</th>
               <th class="text-end">Paid</th>
               <th>Communities</th>
               <th>Status</th>
+              <th>Renewal</th>
               <th />
             </tr>
           </thead>
           <template v-for="p in partnerships" :key="'partnership-' + p.id">
-            <tbody>
+            <tbody :id="'partnership-' + p.id">
               <tr>
                 <td>
                   <strong>{{ p.name }}</strong>
@@ -97,24 +127,35 @@
                     {{ p.authorityname }}
                   </div>
                 </td>
-                <td>{{ p.startdate }} to {{ p.enddate }}</td>
+                <td>
+                  {{ formatDate(p.startdate) }} to {{ formatDate(p.enddate) }}
+                </td>
+                <td class="text-nowrap">
+                  {{ dealLength(p.startdate, p.enddate) }}
+                </td>
                 <td class="text-end">£{{ formatMoney(p.amount) }}</td>
                 <td class="text-end">£{{ formatMoney(p.paid) }}</td>
                 <td>{{ p.groupcount }}</td>
                 <td>
-                  <b-badge v-if="!p.agreed" variant="secondary">
-                    In discussion
+                  <b-badge :variant="statusInfo(p.status).variant">
+                    {{ statusInfo(p.status).text }}
                   </b-badge>
-                  <b-badge v-else-if="p.expired" variant="danger">
+                  <b-badge v-if="p.expired" variant="dark" class="ms-1">
                     Ended
                   </b-badge>
-                  <b-badge v-else-if="p.expiring" variant="warning">
+                  <b-badge
+                    v-else-if="p.expiring"
+                    variant="warning"
+                    class="ms-1"
+                  >
                     Renewal due
                   </b-badge>
-                  <b-badge v-else variant="success">Live</b-badge>
                   <b-badge v-if="!p.visible" variant="light" class="ms-1">
                     Hidden
                   </b-badge>
+                </td>
+                <td>
+                  <ModPartnershipRenewal :renewal="p.renewal" />
                 </td>
                 <td class="text-end text-nowrap">
                   <b-button variant="link" size="sm" @click="toggle(p.id)">
@@ -138,7 +179,7 @@
                 </td>
               </tr>
               <tr v-if="expanded === p.id">
-                <td colspan="7">
+                <td colspan="9">
                   <ModPartnershipDetail :id="p.id" />
                 </td>
               </tr>
@@ -146,7 +187,7 @@
           </template>
           <tbody v-if="!partnerships.length">
             <tr>
-              <td colspan="7" class="text-muted">
+              <td colspan="9" class="text-muted">
                 No partnerships yet. Add the first one above.
               </td>
             </tr>
@@ -162,6 +203,7 @@
         v-if="showEdit"
         :partnership="editing"
         @hidden="showEdit = false"
+        @saved="onSaved"
       />
       <ConfirmModal
         v-if="deleting"
@@ -174,12 +216,18 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { GChart } from 'vue-google-charts'
 import { useRoute, useRuntimeConfig, useHead } from '#imports'
 import { usePartnershipsStore } from '~/stores/partnerships'
 import { useMe } from '~/composables/useMe'
 import { buildHead } from '~/composables/useMTBuildHead'
+import {
+  dealLength,
+  formatDate,
+  formatMoney,
+  statusInfo,
+} from '~/modtools/composables/usePartnershipFormat'
 
 const partnershipsStore = usePartnershipsStore()
 const route = useRoute()
@@ -211,20 +259,15 @@ const partnerships = computed(() => partnershipsStore.list)
 const summary = computed(() => partnershipsStore.summary)
 const expiring = computed(() => partnershipsStore.expiring)
 
-function formatMoney(v) {
-  return (parseFloat(v) || 0).toLocaleString('en-GB', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })
-}
-
-// Agreed and hoped-for money are stacked separately, so a fat pipeline never reads as
-// income we already have.
+// Each pipeline stage is stacked separately, so a fat pipeline never reads as income we
+// already have.
 const chartData = computed(() => {
-  const rows = [['Financial year', 'Agreed', 'In discussion']]
+  const rows = [
+    ['Financial year', 'Confirmed', 'Agreed in principle', 'Quoted'],
+  ]
 
   summary.value?.years?.forEach((y) => {
-    rows.push([y.label, y.agreed, y.pipeline])
+    rows.push([y.label, y.committed, y.inprinciple, y.quoted])
   })
 
   return rows
@@ -234,7 +277,7 @@ const chartOptions = {
   height: 320,
   isStacked: true,
   legend: { position: 'top' },
-  colors: ['#5B8930', '#c0c0c0'],
+  colors: ['#5B8930', '#e38d13', '#c0c0c0'],
   vAxis: { format: '£#,##0', minValue: 0 },
   chartArea: { width: '85%', height: '70%' },
 }
@@ -251,6 +294,22 @@ function addPartnership() {
 function editPartnership(p) {
   editing.value = p
   showEdit.value = true
+}
+
+// Open a deal's details and bring it into view - from the timeline, or after saving a new
+// one so its communities can be checked straight away.
+async function showDeal(id) {
+  expanded.value = id
+  await nextTick()
+  document
+    .getElementById('partnership-' + id)
+    ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function onSaved(id) {
+  if (id && !editing.value) {
+    showDeal(id)
+  }
 }
 
 function confirmDelete(p) {
