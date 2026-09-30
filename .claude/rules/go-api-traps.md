@@ -123,6 +123,21 @@ that has not caught up:
 
 Never confirm a write by reading it again unless you have pinned the read to the primary.
 
+## A 5xx on a slow query is ten slow queries
+
+The web and ModTools clients retry every 5xx up to ten times (`useFetchRetry`, with a
+one-second-per-attempt delay), and a query that hit `MAX_EXECUTION_TIME` will hit it again
+on the retry. So a handler that turns a 20-second abort into a 500 has multiplied it by ten
+on the read node, one copy after another, for a request that was never going to succeed.
+Found on the ModTools member search: one moderator's single term appears 17 times in a
+week's 500s.
+
+Where the cause is the request itself - a search too broad for its scope - answer a 4xx
+with a message that says what to change; the client parses the body of a 4xx and does not
+retry it. Keep the 5xx where a retry can genuinely succeed, such as a queue listing
+aborted by a slow replica (Discourse 10037). The gateway's own 504 is the one 5xx the
+client retries once only, for the same reason.
+
 ## A request context that only cancels at shutdown
 
 The framework request context is not cancelled when the client or the gateway goes away; it ends
