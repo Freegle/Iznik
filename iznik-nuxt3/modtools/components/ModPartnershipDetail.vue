@@ -29,10 +29,10 @@
       <b-col cols="12" lg="6">
         <h5>Communities covered</h5>
         <p class="text-muted small">
-          Every community inside the council boundary is covered, including any
-          set up later. The percentage is how much of it lies inside the
-          boundary; the statistics count that share of it. These are the
-          communities the statistics report on.
+          Every community that overlaps the council boundary is covered,
+          including any set up later. The percentage is how much of it lies
+          inside the boundary; the statistics count that share of it. These are
+          the communities the statistics report on.
         </p>
         <NoticeMessage v-if="!covered.length" variant="warning">
           No communities are covered, so nothing is showing to members.
@@ -67,7 +67,7 @@
         </ul>
 
         <div v-if="leftOut.length" class="mb-2">
-          <p class="small mb-1">Inside the boundary but left out:</p>
+          <p class="small mb-1">Overlapping the boundary but left out:</p>
           <b-button
             v-for="g in leftOut"
             :key="'out-' + g.groupid"

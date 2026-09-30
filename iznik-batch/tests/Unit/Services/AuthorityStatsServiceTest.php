@@ -168,18 +168,18 @@ class AuthorityStatsServiceTest extends TestCase
         $this->assertSame(2, $report['postcodes']['AB1 2']['Offer']);
     }
 
-    public function test_get_authority_ignores_a_group_that_only_grazes_the_boundary(): void
+    public function test_get_authority_keeps_a_group_that_only_touches_the_boundary_at_its_share(): void
     {
         $this->seedAuthorityScenario();
 
-        // 2% of this group is inside the authority, and it covers 0.1% of the authority -
-        // Southend against Essex County. Neither is enough to count it.
+        // 2% of this group is inside the authority - Southend against Essex County. It is kept,
+        // and counts for 2% of its figures, as on the authority stats page.
         $this->insertGroup(900104, 'grazegrp', 'Graze Group', 'POLYGON((0.98 10.5, 1.98 10.5, 1.98 10.6, 0.98 10.6, 0.98 10.5))');
 
-        $names = array_column($this->service->getAuthority($this->authorityId)['groups'], 'namedisplay');
+        $overlaps = array_column($this->service->getAuthority($this->authorityId)['groups'], 'overlap', 'namedisplay');
 
-        $this->assertNotContains('Graze Group', $names);
-        $this->assertContains('Half Group', $names);
+        $this->assertArrayHasKey('Graze Group', $overlaps);
+        $this->assertEqualsWithDelta(0.02, $overlaps['Graze Group'], 0.005);
     }
 
     public function test_compute_report_for_a_partnership_reports_exactly_its_communities(): void

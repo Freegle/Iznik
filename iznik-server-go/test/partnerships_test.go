@@ -300,9 +300,10 @@ func TestPartnershipDetectsCoveredGroups(t *testing.T) {
 	assert.InDelta(t, 1.0, g["overlap"].(float64), 0.001)
 }
 
-// A community that only grazes the boundary is not covered: Southend against Essex County
-// was the case that showed the old rule kept every community that touched it.
-func TestPartnershipIgnoresACommunityThatOnlyGrazesTheBoundary(t *testing.T) {
+// A community that only touches the boundary is covered, with the small share of it that is
+// inside - the same as the authority stats page, which counts that share of its figures.
+// Southend against Essex County is the real case; leaving it out is a decision for the team.
+func TestPartnershipCoversACommunityThatTouchesTheBoundaryWithItsShare(t *testing.T) {
 	prefix := uniquePrefix("PartnershipGraze")
 	_, token := partnershipsUser(t, prefix)
 	authorityID := createPartnershipAuthority(t, prefix)
@@ -321,8 +322,10 @@ func TestPartnershipIgnoresACommunityThatOnlyGrazesTheBoundary(t *testing.T) {
 
 	id := createPartnership(t, token, authorityID, defaultBody(authorityID))
 
-	assert.Nil(t, findGroup(getPartnership(t, token, id), grazeID))
-	assert.Equal(t, int64(0), sponsorshipCount(grazeID))
+	g := findGroup(getPartnership(t, token, id), grazeID)
+	require.NotNil(t, g)
+	assert.Equal(t, "Boundary", g["source"])
+	assert.InDelta(t, 0.02, g["overlap"].(float64), 0.005)
 }
 
 func TestPartnershipCreateCanLeaveOutAndAddCommunities(t *testing.T) {

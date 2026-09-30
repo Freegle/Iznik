@@ -240,10 +240,8 @@ class AuthorityStatsService
             return null;
         }
 
-        // overlap is the fraction of the group inside the authority; overlap2 the
-        // fraction of the authority the group covers. Either being 5% keeps the group,
-        // so a small authority inside a big group still counts while a group that only
-        // grazes the boundary does not. Must match authority.GroupsForAuthority in Go.
+        // Overlap of each group's polyindex with the authority polygon, in both
+        // directions, so we can keep any group that meaningfully intersects.
         $rows = DB::select(
             "SELECT groups.id AS id, nameshort, namefull,
                 CASE WHEN ST_GeometryType(ST_Intersection(polyindex, COALESCE(simplified, polygon))) IN ('POLYGON', 'MULTIPOLYGON') THEN
@@ -254,7 +252,7 @@ class AuthorityStatsService
                 END AS overlap,
                 CASE WHEN ST_GeometryType(ST_Intersection(polyindex, COALESCE(simplified, polygon))) IN ('POLYGON', 'MULTIPOLYGON') THEN
                     CASE WHEN polyindex = COALESCE(simplified, polygon) THEN 1
-                    ELSE ST_Area(ST_Intersection(polyindex, COALESCE(simplified, polygon))) / ST_Area(COALESCE(simplified, polygon))
+                    ELSE ST_Area(polyindex) / ST_Area(ST_Intersection(polyindex, COALESCE(simplified, polygon)))
                     END
                 ELSE 0
                 END AS overlap2

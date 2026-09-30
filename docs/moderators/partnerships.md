@@ -8,7 +8,6 @@ covers:
   - iznik-nuxt3/modtools/stores/partnerships.js
   - iznik-nuxt3/api/PartnershipsAPI.js
   - iznik-server-go/partnerships/**
-  - iznik-server-go/authority/authority.go
   - iznik-batch/app/Console/Commands/Partnerships/**
   - iznik-batch/app/Services/PartnershipGroupsService.php
   - iznik-batch/app/Services/AuthorityStatsService.php
@@ -72,16 +71,17 @@ named.
 
 ## Which communities a deal covers
 
-A deal covers every community inside the council boundary, **including any set up later** -
-a daily check picks those up, so nobody has to add them.
+A deal covers every community that overlaps the council boundary, **including any set up
+later** - a daily check picks those up, so nobody has to add them. These are the same
+communities the authority stats page on the member site uses.
 
-"Inside" means at least 5% of the community lies within the boundary, or the community covers
-at least 5% of the council's area. A community that only grazes the edge, such as Southend
-against Essex County, is not included. Each community shows the share of it that is inside,
-and the statistics count that share.
+Each community shows the share of it that lies inside the boundary, and the statistics count
+only that share of its figures, as the authority stats page does. A community that only
+touches the edge, such as Southend against Essex County at about 1%, adds very little; leave it
+out if the council should not be shown as sponsoring it.
 
-When you create a deal, the communities are listed as soon as you pick the council, most-inside
-first, and you can untick any to leave them out. Under **Details** you can also:
+When you create a deal, the communities are listed as soon as you pick the council, largest
+share first, and you can untick any to leave them out. Under **Details** you can also:
 
 - **Leave out** a community. It stays left out; re-checking the boundary does not bring it
   back. It is listed as left out, with a button to put it back.

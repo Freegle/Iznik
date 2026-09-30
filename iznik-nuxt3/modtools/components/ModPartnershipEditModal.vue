@@ -59,17 +59,18 @@
         <div v-if="!partnership && chosenAuthority" class="mb-3">
           <label class="form-label">Communities this deal covers</label>
           <p v-if="loadingBoundary" class="text-muted small">
-            Working out which communities are inside the council boundary...
+            Working out which communities overlap the council boundary...
           </p>
           <template v-else>
             <p class="text-muted small mb-1">
-              Every community inside the council boundary is covered, including
-              any set up later. Untick one to leave it out. The percentage is
-              how much of the community lies inside the boundary; the statistics
-              count that share of it.
+              Every community that overlaps the council boundary is covered,
+              including any set up later. The percentage is how much of the
+              community lies inside the boundary, and the statistics count that
+              share of it, as on the authority stats page. Untick one to leave
+              it out - for example one that only touches the edge.
             </p>
             <NoticeMessage v-if="!boundaryGroups.length" variant="warning">
-              No communities are inside this council's boundary.
+              No communities overlap this council's boundary.
             </NoticeMessage>
             <b-form-checkbox
               v-for="g in boundaryGroups"
