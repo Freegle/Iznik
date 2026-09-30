@@ -79,22 +79,6 @@
     }
    }
   },
-  "/activity": {
-   "get": {
-    "description": "DEPRECATED - Crawler traffic only in production. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nReturns the most recent activity in groups",
-    "tags": [
-     "message"
-    ],
-    "summary": "Get recent activity (DEPRECATED)",
-    "operationId": "getActivity",
-    "deprecated": true,
-    "responses": {
-     "200": {
-      "$ref": "#/responses/activityResponse"
-     }
-    }
-   }
-  },
   "/address": {
    "get": {
     "description": "Returns all addresses for the authenticated user",
@@ -1559,13 +1543,12 @@
   },
   "/config/admin": {
    "patch": {
-    "description": "DEPRECATED - The ModTools client no longer calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nUpdates admin configuration values (Support/Admin only)",
+    "description": "Updates admin configuration values (Support/Admin only)",
     "tags": [
      "config"
     ],
-    "summary": "Update admin config keys (DEPRECATED)",
+    "summary": "Update admin config keys",
     "operationId": "patchAdminConfig",
-    "deprecated": true,
     "responses": {
      "200": {
       "$ref": "#/responses/successResponse"
@@ -2736,102 +2719,6 @@
     ]
    }
   },
-  "/isochrone": {
-   "get": {
-    "description": "DEPRECATED - the per-user isochrone editor was removed in the rippling-out reach flip\n(PR #921), but stale native-app bundles that predate it still call this (observed in\nproduction). Retained until that cohort drains; only /isochrone/message and\nmessage/count remain in current use.",
-    "tags": [
-     "isochrone"
-    ],
-    "summary": "List isochrones (DEPRECATED)",
-    "operationId": "listIsochrones",
-    "deprecated": true,
-    "responses": {
-     "200": {
-      "$ref": "#/responses/isochronesResponse"
-     },
-     "401": {
-      "$ref": "#/responses/errorResponse"
-     }
-    },
-    "security": [
-     {
-      "BearerAuth": []
-     }
-    ]
-   },
-   "put": {
-    "description": "DEPRECATED - the isochrone editor was removed in PR #921, but stale native-app bundles\nthat predate it still contain the calling code (GET/PATCH observed in production). Retained\nfor backward compatibility only.",
-    "tags": [
-     "isochrone"
-    ],
-    "summary": "Create an isochrone (DEPRECATED)",
-    "operationId": "createIsochrone",
-    "deprecated": true,
-    "responses": {
-     "200": {
-      "$ref": "#/responses/successResponse"
-     },
-     "400": {
-      "$ref": "#/responses/errorResponse"
-     },
-     "401": {
-      "$ref": "#/responses/errorResponse"
-     }
-    },
-    "security": [
-     {
-      "BearerAuth": []
-     }
-    ]
-   },
-   "delete": {
-    "description": "DEPRECATED - the isochrone editor was removed in PR #921, but stale native-app bundles\nthat predate it still contain the calling code (GET/PATCH observed in production). Retained\nfor backward compatibility only.",
-    "tags": [
-     "isochrone"
-    ],
-    "summary": "Delete an isochrone (DEPRECATED)",
-    "operationId": "deleteIsochrone",
-    "deprecated": true,
-    "responses": {
-     "200": {
-      "$ref": "#/responses/successResponse"
-     },
-     "401": {
-      "$ref": "#/responses/errorResponse"
-     }
-    },
-    "security": [
-     {
-      "BearerAuth": []
-     }
-    ]
-   },
-   "patch": {
-    "description": "DEPRECATED - the isochrone editor was removed in PR #921, but stale native-app bundles\nthat predate it still contain the calling code (GET/PATCH observed in production). Retained\nfor backward compatibility only.",
-    "tags": [
-     "isochrone"
-    ],
-    "summary": "Edit an isochrone (DEPRECATED)",
-    "operationId": "editIsochrone",
-    "deprecated": true,
-    "responses": {
-     "200": {
-      "$ref": "#/responses/successResponse"
-     },
-     "400": {
-      "$ref": "#/responses/errorResponse"
-     },
-     "401": {
-      "$ref": "#/responses/errorResponse"
-     }
-    },
-    "security": [
-     {
-      "BearerAuth": []
-     }
-    ]
-   }
-  },
   "/isochrone/message": {
    "get": {
     "description": "Returns messages within the user's isochrone areas",
@@ -3987,13 +3874,12 @@
   },
   "/message/{id}": {
    "delete": {
-    "description": "DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nDeletes a message by ID",
+    "description": "Deletes a message by ID",
     "tags": [
      "message"
     ],
-    "summary": "Delete message (DEPRECATED)",
+    "summary": "Delete message",
     "operationId": "deleteMessage",
-    "deprecated": true,
     "parameters": [
      {
       "type": "integer",
@@ -4136,48 +4022,6 @@
     }
    }
   },
-  "/messages": {
-   "get": {
-    "description": "DEPRECATED - No Freegle client calls this (ModTools uses /modtools/messages); remaining traffic is external scrapers. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nReturns messages for a group with pagination. Response includes tnpostid (Trash Nothing post ID)\nand expiresat (computed expiry date based on group settings) for each message.",
-    "tags": [
-     "message"
-    ],
-    "summary": "List messages (DEPRECATED)",
-    "operationId": "listPublicMessages",
-    "deprecated": true,
-    "parameters": [
-     {
-      "type": "integer",
-      "description": "Group ID to list messages from",
-      "name": "groupid",
-      "in": "query"
-     },
-     {
-      "type": "string",
-      "description": "Message collection (Approved, Pending, Rejected, Spam)",
-      "name": "collection",
-      "in": "query"
-     },
-     {
-      "type": "integer",
-      "description": "Max messages to return (1-100, default 20)",
-      "name": "limit",
-      "in": "query"
-     },
-     {
-      "type": "string",
-      "description": "Pagination cursor (JSON with Date and id)",
-      "name": "context",
-      "in": "query"
-     }
-    ],
-    "responses": {
-     "200": {
-      "$ref": "#/responses/listMessagesResponse"
-     }
-    }
-   }
-  },
   "/messages/clearcount": {
    "post": {
     "description": "Marks the member's whole browse feed as cleared, without needing the client to enumerate posts. Moves one watermark rather than writing a view row per post. Requires authentication.",
@@ -4263,13 +4107,12 @@
     ]
    },
    "patch": {
-    "description": "DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nAllows a moderator to set feedback, score_positive, and score_negative on a microaction",
+    "description": "Allows a moderator to set feedback, score_positive, and score_negative on a microaction",
     "tags": [
      "microvolunteering"
     ],
-    "summary": "Provide moderator feedback on microaction (DEPRECATED)",
+    "summary": "Provide moderator feedback on microaction",
     "operationId": "patchMicrovolunteeringFeedback",
-    "deprecated": true,
     "parameters": [
      {
       "name": "Body",
@@ -4394,13 +4237,12 @@
   },
   "/modtools/admin/{id}": {
    "get": {
-    "description": "DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nReturns a single admin record by ID",
+    "description": "Returns a single admin record by ID",
     "tags": [
      "modtools"
     ],
-    "summary": "Get admin by ID (DEPRECATED)",
+    "summary": "Get admin by ID",
     "operationId": "getAdmin",
-    "deprecated": true,
     "parameters": [
      {
       "type": "integer",
@@ -4488,13 +4330,12 @@
   },
   "/modtools/alert/{id}": {
    "get": {
-    "description": "DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nReturns a single alert by ID (public access)",
+    "description": "Returns a single alert by ID (public access)",
     "tags": [
      "modtools"
     ],
-    "summary": "Get alert by ID (DEPRECATED)",
+    "summary": "Get alert by ID",
     "operationId": "getAlert",
-    "deprecated": true,
     "parameters": [
      {
       "type": "integer",
@@ -5584,13 +5425,12 @@
     }
    },
    "delete": {
-    "description": "DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nDeletes a noticeboard by ID. Requires mod/admin role.",
+    "description": "Deletes a noticeboard by ID. Requires mod/admin role.",
     "tags": [
      "noticeboard"
     ],
-    "summary": "Delete noticeboard (DEPRECATED)",
+    "summary": "Delete noticeboard",
     "operationId": "deleteNoticeboard",
-    "deprecated": true,
     "parameters": [
      {
       "type": "integer",
@@ -6638,22 +6478,6 @@
     ]
    }
   },
-  "/simulation": {
-   "get": {
-    "description": "DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nReturns simulation run data for analysis",
-    "tags": [
-     "simulation"
-    ],
-    "summary": "Get simulation data (DEPRECATED)",
-    "operationId": "getSimulation",
-    "deprecated": true,
-    "responses": {
-     "200": {
-      "$ref": "#/responses/genericResponse"
-     }
-    }
-   }
-  },
   "/src": {
    "post": {
     "description": "Records source tracking data for analytics",
@@ -6726,25 +6550,6 @@
      },
      "401": {
       "$ref": "#/responses/errorResponse"
-     }
-    },
-    "security": [
-     {
-      "BearerAuth": []
-     }
-    ]
-   },
-   "post": {
-    "description": "DEPRECATED - Action-based route; live clients use /story/like and /story/unlike. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nHandles story actions",
-    "tags": [
-     "story"
-    ],
-    "summary": "Story actions (Like/Unlike) (DEPRECATED)",
-    "operationId": "postStory",
-    "deprecated": true,
-    "responses": {
-     "200": {
-      "$ref": "#/responses/successResponse"
      }
     },
     "security": [
@@ -6877,13 +6682,12 @@
     }
    },
    "delete": {
-    "description": "DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nDeletes a story by ID",
+    "description": "Deletes a story by ID",
     "tags": [
      "story"
     ],
-    "summary": "Delete a story (DEPRECATED)",
+    "summary": "Delete a story",
     "operationId": "deleteStory",
-    "deprecated": true,
     "parameters": [
      {
       "type": "integer",
@@ -6991,13 +6795,12 @@
     ]
    },
    "post": {
-    "description": "DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nAdds a member to a team",
+    "description": "Adds a member to a team",
     "tags": [
      "team"
     ],
-    "summary": "Create team member (DEPRECATED)",
+    "summary": "Create team member",
     "operationId": "createTeam",
-    "deprecated": true,
     "responses": {
      "200": {
       "$ref": "#/responses/successResponse"
@@ -7016,13 +6819,12 @@
     ]
    },
    "delete": {
-    "description": "DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nRemoves a member from a team",
+    "description": "Removes a member from a team",
     "tags": [
      "team"
     ],
-    "summary": "Delete team member (DEPRECATED)",
+    "summary": "Delete team member",
     "operationId": "deleteTeam",
-    "deprecated": true,
     "responses": {
      "200": {
       "$ref": "#/responses/successResponse"
@@ -8366,80 +8168,6 @@
     }
    },
    "x-go-package": "github.com/freegle/iznik-server-go/user"
-  },
-  "Activity": {
-   "description": "Activity represents a recent activity in groups",
-   "type": "object",
-   "properties": {
-    "group": {
-     "$ref": "#/definitions/ActivityGroup"
-    },
-    "id": {
-     "type": "integer",
-     "format": "uint64",
-     "x-go-name": "ID"
-    },
-    "message": {
-     "$ref": "#/definitions/ActivityMessage"
-    }
-   },
-   "x-go-package": "github.com/freegle/iznik-server-go/message"
-  },
-  "ActivityGroup": {
-   "description": "ActivityGroup represents a group in an activity",
-   "type": "object",
-   "properties": {
-    "id": {
-     "type": "integer",
-     "format": "uint64",
-     "x-go-name": "ID"
-    },
-    "lat": {
-     "type": "number",
-     "format": "float",
-     "x-go-name": "Lat"
-    },
-    "lng": {
-     "type": "number",
-     "format": "float",
-     "x-go-name": "Lng"
-    },
-    "namedisplay": {
-     "type": "string",
-     "x-go-name": "Namedisplay"
-    },
-    "nameshort": {
-     "type": "string",
-     "x-go-name": "Nameshort"
-    }
-   },
-   "x-go-package": "github.com/freegle/iznik-server-go/message"
-  },
-  "ActivityMessage": {
-   "description": "ActivityMessage represents a message in an activity",
-   "type": "object",
-   "properties": {
-    "arrival": {
-     "type": "string",
-     "format": "date-time",
-     "x-go-name": "Arrival"
-    },
-    "delta": {
-     "type": "integer",
-     "format": "int64",
-     "x-go-name": "Delta"
-    },
-    "id": {
-     "type": "integer",
-     "format": "uint64",
-     "x-go-name": "ID"
-    },
-    "subject": {
-     "type": "string",
-     "x-go-name": "Subject"
-    }
-   },
-   "x-go-package": "github.com/freegle/iznik-server-go/message"
   },
   "Address": {
    "type": "object",
@@ -10674,54 +10402,6 @@
     }
    },
    "x-go-package": "github.com/freegle/iznik-server-go/misc"
-  },
-  "Isochrones": {
-   "type": "object",
-   "properties": {
-    "id": {
-     "type": "integer",
-     "format": "uint64",
-     "x-go-name": "ID"
-    },
-    "isochroneid": {
-     "type": "integer",
-     "format": "uint64",
-     "x-go-name": "Isochroneid"
-    },
-    "locationid": {
-     "type": "integer",
-     "format": "uint64",
-     "x-go-name": "Locationid"
-    },
-    "minutes": {
-     "type": "integer",
-     "format": "int64",
-     "x-go-name": "Minutes"
-    },
-    "nickname": {
-     "type": "string",
-     "x-go-name": "Nickname"
-    },
-    "polygon": {
-     "type": "string",
-     "x-go-name": "Polygon"
-    },
-    "timestamp": {
-     "type": "string",
-     "format": "date-time",
-     "x-go-name": "Timestamp"
-    },
-    "transport": {
-     "type": "string",
-     "x-go-name": "Transport"
-    },
-    "userid": {
-     "type": "integer",
-     "format": "uint64",
-     "x-go-name": "Userid"
-    }
-   },
-   "x-go-package": "github.com/freegle/iznik-server-go/isochrone"
   },
   "Item": {
    "type": "object",
@@ -13901,15 +13581,6 @@
     "$ref": "#/definitions/ABTestVariant"
    }
   },
-  "activityResponse": {
-   "description": "Get recent activity (DEPRECATED)\n\nDEPRECATED - Crawler traffic only in production. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nReturns the most recent activity in groups",
-   "schema": {
-    "type": "array",
-    "items": {
-     "$ref": "#/definitions/Activity"
-    }
-   }
-  },
   "addressResponse": {
    "description": "Get address by ID\n\nReturns a single address by ID",
    "schema": {
@@ -13926,7 +13597,7 @@
    }
   },
   "adminResponse": {
-   "description": "Get admin by ID (DEPRECATED)\n\nDEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nReturns a single admin record by ID",
+   "description": "Get admin by ID\n\nReturns a single admin record by ID",
    "schema": {
     "$ref": "#/definitions/Admin"
    }
@@ -13975,7 +13646,7 @@
    }
   },
   "alertResponse": {
-   "description": "Get alert by ID (DEPRECATED)\n\nDEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);\nretirement is gated on observed-zero usage in the nightly report, not the date.\n\n\nReturns a single alert by ID (public access)",
+   "description": "Get alert by ID\n\nReturns a single alert by ID (public access)",
    "schema": {
     "$ref": "#/definitions/Alert"
    }
@@ -14184,12 +13855,6 @@
    "description": "Get AI illustration for item\n\nReturns a cached AI-generated illustration for an item name. Returns ret=3 if not cached.",
    "schema": {
     "$ref": "#/definitions/IllustrationResult"
-   }
-  },
-  "isochronesResponse": {
-   "description": "List isochrones (DEPRECATED)\n\nDEPRECATED - the per-user isochrone editor was removed in the rippling-out reach flip\n(PR #921), but stale native-app bundles that predate it still call this (observed in\nproduction). Retained until that cohort drains; only /isochrone/message and\nmessage/count remain in current use.",
-   "schema": {
-    "$ref": "#/definitions/Isochrones"
    }
   },
   "jobResponse": {

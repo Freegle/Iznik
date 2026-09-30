@@ -453,10 +453,6 @@ func LikeStory(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	// Converted together with its
-	// identical twin at PostStory's Like case (0d3865cbb34e): a half-converted
-	// pair renumbers the survivor's site ID, so gate (h) refuses the split
-	// state.
 	db.Table("users_stories_likes").Clauses(clause.Insert{Modifier: "IGNORE"}).
 		Create(map[string]interface{}{"storyid": req.ID, "userid": myid})
 
@@ -486,44 +482,6 @@ func UnlikeStory(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	db.Table("users_stories_likes").Where("storyid = ? AND userid = ?", req.ID, myid).Delete(nil)
-
-	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
-}
-
-// @Summary Post story action (Like/Unlike)
-// @Tags story
-// @Router /story [post]
-func PostStory(c *fiber.Ctx) error {
-	myid := user.WhoAmI(c)
-	if myid == 0 {
-		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
-	}
-
-	type PostRequest struct {
-		ID     uint64 `json:"id"`
-		Action string `json:"action"`
-	}
-	var req PostRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
-	}
-
-	if req.ID == 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "Missing story ID")
-	}
-
-	db := database.DBConn
-
-	switch req.Action {
-	case "Like":
-		// Twin of 713e8b8dab08 above.
-		db.Table("users_stories_likes").Clauses(clause.Insert{Modifier: "IGNORE"}).
-			Create(map[string]interface{}{"storyid": req.ID, "userid": myid})
-	case "Unlike":
-		db.Table("users_stories_likes").Where("storyid = ? AND userid = ?", req.ID, myid).Delete(nil)
-	default:
-		return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
-	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

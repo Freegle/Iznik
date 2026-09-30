@@ -51,7 +51,6 @@ import (
 	"github.com/freegle/iznik-server-go/group"
 	"github.com/freegle/iznik-server-go/housekeeper"
 	"github.com/freegle/iznik-server-go/image"
-	"github.com/freegle/iznik-server-go/isochrone"
 	"github.com/freegle/iznik-server-go/job"
 	"github.com/freegle/iznik-server-go/location"
 	"github.com/freegle/iznik-server-go/membership"
@@ -122,32 +121,6 @@ type postABTestParams struct {
 	// in: body
 	// required: true
 	Body abtest.PostABTestRequest `json:"body"`
-}
-
-// ============================================================================
-// Activity
-// ============================================================================
-
-// swagger:route GET /activity message getActivity
-// Get recent activity (DEPRECATED)
-//
-// DEPRECATED - Crawler traffic only in production. Wrapped in deprecation.Marker (sunset 2026-08-01);
-// retirement is gated on observed-zero usage in the nightly report, not the date.
-//
-// Deprecated: true
-//
-// Returns the most recent activity in groups
-//
-// responses:
-//
-//	200: activityResponse
-//
-// activityResponse is the response for the activity endpoint
-// swagger:response activityResponse
-type activityResponse struct {
-	// Activity data
-	// in:body
-	Body []message.Activity
 }
 
 // ============================================================================
@@ -277,12 +250,7 @@ type adminsResponse struct {
 }
 
 // swagger:route GET /modtools/admin/{id} modtools getAdmin
-// Get admin by ID (DEPRECATED)
-//
-// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
-// retirement is gated on observed-zero usage in the nightly report, not the date.
-//
-// Deprecated: true
+// Get admin by ID
 //
 // Returns a single admin record by ID
 //
@@ -377,12 +345,7 @@ type alertsResponse struct {
 }
 
 // swagger:route GET /modtools/alert/{id} modtools getAlert
-// Get alert by ID (DEPRECATED)
-//
-// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
-// retirement is gated on observed-zero usage in the nightly report, not the date.
-//
-// Deprecated: true
+// Get alert by ID
 //
 // Returns a single alert by ID (public access)
 //
@@ -1205,12 +1168,7 @@ type configResponse struct {
 }
 
 // swagger:route PATCH /config/admin config patchAdminConfig
-// Update admin config keys (DEPRECATED)
-//
-// DEPRECATED - The ModTools client no longer calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
-// retirement is gated on observed-zero usage in the nightly report, not the date.
-//
-// Deprecated: true
+// Update admin config keys
 //
 // Updates admin configuration values (Support/Admin only)
 //
@@ -1793,85 +1751,6 @@ type postImageParams struct {
 // Isochrone
 // ============================================================================
 
-// swagger:route GET /isochrone isochrone listIsochrones
-// List isochrones (DEPRECATED)
-//
-// DEPRECATED - the per-user isochrone editor was removed in the rippling-out reach flip
-// (PR #921), but stale native-app bundles that predate it still call this (observed in
-// production). Retained until that cohort drains; only /isochrone/message and
-// /message/count remain in current use.
-//
-// Deprecated: true
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: isochronesResponse
-//	401: errorResponse
-//
-// isochronesResponse is the response for isochrone list
-// swagger:response isochronesResponse
-type isochronesResponse struct {
-	// Isochrone data
-	// in:body
-	Body isochrone.Isochrones
-}
-
-// swagger:route PUT /isochrone isochrone createIsochrone
-// Create an isochrone (DEPRECATED)
-//
-// DEPRECATED - the isochrone editor was removed in PR #921, but stale native-app bundles
-// that predate it still contain the calling code (GET/PATCH observed in production). Retained
-// for backward compatibility only.
-//
-// Deprecated: true
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: successResponse
-//	400: errorResponse
-//	401: errorResponse
-
-// swagger:route PATCH /isochrone isochrone editIsochrone
-// Edit an isochrone (DEPRECATED)
-//
-// DEPRECATED - the isochrone editor was removed in PR #921, but stale native-app bundles
-// that predate it still contain the calling code (GET/PATCH observed in production). Retained
-// for backward compatibility only.
-//
-// Deprecated: true
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: successResponse
-//	400: errorResponse
-//	401: errorResponse
-
-// swagger:route DELETE /isochrone isochrone deleteIsochrone
-// Delete an isochrone (DEPRECATED)
-//
-// DEPRECATED - the isochrone editor was removed in PR #921, but stale native-app bundles
-// that predate it still contain the calling code (GET/PATCH observed in production). Retained
-// for backward compatibility only.
-//
-// Deprecated: true
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: successResponse
-//	401: errorResponse
-
 // swagger:route GET /isochrone/message isochrone getIsochroneMessages
 // Get messages for isochrone
 //
@@ -2426,43 +2305,6 @@ type listMessagesResponse struct {
 	Body message.ListMessagesResponse
 }
 
-// swagger:route GET /messages message listPublicMessages
-// List messages (DEPRECATED)
-//
-// DEPRECATED - No Freegle client calls this (ModTools uses /modtools/messages); remaining traffic is external scrapers. Wrapped in deprecation.Marker (sunset 2026-08-01);
-// retirement is gated on observed-zero usage in the nightly report, not the date.
-//
-// Deprecated: true
-//
-// Returns messages for a group with pagination. Response includes tnpostid (Trash Nothing post ID)
-// and expiresat (computed expiry date based on group settings) for each message.
-//
-// Parameters:
-//   + name: groupid
-//     in: query
-//     description: Group ID to list messages from
-//     required: false
-//     type: integer
-//   + name: collection
-//     in: query
-//     description: Message collection (Approved, Pending, Rejected, Spam)
-//     required: false
-//     type: string
-//   + name: limit
-//     in: query
-//     description: Max messages to return (1-100, default 20)
-//     required: false
-//     type: integer
-//   + name: context
-//     in: query
-//     description: Pagination cursor (JSON with Date and id)
-//     required: false
-//     type: string
-//
-// Responses:
-//
-//	200: listMessagesResponse
-
 // swagger:route GET /modtools/messages modtools listMessages
 // List messages
 //
@@ -2724,12 +2566,7 @@ type messagesResponse struct {
 //	401: errorResponse
 
 // swagger:route DELETE /message/{id} message deleteMessage
-// Delete message (DEPRECATED)
-//
-// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
-// retirement is gated on observed-zero usage in the nightly report, not the date.
-//
-// Deprecated: true
+// Delete message
 //
 // Deletes a message by ID
 //
@@ -2790,12 +2627,7 @@ type microvolunteeringResponse struct {
 //	401: errorResponse
 
 // swagger:route PATCH /microvolunteering microvolunteering patchMicrovolunteeringFeedback
-// Provide moderator feedback on microaction (DEPRECATED)
-//
-// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
-// retirement is gated on observed-zero usage in the nightly report, not the date.
-//
-// Deprecated: true
+// Provide moderator feedback on microaction
 //
 // Allows a moderator to set feedback, score_positive, and score_negative on a microaction
 //
@@ -3155,12 +2987,7 @@ type noticeboardItemResponse struct {
 //	401: errorResponse
 
 // swagger:route DELETE /noticeboard/{id} noticeboard deleteNoticeboard
-// Delete noticeboard (DEPRECATED)
-//
-// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
-// retirement is gated on observed-zero usage in the nightly report, not the date.
-//
-// Deprecated: true
+// Delete noticeboard
 //
 // Deletes a noticeboard by ID. Requires mod/admin role.
 //
@@ -3344,24 +3171,6 @@ type shortlinksResponse struct {
 //	200: successResponse
 //	400: errorResponse
 //	401: errorResponse
-
-// ============================================================================
-// Simulation
-// ============================================================================
-
-// swagger:route GET /simulation simulation getSimulation
-// Get simulation data (DEPRECATED)
-//
-// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
-// retirement is gated on observed-zero usage in the nightly report, not the date.
-//
-// Deprecated: true
-//
-// Returns simulation run data for analysis
-//
-// Responses:
-//
-//	200: genericResponse
 
 // ============================================================================
 // Spammers
@@ -3603,23 +3412,6 @@ type storyResponse struct {
 //	400: errorResponse
 //	401: errorResponse
 
-// swagger:route POST /story story postStory
-// Story actions (Like/Unlike) (DEPRECATED)
-//
-// DEPRECATED - Action-based route; live clients use /story/like and /story/unlike. Wrapped in deprecation.Marker (sunset 2026-08-01);
-// retirement is gated on observed-zero usage in the nightly report, not the date.
-//
-// Deprecated: true
-//
-// Handles story actions
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: successResponse
-
 // swagger:route POST /story/like story likeStory
 // Like a story
 //
@@ -3647,12 +3439,7 @@ type storyResponse struct {
 //	401: errorResponse
 
 // swagger:route DELETE /story/{id} story deleteStory
-// Delete a story (DEPRECATED)
-//
-// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
-// retirement is gated on observed-zero usage in the nightly report, not the date.
-//
-// Deprecated: true
+// Delete a story
 //
 // Deletes a story by ID
 //
@@ -3746,12 +3533,7 @@ type teamResponse struct {
 }
 
 // swagger:route POST /team team createTeam
-// Create team member (DEPRECATED)
-//
-// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
-// retirement is gated on observed-zero usage in the nightly report, not the date.
-//
-// Deprecated: true
+// Create team member
 //
 // Adds a member to a team
 //
@@ -3779,12 +3561,7 @@ type teamResponse struct {
 //	401: errorResponse
 
 // swagger:route DELETE /team team deleteTeam
-// Delete team member (DEPRECATED)
-//
-// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
-// retirement is gated on observed-zero usage in the nightly report, not the date.
-//
-// Deprecated: true
+// Delete team member
 //
 // Removes a member from a team
 //

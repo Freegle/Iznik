@@ -66,15 +66,3 @@ func modMessagingAllowed(groups []MessageGroup) bool {
 
 	return true
 }
-
-// listModMessagingAllowed is modMessagingAllowed for the mod queue's leaner group rows.
-// Same rule, different struct - the queue carries only the handful of columns it renders.
-func listModMessagingAllowed(groups []MessageGroupInfo) bool {
-	for _, g := range groups {
-		if g.RippledIn == 0 && !g.ModMessagingAllowed {
-			return false
-		}
-	}
-
-	return true
-}
