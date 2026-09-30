@@ -1,9 +1,9 @@
 <template>
   <!--
     Reach hint below the distance slider, from a single routing pass server-side:
-    "Upto X-Y miles by road" (X-Y = min/max frontier road-distance across directions) followed by
-    example places it covers ("e.g. Town, Town", biggest-population first) - or the nearest place
-    when none are in reach. Responsive: on mobile the town list drops to its own line and truncates
+    "Up to about N miles by road" (N = the typical frontier road-distance across directions)
+    followed by example places it covers ("e.g. Town, Town", biggest-population first) - or the
+    nearest place and its distance when none are in reach. Responsive: on mobile the town list drops to its own line and truncates
     with an ellipsis; on tablet and up it's one line, ellipsis-truncated. Fixed per-breakpoint height
     so the async result doesn't shift the page (CLS-safe). Fetches lazily, only once scrolled into
     view. Pulsates while fetching.
@@ -30,8 +30,8 @@ import { ref, computed, watch } from 'vue'
 import { useMe } from '~/composables/useMe'
 import api from '~/api'
 
-// Furthest towns the setting reaches (biggest-population first) as examples, plus the road-distance
-// reach range. Real miles - the reach follows road distance and travel time, which the slider copy
+// Places in the outer part of the reach (biggest-population first) as examples, plus the
+// road-distance reach. Real miles - the reach follows road distance and travel time, which the slider copy
 // explains.
 const props = defineProps({
   // The slider's travel-time budget in MINUTES. The reach hint it drives is still shown in road
@@ -40,8 +40,8 @@ const props = defineProps({
   // Which way round the same reach is being described. The geometry is identical either way - a
   // radius around the member - so both perspectives share one routing call and one town list, and
   // only the wording differs.
-  //   'inbound'  how far the member can go to collect: "Max 10-12 miles by road, e.g. Ely".
-  //   'outbound' how far their posts are seen: "Seen up to 10-12 miles away, e.g. Ely".
+  //   'inbound'  how far the member can go to collect: "Up to about 10 miles by road, e.g. Ely".
+  //   'outbound' how far their posts are seen: "Seen up to about 10 miles away by road, e.g. Ely".
   perspective: {
     type: String,
     default: 'inbound',
@@ -55,31 +55,31 @@ const { me } = useMe()
 
 const towns = ref([])
 const closer = ref('')
+const closerMiles = ref(null)
 const frontierMedian = ref(null)
-const frontierMax = ref(null)
 const loading = ref(false)
 const visible = ref(false)
 let timer = null
 let seq = 0
 
-// Split into a fixed lead ("Upto X-Y miles by road") that always stays visible and a tail (the town
-// examples, or the nearest place) that truncates with an ellipsis. `sep` joins them on one line
-// (tablet+); it's hidden on mobile where the tail drops to its own line.
+function miles(n) {
+  return n === 1 ? '1 mile' : `${n} miles`
+}
+
+// Split into a fixed lead ("Up to about N miles by road") that always stays visible and a tail (the
+// town examples, or the nearest place) that truncates with an ellipsis. `sep` joins them on one
+// line (tablet+); it's hidden on mobile where the tail drops to its own line.
+//
+// One figure, the typical reach across directions. The previous "Max 16-19 miles" put a range after
+// "Max", which a Wellingborough member reported they could not make sense of.
 const bits = computed(() => {
-  const lo = frontierMedian.value
-  const hi = frontierMax.value
   let lead = ''
-  if (lo != null && hi != null) {
-    const a = Math.round(lo)
-    const b = Math.round(hi)
-    if (b > 0) {
-      const unit = b === 1 ? 'mile' : 'miles'
-      const dist = a > 0 && a < b ? `${a}-${b}` : `${b}`
-      lead =
-        props.perspective === 'outbound'
-          ? `Seen up to ${dist} ${unit} away by road`
-          : `Max ${dist} ${unit} by road`
-    }
+  if (frontierMedian.value != null) {
+    const n = Math.max(1, Math.round(frontierMedian.value))
+    lead =
+      props.perspective === 'outbound'
+        ? `Seen up to about ${miles(n)} away by road`
+        : `Up to about ${miles(n)} by road`
   }
   if (towns.value.length) {
     return {
@@ -94,15 +94,16 @@ const bits = computed(() => {
     // example or two still leaves a useful hint), this tail is a single town name and IS the
     // whole message. Ellipsis-truncating it can hide the only information it conveys, so it
     // wraps instead of clipping (`wrap: true` -> .nt-tail--wrap, Discourse 9808).
-    // "Close to X" not "Closer than X": at the minimum setting the reach still includes
-    // areas beyond X, so "closer than" is misleading (Neville, Discourse 9808/584).
+    // Name the distance too. A bare "Close to Northampton" beside a 1-mile reach read as the
+    // reach extending to Northampton, 12 miles away.
+    const away =
+      closerMiles.value != null
+        ? `, ${miles(Math.max(1, Math.round(closerMiles.value)))} away`
+        : ''
     return {
       lead,
       sep: lead ? '. ' : '',
-      tail:
-        props.perspective === 'outbound'
-          ? `Seen close to ${closer.value}`
-          : `Close to ${closer.value}`,
+      tail: `Nearest town: ${closer.value}${away}`,
       wrap: true,
     }
   }
@@ -118,8 +119,8 @@ function schedule() {
 function reset() {
   towns.value = []
   closer.value = ''
+  closerMiles.value = null
   frontierMedian.value = null
-  frontierMax.value = null
 }
 
 async function fetchTowns() {
@@ -139,12 +140,12 @@ async function fetchTowns() {
     if (mySeq !== seq) return // a newer request superseded this one
     towns.value = r?.towns || []
     closer.value = r?.closer_than || ''
+    closerMiles.value =
+      typeof r?.closer_miles === 'number' ? r.closer_miles : null
     frontierMedian.value =
       typeof r?.frontier_median_miles === 'number'
         ? r.frontier_median_miles
         : null
-    frontierMax.value =
-      typeof r?.frontier_max_miles === 'number' ? r.frontier_max_miles : null
   } catch (e) {
     if (mySeq === seq) reset()
   } finally {
@@ -188,7 +189,7 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* The "Close to X" nearest-town name IS the whole message, unlike the "e.g. Town, Town"
+/* The "Nearest town: X" name IS the whole message, unlike the "e.g. Town, Town"
    examples list above (safe to ellipsis-clip - losing an example or two still leaves a useful
    hint). Clipping the single town name could hide the only information it conveys, so it wraps
    onto another line instead of truncating (Discourse 9808). */
@@ -209,7 +210,7 @@ watch(
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  /* The "Close to X" name wraps rather than clips (bits.wrap -> .nt-tail--wrap).
+  /* The "Nearest town: X" name wraps rather than clips (bits.wrap -> .nt-tail--wrap).
      That case is breakpoint-agnostic (set from server data, not viewport), so at
      >=768px the fixed single-line box above would clip the wrapped 2nd line
      vertically with no ellipsis. Let the container grow to fit instead (Discourse

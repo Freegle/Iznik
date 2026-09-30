@@ -27,23 +27,23 @@ import (
 
 const townNearEdinburgh = "lat=55.9533&lng=-3.1883&minutes=30"
 
-// townNearTownID is well above any real towns row, so seeding cannot collide with data a
+// townNearTownID is well above any real places row, so seeding cannot collide with data a
 // future fixture adds.
 const townNearTownID = 990001
 
-// seedTownNearEdinburgh puts one town inside the handler's candidate box.
+// seedTownNearEdinburgh puts one place inside the handler's candidate box.
 //
-// Required, not incidental: the schema-only test database has an EMPTY towns table, and with no
-// candidate towns the handler returns its "no candidates" response BEFORE it ever calls the
+// Required, not incidental: the schema-only test database has an EMPTY places table, and with no
+// candidate places the handler returns its "no candidates" response BEFORE it ever calls the
 // routing server. Without this, every assertion below would pass against a response that never
 // exercised the code under test.
 func seedTownNearEdinburgh(t *testing.T) {
 	t.Helper()
 	db := database.DBConn
-	db.Exec("INSERT IGNORE INTO towns (id, name, lat, lng) VALUES (?, ?, ?, ?)",
-		townNearTownID, "Testburgh", 55.95, -3.19)
+	db.Exec("INSERT IGNORE INTO places (id, name, lat, lng, population, position) VALUES (?, ?, ?, ?, ?, ST_SRID(POINT(?, ?), 3857))",
+		townNearTownID, "Testburgh", 55.95, -3.19, 50000, -3.19, 55.95)
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM towns WHERE id = ?", townNearTownID)
+		db.Exec("DELETE FROM places WHERE id = ?", townNearTownID)
 	})
 }
 
@@ -199,4 +199,32 @@ func TestTownNearPolygonDoesNotChangeTheOtherFields(t *testing.T) {
 func TestTownNearNoPolygonWithoutALocation(t *testing.T) {
 	body := townNear(t, "lat=0&lng=0&minutes=30&polygon=1")
 	assert.NotContains(t, body, "reach_polygon")
+}
+
+// A reachable place is named from the places gazetteer.
+func TestTownNearNamesReachablePlaces(t *testing.T) {
+	seedTownNearEdinburgh(t)
+	stubRouting(t, false) // every point comes back 12.5 minutes away
+
+	body := townNear(t, townNearEdinburgh)
+
+	assert.Equal(t, []interface{}{"Testburgh"}, body["towns"])
+	assert.NotContains(t, body, "closer_than")
+}
+
+// With nothing in reach, the nearest place comes back WITH its distance. A bare "Close to X"
+// read as the reach extending to X: a Wellingborough member was told "Max 1-2 miles by road.
+// Close to Northampton", 12 miles away.
+func TestTownNearNearestPlaceCarriesItsDistance(t *testing.T) {
+	seedTownNearEdinburgh(t)
+	stubRouting(t, false) // 12.5 minutes, beyond a 10-minute budget
+
+	body := townNear(t, "lat=55.9533&lng=-3.1883&minutes=10")
+
+	assert.Empty(t, body["towns"])
+	assert.Equal(t, "Testburgh", body["closer_than"])
+	miles, ok := body["closer_miles"].(float64)
+	assert.True(t, ok, "closer_miles must be present: %v", body)
+	// Testburgh sits about a quarter of a mile from the query point.
+	assert.InDelta(t, 0.25, miles, 0.1)
 }
