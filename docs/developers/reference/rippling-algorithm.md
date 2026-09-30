@@ -945,8 +945,8 @@ rows, its latest row states its outcome.
   at the 5-minute stop read "Max 1-2 miles by road. Close to Northampton": Wellingborough,
   Kettering and Rushden are not curated towns, so the nearest one was 12 miles away. The
   examples are the biggest places in the outer half of the reach, so they move outwards as the
-  slider widens. When nothing is in reach, the nearest place comes back with its crow-flies
-  distance (`closer_miles`), shown as "Nearest town: X, N miles away". The reach itself is one
+  slider widens. When nothing is in reach, the nearest place comes back with its
+  road distance (`closer_miles`, from the drive-metrics lookup, omitted rather than replaced by a straight line when routing cannot say), shown as "Nearest town: X, N miles by road". The reach itself is one
   figure, "Up to about N miles by road", the median frontier. `towns` still anchors Community
   News areas, which is now its only reader.
 

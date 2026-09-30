@@ -98,7 +98,7 @@ const bits = computed(() => {
     // reach extending to Northampton, 12 miles away.
     const away =
       closerMiles.value != null
-        ? `, ${miles(Math.max(1, Math.round(closerMiles.value)))} away`
+        ? `, ${miles(Math.max(1, Math.round(closerMiles.value)))} by road`
         : ''
     return {
       lead,

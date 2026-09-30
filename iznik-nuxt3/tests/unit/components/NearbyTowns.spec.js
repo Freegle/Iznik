@@ -82,7 +82,7 @@ describe('NearbyTowns', () => {
 
     expect(wrapper.find('.nt-lead').text()).toBe('Up to about 1 mile by road')
     expect(wrapper.find('.nt-tail').text()).toBe(
-      'Nearest town: Northampton, 12 miles away'
+      'Nearest town: Northampton, 12 miles by road'
     )
   })
 

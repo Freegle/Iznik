@@ -22,6 +22,8 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/density"
+	"github.com/freegle/iznik-server-go/driving"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -108,6 +110,56 @@ func SelectNear(cands []TownCand, maxMinutes float64, limit int) []string {
 		out = append(out, c.Name)
 	}
 	return out
+}
+
+// nearestPlaceCandidates is how many of the crow-flies nearest places are measured by road. The
+// nearest by road is often not the nearest as the crow flies (an estuary, a hill with one road
+// over it), and the drive-metrics lookup is one label query plus a table read per place.
+const nearestPlaceCandidates = 5
+
+// nearestPlaceByRoad names the place nearest to (lat, lng) by road, with its road miles. When the
+// routing server cannot say (down, or no road to any of them), it returns the crow-flies nearest
+// name and nil miles: a straight-line figure would read as a road distance beside the reach,
+// which is shown in road miles, so the client shows the name alone instead.
+func nearestPlaceByRoad(lat, lng float64) (string, *float64) {
+	type near struct {
+		ID   int64
+		Name string
+		Lat  float64
+		Lng  float64
+	}
+	var cands []near
+	// Order() itself takes no bind args, so the ST_Distance_Sphere binds go through
+	// clause.OrderBy{Expression: gorm.Expr(...)} instead - same technique as message/message.go's
+	// ResolveOnBehalfPosting (site ecaf3f90bee2).
+	database.DBConn.Table("places").
+		Select("id, name, lat, lng").
+		Where("population >= ?", placesMinPopulation).
+		Order(clause.OrderBy{Expression: gorm.Expr("ST_Distance_Sphere(POINT(lng, lat), POINT(?, ?))", lng, lat)}).
+		Limit(nearestPlaceCandidates).
+		Scan(&cands)
+	if len(cands) == 0 {
+		return "", nil
+	}
+
+	targets := make([]driving.Target, len(cands))
+	for i, p := range cands {
+		targets[i] = driving.Target{ID: p.ID, Lat: p.Lat, Lng: p.Lng}
+	}
+	name := cands[0].Name
+	var best *float64
+	for _, r := range driving.FetchDriveMetrics(roadblur.RoutingURL(), lat, lng, targets) {
+		if r.Miles == nil || (best != nil && *r.Miles >= *best) {
+			continue
+		}
+		for _, p := range cands {
+			if p.ID == r.ID {
+				name = p.Name
+				best = r.Miles
+			}
+		}
+	}
+	return name, best
 }
 
 type rippleEvalReq struct {
@@ -294,26 +346,15 @@ func Near(c *fiber.Ctx) error {
 		return c.JSON(out)
 	}
 
-	// Nothing within reach: return the single nearest place and how far it is, so the UI can say
-	// "Nearest town: X, N miles away" instead of showing nothing - useful for rural members whose
+	// Nothing within reach: name the nearest place and how far it is BY ROAD, so the UI can say
+	// "Nearest town: X, N miles by road" instead of showing nothing - useful for rural members whose
 	// nearest town is beyond the reach. The distance goes with the name because a bare "Close to X"
-	// read as the reach extending to X. Order() itself takes no bind args, so the
-	// ST_Distance_Sphere binds go through clause.OrderBy{Expression: gorm.Expr(...)} instead - same
-	// technique as message/message.go's ResolveOnBehalfPosting (site ecaf3f90bee2).
-	var closer struct {
-		Name   string
-		Metres float64
-	}
-	db.Table("places").
-		Select("name, ST_Distance_Sphere(POINT(lng, lat), POINT(?, ?)) AS metres", lng, lat).
-		Where("population >= ?", placesMinPopulation).
-		Order(clause.OrderBy{Expression: gorm.Expr("ST_Distance_Sphere(POINT(lng, lat), POINT(?, ?))", lng, lat)}).
-		Limit(1).
-		Scan(&closer)
+	// read as the reach extending to X.
+	name, miles := nearestPlaceByRoad(lat, lng)
 	out["towns"] = []string{}
-	out["closer_than"] = closer.Name
-	if closer.Name != "" {
-		out["closer_miles"] = closer.Metres / 1609.344
+	out["closer_than"] = name
+	if miles != nil {
+		out["closer_miles"] = *miles
 	}
 	return c.JSON(out)
 }
