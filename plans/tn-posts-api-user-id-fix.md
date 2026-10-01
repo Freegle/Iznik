@@ -27,22 +27,21 @@ Added next to `removeTNGroup()` in `app/Models/User.php`:
 - Tests: five new cases in `tests/Unit/Models/UserModelTest.php` (Go-parity display names, bare/alias/mixed-case addresses, hyphenated usernames incl. `bibiana` vs `bibiana-gomes-g4840` and `ann-g12-g34`, non-TN rejections). `UserModelTest` passes (72 tests) via the status API.
 - **Running tests:** a hook blocks `php artisan test` directly. Use the status API instead: `curl -s -X POST http://localhost:8081/api/tests/laravel -H 'Content-Type: application/json' -d '{"filter":"…","testsuite":"Unit"}'`, then poll `/api/tests/laravel/status`. The full Unit/Feature suites have not been run yet for this step; run them before pushing.
 
-### 2. New `App\Services\TrashNothing\Ingestion\TnUserProvisioner`
+### 2. New `App\Services\TrashNothing\Ingestion\TnUserProvisioner` — **DONE**
 - **Constructor:** `bool $dryRun`, `bool $localTesting`, `string $publicApiKey`, `LokiService $loki`, `?TrashNothingRateLimiter $rateLimiter`.
 - **`resolveOrCreate(int $tnUserId): ?User`**
   1. Return the existing user from `User::where('tnuserid', …)`. This moves the lookup out of `GroupPostIngestionService::resolveUser`.
-  2. Check a per-run memo, plus a short negative cache (`Cache`, about 6h, key `tn-user-lookup-miss:{id}`). Without it, the 10s sync overlap and the verifier's backfills would re-hit the API for the same 404 or null-username user.
-  3. Fetch the user. Call `rateLimiter->await()` first, then `Http::timeout(…)->get("https://trashnothing.com/api/v1.4/users/{id}", ['api_key' => …])`. The host comes from a new config key `freegle.trashnothing.public_api_base_url`.
+  2. Fetch the user. Call `rateLimiter->await()` first, then `Http::get("{host}/users/{id}", ['api_key' => …])` with Laravel's default timeout, as the other TN syncers use. The host is the generated client's, `Configuration::getDefaultConfiguration()->getHost()` (`https://trashnothing.com/api/v1.4`), so no new config key.
      - Use the plain `Http` client, as `UserChangesSyncer` does. The generated `UsersApi` has no `getUser` method.
      - Pass every logged error through `PostSyncer::redactApiKey()`.
      - With `localTesting`, read `tests/fixtures/tn_sync/users/{id}.json` instead.
-  4. If the response is 404, `username` is empty, or the built address fails `filter_var(FILTER_VALIDATE_EMAIL)`, write the negative cache entry and return null.
-  5. **Look for an existing account without `tnuserid`.** Use the same order as `IncomingMailService::findUserByEmail` (`:3753`): match the exact address first, then a `users_emails` row whose `canon` equals `User::canonMail(tnEmailForUsername($username))`. That canon also matches the per-group `-gNNN` aliases the email path created. As `FindTNCandidates` does (`partner.go:58`), only consider users with `deleted IS NULL`.
+  3. If the response is 404, `username` is empty, or the built address fails `filter_var(FILTER_VALIDATE_EMAIL)`, return null.
+  4. **Look for an existing account without `tnuserid`.** Use the same order as `IncomingMailService::findUserByEmail` (`:3753`): match the exact address first, then a `users_emails` row whose `canon` equals `User::canonMail(tnEmailForUsername($username))`. That canon also matches the per-group `-gNNN` aliases the email path created. As `FindTNCandidates` does (`partner.go:58`), only consider users with `deleted IS NULL`.
      - If its user has `tnuserid IS NULL`, stamp the id on that user and return it. This mirrors `EnsurePartnerIdentifiers` (`partner.go:226`) and avoids minting a twin. Also attach the bare `username@user.trashnothing.com` address with `$user->addEmail($addr, primary: 0)`, so later exact-match lookups hit, as `handleSubscribe` does with `addEmailToUser` (`:1232`). This keeps the member's current preferred address.
      - If its user holds a *different* `tnuserid`, return null with a distinct reason, `tn-username-clash`, and log it. TN says usernames are not guaranteed unique.
-  6. **Create the user** inside `DB::transaction`, writing every field in the "Field parity" table below. Use Eloquent (`User::create`, then `$user->addEmail(...)`) so model events and auditing fire. Every write emits a `TN-SYNC-TRACE [WRITE]` line and honours `dryRun`. In dry run, return an unsaved `User` so `ingest()`'s trace still runs through (`createMessage` already handles the dry-run id).
-  7. **Race:** if the `tnuserid` unique index throws a duplicate-key error, re-query by `tnuserid` and return that user. `tn:sync` and the hourly `tn:verify-email-coverage` backfill can provision the same user at the same time.
-  8. Emit the Loki event `tn-sync` / `user-create-from-tn` with `tn_user_id`, `user_id` and `linked_existing`.
+  5. **Create the user** inside `DB::transaction`, writing every field in the "Field parity" table below. Use Eloquent (`User::create`, then `$user->addEmail(...)`) so model events and auditing fire. Every write emits a `TN-SYNC-TRACE [WRITE]` line and honours `dryRun`. In dry run, return an unsaved `User` so `ingest()`'s trace still runs through (`createMessage` already handles the dry-run id).
+  6. **Race:** if the `tnuserid` unique index throws a duplicate-key error, re-query by `tnuserid` and return that user. `tn:sync` and the hourly `tn:verify-email-coverage` backfill can provision the same user at the same time.
+  7. Emit the Loki event `tn-sync` / `user-create-from-tn` with `tn_user_id`, `user_id` and `linked_existing`.
 - **Field parity with the existing creation paths.** These are the two places a TN member's FD account is created today: the email path's `IncomingMailService::handleSubscribe` (`:1205-1221`), and the Go partner join `putMembershipsPartner` → `CreatePartnerUser` (`membership.go:1393`, `partner.go:147-212`).
 
   | Table.column | Email subscribe | Go partner | New API provisioning |
@@ -63,11 +62,23 @@ Added next to `removeTNGroup()` in `app/Models/User.php`:
   | membership, `memberships_history`, Group/Joined log, reach queue | yes | yes | **no**, by decision (see "Decisions taken") |
 
   Deliberately left unset, as neither existing path writes them: `lastlocation` (by decision), `settings`, `source`, and the per-user mail flags (column defaults apply). Go's `emailhygiene.Report` has no PHP counterpart and is skipped. Add an `ensureFieldParity`-style test: create a user through the provisioner and assert every row above, including the absence of membership rows.
-- **Failure handling:** a 5xx, 429 or timeout returns null with reason `tn-user-lookup-failed`, and the result is **not** negatively cached. Before cutover, the post is dropped for this run, as it is today. After cutover, `tn:verify-email-coverage` finds it and backfills, and that backfill retries the lookup.
+- **Failure handling:** a 5xx, 429 or timeout returns null with reason `tn-user-lookup-failed`, and nothing is remembered. Before cutover, the post is dropped for this run, as it is today. After cutover, `tn:verify-email-coverage` finds it and backfills, and that backfill retries the lookup.
+- **As implemented** (`app/Services/TrashNothing/Ingestion/TnUserProvisioner.php`):
+  - **Failure reasons.** `resolveOrCreate()` returns `?User`; on null, `lastFailureReason()` gives one of `TnUserProvisioner::REASON_NOT_FOUND` (`tn-user-not-found`: 404, empty/null username, or an invalid built address), `REASON_LOOKUP_FAILED` (`tn-user-lookup-failed`) or `REASON_USERNAME_CLASH` (`tn-username-clash`). Step 3 maps these onto `GroupPostIngestionService`'s routing reasons (`REASON_NOT_FOUND` → `REASON_UNKNOWN_USER`).
+  - **Lookup failures** are: a `ConnectionException` (timeout), any non-404 non-2xx status (5xx, 429, 401), a response carrying `cf-mitigated`, or a 2xx whose body is not a JSON object. Each is logged with the status, `Retry-After` and the first 200 chars of the body, all through `redactApiKey()`.
+  - **No cache and no memo** (decided in review). Every call that misses on `tnuserid` asks TN again. A cross-run negative cache was dropped: the 10s sync overlap re-sees almost nothing, and the verifier's hourly retries are bounded. Consequence in **dry run only**: an unsaved user cannot be found again by `tnuserid`, so several posts by the same new poster in one dry run each re-fetch and each trace a `users op=insert`. A real run finds the user after the first post.
+  - **Canon-match guard (addition to step 4).** A canon match is linked only if `User::tnUsernameFromEmail()` of the stored address equals the lowercased username. Today's `canonMail` strips everything after the last hyphen of a TN local part, so `mary-jane@` and another member's `mary-g12@` share a canon; without the guard they would be linked. Matches are ordered by `users_emails.userid`, then `id`.
+  - **Linking is kept** (decided in review), rather than resolving by `tnuserid` only. Without it, an email-path account would get a twin, and if it already holds the bare address, creation would hit the `users_emails.email` UNIQUE index on every attempt. Linking does not overwrite `fullname`; in dry run it writes nothing and returns the existing user unchanged.
+  - **Dry-run create** builds an unsaved `User` and traces the email insert itself rather than calling `addEmail(dryRun: true)`: `addEmail` passes `$this->id` to `assignUserToToDonation(int)`, which throws for an unsaved user.
+  - **Race.** A 1062 from either the create or the link path re-queries by `tnuserid`. If no winner is found (for example the duplicate was on the email), it returns `REASON_LOOKUP_FAILED`, so the next attempt retries. Any other `QueryException` is rethrown.
+  - **Trace lines.** `TN-SYNC-TRACE [TN-USER] tn_user_id=… result=…` (`not-found`, `no-usable-username`, `username-clash`, `created`, `linked`, `lost-race`) alongside the `[WRITE]` lines.
+  - **`about_me`/`reply_time`** rows use `timestamp = now()` (the user-changes path uses the change date, which the users endpoint does not give). `reply_time = 0` is stored.
+  - **Fixture:** `tests/fixtures/tn_sync/users/99010901.json` (`fixture.poster`) for the `localTesting` path. A missing fixture file is treated as a 404.
+- **Tests:** `tests/Unit/Services/TrashNothing/TnUserProvisionerTest.php`, 21 tests, all passing via the status API. They cover the step 5 list, plus field parity, null first/last names, bare-address linking, the canon guard, deleted accounts not linked, an invalid built address, 429 and `cf-mitigated`, dry-run linking, a miss asked again later, and both `localTesting` paths. The race test creates the competing user from inside the `Http::fake` closure, so it really hits the `tnuserid` unique index. The full Unit/Feature suites have **not** been run for this step yet; run them before pushing.
 
 ### 3. Wire it into `GroupPostIngestionService`
 - Inject `TnUserProvisioner` through the constructor. `PostSyncer` builds it from `$this->apiKey` (the public key), its shared rate limiter, `dryRun` and `localTesting` (`PostSyncer.php:70`).
-- Replace `resolveUser()` with the provisioner. Keep the `user === null` branch for the remaining failures, using new API-only reason constants `REASON_TN_USER_LOOKUP_FAILED` and `REASON_TN_USERNAME_CLASH`. Keep `REASON_UNKNOWN_USER` for a 404 or null username.
+- Replace `resolveUser()` with the provisioner. Keep the `user === null` branch for the remaining failures, using new API-only reason constants `REASON_TN_USER_LOOKUP_FAILED` and `REASON_TN_USERNAME_CLASH` (map from `TnUserProvisioner::lastFailureReason()`). Keep `REASON_UNKNOWN_USER` for `TnUserProvisioner::REASON_NOT_FOUND` (a 404 or null username).
 - Rewrite the `resolveUser` docblock and the comment at `:232-237`. Add a note by the reason constants that creating the user is a **deliberate divergence** from email-path case 2, which still drops. Parity comparisons will then show API-side Pending against email-side Dropped/unknown-user, and that is expected.
 
 ### 4. Fix `UserChangesSyncer`'s username handling (`UserChangesSyncer.php:110-131`)
@@ -84,20 +95,20 @@ Added next to `removeTNGroup()` in `app/Models/User.php`:
 - If no TN email can be found, fall back to the current comparison.
 
 ### 5. Config, docs, tests
-- **Config:** in `config/freegle.php`, under `trashnothing`, add `public_api_base_url` (default `https://trashnothing.com/api/v1.4`) and `user_lookup_miss_ttl`.
+- **Config:** none. The host comes from the generated client (step 2) and the timeout is Laravel's default.
 - **Docs:** update `docs/developers/reference/trashnothing.md`.
   - The section near line 184 ("poster is resolved through `users.tnuserid`… nothing is created") becomes the provisioning behaviour.
   - Update the User Changes API section to cover the rename fix.
   - Respect its `covers:` front matter so `check-docs-freshness` passes.
 - **`plans/tn-api-post-ingestion.md` §F:** close the "missing user" open item.
 - **Tests:**
-  - `tests/Unit/Services/TrashNothing/TnUserProvisionerTest.php` (new), using `Http::fake` with **one** closure keyed on the request URL (see laravel-batch-traps: fakes merge, and the first stub wins). Cases:
+  - **Done in step 2.** `tests/Unit/Services/TrashNothing/TnUserProvisionerTest.php` (new), using `Http::fake` with **one** closure keyed on the request URL (see laravel-batch-traps: fakes merge, and the first stub wins). Cases:
     - existing `tnuserid` makes no HTTP call;
     - create from a full response checks `fullname` "Tricia Hayes", the email, `tnuserid` and `firstname` handling;
     - an existing account with a matching `-gNNN` alias and no `tnuserid` is linked, not duplicated;
     - a clash with a different `tnuserid` returns null;
-    - a 404 or null username is cached negatively, so a second call makes no HTTP request;
-    - a 500 is not cached;
+    - a 404 or null username returns null with the not-found reason, and a later call asks TN again;
+    - a 500 returns null with `tn-user-lookup-failed`;
     - dry run writes nothing;
     - a duplicate-key race returns the existing user;
     - the API key does not appear in logs.
@@ -166,7 +177,7 @@ After steps 2 and 4, TN addresses **without** a `-gXXX` suffix become normal: th
 - `iznik-batch/app/Services/TrashNothing/Sync/PostSyncer.php` (construction only)
 - `iznik-batch/app/Services/TrashNothing/Sync/UserChangesSyncer.php`
 - `iznik-batch/app/Models/User.php`
-- `iznik-batch/config/freegle.php`, `docs/developers/reference/trashnothing.md`
+- `docs/developers/reference/trashnothing.md`
 - Step 6 (suffix audit): `IncomingMailService.php` (`canonicalizeEmail`), `TNSyncCommand.php`, `FixTNNamesCommand.php`, `NameSanitiser.php`, `iznik-server-go/user/partner.go`, `iznik-server-go/user/namevalidation.go`, `.claude/rules/mail-and-data.md`
 
 Reused as-is: `TrashNothingRateLimiter`, `PostSyncer::redactApiKey`, `User::addEmail`/`canonMail`/`removeTNGroup`, the `UserAboutMe`/`UserReplyTime` models, `LokiService::logEvent`.
