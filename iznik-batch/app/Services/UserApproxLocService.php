@@ -163,8 +163,10 @@ class UserApproxLocService
             // keep-raw: JSON path extraction, which the builder has no expression for. Read as raw
             // JSON text rather than CAST to DECIMAL because a JSON null casts to 0.000000, not
             // NULL, which would silently place the member in the Atlantic.
-            ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lat')) AS myloc_lat")
-            ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lng')) AS myloc_lng")
+            // A Trash Nothing member's mylocation is stale V1 data; TN is the master for their
+            // location (User::chosenLatLng), so it is not read for them.
+            ->selectRaw("CASE WHEN u.tnuserid IS NULL THEN JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lat')) END AS myloc_lat")
+            ->selectRaw("CASE WHEN u.tnuserid IS NULL THEN JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lng')) END AS myloc_lng")
             ->get();
     }
 

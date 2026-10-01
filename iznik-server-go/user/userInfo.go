@@ -271,10 +271,12 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 func GetPublicLocationForUser(userid uint64) *Publiclocation {
 	db := database.DBConn
 
-	// Use settings.mylocation.area.name first for the public location display.
+	// Use settings.mylocation.area.name first for the public location display. Not for a
+	// Trash Nothing member: TN is the master for their location (tn:sync keeps lastlocation
+	// in step with it) and their mylocation is stale V1 data.
 	var areaName *string
 	db.Table("users").Select("JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.area'), '$.name'))").
-		Where("id = ? AND settings IS NOT NULL", userid).Scan(&areaName)
+		Where("id = ? AND settings IS NOT NULL AND tnuserid IS NULL", userid).Scan(&areaName)
 
 	if areaName != nil && *areaName != "" && *areaName != "null" {
 		return &Publiclocation{

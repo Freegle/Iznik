@@ -4872,7 +4872,9 @@ type OnBehalfPosting struct {
 // postcode their own posts carry. Deliberately not derived from lastlocation or
 // a nearest-postcode lookup: those say where they last were, not where they say
 // they are, so they would stamp a postcode on a member's post that the member
-// never picked. If they have not set one, we refuse rather than guess.
+// never picked. If they have not set one, we refuse rather than guess. A Trash
+// Nothing member's mylocation is stale V1 data (TN is the master for their
+// location), so it does not count as chosen.
 //
 // The error text is shown to the moderator, so it says what to do about it.
 func ResolveOnBehalfPosting(author uint64) (*OnBehalfPosting, error) {
@@ -4890,7 +4892,7 @@ func ResolveOnBehalfPosting(author uint64) (*OnBehalfPosting, error) {
 			"JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.name')) AS locationname, "+
 			"JSON_EXTRACT(settings, '$.mylocation.lat') AS lat, "+
 			"JSON_EXTRACT(settings, '$.mylocation.lng') AS lng").
-		Where("id = ?", author).Scan(&chosen)
+		Where("id = ? AND tnuserid IS NULL", author).Scan(&chosen)
 
 	if chosen.Locationid == 0 || chosen.Locationname == "" {
 		return nil, errors.New("That member hasn't set their location, so we can't post for them - ask them to set it first")

@@ -195,11 +195,12 @@ func GetVisualise(c *fiber.Ctx) error {
 			for _, o := range otherIDs {
 				icon := getUserIcon(db, o.Userid, imageDomain, archivedDomain)
 
-				// Get user location from settings JSON.
+				// Get user location from settings JSON. Not for a Trash Nothing member:
+				// their mylocation is stale V1 data.
 				var lat, lng float64
-				db.Table("users").Select("CASE WHEN settings IS NOT NULL AND JSON_VALID(settings) "+
+				db.Table("users").Select("CASE WHEN settings IS NOT NULL AND JSON_VALID(settings) AND tnuserid IS NULL "+
 					"THEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.lat')), 0) ELSE 0 END AS lat, "+
-					"CASE WHEN settings IS NOT NULL AND JSON_VALID(settings) "+
+					"CASE WHEN settings IS NOT NULL AND JSON_VALID(settings) AND tnuserid IS NULL "+
 					"THEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.lng')), 0) ELSE 0 END AS lng").
 					Where("id = ?", o.Userid).Row().Scan(&lat, &lng)
 
