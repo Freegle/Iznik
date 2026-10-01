@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Message;
+use App\Models\User;
 use App\Support\ReuseBenefit;
 use Illuminate\Support\Facades\DB;
 
@@ -558,18 +559,11 @@ class AuthorityStatsService
             return $ret;
         }
 
-        // 1. settings.mylocation  2. users.lastlocation
-        $users = DB::table('users')->whereIn('id', $userids)->get(['id', 'settings', 'lastlocation']);
+        // 1. settings.mylocation (never for a TN member, see User::chosenLatLng)  2. users.lastlocation
+        $users = DB::table('users')->whereIn('id', $userids)->get(['id', 'settings', 'lastlocation', 'tnuserid']);
         $lastLocationIds = [];
         foreach ($users as $u) {
-            $lat = $lng = null;
-            if (!empty($u->settings)) {
-                $settings = json_decode($u->settings, true);
-                if (isset($settings['mylocation']['lat'], $settings['mylocation']['lng'])) {
-                    $lat = (float) $settings['mylocation']['lat'];
-                    $lng = (float) $settings['mylocation']['lng'];
-                }
-            }
+            [$lat, $lng] = User::chosenLatLng($u->settings, $u->tnuserid) ?? [null, null];
             if ($lat === null && $u->lastlocation) {
                 $lastLocationIds[(int) $u->lastlocation][] = (int) $u->id;
                 continue;

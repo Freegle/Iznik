@@ -16,6 +16,7 @@ covers:
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-server-go/test/modmessaging_test.go
   - iznik-server-go/user/partner.go
+  - iznik-server-go/test/user_tn_location_test.go
 ---
 
 # TrashNothing Integration Documentation
@@ -449,11 +450,19 @@ Syncs:
 - Account removal notifications
 
 **TN is the master for a TN member's location.** A change row's `location` sets
-`users.lastlocation` to the nearest postcode, and also removes `settings.mylocation`.
-That setting is read before `lastlocation` almost everywhere (profile, distances,
-Browse), and on TN accounts it is V1-era data from before the account was linked to TN,
-so leaving it in place makes FD show the member somewhere TN no longer says they are.
-For the same reason a TN post (either path) only writes `lastlocation` when it is
+`users.lastlocation` to the nearest postcode. `settings.mylocation` is read before
+`lastlocation` for other members, but on TN accounts it is V1-era data from before the
+account was linked to TN, so every reader ignores it when `tnuserid` is set:
+
+- Go: `user.GetLatLng`, `GetPublicLocationForUser`, the ModTools location name,
+  `ResolveOnBehalfPosting` and the visualise map. The session's own location is left
+  alone, as TN members do not log in.
+- Batch: `User::chosenLatLng()` for code holding a user, and `AND <alias>.tnuserid IS NULL`
+  in the SQL "mylocation else lastlocation" expressions (digests, Community News,
+  first-reply match mail, the approximate-location map).
+
+The sync also removes the setting when TN sends a location, so the stale data goes as
+members are active. For the same reason a TN post (either path) only writes `lastlocation` when it is
 empty: the post's coordinates are where the item is, not where the member is.
 
 Each change row carries the member's *current* state, not the state at that row's

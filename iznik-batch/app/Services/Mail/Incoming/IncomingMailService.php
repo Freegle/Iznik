@@ -1851,18 +1851,15 @@ class IncomingMailService
      * Resolve a replier's point as settings.mylocation (both coords) else their lastlocation —
      * the same order the immediate-mail recipient query and the digest reach-gate use, so the
      * held point (and releaseCovered, which tests it) agree with the read/notify paths.
+     * A TN member's mylocation is ignored (User::chosenLatLng).
      *
      * @return array{0:float,1:float}|null [lat, lng]
      */
     private function resolveReplierLatLng(User $replier): ?array
     {
-        $settings = $replier->settings;
-        if (is_string($settings)) {
-            $settings = json_decode($settings, true) ?: [];
-        }
-        $myloc = is_array($settings) ? ($settings['mylocation'] ?? null) : null;
-        if (is_array($myloc) && isset($myloc['lat'], $myloc['lng']) && $myloc['lat'] !== null && $myloc['lng'] !== null) {
-            return [(float) $myloc['lat'], (float) $myloc['lng']];
+        $chosen = User::chosenLatLng($replier->settings, $replier->tnuserid);
+        if ($chosen) {
+            return $chosen;
         }
 
         if ($replier->lastlocation) {

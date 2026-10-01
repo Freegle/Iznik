@@ -983,7 +983,8 @@ func GetLatLng(id uint64) utils.LatLng {
 	var ul, ulmsg, ulgroups userLoc
 
 	// We look for the location in the following descending order:
-	// - mylocation in settings, which we need to decode
+	// - mylocation in settings, which we need to decode - except for a Trash Nothing
+	//   member, whose location TN is the master for and whose mylocation is stale V1 data
 	// - lastlocation in user
 	// - last messages posted on a group with a location
 	// - most recently joined group
@@ -993,8 +994,8 @@ func GetLatLng(id uint64) utils.LatLng {
 	// If it doesn't give us what we need them , then fetch the others in parallel.
 	db.Table("users").
 		Select("users.id, locations.lat AS lastlat, locations.lng as lastlng, "+
-			"CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lat') AS DECIMAL(10,6)) AS mylat,"+
-			"CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lng') AS DECIMAL(10,6)) as mylng").
+			"CASE WHEN users.tnuserid IS NULL THEN CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lat') AS DECIMAL(10,6)) END AS mylat,"+
+			"CASE WHEN users.tnuserid IS NULL THEN CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lng') AS DECIMAL(10,6)) END as mylng").
 		Joins("LEFT JOIN locations ON locations.id = users.lastlocation").
 		Joins("LEFT JOIN spam_users ON spam_users.userid = users.id").
 		Where("users.id = ?", id).
@@ -1489,8 +1490,9 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 	if modtools {
 		if privatePos.Lat != 0 || privatePos.Lng != 0 {
 			var locNamePtr *string
+			// Not for a Trash Nothing member: their mylocation is stale V1 data.
 			db.Table("users").Select("JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.name'))").
-				Where("id = ? AND settings IS NOT NULL", id).Scan(&locNamePtr)
+				Where("id = ? AND settings IS NOT NULL AND tnuserid IS NULL", id).Scan(&locNamePtr)
 
 			locName := ""
 			if locNamePtr != nil && *locNamePtr != "null" {
