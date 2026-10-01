@@ -102,6 +102,60 @@ Add these next to `removeTNGroup()` (`app/Models/User.php:385`):
   - `EmailApiParityTest` / `TnApiLokiParityTest`: if any fixture relies on the unknown-user drop, mark the divergence explicitly. Do not loosen the assertions.
   - A `User` helper unit test, with one Go/PHP parity example per transformation.
 
+### 6. Remove the "every TN address has a `-gXXX` suffix" assumption across the codebase
+After steps 2 and 4, TN addresses **without** a `-gXXX` suffix become normal: the provisioner creates bare `username@user.trashnothing.com`, and a rename collapses everything to that form. (Some legacy bare rows already exist; `FixTNNamesCommand.php:40` says "older rows sit directly on the bare domain".) This step needs extensive checks, rewrites and tests, because every piece of code that recognises or parses a TN address by its suffix will silently mishandle the bare form. None of it throws; it produces a plausible wrong answer.
+
+**Replacement rule.**
+- *"Is this a TN address?"* becomes a domain check: the address ends with `@user.trashnothing.com`, case-insensitive. Nothing else.
+- *"Which TN username is this?"* uses one shared helper per stack: strip an **optional** `-g\d+` that sits immediately before the domain, and only there (`/^(.+?)(?:-g\d+)?@user\.trashnothing\.com$/i`). In PHP this is step 1's `User::tnUsernameFromEmail`; in Go, `TNAliasIdentity` with the suffix made optional. Never split on the first `-` or `-g`, because usernames can contain hyphens (`mary-jane`, `bibiana-gomes`).
+- *"Find this member's other addresses"* must match both forms: `email = 'username@…' OR email LIKE 'username-g%@…'`, then exact-match the username through the helper. That exact-match guard already exists to stop the `bibiana-g%` → `bibiana-gomes-g4840` mis-merge.
+
+**A. Email-format assumptions that break with bare addresses. Fix these and add bare-address tests for each.**
+
+| Site | What it assumes | What goes wrong with a bare address |
+|---|---|---|
+| `iznik-batch/app/Models/User.php:472` `canonMail()` and `IncomingMailService.php:3800` `canonicalizeEmail()` | `/(.*)\-(.*)(@user.trashnothing.com)/` strips **anything** after the last hyphen | A bare `mary-jane@` canonicalises to `mary@…`, so the canon fallback in `findUserByEmail` can resolve one member's mail to a different member's account. Tighten both to strip only `-g\d+`. Check how many existing `canon` rows would change (`BackfillEmailCanonCommand` covers the rewrite), and keep the two PHP functions and Go's `CanonicalizePartnerEmail` byte-identical. |
+| `iznik-server-go/user/partner.go:275` `tnAliasRegexp` / `TNAliasIdentity` | `^(.+)-g\d+@(.+)$` is mandatory | A bare address returns `ok=false`, so everything below falls back or does nothing. |
+| `partner.go:384` `CanonicalizePartnerEmail` | built on `TNAliasIdentity` | A bare address falls through to the general Go `CanonicalizeEmail`: domain dots are kept and local dots stripped (`triciahayes@user.trashnothing.com`), so the PHP canon lookup can't find it. This reopens the duplicate-account hole described in `.claude/rules/mail-and-data.md`. |
+| `partner.go:297-345` `FindTNSiblings` (LIKE `username-g%@` at `:316`) | siblings always carry `-g` | A bare address finds no siblings, and a bare sibling is never found from a suffixed one. The partner Promise 403 fix (TN post 47243586) regresses for these members. |
+| `partner.go:157` `CreatePartnerUser` name extraction | `strings.Index(prefix, "-g")`, the **first** `-g` | Already wrong for `bibiana-gomes-g4840` (it gives "Bibiana"); a bare `mary-grace@` gives "Mary". Switch to the shared username helper, then apply `tnDisplayName`. |
+| `iznik-batch/app/Console/Commands/TrashNothing/TNSyncCommand.php:406` `tnUsernameFromAddress` and the per-tick LIKE at `:512` | `-g\d+@` suffix; LIKE `username-g%@` | For a bare address the regex doesn't match, so the **whole address** becomes the "username", and a member's bare and suffixed twin accounts are never grouped or merged. The per-tick LIKE also misses bare rows. Rewrite both using the replacement rule. Keep the exact-username guard and the full-pass memory design (one integer per username). |
+| `iznik-batch/app/Console/Commands/User/FixTNNamesCommand.php:61` | `/^(.*)-[^-]+@/`, a hyphen before `@` | A bare `tricia.hayes@` is skipped; a bare `mary-jane@` sets `fullname` to "mary". Use the shared helper, then `tnDisplayName`. |
+| `iznik-batch/app/Services/TrashNothing/Sync/UserChangesSyncer.php:118-120` | `"{$oldname}-"` substring | Already covered by step 4. |
+| `iznik-batch/app/Support/NameSanitiser.php:76` and `iznik-server-go/user/namevalidation.go:73` (`TN_EMAIL_SUFFIX` / `tnEmailSuffix`) | an email-shaped `fullname` from TN ends `-g\d+@user.trashnothing.com` | A `fullname` holding a bare TN address is no longer recognised as an import side effect and may be treated as suspicious. Change both to the domain check. They are deliberately twinned, so keep the PHP and Go versions in step. |
+
+**B. Already domain-only. Verify these, with a bare-address test case where a test exists; no change expected.**
+- `User::isTN()` (`User.php:434`)
+- `ModMember.vue:454` (`isTN`)
+- `DiscourseNotSignedUpService.php:115`
+- `TNSyncCommand::whereTNAddress` (`:637-644`)
+- `FixTNNamesCommand`'s row filter (`:43`)
+- `IncomingMailService::findUserByEmail`'s exact-match arm (`:3771`)
+
+**C. Display-name `-gXXX` stripping, not email parsing. Keep these.** They strip the suffix TN used to put in **names** (`Alice-g298`). A bare-address user's name has no suffix, so they simply do nothing. Re-read each during the audit to confirm it never receives an email address:
+- `User::removeTNGroup` (`User.php:385`) and `getDisplayNameAttribute` (`:326`)
+- `ListModsService.php:155`
+- `PushNotificationService.php:1325`
+- Go `utils.TN_REGEXP` / `tnOnlyRegexp` / `TidyName` (`utils.go:117`, `:379-441`)
+- `chat/chatroom.go:1106`
+- `message/message.go:49`
+
+**Audit procedure.** The grep above was run on 2026-10-01. Re-run it on the implementation branch, because new sites may land meanwhile:
+`grep -rnE -- '-g\[0-9\]|-g\\d|-g\(|"-g"|-g%|\\-\(\.\*\)\(@user|removeTNGroup|TNAliasIdentity|tnUsernameFromAddress|user\.trashnothing'` across `iznik-batch/app`, `iznik-server-go`, `iznik-nuxt3`, `status-nuxt`, `monitor-fsm` and `scripts`. Also check SQL in raw queries and migrations for `REGEXP_REPLACE`/`LIKE '%-g%'`. Classify every hit as A, B or C above. Anything in A gets a fix and a test.
+
+**Tests.**
+- About 10 test files currently build TN fixtures only in the `-gNNN` form (`grep -rlE -- '-g[0-9]+@user\.trashnothing\.com'` across `iznik-batch/tests`, `iznik-server-go`, `iznik-nuxt3/tests`). Every test covering an A-row site gets bare-address cases, including:
+  - a hyphenated bare username (`mary-jane@`);
+  - a dotted bare username (`tricia.hayes@`);
+  - a bare and a suffixed address of the same member being treated as one;
+  - two different members whose usernames share a prefix (`bibiana@` vs `bibiana-gomes-g4840@`) being kept apart.
+- Add one cross-stack canon table (the same input → expected canon pairs, asserted in both a PHP and a Go test), so `canonMail`, `canonicalizeEmail` and `CanonicalizePartnerEmail` cannot drift apart again.
+- Run the Go suite as well as the batch suites, since this step touches `iznik-server-go`. Per CLAUDE.md, update the CircleCI orb if test wiring changes.
+
+**Docs and rules.**
+- Update the "Email Canonicalization" and "Identifying the member behind an address" sections of `docs/developers/reference/trashnothing.md`.
+- Add a trap to `.claude/rules/mail-and-data.md`: TN addresses are no longer always `-gNNN` aliases, so recognise them by domain and parse the username with the shared helper.
+
 ## Critical files
 - `iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php`
 - `iznik-batch/app/Services/TrashNothing/Ingestion/TnUserProvisioner.php` (new)
@@ -109,6 +163,7 @@ Add these next to `removeTNGroup()` (`app/Models/User.php:385`):
 - `iznik-batch/app/Services/TrashNothing/Sync/UserChangesSyncer.php`
 - `iznik-batch/app/Models/User.php`
 - `iznik-batch/config/freegle.php`, `docs/developers/reference/trashnothing.md`
+- Step 6 (suffix audit): `IncomingMailService.php` (`canonicalizeEmail`), `TNSyncCommand.php`, `FixTNNamesCommand.php`, `NameSanitiser.php`, `iznik-server-go/user/partner.go`, `iznik-server-go/user/namevalidation.go`, `.claude/rules/mail-and-data.md`
 
 Reused as-is: `TrashNothingRateLimiter`, `PostSyncer::redactApiKey`, `User::addEmail`/`canonMail`/`removeTNGroup`, the `UserAboutMe`/`UserReplyTime` models, `LokiService::logEvent`.
 
@@ -116,4 +171,5 @@ Reused as-is: `TrashNothingRateLimiter`, `PostSyncer::redactApiKey`, `User::addE
 1. `docker exec freegle-batch php artisan test --filter="TnUserProvisioner|GroupPostIngestionService|UserChangesSyncer|EmailApiParity|TnApiLokiParity"`, then the full `--testsuite=Unit,Feature`.
 2. `docker exec freegle-batch php artisan tn:sync --local-testing` with a fixture post whose `user_id` is unknown, plus `tests/fixtures/tn_sync/users/{id}.json`. Check the `TN-SYNC-TRACE` lines for the user and email inserts, and the message landing Pending/`unmapped user`.
 3. Against the real API with the dev key: `tn:parity-check` (or `tn:sync --dry-run --local-testing` off) on a window containing an unknown poster. Confirm the lookup succeeds with `username` populated for the developer key.
-4. ~~Rate-limit probe~~ Done 2026-10-01; see "Rate-limit probe results" above. Outcome: `await()` stays as is.
+4. Step 6: the Go suite for `iznik-server-go/user`, plus the full batch suites. Then re-run the audit grep and confirm that every remaining `-g` hit is a C-row (display-name) site.
+5. ~~Rate-limit probe~~ Done 2026-10-01; see "Rate-limit probe results" above. Outcome: `await()` stays as is.
