@@ -3008,8 +3008,11 @@ class IncomingMailService
                 $locationId = null;
             }
 
-            // Update user's lastlocation if we found a location
-            if ($locationId && $user->id) {
+            // Update user's lastlocation if we found a location. TN is the master for a
+            // TN member's location (tn:sync keeps lastlocation in step with it), so a TN
+            // post only fills it in when it is empty; the post's own point is where the
+            // item is, not where the member is.
+            if ($locationId && $user->id && (!$user->isTN() || $user->lastlocation === null)) {
                 Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastlocation=' . $locationId);
                 DB::table('users')
                     ->where('id', $user->id)

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-30
+last_reviewed: 2026-10-01
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -246,7 +246,7 @@ would sit in the mod queue with nothing able to promote them.
 **A stale spatial-index location costs the post its location, not the post.** The
 spatial server keeps its own R-tree, rebuilt from MySQL on its own schedule, so its
 nearest-postcode answer can name a `locations` row that has since been purged or
-renumbered. `users.lastlocation` is a foreign key, and both paths write it *inside*
+renumbered. `users.lastlocation` is a foreign key, and both paths can write it *inside*
 message creation, so an id that is no longer in `locations` throws there and takes
 the whole post down rather than just its location - it routes Pending and creates no
 `messages` row at all. `GroupPostIngestionService` and
@@ -447,6 +447,18 @@ Syncs:
 - Username changes
 - Location updates
 - Account removal notifications
+
+**TN is the master for a TN member's location.** A change row's `location` sets
+`users.lastlocation` to the nearest postcode, and also removes `settings.mylocation`.
+That setting is read before `lastlocation` almost everywhere (profile, distances,
+Browse), and on TN accounts it is V1-era data from before the account was linked to TN,
+so leaving it in place makes FD show the member somewhere TN no longer says they are.
+For the same reason a TN post (either path) only writes `lastlocation` when it is
+empty: the post's coordinates are where the item is, not where the member is.
+
+Each change row carries the member's *current* state, not the state at that row's
+`date`, so re-reading old rows from the feed cannot show what a past sync received;
+the batch log's `TN-SYNC-TRACE [LOCATION]` lines are the record of that.
 
 ### Changes Feed (TN pulls from Freegle)
 
