@@ -872,6 +872,34 @@ class User extends Model implements Auditable
      *
      * @return array [lat, lng] or [null, null] if not available
      */
+    /**
+     * The point a member chose in their settings (settings.mylocation), as [lat, lng], or
+     * null when there is none. Callers fall back to lastlocation.
+     *
+     * Always null for a Trash Nothing member (tnuserid set): TN is the master for their
+     * location and tn:sync keeps lastlocation in step with it, while their mylocation is
+     * stale V1 data from before the account was linked to TN.
+     *
+     * @return array{0: float, 1: float}|null
+     */
+    public static function chosenLatLng(mixed $settings, mixed $tnuserid): ?array
+    {
+        if ($tnuserid !== null) {
+            return null;
+        }
+
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true);
+        }
+
+        $myloc = is_array($settings) ? ($settings['mylocation'] ?? null) : null;
+        if (!is_array($myloc) || !isset($myloc['lat'], $myloc['lng'])) {
+            return null;
+        }
+
+        return [(float) $myloc['lat'], (float) $myloc['lng']];
+    }
+
     public function getLatLng(): array
     {
         $location = $this->lastLocation;

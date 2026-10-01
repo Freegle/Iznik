@@ -11,6 +11,7 @@ use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Tests\Support\SeedsSpatialIndex;
 use Tests\TestCase;
 
 /**
@@ -22,6 +23,8 @@ use Tests\TestCase;
  */
 class GroupPostIngestionServiceTest extends TestCase
 {
+    use SeedsSpatialIndex;
+
     private LokiService $loki;
     private ItemService $itemService;
 
@@ -348,6 +351,39 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertNotNull($mg, 'Expected a messages_groups row');
         $this->assertSame(MessageGroup::COLLECTION_PENDING, $mg->collection);
         $this->assertTrue($mg->mod_messaging_allowed, 'mod_messaging_allowed should default to true when not passed');
+    }
+
+    /**
+     * TN is the master for a TN member's location and tn:sync keeps lastlocation in
+     * step with it. The post's coordinates place the post, not the member.
+     */
+    public function test_post_coordinates_do_not_move_a_member_who_has_a_location(): void
+    {
+        // Open sea, so no real postcode in the spatial index out-competes the sentinel.
+        $postPcId = 99000301;
+        $this->seedSpatialPoint('postcodes', $postPcId, 56.710, 3.110);
+        try {
+            DB::table('locations')->insert([
+                'id' => $postPcId, 'name' => 'ZZ9 9ZY', 'type' => 'Postcode', 'lat' => 56.710, 'lng' => 3.110,
+            ]);
+            $homeId = $this->createTestLocation();
+            $user  = $this->createTnUser(['lastlocation' => $homeId]);
+            $group = $this->createTestGroup();
+            $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+            $postId = 'tn-home-' . uniqid();
+            $post   = $this->makePost([
+                'post_id' => $postId, 'user_id' => $user->tnuserid, 'latitude' => 56.710, 'longitude' => 3.110,
+            ]);
+            $this->makeService(dryRun: false)->ingest($post, $group);
+
+            $message = Message::where('tnpostid', $postId)->first();
+            $this->assertNotNull($message);
+            $this->assertEquals($postPcId, $message->locationid);
+            $this->assertEquals($homeId, DB::table('users')->where('id', $user->id)->value('lastlocation'));
+        } finally {
+            $this->removeSpatial('postcodes', [$postPcId]);
+        }
     }
 
     public function test_live_persists_mod_messaging_disallowed_when_specified(): void
