@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { nextTick } from 'vue'
 import api from '~/api'
 import { useMiscStore } from '~/stores/misc'
+import { useAuthStore } from '~/stores/auth'
 
 // Debounce delay for batching user fetches (ms)
 const BATCH_DELAY = 50
@@ -98,6 +99,12 @@ export const useUserStore = defineStore('user', {
       const miscStore = useMiscStore()
       if (miscStore.modtools) {
         return this.fetchMT({ id, info: true }, force)
+      }
+
+      // A copy fetched while logged out (e.g. during server rendering) may have the
+      // member's name and photo withheld; once logged in it is stale.
+      if (this.list[id]?.redacted && useAuthStore().user) {
+        force = true
       }
 
       // If already cached and not forcing, return immediately
