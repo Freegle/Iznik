@@ -17,11 +17,15 @@ The work also fixes a latent bug in `UserChangesSyncer`'s username handling. Tha
 
 ## Implementation
 
-### 1. Shared TN name and address helpers on `App\Models\User`
-Add these next to `removeTNGroup()` (`app/Models/User.php:385`):
-- `tnDisplayName(string $username): string`. A PHP port of the Go `CreatePartnerUser` logic (`iznik-server-go/user/partner.go:152-164`): replace `.` and `_` with spaces, then `ucwords`. A comment cross-references the Go side.
+### 1. Shared TN name and address helpers on `App\Models\User` — **DONE**
+Added next to `removeTNGroup()` in `app/Models/User.php`:
+- `tnDisplayName(string $username): string`. A PHP port of the Go `CreatePartnerUser` logic (`iznik-server-go/user/partner.go:152-164`): replace `.` and `_` with spaces, then title case. A comment cross-references the Go side.
+  - **Not `ucwords`.** Go's `strings.Title` capitalises after any non-letter/digit/underscore, not just whitespace. Verified by running Go in `freegle-apiv2`: `mary-jane` → `Mary-Jane`, `o'brien` → `O'Brien`, `x2y.z` → `X2y Z`, `élise.dupont` → `Élise Dupont`, `ALREADY.up` → `ALREADY Up`. The PHP version uses `preg_replace_callback('/(?<![\p{L}\p{N}_])\p{Ll}/u', mb_strtoupper)` to match.
+  - Known residual difference: Go treats non-ASCII non-letter symbols (e.g. `€`) as non-separators; the PHP regex treats them as separators. Accepted, since TN usernames are not expected to contain them.
 - `tnEmailForUsername(string $username): string`. Returns `"{$username}@user.trashnothing.com"`.
-- `tnUsernameFromEmail(string $email): ?string`. Returns the local part with any `-gNNN` suffix stripped, and only for `@user.trashnothing.com` addresses.
+- `tnUsernameFromEmail(string $email): ?string`. Already follows step 6's replacement rule: `/^(.+?)(?:-g\d+)?@user\.trashnothing\.com$/i`, stripping an optional `-g<digits>` only immediately before the domain. Returns null for non-TN addresses. Trims and **lowercases** the result, matching Go's `TNAliasIdentity`. (Step 4 compares usernames through this, so compare against a lowercased new username there.)
+- Tests: five new cases in `tests/Unit/Models/UserModelTest.php` (Go-parity display names, bare/alias/mixed-case addresses, hyphenated usernames incl. `bibiana` vs `bibiana-gomes-g4840` and `ann-g12-g34`, non-TN rejections). `UserModelTest` passes (72 tests) via the status API.
+- **Running tests:** a hook blocks `php artisan test` directly. Use the status API instead: `curl -s -X POST http://localhost:8081/api/tests/laravel -H 'Content-Type: application/json' -d '{"filter":"…","testsuite":"Unit"}'`, then poll `/api/tests/laravel/status`. The full Unit/Feature suites have not been run yet for this step; run them before pushing.
 
 ### 2. New `App\Services\TrashNothing\Ingestion\TnUserProvisioner`
 - **Constructor:** `bool $dryRun`, `bool $localTesting`, `string $publicApiKey`, `LokiService $loki`, `?TrashNothingRateLimiter $rateLimiter`.
@@ -168,7 +172,7 @@ After steps 2 and 4, TN addresses **without** a `-gXXX` suffix become normal: th
 Reused as-is: `TrashNothingRateLimiter`, `PostSyncer::redactApiKey`, `User::addEmail`/`canonMail`/`removeTNGroup`, the `UserAboutMe`/`UserReplyTime` models, `LokiService::logEvent`.
 
 ## Verification
-1. `docker exec freegle-batch php artisan test --filter="TnUserProvisioner|GroupPostIngestionService|UserChangesSyncer|EmailApiParity|TnApiLokiParity"`, then the full `--testsuite=Unit,Feature`.
+1. Through the status API (direct `php artisan test` is blocked by a hook): POST `/api/tests/laravel` with `{"filter":"UserModelTest|TnUserProvisioner|GroupPostIngestionService|UserChangesSyncer|EmailApiParity|TnApiLokiParity","testsuite":"Unit,Feature"}`, then with an empty body for the full suites.
 2. `docker exec freegle-batch php artisan tn:sync --local-testing` with a fixture post whose `user_id` is unknown, plus `tests/fixtures/tn_sync/users/{id}.json`. Check the `TN-SYNC-TRACE` lines for the user and email inserts, and the message landing Pending/`unmapped user`.
 3. Against the real API with the dev key: `tn:parity-check` (or `tn:sync --dry-run --local-testing` off) on a window containing an unknown poster. Confirm the lookup succeeds with `username` populated for the developer key.
 4. Step 6: the Go suite for `iznik-server-go/user`, plus the full batch suites. Then re-run the audit grep and confirm that every remaining `-g` hit is a C-row (display-name) site.

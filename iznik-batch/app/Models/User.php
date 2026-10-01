@@ -388,6 +388,51 @@ class User extends Model implements Auditable
     }
 
     /**
+     * Display name for a TN username: dots and underscores become spaces, then
+     * title case ("tricia.hayes" -> "Tricia Hayes").
+     *
+     * Mirrors CreatePartnerUser in iznik-server-go/user/partner.go, which uses
+     * Go's strings.Title. That capitalises after any non-alphanumeric, not
+     * just whitespace ("mary-jane" -> "Mary-Jane"), so ucwords() would drift.
+     */
+    public static function tnDisplayName(string $username): string
+    {
+        $name = str_replace(['.', '_'], ' ', $username);
+
+        return preg_replace_callback(
+            '/(?<![\p{L}\p{N}_])\p{Ll}/u',
+            fn ($m) => mb_strtoupper($m[0]),
+            $name
+        );
+    }
+
+    /**
+     * The bare TN address for a username. TN confirm it is deliverable.
+     */
+    public static function tnEmailForUsername(string $username): string
+    {
+        return "{$username}@user.trashnothing.com";
+    }
+
+    /**
+     * The TN username behind a TN address, bare or per-group alias:
+     * "tricia.hayes-g298@user.trashnothing.com" and
+     * "tricia.hayes@user.trashnothing.com" both give "tricia.hayes".
+     *
+     * Only a -g<digits> immediately before the domain is stripped, because
+     * usernames can contain hyphens ("bibiana-gomes-g4840" is "bibiana-gomes").
+     * Returns NULL for anything that is not a TN address.
+     */
+    public static function tnUsernameFromEmail(string $email): ?string
+    {
+        if (!preg_match('/^(.+?)(?:-g\d+)?@user\.trashnothing\.com$/i', trim($email), $m)) {
+            return NULL;
+        }
+
+        return strtolower($m[1]);
+    }
+
+    /**
      * Check if user is a moderator of any group.
      */
     public function isModerator(): bool
