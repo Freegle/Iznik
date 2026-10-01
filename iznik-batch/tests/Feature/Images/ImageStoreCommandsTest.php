@@ -53,6 +53,32 @@ class ImageStoreCommandsTest extends TestCase
         touch($disk->path($id . '.info'), time() - $ageSeconds);
     }
 
+    public function test_migrate_legacy_copies_a_listing_of_the_share(): void
+    {
+        $legacy = Storage::disk('tusd-legacy');
+        $legacy->put('s1', self::JPEG);
+        $legacy->put('s1.info', json_encode(['ID' => 's1', 'Size' => strlen(self::JPEG), 'MetaData' => ['filetype' => 'image/jpeg']]));
+        $path = tempnam(sys_get_temp_dir(), 'share-listing-');
+        file_put_contents($path, "s1\n");
+
+        $this->artisan('images:migrate-legacy', ['--listing' => $path, '--time-budget' => 60])
+            ->expectsOutputToContain('The listing is complete')
+            ->assertExitCode(0);
+
+        Storage::disk('images')->assertExists('s1');
+        $this->assertNotNull(DB::table('image_store_migration')->where('source', 'listing:' . basename($path))->value('completed_at'));
+
+        $this->artisan('images:migrate-legacy', ['--status' => true])
+            ->expectsOutputToContain('listing:' . basename($path))
+            ->assertExitCode(0);
+
+        $this->artisan('images:migrate-legacy', ['--listing' => '/nowhere/share-files.txt'])
+            ->expectsOutputToContain('is not a file')
+            ->assertExitCode(1);
+
+        unlink($path);
+    }
+
     public function test_push_spool_pushes_and_reports(): void
     {
         $this->spool('p1');

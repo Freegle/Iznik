@@ -59,6 +59,114 @@ class LegacyMigrationServiceTest extends TestCase
         ]);
     }
 
+    private function listing(string ...$lines): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'share-listing-');
+        file_put_contents($path, implode("\n", $lines) . "\n");
+
+        return $path;
+    }
+
+    /**
+     * A listing of the share names files no table refers to: photos of deleted
+     * posts that partners, old emails and link previews still fetch. It is
+     * copied like a table walk - what the store already holds is skipped, a
+     * name the share lacks is counted, a line that is not an id is skipped -
+     * and the cursor is the line number under "listing:<file name>".
+     */
+    public function test_copies_a_listing_of_the_share_and_keeps_a_line_cursor(): void
+    {
+        $this->legacyFile('l1');
+        $this->legacyFile('l2');
+        Storage::disk('images')->put('l2', self::JPEG);
+        $path = $this->listing('l1', 'l2', 'not an id!', 'l3');
+
+        $stats = $this->migrator()->migrateListing($path, timeBudgetSeconds: 60);
+
+        $this->assertSame(4, $stats['scanned']);
+        $this->assertSame(1, $stats['copied']);
+        $this->assertSame(1, $stats['present']);
+        $this->assertSame(1, $stats['missing_source']);
+        $this->assertSame(1, $stats['invalid']);
+        $this->assertTrue($stats['finished']);
+        Storage::disk('images')->assertExists('l1');
+        Storage::disk('tusd-legacy')->assertExists('l1');
+
+        $source = LegacyMigrationService::listingSource($path);
+        $row = DB::table('image_store_migration')->where('source', $source)->first();
+        $this->assertSame(4, (int) $row->last_id);
+        $this->assertNotNull($row->completed_at);
+        $this->assertContains($source, array_column($this->migrator()->status(), 'source'));
+
+        // Complete means nothing more to do, however often it is run.
+        $again = $this->migrator()->migrateListing($path, timeBudgetSeconds: 60);
+        $this->assertSame(0, $again['scanned']);
+        $this->assertTrue($again['finished']);
+
+        unlink($path);
+    }
+
+    public function test_a_listing_resumes_from_its_cursor_and_can_be_reset(): void
+    {
+        $this->legacyFile('r1');
+        $this->legacyFile('r2');
+        $this->legacyFile('r3');
+        $path = $this->listing('r1', 'r2', 'r3');
+        $source = LegacyMigrationService::listingSource($path);
+
+        $first = $this->migrator()->migrateListing($path, timeBudgetSeconds: 60, limit: 2);
+        $this->assertSame(2, $first['scanned']);
+        $this->assertFalse($first['finished']);
+        $this->assertSame(2, (int) DB::table('image_store_migration')->where('source', $source)->value('last_id'));
+        Storage::disk('images')->assertMissing('r3');
+
+        $second = $this->migrator()->migrateListing($path, timeBudgetSeconds: 60);
+        $this->assertSame(1, $second['scanned']);
+        $this->assertSame(1, $second['copied']);
+        $this->assertTrue($second['finished']);
+        Storage::disk('images')->assertExists('r3');
+
+        $this->migrator()->resetCursor($source);
+        $this->assertSame(0, (int) DB::table('image_store_migration')->where('source', $source)->value('last_id'));
+        $third = $this->migrator()->migrateListing($path, timeBudgetSeconds: 60);
+        $this->assertSame(3, $third['scanned']);
+        $this->assertSame(3, $third['present']);
+
+        unlink($path);
+    }
+
+    public function test_a_listing_stops_before_the_line_that_met_an_unavailable_store(): void
+    {
+        $this->legacyFile('u1');
+        $this->legacyFile('u2');
+        $path = $this->listing('u1', 'u2');
+        $source = LegacyMigrationService::listingSource($path);
+
+        // The store goes dark at u2, as in the table-walk test above: u1 is
+        // copied, the run stops, and u2 is the first line of the next run.
+        $store = new class(Storage::disk('images')) extends ObjectStore {
+            public function sizeOf(string $key): ?int
+            {
+                if ($key === 'u2') {
+                    throw new ObjectStoreUnavailable('403 from the store');
+                }
+
+                return parent::sizeOf($key);
+            }
+        };
+        $migrator = new LegacyMigrationService($store, Storage::disk('tusd-legacy'));
+
+        $stats = $migrator->migrateListing($path, timeBudgetSeconds: 60);
+
+        $this->assertSame('403 from the store', $stats['unavailable']);
+        $this->assertFalse($stats['finished']);
+        $this->assertSame(0, $stats['failed']);
+        $this->assertSame(1, (int) DB::table('image_store_migration')->where('source', $source)->value('last_id'));
+        $this->assertNull(DB::table('image_store_migration')->where('source', $source)->value('completed_at'));
+
+        unlink($path);
+    }
+
     public function test_copies_referenced_files_that_the_store_does_not_have(): void
     {
         $this->legacyFile('a1');

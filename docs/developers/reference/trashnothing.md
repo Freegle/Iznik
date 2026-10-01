@@ -17,6 +17,7 @@ covers:
   - iznik-server-go/test/modmessaging_test.go
   - iznik-server-go/user/partner.go
   - iznik-server-go/test/user_tn_location_test.go
+  - iznik-server-go/test/user_tn_privacy_test.go
 ---
 
 # TrashNothing Integration Documentation
@@ -568,6 +569,15 @@ TN users appear largely the same as native users:
 - Profile image loaded from TN if available
 - Ratings and reply time synced from TN
 - Messages appear with normal formatting
+
+**Logged-out visitors do not see a TN member's name, photo or about-me.** Trash Nothing
+asked for this. `GET /user/:id` and the batch `GET /user/:id1,:id2` return
+`displayname` "A freegler", no name fields, an empty `profile` and `aboutme`, and
+`redacted: true` when the caller is not logged in and the user has a `tnuserid`
+(`hideTNIdentityFromAnonymous` in `iznik-server-go/user/user.go`). A call with a valid
+partner key is not redacted. Pages are rendered on the server logged out, so the user
+store (`iznik-nuxt3/stores/user.js`) refetches a cached `redacted` user once someone is
+logged in.
 
 ### Differences Members May Notice
 
