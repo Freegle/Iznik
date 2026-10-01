@@ -94,6 +94,10 @@ type User struct {
 	Giftaid            *UserGiftAid         `json:"giftaid,omitempty" gorm:"-"`
 	Loginlink          string               `json:"loginlink,omitempty" gorm:"-"`
 	Engagement         *string              `json:"engagement" gorm:"->"`
+
+	// Set when the name, photo and about-me were withheld (see hideTNIdentityFromAnonymous),
+	// so a client that cached this copy before logging in knows to fetch it again.
+	Redacted bool `json:"redacted,omitempty" gorm:"-"`
 }
 
 type UserGiftAid struct {
@@ -217,6 +221,24 @@ func hideSensitiveFields(user *User, myid uint64) {
 	}
 }
 
+// hideTNIdentityFromAnonymous withholds a Trash Nothing member's name, photo and about-me
+// from someone who is not logged in. Trash Nothing asked for this: its members never log in
+// to Freegle, and their details should only be visible to other members. tnuserid must be
+// read before hideSensitiveFields, which clears it for most viewers.
+func hideTNIdentityFromAnonymous(user *User, myid uint64, tnuserid *uint64) {
+	if myid != 0 || tnuserid == nil {
+		return
+	}
+
+	user.Firstname = nil
+	user.Lastname = nil
+	user.Fullname = nil
+	user.Displayname = "A freegler"
+	user.Profile = UserProfile{}
+	user.Aboutme = Aboutme{}
+	user.Redacted = true
+}
+
 func GetUserByEmail(c *fiber.Ctx) error {
 	email := c.Params("email")
 
@@ -287,6 +309,18 @@ func GetUser(c *fiber.Ctx) error {
 			hideSensitiveFields(&user, myid)
 			enrichUserForModtools(&user, id, myid, modtools)
 
+			isPartner := false
+			partnerKey := c.Query("partner")
+			if partnerKey != "" {
+				if _, _, _, err := ValidatePartnerKey(database.DBConn, partnerKey); err == nil {
+					isPartner = true
+				}
+			}
+
+			if !isPartner {
+				hideTNIdentityFromAnonymous(&user, myid, tnuserid)
+			}
+
 			// Mod-or-above callers (Moderator/Support/Admin systemrole) get
 			// tnuserid/ljuserid restored even when not a mod of a shared group
 			// with the target. authMiddleware sets c.Locals("userRole") only
@@ -305,12 +339,10 @@ func GetUser(c *fiber.Ctx) error {
 			// GetOrCreateInternalEmail ensures a correctly-formatted address exists
 			// even for users whose only stored internal email has the wrong user ID
 			// (e.g. after a merge), and creates one if none exists at all.
-			if partnerKey := c.Query("partner"); partnerKey != "" {
-				if _, _, _, err := ValidatePartnerKey(database.DBConn, partnerKey); err == nil {
-					user.Email = GetOrCreateInternalEmail(database.DBConn, id)
-					user.Tnuserid = tnuserid
-					user.Ljuserid = ljuserid
-				}
+			if isPartner {
+				user.Email = GetOrCreateInternalEmail(database.DBConn, id)
+				user.Tnuserid = tnuserid
+				user.Ljuserid = ljuserid
 			}
 
 			return c.JSON(user)
@@ -915,7 +947,9 @@ func GetUsersByIds(ids []string, myid uint64, modtools bool) []User {
 			}
 
 			user := GetUserById(id, myid)
+			tnuserid := user.Tnuserid
 			hideSensitiveFields(&user, myid)
+			hideTNIdentityFromAnonymous(&user, myid, tnuserid)
 
 			if user.ID == id {
 				mu.Lock()
