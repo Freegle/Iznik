@@ -302,11 +302,16 @@ class TnUserProvisioner
     private function create(int $tnUserId, string $username, string $email, array $tnUser): User
     {
         $attributes = [
-            'fullname'   => User::tnDisplayName($username),
-            'systemrole' => 'User',
-            'added'      => now(),
-            'lastaccess' => now(),
-            'tnuserid'   => $tnUserId,
+            'fullname'     => User::tnDisplayName($username),
+            'systemrole'   => 'User',
+            'added'        => now(),
+            'lastaccess'   => now(),
+            'tnuserid'     => $tnUserId,
+            // Unmapped by decision, and set explicitly because the caller reads
+            // it: a model built from attributes has no key for an unset column,
+            // so $user->lastlocation would resolve the lastLocation() relation
+            // and throw instead of giving null.
+            'lastlocation' => null,
         ];
         foreach (['firstname', 'lastname'] as $field) {
             $value = trim((string) ($tnUser[$field] ?? ''));

@@ -48,6 +48,21 @@ class GroupPostIngestionService
      */
     public const REASON_NO_USER_ID = 'no-user-id';
 
+    /**
+     * The poster could not be resolved because TN could not be asked who they
+     * are (5xx, 429, timeout, challenge), or because their username's address
+     * belongs to a Freegle user with a different tnuserid. See TnUserProvisioner.
+     *
+     * Both exist only because this path CREATES a Freegle user for a TN poster
+     * Freegle has never met — a deliberate divergence from email-path case 2,
+     * which still drops such a post as REASON_UNKNOWN_USER. Expect API-side
+     * Pending (a new user is unmapped) against email-side Dropped/unknown-user
+     * for the same post; that is the feature working, not a parity gap.
+     */
+    public const REASON_TN_USER_LOOKUP_FAILED = TnUserProvisioner::REASON_LOOKUP_FAILED;
+
+    public const REASON_TN_USERNAME_CLASH = TnUserProvisioner::REASON_USERNAME_CLASH;
+
     public const REASON_DUPLICATE = 'duplicate';
 
     /**
@@ -100,6 +115,7 @@ class GroupPostIngestionService
         private readonly bool $dryRun,
         private readonly LokiService $loki,
         private readonly ItemService $itemService,
+        private readonly TnUserProvisioner $userProvisioner,
     ) {}
 
     /**
@@ -230,24 +246,29 @@ class GroupPostIngestionService
         }
 
         // Resolve the Freegle user from TN's user id. TN's `user_id` is TN's OWN id,
-        // not a Freegle id: the mapping is users.tnuserid (unique, set when TN adds a
-        // member through the partner API). A TN user Freegle does not know is skipped -
-        // there is no address to reach them at, so a reply to their post could never be
-        // delivered, and treating the number as a Freegle id would hand the post to
-        // whichever unrelated account happens to hold it.
-        $user = $tnUserId ? $this->resolveUser((int) $tnUserId) : null;
+        // not a Freegle id: treating it as one would hand the post to whichever
+        // unrelated account happens to hold the number. The mapping is
+        // users.tnuserid; a TN poster Freegle has never met is looked up on TN and
+        // created (see TnUserProvisioner), deliberately unlike email-path case 2 —
+        // see REASON_TN_USER_LOOKUP_FAILED. The post is skipped only when that fails.
+        $user = $tnUserId ? $this->userProvisioner->resolveOrCreate((int) $tnUserId) : null;
         if ($user === null) {
-            $reason = $tnUserId ? 'unknown-user' : 'no-user-id';
-            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=' . $reason . ' tnpostid=' . $postId . ' tn_user_id=' . $tnUserId);
-            $this->loki->logEvent('tn-sync', 'post-skip-unknown-user', ['tn_post_id' => $postId, 'tn_user_id' => $tnUserId]);
+            $reason = $tnUserId ? $this->unresolvedUserReason() : self::REASON_NO_USER_ID;
+            $traceReason = match ($reason) {
+                self::REASON_UNKNOWN_USER => 'unknown-user',
+                default                   => $reason,
+            };
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=' . $traceReason . ' tnpostid=' . $postId . ' tn_user_id=' . $tnUserId);
+            $this->loki->logEvent('tn-sync', 'post-skip-unknown-user', [
+                'tn_post_id' => $postId,
+                'tn_user_id' => $tnUserId,
+                'reason'     => $traceReason,
+            ]);
             // Mirrors email-path case 2, which sets routing_reason and NOTHING
             // else — no group_id/group_name, even though the email path has
             // resolved the group by this point. dropped() REPLACES the context
             // rather than merging, which is what reproduces that omission here.
-            return $this->dropped(
-                $tnUserId ? self::REASON_UNKNOWN_USER : self::REASON_NO_USER_ID,
-                result: 'skipped',
-            );
+            return $this->dropped($reason, result: 'skipped');
         }
 
         // Update user's last access.
@@ -628,17 +649,18 @@ class GroupPostIngestionService
     }
 
     /**
-     * The Freegle user behind a TN user id, or null if Freegle has never met them.
+     * The routing_reason for a TN user id the provisioner could not resolve.
      *
-     * users.tnuserid is unique and is written by the partner membership-add flow, which
-     * runs whenever a TN member joins a Freegle community through TN, so nearly every TN
-     * user who has ever touched Freegle resolves here. Nothing is created for the rest:
-     * the public API gives no name and no address for a poster, so a stub could only
-     * carry an invented address that bounces, and a Freegle member's reply would vanish.
+     * TN having no usable user is the email path's unknown user, so it keeps
+     * that path's wording; the other failures can only happen here.
      */
-    private function resolveUser(int $tnUserId): ?User
+    private function unresolvedUserReason(): string
     {
-        return User::where('tnuserid', $tnUserId)->orderBy('id')->first();
+        return match ($this->userProvisioner->lastFailureReason()) {
+            TnUserProvisioner::REASON_LOOKUP_FAILED   => self::REASON_TN_USER_LOOKUP_FAILED,
+            TnUserProvisioner::REASON_USERNAME_CLASH  => self::REASON_TN_USERNAME_CLASH,
+            default                                   => self::REASON_UNKNOWN_USER,
+        };
     }
 
     /**
