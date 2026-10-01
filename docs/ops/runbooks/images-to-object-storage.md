@@ -167,11 +167,16 @@ read chain; keeping it is harmless.
 
 ## What the tables do not cover
 
-The database is not the only thing holding upload URLs. Photos of posts since deleted or
-withdrawn are still fetched through the uploads vhost: partner sites keep the URLs (the
-`:8080` form), mail clients proxy the images in old digests, and link previews are cached.
-Measured on 2026-09-30: of 5,414 distinct uploads served in a day, 42 existed on the share
-alone. Retiring the share without them would answer those with 404s.
+The database is not the only thing holding upload URLs. The share also holds files no row
+points to: the originals of photos the old archiver moved to Azure (the row keeps
+`archived = 1` and loses its tusd id; about 39,000 Taken and Withdrawn posts), photos
+removed from posts, purged drafts and pending posts, and uploads never attached to
+anything, 234,711 files in all. They cannot be told apart by content, because the archive
+copy is re-encoded. Some are still fetched through the uploads vhost: partner sites keep
+the URLs (the `:8080` form), mail clients proxy the images in old digests, and link
+previews are cached. Measured on 2026-09-30: of 5,414 distinct uploads served in a day, 42
+existed on the share alone. Retiring the share without them would answer those with 404s,
+so they are all copied.
 
 So, after the verify, copy the share's remainder by listing it. Listing is safe once tusd
 no longer writes to the share; the monit `tusd-nfs-starvation` check only acts when tusd
