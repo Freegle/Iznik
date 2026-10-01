@@ -208,6 +208,11 @@ NFS server was healthy throughout - `nfsstat` and the admin UI both said so.)
 - If a whole-filesystem scan is unavoidable: `find / -xdev`, or `-path /srv/tusd-data -prune`.
 - monit (`ops/hosts/monit/batch-host/conf.d/tusd`) kills whatever is scanning once tusd is
   starved, so a process of yours vanishing mid-scan is that, not a crash.
+- Since tusd moved to the local spool (2026-09-28) it never opens the share, so a listing
+  starves nothing and monit has nothing to kill; the share is listed on purpose to copy
+  what no table references (`images:migrate-legacy --listing`). A listing still takes a
+  long time to yield its first entry: one `getdents()` on two million NFS entries is a
+  long chain of READDIRPLUS calls, so `find` printing nothing for ten minutes is normal.
 
 ## An image bucket that is not public fails through to "every new photo is missing"
 

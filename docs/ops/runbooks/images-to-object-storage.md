@@ -51,9 +51,9 @@ flowchart LR
 - **The migrator** (`images:migrate-legacy`) walks the eleven tables that hold upload
   ids by primary key, keeps a cursor per source in `image_store_migration`, and copies
   each referenced file that the bucket does not already hold at the right length. It
-  runs in short scheduled slices with a bandwidth cap, never lists the share (a listing
-  starves uploads) and never deletes from it. `--verify` re-walks and reports anything
-  missing.
+  runs in short scheduled slices with a bandwidth cap and never deletes from the share.
+  `--verify` re-walks and reports anything missing. `--listing=<file>` copies the files
+  named in a listing of the share instead, for what no table refers to (see below).
 
 Everything that decides where a file lives is in `frontend-nginx.conf` (the uploads
 vhost) and `iznik-batch/app/Services/ImageStore/`.
@@ -165,19 +165,48 @@ read chain; keeping it is harmless.
    Run it until it reports `finished`; it resumes from its own cursor. It must list
    nothing missing. Anything it does list is a row whose file is on neither store.
 
+## What the tables do not cover
+
+The database is not the only thing holding upload URLs. The share also holds files no row
+points to: the originals of photos the old archiver moved to Azure (the row keeps
+`archived = 1` and loses its tusd id; about 39,000 Taken and Withdrawn posts), photos
+removed from posts, purged drafts and pending posts, and uploads never attached to
+anything, 234,711 files in all. They cannot be told apart by content, because the archive
+copy is re-encoded. Some are still fetched through the uploads vhost: partner sites keep
+the URLs (the `:8080` form), mail clients proxy the images in old digests, and link
+previews are cached. Measured on 2026-09-30: of 5,414 distinct uploads served in a day, 42
+existed on the share alone. Retiring the share without them would answer those with 404s,
+so they are all copied.
+
+So, after the verify, copy the share's remainder by listing it. Listing is safe once tusd
+no longer writes to the share; the monit `tusd-nfs-starvation` check only acts when tusd
+threads are blocked on the directory, which they no longer are.
+
+```
+find /srv/tusd-data -maxdepth 1 -type f ! -name '*.info' -printf '%f\n' > share-files.txt
+docker cp share-files.txt freegledocker-batch-prod:/tmp/share-files.txt
+php artisan images:migrate-legacy --listing=/tmp/share-files.txt --time-budget=3600
+```
+
+Run it until it reports the listing complete; it keeps its cursor as the line number under
+the source `listing:share-files.txt`, visible in `--status`. Everything the tables already
+copied is counted `Already in store`, so the listing can include them. `--reset=listing:share-files.txt`
+starts it again.
+
 ## Retiring the share
 
-Only after a clean verify:
+Only after a clean verify and a complete listing copy:
 
 1. Remove the `@legacy_store` location and the `error_page 401 403 404 500 502 503 504 = @legacy_store`
    line from the uploads vhost in `frontend-nginx.conf`, both `/srv/tusd-data` binds
    from `docker-compose.override.edge.yml`, and the `tusd-legacy` volume and its mount
    from `docker-compose.yml`. Bring the edge services up again.
-2. Watch delivery for a day: a rise in 404s from the uploads vhost means a reference the
-   verify did not cover.
-3. Unmount the share on the host and delete the file storage volume in the cloud
-   console. Files the database did not reference (abandoned uploads, deleted posts) go
-   with it; nothing could reach them.
+2. Watch delivery for a day: a rise in 404s from the uploads vhost means a reference
+   neither the verify nor the listing covered.
+3. Remove the `tusd-nfs-starvation` monit check (`ops/hosts/monit/batch-host/conf.d/tusd`),
+   then unmount the share on the host and delete the file storage volume in the cloud
+   console. Only files the listing copy skipped go with it: `.info` bookkeeping, and
+   names that are not upload ids.
 
 ## What to expect on the bill
 
