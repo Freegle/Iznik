@@ -71,7 +71,12 @@ Add these next to `removeTNGroup()` (`app/Models/User.php:385`):
 - Instead, derive the old username from the user's TN email: `tnUsernameFromEmail()` on the preferred address.
 - On a real rename:
   - set `fullname = User::tnDisplayName($new)`;
-  - rewrite both email forms: `old-gNNN@…` → `new-gNNN@…` (the existing logic) **and** the bare `old@…` → `new@…` (new; this is the address the provisioner creates).
+  - **collapse the TN addresses to one bare `new@user.trashnothing.com`, dropping the `-gXXX` suffix.** This replaces the existing `"{$oldname}-"` → `"{$new}-"` rewrite, which kept the suffix:
+    - Remove every TN address for the old username, both `old-gNNN@user.trashnothing.com` and bare `old@user.trashnothing.com`, with `removeEmail()`, emitting the `user-email-rename` Loki event once per removed address (`old_email` → `new_email`).
+    - Add `User::tnEmailForUsername($new)` once with `addEmail()`. Make it `primary: 1` if any removed address was preferred, which is normally the case. It has to stay preferred, because `User::isTN()` reads the preferred address and `UserChangesSyncer` skips users for whom it returns false.
+    - Dropping the suffixed aliases is safe for inbound mail. TN still sends from `new-gNNN@` aliases, and `findUserByEmail`'s canon fallback reduces those to `new@usertrashnothingcom`, the same canon as the bare address. The Go partner sync's `EnsurePartnerIdentifiers` may re-attach a `new-gNNN` alias later, and that is harmless.
+    - If the bare `new@` address already belongs to a *different* user (`users_emails.email` is UNIQUE), leave this user's addresses untouched. Log `TN-SYNC-TRACE [NAME-CHANGE] … email-clash` and send the error to Sentry rather than throwing mid-change.
+    - Emit `TN-SYNC-TRACE [WRITE]` lines and honour `dryRun` throughout, as the existing code does.
 - If no TN email can be found, fall back to the current comparison.
 
 ### 5. Config, docs, tests
@@ -93,7 +98,7 @@ Add these next to `removeTNGroup()` (`app/Models/User.php:385`):
     - a duplicate-key race returns the existing user;
     - the API key does not appear in logs.
   - `GroupPostIngestionServiceTest`: update the unknown-user case near `:981` so an unknown `tn_user_id` with a faked TN response now creates the user and the post goes **Pending, reason `unmapped user`**. Add cases for the lookup-failure and clash reasons.
-  - `UserChangesSyncer` test: a prettified-`fullname` user with an unchanged username must not be renamed; a rename rewrites both the bare and the `-gNNN` addresses.
+  - `UserChangesSyncer` test: a prettified-`fullname` user with an unchanged username must not be renamed; a rename on a user holding `old-g123@` (preferred) and `old-g456@` ends with exactly one TN address, bare `new@user.trashnothing.com`, preferred, so `isTN()` stays true; a rename from a bare `old@` does the same; a non-TN address on the user is left alone; an email clash with another user leaves the addresses unchanged; dry run writes nothing.
   - `EmailApiParityTest` / `TnApiLokiParityTest`: if any fixture relies on the unknown-user drop, mark the divergence explicitly. Do not loosen the assertions.
   - A `User` helper unit test, with one Go/PHP parity example per transformation.
 
