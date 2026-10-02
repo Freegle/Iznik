@@ -233,6 +233,7 @@ describe('ModAdmin', () => {
         id: 1,
         subject: 'Test Admin',
         text: 'Test body',
+        sendafter: null,
         pending: true,
       })
     })
@@ -337,6 +338,34 @@ describe('ModAdmin', () => {
       await wrapper.vm.$nextTick()
       expect(wrapper.text()).not.toContain('copy of a suggested ADMIN')
       expect(wrapper.text()).toContain('Pat Mod')
+    })
+  })
+
+  describe('send after', () => {
+    it('shows the stored time and saves an edited one as ISO', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { sendafter: '2030-05-06T07:08:00Z' }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.sendafter).toMatch(/^2030-05-0[56]T\d\d:\d\d$/)
+
+      wrapper.vm.sendafter = '2031-02-03T04:05'
+      await wrapper.vm.save()
+
+      const params = mockAdminsStore.edit.mock.calls[0][0]
+      expect(params.sendafter).toBe(new Date('2031-02-03T04:05').toISOString())
+    })
+
+    it('clears the send-after time when the field is emptied', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { sendafter: '2030-05-06T07:08:00Z' }
+      )
+      wrapper.vm.sendafter = ''
+      await wrapper.vm.save()
+
+      expect(mockAdminsStore.edit.mock.calls[0][0].sendafter).toBeNull()
     })
   })
 })

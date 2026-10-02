@@ -313,4 +313,40 @@ class AdminMailTest extends TestCase
         $this->assertStringNotContainsString($guidance, $mail->adminText);
         $this->assertStringNotContainsString($guidance, $mail->envelope()->subject);
     }
+
+    private function subjectFor(array $overrides): string
+    {
+        $mail = new AdminMail($this->createTestUser(), $this->makeAdmin($overrides), 'Test Group');
+
+        return $mail->envelope()->subject;
+    }
+
+    public function test_essential_admin_subject_is_admin_prefixed(): void
+    {
+        $this->assertEquals('ADMIN: Rota change', $this->subjectFor(['subject' => 'Rota change', 'essential' => true]));
+    }
+
+    public function test_non_essential_admin_subject_is_newsletter_prefixed(): void
+    {
+        $this->assertEquals('NEWSLETTER: Spring news', $this->subjectFor(['subject' => 'Spring news', 'essential' => false]));
+    }
+
+    public function test_typed_prefix_is_never_doubled_in_subject(): void
+    {
+        $this->assertEquals('ADMIN: Rota change', $this->subjectFor(['subject' => 'ADMIN: Rota change', 'essential' => true]));
+        $this->assertEquals('ADMIN: Rota change', $this->subjectFor(['subject' => 'ADMIN Rota change', 'essential' => true]));
+        $this->assertEquals('NEWSLETTER: Spring news', $this->subjectFor(['subject' => 'ADMIN: Spring news', 'essential' => false]));
+        $this->assertEquals('NEWSLETTER: Spring news', $this->subjectFor(['subject' => 'NEWSLETTER: Spring news', 'essential' => false]));
+        $this->assertEquals('ADMIN: Rota change', $this->subjectFor(['subject' => 'NEWSLETTER Rota change', 'essential' => true]));
+    }
+
+    public function test_a_subject_merely_containing_admin_is_kept(): void
+    {
+        $this->assertEquals('ADMIN: Admin team meeting', $this->subjectFor(['subject' => 'Admin team meeting']));
+    }
+
+    public function test_marketing_template_subject_unchanged(): void
+    {
+        $this->assertEquals('ADMIN: Help us', $this->subjectFor(['subject' => 'ADMIN: Help us', 'template' => 'fundraising', 'essential' => false]));
+    }
 }

@@ -94,6 +94,11 @@ message body. Each community's copy shows that guidance in a highlighted box abo
 message, telling you how you might adapt the ADMIN for your community. It is only advice for
 you: it is never part of the email, and editing or approving your copy does not send it.
 
+The Create tab and each pending copy also have an optional **Send after** date and time. An
+approved ADMIN is held until then. Leave it empty to send as soon as it is approved. The email's
+subject line starts "ADMIN:" for an Essential message and "NEWSLETTER:" for a Newsletter one, and
+a prefix typed into the subject is not doubled.
+
 ## Logs and maps
 
 - **Logs** (`/logs`) is a searchable audit trail of moderation, tabbed by Messages and

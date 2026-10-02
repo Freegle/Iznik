@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -80,6 +81,21 @@ func addCreators(db *gorm.DB, admins []Admin) {
 			}
 		}
 	}
+}
+
+// normaliseSendAfter accepts ISO 8601 (e.g. "2006-01-02T15:04:05Z", or a browser datetime-local value)
+// and converts it to the MySQL DATETIME format ("2006-01-02 15:04:05") which strict mode requires.
+// Nil or empty means no send-after time, which is stored as NULL.
+func normaliseSendAfter(in *string) interface{} {
+	if in == nil || *in == "" {
+		return nil
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, *in); err == nil {
+			return t.UTC().Format("2006-01-02 15:04:05")
+		}
+	}
+	return *in
 }
 
 // GetAdmin handles GET /admin/:id - get a single admin by ID.
@@ -296,21 +312,7 @@ func PostAdmin(c *fiber.Ctx) error {
 			template = *req.Template
 		}
 
-		// Normalise sendafter: accept ISO 8601 (e.g. "2006-01-02T15:04:05Z") and
-		// convert to MySQL DATETIME format ("2006-01-02 15:04:05") which strict mode requires.
-		var sendAfter interface{}
-		if req.SendAfter != nil && *req.SendAfter != "" {
-			for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05"} {
-				if t, err := time.Parse(layout, *req.SendAfter); err == nil {
-					s := t.UTC().Format("2006-01-02 15:04:05")
-					sendAfter = s
-					break
-				}
-			}
-			if sendAfter == nil {
-				sendAfter = *req.SendAfter
-			}
-		}
+		sendAfter := normaliseSendAfter(req.SendAfter)
 
 		// Table()+map Create reads the generated id back from the same
 		// sql.Result the INSERT returned, under the map key "@id" - see
@@ -359,6 +361,8 @@ type PatchAdminRequest struct {
 	Essential     *bool   `json:"essential,omitempty"`
 	Template      *string `json:"template,omitempty"`
 	Editprotected *bool   `json:"editprotected,omitempty"`
+	// Sendafter is held raw so an explicit null or "" (clear it) can be told from absent.
+	Sendafter json.RawMessage `json:"sendafter,omitempty"`
 }
 
 // PatchAdmin handles PATCH /admin - update an admin.
@@ -423,6 +427,23 @@ func PatchAdmin(c *fiber.Ctx) error {
 		return heldByAnotherResponse(c, holder, name)
 	}
 
+	// Validate sendafter before changing anything. V1 allowed it to be set by PATCH; null or ""
+	// clears it.
+	var sendafterVal interface{}
+	sendafterSet := len(req.Sendafter) > 0
+	if sendafterSet {
+		var sa *string
+		if err := json.Unmarshal(req.Sendafter, &sa); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid sendafter")
+		}
+		sendafterVal = normaliseSendAfter(sa)
+		if str, ok := sendafterVal.(string); ok {
+			if _, err := time.Parse("2006-01-02 15:04:05", str); err != nil {
+				return fiber.NewError(fiber.StatusBadRequest, "Invalid sendafter")
+			}
+		}
+	}
+
 	if req.Subject != nil {
 		db.Table("admins").Where("id = ?", req.ID).Update("subject", *req.Subject)
 	}
@@ -457,6 +478,9 @@ func PatchAdmin(c *fiber.Ctx) error {
 	}
 	if req.Editprotected != nil {
 		db.Table("admins").Where("id = ?", req.ID).Update("editprotected", *req.Editprotected)
+	}
+	if sendafterSet {
+		db.Table("admins").Where("id = ?", req.ID).Update("sendafter", sendafterVal)
 	}
 
 	// Track who edited and when.

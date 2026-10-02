@@ -400,4 +400,23 @@ describe('admins.vue page', () => {
       expect(params).not.toHaveProperty('modguidance')
     })
   })
+
+  describe('send after', () => {
+    it('sends the chosen time as ISO, and nothing when left empty', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.groupidcreate = 5
+      wrapper.vm.subject = 'Subject'
+      wrapper.vm.body = 'Body'
+      await wrapper.vm.create()
+      expect(mockAdminsStore.add.mock.calls[0][0]).not.toHaveProperty(
+        'sendafter'
+      )
+
+      wrapper.vm.sendafter = '2031-02-03T04:05'
+      await wrapper.vm.create()
+      expect(mockAdminsStore.add.mock.calls[1][0].sendafter).toBe(
+        new Date('2031-02-03T04:05').toISOString()
+      )
+    })
+  })
 })

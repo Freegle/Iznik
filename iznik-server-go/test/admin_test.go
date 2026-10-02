@@ -693,3 +693,132 @@ func TestAnyGroupModeratorCanGetAnAdmin(t *testing.T) {
 
 	database.DBConn.Exec("DELETE FROM admins WHERE id = ?", adminID)
 }
+
+func patchAdmin(t *testing.T, token string, body string) int {
+	req := httptest.NewRequest("PATCH", "/api/modtools/admin?jwt="+token, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	return resp.StatusCode
+}
+
+func TestPatchAdminSetsAndClearsSendAfter(t *testing.T) {
+	prefix := uniquePrefix("adm_sendafter")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+	adminID := createTestAdmin(t, modID, groupID, "Sendafter "+prefix)
+	db := database.DBConn
+
+	count := func(where string) int64 {
+		var n int64
+		db.Raw("SELECT COUNT(*) FROM admins WHERE id = ? AND "+where, adminID).Scan(&n)
+		return n
+	}
+
+	assert.Equal(t, 200, patchAdmin(t, token, fmt.Sprintf(`{"id":%d,"sendafter":"2030-05-06T07:08:00Z"}`, adminID)))
+	assert.Equal(t, int64(1), count("sendafter = '2030-05-06 07:08:00'"))
+
+	// A browser datetime-local value without seconds or zone is accepted too.
+	assert.Equal(t, 200, patchAdmin(t, token, fmt.Sprintf(`{"id":%d,"sendafter":"2030-06-07T08:09"}`, adminID)))
+	assert.Equal(t, int64(1), count("sendafter = '2030-06-07 08:09:00'"))
+
+	// An edit that does not mention sendafter leaves it alone.
+	assert.Equal(t, 200, patchAdmin(t, token, fmt.Sprintf(`{"id":%d,"subject":"Other"}`, adminID)))
+	assert.Equal(t, int64(1), count("sendafter = '2030-06-07 08:09:00'"))
+
+	// Garbage is refused and changes nothing, including other fields in the same request.
+	assert.Equal(t, 400, patchAdmin(t, token, fmt.Sprintf(`{"id":%d,"subject":"Nope","sendafter":"next tuesday"}`, adminID)))
+	assert.Equal(t, int64(1), count("sendafter = '2030-06-07 08:09:00' AND subject = 'Other'"))
+
+	// null clears it.
+	assert.Equal(t, 200, patchAdmin(t, token, fmt.Sprintf(`{"id":%d,"sendafter":null}`, adminID)))
+	assert.Equal(t, int64(1), count("sendafter IS NULL"))
+
+	db.Exec("DELETE FROM admins WHERE id = ?", adminID)
+}
+
+func TestCreateAdminSendAfterAcceptsDatetimeLocal(t *testing.T) {
+	prefix := uniquePrefix("adm_sa_new")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	body := fmt.Sprintf(`{"groupid":%d,"subject":"SA %s","text":"x","sendafter":"2031-01-02T03:04"}`, groupID, prefix)
+	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+token, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	id := uint64(result["id"].(float64))
+
+	var n int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM admins WHERE id = ? AND sendafter = '2031-01-02 03:04:00'", id).Scan(&n)
+	assert.Equal(t, int64(1), n)
+	database.DBConn.Exec("DELETE FROM admins WHERE id = ?", id)
+}
+
+func deleteAdminStatus(t *testing.T, token string, id uint64) int {
+	req := httptest.NewRequest("DELETE", "/api/modtools/admin?jwt="+token, bytes.NewBufferString(fmt.Sprintf(`{"id":%d}`, id)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	return resp.StatusCode
+}
+
+func adminExists(id uint64) bool {
+	var n int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM admins WHERE id = ?", id).Scan(&n)
+	return n == 1
+}
+
+func TestDeleteAdminPermissions(t *testing.T) {
+	prefix := uniquePrefix("adm_delperm")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Moderator")
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+	_, memberToken := CreateTestSession(t, memberID)
+
+	otherGroup := CreateTestGroup(t, prefix+"_other")
+	otherModID := CreateTestUser(t, prefix+"_othermod", "User")
+	CreateTestMembership(t, otherModID, otherGroup, "Moderator")
+	_, otherModToken := CreateTestSession(t, otherModID)
+
+	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	_, supportToken := CreateTestSession(t, supportID)
+	adminUserID := CreateTestUser(t, prefix+"_sysadmin", "Admin")
+	_, sysadminToken := CreateTestSession(t, adminUserID)
+
+	// A plain member and a moderator of another group cannot delete it.
+	id := createTestAdmin(t, ownerID, groupID, "Del perm "+prefix)
+	assert.Equal(t, 403, deleteAdminStatus(t, memberToken, id))
+	assert.Equal(t, 403, deleteAdminStatus(t, otherModToken, id))
+	assert.True(t, adminExists(id))
+
+	// Support and Admin can delete any admin, without moderating its group.
+	assert.Equal(t, 200, deleteAdminStatus(t, supportToken, id))
+	assert.False(t, adminExists(id))
+
+	id = createTestAdmin(t, ownerID, groupID, "Del perm admin "+prefix)
+	assert.Equal(t, 200, deleteAdminStatus(t, sysadminToken, id))
+	assert.False(t, adminExists(id))
+
+	// Support and Admin can delete a system-wide admin (no group); a group moderator cannot.
+	database.DBConn.Exec("INSERT INTO admins (createdby, groupid, subject, text, created) VALUES (?, NULL, ?, 'x', NOW())", supportID, "Sys "+prefix)
+	var sysID uint64
+	database.DBConn.Raw("SELECT id FROM admins WHERE subject = ? ORDER BY id DESC LIMIT 1", "Sys "+prefix).Scan(&sysID)
+	_, ownerToken := CreateTestSession(t, ownerID)
+	assert.Equal(t, 403, deleteAdminStatus(t, ownerToken, sysID))
+	assert.True(t, adminExists(sysID))
+	assert.Equal(t, 200, deleteAdminStatus(t, supportToken, sysID))
+	assert.False(t, adminExists(sysID))
+
+	// The group's own moderator can delete it.
+	id = createTestAdmin(t, ownerID, groupID, "Del perm own "+prefix)
+	assert.Equal(t, 200, deleteAdminStatus(t, ownerToken, id))
+	assert.False(t, adminExists(id))
+}
