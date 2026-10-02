@@ -1,6 +1,6 @@
 Be careful!
 
-You've been talking to {{ $spammerName }}. Our checks suggest that this person might be a scammer/spammer.
+You've been talking to "{{ $spammerName }}". Our checks suggest that this person might be a scammer/spammer.
 @if(!empty($messageSubject))
 
 We think you were talking about: {{ $messageSubject }}
