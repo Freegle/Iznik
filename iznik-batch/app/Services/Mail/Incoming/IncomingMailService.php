@@ -2851,6 +2851,7 @@ class IncomingMailService
                 MessageGroup::where('msgid', $messageId)
                     ->where('groupid', $group->id)
                     ->where('needs_moderator', 0)
+                    ->where('locked_by_home', 0)
                     ->update([
                         'collection' => MessageGroup::COLLECTION_APPROVED,
                         'approvedat' => now(),
@@ -3425,6 +3426,7 @@ class IncomingMailService
      * - substance_regulated: UK regulated substances
      * - substance_reportable: UK reportable substances
      * - substance_medicine: Medicines/supplements
+     * - safeguarding: posts that may show where someone escaping abuse lives
      * - review / scam: Just needs looking at
      * - allowed: Exclusions (removed from text before checking)
      *

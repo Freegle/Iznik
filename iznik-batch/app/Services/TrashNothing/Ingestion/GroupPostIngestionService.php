@@ -392,6 +392,7 @@ class GroupPostIngestionService
             if (!$this->dryRun) {
                 MessageGroup::where('msgid', $messageId)
                     ->where('needs_moderator', 0)
+                    ->where('locked_by_home', 0)
                     ->update([
                         'collection' => MessageGroup::COLLECTION_APPROVED,
                         'approvedat' => now(),
