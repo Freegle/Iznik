@@ -4140,7 +4140,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const db = getDb()
       const dbOpenBugs = (db.prepare(`
         SELECT topic, post, reporter, excerpt, feature_area AS featureArea, topic_title AS topicTitle,
-               pr_rejections AS prRejections, symptom_tags AS symptomTagsJson
+               pr_rejections AS prRejections, symptom_tags AS symptomTagsJson, first_seen_at
         FROM discourse_bug
         WHERE state = 'open' AND pr_number IS NULL
       `).all() as Array<any>).filter(b => !fixedKeys.has(`${b.topic}.${b.post}`))
