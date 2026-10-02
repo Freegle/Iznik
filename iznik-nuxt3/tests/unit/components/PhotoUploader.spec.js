@@ -561,9 +561,12 @@ describe('PhotoUploader', () => {
       await wrapper.find('.featured-photo .rotate-btn').trigger('click')
       await flushPromises()
 
-      expect(mockImageStore.post).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 2, rotate: 90 })
-      )
+      // The rotation is held on the photo itself (and sent with the single submit
+      // call), so it applies to the photo shown, with no image round-trip.
+      expect(mockImageStore.post).not.toHaveBeenCalled()
+      const imgs = wrapper.findAll('.thumbnail .our-uploaded-image')
+      expect(imgs[0].attributes('data-rotate')).toBeUndefined()
+      expect(imgs[1].attributes('data-rotate')).toBe('90')
     })
 
     it('does not reorder when selecting first photo', async () => {
