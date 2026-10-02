@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-30
+last_reviewed: 2026-10-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
@@ -41,6 +41,10 @@ reply, you pick someone, and they collect. This guide walks through the whole th
 
 On a phone the steps are the same but split into photo, details, options and location
 screens.
+
+Occasionally, when Freegle is dealing with a wave of spam, new posts are held back for a
+while before they appear. Yours is not lost: it goes through the usual checks once the
+hold is lifted.
 
 ### Tips for a good OFFER
 
