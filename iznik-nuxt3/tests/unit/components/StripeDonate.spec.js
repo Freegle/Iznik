@@ -398,7 +398,7 @@ describe('StripeDonate', () => {
       expect(component.emitted('success')).toBeTruthy()
     })
 
-    it('emits error when confirmPayment fails', async () => {
+    it('shows an inline error, not the no-wallets fallback, when confirmPayment fails', async () => {
       const wrapper = await createWrapper({ price: 10 })
 
       const confirmCall = mockExpressCheckoutElement.on.mock.calls.find(
@@ -411,14 +411,39 @@ describe('StripeDonate', () => {
         error: { message: 'Payment failed' },
       })
 
-      await confirmCallback({ expressPaymentType: 'card' })
+      const paymentFailed = vi.fn()
+      await confirmCallback({ expressPaymentType: 'paypal', paymentFailed })
       await flushPromises()
 
       const component = wrapper.findComponent(StripeDonate)
-      expect(component.emitted('error')).toBeTruthy()
+      expect(component.emitted('error')).toBeFalsy()
+      expect(component.emitted('success')).toBeFalsy()
+      expect(paymentFailed).toHaveBeenCalled()
+      expect(component.text()).toContain('Payment failed')
     })
 
-    it('emits error when submit fails', async () => {
+    it('shows an inline error and does not throw when the intent cannot be created', async () => {
+      const wrapper = await createWrapper({ price: 10 })
+
+      const confirmCallback = mockExpressCheckoutElement.on.mock.calls.find(
+        (call) => call[0] === 'confirm'
+      )[1]
+
+      mockElements.submit.mockResolvedValue({})
+      mockDonationStore.stripeIntent = vi.fn(() =>
+        Promise.reject(new Error('boom'))
+      )
+
+      await confirmCallback({ expressPaymentType: 'google_pay' })
+      await flushPromises()
+
+      const component = wrapper.findComponent(StripeDonate)
+      expect(component.emitted('error')).toBeFalsy()
+      expect(mockStripeInstanceSpy.confirmPayment).not.toHaveBeenCalled()
+      expect(component.text()).toContain('Payment failed')
+    })
+
+    it('does not use the no-wallets fallback when submit fails', async () => {
       const wrapper = await createWrapper({ price: 10 })
 
       const confirmCall = mockExpressCheckoutElement.on.mock.calls.find(
@@ -434,7 +459,7 @@ describe('StripeDonate', () => {
       await flushPromises()
 
       const component = wrapper.findComponent(StripeDonate)
-      expect(component.emitted('error')).toBeTruthy()
+      expect(component.emitted('error')).toBeFalsy()
     })
   })
 

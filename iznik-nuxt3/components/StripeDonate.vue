@@ -316,10 +316,10 @@ onMounted(async () => {
 
       if (submitError) {
         console.error('Payment submit error')
-        Sentry.captureMessage('Stripe Express Checkout load error', {
+        Sentry.captureMessage('Stripe Express Checkout submit error', {
           extra: event,
         })
-        emit('error')
+        paymentFailed(event, submitError.message)
       } else if (!props.monthly) {
         // Create the PaymentIntent and obtain clientSecret
         console.log(
@@ -341,15 +341,22 @@ onMounted(async () => {
           console.log('stripeIntent returned:', res)
         } catch (e) {
           console.error('stripeIntent exception:', e)
-          console.error('Exception message:', e.message)
-          console.error('Exception stack:', e.stack)
-          throw e
+          Sentry.captureException(e, {
+            tags: { stripe_step: 'express_intent_error' },
+          })
+          paymentFailed(event)
+          return
         }
 
         const clientSecret = res?.clientSecret
         console.log('clientSecret:', clientSecret)
 
-        const { error } = await stripe.confirmPayment({
+        if (!clientSecret) {
+          paymentFailed(event)
+          return
+        }
+
+        const { error: confirmError } = await stripe.confirmPayment({
           // `elements` instance used to create the Express Checkout Element
           elements,
           // `clientSecret` from the created PaymentIntent
@@ -360,14 +367,14 @@ onMounted(async () => {
           redirect: 'if_required',
         })
 
-        console.log('Confirm payment returned', error)
+        console.log('Confirm payment returned', confirmError)
 
-        if (error) {
-          console.error('Confirm payment error', error)
+        if (confirmError) {
+          console.error('Confirm payment error', confirmError)
           Sentry.captureMessage('Confirm payment error', {
             extra: event,
           })
-          emit('error')
+          paymentFailed(event, confirmError.message)
         } else {
           // The payment UI is support to automatically close. But we have
           // seen a PayPal overlay persist, so remove that if it's present.
@@ -380,7 +387,7 @@ onMounted(async () => {
           emit('success')
         }
       } else {
-        const { error } = await stripe.confirmPayment({
+        const { error: subscriptionError } = await stripe.confirmPayment({
           // `Elements` instance that was used to create the Payment Element
           elements,
           confirmParams: {
@@ -388,15 +395,13 @@ onMounted(async () => {
           },
         })
 
-        if (error) {
-          console.error('Create subscription error', error)
+        if (subscriptionError) {
+          console.error('Create subscription error', subscriptionError)
           Sentry.captureMessage('Create subscription  error', {
             extra: event,
           })
 
-          error.value = error.message
-
-          emit('error')
+          paymentFailed(event, subscriptionError.message)
         } else {
           emit('success')
         }
@@ -405,6 +410,17 @@ onMounted(async () => {
   }
   loading.value = false
 })
+
+// A failure while paying (cancelled popup, declined card, intent error) is not the same as no wallet
+// being available. Every parent treats the 'error' event as "fall back to the PayPal button", which
+// hides the wallets and looks like a broken payment, so show the problem inline instead.
+function paymentFailed(event, message) {
+  error.value = message || 'Payment failed. Please try again.'
+
+  if (event && typeof event.paymentFailed === 'function') {
+    event.paymentFailed({ reason: 'fail' })
+  }
+}
 
 // Create payment intent on-demand if it wasn't ready at mount time (e.g., API error).
 async function ensureIntent() {
