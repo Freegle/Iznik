@@ -3780,6 +3780,21 @@
     }
    }
   },
+  "/message/submit": {
+   "put": {
+    "description": "Creates, attaches photos, joins the group and posts a complete message in a single request. Logged-out callers supply an email, which finds or creates the account and returns a JWT.",
+    "tags": [
+     "message"
+    ],
+    "summary": "Submit a complete post in one call",
+    "operationId": "submitMessage",
+    "responses": {
+     "200": {
+      "description": "Success"
+     }
+    }
+   }
+  },
   "/message/tn/{tnpostid}": {
    "patch": {
     "description": "Updates ALL Freegle messages sharing the given Trash Nothing post ID. A single TN post\ncan be submitted to multiple Freegle groups, each producing a separate Freegle message\nrow \u2014 this endpoint updates every one of them in a single call. Used by partner\nintegrations where the Freegle message ID is not yet known (e.g. post held for moderation).",
@@ -4672,6 +4687,21 @@
     }
    }
   },
+  "/modtools/messages/markchecked": {
+   "post": {
+    "description": "Marks the Checked or Trusted oversight bucket for a group as reviewed by the calling moderator.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Mark posts as checked",
+    "operationId": "markMessagesChecked",
+    "responses": {
+     "200": {
+      "description": "Success"
+     }
+    }
+   }
+  },
   "/modtools/modconfig": {
    "get": {
     "description": "Returns moderation configuration",
@@ -4762,6 +4792,21 @@
       "BearerAuth": []
      }
     ]
+   }
+  },
+  "/modtools/moderationstats": {
+   "get": {
+    "description": "Reports where posts went (auto-approved, trusted, manual) and the auto-publish error rate over a period.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Moderation statistics",
+    "operationId": "getModerationStats",
+    "responses": {
+     "200": {
+      "description": "Success"
+     }
+    }
    }
   },
   "/modtools/recommendations/stats": {

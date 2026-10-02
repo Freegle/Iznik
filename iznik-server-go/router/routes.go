@@ -57,6 +57,7 @@ import (
 	"github.com/freegle/iznik-server-go/membership"
 	"github.com/freegle/iznik-server-go/merge"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/moderation"
 
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
@@ -865,6 +866,7 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/locations", location.ExcludeLocation)
 
 		rg.Get("/modtools/messages", message.ListMessagesMT)
+		rg.Post("/modtools/messages/markchecked", message.MarkChecked)
 
 		// Message Sitemap
 		// @Router /message/sitemap [get]
@@ -1040,6 +1042,11 @@ func SetupRoutes(app *fiber.App) {
 		rg.Patch("/message/tn/:tnpostid", message.PatchMessageByTN)
 		rg.Put("/message", message.PutMessage)
 		rg.Delete("/message/:id", message.DeleteMessageEndpoint)
+
+		// Single-call compose: create + attach (inline) + join + post in one request.
+		// Additive — the multi-step PUT/POST(JoinAndPost)/POST(image) flow above is
+		// kept for edit/repost and backwards compatibility.
+		rg.Put("/message/submit", message.SubmitMessage)
 
 		// Bulk-offer ("clearance") logged-out update page: an external item-owner
 		// toggles item available/taken and edits counts via an unguessable secret
@@ -1474,6 +1481,8 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 401 {object} fiber.Error "Unauthorized"
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/email/deferrals", emailtracking.Deferrals)
+		// Moderation analytics for the auto-approve approach (Admin/Support only).
+		rg.Get("/modtools/moderationstats", moderation.Stats)
 
 		// Email Statistics Time Series (authenticated, admin only)
 		// @Router /email/stats/timeseries [get]

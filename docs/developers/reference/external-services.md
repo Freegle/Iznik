@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-28
+last_reviewed: 2026-10-02
 owner: Freegle dev team
 covers:
   - .env.example

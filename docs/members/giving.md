@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-30
+last_reviewed: 2026-10-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
@@ -37,7 +37,10 @@ reply, you pick someone, and they collect. This guide walks through the whole th
 5. **Confirm who you are.** If you are logged in this is filled in already. If not, enter
    your email. If that email already belongs to an account, we ask you to log in rather
    than create a duplicate.
-6. Click **Freegle it!** Your post goes live and starts reaching people nearby.
+6. Click **Freegle it!** Your post, photos included, is sent in one go and goes live (or
+   to a moderator first, if your community checks new posts) and starts reaching people
+   nearby. If you had to log in first, the post is sent automatically once you are logged
+   in, and you land on My Posts.
 
 On a phone the steps are the same but split into photo, details, options and location
 screens.

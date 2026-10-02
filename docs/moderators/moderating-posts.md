@@ -20,6 +20,13 @@ covers:
 Approving and tidying members' posts is the heart of moderation. This guide covers the
 queues, the actions, why posts get held, and how reports work.
 
+## Checked and Trusted
+
+Alongside Pending, **Messages > Checked** and **Messages > Trusted** are oversight queues of
+posts that went live without a moderator approving them: Checked holds posts auto-approved
+by the automated checks from members with no posting status set, and Trusted holds posts
+from trusted members. Look them over and use **Mark all as checked** to clear them.
+
 ## The pending queue
 
 ![The pending queue](assets/pending.png)
