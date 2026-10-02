@@ -65,6 +65,7 @@ import (
 	"github.com/freegle/iznik-server-go/noticeboard"
 	"github.com/freegle/iznik-server-go/notification"
 	"github.com/freegle/iznik-server-go/partnerships"
+	"github.com/freegle/iznik-server-go/supportai"
 	"github.com/freegle/iznik-server-go/recommendations"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/session"
@@ -1680,6 +1681,18 @@ func SetupRoutes(app *fiber.App) {
 		rg.Get("/housekeeper/tasks", housekeeper.ListTasks)
 		rg.Post("/housekeeper/tasks/:key/complete", housekeeper.CompleteTask)
 		rg.Get("/housekeeper/cronjobs", housekeeper.ListCronJobs)
+
+		// AI Support Helper runs and their thumbs up/down (Support/Admin only)
+		// @Router /supportai/runs [get]
+		// @Summary List AI Support Helper runs, most recent first
+		// @Tags supportai
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {array} supportai.ListedRun
+		rg.Get("/supportai/runs", supportai.List)
+		rg.Post("/supportai/runs", supportai.Record)
+		rg.Patch("/supportai/runs", supportai.Rate)
+		rg.Get("/supportai/runs/:id", supportai.Get)
 
 		// GDPR Data Export
 		rg.Post("/export", export.PostExport)

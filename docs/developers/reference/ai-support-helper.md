@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-29
+last_reviewed: 2026-10-02
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -17,6 +17,10 @@ covers:
   - iznik-server-go/userdump/loki.go
   - iznik-server-go/userdump/sentry.go
   - iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue
+  - claude-agent-sdk/run-record.js
+  - iznik-server-go/supportai/supportai.go
+  - iznik-nuxt3/modtools/components/ModSupportAIRating.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminSupportAI.vue
 ---
 
 # AI Support Helper
@@ -252,6 +256,40 @@ SMTP defaults to the local **mailpit** (`SUPPORT_SMTP_HOST`), so a referral sent
 developing lands at `mailpit.localhost` and never reaches the real geeks list; edge/prod
 points `SUPPORT_SMTP_*` at a real relay.
 
+## Run log and ratings
+
+Every question put to the helper is a **run**, kept in `support_ai_runs` so that answers that
+went badly can be found and the prompt or tools improved. A follow-up question is a run of its
+own; runs in one investigation share the Claude `sessionid`.
+
+- **What is kept.** The question, the answer, the status (an error run is kept too, so failures
+  show up as well as poor answers), the model, tokens, duration, and a transcript: the agent's
+  own text, each tool call with its input, and each tool result capped at 4,000 characters
+  (`run-record.js`). A transcript that would not fit loses its *oldest* steps, because the end is
+  where the answer was reached.
+- **Who records it.** `support-agent.js` sends the run to the Go API
+  (`POST /api/supportai/runs`, `iznik-server-go/supportai`) with the asking volunteer's own JWT,
+  because this container's database connection is a read-only grant. The volunteer is taken from
+  the JWT, never the body. Recording is best-effort: if it fails, the volunteer still gets the
+  answer, just with no rating buttons.
+- **Quota.** On a Claude subscription the run records the subscription's five-hour and seven-day
+  utilisation just before and just after, from `GET https://api.anthropic.com/api/oauth/usage`
+  (what `claude /usage` reads; undocumented). Anything else on the same subscription at the time
+  moves it too, so the difference is an upper bound, and the endpoint reports whole percent, so a
+  short run reads +0%. Metered API mode has no subscription quota, so those columns stay NULL;
+  NULL always means unknown, never zero.
+- **Rating.** The run id comes back in the `result` event, and `ModSupportAIRating.vue` puts a
+  thumbs up/down under the answer, then asks what was wrong (or anything worth noting). Clicking
+  the chosen thumb again clears it. Any Support or Admin volunteer can rate any run
+  (`PATCH /api/supportai/runs`), so a run can also be judged when it is reviewed later.
+- **Review.** ModTools **SysAdmin -> AI Helper** (`ModSysAdminSupportAI.vue`,
+  `/sysadmin?tab=aihelper`) lists runs most recent first, filterable to thumbs down, thumbs up or
+  not rated. Opening one fetches its transcript (`GET /api/supportai/runs/:id`); the list leaves
+  transcripts out because they can be large.
+
+All four endpoints are Support/Admin only, the same people who can use the helper. A run about a
+member is deleted with that member's account (`userid` cascades).
+
 ## Security controls
 
 - **Caller gate (`auth.js`)** — only `Support` and `Admin` systemroles may use it; a plain
@@ -281,9 +319,12 @@ points `SUPPORT_SMTP_*` at a real relay.
 ## Files
 
 - **Backend**: `claude-agent-sdk/` — `server.js` (SSE endpoint + CORS + auth gate),
-  `support-agent.js` (`query()` orchestration), `prompt.js` (system prompt + playbook,
+  `support-agent.js` (`query()` orchestration), `run-record.js` (run log, quota, transcript;
+  dependency-free so it is unit-tested in CI), `prompt.js` (system prompt + playbook,
   dependency-free so it is unit-tested in CI), `tools.js`
   (direct-access tools + guards + audit), `auth.js` (Support/Admin verification),
   `Dockerfile` / `entrypoint.sh`.
-- **Frontend**: `iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue`.
+- **Frontend**: `iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue`,
+  `ModSupportAIRating.vue` (thumbs), `ModSysAdminSupportAI.vue` (SysAdmin review).
+- **Go API**: `iznik-server-go/supportai/` (record, list, get, rate runs).
 - **Compose**: the `ai-support-helper` service in `docker-compose.yml` (profile `backend`).

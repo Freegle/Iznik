@@ -1393,6 +1393,8 @@ services:
     restart: "no"
     environment:
       - IZNIK_API_V2=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api
+      # The helper is reached through traefik, so its URL carries the worktree's port offset.
+      - AI_SUPPORT_URL=${AI_SUPPORT_URL:-http://ai-support-helper.localhost:${PORT_TRAEFIK_HTTP:-80}}
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
       - TUS_UPLOADER=http://tusd.localhost:${PORT_TRAEFIK_HTTP:-80}/tus/
       - IMAGE_BASE_URL=http://tusd:8080/tus
@@ -1449,6 +1451,8 @@ services:
     environment:
       # LIVE/Production APIs - REAL DATA!
       - IZNIK_API_V2=${LIVE_MT_API_V2:-https://api.ilovefreegle.org/apiv2}
+      # The helper is reached through traefik, so its URL carries the worktree's port offset.
+      - AI_SUPPORT_URL=${AI_SUPPORT_URL:-http://ai-support-helper.localhost:${PORT_TRAEFIK_HTTP:-80}}
       # Use production delivery and USER_SITE - local delivery won't work
       # from mobile devices since they can't resolve localhost hostnames
       - IMAGE_DELIVERY=https://delivery.ilovefreegle.org
