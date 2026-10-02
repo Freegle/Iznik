@@ -1604,7 +1604,7 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
-     * Negative memoization (Phase 0, plans/routing-performance-step-change.md): a definitive
+     * Negative memoization: a definitive
      * "not quicker" answer writes a rippling_proximity_checked marker, so the row is never
      * re-queried. Previously these rows were recomputed on every 5-minute run for the whole
      * 8-day candidate window (the 2026-07-06 group-21521 Sentry storm's standing tax).
@@ -4140,7 +4140,7 @@ class ExpandServiceTest extends TestCase
 
     /**
      * Every reach write must leave a verified sandwich-bounds row behind
-     * (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md): outer_bound ⊇ reach and
+     * (docs/developers/reference/rippling-algorithm.md section 11): outer_bound ⊇ reach and
      * inner_bound ⊆ reach (or NULL), derived from the FINAL stored grid.
      *
      * The check runs against the grid's bounding box (its header, no network):

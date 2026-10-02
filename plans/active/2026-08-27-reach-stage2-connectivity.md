@@ -1,6 +1,6 @@
 # Stage 2 build: connectivity-native reach (partition prototype → gate → engine)
 
-Date: 2026-08-27. Parent design: `plans/2026-08-27-reach-cost-redesign.md` stage 2.
+Date: 2026-08-27. Stage 2 of the reach cost redesign.
 Direction set by Edward: build stage 2 direct (skip stages 0/1/interim as standalone work),
 validate against prod data via the read-only tunnel. Adversarial review of the parent plan
 (23-agent run, same day) confirmed the cost diagnosis and recommended folding the degree-2
@@ -34,7 +34,7 @@ against today's cell answer (prod `rippling_reach.polygon_cells` via the tunnel)
 ## Design decisions
 
 **Contraction is partitioner prep, not a standalone stage-0.** Per-mode-safe rule from
-routing-performance-step-change.md §3: a node contracts only if, for EVERY mode with any
+the July routing design study: a node contracts only if, for EVERY mode with any
 usable incident edge, it is a pure pass-through between the same neighbour pair {a,b}
 (two-way both sides, or a consistent oneway through-pattern). Penalties are already inside
 edge Seconds at build time (graph.go builds them into the per-edge drive seconds), so

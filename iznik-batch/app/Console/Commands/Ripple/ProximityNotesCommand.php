@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Log;
  * yet have a rippling_proximity row, resolves P (nearest in-group point to the offer) and Q
  * (furthest in-group point from P) to place names, and stores them only when quicker=true.
  *
- * Negative memoization (Phase 0, plans/routing-performance-step-change.md): every DEFINITIVE
+ * Negative memoization: every DEFINITIVE
  * routing answer — note written, not quicker, or unreachable within budget — also writes a
  * checked-once-forever marker to rippling_proximity_checked, and marked rows are excluded from
  * future runs. Without this, "no note needed" rows (the majority) were recomputed every 5-minute

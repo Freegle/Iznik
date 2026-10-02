@@ -104,8 +104,8 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 		// only in the app-side check: N parallel requests all read the same stale value, all
 		// pass the check, and all UPDATE the same row — and with writes sprayed across the
 		// Galera hosts those same-row writes cause certification conflicts (387ms avg,
-		// ~197 DB-hours/10d — plans/2026-07-17-db3-cpu-reach-sql-prefilter.md, adjacent
-		// fix 1). With the guard, the racers match zero rows and are cheap no-ops. The
+		// ~197 DB-hours/10d on db3,
+		// July 2026). With the guard, the racers match zero rows and are cheap no-ops. The
 		// app-side staleness check is kept as a fast path only: it skips issuing the
 		// statement at all when the auth SELECT already saw a fresh value.
 		if userIdInJWT > 0 && userIdInDB.Id > 0 && (userIdInDB.Lastaccess.IsZero() || userIdInDB.Lastaccess.Before(time.Now().Add(-10*time.Minute))) {

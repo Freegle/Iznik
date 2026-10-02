@@ -1069,7 +1069,7 @@ rows, its latest row states its outcome.
   (Discourse 9933).
 
   The containment test itself is served through **sandwich bounds**
-  (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md): the exact polygons are grid-fill
+  (section 11): the exact polygons are grid-fill
   isochrones averaging ~11k vertices / 178 KB, so the hot queries first consult two small
   derived polygons stored as SAME-ROW columns on `rippling_reach` — `outer_bound` (a
   verified superset, NOT NULL and spatially indexed: outside it = definitely out) and
@@ -1930,3 +1930,50 @@ record. The evidence bit is frozen per reply in `rippling_reply_attribution.was_
 `ripple:backfill-reply-attribution` reconstructs it for older rows - re-reading a frozen
 `was_home_member` bit as `ripple_join` where the surviving membership shows that provenance, while
 leaving rows whose membership has since decayed away on their original answer.
+
+## 11. Sandwich bounds: the measured facts behind the design
+
+Section 7 describes how `outer_bound` and `inner_bound` serve the containment test. These are the
+measurements (prod db3, July 2026) that fixed its shape. They are why the obvious alternatives are
+not used.
+
+**Dead ends, do not retry:**
+
+- **A bounding-box or lat/lng prefilter.** The spatial R-tree already is one, and is used. No stored
+  box beats the polygon's own MBR.
+- **Lossless vertex reduction.** `ST_Simplify` at tolerances from 1e-10 to 1e-5 removes no
+  vertices: every vertex of a grid-fill isochrone is a change of direction.
+- **Lossy `ST_Simplify` as the stored reach.** Unsafe. At 0.005 degrees it bridges the Thames at
+  Gravesend and gains the north bank. The tolerance is in degrees because the coordinates are
+  lng/lat labelled SRID 3857, and the Thames there is 0.007-0.012 degrees wide. Simplification may
+  only ever produce a bound, never the answer.
+- **Asking the routing server per request.** Correct at barriers, but 1.8 s at 30 minutes and 14.7 s
+  at 60, against 0.26 s for the whole SQL query.
+
+**MySQL executor facts that dictate the query shape:**
+
+1. `AND` conjuncts run cheap-first, and a BLOB is fetched lazily per stage, so a failing cheap
+   conjunct means the polygon is never read.
+2. Inside a single `OR`, `CASE` or `IF`, any reference to the polygon column fetches it for every
+   evaluated row (2.10 s against 2.3 ms over 8,129 rows). Laziness does not cross expression items.
+3. A correlated `EXISTS (... polygon ...)` inside an `OR` is lazy. It is the only safe place for the
+   exact polygon.
+4. `MBRContains(bound, point)` drives the R-tree from the index alone.
+
+**Rules for anything that writes a reach:**
+
+- Any shrink of the polygon (both `ST_Difference` clip paths) must shrink or NULL `inner_bound` in
+  the same statement. A stale inner bound accepts viewers in an area just clipped out, which is the
+  same class of error as a Thames leak. A stale outer bound is only loose, which is safe.
+- The wholly-within DELETE after a rejected-group clip stays keyed on the exact polygon, not
+  `outer_bound`: `ST_Within(outer, G)` is stricter and would stop the secondary clip firing.
+- Verify at write time that `ST_Contains(outer, polygon) = 1` and `ST_Contains(polygon, inner) = 1`.
+  Anything else, including an error on invalid geometry, falls back to the envelope as outer and
+  NULL as inner, which is always correct.
+
+**Do not prune `rippling_reach` rows for completed posts,** either by deleting them or by
+degenerating the polygon. A deleted row is recreated by `initialiseNew`'s anti-join on the next
+expand, churning and corrupting `created_at`. A degenerate polygon hides "came and went" posts in the
+digest, holds every reply to a taken rippled post, and leaves a post that is reopened (which happens
+automatically) invisible with no repair path. Completed posts are pruned instead by driving browse
+from the `outer_bound` index, whose arms all filter `successful = 0`.
