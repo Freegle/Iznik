@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
- * Sandwich bounds for the stored reach grid (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md;
+ * Sandwich bounds for the stored reach grid (docs/developers/reference/rippling-algorithm.md section 11;
  * derived from polygon_cells via the spatial server's trace since the raster storage change).
  *
  * The invariants under test are the ones that make the bounds safe to consult

@@ -146,7 +146,7 @@ const props = defineProps({
   },
 })
 
-/* Guidance for the substance categories, in one place because the same three
+/* Guidance for the substance categories (and safeguarding), in one place because the same
    cases arrive by two routes - a real-time worry word (typed Regulated /
    Reportable / Medicine) and a stored content check (categorised) - and used to
    be worded differently in each, so the same post read differently depending on
@@ -165,6 +165,13 @@ const SUBSTANCE_COPY = {
     label: 'Medicine or drug',
     body: "This post might contain a drug, medicine or supplement, which isn't allowed on Freegle.",
   },
+  /* Not a rule being broken: a post that may show where somebody escaping abuse lives. The
+     flag keeps it Pending so a moderator checks the location first; once approved it ripples
+     like any other post (Discourse 9808/835). */
+  safeguarding: {
+    label: 'Safeguarding',
+    body: "This post may show where someone escaping abuse lives. Before approving, check the location. Suggest the poster uses a public place or just the town, and doesn't name the service.",
+  },
 }
 
 /* worrywords.type names the same three cases as the stored categories. */
@@ -172,6 +179,7 @@ const WORRY_TYPE_CATEGORY = {
   Regulated: 'substance_regulated',
   Reportable: 'substance_reportable',
   Medicine: 'substance_medicine',
+  Safeguarding: 'safeguarding',
 }
 
 function substanceCopy(category) {

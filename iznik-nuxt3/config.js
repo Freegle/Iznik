@@ -6,6 +6,18 @@ const CONFIG = {
   IS_MT: process.env.MT === 'true', // For MT set in modtools/nuxt.config.ts
   APP_ENV: process.env.APP_ENV,
   NODE_ENV: process.env.NODE_ENV,
+
+  // Sentry environment. An explicit ENVIRONMENT wins; otherwise CI builds are
+  // 'ci', production builds (nuxt build/generate, which includes the app) are
+  // 'production' and the dev server is 'dev'. Without this every build,
+  // including the app in members' hands, reported itself to Sentry as 'dev'.
+  ENVIRONMENT:
+    process.env.ENVIRONMENT ||
+    (process.env.CIRCLECI
+      ? 'ci'
+      : process.env.NODE_ENV === 'production'
+        ? 'production'
+        : 'dev'),
   USE_COOKIES: process.env.USE_COOKIES === 'True', // 'True' or 'False'
 
   // Go API for all operations.

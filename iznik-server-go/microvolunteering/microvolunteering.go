@@ -983,6 +983,15 @@ func reopenMicrovolunteerCheck(db *gorm.DB, msgid uint64) {
 // A caller that writes its own, fuller log for some groups lists them in alreadyLogged.
 // Returns the groups whose copy was flipped.
 func SendForReviewAllGroups(db *gorm.DB, msgid uint64, reason string, byuser *uint64, alreadyLogged []uint64) []uint64 {
+	return SendForReviewAllGroupsWithRippledReason(db, msgid, reason, "", byuser, alreadyLogged)
+}
+
+// SendForReviewAllGroupsWithRippledReason is SendForReviewAllGroups where a rippled-in copy
+// is told a different reason (stored on the copy and written to its log) from the home
+// copies: a moderator of the home community pulled the post back, and the receiving
+// communities are told it was the home community. rippledReason "" means the same reason
+// everywhere.
+func SendForReviewAllGroupsWithRippledReason(db *gorm.DB, msgid uint64, reason string, rippledReason string, byuser *uint64, alreadyLogged []uint64) []uint64 {
 	if msgid == 0 {
 		return nil
 	}
@@ -998,6 +1007,22 @@ func SendForReviewAllGroups(db *gorm.DB, msgid uint64, reason string, byuser *ui
 	db.Table("messages_groups").Where("msgid = ? AND collection = ?", msgid, utils.COLLECTION_APPROVED).
 		Updates(map[string]interface{}{"collection": utils.COLLECTION_PENDING, "spamreason": reason})
 
+	var rippledGroups []uint64
+	if rippledReason != "" {
+		db.Table("messages_groups").Select("groupid").
+			Where("msgid = ? AND groupid IN ? AND rippled_in = 1", msgid, flipped).
+			Scan(&rippledGroups)
+		if len(rippledGroups) > 0 {
+			db.Table("messages_groups").
+				Where("msgid = ? AND groupid IN ?", msgid, rippledGroups).
+				Update("spamreason", rippledReason)
+		}
+	}
+	isRippled := map[uint64]bool{}
+	for _, gid := range rippledGroups {
+		isRippled[gid] = true
+	}
+
 	var fromuser uint64
 	db.Table("messages").Select("fromuser").Where("id = ?", msgid).Scan(&fromuser)
 
@@ -1011,6 +1036,9 @@ func SendForReviewAllGroups(db *gorm.DB, msgid uint64, reason string, byuser *ui
 		}
 		g := gid
 		text := reason
+		if isRippled[gid] {
+			text = rippledReason
+		}
 		flog.Log(flog.LogEntry{
 			Byuser:  byuser,
 			Type:    flog.LOG_TYPE_MESSAGE,

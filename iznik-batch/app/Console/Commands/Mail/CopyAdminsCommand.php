@@ -111,6 +111,9 @@ class CopyAdminsCommand extends Command
                     'essential' => $admin->essential,
                     'editprotected' => $admin->editprotected,
                     'template' => $admin->template,
+                    // Guidance for local mods travels with the copy so they see it when reviewing.
+                    // It is its own column and is never merged into subject or text.
+                    'modguidance' => $admin->modguidance,
                 ]);
 
                 $copied++;

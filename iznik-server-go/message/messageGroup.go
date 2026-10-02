@@ -73,6 +73,12 @@ type MessageGroup struct {
 	// populateAutomodDecisions in autoapproveat.go). nil for everyone else, and for a
 	// group with no messages_automod row yet (not run, or not on an automod path).
 	Automod *AutomodDecision `json:"automod,omitempty" gorm:"-"`
+
+	// LockedByHome is stored 1 on a rippled-in copy pulled back by a moderator of the post's
+	// home community. In the payload it is the EFFECTIVE lock (effectiveHomeLocks): still 1
+	// only while the home copy exists and is not Approved, so ModTools can say the home
+	// community is reviewing the post and that this copy cannot be approved yet.
+	LockedByHome uint8 `json:"locked_by_home"`
 }
 
 // AutomodDecision is the automod flowchart's stored decision for one (msgid, groupid),
@@ -88,6 +94,26 @@ type AutomodDecision struct {
 	Created time.Time       `json:"created"`
 }
 
+// effectiveHomeLocks clears LockedByHome on every row that is not actually blocked: a lock
+// only holds while an undeleted home row (rippled_in = 0) exists and is not Approved. Once
+// the home copy is approved, or gone, the stored flag is a leftover and means nothing.
+// Rows are expected to be a post's undeleted messages_groups rows.
+func effectiveHomeLocks(groups []MessageGroup) {
+	homePending := false
+	for _, g := range groups {
+		if g.RippledIn == 0 && g.Collection != "Approved" {
+			homePending = true
+			break
+		}
+	}
+
+	for i := range groups {
+		if groups[i].LockedByHome == 1 && (!homePending || groups[i].RippledIn == 0) {
+			groups[i].LockedByHome = 0
+		}
+	}
+}
+
 // modMessagingAllowed reduces a post's group rows to the one message-level answer the
 // moderation UI needs: may this post's poster be talked to at all?
 //
@@ -96,18 +122,6 @@ type AutomodDecision struct {
 // unaddressed origin. A post with no origin row among the rows supplied reads as allowed -
 // the safe direction, since everything this gates removes moderator abilities.
 func modMessagingAllowed(groups []MessageGroup) bool {
-	for _, g := range groups {
-		if g.RippledIn == 0 && !g.ModMessagingAllowed {
-			return false
-		}
-	}
-
-	return true
-}
-
-// listModMessagingAllowed is modMessagingAllowed for the mod queue's leaner group rows.
-// Same rule, different struct - the queue carries only the handful of columns it renders.
-func listModMessagingAllowed(groups []MessageGroupInfo) bool {
 	for _, g := range groups {
 		if g.RippledIn == 0 && !g.ModMessagingAllowed {
 			return false

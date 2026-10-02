@@ -302,7 +302,7 @@ class ReachServiceTest extends TestCase
     public function test_catchment_geometry_parses_polygon_and_sandwich_bounds(): void
     {
         // The routing server ships sandwich bounds alongside the exact catchment
-        // (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md); catchmentGeometry exposes
+        // (docs/developers/reference/rippling-algorithm.md section 11); catchmentGeometry exposes
         // all three as WKT for the reach writers.
         Http::fake(['*catchment*' => Http::response([
             'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),

@@ -700,4 +700,40 @@ class SendAdminCommandTest extends TestCase
 
         Mail::assertNothingSent();
     }
+
+    /**
+     * Test: Moderator guidance stored on an admin is never sent to members.
+     */
+    public function test_moderator_guidance_is_not_sent_to_members(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['lastaccess' => now()]);
+        $this->createMembership($user, $group);
+
+        $guidance = 'GUIDANCE-FOR-MODS-ONLY adapt this for your area';
+        $adminId = $this->createAdmin($group, ['modguidance' => $guidance]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])->assertSuccessful();
+
+        $checked = false;
+        Mail::assertSent(AdminMail::class, function (AdminMail $mail) use ($guidance, &$checked) {
+            $html = $mail->render();
+            $text = view('emails.text.admin.admin', $mail->buildViewData())->render();
+
+            $this->assertStringContainsString('This is a test admin message.', $html);
+            $this->assertStringNotContainsString($guidance, $html);
+            $this->assertStringNotContainsString($guidance, $text);
+            $this->assertStringNotContainsString($guidance, $mail->adminText);
+            $checked = true;
+
+            return true;
+        });
+        $this->assertTrue($checked);
+
+        // Sending must not touch the guidance column.
+        $this->assertEquals($guidance, DB::table('admins')->where('id', $adminId)->value('modguidance'));
+    }
 }

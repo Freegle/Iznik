@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-27
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 covers:
   - iznik-batch/config/freegle.php
@@ -56,6 +56,8 @@ variables like every other Freegle setting.
 | `automod.timeout` | `AUTOMOD_TIMEOUT` | `60` | Seconds to wait for one decision. One call answers every question about a post, and the frontier model takes 10 to 20 seconds; a decision that times out is stored as a hold and tried again after five minutes. |
 | `autoapprove.delay_minutes`, `autoapprove.danger_log_days` | `FREEGLE_AUTOAPPROVE_DELAY_MINUTES`, `FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS` | `20`, `90` | Blank or zero means the default, because docker-compose passes an unset variable as an empty string. |
 | `cookieyes.enabled` | `COOKIEYES_ENABLED` | `true` | Off, the weekly `cookieyes:check` is not scheduled. For a deployment with no CookieYes account, which would otherwise fail and email every week. See [cookieyes-watchdog.md](cookieyes-watchdog.md). |
+| `image_store.enabled` | `IMAGE_STORE_ENABLED` | `false` | On, `images:push-spool` runs every minute, moving completed tusd uploads from the local spool to the `images` S3 disk. Off, uploads stay in the spool and are served from there, which is how a deployment without a bucket runs. Turn on only after `images:object-store-check` passes; see [the runbook](../../ops/runbooks/images-to-object-storage.md). |
+| `image_store.migrate_enabled` | `IMAGE_STORE_MIGRATE_ENABLED` | `false` | On (with the above), `images:migrate-legacy` runs every five minutes for `IMAGE_STORE_MIGRATE_TIME_BUDGET` seconds, copying legacy uploads into the bucket at up to `IMAGE_STORE_MIGRATE_MAX_MBPS`. Only meaningful for a deployment with an older store to drain; Freegle turns it off after a clean `--verify`. |
 | `backup.drain.enabled` | `BACKUP_DRAIN_ENABLED` | `false` | Holds batch work off while the nightly database backup runs. Off ships as a no-op. See below. |
 | `backup.drain.start` | `BACKUP_DRAIN_START` | `03:50` | When the hold starts, `HH:MM` in the app timezone. Anything that is not a valid `HH:MM` leaves the drain off rather than holding the schedule back for ever. |
 | `backup.drain.minutes` | `BACKUP_DRAIN_MINUTES` | `45` | How long the hold lasts. Zero or negative leaves it off, on the same reasoning. |

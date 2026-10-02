@@ -584,8 +584,14 @@ watch(zoom, (newVal) => {
 // padding, so the map frames what's actually visible - and zooms in as the
 // distance slider is pulled in. No-op if the map isn't ready or nothing has
 // coordinates.
+//
+// Also a no-op once the view has been moved (dragged, a place searched, a community
+// chosen). From then on the posts shown come from a fetch within the map's own bounds,
+// so fitting the map to them changes the bounds and fetches again. Each padded fit
+// widened the view, and a search zoomed out in steps to the whole country
+// (Discourse 10091).
 function fitToShownMarkers() {
-  if (!mapObject.value) return
+  if (!mapObject.value || moved.value) return
   const latlngs = messagesForMap.value
     .filter((m) => m.lat != null || m.lng != null)
     .map((m) => [m.lat, m.lng])

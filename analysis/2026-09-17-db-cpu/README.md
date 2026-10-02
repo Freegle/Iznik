@@ -1,7 +1,7 @@
 # DB CPU profiling harness
 
-Used for `plans/2026-09-17-db2-db3-cpu.md`, and the same method as
-`plans/2026-09-02-db2-cpu-reduction.md`.
+Used for the September 2026 db2/db3 measurement rounds; what they found and has not been fixed
+is in `plans/2026-09-29-perf-backlog.md`.
 
 Copy the three scripts to `/root/` on a db node and start each with `setsid … &`. They write to
 `/root/plsample/`. Pull the TSVs back and rank them with `analyse.mjs`. **Do not commit the TSVs**

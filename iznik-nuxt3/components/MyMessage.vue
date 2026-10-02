@@ -329,7 +329,7 @@
                   @click.stop="outcome('Taken', $event)"
                 >
                   <v-icon icon="check" />
-                  <span>TAKEN</span>
+                  <span>Mark as TAKEN</span>
                 </button>
                 <button
                   v-if="message.type === 'Wanted' && !received && !withdrawn"
@@ -338,7 +338,7 @@
                   @click.stop="outcome('Received', $event)"
                 >
                   <v-icon icon="check" />
-                  <span>RECEIVED</span>
+                  <span>Mark as RECEIVED</span>
                 </button>
                 <button
                   v-if="
@@ -416,7 +416,7 @@
                 @click="outcome('Taken', $event)"
               >
                 <v-icon icon="check" />
-                <span>TAKEN</span>
+                <span>Mark as TAKEN</span>
               </button>
               <button
                 v-if="message.type === 'Wanted' && !received && !withdrawn"
@@ -424,7 +424,7 @@
                 @click="outcome('Received', $event)"
               >
                 <v-icon icon="check" />
-                <span>RECEIVED</span>
+                <span>Mark as RECEIVED</span>
               </button>
               <button
                 v-if="isPromised && !taken && !received && !withdrawn"
@@ -1374,7 +1374,7 @@ onMounted(async () => {
 .desktop-actions {
   display: flex;
   gap: 5px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   margin-top: auto;
   padding-top: 8px;
   border-top: 1px solid $color-gray--lighter;

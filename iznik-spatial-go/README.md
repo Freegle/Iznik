@@ -81,6 +81,9 @@ trusted callers (`iznik-routing-go`, `apiv2`, batch).
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | `{"status":"ok"}` |
+| `GET` | `/v1/{dataset}/knn?lat=&lng=&limit=&type=&polygon=` | Nearest records to a point. `limit` 1–1000 (default 1); optional `type` filter; optional WKT `polygon` to restrict results |
+| `GET` | `/v1/{dataset}/containing?lng=&lat=` | Reach raster containment: which live reaches cover the point (`reach` dataset only) |
+| `POST` | `/v1/{dataset}/within_coords` | Full items **with coordinates** inside a WKT polygon (no centre-distance bias). Polygon in the request body avoids URL-length limits for big isochrone polygons. Body may be raw WKT (`text/plain`) or `polygon=WKT` (`application/x-www-form-urlencoded`) |
 | `GET` | `/api?q=&bbox=&layer=&lat=&lon=&zoom=&limit=` | Photon-compatible UK place search (see **Place search** below). This one **is** exposed publicly: production nginx proxies `geocode.ilovefreegle.org` to it, and it answers its own CORS |
 | `GET` | `/v1/datasets` | All datasets with name, record count, readiness |
 | `GET` | `/v1/{dataset}/status` | Readiness, row count, last sync time for one dataset |
@@ -98,12 +101,11 @@ A separate listener for maintenance operations — keep it off the public networ
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/v1/{dataset}/rebuild` | Trigger an async full rebuild of one dataset from MySQL (HTTP 409 if already rebuilding) |
-| `POST` | `/v1/rebuild` | Trigger an async full rebuild of **every** dataset |
 | `POST` | `/v1/{dataset}/remove` | Incremental hard-delete of specific record IDs. Body: `{"ids":[...]}` |
 
-**Response shape:** all query endpoints return `{"results":[...]}` (KNN /
-within_coords) or `{"ids":[...]}` (within). The legacy `{"locationid":N}` shape is
-**deprecated**; callers should use `?limit=1` and read `results[0].id`.
+**Response shape:** all query endpoints return `{"results":[...]}`. The legacy
+`{"locationid":N}` shape is **deprecated**; callers should use `?limit=1` and
+read `results[0].id`.
 
 **Polygon limits:** WKT polygons are capped at 100 KB and 10 000 vertices (HTTP
 400 if exceeded).
@@ -138,7 +140,7 @@ schedules:
   datasets with a "modified"/timestamp trigger; a periodic full rebuild (every
   **15 min**) for the rebuild-only datasets (`userapproxlocs`, `groups`).
 
-`last_sync` for each dataset is visible via `GET /v1/{dataset}/status`.
+Sync state is logged at startup and on each rebuild/delta cycle.
 
 ---
 

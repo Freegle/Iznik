@@ -47,6 +47,11 @@ vi.mock('~/stores/misc', () => ({
   useMiscStore: () => ({ modtools: false }),
 }))
 
+const mockAuth = { user: null }
+vi.mock('~/stores/auth', () => ({
+  useAuthStore: () => mockAuth,
+}))
+
 describe('user store', () => {
   let useUserStore
 
@@ -242,6 +247,43 @@ describe('user store', () => {
 
     it('does nothing for empty list', async () => {
       await store.fetchMultiple([])
+      expect(mockFetchMultiple).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('fetch', () => {
+    let store
+
+    beforeEach(() => {
+      store = useUserStore()
+      store.init({ public: {} })
+      mockAuth.user = null
+    })
+
+    it('returns a cached user without fetching', async () => {
+      store.list[5] = { id: 5, displayname: 'Cached' }
+      const result = await store.fetch(5)
+      expect(result.displayname).toBe('Cached')
+      expect(mockFetchMultiple).not.toHaveBeenCalled()
+    })
+
+    // The page is rendered on the server, logged out, so a Trash Nothing member
+    // arrives with their name and photo withheld. Once logged in, that copy is stale.
+    it('refetches a redacted user once logged in', async () => {
+      store.list[5] = { id: 5, displayname: 'A freegler', redacted: true }
+      mockAuth.user = { id: 1 }
+      mockFetchMultiple.mockResolvedValue([{ id: 5, displayname: 'Real Name' }])
+
+      const result = await store.fetch(5)
+
+      expect(mockFetchMultiple).toHaveBeenCalledWith([5], false)
+      expect(result.displayname).toBe('Real Name')
+    })
+
+    it('keeps a redacted user while logged out', async () => {
+      store.list[5] = { id: 5, displayname: 'A freegler', redacted: true }
+      const result = await store.fetch(5)
+      expect(result.displayname).toBe('A freegler')
       expect(mockFetchMultiple).not.toHaveBeenCalled()
     })
   })

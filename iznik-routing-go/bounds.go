@@ -2,7 +2,7 @@ package main
 
 import "math"
 
-// Sandwich bounds for a catchment polygon (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md).
+// Sandwich bounds for a catchment polygon (docs/developers/reference/rippling-algorithm.md section 11).
 //
 // The exact isochrone polygon is a grid-fill outline averaging thousands of vertices;
 // the reach containment queries in MySQL consult two SMALL conservative polygons first

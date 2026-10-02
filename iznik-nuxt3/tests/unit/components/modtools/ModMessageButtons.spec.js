@@ -330,6 +330,58 @@ describe('ModMessageButtons', () => {
     })
   })
 
+  describe('copy locked by the home community', () => {
+    it('shows Approve on a pending copy that is not locked', () => {
+      const wrapper = mountComponent(
+        { groupid: 456 },
+        {
+          groups: [{ groupid: 456, collection: 'Pending', locked_by_home: 0 }],
+        }
+      )
+      expect(wrapper.find('.mod-message-button.approve').exists()).toBe(true)
+    })
+
+    it('hides Approve on a pending copy locked by the home community', () => {
+      const wrapper = mountComponent(
+        { groupid: 456 },
+        {
+          groups: [{ groupid: 456, collection: 'Pending', locked_by_home: 1 }],
+        }
+      )
+      expect(wrapper.find('.mod-message-button.approve').exists()).toBe(false)
+      // Reject and Hold stay: only approving is withdrawn.
+      expect(wrapper.find('.mod-message-button.reject').exists()).toBe(true)
+      expect(wrapper.find('.mod-message-button.hold').exists()).toBe(true)
+    })
+
+    it('only the locked group is affected when the post is on several', () => {
+      const groups = [
+        { groupid: 456, collection: 'Pending', locked_by_home: 1 },
+        { groupid: 789, collection: 'Pending', locked_by_home: 0 },
+      ]
+      expect(
+        mountComponent({ groupid: 789 }, { groups })
+          .find('.mod-message-button.approve')
+          .exists()
+      ).toBe(true)
+      expect(
+        mountComponent({ groupid: 456 }, { groups })
+          .find('.mod-message-button.approve')
+          .exists()
+      ).toBe(false)
+    })
+
+    it('does not offer an Approve standard message while locked', () => {
+      const wrapper = mountComponent(
+        { groupid: 456 },
+        {
+          groups: [{ groupid: 456, collection: 'Pending', locked_by_home: 1 }],
+        }
+      )
+      expect(wrapper.vm.validActions).not.toContain('Approve')
+    })
+  })
+
   describe('approved message buttons', () => {
     it('shows leave (blank reply) button for approved messages', () => {
       const wrapper = mountComponent(

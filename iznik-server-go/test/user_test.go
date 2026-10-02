@@ -1856,6 +1856,11 @@ func TestLimboUserSelf(t *testing.T) {
 	var deleted *string
 	db.Raw("SELECT deleted FROM users WHERE id = ?", userID).Scan(&deleted)
 	assert.NotNil(t, deleted)
+
+	// Verify session was destroyed — mirroring handleForget (session/session.go).
+	var sessionCount int64
+	db.Raw("SELECT COUNT(*) FROM sessions WHERE userid = ?", userID).Scan(&sessionCount)
+	assert.Equal(t, int64(0), sessionCount, "Self-delete must destroy the user's session")
 }
 
 func TestLimboUserAdmin(t *testing.T) {
@@ -1917,6 +1922,11 @@ func TestLimboUserSelfDelete(t *testing.T) {
 	var taskCount int64
 	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'user_forget' AND JSON_EXTRACT(data, '$.user_id') = ?", userID).Scan(&taskCount)
 	assert.Equal(t, int64(0), taskCount, "Self-delete must not queue a forget task — user has 14-day grace period")
+
+	// Verify session was destroyed — mirroring handleForget (session/session.go).
+	var sessionCount int64
+	db.Raw("SELECT COUNT(*) FROM sessions WHERE userid = ?", userID).Scan(&sessionCount)
+	assert.Equal(t, int64(0), sessionCount, "Self-delete must destroy the user's session")
 }
 
 func TestLimboUserNotAdmin(t *testing.T) {
@@ -5327,4 +5337,39 @@ func TestPostUserMergeByIdKeptUserWithoutEmailInheritsBest(t *testing.T) {
 	var preferredCount int64
 	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND preferred = 1", user2ID).Scan(&preferredCount)
 	assert.Equal(t, int64(1), preferredCount, "exactly one preferred email after the merge")
+}
+
+// Freegle's own mailboxes (support@, mentors@, ...) are ordinary users, not
+// mods, and their names ("Freegle Support") are exactly what the impersonation
+// check exists to catch. A user holding one of the configured Freegle
+// addresses is genuine, so it keeps its name; anyone else using that name is
+// still rewritten.
+func TestGetUserKeepsNameOfOfficialFreegleAddress(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("official_name")
+
+	officialEmail := prefix + "-support@ilovefreegle.org"
+	t.Setenv("FREEGLE_SUPPORT_ADDR", officialEmail)
+
+	officialID := CreateTestUserWithEmail(t, prefix+"_official", officialEmail)
+	db.Exec("UPDATE users SET fullname = 'Freegle Support', firstname = NULL, lastname = NULL WHERE id = ?", officialID)
+
+	impostorID := CreateTestUserWithEmail(t, prefix+"_impostor", prefix+"-impostor@example.com")
+	db.Exec("UPDATE users SET fullname = 'Freegle Support', firstname = NULL, lastname = NULL WHERE id = ?", impostorID)
+
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	_, viewerToken := CreateTestSession(t, viewerID)
+
+	displayName := func(id uint64) string {
+		url := fmt.Sprintf("/api/user/%d?jwt=%s", id, viewerToken)
+		resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+		require.NoError(t, err)
+		require.Equal(t, 200, resp.StatusCode)
+		var u user2.User
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&u))
+		return u.Displayname
+	}
+
+	assert.Equal(t, "Freegle Support", displayName(officialID), "a configured Freegle address keeps its name")
+	assert.Equal(t, "A freegler", displayName(impostorID), "the same name on any other address is still rewritten")
 }

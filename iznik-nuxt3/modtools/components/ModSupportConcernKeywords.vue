@@ -123,6 +123,7 @@ const categoryOptions = [
   { value: 'substance_reportable', text: 'Substance — Reportable' },
   { value: 'substance_medicine', text: 'Substance — Medicine' },
   { value: 'scam', text: 'Scam / fraud' },
+  { value: 'safeguarding', text: 'Safeguarding (refuges, abuse)' },
   { value: 'review', text: 'Review (general)' },
   { value: 'allowed', text: 'Allowed (whitelist)' },
 ]

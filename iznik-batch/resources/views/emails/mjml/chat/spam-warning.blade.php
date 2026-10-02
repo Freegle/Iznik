@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Be careful - you have been talking to ' . $spammerName . (!empty($messageSubject) ? ' about: ' . $messageSubject : '')])
+  @include('emails.mjml.partials.head', ['preview' => 'Be careful - you have been talking to "' . $spammerName . '"' . (!empty($messageSubject) ? ' about: ' . $messageSubject : '')])
   <mj-body background-color="#ffffff">
     {{-- Header --}}
     <mj-section mj-class="bg-freegle" padding="20px">
@@ -25,7 +25,7 @@
           Be careful!
         </mj-text>
         <mj-text font-size="15px" color="#333333" line-height="1.6">
-          You've been talking to <strong>{{ $spammerName }}</strong>.
+          You've been talking to <strong>"{{ $spammerName }}"</strong>.
           Our checks suggest that this person might be a scammer or spammer.
         </mj-text>
       </mj-column>

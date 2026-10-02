@@ -146,7 +146,7 @@ func TestNotificationListDoesNotBumpFreshLastaccess(t *testing.T) {
 	// users.lastaccess on every poll: the auth middleware already maintains
 	// lastaccess with a 10-minute throttle, and an unthrottled same-row UPDATE
 	// sprayed across Galera write hosts causes certification conflicts
-	// (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md, adjacent fix 1).
+	// (measured on db3, July 2026).
 	uid, token := CreateFullTestUser(t, uniquePrefix("notif_la"))
 	db := database.DBConn
 	db.Exec("UPDATE users SET lastaccess = DATE_SUB(NOW(), INTERVAL 5 MINUTE) WHERE id = ?", uid)

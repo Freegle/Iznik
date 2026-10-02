@@ -33,10 +33,6 @@ export default class PartnershipsAPI extends BaseAPI {
     await this.$delv2('/partnership/' + id)
   }
 
-  async fetchGroups(id) {
-    return await this.$getv2('/partnership/' + id + '/group')
-  }
-
   async patchGroups(id, params) {
     return await this.$patchv2('/partnership/' + id + '/group', params)
   }

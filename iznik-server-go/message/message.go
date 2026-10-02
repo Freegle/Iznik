@@ -603,8 +603,9 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// issue because these messages were posted with the intention of being public. It also
 				// allows shared links to work even before moderation approval.
 				db.Table("messages_groups").
-					Select("groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in, quality_sample, autoapprove_hold_until, mod_messaging_allowed, needs_moderator").
+					Select("groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in, quality_sample, autoapprove_hold_until, mod_messaging_allowed, needs_moderator, locked_by_home").
 					Where("msgid = ? AND deleted = 0", id).Scan(&messageGroups)
+				effectiveHomeLocks(messageGroups)
 
 				// Moderator-only "quicker to get to" P/Q note, kept in its own rippling_proximity
 				// table (off the hot messages_groups path). Best-effort: only for mods, and a
@@ -1301,6 +1302,7 @@ func checkWorryWords(db *gorm.DB, messages []Message) {
 			"WHEN 'substance_regulated' THEN 'Regulated' " +
 			"WHEN 'substance_reportable' THEN 'Reportable' " +
 			"WHEN 'substance_medicine' THEN 'Medicine' " +
+			"WHEN 'safeguarding' THEN 'Safeguarding' " +
 			"WHEN 'review' THEN 'Review' " +
 			"WHEN 'allowed' THEN 'Allowed' " +
 			"ELSE 'Review' END AS type").
@@ -2130,106 +2132,6 @@ func Search(c *fiber.Ctx) error {
 	return c.JSON(applyOriginOnly(applyBrowseFilters(filtered)))
 }
 
-// Activity represents a recent activity in groups
-// swagger:model Activity
-type Activity struct {
-	ID      uint64          `json:"id"`
-	Message ActivityMessage `json:"message"`
-	Group   ActivityGroup   `json:"group"`
-}
-
-// ActivityMessage represents a message in an activity
-// swagger:model ActivityMessage
-type ActivityMessage struct {
-	ID      uint64    `json:"id"`
-	Subject string    `json:"subject"`
-	Arrival time.Time `json:"arrival"`
-	Delta   int64     `json:"delta"`
-}
-
-// ActivityGroup represents a group in an activity
-// swagger:model ActivityGroup
-type ActivityGroup struct {
-	ID          uint64  `json:"id"`
-	Nameshort   string  `json:"nameshort"`
-	Namefull    string  `json:"-"`
-	Namedisplay string  `json:"namedisplay"`
-	Lat         float32 `json:"lat"`
-	Lng         float32 `json:"lng"`
-}
-
-type ActivityQuery struct {
-	Id        uint64
-	Subject   string
-	Arrival   time.Time
-	Delta     int64
-	Groupid   uint64
-	Nameshort string
-	Namefull  string
-	Lat       float32
-	Lng       float32
-}
-
-func GetRecentActivity(c *fiber.Ctx) error {
-	var activity []ActivityQuery
-
-	db := database.DBConn
-
-	start := time.Now().Add(-time.Hour * 24).Format("2006-01-02 15:04:05")
-
-	db.Table("messages").
-		Select("messages.id, messages_groups.arrival, messages_groups.groupid, messages.subject, "+
-			"groups.nameshort, groups.namefull, groups.lat, groups.lng").
-		Joins("INNER JOIN messages_groups ON messages.id = messages_groups.msgid").
-		Joins("INNER JOIN `groups` ON messages_groups.groupid = groups.id").
-		Joins("INNER JOIN users ON messages.fromuser = users.id").
-		Where("messages_groups.arrival > ? AND collection = ?", start, utils.COLLECTION_APPROVED).
-		Order("messages_groups.arrival ASC").
-		Limit(100).
-		Scan(&activity)
-
-	last := int64(0)
-
-	var ret []Activity
-
-	for _, r := range activity {
-		namedisplay := r.Nameshort
-
-		if len(r.Namefull) > 0 {
-			namedisplay = r.Namefull
-		}
-
-		arrival := r.Arrival.Unix()
-		delta := int64(0)
-
-		if last != 0 {
-			delta = arrival - last
-		}
-
-		last = arrival
-
-		ret = append(ret, Activity{
-			ID: r.Id,
-			Message: ActivityMessage{
-				ID:      r.Id,
-				Subject: r.Subject,
-				Arrival: r.Arrival,
-				Delta:   delta,
-			},
-			Group: ActivityGroup{
-				ID:          r.Groupid,
-				Lat:         r.Lat,
-				Lng:         r.Lng,
-				Nameshort:   r.Nameshort,
-				Namefull:    r.Namefull,
-				Namedisplay: namedisplay,
-			},
-		})
-	}
-
-	return c.JSON(ret)
-}
-
 // =============================================================================
 // Merged from message/message_mod.go
 // =============================================================================
@@ -2554,18 +2456,22 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Set ctx.Groupid to the primary acted-on group (for logging).
 	ctx.Groupid = authorizedGroups[0]
 
-	// Move to Approved with arrival=NOW() so immediate-email recipients get it.
-	// Guard against double-approve by requiring collection != Approved.
-	// Restrict to groups the caller is authorised for.
-	if result := db.Table("messages_groups").
-		Where("msgid = ? AND groupid IN ? AND collection != ?", req.ID, authorizedGroups, utils.COLLECTION_APPROVED).
-		Updates(map[string]interface{}{
-			"collection": utils.COLLECTION_APPROVED, "approvedby": myid,
-			"approvedat": gorm.Expr("NOW()"), "arrival": gorm.Expr("NOW()"),
-			"needs_moderator": 0,
-		}); result.Error != nil {
-		log.Printf("Failed to approve message %d: %v", req.ID, result.Error)
+	// A copy that rippled in cannot be approved while the post's home community is
+	// reviewing it (their moderator sent it back to pending): see lockedCopiesBlocked.
+	if blocked := lockedCopiesBlocked(db, req.ID, authorizedGroups); len(blocked) > 0 {
+		return fiber.NewError(fiber.StatusForbidden, homeLockedMessage)
 	}
+
+	approvable, stillHeld := ApprovePendingCopies(db, req.ID, myid, authorizedGroups)
+	if len(approvable) == 0 && len(stillHeld) > 0 {
+		holder, holderName := heldByAnotherMod(myid, req)
+		return heldByAnotherResponse(c, holder, holderName)
+	}
+	authorizedGroups = approvable
+
+	// The home copy is approved, so the copies it was locking go back to normal per-group
+	// moderation. The reach stays frozen: nothing is re-sent.
+	clearHomeLocksIfHomeApproved(db, req.ID, authorizedGroups)
 
 	// Release hold on the same authorised groups.
 	// Identical to cc381d7c669b
@@ -2641,6 +2547,94 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// ApprovePendingCopies moves the message's copies on the given groups to Approved, with
+// arrival=NOW() so immediate-email recipients get it, and returns the groups the caller may
+// carry on with plus those it must leave alone.
+//
+// The hold is checked in the write itself, not only by the check in
+// dispatchPostMessageAction: a hold and an approval by two moderators in the same second both
+// succeeded, because the hold landed between that check and this update (Discourse 9808/835,
+// where it is how the post first went live). A copy held by somebody else is simply not
+// touched, and, unlike the rest of the approval, its hold is not released afterwards.
+//
+// Guards against double-approve by requiring collection != Approved. heldByOther lists the
+// groups still Pending under another moderator's hold; approvable is everything else asked
+// for.
+func ApprovePendingCopies(db *gorm.DB, msgid uint64, myid uint64, groups []uint64) (approvable []uint64, heldByOther []uint64) {
+	if result := db.Table("messages_groups").
+		Where("msgid = ? AND groupid IN ? AND collection != ? AND (heldby IS NULL OR heldby = ?)", msgid, groups, utils.COLLECTION_APPROVED, myid).
+		Updates(map[string]interface{}{
+			"collection": utils.COLLECTION_APPROVED, "approvedby": myid,
+			"approvedat": gorm.Expr("NOW()"), "arrival": gorm.Expr("NOW()"),
+			"needs_moderator": 0,
+		}); result.Error != nil {
+		log.Printf("Failed to approve message %d: %v", msgid, result.Error)
+	}
+
+	db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND groupid IN ? AND collection != ? AND heldby IS NOT NULL AND heldby != ? AND deleted = 0",
+			msgid, groups, utils.COLLECTION_APPROVED, myid).
+		Scan(&heldByOther)
+
+	held := map[uint64]bool{}
+	for _, gid := range heldByOther {
+		held[gid] = true
+	}
+	for _, gid := range groups {
+		if !held[gid] {
+			approvable = append(approvable, gid)
+		}
+	}
+
+	return approvable, heldByOther
+}
+
+// homeLockedMessage is what a receiving community's moderator is told when they try to
+// approve a copy their post's home community has pulled back.
+const homeLockedMessage = "The post's home community is reviewing this post, so it can't be approved here until they approve it."
+
+// lockedCopiesBlocked returns the groups, among those the moderator is acting on, whose
+// copy is locked by the home community and so may not be approved. A copy is blocked while
+// the post has an undeleted home row that is not Approved. Acting on the home group itself
+// is never blocked: that approval is what lifts the lock.
+func lockedCopiesBlocked(db *gorm.DB, msgid uint64, groups []uint64) []uint64 {
+	home := HomeGroups(db, msgid)
+	for _, gid := range groups {
+		if home[gid] {
+			return nil
+		}
+	}
+
+	var homePending int64
+	db.Table("messages_groups").
+		Where("msgid = ? AND rippled_in = 0 AND deleted = 0 AND collection != ?", msgid, utils.COLLECTION_APPROVED).
+		Count(&homePending)
+	if homePending == 0 {
+		return nil
+	}
+
+	var blocked []uint64
+	db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND groupid IN ? AND rippled_in = 1 AND locked_by_home = 1 AND deleted = 0", msgid, groups).
+		Scan(&blocked)
+
+	return blocked
+}
+
+// clearHomeLocksIfHomeApproved lifts the home lock on a post's other copies once a home
+// group's copy has been approved by this action.
+func clearHomeLocksIfHomeApproved(db *gorm.DB, msgid uint64, approvedGroups []uint64) {
+	home := HomeGroups(db, msgid)
+	for _, gid := range approvedGroups {
+		if home[gid] {
+			db.Table("messages_groups").
+				Where("msgid = ? AND locked_by_home = 1", msgid).
+				Update("locked_by_home", 0)
+			return
+		}
+	}
 }
 
 // handleReject rejects a pending message.
@@ -3114,6 +3108,23 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
+// homeSentBackReason is the reason and log text a receiving community sees when a moderator
+// of the post's home community sends it back.
+const homeSentBackReason = "A moderator of the home community moved this post back to pending for review. It can't be approved here until they approve it."
+
+// actingOnHomeGroup reports whether any group a moderator is acting on is one the post was
+// posted to directly (HomeGroups), as opposed to one it merely rippled into.
+func actingOnHomeGroup(db *gorm.DB, msgid uint64, acting []uint64) bool {
+	home := HomeGroups(db, msgid)
+	for _, gid := range acting {
+		if home[gid] {
+			return true
+		}
+	}
+
+	return false
+}
+
 // handleBackToPending moves an approved message back to pending.
 func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
@@ -3150,7 +3161,18 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// every other group whose copy is pulled back (rippled copies elsewhere) gets a Hold
 	// log from SendForReviewAllGroups, so its moderators can see why the post is back in
 	// their queue and who did it (Discourse 10102).
-	flipped := microvolunteering.SendForReviewAllGroups(db, req.ID, "A moderator moved this post back to pending for review.", &myid, authorizedGroups)
+	//
+	// When the acting moderator moderates the post's HOME community, the receiving
+	// communities are told it was the home community and their copies are locked: they
+	// cannot approve until the home copy is approved again (Discourse 9808/835). A Back to
+	// pending from a receiving community's own moderator, or by a members' report quorum,
+	// locks nothing: those copies stay independent.
+	fromHome := actingOnHomeGroup(db, req.ID, authorizedGroups)
+	rippledReason := ""
+	if fromHome {
+		rippledReason = homeSentBackReason
+	}
+	flipped := microvolunteering.SendForReviewAllGroupsWithRippledReason(db, req.ID, "A moderator moved this post back to pending for review.", rippledReason, &myid, authorizedGroups)
 
 	// Every copy pulled back, and the copy this moderator acted on, now waits for a
 	// moderator of its own group: needs_moderator stops the content check and auto-approve
@@ -3158,6 +3180,12 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	db.Table("messages_groups").
 		Where("msgid = ? AND groupid IN ? AND collection = ?", req.ID, append(flipped, authorizedGroups...), utils.COLLECTION_PENDING).
 		Update("needs_moderator", 1)
+
+	if fromHome {
+		db.Table("messages_groups").
+			Where("msgid = ? AND rippled_in = 1 AND deleted = 0 AND collection = ?", req.ID, utils.COLLECTION_PENDING).
+			Updates(map[string]interface{}{"locked_by_home": 1, "needs_moderator": 1})
+	}
 
 	// Freeze the ripple once the origin is Pending: the copies persist for per-group
 	// moderation and a later re-approval brings a copy back without re-rippling or
@@ -4987,7 +5015,9 @@ type OnBehalfPosting struct {
 // postcode their own posts carry. Deliberately not derived from lastlocation or
 // a nearest-postcode lookup: those say where they last were, not where they say
 // they are, so they would stamp a postcode on a member's post that the member
-// never picked. If they have not set one, we refuse rather than guess.
+// never picked. If they have not set one, we refuse rather than guess. A Trash
+// Nothing member's mylocation is stale V1 data (TN is the master for their
+// location), so it does not count as chosen.
 //
 // The error text is shown to the moderator, so it says what to do about it.
 func ResolveOnBehalfPosting(author uint64) (*OnBehalfPosting, error) {
@@ -5005,7 +5035,7 @@ func ResolveOnBehalfPosting(author uint64) (*OnBehalfPosting, error) {
 			"JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.name')) AS locationname, "+
 			"JSON_EXTRACT(settings, '$.mylocation.lat') AS lat, "+
 			"JSON_EXTRACT(settings, '$.mylocation.lng') AS lng").
-		Where("id = ?", author).Scan(&chosen)
+		Where("id = ? AND tnuserid IS NULL", author).Scan(&chosen)
 
 	if chosen.Locationid == 0 || chosen.Locationname == "" {
 		return nil, errors.New("That member hasn't set their location, so we can't post for them - ask them to set it first")
@@ -5684,18 +5714,23 @@ func heldByAnotherMod(myid uint64, req PostMessageRequest) (uint64, string) {
 	return holder, holderName
 }
 
+// heldByAnotherResponse is the 409 body ModTools reads to show who holds the post.
+func heldByAnotherResponse(c *fiber.Ctx, holder uint64, holderName string) error {
+	return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+		"ret":        1,
+		"status":     "Held by another moderator",
+		"heldby":     holder,
+		"heldbyname": holderName,
+	})
+}
+
 // dispatchPostMessageAction routes a POST /message action to the correct handler.
 func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Enforced centrally rather than per-handler so a new moderation action
 	// cannot silently skip the check by forgetting to call it.
 	if moderationActionsBlockedByHold[req.Action] {
 		if holder, holderName := heldByAnotherMod(myid, req); holder != 0 {
-			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-				"ret":        1,
-				"status":     "Held by another moderator",
-				"heldby":     holder,
-				"heldbyname": holderName,
-			})
+			return heldByAnotherResponse(c, holder, holderName)
 		}
 	}
 

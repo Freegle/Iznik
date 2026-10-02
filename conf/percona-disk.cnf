@@ -1,0 +1,3 @@
+# Read after conf/percona-my.cnf when PERCONA_STORAGE=disk. Nothing to override: a
+# datadir on disk was created with percona-my.cnf's tablespace layout and must keep it.
+[mysqld]
