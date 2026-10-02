@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { getDb, resetDbForTests, upsertDiscourseBug, getDiscourseBug } from '../db/index.js'
+import { appendEvidence, evidenceLine } from '../evidence.js'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Handler = (params: Record<string, unknown>, context: Record<string, unknown>) => Promise<any>
@@ -10,12 +14,16 @@ let ghCalls: string[][]
 let posted: Array<{ topic: number; raw: string }>
 let prBody: string
 
-const GROUNDED = '## Root Cause\nx\n\n## Live evidence\nQuery: SELECT COUNT(*) FROM messages WHERE id > 1\nResult: 12 rows.\n\n## Evidence\ntest\n'
+let GROUNDED = ''
 const UNGROUNDED = '## Root Cause\nx\n\n## Evidence\nA test reproduces it. I did not check live data in this run.\n'
 
 beforeEach(async () => {
   resetDbForTests()
   db = getDb(':memory:')
+  process.env.MONITOR_FSM_EVIDENCE_DIR = mkdtempSync(join(tmpdir(), 'cpr-ev-'))
+  appendEvidence(9600, 2, { kind: 'db', available: true, source: 'prod', result: { columns: ['n'], rows: [['12']] } })
+  appendEvidence(9600, 2, { kind: 'note', text: 'Production shows the own post is never in the window query.' })
+  GROUNDED = `## Root Cause\nx\n\n## Live evidence\n${evidenceLine(9600, 2)}\n\n## Evidence\ntest\n`
   const mod = await import('../actions/index.js')
   ghCalls = []
   posted = []
@@ -65,6 +73,14 @@ describe('create_pr live-evidence gate', () => {
     expect(bug?.state).toBe('needs-detail')
     expect(bug?.reason ?? '').toMatch(/1700/)
     expect(posted).toHaveLength(1)
+  })
+
+  it('closes a PR whose description looks right but has no production read on record', async () => {
+    upsertDiscourseBug(db, { topic: 9601, post: 1, reporter: 'Sam', excerpt: 'Two members cannot donate', state: 'open' })
+    prBody = GROUNDED.replace('9600/2', '9601/1')
+    const r = await createPr({ prNumber: 1700, topic: 9601, post: 1 }, {})
+    expect(r.refused).toBe(true)
+    expect(getDiscourseBug(db, 9601, 1)?.state).toBe('needs-detail')
   })
 
   it('blanks a description that holds personal data before closing it', async () => {

@@ -1277,8 +1277,8 @@ export const prGateDeps = {
 }
 
 /**
- * Refuse a Discourse bug-fix PR whose description shows nothing from production, or
- * holds a member's details. See evidence.ts for what counts. The PR is closed, the
+ * Refuse a Discourse bug-fix PR that has no production reads in its local evidence
+ * record, or whose description holds a member's details. See evidence.ts. The PR is closed, the
  * report is held as needs-detail, and the reporter is asked for what would let the
  * next attempt look it up: a fix agent with nothing to look up guesses, and the
  * guesses read convincingly (PRs #1654, #1657, #1658, #1659).
@@ -1286,7 +1286,7 @@ export const prGateDeps = {
 async function refuseUngroundedPr(
   prNumber: number, repo: string, body: string, topic: number, post: number,
 ): Promise<{ refused: boolean; problems: string[] }> {
-  const evidence = assessPrEvidence(body)
+  const evidence = assessPrEvidence(body, topic, post)
   if (evidence.ok) return { refused: false, problems: [] }
 
   // The repository is public. Blank the description before anything else, so the
@@ -1296,7 +1296,7 @@ async function refuseUngroundedPr(
       'body=Description removed: it contained personal details. This repository is public.'])
     if (blanked.code !== 0) outWarn(`create_pr: could not blank the description of #${prNumber}: ${blanked.stderr.slice(0, 200)}`)
   }
-  const comment = `Closed by the monitor before review: ${evidence.problems.join('; ')}. A fix needs evidence from production that the diagnosed path is the one failing.`
+  const comment = `Closed by the monitor before review: ${evidence.problems.join('; ')}. A fix needs production reads, recorded locally, showing the diagnosed path is the one failing.`
   await prGateDeps.gh(['pr', 'close', String(prNumber), '--repo', repo, '--comment', comment])
 
   const db = getDb()
