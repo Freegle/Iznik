@@ -391,6 +391,10 @@ longer a live offer there - so:
 2. **It stops spreading.** Its rippling is halted, so it will not appear on any further
    communities.
 
+This still applies if the post was earlier sent back to pending: while it sits in Pending on
+its home community the copies stay for each community to deal with, but once it is deleted or
+rejected at home they are all pulled within a minute.
+
 This is exactly what you want when you catch spam or a rule-breaking post on its home
 community: dealing with it once removes it everywhere, instead of leaving live copies
 stranded on the neighbouring communities it had already reached.

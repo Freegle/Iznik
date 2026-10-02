@@ -865,8 +865,12 @@ Freezing governs what we SEND, not who has been reached:
 As a capped reach shrinks or the reachable set changes, `retractOutOfReachCopies`
 soft-deletes rippled-in copies no longer in reach, and removes the ripple-join membership
 when the poster has no other live post there. A **held** reach (from a report or
-Back-to-Pending) is frozen: its copies persist for per-group moderation and are never
-retracted, so re-approval restores the copy without re-rippling.
+Back-to-Pending) is frozen: while the home copy still exists, its copies persist for per-group
+moderation and are not retracted, so re-approval restores the copy without re-rippling. Once the
+home copy is deleted or rejected there is nothing left to moderate against, so the freeze no
+longer protects the copies: `retractCopiesOrphanedByOriginRemoval` retracts them whatever the
+reach status. A frozen reach is spared only while the home row is still Pending. (Nothing clears
+`held`, so a Back to pending followed by a delete at home used to leave the copies live.)
 
 A community switching ripple-out off retracts the same way - see §4a.
 
