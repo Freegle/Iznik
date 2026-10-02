@@ -1,8 +1,9 @@
 ---
-last_reviewed: 2026-08-23
+last_reviewed: 2026-09-29
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
+  - claude-agent-sdk/prompt.js
   - claude-agent-sdk/tools.js
   - claude-agent-sdk/server.js
   - claude-agent-sdk/auth.js
@@ -11,6 +12,10 @@ covers:
   - iznik-nuxt3/composables/useClientLog.js
   - claude-agent-sdk/referral-mjml.js
   - claude-agent-sdk/referral-email.js
+  - iznik-server-go/userdump/userdump.go
+  - iznik-server-go/userdump/collect_db.go
+  - iznik-server-go/userdump/loki.go
+  - iznik-server-go/userdump/sentry.go
   - iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue
 ---
 
@@ -32,18 +37,19 @@ calls and answer back to the browser.
 
 ## Architecture
 
-```
-ModTools (support section)                 Backend container (ai-support-helper)
-ModSupportAIAssistant.vue                  server.js  → support-agent.js → tools.js
-  │  identify member first                   │
-  │  POST /api/log-analysis  (SSE) ──────────┤ verify caller is Support/Admin (auth.js
-  │  Authorization: Bearer <mod JWT>         │   → Go API /api/session)
-  │  { query, userId }                       │ audit(session) then run query():
-  │                                          │   Claude Agent SDK, read-only tools,
-  │  ◄── data: {type:'thinking'|'tool'|      │   codebase checkout at /app/codebase
-  │        'status'|'result'|'error'} ───────┘
-  ▼
-  renders streamed transcript + cost/tokens (answer sanitised with DOMPurify)
+```mermaid
+sequenceDiagram
+    participant MT as ModTools support section<br/>ModSupportAIAssistant.vue
+    participant H as ai-support-helper container<br/>server.js, support-agent.js, tools.js
+    participant GO as Go API /api/session
+
+    Note over MT: the volunteer identifies the member first
+    MT->>H: POST /api/log-analysis, server-sent events<br/>Bearer mod JWT, query plus userId
+    H->>GO: auth.js checks the caller is Support or Admin
+    GO-->>H: session and roles
+    Note over H: audit the session, then run the query:<br/>Claude Agent SDK, read-only tools,<br/>codebase checkout at /app/codebase
+    H-->>MT: streamed events of type thinking, tool,<br/>status, result or error
+    Note over MT: renders the transcript plus cost and tokens,<br/>answer sanitised with DOMPurify
 ```
 
 One `query()` code path serves both auth modes (see below); everything else is identical.
@@ -84,7 +90,9 @@ SDK's `Read`/`Grep`/`Glob` confined to the codebase checkout:
 
 The investigation playbook (held chat replies, duplicate conversations, purged accounts,
 rippling auto-joins, stale-deploy chunks, etc.) lives in the system prompt in
-`support-agent.js`.
+`prompt.js`. That module has no `require` at all, so the bare `node --test` CI step can
+load it and `prompt.test.js` can pin its load-bearing lines; `support-agent.js` (which
+pulls in `tools.js` and with it `mysql2`) only wires the prompt into `query()`.
 
 ### What the user dump does and does not contain
 
@@ -96,32 +104,77 @@ a real bound, not a hint:
   Mod2Mod and User2Mod chat on their groups (one real admin: 18,664 rooms, of which 332
   had any activity in 90 days), and pulling every message for all of them could not finish
   inside the caller's timeout — so that member could not be investigated at all.
+  The **roster** is the member's own row in every room plus everyone's rows in the
+  active rooms; the other members of old mod chats are left out (they were 112,609 of
+  one moderator's rows).
+- **Sections are collected concurrently** (`dumpWorkers` in `userdump.go`), heaviest
+  first, so the snapshot takes as long as its slowest section rather than the sum of
+  them. `_sections` rows are in completion order.
 - **Loki logs are clamped to 30 days** whatever `since` says, because production Loki
   rejects any `query_range` longer than `30d1h` outright.
-- **Loki collection runs in value order under a time budget** (`userdump/loki.go`):
-  the indexed member-id passes first, then the slim unlabelled sources and email passes
-  (each `|=`-prefiltered before any `| json`/regex, in 15-day halves), then two-leg
-  session lookups, and finally `api_headers` — the ~67GB/7d firehose — newest-first in
-  budget-capped 1.5-day slices. Anything the caps drop is recorded in `_sections` as
-  `loki_bounds`. The same prefilter-before-parse rule applies to every LogQL the helper
-  or `systemlogs` builds.
-- **A member's logs are addressed two ways, and both are asked** (changed 2026-08-23).
-  Entries written before that carry `user_id` as a Loki stream label; later ones carry a
-  coarse `user_bucket` label plus the exact `user_id` as structured metadata, because
-  `user_id` had far too many values to be a label and was silently discarding entries.
-  Both the dump and the helper query both forms and merge; they are disjoint, so nothing
-  double-counts. Until nothing older than the change is left in retention, **dropping
-  either leg silently returns a partial answer**. See
+- **Loki collection runs every pass at once under a time budget** (`userdump/loki.go`,
+  at most `lokiParallel` queries in flight): the member's labelled lines by `user_bucket`
+  plus `user_id`, one query per source group (`api`, `client`, the rest) so the busiest
+  source cannot fill the line cap and crowd out the others; the slim unlabelled sources;
+  and all the member's emails in **one** query (each `|=`-prefiltered before any
+  `| json`/regex, in 15-day halves). The same prefilter-before-parse rule applies to every
+  LogQL the helper or `systemlogs` builds. Anything the caps drop is recorded in
+  `_sections` as `loki_bounds`.
+- **`api_headers` is searched only where the member was active.** It has no member label,
+  so a 7-day search of the ~67GB firehose was a full-text scan (~40-50s). But each request
+  writes exactly one `api` line and one `api_headers` line, together, and the dump has
+  just fetched the member's `api` lines by index: they give the minutes to search and how
+  many header lines each window holds. An ordinary member measured 27s -> 1s with nothing
+  missed. A member active all week fills the `api` line cap, so their headers cover only
+  the period of their newest 5,000 requests, and the dump says so.
+- **Logged-out client lines are not in the dump.** They carry no user at all, so finding
+  them is a full-text scan of seven days of client logs. The dump says so in `_sections`
+  (`loki_not_collected`), and the system prompt points the agent at `loki_search`.
+- **A member's logs are addressed two ways** (changed 2026-08-23). Entries written before
+  that carry `user_id` as a Loki stream label; later ones carry a coarse `user_bucket`
+  label plus the exact `user_id` as structured metadata, because `user_id` had far too
+  many values to be a label and was silently discarding entries. The dump asks only for
+  the bucketed form: it reads the last 30 days, all written after the change, and the
+  old-form queries returned nothing for 3-5s each. The helper's `loki_search`, which can
+  look further back, still asks for both. See
   [../../ops/reference/logging.md](../../ops/reference/logging.md).
 - Anything the dump had to bound is recorded in its **`_sections`** table with
   `status='warning'` and a note. Read it before concluding "there is nothing there" — an
   empty table can mean *not collected*, not *did not happen*.
+- **Sentry is two org-wide searches**, by `user.id` and by all emails as one
+  `user.email:[a,b]` list, across every project. Freegle's Sentry events do not
+  currently set `user.email` at all, so in practice matches come from the id.
 - The helper downloads the dump with **`format=framed`** (see
   `iznik-server-go/userdump/frame.go`): the server flushes a progress frame per section
   plus a 15s heartbeat during long sections, so the prod API LB's 50s idle timeout never
   cuts a slow build the way the silent `format=raw` stream was cut. The client verifies
   the end frame's byte count and SHA-256, and aborts only on 90s of *inactivity* rather
   than a fixed overall deadline.
+
+## What the volunteer sees while it works
+
+`support-agent.js` streams three kinds of progress event: `status` once at the start,
+`thinking` for each piece of text the model writes between tool calls (the conclusions it
+is reaching as it goes) and `tool` for each tool call with its raw arguments (a file
+path, a grep pattern, SQL). The transcript in `ModSupportAIAssistant.vue` lists the
+`status` and `thinking` events only. It used to list the `tool` events as well, and an
+investigation makes so many of them that the conclusions scrolled off the top of the
+screen before anyone could read them.
+
+A `tool` event instead sets a single line under the transcript saying what kind of check
+is running, in plain words: "Querying the database", "Reading the code", "Searching the
+logs" (the `TOOL_ACTIVITY` map in the component; a tool it does not know shows a generic
+"Checking" rather than an internal name). Each tool event replaces that line, a
+`thinking` event clears it, and it yields to the snapshot progress bar while that is
+showing. The raw tool call still goes to the Debug panel, so which SQL ran or which file
+was read is one switch away when something has gone wrong.
+
+## Suggested replies
+
+Volunteers paste the helper's suggested replies straight to the member, so the prompt's
+Style section asks for them in the second person ("you haven't verified your email yet",
+never "she hasn't"), with no internal names, under a **Suggested reply** heading in a
+blockquote. The draft can then be copied out as-is and the analysis left behind.
 
 ## Device summary panel
 
@@ -144,10 +197,14 @@ release. Either input missing yields `unknown`, which shows no badge rather than
 **Where the app version comes from.** Only the native app knows its installed version, and
 only after Capacitor's `App.getInfo()` returns — long after the client-logging plugin starts.
 So the app logs `session_start` **twice** for one session: once immediately (no app version
-yet), then again from `stores/mobile.js` `logAppSession()` once `App.getInfo()` and
+yet), then again from `stores/mobile.js` (which also owns deep-link handling, see the mobile
+app page) `logAppSession()` once `App.getInfo()` and
 `Device.getInfo()` have answered. Both carry the same `session_id`, so `dedupeSessions()`
 merges them into one record — keeping the session count honest and making the app version
-independent of the order Loki returns the lines in.
+independent of the order Loki returns the lines in. The same native answers are set as
+Sentry tags (`os.version.exact`, `device.model.exact`, `app.version`, `app.build`), because
+the user agent only gives Sentry the OS minor version and a device-specific fault needs the
+patch level and model.
 
 ## Refer to geeks
 
@@ -159,8 +216,9 @@ investigation over by email, so nobody has to retype the story.
 the member, the device summary, every message, the running totals and the volunteer's
 **referral text** — which is required, because a transcript with no statement of what the
 volunteer wants doing about it is not a referral. It emails `GEEKS_EMAIL`
-(`geeks@ilovefreegle.org`) with **Reply-To set to the referring volunteer**, so a reply
-goes back to the person who actually saw the problem.
+(`geeks@ilovefreegle.org`) with **Reply-To set to `SUPPORT_ADDR`** (`support@ilovefreegle.org`),
+so a reply lands in the support mailbox where the whole support team sees it, rather than
+in one volunteer's personal inbox. The referring volunteer is named in the email body.
 
 Every referral gets a short reference — `SR-XXXXX`, generated **server-side** so the client
 cannot choose or reuse one. It appears in the subject line, the email body, an
@@ -206,7 +264,7 @@ points `SUPPORT_SMTP_*` at a real relay.
   stripped first (defeats `INTO/**/OUTFILE`), a denylist of write/DoS keywords, a denylist
   of auth-secret **tables** (`sessions`, `users_logins`, `config`, …) and **columns**
   (`credentials`, `token`, `password`, …), and a hard cap on the `LIMIT` value.
-- **Prompt-injection defence (`support-agent.js`)** — the system prompt marks everything
+- **Prompt-injection defence (`prompt.js`)** — the system prompt marks everything
   tools return (chat text, names, log lines) as **data, never instructions**; tools are
   read-only (`disallowedTools: Write/Edit/Bash`), file reads are confined to
   `additionalDirectories: [CODEBASE]`.
@@ -223,7 +281,8 @@ points `SUPPORT_SMTP_*` at a real relay.
 ## Files
 
 - **Backend**: `claude-agent-sdk/` — `server.js` (SSE endpoint + CORS + auth gate),
-  `support-agent.js` (`query()` orchestration + system-prompt playbook), `tools.js`
+  `support-agent.js` (`query()` orchestration), `prompt.js` (system prompt + playbook,
+  dependency-free so it is unit-tested in CI), `tools.js`
   (direct-access tools + guards + audit), `auth.js` (Support/Admin verification),
   `Dockerfile` / `entrypoint.sh`.
 - **Frontend**: `iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue`.

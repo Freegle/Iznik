@@ -2,6 +2,7 @@
 
 namespace Tests\Support;
 
+use App\Services\Ripple\CellSetService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 
@@ -15,10 +16,10 @@ use Illuminate\Support\Facades\Http;
  * people were invited to posts they could not see.
  *
  * So a test that seeds a ring has to serve one. This fake answers FROM THE SEEDED
- * ROWS, which keeps each test meaning what it meant: the ring the test planted is
- * still what decides, and the assertions still read as statements about bands,
- * wedges and lane flags rather than about HTTP. The test rings are rectangles, so
- * a bounding-box test against their WKT is exact for them.
+ * ROWS' overflow_cells, which keeps each test meaning what it meant: the ring the
+ * test planted is still what decides, and the assertions still read as statements
+ * about bands, wedges and lane flags rather than about HTTP. Containment is a
+ * probe of the seeded lane's own cell grid, so it is exact by construction.
  */
 trait FakesRingIndex
 {
@@ -46,8 +47,8 @@ trait FakesRingIndex
                 $admitted = [];
                 foreach (($body['points'] ?? []) as $i => $point) {
                     foreach ((array) ($point['lanes'] ?? []) as $lane) {
-                        $wkt = $this->ringWkt($bounds, $lane);
-                        if ($wkt !== null && $this->covers($wkt, (float) $point['lng'], (float) $point['lat'])) {
+                        $cells = $this->ringCells($bounds, $lane);
+                        if ($cells !== null && $this->covers($cells, (float) $point['lng'], (float) $point['lat'])) {
                             $admitted[] = $i;
                             break;
                         }
@@ -55,6 +56,30 @@ trait FakesRingIndex
                 }
 
                 return Http::response(['admitted' => $admitted]);
+            },
+
+            // The reach index proper (the daily digest's containment
+            // universe): which seeded rows' polygon_cells cover the point.
+            // Same authority as production, answered from the same bytes.
+            '*/v1/reach/containing*' => function ($request) {
+                $query = [];
+                parse_str((string) parse_url((string) $request->url(), PHP_URL_QUERY), $query);
+                $lng = (float) ($query['lng'] ?? 0);
+                $lat = (float) ($query['lat'] ?? 0);
+
+                $svc = new CellSetService();
+                $in = [];
+                $rows = DB::table('rippling_reach')
+                    ->where('status', '!=', 'held')
+                    ->whereNotNull('polygon_cells')
+                    ->get(['msgid', 'polygon_cells']);
+                foreach ($rows as $row) {
+                    if ($svc->containsEncoded((string) $row->polygon_cells, $lng, $lat) === true) {
+                        $in[] = (int) $row->msgid;
+                    }
+                }
+
+                return Http::response(['in' => $in, 'partial' => []]);
             },
 
             '*/v1/reachoverflow/containing*' => function ($request) {
@@ -66,13 +91,13 @@ trait FakesRingIndex
 
                 $in = [];
                 $rows = DB::table('rippling_reach')
-                    ->whereNotNull('overflow_bounds')
-                    ->get(['msgid', 'overflow_bounds']);
+                    ->whereNotNull('overflow_cells')
+                    ->get(['msgid', 'overflow_cells']);
                 foreach ($rows as $row) {
-                    $bounds = json_decode((string) $row->overflow_bounds, true);
+                    $bounds = json_decode((string) $row->overflow_cells, true);
                     foreach ($lanes as $lane) {
-                        $wkt = $this->ringWkt(is_array($bounds) ? $bounds : null, $lane);
-                        if ($wkt !== null && $this->covers($wkt, $lng, $lat)) {
+                        $cells = $this->ringCells(is_array($bounds) ? $bounds : null, $lane);
+                        if ($cells !== null && $this->covers($cells, $lng, $lat)) {
                             $in[] = (int) $row->msgid;
                             break;
                         }
@@ -97,14 +122,17 @@ trait FakesRingIndex
 
     private function seededBounds(int $msgid): ?array
     {
-        $raw = DB::table('rippling_reach')->where('msgid', $msgid)->value('overflow_bounds');
+        $raw = DB::table('rippling_reach')->where('msgid', $msgid)->value('overflow_cells');
         $bounds = is_string($raw) ? json_decode($raw, true) : null;
 
         return is_array($bounds) ? $bounds : null;
     }
 
-    /** Resolve a lane path ($.rural.sparse, $.cluster.w1, $.fairness."1") in the seeded JSON. */
-    private function ringWkt(?array $bounds, string $lane): ?string
+    /**
+     * Resolve a lane path ($.rural.sparse, $.cluster.w1, $.fairness."1") in the
+     * seeded JSON to the lane's raw cell bytes.
+     */
+    private function ringCells(?array $bounds, string $lane): ?string
     {
         if ($bounds === null || ! str_starts_with($lane, '$.')) {
             return null;
@@ -117,21 +145,18 @@ trait FakesRingIndex
         [$family, $key] = $parts;
         $key = trim($key, '"');
 
-        $wkt = $bounds[$family][$key] ?? null;
+        $b64 = $bounds[$family][$key] ?? null;
+        if (! is_string($b64) || $b64 === '') {
+            return null;
+        }
+        $raw = base64_decode($b64, true);
 
-        return is_string($wkt) && $wkt !== '' ? $wkt : null;
+        return $raw === false ? null : $raw;
     }
 
-    /** Bounding-box containment, exact for the rectangles the fixtures plant. */
-    private function covers(string $wkt, float $lng, float $lat): bool
+    /** Containment by probing the seeded lane's own cell grid - exact. */
+    private function covers(string $cells, float $lng, float $lat): bool
     {
-        if (! preg_match_all('/(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/', $wkt, $m, PREG_SET_ORDER)) {
-            return false;
-        }
-
-        $xs = array_map(static fn ($p) => (float) $p[1], $m);
-        $ys = array_map(static fn ($p) => (float) $p[2], $m);
-
-        return $lng >= min($xs) && $lng <= max($xs) && $lat >= min($ys) && $lat <= max($ys);
+        return (new CellSetService())->containsEncoded($cells, $lng, $lat) === true;
     }
 }

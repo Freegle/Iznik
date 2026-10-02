@@ -13,6 +13,14 @@ type IsochroneResult struct {
 	// callers read how far a node is BY ROAD, not just by time, for free - a nearby node reads
 	// as a small distance even if the isochrone sprawls much further in other directions.
 	DistM map[NodeID]float32
+
+	// OriginFound reports whether (lat, lng) snapped to a node at all. False means
+	// the graph has no usable road within nearestNodeGrid's search radius (about
+	// 11km), so the empty ReachedNodes above says "not on our map", NOT "nothing is
+	// near you". Callers that cannot tell those apart ship silence: an OSM extract
+	// missing the Isle of Man left its 825 members with no reach for a year, with
+	// no error and nothing logged.
+	OriginFound bool
 }
 
 // item is a priority queue entry.
@@ -30,33 +38,26 @@ func (q pq) Swap(i, j int)       { q[i], q[j] = q[j], q[i]; q[i].idx = i; q[j].i
 func (q *pq) Push(x interface{}) { it := x.(*item); it.idx = len(*q); *q = append(*q, it) }
 func (q *pq) Pop() interface{}   { old := *q; n := len(old); it := old[n-1]; *q = old[:n-1]; return it }
 
-// modeMaxSpeed returns the maximum physically possible speed in m/s for a mode.
-func modeMaxSpeed(mode Mode) float64 {
-	switch mode {
-	case Walk:
-		return 3.0
-	case Cycle:
-		return 12.0
-	default:
-		return 32.0
-	}
-}
+// driveMaxSpeedMS is the fastest a car can physically travel, in m/s. It bounds
+// how far a Dijkstra needs to look before a node can be discarded on distance
+// alone.
+const driveMaxSpeedMS = 32.0
 
 // Isochrone runs Dijkstra from the node nearest to (lat, lng) and returns all
-// nodes reachable within limitSeconds for the given mode.
-func Isochrone(g *Graph, lat, lng float64, limitSeconds float32, mode Mode) IsochroneResult {
-	origin := nearestNodeForMode(g, lat, lng, mode)
+// nodes reachable by car within limitSeconds.
+func Isochrone(g *Graph, lat, lng float64, limitSeconds float32) IsochroneResult {
+	origin := nearestDriveNode(g, lat, lng)
 	if origin == noNode {
 		return IsochroneResult{ReachedNodes: map[NodeID]float32{}, DistM: map[NodeID]float32{}}
 	}
 
 	startLat := float64(g.Nodes[origin].Lat)
 	startLng := float64(g.Nodes[origin].Lng)
-	maxReachM := modeMaxSpeed(mode) * float64(limitSeconds)
+	maxReachM := driveMaxSpeedMS * float64(limitSeconds)
 
 	dist := make(map[NodeID]float32)
 	distM := make(map[NodeID]float32)
-	start := initialCostFor(mode)
+	start := driveStartupSecs
 	dist[origin] = start
 	distM[origin] = 0
 
@@ -73,11 +74,7 @@ func Isochrone(g *Graph, lat, lng float64, limitSeconds float32, mode Mode) Isoc
 		}
 		curNode := g.Nodes[cur.id]
 		for _, e := range g.EdgesFrom(cur.id) {
-			edgeCost := e.Seconds[mode]
-			if edgeCost < 0 {
-				continue
-			}
-			newCost := cur.cost + edgeCost
+			newCost := cur.cost + e.Sec()
 			if newCost > limitSeconds {
 				continue
 			}
@@ -94,43 +91,32 @@ func Isochrone(g *Graph, lat, lng float64, limitSeconds float32, mode Mode) Isoc
 		}
 	}
 
-	return IsochroneResult{ReachedNodes: dist, DistM: distM}
+	return IsochroneResult{ReachedNodes: dist, DistM: distM, OriginFound: true}
 }
 
-// nearestNodeForMode returns the NodeID closest to (lat, lng) with an edge usable by mode.
-func nearestNodeForMode(g *Graph, lat, lng float64, mode Mode) NodeID {
+// nearestDriveNode returns the NodeID closest to (lat, lng) that a car can use.
+func nearestDriveNode(g *Graph, lat, lng float64) NodeID {
 	if g.Grid != nil {
-		return nearestNodeGrid(g, lat, lng, mode)
+		return nearestNodeGrid(g, lat, lng)
 	}
-	return nearestNodeLinear(g, lat, lng, mode)
+	return nearestNodeLinear(g, lat, lng)
 }
 
-// initialCostFor returns the fixed per-trip overhead seeded at the origin of
-// a mode's Dijkstra (driveStartupSecs for Drive; nothing for walk/cycle), so
-// every drive-time product - isochrones, ripple ticks, drive_min - includes
-// the startup overhead consistently.
-func initialCostFor(mode Mode) float32 {
-	if mode == Drive {
-		return driveStartupSecs
-	}
-	return 0
-}
-
-// snappableForMode reports whether a node is a valid snap target for a mode:
-// it must have a usable edge, and for Drive it must not sit in a tiny
-// disconnected fragment (see computeDriveSnappable).
-func snappableForMode(g *Graph, id NodeID, mode Mode) bool {
-	if !hasEdgeForMode(g, id, mode) {
+// driveSnappable reports whether a node is a valid snap target: it must have a
+// drive edge, and it must not sit in a tiny disconnected fragment (see
+// computeDriveSnappable).
+func driveSnappable(g *Graph, id NodeID) bool {
+	if !hasDriveEdge(g, id) {
 		return false
 	}
-	if mode == Drive && g.DriveSnappable != nil && !g.DriveSnappable[id] {
+	if g.DriveSnappable != nil && !g.DriveSnappable.Get(int(id)) {
 		return false
 	}
 	return true
 }
 
 // nearestNodeGrid searches the spatial grid, expanding outward until a valid node is found.
-func nearestNodeGrid(g *Graph, lat, lng float64, mode Mode) NodeID {
+func nearestNodeGrid(g *Graph, lat, lng float64) NodeID {
 	baseRow := int16(lat / gridRes)
 	baseCol := int16(lng / gridRes)
 
@@ -143,9 +129,9 @@ func nearestNodeGrid(g *Graph, lat, lng float64, mode Mode) NodeID {
 				if dr != -radius && dr != radius && dc != -radius && dc != radius {
 					continue
 				}
-				ids := g.Grid.cells[[2]int16{baseRow + dr, baseCol + dc}]
+				ids := g.Grid.at(baseRow+dr, baseCol+dc)
 				for _, id := range ids {
-					if !snappableForMode(g, id, mode) {
+					if !driveSnappable(g, id) {
 						continue
 					}
 					n := g.Nodes[id]
@@ -164,14 +150,14 @@ func nearestNodeGrid(g *Graph, lat, lng float64, mode Mode) NodeID {
 	return best
 }
 
-// nearestNodesForMode returns up to k snap candidates for a mode, nearest
+// nearestDriveNodes returns up to k drive snap candidates, nearest
 // first.  Callers that need an ARRIVABLE node (e.g. evaluating a destination
 // against an isochrone) should try candidates in order: the single nearest
 // node can sit on a one-way that can be left but never arrived at, which a
 // component filter cannot catch.
-func nearestNodesForMode(g *Graph, lat, lng float64, mode Mode, k int) []NodeID {
+func nearestDriveNodes(g *Graph, lat, lng float64, k int) []NodeID {
 	if g.Grid == nil {
-		if id := nearestNodeLinear(g, lat, lng, mode); id != noNode {
+		if id := nearestNodeLinear(g, lat, lng); id != noNode {
 			return []NodeID{id}
 		}
 		return nil
@@ -212,8 +198,8 @@ func nearestNodesForMode(g *Graph, lat, lng float64, mode Mode, k int) []NodeID 
 				if dr != -radius && dr != radius && dc != -radius && dc != radius {
 					continue
 				}
-				for _, id := range g.Grid.cells[[2]int16{baseRow + dr, baseCol + dc}] {
-					if !snappableForMode(g, id, mode) {
+				for _, id := range g.Grid.at(baseRow+dr, baseCol+dc) {
+					if !driveSnappable(g, id) {
 						continue
 					}
 					n := g.Nodes[id]
@@ -233,11 +219,11 @@ func nearestNodesForMode(g *Graph, lat, lng float64, mode Mode, k int) []NodeID 
 }
 
 // nearestNodeLinear is the O(N) fallback scan when no grid is present.
-func nearestNodeLinear(g *Graph, lat, lng float64, mode Mode) NodeID {
+func nearestNodeLinear(g *Graph, lat, lng float64) NodeID {
 	var best NodeID
 	bestDist := math.MaxFloat64
 	for id := NodeID(1); id < NodeID(len(g.Nodes)); id++ {
-		if !snappableForMode(g, id, mode) {
+		if !driveSnappable(g, id) {
 			continue
 		}
 		n := g.Nodes[id]
@@ -250,11 +236,8 @@ func nearestNodeLinear(g *Graph, lat, lng float64, mode Mode) NodeID {
 	return best
 }
 
-func hasEdgeForMode(g *Graph, id NodeID, mode Mode) bool {
-	for _, e := range g.EdgesFrom(id) {
-		if e.Seconds[mode] >= 0 {
-			return true
-		}
-	}
-	return false
+// hasDriveEdge reports whether a node has any outgoing drive edge. Every edge
+// in the served graph is drivable, so having one is now the whole test.
+func hasDriveEdge(g *Graph, id NodeID) bool {
+	return len(g.EdgesFrom(id)) > 0
 }

@@ -152,10 +152,9 @@ func TestPostMatchesReachFilteredForOwner(t *testing.T) {
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
-		polygon GEOMETRY NOT NULL SRID 3857,
-		outer_bound GEOMETRY NULL SRID 3857,
-		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
-		SPATIAL INDEX msgreach_poly (polygon)
+		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("postmatchesreach")
@@ -176,9 +175,9 @@ func TestPostMatchesReachFilteredForOwner(t *testing.T) {
 	defer embedding.Global.SetEntries(nil)
 
 	db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", inReachID, outReachID)
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), "+
-		"ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding')", outReachID)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding')", outReachID,
+		mustRasterize(t, "POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))"))
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", inReachID, outReachID)
 
 	// Unauthenticated (batch) request — reach still applies, keyed on post location.

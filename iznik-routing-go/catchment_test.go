@@ -24,12 +24,12 @@ func makeLineGraph(n int) *Graph {
 // ends covers both.
 func TestMultiSourceIsochrone_CoversAllSeeds(t *testing.T) {
 	g := makeLineGraph(7) // NodeIDs 1..7 west→east
-	budget := Isochrone(g, float64(g.Nodes[1].Lat), float64(g.Nodes[1].Lng), 1e9, Walk).ReachedNodes[3]
+	budget := Isochrone(g, float64(g.Nodes[1].Lat), float64(g.Nodes[1].Lng), 1e9).ReachedNodes[3]
 	if budget <= 0 {
 		t.Fatal("degenerate line graph")
 	}
-	single := multiSourceIsochrone(g, []NodeID{1}, budget, Walk)
-	multi := multiSourceIsochrone(g, []NodeID{1, 7}, budget, Walk)
+	single := multiSourceIsochrone(g, []NodeID{1}, budget)
+	multi := multiSourceIsochrone(g, []NodeID{1, 7}, budget)
 
 	if _, ok := single.ReachedNodes[7]; ok {
 		t.Error("single-source from node 1 should NOT reach node 7 within the tight budget")

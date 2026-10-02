@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Log;
  * One-shot repair for rippling_reach rows whose inner bound is missing or uselessly
  * small — the town-core-fragment inners the routing grid's erosion produced for rural
  * reaches, which sent ~58% of browse candidates to the full polygon test and saturated
- * db3 (Aug 2026). Re-derives the inner from the stored polygon via
+ * db3 (Aug 2026). Re-derives the inner from the stored reach grid via
  * ReachBoundsService::ensureUsefulInner, one row at a time, paced for Galera.
  *
  * Safe to re-run (idempotent — a useful inner is never rewritten). Degraded
@@ -27,9 +27,9 @@ class BackfillInnerBoundsCommand extends Command
                             {--dry-run : Report how many rows would be fixed without changing anything}
                             {--limit=0 : Max rows to fix (0 = no limit)}
                             {--sleep-ms=200 : Pause between row updates, to pace Galera replication}
-                            {--min-ratio= : Override the inner/polygon area share below which an inner is re-derived}';
+                            {--min-ratio= : Override the inner/outer area share below which an inner is re-derived}';
 
-    protected $description = 'Re-derive missing or uselessly small rippling_reach inner bounds from the stored polygon';
+    protected $description = 'Re-derive missing or uselessly small rippling_reach inner bounds from the stored reach grid';
 
     public function handle(ReachBoundsService $bounds): int
     {
@@ -51,8 +51,7 @@ class BackfillInnerBoundsCommand extends Command
             $lastId = 0;
 
             // PK-chunked scan carrying no GIS work, so one row's invalid geometry can
-            // only fail its own per-row check, never a whole chunk. rippling_reach is
-            // ~17GB of polygon BLOBs — nothing here may read them in bulk.
+            // only fail its own per-row check, never a whole chunk.
             while (true) {
                 $msgids = DB::table('rippling_reach')
                     ->where('msgid', '>', $lastId)
@@ -69,13 +68,19 @@ class BackfillInnerBoundsCommand extends Command
                     $stats['scanned']++;
 
                     try {
+                        // The reach itself is a stored grid, so the health
+                        // ratio is measured against OUTER_BOUND - a buffered
+                        // simplification of the reach, so a slight superset:
+                        // the ratio reads marginally lower than the old
+                        // inner/polygon share, which errs toward re-deriving,
+                        // and ensureUsefulInner never rewrites a useful inner.
                         // keep-raw: ST_GeometryType/ST_Area GIS expressions per single row
                         $row = DB::selectOne(
                             'SELECT ST_GeometryType(outer_bound) AS outer_type,
                                     inner_bound IS NULL AS missing,
-                                    COALESCE(ST_Area(inner_bound) / NULLIF(ST_Area(polygon), 0), 0) AS ratio
+                                    COALESCE(ST_Area(inner_bound) / NULLIF(ST_Area(outer_bound), 0), 0) AS ratio
                                FROM rippling_reach
-                              WHERE msgid = ? AND polygon IS NOT NULL AND outer_bound IS NOT NULL',
+                              WHERE msgid = ? AND outer_bound IS NOT NULL',
                             [$lastId]
                         );
                     } catch (\Throwable) {
@@ -87,9 +92,6 @@ class BackfillInnerBoundsCommand extends Command
                     if ($row !== null
                         && ($row->outer_type === 'POINT'
                             || (!(int) $row->missing && (float) $row->ratio >= $minRatio))) {
-                        // Healthy row — but its check still read the polygon's off-page
-                        // BLOB for ST_Area, so even a fix-nothing scan is a bulk polygon
-                        // read: the very load this command exists to reduce. Pace it.
                         usleep(10000);
 
                         continue;
@@ -98,8 +100,6 @@ class BackfillInnerBoundsCommand extends Command
                     $stats['candidates']++;
 
                     if ($dryRun) {
-                        // Same pacing rationale as the healthy-row path: the check above
-                        // already cost a polygon BLOB read even though nothing changes.
                         usleep(10000);
 
                         continue;

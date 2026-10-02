@@ -4,8 +4,10 @@ namespace Tests\Unit\Services;
 
 use App\Services\EeeClassificationService;
 use App\Services\EeeComponentService;
+use App\Services\EeeProductionStore;
 use App\Services\EeeSqliteService;
 use App\Services\EeeVisionService;
+use PHPUnit\Framework\Attributes\DataProvider;
 use ReflectionMethod;
 use Tests\TestCase;
 
@@ -34,17 +36,16 @@ class EeeClassificationServiceTest extends TestCase
         $vision    = $this->createMock(EeeVisionService::class);
         $sqlite    = $this->createMock(EeeSqliteService::class);
         $component = $this->createMock(EeeComponentService::class);
+        $store     = $this->createMock(EeeProductionStore::class);
 
-        $this->service = new EeeClassificationService($vision, $sqlite, $component);
+        $this->service = new EeeClassificationService($vision, $sqlite, $component, $store);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // extractTextSignals — public, no DB/HTTP
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * @dataProvider provideExtractTextSignalsCases
-     */
+    #[DataProvider('provideExtractTextSignalsCases')]
     public function test_extract_text_signals(string $text, array $expectedEee, array $expectedNonEee): void
     {
         $result = $this->service->extractTextSignals($text);
@@ -431,7 +432,7 @@ class EeeClassificationServiceTest extends TestCase
         $out = $this->computeConsensus($results);
 
         $this->assertSame(2, $out['weee_category']);
-        $this->assertSame('Screens and monitors', $out['weee_category_name']);
+        $this->assertSame('B: Cooling appliances', $out['weee_category_name']);
         $this->assertEqualsWithDelta(2 / 3, $out['weee_category_confidence'], 0.0001);
     }
 
@@ -461,7 +462,7 @@ class EeeClassificationServiceTest extends TestCase
         $out = $this->computeConsensus($results);
 
         $this->assertSame(6, $out['weee_category']);
-        $this->assertSame('Small IT and telecom equipment', $out['weee_category_name']);
+        $this->assertSame('F: Vapes and electronic cigarettes', $out['weee_category_name']);
         $this->assertSame(1.0, $out['weee_category_confidence']);
     }
 

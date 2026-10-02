@@ -133,17 +133,7 @@ class SendUnifiedDigestCommand extends Command
 
         // Daily mode is gated at the recipient level by
         // FREEGLE_DIGEST_DAILY_ALLOWLIST (default empty = nobody; V1's bulk3
-        // `digest.php -i 24` cron still owns daily for everyone else). This
-        // is just a defensive guard: if the users_digests table hasn't been
-        // migrated in this environment, refuse with a clear message rather
-        // than failing mid-run with "Base table not found". The table is
-        // created by 2026_01_06_120000_create_users_digests_table.php.
-        if ($mode === UnifiedDigestService::MODE_DAILY
-            && ! \Illuminate\Support\Facades\Schema::hasTable('users_digests')) {
-            $this->warn('Daily mode skipped — users_digests table not present (migration not run here).');
-            return Command::SUCCESS;
-        }
-
+        // `digest.php -i 24` cron still owns daily for everyone else).
         if ($groupId && $mode !== UnifiedDigestService::MODE_IMMEDIATE) {
             $this->error('--group is only supported with --mode=immediate.');
             return Command::FAILURE;

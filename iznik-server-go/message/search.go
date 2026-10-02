@@ -106,8 +106,26 @@ type SearchResult struct {
 	// reflect the member's "How far away" slider and "Closest" sort. 0 when the member has no
 	// known location (logged out).
 	Distance float64 `json:"distance" gorm:"-"`
+	// Roadmins/Roadmiles mirror the feed summaries' fields: drive time and road miles from
+	// the member, stamped in one batched routing call when their drive-minutes budget is in
+	// play, so the client's payload-only verdict and Closest sort see the same numbers the
+	// server filtered and ordered by. Nil when not fetched or the engine had no answer.
+	Roadmins  *float64 `json:"roadmins,omitempty" gorm:"-"`
+	Roadmiles *float64 `json:"roadmiles,omitempty" gorm:"-"`
+	// Posted and VisibleSince are the two dates every browse summary carries
+	// (MessageSummary): when the post was written, and the oldest live group arrival - the
+	// ONE clock the client's "Newest posted" sort and each card's age badge read. Search
+	// results are sorted by the same client code as the feed, and without these they sorted
+	// by Arrival (the ripple-bumped spatial arrival) against cards dated from the full
+	// record. Stamped by the Search handler on every result (message.whenVisible).
+	Posted       time.Time `json:"posted,omitempty" gorm:"-"`
+	VisibleSince time.Time `json:"visibleSince,omitempty" gorm:"-"`
 }
 
+// GetWords tokenises a search string into lower-cased, stopword-filtered words.
+// Used for the vector search's lexical-match tier (the query terms and the
+// keyword boost). The old keyword-index query functions that also lived here
+// were removed when the keyword index was retired.
 func GetWords(search string) []string {
 	common := [...]string{
 		"the", "old", "new", "please", "thanks", "with", "offer", "taken", "wanted", "received", "attachment", "offered", "and",
@@ -146,15 +164,6 @@ func GetWords(search string) []string {
 	return filtered
 }
 
-func processResults(tag string, results []SearchResult) []SearchResult {
-	for i := range results {
-		results[i].Matchedon.Type = tag
-		results[i].Matchedon.Word = results[i].Word
-	}
-
-	return results
-}
-
 func groupFilter(groupids []uint64) string {
 	ret := ""
 
@@ -170,29 +179,6 @@ func groupFilter(groupids []uint64) string {
 	}
 
 	return ret
-}
-
-// msgidFilter restricts a keyword-search query to an explicit msgid universe - for a
-// browse-scoped Nearby search, the member's reach feed (see nearbyFeedMsgIDs). Applying it
-// INSIDE the query matters: each search arm caps its results (LIMIT/top-K), so filtering
-// afterwards would let out-of-feed posts crowd in-feed posts out of the capped candidate
-// set. Empty = no restriction. The ids come from our own queries, never user input, so the
-// IN list is built directly (same pattern as groupFilter).
-func msgidFilter(msgids []uint64) string {
-	if len(msgids) == 0 {
-		return ""
-	}
-
-	var sb strings.Builder
-	sb.WriteString(" AND messages_spatial.msgid IN (")
-	for i, id := range msgids {
-		if i > 0 {
-			sb.WriteByte(',')
-		}
-		sb.WriteString(strconv.FormatUint(id, 10))
-	}
-	sb.WriteString(") ")
-	return sb.String()
 }
 
 // nearbyFeedMsgIDs returns the msgids of the posts that make up the member's Nearby browse
@@ -248,29 +234,22 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 		// own preference and applies however the viewer got in.
 		// TWO ARMS, TWO QUERIES - deliberately not one OR.
 		//
-		// The committed-reach arm is driven by the SPATIAL index on
-		// rippling_reach.polygon. ORing the ring test into it removed that index
-		// (EXPLAIN: key=rippling_reach_polygon rows=1 becomes key=NULL rows=62,534)
-		// and full-scanned a 17GB table on every cold cache fill, which on
-		// 2026-08-21 put 70+ concurrent copies on the read node, 250 running
-		// threads and load 158. The ring test is JSON_EXTRACT over a column and
-		// can never be indexed alongside a geometry predicate, so it has to be
-		// asked separately and merged here.
-		containment := "AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
-			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "
-
-		args := []interface{}{lng, lat, utils.SRID, lng, lat, utils.SRID}
-		args = append(args, float64(9007199254740991), lat, lng, lat)
-		db.Table("rippling_reach rr").
-			Select("ms.msgid").
-			Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
-			Joins("INNER JOIN messages m ON m.id = ms.msgid").
-			Joins("INNER JOIN users au ON au.id = m.fromuser").
-			Where("ms.successful = 0 AND rr.status != 'held' "+
-				containment+
-				utils.AuthorReachCapWhere,
-				args...).
-			Scan(&reachIDs)
+		// The committed-reach arm. Preferred source: the spatial index's id
+		// list (exact, from the stored cell grids - the same authority the
+		// feed and badge use), narrowed here by the same visibility and
+		// author-cap conjuncts, bounded by primary key. The legacy geometry
+		// SQL survives as the fallback while its columns exist; once they are
+		// dropped the last resort is the outer-bound superset with each
+		// candidate probed against its stored cells in Go.
+		//
+		// History, because this is the exact query the 2026-08-21 outage hit:
+		// the SQL form is driven by the outer_bound R-tree, and ORing the
+		// ring test into it removed that index (EXPLAIN: key=
+		// rippling_reach_polygon rows=1 becomes key=NULL rows=62,534) and
+		// full-scanned a 17GB table on every cold cache fill - 70+ concurrent
+		// copies, 250 running threads, load 158. The ring test stays out of
+		// every form here.
+		reachIDs = searchReachArmIDs(db, lng, lat)
 
 		// Ring arm. The posts an overflow ring admits this viewer to, resolved
 		// through rippling.AdmittedMsgids - the spatial server's rasters, with
@@ -343,263 +322,6 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 	return ids
 }
 
-func typeFilter(msgtype string) string {
-	var ret string
-
-	switch msgtype {
-	case utils.OFFER:
-		ret = " AND messages_spatial.msgtype = '" + utils.OFFER + "' "
-	case utils.WANTED:
-		ret = " AND messages_spatial.msgtype = '" + utils.WANTED + "' "
-	default:
-		ret = ""
-	}
-
-	return ret
-}
-
-func boxFilter(nelatf float32, nelngf float32, swlatf float32, swlngf float32) string {
-	var ret string
-
-	// Add in some padding.  This copes with blurring and also shows some fairly nearby results which might not be
-	// on the map.
-	if nelatf != 0 && nelngf != 0 && swlatf != 0 && swlngf != 0 {
-		nelat := strconv.FormatFloat(float64(nelatf+0.02), 'f', -1, 32)
-		nelng := strconv.FormatFloat(float64(nelngf+0.02), 'f', -1, 32)
-		swlat := strconv.FormatFloat(float64(swlatf-0.02), 'f', -1, 32)
-		swlng := strconv.FormatFloat(float64(swlngf-0.02), 'f', -1, 32)
-		srid := strconv.FormatInt(utils.SRID, 10)
-		ret = " ST_Contains(ST_SRID(POLYGON(LINESTRING(" +
-			"POINT(" + swlng + ", " + swlat + "), " +
-			"POINT(" + swlng + ", " + nelat + "), " +
-			"POINT(" + nelng + ", " + nelat + "), " +
-			"POINT(" + nelng + ", " + swlat + "), " +
-			"POINT(" + swlng + ", " + swlat + "))), " + srid + "), point) "
-	}
-
-	return ret
-}
-
-// buildGetWordsExactQuery is a pure SQL-builder: no database needed - see
-// message_list.go's buildMTUnionAllMsgIDQuery for the established
-// convention this follows. Extracted from GetWordsExact (a pure
-// behaviour-preserving refactor) so the per-word bind count (n =
-// len(words), unbounded - a search query can contain any number of terms)
-// can be proven correct for any n via
-// the retired ormharness (search_tier9_test.go, removed in d22ba1d6c) rather
-// than sampled at one or two word counts - see keep-raw site 849c08b687c3
-// and plans/active/orm-keepraw-adversarial-review.md §4.
-func buildGetWordsExactQuery(words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) (string, []interface{}) {
-	bf := boxFilter(nelat, nelng, swlat, swlng)
-
-	if len(bf) > 0 {
-		bf = bf + " AND "
-	}
-
-	sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch, messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
-		"INNER JOIN words ON messages_index.wordid = words.id " +
-		"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
-		"WHERE " +
-		bf +
-		"word IN ("
-
-	args := []interface{}{}
-
-	for i, w := range words {
-		if i > 0 {
-			sql += ","
-		}
-
-		sql += "? "
-		args = append(args, w)
-	}
-
-	sql += ") " +
-		groupFilter(groupids) +
-		msgidFilter(msgids) +
-		typeFilter(msgtype) +
-		"GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?;"
-
-	args = append(args, limit)
-
-	return sql, args
-}
-
-func GetWordsExact(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
-	var res []SearchResult
-
-	// Empty words would render "word IN ()", which is invalid SQL (Error
-	// 1064 in production whenever a search reduced to zero indexed words).
-	// GetWordsTypo/Starts/Sounds all carry this same guard; Exact was the
-	// one sibling missing it.
-	if len(words) > 0 {
-		sql, args := buildGetWordsExactQuery(words, limit, groupids, msgids, msgtype, nelat, nelng, swlat, swlng)
-
-		// keep-raw: site 849c08b687c3 - unbounded per-word bind count in a
-		// hand-built word-IN shape; see buildGetWordsExactQuery.
-		db.Raw(sql, args...).Scan(&res)
-	}
-
-	return processResults("Exact", res)
-}
-
-// buildGetWordsTypoQuery is a pure SQL-builder - see buildGetWordsExactQuery
-// above for the convention and the reason (keep-raw site 97b0cc9dd792): the
-// per-word bind count (n = len(words), unbounded) is proven for any n via
-// the retired ormharness (search_tier9_test.go, removed in d22ba1d6c). Extracted
-// from GetWordsTypo, a pure behaviour-preserving refactor.
-func buildGetWordsTypoQuery(words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) (string, []interface{}) {
-	bf := boxFilter(nelat, nelng, swlat, swlng)
-
-	if len(bf) > 0 {
-		bf = bf + " AND "
-	}
-
-	sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch, messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
-		"INNER JOIN words ON messages_index.wordid = words.id " +
-		"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
-		"WHERE (" + bf
-
-	args := []interface{}{}
-
-	for i, word := range words {
-		if i > 0 {
-			sql += " OR "
-		}
-
-		prefix := word[0:1] + "%"
-
-		sql += "(word LIKE ? AND damlevlim(word, ?, ?) < 2) "
-		args = append(args, prefix, word, len(word))
-	}
-
-	sql += ")" + groupFilter(groupids) +
-		msgidFilter(msgids) +
-		typeFilter(msgtype) +
-		" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?"
-
-	args = append(args, limit)
-
-	return sql, args
-}
-
-func GetWordsTypo(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
-	var res []SearchResult
-
-	if len(words) > 0 {
-		sql, args := buildGetWordsTypoQuery(words, limit, groupids, msgids, msgtype, nelat, nelng, swlat, swlng)
-		db.Raw(sql, args...).Scan(&res)
-	}
-
-	return processResults("Typo", res)
-}
-
-// buildGetWordsStartsQuery is a pure SQL-builder - see
-// buildGetWordsExactQuery above for the convention and the reason (keep-raw
-// site 7b1697ea1d18): the per-word bind count (n = len(words), unbounded) is
-// proven for any n by the retired ormharness (removed in d22ba1d6c)
-// (search_tier9_test.go). Extracted from GetWordsStarts, a pure
-// behaviour-preserving refactor.
-func buildGetWordsStartsQuery(words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) (string, []interface{}) {
-	sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch,  messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
-		"INNER JOIN words ON messages_index.wordid = words.id " +
-		"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
-		"WHERE "
-
-	bf := boxFilter(nelat, nelng, swlat, swlng)
-
-	if len(bf) > 0 {
-		sql += "(" + bf + ") AND "
-	}
-
-	sql += " ("
-
-	args := []interface{}{}
-
-	for i, word := range words {
-		if i > 0 {
-			sql += " OR "
-		}
-
-		prefix := word + "%"
-
-		sql += "word LIKE ? "
-		args = append(args, prefix)
-	}
-
-	sql += ") " + groupFilter(groupids) +
-		msgidFilter(msgids) +
-		typeFilter(msgtype) +
-		" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?"
-
-	args = append(args, limit)
-
-	return sql, args
-}
-
-func GetWordsStarts(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
-	var res []SearchResult
-
-	if len(words) > 0 {
-		sql, args := buildGetWordsStartsQuery(words, limit, groupids, msgids, msgtype, nelat, nelng, swlat, swlng)
-		db.Raw(sql, args...).Scan(&res)
-	}
-
-	return processResults("StartsWith", res)
-}
-
-// buildGetWordsSoundsQuery is a pure SQL-builder - see
-// buildGetWordsExactQuery above for the convention and the reason (keep-raw
-// site feb5e1180e5a): the per-word bind count (n = len(words), unbounded) is
-// proven for any n by the retired ormharness (removed in d22ba1d6c)
-// (search_tier9_test.go). Extracted from GetWordsSounds, a pure
-// behaviour-preserving refactor.
-func buildGetWordsSoundsQuery(words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) (string, []interface{}) {
-	sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch,  messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
-		"INNER JOIN words ON messages_index.wordid = words.id " +
-		"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
-		"WHERE "
-
-	bf := boxFilter(nelat, nelng, swlat, swlng)
-
-	if len(bf) > 0 {
-		sql += "(" + bf + ") AND "
-	}
-
-	sql += " ("
-
-	args := []interface{}{}
-
-	for i, word := range words {
-		if i > 0 {
-			sql += " OR "
-		}
-
-		sql += "soundex = SUBSTRING(SOUNDEX(?), 1, 10) "
-		args = append(args, word)
-	}
-
-	sql += ") " + groupFilter(groupids) +
-		msgidFilter(msgids) +
-		typeFilter(msgtype) +
-		" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?"
-
-	args = append(args, limit)
-
-	return sql, args
-}
-
-func GetWordsSounds(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
-	var res []SearchResult
-
-	if len(words) > 0 {
-		sql, args := buildGetWordsSoundsQuery(words, limit, groupids, msgids, msgtype, nelat, nelng, swlat, swlng)
-		db.Raw(sql, args...).Scan(&res)
-	}
-
-	return processResults("SoundsLike", res)
-}
-
 // SearchByMsgID returns the message with the given id as a single-element search
 // result, restricted to the supplied groups (nil groupids = no restriction, as
 // used for admin/support). Returns nil if the message does not exist or is not in
@@ -634,4 +356,119 @@ func SearchByMsgID(db *gorm.DB, msgid uint64, groupids []uint64) []SearchResult 
 	}
 
 	return results
+}
+
+// searchReachArmIDs resolves the committed-reach arm of the search universe:
+// which live posts' current reach covers this viewer, filtered by the same
+// visibility and author-cap conjuncts as the feed. Two forms, in preference
+// order, mirroring the feed's reachContainmentSQL:
+//
+//  1. Spatial-index id list (exact, from the stored cell grids), narrowed by
+//     a primary-key IN - the keyed lookup shape.
+//  2. Degraded (spatial down): outer-bound superset in SQL, each candidate
+//     probed against its stored cells here. Correct and bounded, just
+//     slower - the emergency path.
+func searchReachArmIDs(db *gorm.DB, lng, lat float64) []uint64 {
+	authorCapArgs := []interface{}{float64(9007199254740991), lat, lng, lat}
+	var reachIDs []uint64
+
+	if in, partial, ok := rippling.SpatialReachIDs(db, lng, lat); ok {
+		if len(partial) > 0 {
+			// Impossible for healthy rows (partial meant a legacy
+			// coarse-raster row); do not silently hide posts.
+			fmt.Printf("search: %d partial reach ids with no legacy geometry to resolve them\n", len(partial))
+		}
+		// Labels-truth: the same narrowing AND discovery union the feed
+		// applies, so search can never surface a post browse hides - nor
+		// hide a discovered post browse shows (the file's own invariant:
+		// never scrollable but unsearchable). The SQL below still applies
+		// every visibility conjunct to the discovered ids.
+		ids := make([]uint64, len(in))
+		for i, id := range in {
+			ids[i] = uint64(id)
+		}
+		verdicts, discovered, _ := rippling.LabelVerdictsWithDiscover(lat, lng, ids)
+		in = rippling.DropLabelOut(in, verdicts)
+		for _, id := range discovered {
+			in = append(in, int64(id))
+		}
+		db.Table("rippling_reach rr").
+			Select("ms.msgid").
+			Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
+			Joins("INNER JOIN messages m ON m.id = ms.msgid").
+			Joins("INNER JOIN users au ON au.id = m.fromuser").
+			Where("ms.successful = 0 AND rr.status != 'held' "+
+				"AND rr.msgid IN (?) "+utils.AuthorReachCapWhere,
+				append([]interface{}{in}, authorCapArgs...)...).
+			Scan(&reachIDs)
+		return reachIDs
+	}
+
+	// Degraded: outer-bound superset + Go-side cells probe. Rows the probe
+	// cannot decide (a RETIRED grid: the label + union threshold replaced
+	// its cells) get one batched label evaluation - the same rescue the
+	// feed's degraded path applies (filterProbed) - so a spatial-index
+	// outage alone does not desynchronise search from browse; only spatial
+	// AND routing down together fails closed.
+	var cands []struct {
+		Msgid uint64 `gorm:"column:msgid"`
+		Cells []byte `gorm:"column:cells"`
+	}
+	args := []interface{}{lng, lat, utils.SRID}
+	db.Table("rippling_reach rr").
+		Select("ms.msgid, "+rippling.ReachCellsExpr(db)+" AS cells").
+		Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
+		Joins("INNER JOIN messages m ON m.id = ms.msgid").
+		Joins("INNER JOIN users au ON au.id = m.fromuser").
+		Where("ms.successful = 0 AND rr.status != 'held' "+
+			"AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) "+
+			utils.AuthorReachCapWhere,
+			append(args, authorCapArgs...)...).
+		Scan(&cands)
+	var undecided []uint64
+	for _, c := range cands {
+		if in, ok := rippling.CellSetContains(c.Cells, lng, lat); ok && in {
+			reachIDs = append(reachIDs, c.Msgid)
+		} else if len(c.Cells) == 0 {
+			undecided = append(undecided, c.Msgid)
+		}
+	}
+	reachIDs = append(reachIDs, rippling.RescueUndecided(lat, lng, undecided)...)
+	return reachIDs
+}
+
+// dropRippledIn keeps only the results one of the given groups holds as its OWN post:
+// a messages_groups row with rippled_in = 0 on that group. It is the search arm of the
+// Approved Messages "Only this group's own posts (hide rippled-in)" filter
+// (?originonly=true), whose listing arm is the mg.rippled_in = 0 clause in
+// message_list.go. No groups means nothing to scope to, so nothing is dropped.
+func dropRippledIn(db *gorm.DB, results []SearchResult, groupids []uint64) []SearchResult {
+	if len(results) == 0 || len(groupids) == 0 {
+		return results
+	}
+
+	ids := make([]uint64, 0, len(results))
+	for _, r := range results {
+		ids = append(ids, r.Msgid)
+	}
+
+	var own []uint64
+	db.Table("messages_groups").
+		Select("DISTINCT msgid").
+		Where("msgid IN ? AND groupid IN ? AND rippled_in = 0 AND deleted = 0", ids, groupids).
+		Scan(&own)
+
+	keep := make(map[uint64]bool, len(own))
+	for _, id := range own {
+		keep[id] = true
+	}
+
+	kept := results[:0]
+	for _, r := range results {
+		if keep[r.Msgid] {
+			kept = append(kept, r)
+		}
+	}
+
+	return kept
 }

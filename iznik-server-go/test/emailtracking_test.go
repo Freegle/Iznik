@@ -543,3 +543,138 @@ func TestEmailTrackingMultipleClicks(t *testing.T) {
 	db.Where("email_tracking_id = ?", updated.ID).Find(&clicks)
 	assert.Equal(t, 2, len(clicks))
 }
+
+// compactEncodeID mirrors the PHP EmailTracking::encodeId(): base64url (RFC 4648
+// §5, no padding) of the minimal big-endian bytes. Used to build compact-route
+// request paths in tests.
+func compactEncodeID(id uint64) string {
+	if id == 0 {
+		return "0"
+	}
+	var b []byte
+	for id > 0 {
+		b = append([]byte{byte(id & 0xFF)}, b...)
+		id >>= 8
+	}
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	var out []byte
+	for i := 0; i < len(b); i += 3 {
+		var n uint32
+		rem := len(b) - i
+		n = uint32(b[i]) << 16
+		if rem > 1 {
+			n |= uint32(b[i+1]) << 8
+		}
+		if rem > 2 {
+			n |= uint32(b[i+2])
+		}
+		out = append(out, alphabet[(n>>18)&0x3F], alphabet[(n>>12)&0x3F])
+		if rem > 1 {
+			out = append(out, alphabet[(n>>6)&0x3F])
+		}
+		if rem > 2 {
+			out = append(out, alphabet[n&0x3F])
+		}
+	}
+	return string(out)
+}
+
+// TestEmailTrackingImageCompactScrollDepth verifies that GET /e/d/i/{ref}/...?s=
+// updates scroll_depth_percent with max semantics, mirroring the long-form Image
+// handler. Seeding a row at 60, sending s=42 must leave it at 60; sending s=80
+// must update it to 80.
+func TestEmailTrackingImageCompactScrollDepth(t *testing.T) {
+	tracking := createTestTrackingRecord(t)
+	defer cleanupTestTracking(t, tracking.TrackingID)
+
+	// Seed scroll_depth_percent = 60.
+	db := database.DBConn
+	initial := uint8(60)
+	db.Model(tracking).Update("scroll_depth_percent", initial)
+
+	// The compact route uses the first 12 chars of tracking_id as the ref.
+	ref := tracking.TrackingID[:12]
+	// Encode a known id (99 -> "Yw") for a type-t image, preset 0.
+	idEnc := compactEncodeID(99)
+
+	// --- s=42, lower than current 60: must stay at 60 ---
+	req1 := httptest.NewRequest("GET",
+		"/e/d/i/"+ref+"/t/"+idEnc+"/0/i0?s=42", nil)
+	resp1, err := getApp().Test(req1, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusFound, resp1.StatusCode)
+
+	var after1 emailtracking.EmailTracking
+	db.Where("tracking_id = ?", tracking.TrackingID).First(&after1)
+	assert.Equal(t, uint8(60), *after1.ScrollDepthPercent,
+		"scroll_depth_percent must not decrease when s=42 < current 60")
+
+	// --- s=80, higher than current 60: must update to 80 ---
+	req2 := httptest.NewRequest("GET",
+		"/e/d/i/"+ref+"/t/"+idEnc+"/0/i0?s=80", nil)
+	resp2, err := getApp().Test(req2, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusFound, resp2.StatusCode)
+
+	var after2 emailtracking.EmailTracking
+	db.Where("tracking_id = ?", tracking.TrackingID).First(&after2)
+	assert.Equal(t, uint8(80), *after2.ScrollDepthPercent,
+		"scroll_depth_percent must update to 80 when s=80 > current 60")
+
+	// Verify image load records were created for both requests.
+	var images []emailtracking.EmailTrackingImage
+	db.Where("email_tracking_id = ?", after2.ID).Find(&images)
+	assert.Equal(t, 2, len(images), "expected 2 image load records")
+}
+
+// Looking a member up by their own address must find them.
+//
+// The lookup carried "AND backwards IS NULL", which made it miss almost every real
+// address: on production only 140,057 of 4,476,456 rows have a null there, and
+// 136,047 of those are Freegle's own proxy addresses. A member looked up by the
+// address they actually use fell through to the users.email fallback instead, which
+// is why it went unnoticed. V1 has no such condition anywhere.
+func TestEmailTrackingFindsUserByTheirOwnAddress(t *testing.T) {
+	prefix := uniquePrefix("emailbyaddr")
+	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	_, token := CreateTestSession(t, supportID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberEmail := prefix + "_member@test.com"
+
+	// A row with canon and backwards filled, which is the ordinary case and exactly
+	// what the old condition excluded.
+	db := database.DBConn
+	db.Exec("UPDATE users_emails SET canon = ?, backwards = ? WHERE userid = ? AND email = ?",
+		memberEmail, reverseForTest(memberEmail), memberID, memberEmail)
+
+	tracking := &emailtracking.EmailTracking{
+		TrackingID:     "byaddr-" + randomString(16),
+		EmailType:      "Test",
+		UserID:         &memberID,
+		RecipientEmail: memberEmail,
+	}
+	db.Create(tracking)
+	defer db.Where("tracking_id = ?", tracking.TrackingID).Delete(&emailtracking.EmailTracking{})
+
+	req := httptest.NewRequest("GET",
+		"/api/modtools/email/user/0?email="+memberEmail+"&jwt="+token, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	emails, _ := result["emails"].([]interface{})
+	assert.NotEmpty(t, emails, "the member's own address must resolve to their tracking rows")
+}
+
+// reverseForTest mirrors the reverse the column stores, so the fixture is a row that
+// HAS a backwards rather than one that happens to lack it.
+func reverseForTest(s string) string {
+	r := []rune(s)
+	for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
+		r[i], r[j] = r[j], r[i]
+	}
+	return string(r)
+}

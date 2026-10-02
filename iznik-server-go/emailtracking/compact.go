@@ -243,12 +243,12 @@ func ClickCompact(c *fiber.Ctx) error {
 
 	id, ok := DecodeID(idEnc)
 	if !ok {
-		return c.Redirect("/")
+		return sendDestination(c, "/")
 	}
 
 	destinationURL := reconstructCompactLink(linkType, id)
 	if destinationURL == "" {
-		return c.Redirect("/")
+		return sendDestination(c, "/")
 	}
 
 	db := database.DBConn
@@ -256,7 +256,7 @@ func ClickCompact(c *fiber.Ctx) error {
 	tracking, found := findTrackingByRef(ref)
 	if !found {
 		// Unknown ref — still send the user to the right place, just untracked.
-		return c.Redirect(destinationURL)
+		return sendDestination(c, destinationURL)
 	}
 
 	ipAddress := c.IP()
@@ -293,11 +293,12 @@ func ClickCompact(c *fiber.Ctx) error {
 	}
 	db.Create(&click)
 
-	return c.Redirect(destinationURL)
+	return sendDestination(c, destinationURL)
 }
 
 // ImageCompact records an image load on a compact image link and 302s to the
-// reconstructed delivery URL. Mirrors Image()'s tracking writes.
+// reconstructed delivery URL. Mirrors Image()'s tracking writes including
+// scroll_depth_percent max-update when ?s= is supplied.
 //
 // @Router /e/d/i/{ref}/{type}/{idenc}/{preset}/{pos} [get]
 // @Summary Compact delivery image
@@ -308,6 +309,7 @@ func ClickCompact(c *fiber.Ctx) error {
 // @Param idenc path string true "base64url-encoded resource id"
 // @Param preset path int true "Dimension preset (0,1,2)"
 // @Param pos path string true "Position label"
+// @Param s query integer false "Estimated scroll percentage (0-100)"
 // @Success 302 {string} string "Redirect to image"
 func ImageCompact(c *fiber.Ctx) error {
 	ref := c.Params("ref")
@@ -333,6 +335,9 @@ func ImageCompact(c *fiber.Ctx) error {
 		c.Set("Content-Type", "image/gif")
 		return c.Send(transparentGIF)
 	}
+
+	// Optional scroll depth param — same semantics as the long-form Image handler.
+	scrollPercent := c.QueryInt("s", -1)
 
 	db := database.DBConn
 
@@ -365,6 +370,18 @@ func ImageCompact(c *fiber.Ctx) error {
 			ImagePosition:   position,
 			LoadedAt:        now,
 		}
+
+		if scrollPercent >= 0 && scrollPercent <= 100 {
+			sp := uint8(scrollPercent)
+			imageLoad.EstimatedScrollPercent = &sp
+
+			// Update scroll depth if this image is deeper than any previous
+			// image load for this email — mirrors Image()'s max-update logic.
+			if tracking.ScrollDepthPercent == nil || sp > *tracking.ScrollDepthPercent {
+				db.Model(tracking).Update("scroll_depth_percent", sp)
+			}
+		}
+
 		db.Create(&imageLoad)
 	}
 

@@ -603,6 +603,42 @@ class DailyPostsPushTest extends TestCase
             ->assertExitCode(0);
     }
 
+    /**
+     * A copy of something already pushed must not buzz the phone again. The push has no record
+     * of individual sends, so the cursor stands in for one: a copy the cursor has passed is one
+     * the member has already been shown.
+     */
+    public function test_command_does_not_push_an_item_it_has_already_pushed(): void
+    {
+        Config::set('freegle.posts_push_allowlist', '*');
+
+        $user  = $this->createTestUser();
+        $other = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($user, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createUserPushToken($user->id);
+
+        $first = $this->createApprovedMessage($other, $group, 'OFFER: Twice posted shelf (London)');
+        DB::table('messages_groups')->where('msgid', $first->id)->update(['arrival' => now()->subHour()]);
+        DB::table('messages')->where('id', $first->id)->update(['arrival' => now()->subHour()]);
+
+        $firstRun = $this->createMock(PushNotificationService::class);
+        $firstRun->expects($this->once())->method('notifyDailyNewPosts')->willReturn(1);
+        $this->app->instance(PushNotificationService::class, $firstRun);
+        $this->artisan('push:daily-posts', ['--user' => $user->id])->assertExitCode(0);
+
+        // The poster puts the same thing up again after that push went out.
+        $this->createApprovedMessage($other, $group, 'OFFER: Twice posted shelf (London)');
+
+        $secondRun = $this->createMock(PushNotificationService::class);
+        $secondRun->expects($this->never())->method('notifyDailyNewPosts');
+        $this->app->instance(PushNotificationService::class, $secondRun);
+        $this->artisan('push:daily-posts', ['--user' => $user->id])->assertExitCode(0);
+    }
+
     public function test_command_advances_cursor_after_send(): void
     {
         Config::set('freegle.posts_push_allowlist', '*');

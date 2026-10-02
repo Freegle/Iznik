@@ -4,10 +4,12 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 )
 
 // EmbeddingDim is 256-dim Matryoshka truncation of nomic-embed-text-v1.5.
@@ -17,7 +19,8 @@ const EmbeddingDim = 256
 type Entry struct {
 	Msgid      uint64
 	Fromuser   uint64
-	Groupid    uint64
+	Groupid    uint64   // messages_spatial.groupid - only ever ONE group, even for a rippled/multi-group message
+	GroupIDs   []uint64 // every group the message is Approved on (origin + rippled-in copies) - used for group-scoped search
 	Msgtype    string
 	Lat        float64
 	Lng        float64
@@ -101,14 +104,67 @@ func fetchEntries(extraWhere string, args ...interface{}) ([]Entry, error) {
 	}
 
 	entries := make([]Entry, 0, len(rows))
+	msgids := make([]uint64, 0, len(rows))
 	for _, r := range rows {
 		e, err := decodeEntry(r.Msgid, r.Fromuser, r.Groupid, r.Msgtype, r.Lat, r.Lng, r.Subject, r.Arrival, r.SubjectEmbedding, r.BodyEmbedding)
 		if err != nil {
 			continue // wrong-sized subject blob: skip
 		}
 		entries = append(entries, e)
+		msgids = append(msgids, e.Msgid)
 	}
+
+	groupIDs, err := fetchGroupIDs(msgids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		entries[i].GroupIDs = groupIDs[entries[i].Msgid]
+	}
+
 	return entries, nil
+}
+
+// fetchGroupIDs maps each msgid to every group the message is Approved on.
+// messages_spatial.groupid names only ONE group per message even when the message
+// is Approved on several (rippling adds a messages_groups row per receiving group)
+// - see message/groups.go's spatialGroupFilter comment. Search matches a mod's
+// group against any of them, not just the one messages_spatial happened to store
+// (Discourse 9808/751: a rippled-in post was invisible to ModTools search scoped
+// to the receiving group).
+//
+// Errors are returned, never swallowed: silently returning an empty map would
+// scope every entry to its single messages_spatial group and hide rippled-in
+// posts from the receiving group's moderators. The callers keep the entries they
+// already hold and retry on the next refresh tick.
+func fetchGroupIDs(msgids []uint64) (map[uint64][]uint64, error) {
+	groupIDs := make(map[uint64][]uint64, len(msgids))
+	if len(msgids) == 0 {
+		return groupIDs, nil
+	}
+
+	db := database.DBConn
+	if db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	type groupRow struct {
+		Msgid   uint64 `gorm:"column:msgid"`
+		Groupid uint64 `gorm:"column:groupid"`
+	}
+	var groupRows []groupRow
+	if err := db.Table("messages_groups").
+		Select("msgid, groupid").
+		Where("msgid IN (?) AND collection = ? AND deleted = 0", msgids, utils.COLLECTION_APPROVED).
+		Scan(&groupRows).Error; err != nil {
+		return nil, fmt.Errorf("groups query: %w", err)
+	}
+
+	for _, gr := range groupRows {
+		groupIDs[gr.Msgid] = append(groupIDs[gr.Msgid], gr.Groupid)
+	}
+
+	return groupIDs, nil
 }
 
 // Load reads all embeddings + spatial metadata from DB.
@@ -190,6 +246,16 @@ func (s *Store) Refresh() error {
 		}
 	}
 
+	// A message's groups change without the message itself changing: a post ripples
+	// into a nearby group minutes after approval, while it is already in the store.
+	// Re-map the groups for every open message, not just the ones being added, or
+	// the receiving group's moderators cannot find the post until the next full
+	// Load() (Discourse 9808/751).
+	groupIDs, err := fetchGroupIDs(openIds)
+	if err != nil {
+		return fmt.Errorf("refresh groups: %w", err)
+	}
+
 	s.mu.Lock()
 	kept := make([]Entry, 0, len(s.entries)+len(newEntries))
 	for i := range s.entries {
@@ -198,6 +264,9 @@ func (s *Store) Refresh() error {
 		}
 	}
 	s.entries = append(kept, newEntries...)
+	for i := range s.entries {
+		s.entries[i].GroupIDs = groupIDs[s.entries[i].Msgid]
+	}
 	s.mu.Unlock()
 
 	return nil
@@ -305,6 +374,23 @@ type VectorSearchResult struct {
 	Arrival    time.Time `json:"-"`
 }
 
+// entryInAnyGroup reports whether e is Approved on any of the requested groups.
+// Groupid alone (messages_spatial's single column) only ever names the origin
+// group, so a message rippled into another group would otherwise be invisible
+// to a search scoped to the receiving group (Discourse 9808/751) - GroupIDs
+// carries every group the message is actually Approved on.
+func entryInAnyGroup(e *Entry, groupSet map[uint64]bool) bool {
+	if groupSet[e.Groupid] {
+		return true
+	}
+	for _, g := range e.GroupIDs {
+		if groupSet[g] {
+			return true
+		}
+	}
+	return false
+}
+
 // Search performs brute-force cosine similarity on every entry and returns the
 // top-K by max(subjectCos, bodyCos). Returning both cosines separately lets the
 // caller order subject-matches ahead of body-matches (what users expect:
@@ -346,7 +432,7 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 		if msgtype == "Wanted" && e.Msgtype != "Wanted" {
 			continue
 		}
-		if hasGroupFilter && !groupSet[e.Groupid] {
+		if hasGroupFilter && !entryInAnyGroup(e, groupSet) {
 			continue
 		}
 		if allowedIDs != nil && !allowedIDs[e.Msgid] {
@@ -421,6 +507,102 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 		}
 	}
 
+	return out
+}
+
+// tokenizeWords lower-cases s and splits it into a set of alphanumeric words,
+// mirroring message.GetWords' tokenisation (without the stopword filter — the
+// query words are already filtered). Kept in this package to avoid an import
+// cycle with the message package.
+func tokenizeWords(s string) map[string]bool {
+	fields := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+	})
+	set := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		set[f] = true
+	}
+	return set
+}
+
+// LexicalMatch returns every open entry whose subject contains ALL of the given
+// words (case-insensitive), subject to the same type/group/allowedIDs/bbox
+// filters as Search — including the rippled-in groups entryInAnyGroup matches,
+// and allowedIDs, the browse-scoped Nearby-feed
+// universe restriction, so the lexical guarantee can't surface a post outside
+// the viewer's reach that the cosine path would have excluded. This is the
+// in-memory replacement for the retired keyword index's exact-match guarantee:
+// a post whose subject literally contains the query words is always findable,
+// even when its embedding cosine is low (short titles, UK retail terms the
+// model misses). O(N × words) over the store — single-digit ms for the ~100k
+// open-message store. Words must already be lower-cased.
+func (s *Store) LexicalMatch(words []string, msgtype string, groupids []uint64,
+	allowedIDs map[uint64]bool, swlat, swlng, nelat, nelng float32) []VectorSearchResult {
+
+	if len(words) == 0 {
+		return nil
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	groupSet := make(map[uint64]bool, len(groupids))
+	for _, g := range groupids {
+		groupSet[g] = true
+	}
+	hasGroupFilter := len(groupids) > 0
+	hasBoxFilter := nelat != 0 || nelng != 0 || swlat != 0 || swlng != 0
+
+	out := make([]VectorSearchResult, 0, 16)
+	for i := range s.entries {
+		e := &s.entries[i]
+
+		if msgtype == "Offer" && e.Msgtype != "Offer" {
+			continue
+		}
+		if msgtype == "Wanted" && e.Msgtype != "Wanted" {
+			continue
+		}
+		if hasGroupFilter && !entryInAnyGroup(e, groupSet) {
+			continue
+		}
+		if allowedIDs != nil && !allowedIDs[e.Msgid] {
+			continue
+		}
+		if hasBoxFilter {
+			lat := float32(e.Lat)
+			lng := float32(e.Lng)
+			if lat < swlat-0.02 || lat > nelat+0.02 || lng < swlng-0.02 || lng > nelng+0.02 {
+				continue
+			}
+		}
+
+		// Whole-word match (matching the retired keyword index's semantics, not a
+		// substring — so "cat" doesn't match "category"). Tokenise the subject the
+		// same way the query words were tokenised: lower-case, split on any
+		// non-alphanumeric rune.
+		subjectWords := tokenizeWords(e.Subject)
+		all := true
+		for _, w := range words {
+			if !subjectWords[w] {
+				all = false
+				break
+			}
+		}
+		if !all {
+			continue
+		}
+
+		out = append(out, VectorSearchResult{
+			Msgid:   e.Msgid,
+			Groupid: e.Groupid,
+			Msgtype: e.Msgtype,
+			Lat:     e.Lat,
+			Lng:     e.Lng,
+			Subject: e.Subject,
+			Arrival: e.Arrival,
+		})
+	}
 	return out
 }
 

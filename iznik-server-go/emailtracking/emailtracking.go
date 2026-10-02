@@ -165,6 +165,56 @@ func generateTrackingID() string {
 	return hex.EncodeToString(b)
 }
 
+// emailTrackingTNJoin is the LEFT JOIN fragment that brings in the users table
+// for the Trash Nothing exclusion filter. Shared across all stats handlers.
+const emailTrackingTNJoin = "LEFT JOIN users ON email_tracking.userid = users.id"
+
+// emailTrackingTNWhere is the WHERE predicate that excludes Trash Nothing users.
+// Always used alongside emailTrackingTNJoin.
+const emailTrackingTNWhere = "users.tnuserid IS NULL"
+
+// statsByTypeQuery returns the StatsByType FROM-table expression and WHERE
+// clause/args. FORCE INDEX (sent_at) helps a date-range scan but misleads the
+// optimizer on a full-table scan, so it's included only when both dates are
+// supplied - the date-range clause is likewise only appended in that case, so
+// this has exactly 2 possible rendered forms.
+func statsByTypeQuery(startDate, endDate string) (table, whereSQL string, whereArgs []interface{}) {
+	hasDateRange := startDate != "" && endDate != ""
+
+	table = "email_tracking"
+	whereSQL = emailTrackingTNWhere
+
+	if hasDateRange {
+		table = "email_tracking FORCE INDEX (sent_at)"
+
+		// If endDate doesn't include time, add end of day
+		endDateTime := endDate
+		if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
+			endDateTime = endDate + " 23:59:59"
+		}
+		whereSQL += " AND sent_at BETWEEN ? AND ?"
+		whereArgs = append(whereArgs, startDate, endDateTime)
+	}
+
+	return table, whereSQL, whereArgs
+}
+
+// calcEmailRates computes the four standard email engagement rates from raw counts.
+// All rates are percentages (0-100); denominators of zero produce 0 to avoid
+// division-by-zero. Shared by Stats, StatsByType, and any other handler that
+// displays engagement rates so that a single fix propagates everywhere.
+func calcEmailRates(totalSent, opened, clicked, linkedBounces int64) (openRate, clickRate, clickToOpenRate, bounceRate float64) {
+	if totalSent > 0 {
+		openRate = float64(opened) / float64(totalSent) * 100
+		clickRate = float64(clicked) / float64(totalSent) * 100
+		bounceRate = float64(linkedBounces) / float64(totalSent) * 100
+	}
+	if opened > 0 {
+		clickToOpenRate = float64(clicked) / float64(opened) * 100
+	}
+	return
+}
+
 // Pixel serves a tracking pixel and records an email open
 // @Router /e/d/p/{id} [get]
 // @Summary Delivery pixel
@@ -197,6 +247,26 @@ func Pixel(c *fiber.Ctx) error {
 // @Param p query string false "Position identifier"
 // @Param a query string false "Action type (e.g., unsubscribe, cta)"
 // @Success 302 {string} string "Redirect"
+// sendDestination answers a tracked click: a 302 for a mail client or browser,
+// or the destination as JSON when the caller asks with ?format=json.
+//
+// The app asks for JSON. On iOS the universal-link association hands EVERY
+// site path to the app, so tapping a tracked link in an email opens the app
+// with the tracker's own URL - /e/d/r/... - which is not a page the app has.
+// It used to push that straight into its router, land on the error page, and
+// leave the member on their home page; one member, sent there by a chat
+// notification's Reply button, typed her reply to the poster into ChitChat
+// (2026-08-17). The app cannot follow a cross-origin 302 to learn where the
+// link went, so it resolves the link here instead: the click is recorded
+// exactly as it is for a browser (it was silently lost before, because the
+// tap never reached the server), and the app routes itself to the answer.
+func sendDestination(c *fiber.Ctx, destination string) error {
+	if c.Query("format") == "json" {
+		return c.JSON(fiber.Map{"url": destination})
+	}
+	return c.Redirect(destination)
+}
+
 func Click(c *fiber.Ctx) error {
 	db := database.DBConn
 	trackingID := c.Params("id")
@@ -205,7 +275,7 @@ func Click(c *fiber.Ctx) error {
 	urlEncoded := c.Query("url", "")
 	urlBytes, err := base64.StdEncoding.DecodeString(urlEncoded)
 	if err != nil {
-		return c.Redirect("/")
+		return sendDestination(c, "/")
 	}
 	rawURL := string(urlBytes)
 	destinationURL := RepairDoubledSiteURL(rawURL)
@@ -225,14 +295,14 @@ func Click(c *fiber.Ctx) error {
 		(!isValidRedirectURL(destinationURL) &&
 			!hasValidLinkSignature(rawURL, c.Query("sig")) &&
 			!isCommunityNewsItemURL(db, destinationURL)) {
-		return c.Redirect("/")
+		return sendDestination(c, "/")
 	}
 
 	// Get tracking record
 	var tracking EmailTracking
 	result := db.Where("tracking_id = ?", trackingID).First(&tracking)
 	if result.Error != nil {
-		return c.Redirect(destinationURL)
+		return sendDestination(c, destinationURL)
 	}
 
 	position := c.Query("p", "")
@@ -280,7 +350,7 @@ func Click(c *fiber.Ctx) error {
 	}
 	db.Create(&click)
 
-	return c.Redirect(destinationURL)
+	return sendDestination(c, destinationURL)
 }
 
 // Image tracks an image load for scroll depth estimation
@@ -397,8 +467,8 @@ func Stats(c *fiber.Ctx) error {
 
 	// Build query - exclude Trash Nothing users from stats
 	query := db.Model(&EmailTracking{}).
-		Joins("LEFT JOIN users ON email_tracking.userid = users.id").
-		Where("users.tnuserid IS NULL")
+		Joins(emailTrackingTNJoin).
+		Where(emailTrackingTNWhere)
 	if emailType != "" {
 		query = query.Where("email_type = ?", emailType)
 	}
@@ -419,15 +489,7 @@ func Stats(c *fiber.Ctx) error {
 	query.Session(&gorm.Session{}).Where("bounced_at IS NOT NULL").Count(&linkedBounces)
 
 	// Calculate rates (bounce rate uses linked bounces for backwards compatibility)
-	var openRate, clickRate, clickToOpenRate, bounceRate float64
-	if totalSent > 0 {
-		openRate = float64(opened) / float64(totalSent) * 100
-		clickRate = float64(clicked) / float64(totalSent) * 100
-		bounceRate = float64(linkedBounces) / float64(totalSent) * 100
-	}
-	if opened > 0 {
-		clickToOpenRate = float64(clicked) / float64(opened) * 100
-	}
+	openRate, clickRate, clickToOpenRate, bounceRate := calcEmailRates(totalSent, opened, clicked, linkedBounces)
 
 	stats := EmailStats{
 		TotalSent:       totalSent,
@@ -580,7 +642,7 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 			"SUM(CASE WHEN replied_via = 'amp' THEN 1 ELSE 0 END) as replied_via_amp, "+
 			"SUM(CASE WHEN replied_via = 'email' THEN 1 ELSE 0 END) as replied_via_email, "+
 			"SUM(CASE WHEN opened_via = 'amp' THEN 1 ELSE 0 END) as rendered").
-		Joins("LEFT JOIN users ON email_tracking.userid = users.id").
+		Joins(emailTrackingTNJoin).
 		Where(ampWhereSQL, ampWhereArgs...).Scan(&ampCounts)
 
 	// Query for non-AMP emails.
@@ -603,7 +665,7 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 			"SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, "+
 			"SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, "+
 			"SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied").
-		Joins("LEFT JOIN users ON email_tracking.userid = users.id").
+		Joins(emailTrackingTNJoin).
 		Where(nonAMPWhereSQL, nonAMPWhereArgs...).Scan(&nonAMPCounts)
 
 	// Populate stats
@@ -762,8 +824,14 @@ func UserEmails(c *fiber.Ctx) error {
 		var userLookup struct {
 			UserID uint64 `gorm:"column:userid"`
 		}
-		// First try users_emails table (for users with multiple emails)
-		result := db.Table("users_emails").Select("userid").Where("email = ? AND backwards IS NULL", email).Limit(1).Scan(&userLookup)
+		// First try users_emails table (for users with multiple emails).
+		//
+		// This used to carry "AND backwards IS NULL", which made it miss almost every
+		// real address: only 140,057 of 4,476,456 rows have a null there, and 136,047 of
+		// those are Freegle's own @users.ilovefreegle.org proxy addresses. A member
+		// looked up by their own address fell through to the users.email fallback
+		// instead. V1 has no such condition anywhere.
+		result := db.Table("users_emails").Select("userid").Where("email = ?", email).Limit(1).Scan(&userLookup)
 		if result.Error != nil || userLookup.UserID == 0 {
 			// Fallback to users table (for new users whose email is only in users.email)
 			var userFallback struct {
@@ -976,7 +1044,7 @@ func TimeSeries(c *fiber.Ctx) error {
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine
 	// (clause/where.go buildExprs), which would diverge from the golden.
-	tsWhereSQL := "users.tnuserid IS NULL AND sent_at BETWEEN ? AND ?"
+	tsWhereSQL := emailTrackingTNWhere + " AND sent_at BETWEEN ? AND ?"
 	tsWhereArgs := []interface{}{startDate, endDateTime}
 	if emailType != "" {
 		tsWhereSQL += " AND email_type = ?"
@@ -998,7 +1066,7 @@ func TimeSeries(c *fiber.Ctx) error {
 			"SUM(CASE WHEN has_amp = 0 AND opened_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_opened, "+
 			"SUM(CASE WHEN has_amp = 0 AND clicked_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_clicked, "+
 			"SUM(CASE WHEN has_amp = 0 AND bounced_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_linked_bounces").
-		Joins("LEFT JOIN users ON email_tracking.userid = users.id").
+		Joins(emailTrackingTNJoin).
 		Where(tsWhereSQL, tsWhereArgs...).
 		Group("DATE(sent_at)").Order("date ASC").Scan(&dailyStats)
 
@@ -1102,36 +1170,14 @@ func StatsByType(c *fiber.Ctx) error {
 	startDate := c.Query("start", "")
 	endDate := c.Query("end", "")
 
-	// Build query for stats by type - exclude Trash Nothing users
-	//
-	// The date-range
-	// clause is only appended when both startDate and endDate are supplied, so
-	// this statement has exactly 2 possible rendered forms, both proven by
-	// the retired ormharness (shapes.json / TestTier3Shapes_ecbedcafc048,
-	// removed in d22ba1d6c).
-	// WHERE built as a single string for ONE Where() call: GORM's
-	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
-	// paren pair once there is more than one Where expression to combine
-	// (clause/where.go buildExprs), which would diverge from the golden.
-	sbtWhereSQL := "users.tnuserid IS NULL"
-	var sbtWhereArgs []interface{}
+	table, sbtWhereSQL, sbtWhereArgs := statsByTypeQuery(startDate, endDate)
 
-	if startDate != "" && endDate != "" {
-		// If endDate doesn't include time, add end of day
-		endDateTime := endDate
-		if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
-			endDateTime = endDate + " 23:59:59"
-		}
-		sbtWhereSQL += " AND sent_at BETWEEN ? AND ?"
-		sbtWhereArgs = append(sbtWhereArgs, startDate, endDateTime)
-	}
-
-	tx := db.Table("email_tracking FORCE INDEX (sent_at)").
+	tx := db.Table(table).
 		Select("email_type, COUNT(*) as total_sent, "+
 			"SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, "+
 			"SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, "+
 			"SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces").
-		Joins("LEFT JOIN users ON email_tracking.userid = users.id").
+		Joins(emailTrackingTNJoin).
 		Where(sbtWhereSQL, sbtWhereArgs...)
 
 	var rawStats []struct {
@@ -1143,23 +1189,20 @@ func StatsByType(c *fiber.Ctx) error {
 	}
 	tx.Group("email_type").Order("total_sent DESC").Scan(&rawStats)
 
-	// Calculate rates
+	// Calculate rates using the shared helper
 	stats := make([]EmailTypeStats, len(rawStats))
 	for i, r := range rawStats {
+		openRate, clickRate, clickToOpenRate, bounceRate := calcEmailRates(r.TotalSent, r.Opened, r.Clicked, r.LinkedBounces)
 		stats[i] = EmailTypeStats{
-			EmailType:     r.EmailType,
-			TotalSent:     r.TotalSent,
-			Opened:        r.Opened,
-			Clicked:       r.Clicked,
-			LinkedBounces: r.LinkedBounces,
-		}
-		if r.TotalSent > 0 {
-			stats[i].OpenRate = float64(r.Opened) / float64(r.TotalSent) * 100
-			stats[i].ClickRate = float64(r.Clicked) / float64(r.TotalSent) * 100
-			stats[i].BounceRate = float64(r.LinkedBounces) / float64(r.TotalSent) * 100
-		}
-		if r.Opened > 0 {
-			stats[i].ClickToOpenRate = float64(r.Clicked) / float64(r.Opened) * 100
+			EmailType:       r.EmailType,
+			TotalSent:       r.TotalSent,
+			Opened:          r.Opened,
+			Clicked:         r.Clicked,
+			LinkedBounces:   r.LinkedBounces,
+			OpenRate:        openRate,
+			ClickRate:       clickRate,
+			ClickToOpenRate: clickToOpenRate,
+			BounceRate:      bounceRate,
 		}
 	}
 

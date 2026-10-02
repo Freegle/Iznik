@@ -126,6 +126,45 @@ describe('NewsConvertModal', () => {
     })
   })
 
+  // A new or moderated member's converted post waits in the group's Pending
+  // queue, invisible to the converting moderator - which looks exactly like
+  // the convert failing (Discourse #6999). Warn up front.
+  describe('when the post will wait for approval', () => {
+    it('warns when the member is moderated', async () => {
+      mockConvertInfo.mockResolvedValue({
+        canpost: true,
+        locationname: 'BA1 5BG',
+        groupid: 12,
+        groupname: 'Freegle Bath',
+        moderated: true,
+      })
+      const wrapper = createWrapper()
+      await flushPromises()
+      expect(wrapper.text()).toContain('need approval')
+      expect(wrapper.text()).toContain('Pending queue')
+    })
+
+    it('says nothing when the member posts straight through', async () => {
+      mockConvertInfo.mockResolvedValue({
+        canpost: true,
+        locationname: 'BA1 5BG',
+        groupid: 12,
+        groupname: 'Freegle Bath',
+        moderated: false,
+      })
+      const wrapper = createWrapper()
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('need approval')
+    })
+
+    it('says nothing when an older server does not answer', async () => {
+      // The default mock has no moderated field at all.
+      const wrapper = createWrapper()
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('need approval')
+    })
+  })
+
   // The server refuses to post for a member it cannot place. Say so before the
   // moderator fills the form in, not after.
   describe('when the member cannot be posted for', () => {

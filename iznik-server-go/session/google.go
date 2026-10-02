@@ -128,7 +128,7 @@ func handleGoogleLogin(c *fiber.Ctx, jwtToken string) error {
 		saveProfileImage(userID, tokenInfo.Picture)
 	}
 
-	persistent, jwtString, err := auth.CreateSessionAndJWT(userID)
+	persistent, jwtString, err := auth.CreateSessionAndJWT(c, userID, auth.SocialLoginMethod("Google", tokenInfo.Sub))
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
 	}

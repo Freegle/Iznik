@@ -31,6 +31,10 @@ class SyncRestartProjectCommand extends Command
 
             $prefix = $dryRun ? '[DRY RUN] Would process' : 'Processed';
             $this->info("{$prefix} {$result['added']} new event(s), {$result['updated']} updated, {$result['deleted']} deleted.");
+
+            if ($result['duplicates']) {
+                $this->info("Skipped {$result['duplicates']} listing(s) already held under another Restart id.");
+            }
         } finally {
             $lock->release();
         }

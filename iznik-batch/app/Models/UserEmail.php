@@ -52,11 +52,35 @@ class UserEmail extends Model implements Auditable
     protected $guarded = ['id'];
     public $timestamps = false;
 
+    /**
+     * Keep canon and backwards derived from the address.
+     *
+     * backwards is REVERSE(canon), not REVERSE(the address): V1's User::addEmail
+     * writes strrev(canonMail($email)) at both its insert sites, and canonMail drops
+     * the Trash Nothing -gNNNN suffix and the dots in the domain on purpose. Deriving
+     * it from the address instead put a second, incompatible form into the column and
+     * left prefix searches over it reading a fraction of the table. See
+     * .claude/rules/mail-and-data.md.
+     *
+     * This hook is authoritative for backwards - it overwrites whatever a caller
+     * passed, which is why setting it at a call site does nothing. canon is only
+     * filled when the caller left it empty, so an explicit value still wins.
+     */
     protected static function booted(): void
     {
         static::saving(function (UserEmail $record) {
+            $email = strtolower(trim((string) $record->email));
+
+            if ($email === '') {
+                return;
+            }
+
+            if (blank($record->canon)) {
+                $record->canon = User::canonMail($email);
+            }
+
             if ($record->isDirty('email') || is_null($record->backwards)) {
-                $record->backwards = strrev(strtolower((string) $record->email));
+                $record->backwards = strrev((string) $record->canon);
             }
         });
     }

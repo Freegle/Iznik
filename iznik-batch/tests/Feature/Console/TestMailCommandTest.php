@@ -5,6 +5,7 @@ namespace Tests\Feature\Console;
 use App\Models\UserEmail;
 use App\Services\EmailSpoolerService;
 use App\Services\MjmlCompilerService;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class TestMailCommandTest extends TestCase
@@ -231,5 +232,104 @@ class TestMailCommandTest extends TestCase
 
         // Verify the email content still references the sender (not the override address).
         $this->assertStringContainsString('Test Sender', $spoolData['html']);
+    }
+
+    // -----------------------------------------------------------------------
+    // On-site notification chase-up
+    // -----------------------------------------------------------------------
+
+    /**
+     * Read the one spooled email back.
+     *
+     * @return array<string, mixed>
+     */
+    private function spooledEmail(): array
+    {
+        $spoolFiles = glob($this->spoolDir . '/sent/*.json.gz');
+        $this->assertNotEmpty($spoolFiles, 'Should have a spool file in sent directory');
+
+        return json_decode(gzdecode(file_get_contents($spoolFiles[0])), true);
+    }
+
+    public function test_notifications_falls_back_to_sample_data_when_the_user_has_none(): void
+    {
+        $recipient = $this->createTestUser(['fullname' => 'Test Recipient']);
+        $overrideEmail = $this->uniqueEmail('override');
+
+        $this->artisan('mail:test', [
+            'type' => 'notifications',
+            '--user' => (string) $recipient->id,
+            '--send-to' => $overrideEmail,
+        ])->assertExitCode(0);
+
+        $spoolData = $this->spooledEmail();
+
+        // Sample data covers every type the email can carry.
+        $this->assertStringContainsString('You have 9 notifications', $spoolData['html']);
+        $this->assertStringContainsString('commented on your post', $spoolData['html']);
+        $this->assertStringContainsString('loved your noticeboard post', $spoolData['html']);
+        $this->assertStringContainsString('has been approved', $spoolData['html']);
+        $this->assertContains($overrideEmail, array_column($spoolData['to'], 'address'));
+    }
+
+    public function test_notifications_uses_the_members_own_notifications_when_they_have_some(): void
+    {
+        $recipient = $this->createTestUser(['fullname' => 'Test Recipient']);
+        $sender = $this->createTestUser(['fullname' => 'Test Sender']);
+        $overrideEmail = $this->uniqueEmail('override');
+
+        $newsfeedId = DB::table('newsfeed')->insertGetId([
+            'userid' => $sender->id,
+            'type' => 'Message',
+            'message' => 'A real unseen comment',
+            'timestamp' => now(),
+            'deleted' => null,
+            'replyto' => null,
+            'position' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+        ]);
+
+        DB::table('users_notifications')->insert([
+            'fromuser' => $sender->id,
+            'touser' => $recipient->id,
+            'type' => 'CommentOnYourPost',
+            'newsfeedid' => $newsfeedId,
+            'url' => null,
+            'title' => null,
+            'text' => null,
+            'timestamp' => now()->subMinutes(10),
+            'seen' => 0,
+            'mailed' => 0,
+        ]);
+
+        $this->artisan('mail:test', [
+            'type' => 'notifications',
+            '--user' => (string) $recipient->id,
+            '--send-to' => $overrideEmail,
+        ])->assertExitCode(0);
+
+        $spoolData = $this->spooledEmail();
+
+        $this->assertStringContainsString('You have 1 notification', $spoolData['html']);
+        $this->assertStringContainsString('A real unseen comment', $spoolData['html']);
+        // Sample data must not leak in alongside the real thing.
+        $this->assertStringNotContainsString('loved your noticeboard post', $spoolData['html']);
+    }
+
+    public function test_notifications_plain_text_part_matches_the_html(): void
+    {
+        $recipient = $this->createTestUser(['fullname' => 'Test Recipient']);
+        $overrideEmail = $this->uniqueEmail('override');
+
+        $this->artisan('mail:test', [
+            'type' => 'notifications',
+            '--user' => (string) $recipient->id,
+            '--send-to' => $overrideEmail,
+        ])->assertExitCode(0);
+
+        $spoolData = $this->spooledEmail();
+
+        $this->assertNotEmpty($spoolData['text']);
+        $this->assertStringContainsString('You have 9 notifications on Freegle.', $spoolData['text']);
+        $this->assertStringContainsString('View on Freegle:', $spoolData['text']);
     }
 }

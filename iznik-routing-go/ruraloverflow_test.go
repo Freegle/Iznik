@@ -159,8 +159,8 @@ func TestRuralOverflow_RingsNestByBandCeiling(t *testing.T) {
 func assertRingsGrowWithCeiling(t *testing.T) {
 	t.Helper()
 	g := getTestGraph(t)
-	iso := Isochrone(g, 51.4545, -2.5879, 45*60, Drive)
-	res := NetworkResolution(g, iso.ReachedNodes, Drive)
+	iso := Isochrone(g, 51.4545, -2.5879, 45*60)
+	res := NetworkResolution(g, iso.ReachedNodes)
 
 	// Ceilings chosen to fall INSIDE this fixture's spread, unlike 20/30/45.
 	prev := 0.0
@@ -291,8 +291,8 @@ var _ = fmt.Sprintf
 // lane affordable.
 func TestRuralOverflow_SkipsBandsTheCommittedReachAlreadyCovers(t *testing.T) {
 	g := getTestGraph(t)
-	iso := Isochrone(g, 51.4545, -2.5879, 45*60, Drive)
-	res := NetworkResolution(g, iso.ReachedNodes, Drive)
+	iso := Isochrone(g, 51.4545, -2.5879, 45*60)
+	res := NetworkResolution(g, iso.ReachedNodes)
 
 	// Nothing committed: every band is worth building.
 	all := ruralOverflowRings(g, iso.ReachedNodes, res, 45, 0)

@@ -48,6 +48,65 @@ class ItemNameTest extends TestCase
             'ta inside a longer job title' => ['Early Years Teaching Assistant (TA)', 'Early Years Teaching Assistant (TA)'],
             'tia is Siemens software' => ['Junior Controls Engineer (TIA Portal)', 'Junior Controls Engineer (TIA Portal)'],
             'thanksgiving is not thanks' => ['decorations for Thanksgiving', 'decorations for Thanksgiving'],
+
+            // Bias words, stripped anywhere like please/pls/plz - regression coverage for
+            // Discourse topic 9630/60: "Adult bike" got a medicine/supplement bottle because
+            // "adult" biases the image generator toward pharmacy imagery.
+            'leading adult' => ['Adult bike', 'bike'],
+            'adult mid-name' => ['large adult bike', 'large bike'],
+            'trailing adult plural' => ['mountain bike, adults', 'mountain bike'],
+            'adult alone falls back' => ['Adult', 'Adult'],
+            'adult prefix of real word is kept' => ['Adulting for beginners book', 'Adulting for beginners book'],
+
+            // Real ai_images names that a bare word-strip left with the qualifier stranded.
+            // Removing only "adult" turned these into "mountain bike, size", "size scooter",
+            // "only jigsaw", "and kids", "A bike for" and "An cycle".
+            'qualifier size goes with the word' => ['mountain bike, adult size', 'mountain bike'],
+            'leading qualifier size' => ['Adult size scooter', 'scooter'],
+            'qualifier only' => ['adults only jigsaw', 'jigsaw'],
+            'stranded trailing preposition' => ['A bike for adult', 'A bike'],
+            'stranded leading conjunction' => ['Adult and kids', 'kids'],
+            'stranded leading conjunction plural' => ['Adults and kids items,home appliance', 'kids items,home appliance'],
+            'article agreement repaired' => ['An adult cycle', 'A cycle'],
+            'empty separator collapsed' => [
+                'Coloured plastic hangers - adult size - will split',
+                'Coloured plastic hangers - will split',
+            ],
+            'article untouched when no bias word' => ['An apple corer', 'An apple corer'],
+
+            // Trailing audience qualifiers, anchored to the end of the name - regression
+            // coverage for Discourse topic 9630/62: "cycle for women" came back a distorted,
+            // unrecognisable shape rather than a plain bicycle.
+            'trailing for women' => ['cycle for women', 'cycle'],
+            'trailing for men' => ['Bike for men', 'Bike'],
+            'trailing for man' => ['Shoe for man', 'Shoe'],
+            'trailing for woman' => ['Bicycle for woman', 'Bicycle'],
+            'trailing for boy' => ['Mose basket for boy', 'Mose basket'],
+            'trailing for girl' => ['Scooter for girl', 'Scooter'],
+            'trailing for girls plural' => ['Clothes for girls', 'Clothes'],
+            'trailing for boys plural' => ['Bike helmet for boys', 'Bike helmet'],
+            'for a woman with article' => ['Watch for a woman', 'Watch'],
+            'case-insensitive audience qualifier' => ['Football boots For men', 'Football boots'],
+            'parenthesised qualifier' => ['Road bike (for men)', 'Road bike'],
+            'audience qualifier alone falls back' => ['for women', 'for women'],
+
+            // Compound names where the audience word is not a qualifier at all, and
+            // age-descriptor variants: both left untouched rather than guessed at.
+            'compound proper noun survives' => [
+                'Raffle/Tombola Prizes For Girl Guide Fundraiser',
+                'Raffle/Tombola Prizes For Girl Guide Fundraiser',
+            ],
+            'conjunction of audiences survives' => [
+                'Clothes for girls age 10-12 and boys age 6-7',
+                'Clothes for girls age 10-12 and boys age 6-7',
+            ],
+
+            // A trailing audience qualifier only exposed once "adult" is stripped out from
+            // between "for" and the audience word - the qualifier pattern has to run after
+            // the bias-word removal, not before, or "bike for adult men" is left as "bike
+            // for men".
+            'audience qualifier exposed by adult removal' => ['bike for adult men', 'bike'],
+            'audience qualifier exposed by adult removal, singular' => ['Coat for adult woman', 'Coat'],
         ];
     }
 

@@ -26,6 +26,21 @@
       :title="'Delete: ' + (user ? user.displayname : '#' + userid)"
       @confirm="() => guardHold(deleteConfirmed)"
     />
+    <ConfirmModal
+      v-if="showSilentRemoveModal"
+      ref="silentRemoveConfirm"
+      title="Remove from your community"
+      @confirm="() => guardHold(silentRemoveConfirmed)"
+      @hidden="showSilentRemoveModal = false"
+    >
+      <template #default>
+        <p class="mb-0">
+          This member is only on your community because a post of theirs rippled
+          in. Removing them here does not tell them anything, because they never
+          joined - so there is no message to send.
+        </p>
+      </template>
+    </ConfirmModal>
     <ModSpammerReport v-if="showSpamModal" ref="spamConfirm" :userid="userid" />
     <ModStdMessageModal
       v-if="showStdMsgModal"
@@ -65,6 +80,14 @@ const props = defineProps({
     type: Number,
     required: false,
     default: null,
+  },
+  // The member's only tie to this group is a post of theirs that rippled in. Removing
+  // them still happens; telling them does not, so there is no message to compose
+  // (Discourse 10102).
+  rippleOnly: {
+    type: Boolean,
+    required: false,
+    default: false,
   },
   stdmsgid: {
     type: Number,
@@ -175,6 +198,12 @@ const stdmodal = ref(null)
 
 const showDeleteModal = ref(false)
 const showStdMsgModal = ref(false)
+const showSilentRemoveModal = ref(false)
+
+// Take a ripple-only member off this community with no message to them.
+async function silentRemoveConfirmed() {
+  await memberStore.delete({ id: props.userid, groupid: props.groupid })
+}
 const showSpamModal = ref(false)
 const stdmsgId = ref(null)
 const stdmsgAction = ref(null)
@@ -322,6 +351,21 @@ async function click(callback) {
       // We want to show a modal.
       stdmsgId.value = null
       stdmsgAction.value = null
+
+      if (props.rippleOnly && props.stdmsgid) {
+        // Only divert when the action is DEFINITIVELY a removal; an unresolvable standard
+        // message falls through to the compose modal, and the server drops the message
+        // either way, so failing this way cannot reach the member.
+        const stdmsg = await stdmsgStore.fetch(props.stdmsgid)
+        if (
+          stdmsg?.action === 'Delete Approved Member' ||
+          stdmsg?.action === 'Delete Member' ||
+          stdmsg?.action === 'Reject'
+        ) {
+          showSilentRemoveModal.value = true
+          return
+        }
+      }
 
       if (props.leave) {
         stdmsgAction.value = 'Leave Member'

@@ -1,10 +1,14 @@
 package test
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/firstreply"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -22,19 +26,66 @@ func seedRipplingReach(t *testing.T, msgID uint64, withMax bool) {
 	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	res := db.Exec("INSERT INTO rippling_reach "+
-		"(msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers, "+
+		"(msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers, "+
 		" max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "+
-		"VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), "+
+		"VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), "+
 		" NOW(), 'drive', 1, 3, 4000, 30, NULL, NOW(), 'expanding', NOW(), NOW())",
-		msgID, frTick1, frTick1)
+		msgID, mustRasterize(t, frTick1), frTick1)
 	if res.Error != nil {
 		t.Fatalf("could not seed reach: %v", res.Error)
 	}
 
 	if withMax {
-		db.Exec("UPDATE rippling_reach SET max_polygon = ST_GeomFromText(?, 3857), "+
-			"max_cumulative_users = 4000 WHERE msgid = ?", frTick3, msgID)
+		db.Exec("UPDATE rippling_reach SET max_polygon_cells = ?, "+
+			"max_cumulative_users = 4000 WHERE msgid = ?", mustRasterize(t, frTick3), msgID)
 	}
+}
+
+// stubReachEvalMax stands in for the routing server: every asked candidate
+// gets the one verdict. The gate is being tested, not the geometry - the
+// geometry is proven routing-side against the engine itself.
+func stubReachEvalMax(t *testing.T, verdict string) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Msgids []uint64 `json:"msgids"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		results := make([]map[string]any, 0, len(req.Msgids))
+		for _, id := range req.Msgids {
+			results = append(results, map[string]any{"msgid": id, "verdict": verdict})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": results})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("ROUTING_EVAL_URL", srv.URL)
+	roadblur.ResetRoutingBreaker()
+	t.Cleanup(roadblur.ResetRoutingBreaker)
+}
+
+// TestFirstReplyPassthrough_RoutingDownFailsClosed: the label is the ONLY
+// record of the eventual reach - with the routing server unreachable the
+// reply is held, the conservative default this gate has always had.
+func TestFirstReplyPassthrough_RoutingDownFailsClosed(t *testing.T) {
+	ensureFirstReplyTables(t)
+	db := database.DBConn
+	prefix := uniquePrefix("frpassdown")
+
+	t.Setenv("FIRSTREPLY_ENABLED", "true")
+	t.Setenv("FIRSTREPLY_PASSTHROUGH_ENABLED", "true")
+	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
+	t.Setenv("ROUTING_EVAL_URL", "http://127.0.0.1:1")
+	roadblur.ResetRoutingBreaker()
+	t.Cleanup(roadblur.ResetRoutingBreaker)
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough down test", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+
+	seedRipplingReach(t, msgID, true)
+
+	assert.False(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
 }
 
 // TestFirstReplyPassthrough_FirstReplyInsideEventualReach: the whole point of the
@@ -57,8 +108,9 @@ func TestFirstReplyPassthrough_FirstReplyInsideEventualReach(t *testing.T) {
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	seedRipplingReach(t, msgID, true)
+	stubReachEvalMax(t, "in")
 
-	// (lng, lat) inside tick 3 only.
+	// (lng, lat) inside tick 3 only - the label at its full budget says in.
 	assert.True(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
 }
 
@@ -79,6 +131,7 @@ func TestFirstReplyPassthrough_SecondReplyIsStillHeld(t *testing.T) {
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	seedRipplingReach(t, msgID, true)
+	stubReachEvalMax(t, "in")
 
 	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, type, refmsgid, date, "+
@@ -107,8 +160,9 @@ func TestFirstReplyPassthrough_OutsideEventualReachIsHeld(t *testing.T) {
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	seedRipplingReach(t, msgID, true)
+	stubReachEvalMax(t, "out")
 
-	// Aberdeen: the post never gets there.
+	// Aberdeen: the post never gets there - the label says out.
 	assert.False(t, firstreply.ShouldPassThrough(db, msgID, -2.1, 57.1))
 }
 
@@ -127,13 +181,14 @@ func TestFirstReplyPassthrough_DisabledAndUnpopulatedBothHold(t *testing.T) {
 	seedRipplingReach(t, msgID, true)
 	assert.False(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
 
-	// Switched on but the eventual reach has not been computed yet - the state
-	// every row is in until the backfill drains. Must also be unchanged.
+	// Switched on but the label has not been stored yet - the state every
+	// row is in until the backfill drains. Must also be unchanged.
 	t.Setenv("FIRSTREPLY_ENABLED", "true")
 	t.Setenv("FIRSTREPLY_PASSTHROUGH_ENABLED", "true")
 	// Whole-network arm; the rollout split is exercised separately.
 	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
 	seedRipplingReach(t, msgID, false)
+	stubReachEvalMax(t, "nolabels")
 	assert.False(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
 }
 
@@ -154,6 +209,7 @@ func TestFirstReplyPassthrough_RespectsTheRolloutPercentage(t *testing.T) {
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	seedRipplingReach(t, msgID, true)
+	stubReachEvalMax(t, "in")
 
 	// Default is nobody, so enabling the lever alone changes nothing.
 	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "0")

@@ -6,6 +6,8 @@ use App\Models\Message;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use PHPUnit\Framework\Attributes\DataProvider;
+use Tests\Support\SeedsReachCells;
 use Tests\TestCase;
 
 /**
@@ -16,6 +18,8 @@ use Tests\TestCase;
  */
 class RebuildReachCommandTest extends TestCase
 {
+    use SeedsReachCells;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -47,12 +51,12 @@ class RebuildReachCommandTest extends TestCase
     {
         DB::insert(
             "INSERT INTO rippling_reach
-                (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+                (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                  status, schedule, next_expansion_at, created_at, updated_at)
-             VALUES (?, ?, ?, ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857),
+             VALUES (?, ?, ?, ?,
                      ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)),
                      ?, 'drive', ?, 3, 90, ?, NULL, NULL, NOW(), NOW())",
-            [$msgid, $lat, $lng, now()->subMinutes(30), $tick, $status]
+            [$msgid, $lat, $lng, $this->reachCellsFor('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'), now()->subMinutes(30), $tick, $status]
         );
     }
 
@@ -109,7 +113,7 @@ class RebuildReachCommandTest extends TestCase
         ];
     }
 
-    /** @dataProvider togetherViolationProvider */
+    #[DataProvider('togetherViolationProvider')]
     public function test_shards_and_shard_must_be_supplied_together(array $shardsOpt, array $shardOpt): void
     {
         $this->artisan('ripple:rebuild-reach', array_merge($shardsOpt, $shardOpt))
@@ -126,7 +130,7 @@ class RebuildReachCommandTest extends TestCase
         ];
     }
 
-    /** @dataProvider invalidShardRangeProvider */
+    #[DataProvider('invalidShardRangeProvider')]
     public function test_invalid_shard_range_is_rejected(int $shards, int $shard): void
     {
         $this->artisan('ripple:rebuild-reach', ['--shards' => $shards, '--shard' => $shard])

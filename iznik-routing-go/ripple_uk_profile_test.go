@@ -53,7 +53,6 @@ func TestUKRippleProfile(t *testing.T) {
 	}
 	g := ukLoad(t)
 	const ticks = 9
-	mode := Drive
 
 	origins := []struct {
 		name     string
@@ -73,7 +72,7 @@ func TestUKRippleProfile(t *testing.T) {
 			secs := float32(mins * 60)
 
 			t0 := time.Now()
-			iso := Isochrone(g, o.lat, o.lng, secs, mode)
+			iso := Isochrone(g, o.lat, o.lng, secs)
 			dDijkstra := time.Since(t0)
 			reached := len(iso.ReachedNodes)
 			if reached == 0 {
@@ -81,7 +80,7 @@ func TestUKRippleProfile(t *testing.T) {
 				continue
 			}
 
-			res := AutoResolution(secs, mode)
+			res := AutoResolution(secs)
 
 			t0 = time.Now()
 			_ = IsochronePolygon(g, iso.ReachedNodes, res)
@@ -129,7 +128,7 @@ func TestUKRippleProfile(t *testing.T) {
 				nd := g.Nodes[ids[(i*7919)%len(ids)]]
 				jlat := float64(nd.Lat) + float64((i%7)-3)*0.0004
 				jlng := float64(nd.Lng) + float64((i%5)-2)*0.0004
-				if nearestNodeForMode(g, jlat, jlng, mode) != noNode {
+				if nearestDriveNode(g, jlat, jlng) != noNode {
 					hit++
 				}
 			}

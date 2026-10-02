@@ -36,6 +36,12 @@ class DeferralProbe
 
     public const MARK_TRUNCATED = '===FREEGLE-DEFERRALS-TRUNCATED===';
 
+    /** Followed by a config directory: the queue lines after it are that instance's. */
+    public const MARK_INSTANCE = '===FREEGLE-DEFERRALS-INSTANCE===';
+
+    /** Followed by the number of seconds the delivery sample covers. */
+    public const MARK_WINDOW = '===FREEGLE-DEFERRALS-WINDOW===';
+
     public const MARK_ACCEPTING = '===FREEGLE-DEFERRALS-ACCEPTING===';
 
     public const MARK_CANPURGE = '===FREEGLE-DEFERRALS-CANPURGE===';
@@ -96,14 +102,30 @@ class DeferralProbe
         return <<<SH
             set -u
             echo '{$this->markQueue()}'
+            # EVERY postfix instance, not just the default one. The relay runs a
+            # second instance that owns delivery to the providers we pace, so a
+            # bare `postqueue -j` returns the queue WITHOUT the providers this
+            # scan exists to watch - it would report a handful of deferrals for
+            # everyone else while tens of thousands of messages to a blocked
+            # provider sat unseen in the other queue, and nothing would suppress.
             if command -v postqueue >/dev/null 2>&1; then
-                OUT=\$(postqueue -j 2>/dev/null | head -c {$bytes})
-                echo "\$OUT"
-                # head -c cuts mid-line, so say so rather than let the scan
-                # treat a truncated tail as a complete picture.
-                if [ "\$(printf '%s' "\$OUT" | wc -c)" -ge {$bytes} ]; then
-                    echo '{$this->markTruncated()}'
-                fi
+                DIRS=\$(postmulti -l 2>/dev/null | awk 'NF {print \$NF}')
+                [ -z "\$DIRS" ] && DIRS=\$(postconf -h config_directory 2>/dev/null || echo /etc/postfix)
+                # Split the transfer budget across instances so the total stays
+                # bounded however many there are.
+                N=\$(printf '%s\n' \$DIRS | wc -l); [ "\$N" -lt 1 ] && N=1
+                EACH=\$(( {$bytes} / N )); [ "\$EACH" -lt 1024 ] && EACH=1024
+                for D in \$DIRS; do
+                    echo '{$this->markInstance()}'
+                    echo "\$D"
+                    OUT=\$(postqueue -c "\$D" -j 2>/dev/null | head -c \$EACH)
+                    echo "\$OUT"
+                    # head -c cuts mid-line, so say so rather than let the scan
+                    # treat a truncated tail as a complete picture.
+                    if [ "\$(printf '%s' "\$OUT" | wc -c)" -ge "\$EACH" ]; then
+                        echo '{$this->markTruncated()}'
+                    fi
+                done
             fi
             echo '{$this->markDelivered()}'
             # status=sent lines in the last hour, bucketed by the relay host
@@ -128,6 +150,28 @@ class DeferralProbe
                 DELIVERED=\$(tail -n 200000 /var/log/mail.log 2>/dev/null | grep 'status=sent' || true)
             fi
             printf '%s\n' "\$DELIVERED"
+            echo '{$this->markWindow()}'
+            # How long the sample above actually covers, in seconds, so a count
+            # can be turned into a rate. `tail -n` takes a number of LINES, and
+            # how much time those cover depends entirely on how busy the relay
+            # is: measured on the live relay, 200,000 lines spanned 2h15m, so
+            # every "per hour" figure derived from it was inflated by more than
+            # double. Resolving the timestamps here rather than in PHP keeps
+            # syslog's year-less format the local `date`'s problem.
+            #
+            # Emitting nothing is the honest answer when the dates will not
+            # parse - the caller then falls back to treating the sample as an
+            # hour, which is what it did before - and a negative span across a
+            # year boundary is caught by the same test.
+            FIRST=\$(printf '%s\n' "\$DELIVERED" | head -n 1 | cut -c1-15)
+            LAST=\$(printf '%s\n' "\$DELIVERED" | tail -n 1 | cut -c1-15)
+            if [ -n "\$FIRST" ] && [ -n "\$LAST" ]; then
+                A=\$(date -d "\$FIRST" +%s 2>/dev/null || true)
+                B=\$(date -d "\$LAST" +%s 2>/dev/null || true)
+                if [ -n "\$A" ] && [ -n "\$B" ] && [ "\$B" -gt "\$A" ]; then
+                    echo \$(( B - A ))
+                fi
+            fi
             echo '{$this->markEnd()}'
             SH;
     }
@@ -145,10 +189,30 @@ class DeferralProbe
      * Callers must have established that the relay family is suppressed;
      * this method only does what it is told.
      *
-     * @param  string[]  $queueIds
+     * @param  array<string, string[]>  $queueIds  config directory => queue ids
      * @return int number of messages the relay CONFIRMED it deleted
      */
     public function purge(string $target, array $queueIds): int
+    {
+        $deleted = 0;
+
+        foreach ($queueIds as $instance => $ids) {
+            $deleted += $this->purgeInstance($target, (string) $instance, (array) $ids);
+        }
+
+        return $deleted;
+    }
+
+    /**
+     * Delete queued messages from ONE postfix instance.
+     *
+     * The instance is not optional. Queue ids are unique only within an
+     * instance, so running postsuper without saying which one either deletes
+     * nothing or deletes a different message that shares the id.
+     *
+     * @param  string[]  $queueIds
+     */
+    private function purgeInstance(string $target, string $instance, array $queueIds): int
     {
         // The ids come from the relay's own listing, but they are still being
         // pasted into a shell on a production host, so anything that does not
@@ -157,6 +221,16 @@ class DeferralProbe
             $queueIds,
             fn ($id) => is_string($id) && preg_match('/^[A-Za-z0-9]{6,32}$/', $id) === 1
         ));
+
+        // Same reasoning for the config directory, which also reaches a shell.
+        if (preg_match('#^/[A-Za-z0-9._/-]{1,120}$#', $instance) !== 1) {
+            Log::error('Mail deferral purge: refusing an implausible instance path', [
+                'target' => $target,
+                'instance' => $instance,
+            ]);
+
+            return 0;
+        }
 
         if ($safe === []) {
             return 0;
@@ -171,7 +245,8 @@ class DeferralProbe
             // so in as many words rather than leaving a bare "fatal" to be
             // decoded. Kept conditional so a root relay still works untouched.
             $script = 'SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo -n"; '
-                .'printf "%s\n" '.implode(' ', $chunk).' | $SUDO postsuper -d - 2>&1';
+                .'printf "%s\n" '.implode(' ', $chunk)
+                .' | $SUDO postsuper -c '.escapeshellarg($instance).' -d - 2>&1';
 
             $out = $this->runner->run($target, $script);
 
@@ -272,6 +347,25 @@ class DeferralProbe
      * relay's sending ip - probing from anywhere else answers a question we did
      * not ask.
      *
+     * And it must ask from the ADDRESS THE MAIL WILL LEAVE FROM. The relay has
+     * several sending addresses and routes a throttled provider to whichever
+     * one it is warming (transport_maps -> a transport with its own
+     * smtp_bind_address). An unbound connection leaves from the default
+     * address - the one the provider blocked in the first place - so it kept
+     * answering "still refusing" for a provider that was being delivered at
+     * 150/min from another address. From 2026-09-02 that held a suppression
+     * over 10,000 members for a day and a half with no way out: the refusal
+     * outranks the fail-open by design. Resolve the domain through the relay's
+     * own transport maps and bind what postfix would bind.
+     *
+     * That resolution now has to cross POSTFIX INSTANCES. A throttled provider
+     * is not delivered by the primary instance at all - it is handed over a
+     * loopback hop to a second instance that owns the warmed addresses, so the
+     * primary resolves it to a relay transport with no bind of its own. Taking
+     * the global default at that point lands on the blocked address again and
+     * recreates this bug exactly, so the resolution walks every instance and
+     * takes the first that yields a transport with a real bind address.
+     *
      * @return bool|null true = accepting, false = still refusing, null = we
      *                   could not tell, so the caller should fall back to
      *                   organic evidence rather than assume either way
@@ -288,10 +382,50 @@ class DeferralProbe
         // "could not tell". That is exactly what production did at 08:01 on
         // 2026-08-19: it failed safe, and therefore silently.
         $script = "echo '".self::MARK_ACCEPTING."'\n".
-            'python3 - '.escapeshellarg($domain).' '.escapeshellarg($sender).' <<\'PYEOF\'
+            'DOMAIN='.escapeshellarg($domain)."\n".
+            'SENDER='.escapeshellarg($sender)."\n".
+            <<<'SH'
+# The address postfix would send from: first transport_maps hit for the
+# domain, that transport's smtp_bind_address, else the global one. Read-only
+# postconf/postmap queries, nothing here writes.
+#
+# Resolve within ONE postfix instance. Prints "<bind> <transport>" only if the
+# transport carries a bind address of its own; no output otherwise, so the
+# caller can keep looking.
+resolve_bind() {  # $1 config directory
+  _cd=$1; _tr=""
+  for m in $(postconf -c "$_cd" -h transport_maps 2>/dev/null | tr ',' ' '); do
+    v=$(postmap -q "$DOMAIN" "$m" 2>/dev/null)
+    [ -n "$v" ] && { _tr=${v%%:*}; break; }
+  done
+  [ -z "$_tr" ] && return 1
+  _b=$(postconf -c "$_cd" -Mf "$_tr/unix" 2>/dev/null | sed -nE 's/^[[:space:]]*-o[[:space:]]+smtp_bind_address=([^[:space:]]+).*/\1/p' | head -1)
+  [ -n "$_b" ] && { echo "$_b $_tr"; return 0; }
+  return 1
+}
+# Throttled providers are not delivered by the primary instance at all: it
+# hands them over a loopback hop to a second instance, whose transports carry
+# the addresses that actually face the provider. So the primary resolves the
+# domain to a relay transport with NO bind of its own, and stopping there would
+# fall through to the global default - which is the address the provider
+# blocked in the first place, the exact failure this resolution exists to
+# prevent. Walk the instances and take the first that yields a real bind. The
+# primary is listed first, so a single-instance host and a pre-cutover host
+# both behave exactly as before.
+BIND=""; TR=""
+INSTANCES=$(postmulti -l 2>/dev/null | awk 'NF {print $NF}')
+[ -z "$INSTANCES" ] && INSTANCES=$(postconf -h config_directory 2>/dev/null || echo /etc/postfix)
+for cdir in $INSTANCES; do
+  out=$(resolve_bind "$cdir") || continue
+  BIND=${out%% *}; TR=${out##* }
+  break
+done
+[ -z "$BIND" ] && BIND=$(postconf -h smtp_bind_address 2>/dev/null)
+python3 - "$DOMAIN" "$SENDER" "$BIND" "$TR" <<'PYEOF'
 import smtplib, socket, sys
 
-domain, sender = sys.argv[1], sys.argv[2]
+domain, sender, bind, transport = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+via = "%s via %s" % (bind or "default", transport or "default")
 
 try:
     import subprocess
@@ -307,7 +441,8 @@ except Exception as e:
     sys.exit(0)
 
 try:
-    s = smtplib.SMTP(timeout=20)
+    # source_address pins the local end; (ip, 0) lets the kernel pick a port.
+    s = smtplib.SMTP(timeout=20, source_address=(bind, 0) if bind else None)
     s.connect(host, 25)
     s.ehlo("bulk2")
     code, msg = s.mail(sender)
@@ -318,16 +453,17 @@ try:
     # 2xx to MAIL FROM means they are taking mail from this ip right now.
     # 4xx here is the throttle itself (421 4.7.0 [TSSnn]).
     if 200 <= code < 300:
-        print("ACCEPTING %s %d" % (host, code))
+        print("ACCEPTING %s %d from %s" % (host, code, via))
     elif 400 <= code < 500:
-        print("REFUSING %s %d %s" % (host, code, msg.decode("utf8", "replace")[:120]))
+        print("REFUSING %s %d from %s %s" % (host, code, via, msg.decode("utf8", "replace")[:120]))
     else:
-        print("UNKNOWN %s %d" % (host, code))
+        print("UNKNOWN %s %d from %s" % (host, code, via))
 except (socket.timeout, OSError, smtplib.SMTPException) as e:
     # Could not reach them at all: that is our network or theirs being down,
     # not a verdict on our reputation.
-    print("UNKNOWN %s %s" % (host, e))
-PYEOF';
+    print("UNKNOWN %s from %s %s" % (host, via, e))
+PYEOF
+SH;
 
         $out = $this->runner->run($target, $script);
 
@@ -350,6 +486,14 @@ PYEOF';
         }
 
         if (str_contains($out, 'REFUSING ')) {
+            // Say which address was refused: a refusal from the default
+            // address while the provider is routed elsewhere is the bug this
+            // probe used to have, and the log line is how you would see it.
+            Log::info('Mail deferral probe: provider is still refusing', [
+                'domain' => $domain,
+                'detail' => trim(str_replace(self::MARK_ACCEPTING, '', $out)),
+            ]);
+
             return false;
         }
 
@@ -366,9 +510,19 @@ PYEOF';
         return self::MARK_DELIVERED;
     }
 
+    private function markWindow(): string
+    {
+        return self::MARK_WINDOW;
+    }
+
     private function markEnd(): string
     {
         return self::MARK_END;
+    }
+
+    private function markInstance(): string
+    {
+        return self::MARK_INSTANCE;
     }
 
     private function markTruncated(): string
@@ -385,10 +539,30 @@ PYEOF';
 
         $section = null;
         $truncated = false;
+        // Which instance the queue lines currently belong to. Queue ids are
+        // only unique WITHIN an instance, so a purge that forgets this could
+        // delete a different message that happens to share an id.
+        $instance = null;
+        $expectInstance = false;
 
         foreach (explode("\n", $output) as $line) {
             $line = rtrim($line, "\r");
 
+            if ($expectInstance) {
+                $instance = $line !== '' ? $line : null;
+                $expectInstance = false;
+
+                if ($instance !== null && ! in_array($instance, $snapshot->instancesSeen, true)) {
+                    $snapshot->instancesSeen[] = $instance;
+                }
+
+                continue;
+            }
+            if ($line === self::MARK_INSTANCE) {
+                $expectInstance = true;
+
+                continue;
+            }
             if ($line === self::MARK_QUEUE) {
                 $section = 'queue';
 
@@ -396,6 +570,11 @@ PYEOF';
             }
             if ($line === self::MARK_DELIVERED) {
                 $section = 'delivered';
+
+                continue;
+            }
+            if ($line === self::MARK_WINDOW) {
+                $section = 'window';
 
                 continue;
             }
@@ -412,9 +591,11 @@ PYEOF';
             }
 
             if ($section === 'queue') {
-                $this->parseQueueLine($line, $snapshot);
+                $this->parseQueueLine($line, $snapshot, $instance);
             } elseif ($section === 'delivered') {
                 $this->parseDeliveredLine($line, $snapshot);
+            } elseif ($section === 'window' && ctype_digit($line)) {
+                $snapshot->windowSeconds = (int) $line;
             }
         }
 
@@ -431,7 +612,7 @@ PYEOF';
      * attempted and pushed back: `incoming` and `hold` have not been tried,
      * and `corrupt` is a different problem entirely.
      */
-    private function parseQueueLine(string $line, RelayQueueSnapshot $snapshot): void
+    private function parseQueueLine(string $line, RelayQueueSnapshot $snapshot, ?string $instance = null): void
     {
         $entry = json_decode($line, true);
 
@@ -443,8 +624,19 @@ PYEOF';
             return;
         }
 
+        // The three queues mail actually flows through. `incoming` matters as
+        // much as the other two for the waiting count and is easy to leave
+        // out: it is where a burst lands, and on 2026-09-13 it held 81,800
+        // messages against 40,000 in active - so a count that skipped it would
+        // have understated the backlog by two thirds. It cannot affect the
+        // deferral counts either way, because nothing in it has been attempted
+        // and so none of it carries a delay reason.
+        //
+        // `hold` is deliberately not here. Mail is only in it because an
+        // operator put it there, which is a different fact needing a different
+        // conversation, and folding it in would read as a delivery problem.
         $queue = $entry['queue_name'] ?? '';
-        if ($queue !== 'deferred' && $queue !== 'active') {
+        if ($queue !== 'deferred' && $queue !== 'active' && $queue !== 'incoming') {
             return;
         }
 
@@ -456,10 +648,18 @@ PYEOF';
                 continue;
             }
 
-            // Absent for a recipient that has not been attempted yet. Those
-            // are not evidence of a deferral, so they do not count.
+            // Absent for a recipient nothing has refused. That is not a
+            // deferral - but it is not nothing either. On a relay that paces
+            // an address deliberately, this is where a warmed provider's
+            // whole backlog lives: tens of thousands of messages, hours old,
+            // with no error anywhere because none has occurred. Counting it
+            // separately is what lets the delayed view say "waiting on us"
+            // rather than report an empty page while mail runs half a day
+            // late.
             $reason = $recipient['delay_reason'] ?? null;
             if (! is_string($reason) || $reason === '') {
+                $snapshot->addWaiting((string) $recipient['address'], $arrival, $instance);
+
                 continue;
             }
 
@@ -468,6 +668,7 @@ PYEOF';
                 reason: $reason,
                 arrivalTime: $arrival,
                 queueId: $queueId,
+                instance: $instance,
             );
         }
     }
@@ -480,8 +681,38 @@ PYEOF';
      * We only need the relay host, to know which providers are still taking
      * our mail.
      */
+    /**
+     * Is this line the loopback hop into the relay's other postfix instance,
+     * rather than a delivery to anybody?
+     *
+     * The hop logs exactly like a delivery - `to=<the real recipient>` and
+     * `status=sent (250 ...)` - and there is one per message, so counting it
+     * roughly doubles the apparent send rate for every provider we pace. In a
+     * sample window it put 440 hops against about 1,000 real deliveries for
+     * one domain, which would have made "clears in two hours" out of a queue
+     * that needed three.
+     *
+     * Two independent signals, matching App\Services\Mail\RelayLogIngestService,
+     * so that one going stale on its own - a renamed transport, a changed port -
+     * cannot quietly turn hops back into deliveries.
+     */
+    private function isHandover(string $line): bool
+    {
+        $port = (int) config('freegle.mail.relay_logs.handover_port', 10026);
+        $transport = (string) config('freegle.mail.relay_logs.handover_transport', 'relaywarm');
+
+        return str_contains($line, "relay=127.0.0.1[127.0.0.1]:$port")
+            || ($transport !== '' && str_contains($line, "postfix-$transport/"));
+    }
+
     private function parseDeliveredLine(string $line, RelayQueueSnapshot $snapshot): void
     {
+        if ($this->isHandover($line)) {
+            $snapshot->handoversSeen++;
+
+            return;
+        }
+
         if (! preg_match('/relay=([^\[\s,:]+)/', $line, $m)) {
             return;
         }
@@ -495,5 +726,13 @@ PYEOF';
         }
 
         $snapshot->addDelivery(MxGrouper::group($host));
+
+        // Also by recipient domain, which is the unit the waiting queue is
+        // counted in. Without it a domain's backlog has a depth but no drain
+        // rate, and "3,000 queued" cannot be turned into "clears in two
+        // hours" - which is the only form of the number anyone can act on.
+        if (preg_match('/to=<[^@>]*@([^>\s,]+)>/', $line, $to)) {
+            $snapshot->addDomainDelivery(rtrim($to[1], '.'));
+        }
     }
 }

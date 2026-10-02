@@ -1,0 +1,4 @@
+# The runtime graph data (OSM extract + reach-engine artifacts, ~7GB) is
+# volume-mounted at /data — never baked into the image. testdata stays: the
+# CI spatial container boots on the Bristol extract.
+data/

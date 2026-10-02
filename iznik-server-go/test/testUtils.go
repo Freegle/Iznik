@@ -508,8 +508,13 @@ func CreateTestMessage(t *testing.T, userID uint64, groupID uint64, subject stri
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
 
+	// Back-dated past rippling.ReachPendingGraceMinutes. A post with no
+	// rippling_reach row is hidden from the feeds for its first few minutes, and
+	// these fixtures have no reach row, so a fixture stamped NOW() would be
+	// invisible to every feed test. Tests that want the grace window itself set
+	// arrival back to NOW() explicitly.
 	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
-		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, NOW())",
+		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL 15 MINUTE))",
 		userID, subject, locationID)
 
 	if result.Error != nil {
@@ -526,54 +531,18 @@ func CreateTestMessage(t *testing.T, userID uint64, groupID uint64, subject stri
 
 	// Add to messages_groups
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
-		"VALUES (?, ?, NOW(), 'Approved', 0)", messageID, groupID)
+		"VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 15 MINUTE), 'Approved', 0)", messageID, groupID)
 
 	// Add to messages_spatial
 	db.Exec(fmt.Sprintf("INSERT INTO messages_spatial (msgid, point, successful, groupid, arrival, msgtype) "+
-		"VALUES (?, ST_GeomFromText(?, %d), 1, ?, NOW(), 'Offer')", utils.SRID),
+		"VALUES (?, ST_GeomFromText(?, %d), 1, ?, DATE_SUB(NOW(), INTERVAL 15 MINUTE), 'Offer')", utils.SRID),
 		messageID, fmt.Sprintf("POINT(%f %f)", lng, lat), groupID)
 
-	// Index words for search - extract words from subject and add to search index
-	indexMessageWords(t, db, messageID, groupID, subject)
+	// (Retired) The keyword search index (words / messages_index) is no longer
+	// maintained; search is served from vector embeddings. Tests that exercise
+	// search seed the in-memory embedding store directly.
 
 	return messageID
-}
-
-// indexMessageWords adds words from the subject to the search index
-func indexMessageWords(t *testing.T, db *gorm.DB, messageID uint64, groupID uint64, subject string) {
-	// Split subject into words and filter short/common words
-	words := strings.Fields(strings.ToLower(subject))
-
-	for _, word := range words {
-		// Skip short words and common stop words
-		if len(word) < 3 {
-			continue
-		}
-
-		// Truncate to max 10 chars (words table limit)
-		if len(word) > 10 {
-			word = word[:10]
-		}
-
-		// Insert word if not exists
-		firstThree := word
-		if len(firstThree) > 3 {
-			firstThree = firstThree[:3]
-		}
-
-		db.Exec("INSERT IGNORE INTO words (word, firstthree, soundex, popularity) VALUES (?, ?, SOUNDEX(?), 1)",
-			word, firstThree, word)
-
-		// Get the word ID
-		var wordID uint64
-		db.Raw("SELECT id FROM words WHERE word = ?", word).Scan(&wordID)
-
-		if wordID > 0 {
-			// Add to messages_index
-			db.Exec("INSERT IGNORE INTO messages_index (msgid, wordid, arrival, groupid) VALUES (?, ?, UNIX_TIMESTAMP(), ?)",
-				messageID, wordID, groupID)
-		}
-	}
 }
 
 // CreateTestNewsfeed creates a newsfeed entry for a user

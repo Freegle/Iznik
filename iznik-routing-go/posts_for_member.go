@@ -61,7 +61,7 @@ func handlePostsForMember(g *Graph, spatialURL string) fiber.Handler {
 
 		// Build the isochrone polygon for the member.
 		maxSecs := float32(maxMinutes * 60)
-		iso := Isochrone(g, lat, lng, maxSecs, Drive)
+		iso := Isochrone(g, lat, lng, maxSecs)
 		if len(iso.ReachedNodes) == 0 {
 			return c.JSON(fiber.Map{
 				"max_drive_min": maxMinutes,
@@ -70,7 +70,7 @@ func handlePostsForMember(g *Graph, spatialURL string) fiber.Handler {
 				"posts":         []any{},
 			})
 		}
-		res := NetworkResolution(g, iso.ReachedNodes, Drive)
+		res := NetworkResolution(g, iso.ReachedNodes)
 		poly := IsochronePolygon(g, iso.ReachedNodes, res)
 		ring := poly.Geometry.Coordinates
 		if len(ring) == 0 || len(ring[0]) < 4 {

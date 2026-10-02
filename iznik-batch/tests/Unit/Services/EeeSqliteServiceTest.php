@@ -4,6 +4,7 @@ namespace Tests\Unit\Services;
 
 use App\Services\EeeSqliteService;
 use PDO;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -142,17 +143,6 @@ class EeeSqliteServiceTest extends TestCase
 
     public function test_migrate_upgrades_schema_with_mode_column_but_short_primary_key(): void
     {
-        // TODO: latent bug — migrate()'s "add contains_eee_components /
-        // electrical_components_description if missing" block runs BEFORE the
-        // hasMode=true/pkCols<4 upgrade block, widening the source table to 19
-        // columns. The upgrade then does `INSERT INTO eee_item_types_new (17 cols)
-        // SELECT * FROM eee_item_types (19 cols)`, which SQLite rejects with
-        // "table eee_item_types_new has 17 columns but 19 values were supplied".
-        // Any real v2-schema DB (classification_mode present, PK still 3 columns)
-        // would crash on migrate(). Not fixed here per task instructions (test
-        // files only, no production code changes).
-        $this->markTestSkipped('Latent bug in EeeSqliteService::migrate(): v2-schema (hasMode=true, pkCols<4) upgrade crashes with a column-count mismatch because ADD COLUMN runs before the upgrade SELECT *.');
-
         $path = sys_get_temp_dir() . '/eee_sqlite_test_' . uniqid() . '.sqlite';
         $this->tempPaths[] = $path;
 
@@ -251,15 +241,6 @@ class EeeSqliteServiceTest extends TestCase
 
     public function test_upsert_item_type_with_only_key_columns(): void
     {
-        // TODO: latent bug — upsertItemType() builds `$updates` by filtering OUT
-        // the 4 key columns from array_keys($data). When $data contains ONLY the
-        // key columns (a legitimate call — e.g. "register that this item type
-        // exists, nothing else known yet"), $updates is an empty string, producing
-        // `... ON CONFLICT(...) DO UPDATE SET ` with nothing after SET, which
-        // SQLite rejects with "incomplete input". Not fixed here per task
-        // instructions (test files only, no production code changes).
-        $this->markTestSkipped('Latent bug in EeeSqliteService::upsertItemType(): calling it with only the 4 primary-key columns produces an empty "DO UPDATE SET" clause and throws a PDOException.');
-
         $service = $this->newService();
 
         $service->upsertItemType([
@@ -350,9 +331,7 @@ class EeeSqliteServiceTest extends TestCase
         $this->assertGreaterThan(0, $id1);
     }
 
-    /**
-     * @dataProvider provideHasClassificationCases
-     */
+    #[DataProvider('provideHasClassificationCases')]
     public function test_has_classification(array $inserted, int $messageid, string $model, ?string $promptVersion, bool $expected): void
     {
         $service = $this->newService();
@@ -629,9 +608,7 @@ class EeeSqliteServiceTest extends TestCase
         $this->assertSame(['count' => 5], json_decode($observations[0]['evidence'], true));
     }
 
-    /**
-     * @dataProvider provideConfidenceFilterCases
-     */
+    #[DataProvider('provideConfidenceFilterCases')]
     public function test_get_observations_filters_by_min_confidence(string $minConfidence, array $expectedFindings): void
     {
         $service = $this->newService();
@@ -662,15 +639,6 @@ class EeeSqliteServiceTest extends TestCase
 
     public function test_get_observations_excludes_superseded_entries(): void
     {
-        // TODO: latent bug — getObservations() filters `WHERE o.supersedes_id IS
-        // NULL`, which keeps the OLD/original row (supersedes_id never set on it)
-        // and HIDES the newer row that supersedes it (that row is the one with
-        // supersedes_id populated). This is inverted: per the class docblock,
-        // observations "can be promoted" as findings recur, and callers should see
-        // the latest/promoted finding, not the one it replaced. Not fixed here per
-        // task instructions (test files only, no production code changes).
-        $this->markTestSkipped('Latent bug in EeeSqliteService::getObservations(): the supersedes_id IS NULL filter keeps the original (superseded) row and hides the newer row that supersedes it — the opposite of "show the latest finding".');
-
         $service = $this->newService();
 
         $originalId = $service->recordObservation('s', 'a', 'original finding', 'preliminary');
@@ -878,9 +846,7 @@ class EeeSqliteServiceTest extends TestCase
     // journalCompareRun()
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * @dataProvider provideJournalCompareRunCases
-     */
+    #[DataProvider('provideJournalCompareRunCases')]
     public function test_journal_compare_run_confidence_tiers(array $agreementStats, bool $expectObservation, ?string $expectedConfidence = null): void
     {
         $service = $this->newService();

@@ -42,7 +42,6 @@ func TestRippleProfile(t *testing.T) {
 
 	// Central Bristol (Temple Meads-ish), on the road graph.
 	lat, lng := 51.4545, -2.5879
-	mode := Drive
 	const ticks = 9 // == len(hazard_hours) the PHP ReachService requests
 
 	// Deterministic RNG so the freegler-sampling phase is reproducible.
@@ -53,7 +52,7 @@ func TestRippleProfile(t *testing.T) {
 
 		// ---- Phase 1: Dijkstra isochrone to the max drive-time ----
 		t0 := time.Now()
-		iso := Isochrone(g, lat, lng, secs, mode)
+		iso := Isochrone(g, lat, lng, secs)
 		dDijkstra := time.Since(t0)
 		reached := len(iso.ReachedNodes)
 		if reached == 0 {
@@ -61,7 +60,7 @@ func TestRippleProfile(t *testing.T) {
 			continue
 		}
 
-		res := AutoResolution(secs, mode)
+		res := AutoResolution(secs)
 
 		// ---- Phase 2: one full-isochrone polygon (drives the within_coords WKT) ----
 		t0 = time.Now()
@@ -113,7 +112,7 @@ func TestRippleProfile(t *testing.T) {
 				nd := g.Nodes[ids[rng.Intn(len(ids))]]
 				jlat := float64(nd.Lat) + (rng.Float64()-0.5)*0.003
 				jlng := float64(nd.Lng) + (rng.Float64()-0.5)*0.003
-				_ = nearestNodeForMode(g, jlat, jlng, mode)
+				_ = nearestDriveNode(g, jlat, jlng)
 			}
 			dNearest := time.Since(t0)
 			t.Logf("mins=%2.0f reached=%6d | dijkstra=%8v fullPoly=%8v tickPolys×9=%8v nearest×%-5d=%8v",

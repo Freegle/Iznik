@@ -16,6 +16,12 @@ describe('WhichPostsExplanation', () => {
     expect(text).toContain('distance slider')
   })
 
+  it('says the distance slider measures by road, not as the crow flies', () => {
+    const text = createWrapper().text()
+    expect(text).toContain('by road rather than as the crow flies')
+    expect(text).toContain('not in a straight line')
+  })
+
   it('mentions relevance ordering (most relevant posts first)', () => {
     const wrapper = createWrapper()
     expect(wrapper.text()).toContain('most relevant posts first')

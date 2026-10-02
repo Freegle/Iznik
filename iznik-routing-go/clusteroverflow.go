@@ -96,7 +96,7 @@ type clusterCandidate struct {
 //
 // Returns nil when nothing qualifies (no shell members, no cell reaches cellK, or the pool was
 // already at or past floor), so the caller can omit the field entirely.
-func clusterOverflowWedges(g *Graph, iso2 IsochroneResult, lat, lng float64, mode Mode,
+func clusterOverflowWedges(g *Graph, iso2 IsochroneResult, lat, lng float64,
 	shellMembers []clusterMember, committedSecs, clusterMaxSecs float32,
 	cellK, maxWedges, floor, poolAtCeiling int) map[string]*GeoJSONPolygon {
 
@@ -120,8 +120,8 @@ func clusterOverflowWedges(g *Graph, iso2 IsochroneResult, lat, lng float64, mod
 		return nil
 	}
 
-	res := NetworkResolution(g, iso2.ReachedNodes, mode)
-	marginSecs := float32(clusterMarginKm*1000) / float32(modeMaxSpeed(mode))
+	res := NetworkResolution(g, iso2.ReachedNodes)
+	marginSecs := float32(clusterMarginKm*1000) / float32(driveMaxSpeedMS)
 	lowSecs := committedSecs - marginSecs
 	if lowSecs < 0 {
 		lowSecs = 0

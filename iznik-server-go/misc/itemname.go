@@ -30,16 +30,96 @@ var trailingThanksPattern = regexp.MustCompile(`(?i)(?:[\s,;:.!?]*\b(?:thanks?(?
 
 var whitespacePattern = regexp.MustCompile(`\s+`)
 
-// StripCourtesy removes courtesy words from an item name. It is applied both when looking an
-// illustration up in the cache and when building the prompt to generate one, because the two
-// have to agree: otherwise every "please" post misses the cache and generates its own copy of
-// an image we already have. A name that is nothing BUT courtesy is returned unchanged - there
-// is no item to draw either way, and callers read an empty name as "no item at all".
+// "adult" pulls the image generator toward pharmacy/supplement imagery (Discourse topic
+// 9630/60: a WANTED post for "Adult bike" got a medicine bottle), so it is stripped anywhere
+// in the name the way please/pls/plz are. Word boundaries keep "adulting" intact.
+//
+// biasQualifierPattern runs first and takes the noun the word governs with it. Removing only
+// the word leaves the qualifier stranded - "mountain bike, adult size" would become "mountain
+// bike, size" and "adults only jigsaw" would become "only jigsaw", both of which read worse to
+// the generator than the original. Mirrors ItemName::BIAS_QUALIFIER in iznik-batch.
+var biasQualifierPattern = regexp.MustCompile(`(?i)\badults?\s+(?:sized?|only)\b[!?.,]*`)
+
+var biasWordPattern = regexp.MustCompile(`(?i)\badults?\b[!?.,]*`)
+
+// audienceQualifierPattern matches a target-audience qualifier at the END of a name - "cycle
+// for women", "Bike for men" (Discourse topic 9630/62: "cycle for women" came back a
+// distorted, unrecognisable shape, the same class of defect as "adult" above: the prompt
+// template wants a bare noun, and a qualifier that reaches it unstripped throws it off).
+//
+// Unlike biasWordPattern this is anchored to the end rather than stripped anywhere, because
+// "girl"/"boy"/"man"/"woman" commonly sit inside a compound name that is not a qualifier at
+// all - production has "Raffle/Tombola Prizes For Girl Guide Fundraiser", where "For Girl" is
+// followed by "Guide Fundraiser", not the end of the string. A trailing "for women" has no
+// such reading, so the whole phrase is removed as one unit; an optional wrapping "(...)" is
+// eaten too, so "Road bike (for men)" loses the parenthesis along with the qualifier.
+//
+// Applied AFTER the bias qualifier/word removal below, not before: "bike for adult men" has
+// "adult" sitting between "for" and "men", so the pattern cannot match until "adult" is gone
+// and "for men" is exposed at the end. Applying it first leaves that case as "bike for men".
+//
+// Deliberately narrow: "boys and girls", and trailing age descriptors like "for girl 2-3
+// years", are left alone. Both are common in production and neither is safe to guess at.
+var audienceQualifierPattern = regexp.MustCompile(`(?i)[\s(]*\bfor\s+(?:an?\s+)?(?:women|woman|men|man|boys?|girls?)\b[\s!?.,)]*$`)
+
+// Debris left behind once a bias word is lifted out of the middle of a name: a conjunction or
+// preposition with nothing left on one side of it ("Adult and kids" -> "and kids", "A bike for
+// adult" -> "A bike for"), and the empty separator left by "hangers - adult size - will split".
+// Articles are not stripped, only corrected for agreement, so "An adult cycle" gives "A cycle".
+var strandedLeadPattern = regexp.MustCompile(`(?i)^[\s,;:.\-]*\b(?:and|or|for|with)\b[\s,;:.\-]*`)
+
+var strandedTrailPattern = regexp.MustCompile(`(?i)[\s,;:.\-]*\b(?:and|or|for|with|of)\b[\s,;:.\-]*$`)
+
+var emptySeparatorPattern = regexp.MustCompile(`\s*-\s*-\s*`)
+
+var leadingArticlePattern = regexp.MustCompile(`(?i)^(an?)(\s+)([a-z])`)
+
+// fixArticle restores a/an agreement after a bias word is removed from between the article
+// and the noun: "An adult cycle" would otherwise leave "An cycle".
+func fixArticle(name string) string {
+	return leadingArticlePattern.ReplaceAllStringFunc(name, func(m string) string {
+		parts := leadingArticlePattern.FindStringSubmatch(m)
+		if parts == nil {
+			return m
+		}
+
+		article := "a"
+		if strings.ContainsAny(strings.ToLower(parts[3]), "aeiou") {
+			article = "an"
+		}
+		if parts[1][0] >= 'A' && parts[1][0] <= 'Z' {
+			article = strings.ToUpper(article[:1]) + article[1:]
+		}
+
+		return article + parts[2] + parts[3]
+	})
+}
+
+// StripCourtesy removes courtesy words and other bias words from an item name. It is applied
+// both when looking an illustration up in the cache and when building the prompt to generate
+// one, because the two have to agree: otherwise every "please" (or "adult") post misses the
+// cache and generates its own copy of an image we already have. A name that is nothing BUT
+// courtesy/bias words is returned unchanged - there is no item to draw either way, and callers
+// read an empty name as "no item at all".
 func StripCourtesy(name string) string {
 	cleaned := trailingThanksPattern.ReplaceAllString(name, "")
 	cleaned = courtesyPattern.ReplaceAllString(cleaned, " ")
+	biasBefore := cleaned
+	cleaned = biasQualifierPattern.ReplaceAllString(cleaned, " ")
+	cleaned = biasWordPattern.ReplaceAllString(cleaned, " ")
+	cleaned = audienceQualifierPattern.ReplaceAllString(cleaned, "")
+
+	// Only tidy when a bias word or trailing audience qualifier actually came out, so names
+	// that never contained one keep going through exactly the path they did before.
+	if cleaned != biasBefore {
+		cleaned = emptySeparatorPattern.ReplaceAllString(cleaned, " - ")
+		cleaned = strandedLeadPattern.ReplaceAllString(cleaned, "")
+		cleaned = strandedTrailPattern.ReplaceAllString(cleaned, "")
+		cleaned = fixArticle(cleaned)
+	}
+
 	cleaned = strings.TrimSpace(whitespacePattern.ReplaceAllString(cleaned, " "))
-	cleaned = strings.TrimRight(cleaned, " ,;:")
+	cleaned = strings.TrimRight(cleaned, " ,;:-")
 
 	if cleaned == "" {
 		return name

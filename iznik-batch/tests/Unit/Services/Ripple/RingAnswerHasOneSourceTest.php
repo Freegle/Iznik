@@ -8,7 +8,7 @@ use Tests\TestCase;
  * "Does an overflow ring admit this member" must have exactly one answer, and this
  * is the guard that keeps it that way.
  *
- * On 2026-08-21 the mail derived that answer from `rippling_reach.overflow_bounds`
+ * On 2026-08-21 the mail derived that answer from the ring column itself
  * while the website asked the spatial index. The two came apart, and members were
  * emailed posts that browse would not show them, that search could not find, that
  * the message page called "not reached yet", and whose replies the reply gate held
@@ -31,11 +31,11 @@ class RingAnswerHasOneSourceTest extends TestCase
 
             // The ring geometry parsed out of the JSON column, in any query.
             if (preg_match('/ST_GeomFromText\s*\(\s*JSON_UNQUOTE/i', $src)) {
-                $offenders[] = $file.' parses a ring out of overflow_bounds in SQL';
+                $offenders[] = $file.' parses a ring out of the ring column in SQL';
             }
             // Containment tested against the column directly.
-            if (preg_match('/ST_Contains[^;]{0,200}overflow_bounds/is', $src)) {
-                $offenders[] = $file.' tests containment against overflow_bounds in SQL';
+            if (preg_match('/ST_Contains[^;]{0,200}overflow_(bounds|cells)/is', $src)) {
+                $offenders[] = $file.' tests containment against the ring column in SQL';
             }
         }
 
@@ -54,8 +54,9 @@ class RingAnswerHasOneSourceTest extends TestCase
     }
 
     /**
-     * Reading the ring column is fine - the bbox prefilter and the backfill commands
-     * legitimately do - so this asserts only that nothing DECIDES admission from it.
+     * Reading the ring column is fine - the bbox prefilter and the lane-presence
+     * checks legitimately do - so this asserts only that nothing DECIDES
+     * admission from it.
      *
      * @return iterable<string>
      */

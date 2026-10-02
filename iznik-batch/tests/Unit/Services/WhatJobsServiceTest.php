@@ -684,16 +684,16 @@ class WhatJobsServiceTest extends TestCase
 
     public function test_parse_feed_missing_file_yields_empty_generator(): void
     {
-        // TODO: latent bug — XMLReader::open() on a non-existent file emits E_WARNING
-        // which Laravel's error handler converts to ErrorException; the production
-        // `if (!$reader->open($filePath)) { return; }` guard is never reached because
-        // the exception is thrown before the if-check executes.  In practice parseFeed
-        // is only called with files returned by downloadFeed() (never null/missing), so
-        // this path never fires in production, but the Log::warning guard is dead code.
-        $this->markTestSkipped(
-            'XMLReader::open() throws ErrorException on missing file in this environment; '
-            . 'production guard is unreachable (see latent bug TODO above).'
-        );
+        $svc   = $this->makeServiceWithFixedGeocode(null);
+        $cache = [];
+
+        $jobs = iterator_to_array($svc->parseFeed(
+            sys_get_temp_dir().'/no-such-feed-'.uniqid().'.xml',
+            2,
+            $cache
+        ));
+
+        $this->assertCount(0, $jobs);
     }
 
     public function test_parse_feed_empty_xml_file_yields_nothing(): void

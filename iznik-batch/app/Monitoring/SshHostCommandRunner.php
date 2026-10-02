@@ -14,8 +14,8 @@ use Symfony\Component\Process\Process;
 class SshHostCommandRunner implements HostCommandRunner
 {
     public function __construct(
-        private readonly string $keyPath,
-        private readonly int $timeoutSeconds = 30,
+        public readonly string $keyPath,
+        public readonly int $timeoutSeconds = 30,
     ) {
     }
 

@@ -36,6 +36,14 @@ class EmailSpoolerService
     protected string $sendingDir;
     protected string $failedDir;
     protected string $sentDir;
+
+    /**
+     * Local record of messages SMTP has accepted but which have not yet been
+     * filed into sent/. Deliberately a plain directory on local disk and NOT the
+     * database: the case this exists for is the database being unavailable, so a
+     * guard that needs the database would be absent exactly when it is needed.
+     */
+    protected string $ledgerDir;
     protected LokiService $lokiService;
 
     public function __construct(?LokiService $lokiService = null)
@@ -45,6 +53,7 @@ class EmailSpoolerService
         $this->sendingDir = $this->spoolDir . '/sending';
         $this->failedDir = $this->spoolDir . '/failed';
         $this->sentDir = $this->spoolDir . '/sent';
+        $this->ledgerDir = $this->spoolDir . '/ledger';
         $this->lokiService = $lokiService ?? app(LokiService::class);
 
         $this->ensureDirectoriesExist();
@@ -479,6 +488,41 @@ class EmailSpoolerService
     private const SIBLING_RECLAIM_AFTER_SECONDS = 1800;
 
     /**
+     * A message stranded in sending/ that SMTP already accepted. Files it into
+     * sent/ rather than putting it back in pending/, so recovering from a dead
+     * worker cannot deliver it a second time.
+     *
+     * Returns false when there is no ledger entry, which means the outcome is
+     * genuinely unknown - the worker may have died mid-conversation - and the
+     * caller should re-queue as before. Preferring a possible duplicate over a
+     * possible loss is the right way round for that case; this method exists to
+     * stop us guessing when we do not have to.
+     */
+    protected function fileAlreadyDelivered(string $sendingPath, string $filename): bool
+    {
+        $marker = $this->ledgerDir . '/' . $filename;
+        if (!file_exists($marker)) {
+            return false;
+        }
+
+        $raw = @file_get_contents($sendingPath);
+        $gz = $raw === false ? false : gzencode($raw, 6);
+        if ($gz !== false && @file_put_contents($this->sentDir . '/' . $filename . '.gz', $gz) !== false) {
+            @unlink($sendingPath);
+        } elseif (!@rename($sendingPath, $this->sentDir . '/' . $filename)) {
+            return false;
+        }
+
+        @unlink($marker);
+
+        Log::warning('Spool file was already accepted by SMTP - filed as sent, not re-queued', [
+            'file' => $filename,
+        ]);
+
+        return true;
+    }
+
+    /**
      * Reclaim files orphaned in sending/ by a process that died mid-send
      * (restart/OOM/crash), so nothing is dead-lettered and an extended
      * smarthost outage never loses mail.
@@ -502,6 +546,9 @@ class EmailSpoolerService
         // Pass 1 - our own area, unconditional.
         foreach (glob($this->sendingDir . '/*.json') as $sendingPath) {
             $filename = basename($sendingPath);
+            if ($this->fileAlreadyDelivered($sendingPath, $filename)) {
+                continue;
+            }
             if (rename($sendingPath, $this->pendingDir . '/' . $filename)) {
                 $reclaimed++;
             } else {
@@ -549,6 +596,9 @@ class EmailSpoolerService
             }
 
             $filename = basename($sendingPath);
+            if ($this->fileAlreadyDelivered($sendingPath, $filename)) {
+                continue;
+            }
             if (@rename($sendingPath, $this->pendingDir . '/' . $filename)) {
                 $reclaimed++;
                 Log::warning('Reclaimed stale spool file from another worker area', [
@@ -716,6 +766,20 @@ class EmailSpoolerService
                     // If text is empty, Mail::html() has already set HTML-only body.
                 });
 
+                // SMTP has accepted the message. Record that on local disk BEFORE
+                // filing it into sent/, because everything between here and the
+                // rename is where a duplicate is born: if the worker dies or is
+                // restarted in that window the file is still sitting in sending/,
+                // reclaimOrphanedSending() puts it back in pending/, and it is
+                // delivered a second time. That is what produced 14 identical
+                // password-reset mails and 6 welcome mails on 2026-08-24 - neither
+                // has a per-message marker of its own, so nothing upstream could
+                // have caught it.
+                //
+                // A marker file is cheap and atomic; the filing below is a read,
+                // a gzip and a write, so the window this closes is the large one.
+                @touch($this->ledgerDir . '/' . $filename);
+
                 // Compress into the sent directory instead of a plain move.
                 // Nothing ever reads sent/ back programmatically — it is
                 // write-only and pruned after 7 days (see cleanupSent()) — so
@@ -733,6 +797,11 @@ class EmailSpoolerService
                 } else {
                     rename($sendingPath, $this->sentDir . '/' . $filename);
                 }
+                // Filed successfully, so the ledger entry has done its job. Dropping
+                // it here keeps the ledger to just the unresolved cases rather than a
+                // copy of every send.
+                @unlink($this->ledgerDir . '/' . $filename);
+
                 $stats['sent']++;
 
                 // Extract tracking data from headers.
@@ -911,6 +980,22 @@ class EmailSpoolerService
     {
         $deleted = 0;
         $cutoff = now()->subDays($daysToKeep)->timestamp;
+
+        // Ledger markers normally live for the microseconds between SMTP
+        // accepting a message and it being filed into sent/. One survives only
+        // when a worker died in that window AND nothing later reclaimed the
+        // file - a marker with no spool file behind it. Prune on the same clock
+        // as sent/ so they cannot accumulate silently.
+        if (is_dir($this->ledgerDir)) {
+            foreach (new \DirectoryIterator($this->ledgerDir) as $marker) {
+                if ($marker->isDot() || !$marker->isFile()) {
+                    continue;
+                }
+                if ($marker->getMTime() < $cutoff) {
+                    @unlink($marker->getPathname());
+                }
+            }
+        }
 
         if (!is_dir($this->sentDir)) {
             return 0;
@@ -1155,7 +1240,7 @@ class EmailSpoolerService
 
     protected function ensureDirectoriesExist(): void
     {
-        foreach ([$this->pendingDir, $this->sendingDir, $this->failedDir, $this->sentDir] as $dir) {
+        foreach ([$this->pendingDir, $this->sendingDir, $this->failedDir, $this->sentDir, $this->ledgerDir] as $dir) {
             if (!is_dir($dir)) {
                 mkdir($dir, 0755, true);
             }

@@ -2,15 +2,19 @@
 
 namespace Tests\Unit\Queue;
 
+use App\Console\Commands\Queue\ProcessBackgroundTasksCommand;
 use App\Mail\Chat\ChatSpamReportMail;
 use App\Mail\Chat\ReferToSupportMail;
 use App\Mail\Donation\DonateExternalMail;
 use App\Mail\Newsfeed\ChitchatReportMail;
 use App\Mail\Session\ForgotPasswordMail;
+use App\Mail\Session\LoginLinkMail;
 use App\Mail\Session\MergeOfferMail;
 use App\Mail\Session\UnsubscribeConfirmMail;
 use App\Mail\Session\VerifyEmailMail;
 use App\Mail\Message\ModStdMessageMail;
+use App\Services\BlockedKeywordBackfillService;
+use App\Services\ContentCheckService;
 use App\Services\PushNotificationService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -539,6 +543,66 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         // Verify task was marked as processed.
         $task = DB::table('background_tasks')->first();
         $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_forgot_password_sends_sign_in_link_when_passwordless(): void
+    {
+        Mail::fake();
+        config([
+            'freegle.auth.passwordless' => true,
+            'freegle.auth.login_link_path' => '/',
+            'freegle.sites.user' => 'https://www.example.org',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_forgot_password',
+            'data' => json_encode([
+                'user_id' => 11111,
+                'email' => 'forgetful@test.com',
+                // The host the API baked in is deliberately NOT the configured site.
+                'reset_url' => 'http://localhost:4001/settings?u=11111&k=abc%2B123&src=forgotpass',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertNotSent(ForgotPasswordMail::class);
+        Mail::assertSent(LoginLinkMail::class, function (LoginLinkMail $mail) {
+            return $mail->userId === 11111
+                && $mail->email === 'forgetful@test.com'
+                // Same u/k credentials, on the configured site and sign-in path.
+                && $mail->loginUrl === 'https://www.example.org/?u=11111&k=abc%2B123';
+        });
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+
+        config(['freegle.auth.passwordless' => false]);
+    }
+
+    public function test_sign_in_link_honours_a_custom_landing_path(): void
+    {
+        config([
+            'freegle.auth.login_link_path' => 'signin',
+            'freegle.sites.user' => 'https://www.example.org/',
+        ]);
+
+        $command = new \App\Console\Commands\Queue\ProcessBackgroundTasksCommand();
+        $method = new \ReflectionMethod($command, 'signInLinkFromResetUrl');
+        $method->setAccessible(true);
+
+        $this->assertSame(
+            'https://www.example.org/signin?u=42&k=key',
+            $method->invoke($command, 'https://www.ilovefreegle.org/settings?u=42&k=key&src=forgotpass')
+        );
     }
 
     public function test_processes_email_unsubscribe_task(): void
@@ -2789,6 +2853,224 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     }
 
     /**
+     * A TN post placed on a Freegle community its poster never chose carries no agreement
+     * to hear from that community's volunteers. ModTools offers no standard messages for
+     * one and the Go API refuses them, so a task arriving here with content came from a
+     * stale client - and must still send the poster nothing.
+     */
+    public function test_mod_stdmsg_on_an_unaddressed_tn_post_sends_the_poster_nothing(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Test item',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'rippled_in' => 0,
+            'mod_messaging_allowed' => 0,
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_approved',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'About your post',
+                'body' => 'Please add a photo.',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')->once()->with($group->id)->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertNotSent(ModStdMessageMail::class);
+
+        // No modmail thread with them either - that is the relationship they never agreed to.
+        $this->assertDatabaseMissing('chat_rooms', [
+            'user1' => $poster->id,
+            'groupid' => $group->id,
+            'chattype' => 'User2Mod',
+        ]);
+
+        // The moderator's own audit trail still stands: the action happened, only the
+        // message to the poster did not.
+        $this->assertDatabaseHas('logs', [
+            'type' => 'Message',
+            'subtype' => 'Approved',
+            'msgid' => $msgId,
+            'byuser' => $mod->id,
+        ]);
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+        $this->assertNull($task->failed_at);
+    }
+
+    /**
+     * An ordinary post by the same kind of poster is unaffected - the rule is about the
+     * post nobody chose, not about Trash Nothing.
+     */
+    public function test_mod_stdmsg_still_reaches_the_poster_of_an_ordinary_post(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Test item',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'rippled_in' => 0,
+            'mod_messaging_allowed' => 1,
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_approved',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'About your post',
+                'body' => 'Please add a photo.',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')->once()->with($group->id)->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ModStdMessageMail::class);
+    }
+
+    /**
+     * The member-level half: someone whose every post is unaddressed has not opted in to
+     * Freegle, so a direct mod message must not go out - while a "mixed" poster, who has
+     * also posted normally, is a real member and hears from their volunteers as usual.
+     */
+    public function test_mod_stdmsg_for_member_respects_whether_they_opted_in(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
+
+        $tnOnly = $this->createTestUser();
+        $this->createTestUserEmail($tnOnly, ['preferred' => 1]);
+        $this->createPostWithModMessaging($tnOnly, $group, 0);
+
+        $mixed = $this->createTestUser();
+        $this->createTestUserEmail($mixed, ['preferred' => 1]);
+        $this->createPostWithModMessaging($mixed, $group, 0);
+        $this->createPostWithModMessaging($mixed, $group, 1);
+
+        foreach ([$tnOnly, $mixed] as $target) {
+            DB::table('background_tasks')->insert([
+                'task_type' => 'email_mod_stdmsg',
+                'data' => json_encode([
+                    'userid' => $target->id,
+                    'byuser' => $mod->id,
+                    'groupid' => $group->id,
+                    'subject' => 'A note from your volunteers',
+                    'body' => 'Hello there, could you add a postcode please?',
+                    'action' => 'Leave Approved Member',
+                    'stdmsgid' => 0,
+                ]),
+                'created_at' => now(),
+            ]);
+        }
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 2,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Exactly one message went out, and it was to the member who has actually posted
+        // to Freegle.
+        Mail::assertSent(ModStdMessageMail::class, 1);
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($mixed) {
+            $this->assertEquals($mixed->id, $mail->recipientUserId);
+            return TRUE;
+        });
+    }
+
+    /**
+     * An absent id must read as "not restricted", not as "restricted".
+     *
+     * A task whose payload carries no msgid or no userid tells us nothing about whether the
+     * person opted in, and these checks only ever REMOVE a moderator's ability to write to
+     * someone. Answering true on a missing id would silence perfectly ordinary standard
+     * messages whenever a payload was malformed or came from an older client.
+     */
+    public function test_missing_ids_read_as_unrestricted(): void
+    {
+        $command = new ProcessBackgroundTasksCommand();
+
+        foreach (['postIsUnaddressed', 'userIsUnaddressedOnly'] as $method) {
+            $check = new \ReflectionMethod(ProcessBackgroundTasksCommand::class, $method);
+            $check->setAccessible(true);
+
+            $this->assertFalse($check->invoke($command, 0), "{$method}(0) must not restrict");
+            $this->assertFalse($check->invoke($command, -1), "{$method}(-1) must not restrict");
+        }
+    }
+
+    /**
+     * A post by $user on $group whose origin row carries the given mod_messaging_allowed.
+     */
+    private function createPostWithModMessaging($user, $group, int $allowed): int
+    {
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: Test item ' . $allowed,
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'rippled_in' => 0,
+            'mod_messaging_allowed' => $allowed,
+        ]);
+
+        return $msgId;
+    }
+
+    /**
      * Custom assertion for string containment (PHPUnit 10+ compatible).
      */
     private function assertStringContains(string $needle, string $haystack): void
@@ -2797,5 +3079,286 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             str_contains($haystack, $needle),
             "Failed asserting that '{$haystack}' contains '{$needle}'."
         );
+    }
+
+    /**
+     * A moderator of a group a post rippled INTO administers their own copy of it. Their
+     * removal must not be relayed to the freegler, who posted somewhere else and has never
+     * heard of that community (Discourse 10102). The group still gets its own moderation
+     * log entry and its volunteers still get their push, because the action DID happen
+     * there - it is only the correspondence that belongs to the home community.
+     */
+    public function test_mod_stdmsg_with_notifyposter_off_sends_no_mail_but_still_logs(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Carol Moderator']);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: brown rabbit (Longton ST3)',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Rejected',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_rejected',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Re: OFFER: brown rabbit (Longton ST3)',
+                'body' => 'We do not accept posts for living creatures.',
+                'stdmsgid' => 0,
+                'notifyposter' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')
+            ->once()
+            ->with($group->id)
+            ->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertNotSent(ModStdMessageMail::class);
+
+        $log = DB::table('logs')
+            ->where('msgid', $msgId)
+            ->where('type', 'Message')
+            ->where('subtype', 'Rejected')
+            ->first();
+        $this->assertNotNull($log, 'the acting group still records what it did');
+
+        $this->assertEquals(0, DB::table('chat_messages')->where('refmsgid', $msgId)->count(),
+            'and no modmail chat is opened with the poster');
+    }
+
+    /**
+     * The flag is absent on every task queued before this change and on every home-group
+     * action, and absent must keep meaning "tell the poster".
+     */
+    public function test_mod_stdmsg_without_notifyposter_still_mails_the_poster(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Sharon Moderator']);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: brown rabbit (Longton ST3)',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Rejected',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_rejected',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Re: OFFER: brown rabbit (Longton ST3)',
+                'body' => 'Sorry, we cannot take this.',
+                'stdmsgid' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')->once()->with($group->id)->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ModStdMessageMail::class);
+    }
+
+
+    /**
+     * The member-facing half of the same rule: a group removes a member whose only tie to
+     * it is a post that rippled in, and says nothing to them (Discourse 10102).
+     */
+    public function test_member_stdmsg_with_notifyposter_off_sends_no_mail(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createTestUserEmail($member, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Carol Moderator']);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $member->id,
+                'groupid' => $group->id,
+                'byuser' => $mod->id,
+                'subject' => 'Removed',
+                'body' => 'We do not accept posts for living creatures.',
+                'stdmsgid' => 0,
+                'action' => 'Delete Approved Member',
+                'notifyposter' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertNotSent(ModStdMessageMail::class);
+    }
+
+    /** Absent still means notify, for every task queued before the flag existed. */
+    public function test_member_stdmsg_without_notifyposter_still_mails(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createTestUserEmail($member, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Sharon Moderator']);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $member->id,
+                'groupid' => $group->id,
+                'byuser' => $mod->id,
+                'subject' => 'Removed',
+                'body' => 'Sorry, this has not worked out.',
+                'stdmsgid' => 0,
+                'action' => 'Delete Approved Member',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ModStdMessageMail::class);
+    }
+
+
+    // --- concern_keyword_backfill ---
+    //
+    // The Go API queues this when a Freegle-wide block keyword is created, so the
+    // keyword is applied to the chat messages and posts of the last 24 hours that
+    // arrived before it existed.
+
+    public function test_concern_keyword_backfill_applies_a_new_block_keyword_to_recent_chat_and_posts(): void
+    {
+        $this->mock(PushNotificationService::class);
+        $service = new BlockedKeywordBackfillService(new ContentCheckService());
+        $service->pauseMicros = 0;
+        $this->app->instance(BlockedKeywordBackfillService::class, $service);
+
+        $word = 'testblockword' . uniqid();
+        $keywordId = DB::table('concern_keywords')->insertGetId([
+            'keyword' => $word, 'category' => 'scam', 'action' => 'block',
+            'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,
+        ]);
+
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $chat = $this->createTestChatMessage($room, $sender, ['message' => "Confirm at {$word} now"]);
+
+        $group = $this->createTestGroup();
+        $post = $this->createTestMessage($sender, $group, ['textbody' => "Claim it at {$word}"]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'concern_keyword_backfill',
+            'data' => json_encode(['keyword_id' => $keywordId]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])
+            ->assertSuccessful();
+
+        $this->assertEquals(1, DB::table('chat_messages')->where('id', $chat->id)->value('reviewrejected'));
+        $this->assertNotNull(DB::table('messages')->where('id', $post->id)->value('deleted'));
+        $this->assertNotNull(
+            DB::table('background_tasks')->where('task_type', 'concern_keyword_backfill')->value('processed_at')
+        );
+    }
+
+    public function test_concern_keyword_backfill_ignores_a_flag_keyword(): void
+    {
+        $this->mock(PushNotificationService::class);
+
+        $word = 'testflagword' . uniqid();
+        $keywordId = DB::table('concern_keywords')->insertGetId([
+            'keyword' => $word, 'category' => 'review', 'action' => 'flag',
+            'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,
+        ]);
+
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $chat = $this->createTestChatMessage($room, $sender, ['message' => "Hello {$word}"]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'concern_keyword_backfill',
+            'data' => json_encode(['keyword_id' => $keywordId]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])
+            ->assertSuccessful();
+
+        $this->assertEquals(0, DB::table('chat_messages')->where('id', $chat->id)->value('reviewrejected'),
+            'a flag keyword holds new content only; it must not touch delivered messages');
+        $this->assertNotNull(DB::table('background_tasks')->first()->processed_at);
+    }
+
+    public function test_concern_keyword_backfill_requires_keyword_id(): void
+    {
+        $this->mock(PushNotificationService::class);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'concern_keyword_backfill',
+            'data' => json_encode([]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])
+            ->assertSuccessful();
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNull($task->processed_at);
+        $this->assertStringContainsString('requires keyword_id', $task->error_message);
     }
 }

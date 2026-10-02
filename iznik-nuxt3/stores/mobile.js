@@ -15,6 +15,7 @@
 import { defineStore } from 'pinia'
 import { watch } from 'vue'
 import { Capacitor } from '@capacitor/core'
+import { setTag as sentrySetTag } from '@sentry/browser'
 import { useAuthStore } from '~/stores/auth'
 import { useChatStore } from '~/stores/chat'
 import { useNotificationStore } from '~/stores/notification'
@@ -133,6 +134,12 @@ export const useMobileStore = defineStore('mobile', {
       // Make it available to client logs (session_start) so support sees the
       // real app version a member is running.
       setAppVersion(this.appVersion)
+      try {
+        sentrySetTag('app.version', this.appVersion)
+        sentrySetTag('app.build', this.appBuild)
+      } catch (e) {
+        // Tagging is best effort.
+      }
       dbg()?.info('=== APP STARTUP ===')
       dbg()?.info('App version', runtimeConfig.public.MOBILE_VERSION)
       dbg()?.info('Native app version', appInfo.version)
@@ -243,6 +250,16 @@ export const useMobileStore = defineStore('mobile', {
       const deviceinfo = await Device.getInfo()
       this.deviceinfo = deviceinfo
 
+      // Sentry only sees the coarse OS version from the user agent ("18.7").
+      // Tag the exact native values so a device-specific failure can be pinned
+      // to a patch level and model. setTag is safe before Sentry.init.
+      try {
+        sentrySetTag('os.version.exact', deviceinfo.osVersion || null)
+        sentrySetTag('device.model.exact', deviceinfo.model || null)
+      } catch (e) {
+        // Tagging is best effort.
+      }
+
       // Build device info string - avoid duplicates (platform/operatingSystem are often same)
       const parts = []
       if (deviceinfo.manufacturer) parts.push(deviceinfo.manufacturer)
@@ -338,6 +355,13 @@ export const useMobileStore = defineStore('mobile', {
             const chatStore = useChatStore()
             chatStore.fetchChats(null, false)
 
+            // The navbar's 60s count loop slept with the app, so the unread
+            // badge is as stale as the background was long. Fetch every navbar
+            // count now (dynamic import: useNavbar imports this store).
+            import('~/composables/useNavbar')
+              .then((m) => m.refreshNavbarCounts())
+              .catch((e) => console.log('Failed to refresh navbar counts', e))
+
             // Re-trigger push registration on resume so that a missed/failed
             // initial registration or a rotated FCM/APNs token recovers. The
             // existing 'registration' listener re-fires with the current token
@@ -422,12 +446,65 @@ export const useMobileStore = defineStore('mobile', {
               router.push(target)
               return
             }
+            if (route.startsWith('/e/')) {
+              // A tracked email link. The universal link hands the app the
+              // tracker's own URL, not where it points, and that is not a page
+              // the app has - pushing it landed on the error page and then the
+              // member's home page, which is how a chat notification's Reply
+              // button once put a reply into ChitChat. Ask the API where the
+              // link goes (that also records the click, which the tap never
+              // reached the server to do) and route there.
+              const resolved = await this.resolveTrackedLink(event.url)
+              setTimeout(() => {
+                console.log('appUrlOpen tracked link push', resolved)
+                router.push(resolved)
+              }, 500)
+              return
+            }
             setTimeout(() => {
               console.log('appUrlOpen route push', route)
               router.push(route)
             }, 500)
           }
         })
+      }
+    },
+
+    // resolveTrackedLink asks the API where a tracked email link (/e/...) goes
+    // and returns the in-app path to route to, or '/' when it cannot say. The
+    // API serves the tracker at its own origin, so the site URL is re-based
+    // there; format=json turns the 302 into an answer the WebView can read.
+    async resolveTrackedLink(url) {
+      try {
+        const runtimeConfig = useRuntimeConfig()
+        const api = new URL(runtimeConfig.public.APIv2)
+        const link = new URL(url)
+        link.searchParams.set('format', 'json')
+        const target = api.origin + link.pathname + link.search
+        const resp = await fetch(target)
+        if (!resp.ok) {
+          throw new Error('HTTP ' + resp.status)
+        }
+        const data = await resp.json()
+        const dest = data?.url
+        if (typeof dest !== 'string' || !dest) {
+          throw new Error('no destination')
+        }
+        if (dest.startsWith('/')) {
+          return dest
+        }
+        const lookfor = 'ilovefreegle.org'
+        const pos = dest.indexOf(lookfor)
+        if (pos === -1) {
+          throw new Error('destination is off-site: ' + dest)
+        }
+        const path = dest
+          .substring(pos + lookfor.length)
+          .replace('/chat/', '/chats/')
+        return path || '/'
+      } catch (e) {
+        console.log('resolveTrackedLink failed', e?.message)
+        return '/'
       }
     },
 

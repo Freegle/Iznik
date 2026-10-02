@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 )
@@ -106,8 +107,8 @@ func maxExistingRepliers() int {
 // ShouldPassThrough reports whether an out-of-current-reach reply to refmsgid from
 // (lng, lat) should be delivered immediately instead of held.
 //
-// Deliberately conservative at every step: switched off, no max_polygon populated
-// yet, a query error, or a post that already has repliers all mean "no", which
+// Deliberately conservative at every step: switched off, no max_polygon_cells
+// populated yet, a query error, or a post that already has repliers all mean "no", which
 // leaves the existing hold in place. Being wrong in that direction costs a delay;
 // being wrong the other way would deliver a reply the reach never covers.
 func ShouldPassThrough(db *gorm.DB, refmsgid uint64, lng, lat float64) bool {
@@ -140,19 +141,29 @@ func ShouldPassThrough(db *gorm.DB, refmsgid uint64, lng, lat float64) bool {
 		return false
 	}
 
-	// max_polygon is populated by the firstreply:maxreach batch pass and is NULL
-	// until it gets there (and on any deploy that predates the migration), so a
-	// missing column or value degrades to the existing hold behaviour.
-	var within int
-	if err := db.Table("rippling_reach").
-		Select("COALESCE(MAX(ST_Contains(max_polygon, ST_SRID(POINT(?, ?), ?))), 0)",
-			lng, lat, utils.SRID).
-		Where("msgid = ? AND max_polygon IS NOT NULL", refmsgid).
-		Scan(&within).Error; err != nil {
-		return false
+	// max_polygon_cells (plans/2026-08-24-rippling-reach-raster-storage.md) is
+	// the compact form: one keyed read and a walk of its run stream, with no
+	// further round trip once populated. Fetched alongside so a
+	// not-yet-backfilled row costs nothing extra - it just falls through to
+	// the exact behaviour this had before that column existed. Row().Scan (the
+	// database/sql idiom), not GORM's chain Scan(&dest): that variant treats a
+	// []byte destination as a slice of rows to scan into (one uint8 per row),
+	// not a single BLOB value, and either errors or silently mis-populates it.
+	// Stored labels decide first (labels-truth): the maximum reach is the
+	// label at its own full budget, exactly. Falls through to the cells (and
+	// then the conservative default) wherever no label exists or routing is
+	// unavailable.
+	// The stored label at its own full budget IS the eventual reach. No
+	// verdict (label not stored yet, or routing unreachable) holds the
+	// reply - the conservative default this gate has always had. There is
+	// no grid fallback.
+	if verdicts := rippling.LabelVerdictsAtBudget(lat, lng, []uint64{refmsgid}, "max"); len(verdicts) > 0 {
+		if v, ok := verdicts[refmsgid]; ok {
+			return v == rippling.LabelVerdictIn
+		}
 	}
 
-	return within == 1
+	return false
 }
 
 // SystemUserID is the id of the Freegle account, resolved once from its

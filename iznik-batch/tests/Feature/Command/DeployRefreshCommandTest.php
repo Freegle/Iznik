@@ -4,6 +4,7 @@ namespace Tests\Feature\Command;
 
 use App\Console\Commands\Deploy\RefreshCommand;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class DeployRefreshCommandTest extends TestCase
@@ -87,47 +88,109 @@ class DeployRefreshCommandTest extends TestCase
         $this->assertStringContainsString('0', $version); // Initial version is 0
     }
 
-    public function test_deploy_refresh_records_laravel_commit_to_db(): void
+    /**
+     * The deployed commit is read from the checkout's own .git, which the test
+     * container does not have (it holds a copy of the tree, not a clone). So the
+     * tests make a checkout of their own rather than skipping.
+     */
+    private array $checkouts = [];
+
+    protected function tearDown(): void
     {
-        // Ensure we are in a git repo (we always are in CI / dev).
-        $gitHead = base_path('.git/HEAD');
-        if (! file_exists($gitHead)) {
-            $this->markTestSkipped('Not a git working directory — skipping deploy commit DB test');
+        foreach ($this->checkouts as $dir) {
+            foreach (array_reverse($this->filesUnder($dir)) as $path) {
+                is_dir($path) ? rmdir($path) : unlink($path);
+            }
+            rmdir($dir);
         }
 
-        \Illuminate\Support\Facades\DB::table('config')->where('key', 'deploy.laravel_commit')->delete();
+        parent::tearDown();
+    }
 
-        $this->artisan('deploy:refresh')->assertSuccessful();
+    /** @return list<string> every file and directory under $dir, parents first */
+    private function filesUnder(string $dir): array
+    {
+        $found = [];
+        foreach (scandir($dir) as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+            $path = $dir . '/' . $entry;
+            $found[] = $path;
+            if (is_dir($path)) {
+                $found = array_merge($found, $this->filesUnder($path));
+            }
+        }
 
-        $row = \Illuminate\Support\Facades\DB::table('config')
-            ->where('key', 'deploy.laravel_commit')
-            ->first();
+        return $found;
+    }
 
-        $this->assertNotNull($row, 'deploy.laravel_commit should be written to config table');
-        $this->assertMatchesRegularExpression('/^[0-9a-f]{40}$/i', $row->value, 'Commit SHA should be a 40-char hex string');
+    /**
+     * A checkout whose HEAD is $sha: either the normal shape (HEAD is a symbolic
+     * ref to a branch file) or detached (HEAD holds the SHA itself).
+     */
+    private function fakeCheckout(string $sha, bool $detached = false): string
+    {
+        $dir = sys_get_temp_dir() . '/deploy-refresh-' . uniqid('', true);
+        mkdir($dir . '/.git/refs/heads', 0777, true);
+        $this->checkouts[] = $dir;
+
+        if ($detached) {
+            file_put_contents($dir . '/.git/HEAD', $sha . "\n");
+        } else {
+            file_put_contents($dir . '/.git/HEAD', "ref: refs/heads/master\n");
+            file_put_contents($dir . '/.git/refs/heads/master', $sha . "\n");
+        }
+
+        return $dir;
+    }
+
+    private function readGitHead(string $dir): ?string
+    {
+        return (new \ReflectionMethod(RefreshCommand::class, 'readGitHead'))->invoke(new RefreshCommand(), $dir);
+    }
+
+    public function test_deploy_refresh_records_laravel_commit_to_db(): void
+    {
+        $sha = 'c418742a4c0ec184a4dcbc6d96e03423499be35e';
+        $checkout = $this->fakeCheckout($sha);
+        $this->app->bind(RefreshCommand::class, fn () => new class ($checkout) extends RefreshCommand {
+            public function __construct(private readonly string $checkout)
+            {
+                parent::__construct();
+            }
+
+            protected function repositoryPath(): string
+            {
+                return $this->checkout;
+            }
+        });
+
+        DB::table('config')->where('key', 'deploy.laravel_commit')->delete();
+
+        $this->artisan('deploy:refresh')
+            ->expectsOutputToContain("Recorded Laravel deploy commit: {$sha}")
+            ->assertSuccessful();
+
+        $this->assertSame($sha, DB::table('config')->where('key', 'deploy.laravel_commit')->value('value'));
     }
 
     public function test_read_git_head_returns_null_for_non_git_dir(): void
     {
-        $command = new \App\Console\Commands\Deploy\RefreshCommand();
-        $method = new \ReflectionMethod($command, 'readGitHead');
-        $method->setAccessible(true);
-
-        $result = $method->invoke($command, '/tmp');
-        $this->assertNull($result);
+        $this->assertNull($this->readGitHead(sys_get_temp_dir()));
     }
 
-    public function test_read_git_head_returns_sha_for_git_repo(): void
+    public function test_read_git_head_follows_a_symbolic_ref(): void
     {
-        $command = new \App\Console\Commands\Deploy\RefreshCommand();
-        $method = new \ReflectionMethod($command, 'readGitHead');
-        $method->setAccessible(true);
+        $sha = str_repeat('ab', 20);
 
-        $result = $method->invoke($command, base_path());
-        if ($result === null) {
-            $this->markTestSkipped('Not a git working directory');
-        }
+        $this->assertSame($sha, $this->readGitHead($this->fakeCheckout($sha)));
+    }
 
-        $this->assertMatchesRegularExpression('/^[0-9a-f]{40}$/i', $result);
+    public function test_read_git_head_reads_a_detached_head(): void
+    {
+        $sha = str_repeat('cd', 20);
+
+        $this->assertSame($sha, $this->readGitHead($this->fakeCheckout($sha, detached: true)));
     }
 }

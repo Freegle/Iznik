@@ -9,6 +9,9 @@
           <ModMember :membershipid="pair.user2" />
         </b-col>
       </b-row>
+      <b-alert variant="info" show class="mt-2 mb-0">
+        <v-icon icon="info-circle" /> {{ whyRelated }}
+      </b-alert>
       <div class="d-flex flex-wrap justify-content-start pills mt-2">
         <b-button v-if="whichposted === 'Both'" variant="warning" class="me-1">
           Posted: {{ whichposted }}
@@ -64,8 +67,17 @@ const emit = defineEmits(['processed'])
 const memberStore = useMemberStore()
 const userStore = useUserStore()
 
-// The pair {id, user1, user2} from the member store.
+// The pair {id, user1, user2, reason} from the member store.
 const pair = computed(() => memberStore.get(props.memberid))
+
+// Why these two were put in front of the mod. Detectors that can explain themselves save
+// their explanation on the row; the original browser-session detector predates that column
+// and always means the same thing, so it is worded here rather than backfilled.
+const whyRelated = computed(
+  () =>
+    pair.value?.reason ||
+    'Both accounts were signed in from the same browser, which usually means one person with two accounts.'
+)
 
 // Full user data from the user store (fetched by ModMember on mount).
 const userData1 = computed(() => userStore.list[pair.value?.user1])

@@ -2,11 +2,13 @@
   <div>
     <NoticeMessage variant="info" class="mb-3">
       <p class="mb-0">
-        <strong>Providers refusing our mail.</strong> When a provider stops
-        accepting mail from our sending servers, we pause generating email for
-        everyone at that provider rather than pile up mail that can't be
-        delivered. This is our sending reputation, not a problem with anyone's
-        address.
+        <strong>Why email is running late.</strong> Two different things delay
+        mail and they need opposite responses. A provider can refuse our mail
+        outright, in which case we pause generating email for everyone there
+        rather than pile up mail that can't be delivered. Or mail can simply be
+        queued, waiting its turn, because we send to that provider at a
+        deliberately limited rate - nothing has gone wrong, but the member is
+        still waiting. Both are below.
       </p>
     </NoticeMessage>
 
@@ -19,15 +21,86 @@
     </NoticeMessage>
 
     <template v-else>
-      <NoticeMessage v-if="!suppressions.length" variant="success" class="mb-3">
-        Nothing is being deferred. Every provider is accepting our mail.
+      <NoticeMessage
+        v-if="!suppressions.length && !queues.length && !members.length"
+        variant="success"
+        class="mb-3"
+      >
+        Nothing is waiting and nothing is being deferred. Every provider is
+        accepting our mail as fast as we're sending it.
       </NoticeMessage>
 
-      <template v-else>
+      <!-- The queue comes first because it answers the question people
+           actually arrive with - "is mail to this member late?" - whoever's
+           fault it is. A suppression is the answer to a narrower question. -->
+      <template v-if="queues.length">
         <h3 class="mb-2">
-          Currently suppressed
-          <b-badge variant="danger">{{ suppressions.length }}</b-badge>
+          In the sending queue
+          <b-badge :variant="worstQueueVariant">{{
+            totalQueued.toLocaleString()
+          }}</b-badge>
         </h3>
+        <p class="text-muted small mb-2">
+          One row per recipient domain, worst first.
+          <strong>Waiting</strong> is mail nothing has refused - it's queued
+          behind the rate we send to that provider at.
+          <strong>Refused</strong> is mail they've turned away. Depth on its own
+          doesn't tell you much: a big queue draining fast is fine, a small one
+          that isn't draining is not.
+        </p>
+        <b-table-simple responsive striped small class="mb-4">
+          <b-thead>
+            <b-tr>
+              <b-th>Domain</b-th>
+              <b-th class="text-end">Waiting</b-th>
+              <b-th class="text-end">Refused</b-th>
+              <b-th>Oldest</b-th>
+              <b-th class="text-end">Sending</b-th>
+              <b-th>Clears in</b-th>
+            </b-tr>
+          </b-thead>
+          <b-tbody>
+            <b-tr v-for="q in queues" :key="'q-' + q.domain">
+              <b-td>
+                <code>{{ q.domain }}</code>
+              </b-td>
+              <b-td class="text-end">{{
+                (q.waiting || 0).toLocaleString()
+              }}</b-td>
+              <b-td class="text-end">{{
+                (q.deferred || 0).toLocaleString()
+              }}</b-td>
+              <b-td>
+                <span v-if="q.oldest" :title="q.oldest">{{
+                  timeago(q.oldest)
+                }}</span>
+                <span v-else class="text-muted">-</span>
+              </b-td>
+              <b-td class="text-end">
+                <span v-if="q.deliveredperhour"
+                  >{{ q.deliveredperhour.toLocaleString() }}/hr</span
+                >
+                <span v-else class="text-muted">-</span>
+              </b-td>
+              <b-td :class="clearsClass(q)">{{ clearsIn(q) }}</b-td>
+            </b-tr>
+          </b-tbody>
+        </b-table-simple>
+      </template>
+
+      <h3 class="mb-2">
+        Providers refusing our mail
+        <b-badge v-if="suppressions.length" variant="danger">{{
+          suppressions.length
+        }}</b-badge>
+      </h3>
+
+      <p v-if="!suppressions.length" class="text-muted">
+        Nobody is refusing us. Anything in the queue above is waiting on the
+        rate we send at, not on a provider turning us away.
+      </p>
+
+      <template v-else>
         <p class="text-muted small mb-2">
           One row per recipient domain, worst backlog first. Individual full
           mailboxes are not listed - those are that member's inbox, not a
@@ -61,62 +134,70 @@
         </b-table-simple>
       </template>
 
-      <h3 class="mb-2">
-        Members with mail held
-        <b-badge v-if="members.length" variant="info">{{
-          members.length
-        }}</b-badge>
-      </h3>
+      <h3 class="mb-2 mt-4">Members we've stopped emailing for now</h3>
 
-      <p v-if="!members.length" class="text-muted">
-        No mail has been held back yet. A suppression starts holding mail from
-        the moment it's created, so this fills up as each member's next email
-        comes due.
+      <p class="text-muted small mb-3">
+        Nothing here is a punishment or a setting anyone chose. When mail to
+        someone can't be delivered, we stop generating more of it rather than
+        pile up email that can't arrive, and we send a catch-up once it clears.
+        The count is how many emails we didn't generate while that was true -
+        not a number of emails sitting somewhere waiting. An immediate digest is
+        generated per matching post, so an active member on several communities
+        reaches thousands within days.
       </p>
 
-      <template v-else>
-        <NoticeMessage
-          v-if="members.length >= memberLimit && memberLimit > 0"
-          variant="warning"
-          class="mb-2"
-        >
-          Showing the first {{ memberLimit }} members. There are more.
-        </NoticeMessage>
+      <h4 class="mb-2 h5">
+        Waiting on a provider
+        <b-badge v-if="waitingOnProvider.length" variant="info">{{
+          waitingOnProvider.length
+        }}</b-badge>
+      </h4>
 
-        <b-table-simple responsive striped small>
-          <b-thead>
-            <b-tr>
-              <b-th>Member</b-th>
-              <b-th>Email</b-th>
-              <b-th>Provider</b-th>
-              <b-th>Delayed since</b-th>
-              <b-th class="text-end">Held</b-th>
-            </b-tr>
-          </b-thead>
-          <b-tbody>
-            <b-tr v-for="m in members" :key="'mem-' + m.userid">
-              <b-td>
-                <nuxt-link :to="'/support/' + m.userid">
-                  {{ m.displayname || '#' + m.userid }}
-                </nuxt-link>
-              </b-td>
-              <b-td class="small">{{ m.email }}</b-td>
-              <b-td>{{ m.provider || 'Unknown' }}</b-td>
-              <b-td>
-                <span :title="m.since">{{ dateshort(m.since) }}</span>
-              </b-td>
-              <b-td class="text-end">{{ m.heldmessages }}</b-td>
-            </b-tr>
-          </b-tbody>
-        </b-table-simple>
-      </template>
+      <p class="text-muted small mb-2">
+        Our sending reputation with their provider. Ours to fix, and nothing the
+        member can do.
+      </p>
+
+      <p v-if="!waitingOnProvider.length" class="text-muted">
+        Nobody. Mail queued behind our own sending rate has already been
+        generated and is waiting to go out, so it's in the queue above rather
+        than here.
+      </p>
+
+      <ModSupportMailHeldTable
+        v-else
+        :members="waitingOnProvider"
+        :limit="memberLimit"
+      />
+
+      <h4 class="mb-2 mt-4 h5">
+        Their own mailbox
+        <b-badge v-if="ownMailbox.length" variant="secondary">{{
+          ownMailbox.length
+        }}</b-badge>
+      </h4>
+
+      <p class="text-muted small mb-2">
+        Their inbox is full, or their address doesn't resolve. That's theirs to
+        fix, not our sending reputation, which is why they aren't in the table
+        of providers refusing us above. Nothing here means anything is wrong
+        with our mail.
+      </p>
+
+      <p v-if="!ownMailbox.length" class="text-muted">Nobody.</p>
+
+      <ModSupportMailHeldTable
+        v-else
+        :members="ownMailbox"
+        :limit="memberLimit"
+      />
     </template>
   </div>
 </template>
 <script setup>
 import { computed, onMounted } from 'vue'
 import { useEmailTrackingStore } from '~/modtools/stores/emailtracking'
-import { dateshort } from '~/composables/useTimeFormat'
+import { dateshort, timeago } from '~/composables/useTimeFormat'
 
 const store = useEmailTrackingStore()
 
@@ -125,6 +206,63 @@ const error = computed(() => store.deferralsError)
 const suppressions = computed(() => store.deferralSuppressions)
 const members = computed(() => store.deferralMembers)
 const memberLimit = computed(() => store.deferralMemberLimit)
+const queues = computed(() => store.deferralQueues)
+
+// Two different problems, so two tables. A member whose own inbox is full is
+// not waiting on anything we can fix, and listing them together is what let
+// this page say "every provider is accepting our mail" directly above 194
+// people it described as having mail held.
+const waitingOnProvider = computed(() =>
+  members.value.filter((m) => !m.permailbox)
+)
+const ownMailbox = computed(() => members.value.filter((m) => m.permailbox))
+
+const totalQueued = computed(() =>
+  queues.value.reduce((n, q) => n + (q.waiting || 0) + (q.deferred || 0), 0)
+)
+
+// Colour the headline on the worst row, not on the total. A hundred thousand
+// messages spread over domains that are all draining is a normal busy evening;
+// a thousand that aren't moving is the problem.
+const worstQueueVariant = computed(() => {
+  const stuck = queues.value.some((q) => q.waiting > 0 && !q.deliveredperhour)
+
+  return stuck ? 'danger' : 'warning'
+})
+
+// Depth divided by drain rate. Stated in the units the reader thinks in, and
+// refusing to guess when there is nothing to divide by: "not draining" is a
+// far more useful answer than a made-up number, and it is the row that wants
+// acting on.
+function clearsIn(q) {
+  const waiting = q.waiting || 0
+
+  if (!waiting) {
+    return '-'
+  }
+
+  const rate = q.deliveredperhour || 0
+
+  if (!rate) {
+    return 'not draining'
+  }
+
+  const hours = waiting / rate
+
+  if (hours < 1) {
+    return `${Math.max(1, Math.round(hours * 60))} min`
+  }
+
+  return `${hours.toFixed(1)} hours`
+}
+
+function clearsClass(q) {
+  if (q.waiting > 0 && !q.deliveredperhour) {
+    return 'text-danger fw-bold'
+  }
+
+  return q.waiting / (q.deliveredperhour || 1) > 4 ? 'text-warning' : ''
+}
 
 onMounted(() => {
   store.fetchDeferrals()

@@ -23,12 +23,12 @@ type MessageGroup struct {
 	// There's a slight privacy issue in returning the approval id.  Potentially we might not want users to know that
 	// their messages are moderated, and we might not want to reveal the id of the moderator.  However it's a useful
 	// thing to be able to show mods themselves.
-	Approvedby              uint64           `json:"approvedby"`
-	Heldby                  *uint64          `json:"heldby,omitempty"`
-	Spamtype                *string          `json:"spamtype,omitempty"`
-	Spamreason              *string          `json:"spamreason,omitempty"`
-	ContentcheckCheckedAt   *time.Time       `json:"contentcheck_checked_at,omitempty"`
-	ContentcheckReasons     *json.RawMessage `json:"contentcheck_reasons,omitempty"`
+	Approvedby            uint64           `json:"approvedby"`
+	Heldby                *uint64          `json:"heldby,omitempty"`
+	Spamtype              *string          `json:"spamtype,omitempty"`
+	Spamreason            *string          `json:"spamreason,omitempty"`
+	ContentcheckCheckedAt *time.Time       `json:"contentcheck_checked_at,omitempty"`
+	ContentcheckReasons   *json.RawMessage `json:"contentcheck_reasons,omitempty"`
 
 	// RippledIn is set when this messages_groups row was created by the rippling engine
 	// (the post originated on another group and rippled in here). The moderation UI uses
@@ -42,4 +42,53 @@ type MessageGroup struct {
 	// routing/KNN calls failed at ripple-in time — the frontend shows nothing in all three cases.
 	RippleProximityP *string `json:"ripple_proximity_p,omitempty"`
 	RippleProximityQ *string `json:"ripple_proximity_q,omitempty"`
+
+	// ModMessagingAllowed is whether mods on this group may message the poster of this
+	// message directly. Defaults true for ordinary Freegle posts; TN API ingestion sets
+	// it false unless TN told us the poster consented for this group (see
+	// PostSyncer::processPost / GroupPostIngestionService in iznik-batch).
+	ModMessagingAllowed bool `json:"mod_messaging_allowed"`
+
+	// LockedByHome is stored 1 on a rippled-in copy pulled back by a moderator of the post's
+	// home community. In the payload it is the EFFECTIVE lock (effectiveHomeLocks): still 1
+	// only while the home copy exists and is not Approved, so ModTools can say the home
+	// community is reviewing the post and that this copy cannot be approved yet.
+	LockedByHome uint8 `json:"locked_by_home"`
+}
+
+// effectiveHomeLocks clears LockedByHome on every row that is not actually blocked: a lock
+// only holds while an undeleted home row (rippled_in = 0) exists and is not Approved. Once
+// the home copy is approved, or gone, the stored flag is a leftover and means nothing.
+// Rows are expected to be a post's undeleted messages_groups rows.
+func effectiveHomeLocks(groups []MessageGroup) {
+	homePending := false
+	for _, g := range groups {
+		if g.RippledIn == 0 && g.Collection != "Approved" {
+			homePending = true
+			break
+		}
+	}
+
+	for i := range groups {
+		if groups[i].LockedByHome == 1 && (!homePending || groups[i].RippledIn == 0) {
+			groups[i].LockedByHome = 0
+		}
+	}
+}
+
+// modMessagingAllowed reduces a post's group rows to the one message-level answer the
+// moderation UI needs: may this post's poster be talked to at all?
+//
+// Only the ORIGIN row (rippled_in = 0) carries the answer. The rippling engine inserts its
+// copies without the column, so they take the table default (allowed) and would mask an
+// unaddressed origin. A post with no origin row among the rows supplied reads as allowed -
+// the safe direction, since everything this gates removes moderator abilities.
+func modMessagingAllowed(groups []MessageGroup) bool {
+	for _, g := range groups {
+		if g.RippledIn == 0 && !g.ModMessagingAllowed {
+			return false
+		}
+	}
+
+	return true
 }

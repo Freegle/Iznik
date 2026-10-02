@@ -1,0 +1,12 @@
+tracepoint:syscalls:sys_enter_execve
+{
+  printf("E %llu %d %d %llu\n", nsecs / 1000000, pid, curtask->real_parent->tgid, cgroup);
+  printf("A0 %d |%s|%s\n", pid, str(*(args->argv)), str(*(args->argv+1)));
+  printf("A2 %d |%s|%s\n", pid, str(*(args->argv+2)), str(*(args->argv+3)));
+  printf("A4 %d |%s|%s\n", pid, str(*(args->argv+4)), str(*(args->argv+5)));
+}
+tracepoint:sched:sched_process_exit
+{
+  printf("X %llu %d %d %d %llu %s %llu %llu %llu\n", nsecs / 1000000, pid, tid, curtask->real_parent->tgid, cgroup, comm,
+    curtask->utime / 1000000, curtask->stime / 1000000, (nsecs - curtask->start_time) / 1000000);
+}

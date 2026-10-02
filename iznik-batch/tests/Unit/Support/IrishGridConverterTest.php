@@ -16,13 +16,8 @@ use Tests\TestCase;
  *   - False northing N₀ = 250,000 m
  *   - Scale factor   k₀ = 1.000035
  *
- * NOTE: A latent bug exists in igToGeodetic where the local easting `$x` is
- * divided by both k₀ and ν (the transverse radius of curvature, ≈6.38 M m)
- * before being used in the longitude/latitude series.  The series formulas
- * need $x = (E − E₀)/k₀, not (E − E₀)/(k₀ν).  Dividing by ν twice makes
- * the series terms ≈ 10⁻⁸ times too small, so the reported longitude is
- * always essentially IG_LAM0 (−8°) regardless of easting.  See the
- * TODO-skipped tests below for the failing assertions.
+ * The known-point checks below are cross-checked against PROJ (EPSG:29903 to
+ * EPSG:4326 with the same EPSG:1954 Helmert parameters this class uses).
  */
 class IrishGridConverterTest extends TestCase
 {
@@ -250,57 +245,42 @@ class IrishGridConverterTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
-    // Latent-bug tests — skipped until igToGeodetic is fixed.
+    // Known-point checks.
     //
-    // Root cause: $x = ($E - $E0) / ($k0 * $nu) divides by the transverse
-    // radius of curvature ν (≈6.38 million m) in addition to k₀.  Because
-    // the longitude/latitude series formulas already divide by ν, the net
-    // effect is a ν² term in the denominator that makes all higher-order
-    // corrections vanish.  Longitude becomes stuck at ≈ IG_LAM0 (−8°)
-    // irrespective of easting.
-    //
-    // Fix: change the definition to $x = ($E - $E0) / $k0 (drop the / $nu).
+    // Grid references below are the true Irish Grid coordinates for each
+    // landmark, cross-checked against PROJ (EPSG:29903 to EPSG:4326 with the
+    // same EPSG:1954 Helmert parameters this class uses).  The converter
+    // agrees with PROJ to within a millimetre across the island, so the
+    // tolerance here is 0.0001 degrees, about 11 metres.
     // -------------------------------------------------------------------------
 
     public function test_longitude_varies_with_easting(): void
     {
-        // TODO: latent bug — longitude is insensitive to easting because $x in
-        // igToGeodetic divides by ν a second time; fix by using $x = ($E-$E0)/$k0.
-        $this->markTestSkipped('latent bug: igToGeodetic $x divided by ν twice, longitude stuck at ≈ IG_LAM0');
-
         $west = $this->converter->toWgs84(100000.0, 300000.0);
         $east = $this->converter->toWgs84(300000.0, 300000.0);
 
-        // Moving 200 km east should increase longitude by roughly 2–3 degrees.
+        // Moving 200 km east should increase longitude by roughly 2-3 degrees.
         $this->assertGreaterThan($west[1], $east[1], 'Increasing easting must increase longitude');
         $this->assertGreaterThan(1.5, $east[1] - $west[1], 'Longitude gap should be > 1.5°');
     }
 
     public function test_known_wgs84_for_belfast_city_hall(): void
     {
-        // TODO: latent bug — igToGeodetic $x divided by ν twice, so reported
-        // longitude is ≈ −8.001° instead of ≈ −5.930°.
-        $this->markTestSkipped('latent bug: igToGeodetic $x divided by ν twice, longitude stuck at ≈ IG_LAM0');
-
-        // Belfast City Hall: Irish Grid TM75 ≈ E=333738, N=374278
+        // Belfast City Hall: Irish Grid TM75 E=333830, N=374021
         // Expected WGS84: lat ≈ 54.5967°, lng ≈ −5.9301°
-        $result = $this->converter->toWgs84(333738.0, 374278.0);
+        $result = $this->converter->toWgs84(333830.0, 374021.0);
 
-        $this->assertEqualsWithDelta(54.5967, $result[0], 0.005, 'Belfast lat');
-        $this->assertEqualsWithDelta(-5.9301, $result[1], 0.005, 'Belfast lng');
+        $this->assertEqualsWithDelta(54.5967, $result[0], 0.0001, 'Belfast lat');
+        $this->assertEqualsWithDelta(-5.9301, $result[1], 0.0001, 'Belfast lng');
     }
 
     public function test_known_wgs84_for_dublin_area(): void
     {
-        // TODO: latent bug — igToGeodetic $x divided by ν twice, so reported
-        // longitude is ≈ −8.001° instead of ≈ −6.260°.
-        $this->markTestSkipped('latent bug: igToGeodetic $x divided by ν twice, longitude stuck at ≈ IG_LAM0');
-
-        // Dublin O'Connell Bridge area: Irish Grid TM75 ≈ E=315500, N=234200
+        // Dublin O'Connell Bridge area: Irish Grid TM75 E=315925, N=234472
         // Expected WGS84: lat ≈ 53.348°, lng ≈ −6.260°
-        $result = $this->converter->toWgs84(315500.0, 234200.0);
+        $result = $this->converter->toWgs84(315925.0, 234472.0);
 
-        $this->assertEqualsWithDelta(53.348, $result[0], 0.005, 'Dublin lat');
-        $this->assertEqualsWithDelta(-6.260, $result[1], 0.005, 'Dublin lng');
+        $this->assertEqualsWithDelta(53.348, $result[0], 0.0001, 'Dublin lat');
+        $this->assertEqualsWithDelta(-6.260, $result[1], 0.0001, 'Dublin lng');
     }
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/modmessaging"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -485,16 +486,6 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	tx848af7d73bfe.Statement.BuildClauses = []string{"SELECT"}
 	tx848af7d73bfe.Scan(&wasHome)
 
-	if !rippling.AttributionSchemaReady(db) {
-		db.Table("rippling_reply_attribution").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
-			"msgid":           refmsgid,
-			"userid":          myid,
-			"replied_at":      gorm.Expr("NOW()"),
-			"was_home_member": wasHome,
-		})
-		return
-	}
-
 	// Did we send this user the ripple "new post near you" mail for this post? Keyed lookup on
 	// the notified ledger - the strongest direct ripple-delivery evidence.
 	// Same
@@ -727,10 +718,34 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// The room type also scopes the attribution capture below (a refmsgid message in a
 	// User2Mod room is a REPORT, not a reply), so fetch it once here.
 	roomType := ""
+	roomGroupid := uint64(0)
 	reach := replyReachEvidence{}
 	holdReply := false
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
-		db.Table("chat_rooms").Select("chattype").Where("id = ?", id).Scan(&roomType)
+		var room struct {
+			Chattype string
+			Groupid  uint64
+		}
+		db.Table("chat_rooms").Select("chattype, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&room)
+		roomType = room.Chattype
+		roomGroupid = room.Groupid
+
+		// A report of an unaddressed TN post must never reach a moderator. No community
+		// chose to carry that post, so no mod team has any standing to act on it, and the
+		// report is instead a vote to take it down (a quorum of two removes it - see
+		// microvolunteering.RecordReportVerdict). Record the vote and stop: the chat
+		// message is never written, so the report cannot land in a mod inbox even from a
+		// client too old to know about the /message "Report" action - which matters
+		// because app bundles ship baked into the APK.
+		if roomType == utils.CHAT_TYPE_USER2MOD && modmessaging.PostIsUnaddressed(db, *payload.Refmsgid) {
+			microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, roomGroupid, payload.Message)
+
+			ret := struct {
+				Id int64 `json:"id"`
+			}{}
+			return c.JSON(ret)
+		}
+
 		if roomType == utils.CHAT_TYPE_USER2USER {
 			latlng := user.GetLatLng(myid)
 			if latlng.Lat != 0 || latlng.Lng != 0 {
@@ -768,35 +783,24 @@ func CreateChatMessage(c *fiber.Ctx) error {
 						break
 					}
 				}
-				var gateErr error
-				if rippling.ReachBoundsReady(db) {
-					// ReachInReachExpr always returns the same expression text
-					// (only the bind args vary per call) - the extractor
-					// couldn't fold that across a function call, but there is
-					// exactly one rendered form. Proven (as a single shape)
-					// by the retired ormharness (shapes.json /
-					// TestTier3Shapes_67cd5e1cc4ec, removed in d22ba1d6c).
-					expr, exprArgs := rippling.ReachInReachExpr(reach.lng, reach.lat, utils.SRID)
-					// Select takes ONLY the expression's own binds. Appending
-					// Refmsgid here as well - while Where binds it too - sent one
-					// argument more than the statement had placeholders, and
-					// MySQL rejected it with "expected 13 arguments, got 14".
-					//
-					// Layer 1 did not catch it: the rendered SQL TEXT is identical
-					// either way, and the golden comparison never counts binds.
-					// Only executing it fails, which is what the chat tests did.
-					gateErr = db.Table("rippling_reach rr").
-						Select("COUNT(*) AS reach_rows, COALESCE(MAX("+expr+"), 0) AS in_reach", exprArgs...).
-						Where("rr.msgid = ?", *payload.Refmsgid).
-						Scan(&rc).Error
-				} else {
-					legacyExpr := "ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?))"
-					legacyArgs := []interface{}{latlng.Lng, latlng.Lat, utils.SRID}
-					gateErr = db.Table("rippling_reach rr").
-						Select("COUNT(*) AS reach_rows, COALESCE(MAX("+legacyExpr+"), 0) AS in_reach",
-							legacyArgs...).
-						Where("rr.msgid = ?", *payload.Refmsgid).
-						Scan(&rc).Error
+				// Containment is the routing server's answer about the stored
+				// label (rippling.ReachMembership), one batched call in place of
+				// the ST_Contains against a megabyte polygon this gate used to
+				// pay per reply.
+				//
+				// A row it could not answer for - no label stored yet, or the
+				// routing server down - does NOT hold the reply. Only a
+				// refusal does. On 2026-09-02 the reach engine was down for 16
+				// hours and every undecided row read as "out", so members were
+				// told a post three miles away had not reached them and their
+				// replies were held; the notice even carried an arrival time in
+				// the past, because the drive-time estimate behind that text
+				// was still working. An outage now costs ordering, not replies.
+				membership, gateErr := rippling.ReachMembership(db, []uint64{*payload.Refmsgid}, reach.lng, reach.lat)
+				rc.ReachRows = len(membership)
+				info, haveInfo := membership[*payload.Refmsgid]
+				if haveInfo && info.InReach {
+					rc.InReach = 1
 				}
 				if gateErr == nil {
 					// A ring admits them: in reach, whatever the polygon said.
@@ -812,11 +816,24 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					// ripple:release-replies cron then delivers it (or 'taken-gone' if the post goes
 					// first). Mirrors IncomingMailService::holdReplyIfOutsideReach for the web path.
 					//
-					// Unless this is the post's FIRST reply and the replier is inside the reach the
-					// post will eventually have (see firstreply.ShouldPassThrough). Holding that
-					// reply delays a poster who currently has nothing, to protect an ordering the
-					// replier was going to be allowed to cross anyway.
-					if rc.ReachRows > 0 && rc.InReach == 0 {
+					// Undecided is not a refusal: let the reply through and
+					// count it, so the size of an outage is visible after the
+					// fact as well as in the Sentry alert the routing call
+					// raises at the time.
+					if rc.ReachRows > 0 && rc.InReach == 0 && !info.Decided && !ringAdmits {
+						db.Table("rippling_event_metrics").Clauses(clause.OnConflict{
+							DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
+						}).Create(map[string]interface{}{
+							"day":   gorm.Expr("CURDATE()"),
+							"event": gorm.Expr("'reply_undecided_passthrough'"),
+							"count": gorm.Expr("1"),
+						})
+					} else if rc.ReachRows > 0 && rc.InReach == 0 {
+						// Unless this is the post's FIRST reply and the replier is
+						// inside the reach the post will eventually have (see
+						// firstreply.ShouldPassThrough). Holding that reply delays a
+						// poster who currently has nothing, to protect an ordering the
+						// replier was going to be allowed to cross anyway.
 						holdReply = !firstreply.ShouldPassThrough(db, *payload.Refmsgid, reach.lng, reach.lat)
 						if !holdReply {
 							db.Table("firstreply_event_metrics").Clauses(clause.OnConflict{
@@ -977,15 +994,8 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// chat's group. Only User2Mod refmsgid messages are reports - a User2User refmsgid
 	// message is an Interested reply to the poster, not a report. Best-effort: never
 	// blocks the report.
-	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
-		var reportRoom struct {
-			Chattype string
-			Groupid  uint64
-		}
-		db.Table("chat_rooms").Select("chattype, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&reportRoom)
-		if reportRoom.Chattype == utils.CHAT_TYPE_USER2MOD {
-			microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, reportRoom.Groupid, payload.Message)
-		}
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2MOD {
+		microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, roomGroupid, payload.Message)
 	}
 
 	if payload.Imageid != nil {
@@ -1384,7 +1394,11 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 	isParticipant := myid == room.User1 || myid == room.User2
 	var reviewFilter string
 	if isParticipant {
-		reviewFilter = "(chat_messages.userid = ? OR (chat_messages.reviewrequired = 0 AND chat_messages.reviewrejected = 0 AND chat_messages.processingsuccessful = 1))"
+		// Mirror FetchChatMessages: gate rippling-held replies so a participant
+		// cannot use this endpoint to bypass the hold that the regular chat API
+		// enforces.  The sender still sees their own messages (userid = ? branch).
+		reviewFilter = "(chat_messages.userid = ? OR (chat_messages.reviewrequired = 0 AND chat_messages.reviewrejected = 0 AND chat_messages.processingsuccessful = 1 " +
+			"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')))"
 	} else {
 		// Mod viewing — show all messages except rejected ones.
 		reviewFilter = "(chat_messages.reviewrejected = 0 OR chat_messages.userid = ?)"

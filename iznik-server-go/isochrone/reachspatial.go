@@ -13,33 +13,25 @@ package isochrone
 // a handful of rows by primary key, not hundreds — so the result is exactly
 // the old query's, only the bulk geometry work is gone.
 //
-// Dark-launched: SPATIAL_REACH_MODE=on enables it per node; anything else
-// (or any spatial error, or a not-ready dataset) falls back to the SQL
-// containment path unchanged.
+// Always tried: on any spatial error or a not-ready dataset the caller falls
+// back to the degraded outer-bound + cells-probe path.
 
 import (
-	"os"
+	"fmt"
+	"strconv"
 
-	"github.com/freegle/iznik-server-go/spatial"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 )
 
 // spatialReachIDs asks the spatial server which live reaches cover the
-// viewer. ok=false (mode off, transport error, dataset not ready) means the
-// caller must use the SQL containment path.
-func spatialReachIDs(latlng utils.LatLng) (in []int64, partial []int64, ok bool) {
-	// Read fresh each call (cheap next to the network hop): lets tests point
-	// SPATIAL_KNN_URL at a stub with t.Setenv, and ops flip the mode per node
-	// via .env + monit restart.
-	if os.Getenv("SPATIAL_REACH_MODE") != "on" {
-		return nil, nil, false
-	}
-	in, partial, err := spatial.ReachContaining(float64(latlng.Lng), float64(latlng.Lat))
-	if err != nil {
-		return nil, nil, false
-	}
-	return in, partial, true
+// viewer. ok=false (transport error, dataset not ready) means the caller must
+// use the degraded outer-bound + cells-probe path.
+func spatialReachIDs(db *gorm.DB, latlng utils.LatLng) (in []int64, partial []int64, ok bool) {
+	// The call itself lives in rippling so search's reach arm makes the
+	// identical decision.
+	return rippling.SpatialReachIDs(db, float64(latlng.Lng), float64(latlng.Lat))
 }
 
 // reachCandidateQueryFromIDs is reachCandidateQuery with the CONTAINMENT
@@ -62,8 +54,8 @@ func spatialReachIDs(latlng utils.LatLng) (in []int64, partial []int64, ok bool)
 // reference to rippling_reach at all, so it counted held posts. Requiring a live
 // non-held row for both closes that, and costs one primary-key lookup per id.
 // fromIDsWhere builds the containment WHERE for reachCandidateQueryFromIDs:
-// the two raster buckets, plus — when a ring admits the viewer to something —
-// those posts as a third arm. The rasters only answer the committed reach, and
+// the raster id bucket, plus — when a ring admits the viewer to something —
+// those posts as a second arm. The rasters only answer the committed reach, and
 // the feed (reachOrOverflowSQL) additionally admits via the ring, so the badge
 // must too or it undercounts the feed. Every arm requires a live non-held
 // reach row, so a held or retracted post cannot be counted in on the
@@ -82,7 +74,7 @@ func spatialReachIDs(latlng utils.LatLng) (in []int64, partial []int64, ok bool)
 // ids    -> ms type=range key=msgid rows=22.
 // EXISTS -> ms type=ALL   key=NULL  rows=58,348, with the JSON parse and the
 // geometry build repeated per row, on a badge that polls ~2/s.
-func fromIDsWhere(in, partial []int64, latlng utils.LatLng, admitted []uint64) (string, []interface{}) {
+func fromIDsWhere(in []int64, latlng utils.LatLng, admitted []uint64, watermark uint64) (string, []interface{}) {
 	ringArm := ""
 	var ringArgs []interface{}
 	if len(admitted) > 0 {
@@ -97,22 +89,24 @@ func fromIDsWhere(in, partial []int64, latlng utils.LatLng, admitted []uint64) (
 		ringArgs = []interface{}{admitted}
 	}
 
+	// Unseen = no impression AND above the member's mark-all-seen watermark -
+	// the same definition reachCandidateQuery's unseenFilter, both mygroups
+	// counts and the feed's own `unseen` column use. This arm was written
+	// without the watermark, so a member who had cleared their feed kept a
+	// badge counting posts below the clear: posts the feed already rendered as
+	// seen, sorted by date far down the list, which nothing they viewed could
+	// ever drain. Inlined like the other paths because the args are positional.
 	whereSQL := "ms.successful = 0 AND ml.msgid IS NULL " +
+		"AND ms.id > " + strconv.FormatUint(watermark, 10) + " " +
 		"AND ((ms.msgid IN (?) AND EXISTS (" +
 		"SELECT 1 FROM rippling_reach r1 WHERE r1.msgid = ms.msgid " +
 		"AND r1.status != 'held')) " +
-		"OR (ms.msgid IN (?) AND EXISTS (" +
-		"SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = ms.msgid " +
-		"AND r2.status != 'held' " +
-		"AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))) " +
 		ringArm + ") " +
 		authorReachCapWhere
 
 	// GORM renders an empty slice as IN (NULL) — never matches — which is
-	// exactly right for an empty in or partial list.
-	whereArgs := []interface{}{
-		in, partial, latlng.Lng, latlng.Lat, utils.SRID,
-	}
+	// exactly right for an empty in list.
+	whereArgs := []interface{}{in}
 	whereArgs = append(whereArgs, ringArgs...)
 	whereArgs = append(whereArgs, BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat)
 
@@ -120,9 +114,15 @@ func fromIDsWhere(in, partial []int64, latlng utils.LatLng, admitted []uint64) (
 }
 
 func reachCandidateQueryFromIDs(db *gorm.DB, myid uint64, latlng utils.LatLng, in, partial []int64, admitted []uint64) *gorm.DB {
+	if len(partial) > 0 {
+		// A partial id meant a legacy coarse-raster row whose boundary band
+		// needed the exact geometry; healthy rows no longer produce them.
+		// Excluded (fail-closed for a badge) rather than silently counted.
+		fmt.Printf("badge: %d partial reach ids with no legacy geometry to resolve them\n", len(partial))
+	}
 	// One concatenated WHERE string in a single Where() call — same GORM
 	// extra-paren gotcha as reachCandidateQuery (see there).
-	whereSQL, whereArgs := fromIDsWhere(in, partial, latlng, admitted)
+	whereSQL, whereArgs := fromIDsWhere(in, latlng, admitted, browseClearedWatermark(db, myid))
 
 	return db.Table("messages_spatial ms").
 		Joins("INNER JOIN messages m ON m.id = ms.msgid").

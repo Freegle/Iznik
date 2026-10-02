@@ -6,8 +6,8 @@ import (
 
 func TestIsochronePolygon_Walk15min(t *testing.T) {
 	g := getTestGraph(t)
-	result := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
-	res := AutoResolution(15*60, Walk)
+	result := Isochrone(g, 51.4545, -2.5879, 15*60)
+	res := AutoResolution(15 * 60)
 	poly := IsochronePolygon(g, result.ReachedNodes, res)
 
 	if poly.Geometry.Type != "Polygon" {
@@ -27,8 +27,8 @@ func TestIsochronePolygon_Walk15min(t *testing.T) {
 
 func TestIsochronePolygon_CentreInside(t *testing.T) {
 	g := getTestGraph(t)
-	result := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
-	res := AutoResolution(15*60, Walk)
+	result := Isochrone(g, 51.4545, -2.5879, 15*60)
+	res := AutoResolution(15 * 60)
 	poly := IsochronePolygon(g, result.ReachedNodes, res)
 
 	ring := poly.Geometry.Coordinates[0]
@@ -40,12 +40,22 @@ func TestIsochronePolygon_CentreInside(t *testing.T) {
 }
 
 func TestAutoResolution(t *testing.T) {
-	walkRes := AutoResolution(15*60, Walk)
-	driveRes := AutoResolution(15*60, Drive)
-	if driveRes <= walkRes {
-		t.Errorf("drive resolution should be coarser than walk: drive=%f walk=%f", driveRes, walkRes)
+	// There is one mode now, so the property to pin is that a longer budget
+	// gives a coarser grid, bounded by the floor and the cap.
+	// Both ends of the range are clamped, so pick budgets inside it: at 50km/h
+	// the cap bites above ~240s and the floor below ~72s.
+	short := AutoResolution(120)
+	long := AutoResolution(600)
+	if long <= short {
+		t.Errorf("a longer budget should give a coarser grid: 5min=%f 60min=%f", short, long)
 	}
-	t.Logf("walk15 res=%.5f drive15 res=%.5f", walkRes, driveRes)
+	if short < 0.0005 {
+		t.Errorf("resolution %f is below the 0.0005 floor", short)
+	}
+	if long > 0.0016 {
+		t.Errorf("resolution %f is above the cap that keeps rivers open", long)
+	}
+	t.Logf("drive 5min res=%.5f 60min res=%.5f", short, long)
 }
 
 // pointInPolygon uses ray casting. Coords are [lng, lat].

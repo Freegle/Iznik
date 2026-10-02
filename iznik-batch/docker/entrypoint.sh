@@ -7,6 +7,17 @@ echo "=== Laravel Batch Container Starting ==="
 # No .env file is needed - APP_KEY and all other config is passed via environment
 echo "Using environment variables for configuration (no .env file needed)"
 
+# pcov is compiled into the shared batch image because CI and dev run phpunit
+# with --coverage-clover and pcov is the coverage driver (see phpunit.xml).
+# In production it is pure overhead: with pcov.enabled=1 its execute hook runs
+# the VM one opcode at a time through zend_vm_call_opcode_handler, measured at
+# 47% slower on CPU-bound PHP and ~6% of the batch host's total CPU samples.
+# Dev and CI containers run with APP_ENV=local and keep it on.
+if [ "${APP_ENV:-}" = "production" ]; then
+    echo "pcov.enabled=0" > /usr/local/etc/php/conf.d/zz-production-no-pcov.ini
+    echo "Production: pcov coverage instrumentation disabled"
+fi
+
 # Always clear service/package manifests before any composer/artisan bootstrap.
 # These files can be stale across environments and reference dev-only providers.
 rm -f /var/www/html/bootstrap/cache/services.php

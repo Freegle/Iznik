@@ -1,3 +1,8 @@
+---
+last_reviewed: 2026-09-28
+owner: Freegle dev team
+---
+
 # FreegleDocker Architecture
 
 This document describes the architecture of the FreegleDocker compose environment.
@@ -138,24 +143,26 @@ This allows the container to reach external production services while remaining 
 ## Data Flow
 
 ### Email Sending (batch-prod)
-```
-batch-prod → mail-host (bulk2-internal) → External Recipients
-                    ↓
-            SPF/DKIM signed by bulk2
+```mermaid
+flowchart LR
+    B[batch-prod] --> M["mail-host<br/>SPF and DKIM signed here"] --> R[Recipients]
 ```
 
 ### Log Aggregation
-```
-All containers → Loki (port 3100) → Grafana (optional)
-                      ↓
-              GCS Backup (daily)
+```mermaid
+flowchart LR
+    C[All containers] --> L[Loki] --> G["Grafana (optional)"]
+    L --> B["Cloud storage backup (daily)"]
 ```
 
+The full picture, including how logs reach Loki on live servers, is in
+[../../ops/reference/logging.md](../../ops/reference/logging.md).
+
 ### API Request Flow (Local Dev)
-```
-Browser → Traefik → freegle-dev-local → apiv2 → percona
-                           ↓
-                      delivery (images)
+```mermaid
+flowchart LR
+    BR[Browser] --> T[Traefik] --> F[freegle-dev-local] --> A[apiv2] --> P[(percona)]
+    F --> D["delivery (images)"]
 ```
 
 ## Configuration Files
@@ -178,7 +185,7 @@ Browser → Traefik → freegle-dev-local → apiv2 → percona
 | `production` | Production background services | batch-prod |
 | `monitoring` | Monitoring stack | (reserved for future use) |
 | `backup` | On-demand backup jobs | loki-backup |
-| `edge` | User-facing front-end services on the prod docker host (scale-in-place — see `docs/ops/production.md`). In NO default profile set, so dev/CI never start these. | tile-server, wiki-media, wiki-mysql; frontend-nginx, delivery, tusd (images tier, live since 2026-07-08) |
+| `edge` | User-facing front-end services on the prod docker host (scale-in-place — see `docs/ops/production.md`). In NO default profile set, so dev/CI never start these. | tile-server, wiki-media, wiki-mysql; frontend-nginx, delivery, tusd (images tier, live since 2026-07-08; uploads spool locally and are pushed to object storage, see `docs/ops/runbooks/images-to-object-storage.md`); objectstore + objectstore-init (RustFS, the dev stand-in for the bucket; replicas 0 in prod) |
 
 To enable profiles, set `COMPOSE_PROFILES` in `.env`:
 ```bash

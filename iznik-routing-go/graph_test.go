@@ -87,7 +87,7 @@ func TestBuildGraphFromRaw_EdgeCounts(t *testing.T) {
 	g := makeTestGrid(nil)
 	walkEdges, cycleEdges, driveEdges := 0, 0, 0
 	for id := NodeID(1); id < NodeID(len(g.Nodes)); id++ {
-		for _, e := range g.EdgesFrom(id) {
+		for _, e := range g.ModalEdgesFrom(id) {
 			if e.Seconds[Walk] > 0 {
 				walkEdges++
 			}
@@ -119,7 +119,7 @@ func TestBuildGraphFromRaw_WithDeprivation(t *testing.T) {
 	g := makeTestGrid(idx)
 	tagged := 0
 	for id := NodeID(1); id < NodeID(len(g.Nodes)); id++ {
-		if g.Nodes[id].Quintile != 0 {
+		if g.QuintileOf(id) != 0 {
 			tagged++
 		}
 	}
@@ -141,7 +141,7 @@ func TestBuildGraphFromRaw_MotorwayExcludesWalkers(t *testing.T) {
 	g := BuildGraphFromRaw(nodes, ways, nil)
 
 	found := false
-	for _, e := range g.EdgesFrom(1) {
+	for _, e := range g.ModalEdgesFrom(1) {
 		if e.To == 2 {
 			found = true
 			if e.Seconds[Walk] > 0 {

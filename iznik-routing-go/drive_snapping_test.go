@@ -48,7 +48,7 @@ func TestDriveSnappingSkipsTinyFragments(t *testing.T) {
 	// makes the whole road network unreachable; drive snapping must skip it.
 	probeLat, probeLng := 51.5002, -0.99885
 
-	id := nearestNodeForMode(g, probeLat, probeLng, Drive)
+	id := nearestDriveNode(g, probeLat, probeLng)
 	if id == noNode {
 		t.Fatalf("expected a drive snap, got none")
 	}
@@ -57,7 +57,7 @@ func TestDriveSnappingSkipsTinyFragments(t *testing.T) {
 	}
 
 	// End to end: an isochrone from the probe must reach well down the chain.
-	iso := Isochrone(g, probeLat, probeLng, 600, Drive)
+	iso := Isochrone(g, probeLat, probeLng, 600)
 	if len(iso.ReachedNodes) < 50 {
 		t.Errorf("drive isochrone from probe reached only %d nodes - snapped to a fragment?", len(iso.ReachedNodes))
 	}
@@ -67,7 +67,7 @@ func TestDriveSnappingStillReachesIslands(t *testing.T) {
 	g := buildSnapFixture()
 	// A probe next to the island must snap to the island network (component
 	// size 1050 >= threshold): islands are not fragments.
-	id := nearestNodeForMode(g, 51.55, -3.0003, Drive)
+	id := nearestDriveNode(g, 51.55, -3.0003)
 	if id == noNode {
 		t.Fatalf("expected an island drive snap, got none")
 	}
@@ -76,29 +76,8 @@ func TestDriveSnappingStillReachesIslands(t *testing.T) {
 	}
 }
 
-func TestWalkSnappingUnchangedByFragmentFilter(t *testing.T) {
-	g := buildSnapFixture()
-	// Walk mode keeps plain nearest-node behaviour (the walk network is far
-	// less prone to fragment traps, and walkers can use paths we don't model).
-	id := nearestNodeForMode(g, 51.5002, -0.99885, Walk)
-	if id == noNode {
-		t.Fatalf("expected a walk snap")
-	}
-	if id <= 2150 {
-		t.Errorf("walk probe should still snap to the nearest node (fragment), got %d", id)
-	}
-}
-
 func ExampleBuildGraphFromRaw_componentSizes() {
 	g := buildSnapFixture()
-	n := 0
-	if g.DriveSnappable != nil {
-		for _, ok := range g.DriveSnappable {
-			if ok {
-				n++
-			}
-		}
-	}
-	fmt.Println(n)
+	fmt.Println(g.DriveSnappable.Count())
 	// Output: 2150
 }

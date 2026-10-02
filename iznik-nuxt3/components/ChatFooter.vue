@@ -54,9 +54,9 @@
             @click="showInfo"
             @dismiss="showNotices = false"
           >
-            This freegler is {{ milesstring }} from you. If you are collecting
-            from them, please make sure you can get there. If they are
-            collecting from you, please double-check they have transport.
+            This freegler is about {{ milesstring }} from you. If you are
+            collecting from them, please make sure you can get there. If they
+            are collecting from you, please double-check they have transport.
           </ChatNotice>
           <ChatNotice
             v-if="thumbsdown && !otheruser?.spammer"
@@ -443,7 +443,7 @@ const {
   tooSoonToNudge,
   chatStore,
   chatmessages,
-  milesaway,
+  crowmilesaway,
   milesstring,
 } = setupChat(props.id)
 
@@ -511,7 +511,9 @@ const noticesToShow = computed(() => {
 })
 
 const faraway = computed(() => {
-  return milesaway.value && milesaway.value > FAR_AWAY
+  // Crow-flies on purpose: a LOGIC threshold must not depend on whether the
+  // road-distance engine answered, nor exaggerate over blurred coordinates.
+  return crowmilesaway.value && crowmilesaway.value > FAR_AWAY
 })
 
 const thumbsdown = computed(() => {

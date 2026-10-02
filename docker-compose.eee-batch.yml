@@ -47,7 +47,8 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - TOGETHER_API_KEY=${TOGETHER_API_KEY:-}
       - EEE_CLAUDE_MODEL=${EEE_CLAUDE_MODEL:-claude-sonnet-4-6}
-      - EEE_GEMINI_MODEL=${EEE_GEMINI_MODEL:-gemini-2.0-flash-lite}
+      # gemini-2.0-* models are retired; a retired default 404s on every call.
+      - EEE_GEMINI_MODEL=${EEE_GEMINI_MODEL:-gemini-3.5-flash-lite}
       - EEE_OPENAI_MODEL=${EEE_OPENAI_MODEL:-gpt-4o}
       - EEE_TOGETHER_MODEL=${EEE_TOGETHER_MODEL:-}
       - EEE_OLLAMA_BASE_URL=${EEE_OLLAMA_BASE_URL:-http://host.docker.internal:11434}

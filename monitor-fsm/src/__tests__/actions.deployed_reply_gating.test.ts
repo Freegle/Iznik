@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { getDb, resetDbForTests, upsertDiscourseBug, upsertPr } from '../db/index.js'
-import { classifyTouchedAreas, deployedReplyDeps } from '../actions/index.js'
+import { classifyTouchedAreas, deployedReplyDeps, retestReplyBody } from '../actions/index.js'
 
 /**
  * Reporter-facing "please retest" replies must only go out when the fix is in
@@ -39,6 +39,36 @@ describe('classifyTouchedAreas', () => {
   it('an empty path list is not deployable', () => {
     expect(classifyTouchedAreas([])).toEqual(
       { frontend: false, go: false, php: false, deployable: false })
+  })
+})
+
+// Every reporter-facing "please retest" reply carries a link to the change behind it, so
+// a moderator reading the thread can see what was actually done (Edward, 2026-09-14).
+describe('retestReplyBody', () => {
+  it('ends with the PR link under a Technical details label', () => {
+    const body = retestReplyBody({ affectsApp: false, link: 'https://github.com/Freegle/Iznik/pull/500' })
+    expect(body).toBe(
+      'AI Edward: possible fix applied, please retest and report back'
+      + '\n\nTechnical details: https://github.com/Freegle/Iznik/pull/500',
+    )
+  })
+
+  it('keeps the app caveat with the retest line, above the link', () => {
+    const body = retestReplyBody({ affectsApp: true, link: 'https://github.com/Freegle/Iznik/pull/7' })
+    expect(body).toBe(
+      'AI Edward: possible fix applied, please retest and report back'
+      + ' (but app releases may take up to one week)'
+      + '\n\nTechnical details: https://github.com/Freegle/Iznik/pull/7',
+    )
+  })
+
+  it('says nothing extra when there is no link to give', () => {
+    expect(retestReplyBody({ affectsApp: false })).toBe(
+      'AI Edward: possible fix applied, please retest and report back',
+    )
+    expect(retestReplyBody({ affectsApp: false, link: null })).toBe(
+      'AI Edward: possible fix applied, please retest and report back',
+    )
   })
 })
 
@@ -120,6 +150,22 @@ describe('queue_deployed_reply_drafts', () => {
     expect(postedCalls).toHaveLength(1)
     expect(postedCalls[0].topic).toBe(9001)
     expect(postedCalls[0].replyTo).toBe(3)
+  })
+
+  it('puts the PR link in the posted reply and in the recorded draft', async () => {
+    deployedReplyDeps.checkPrDeployed = async () => fakeDeployResult()
+
+    await handler({}, {})
+
+    expect(postedCalls[0].raw).toContain(
+      'Technical details: https://github.com/Freegle/Iznik/pull/500',
+    )
+    const draft = db
+      .prepare('SELECT body FROM discourse_draft WHERE topic = 9001 AND post = 3')
+      .get() as any
+    expect(draft.body).toContain(
+      'Technical details: https://github.com/Freegle/Iznik/pull/500',
+    )
   })
 
   it('re-arms the retry when the Discourse post fails, then succeeds next run', async () => {

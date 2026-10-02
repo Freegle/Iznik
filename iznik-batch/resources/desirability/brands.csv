@@ -1,0 +1,257 @@
+"slug","label","pattern","strip","is_electrical_brand","is_digital_brand"
+"john_lewis","John Lewis","\bjohn\s?lewis\b",TRUE,FALSE,FALSE
+"ikea","IKEA","\bikea\b",TRUE,FALSE,FALSE
+"m_and_s","Marks & Spencer","\bm\s?(?:&|and)\s?s\b|\bmarks\s?(?:&|and)\s?spencer(?:'?s)?\b",TRUE,FALSE,FALSE
+"mamas_and_papas","Mamas & Papas","\bmamas\s?(?:&|and)\s?papas\b",TRUE,FALSE,FALSE
+"black_and_decker","Black & Decker","\bblack\s?(?:&|and)\s?decker\b",TRUE,TRUE,FALSE
+"silver_cross","Silver Cross","\bsilver\s?cross\b",TRUE,FALSE,FALSE
+"fisher_price","Fisher-Price","\bfisher[\s-]?price\b",TRUE,FALSE,FALSE
+"rug_doctor","Rug Doctor","\brug\s?doctor\b",TRUE,TRUE,FALSE
+"bosch","Bosch","\bbosch\b",TRUE,TRUE,FALSE
+"dyson","Dyson","\bdyson\b",TRUE,TRUE,FALSE
+"lego","LEGO","\blego\b",TRUE,FALSE,FALSE
+"apple","Apple","\bapple\b",TRUE,TRUE,TRUE
+"samsung","Samsung","\bsamsung\b",TRUE,TRUE,TRUE
+"sony","Sony","\bsony\b",TRUE,TRUE,TRUE
+"makita","Makita","\bmakita\b",TRUE,TRUE,FALSE
+"delonghi","De'Longhi","\bde\s?'?longhi\b",TRUE,TRUE,FALSE
+"philips","Philips","\bphill?ips\b",TRUE,TRUE,FALSE
+"karcher","Karcher","\bkarcher\b",TRUE,TRUE,FALSE
+"kenwood","Kenwood","\bkenwood\b",TRUE,TRUE,FALSE
+"morphy_richards","Morphy Richards","\bmorphy\s?richards\b",TRUE,TRUE,FALSE
+"russell_hobbs","Russell Hobbs","\brussell\s?hobbs\b",TRUE,TRUE,FALSE
+"dewalt","DeWalt","\bdewalt\b",TRUE,TRUE,FALSE
+"vtech","VTech","\bvtech\b",TRUE,TRUE,TRUE
+"graco","Graco","\bgraco\b",TRUE,FALSE,FALSE
+"epson","Epson","\bepson\b",TRUE,TRUE,TRUE
+"beko","Beko","\bbeko\b",TRUE,TRUE,FALSE
+"flymo","Flymo","\bflymo\b",TRUE,TRUE,FALSE
+"hp","HP","\bhp\b",TRUE,TRUE,TRUE
+"george_foreman","George Foreman","\bgeorge\s?fore?man\b",TRUE,TRUE,FALSE
+"swan","Swan","\bswan\b",TRUE,TRUE,FALSE
+"smeg","SMEG","\bsmeg\b",TRUE,TRUE,FALSE
+"maxi_cosi","Maxi Cosi","\bmaxi[\s,-]?cosi\b",TRUE,FALSE,FALSE
+"dell","Dell","\bdell\b",TRUE,TRUE,TRUE
+"lenovo","Lenovo","\blenovo\b",TRUE,TRUE,TRUE
+"nintendo","Nintendo","\bnintendo\b",TRUE,TRUE,TRUE
+"toshiba","Toshiba","\btoshiba\b",TRUE,TRUE,TRUE
+"android","Android","\bandroid\b",TRUE,TRUE,TRUE
+"blueberry","Blueberry","\bblueberry\b",TRUE,FALSE,FALSE
+"amazon","Amazon","\bamazon\b",TRUE,TRUE,TRUE
+"lg","LG","\blg\b",TRUE,TRUE,TRUE
+"acer","Acer","\bacer\b",TRUE,TRUE,TRUE
+"huawei","Huawei","\bhuawei\b",TRUE,TRUE,TRUE
+"microsoft","Microsoft","\bmicrosoft\b",TRUE,TRUE,TRUE
+"panasonic","Panasonic","\bpanasonic\b",TRUE,TRUE,TRUE
+"canon","Canon","\bcanon\b",TRUE,TRUE,TRUE
+"halfords","Halfords","\bhalfords\b",TRUE,FALSE,FALSE
+"jvc","JVC","\bjvc\b",TRUE,TRUE,TRUE
+"argos","Argos","\bargos\b",TRUE,FALSE,FALSE
+"gopro","GoPro","\bgo\s?pro\b",TRUE,TRUE,TRUE
+"wilko","Wilko","\bwilkos?\b",TRUE,FALSE,FALSE
+"braun","Braun","\bbraun\b",TRUE,TRUE,FALSE
+"tefal","Tefal","\btefal\b",TRUE,TRUE,FALSE
+"breville","Breville","\bbreville\b",TRUE,TRUE,FALSE
+"ninja","Ninja","\bninja\b",TRUE,TRUE,FALSE
+"shark","Shark","\bshark\b",TRUE,TRUE,FALSE
+"vax","Vax","\bvax\b",TRUE,TRUE,FALSE
+"miele","Miele","\bmiele\b",TRUE,TRUE,FALSE
+"zanussi","Zanussi","\bzanussi\b",TRUE,TRUE,FALSE
+"hotpoint","Hotpoint","\bhotpoint\b",TRUE,TRUE,FALSE
+"indesit","Indesit","\bindesit\b",TRUE,TRUE,FALSE
+"bush","Bush","\bbush\b",TRUE,TRUE,TRUE
+"logik","Logik","\blogik\b",TRUE,TRUE,TRUE
+"jbl","JBL","\bjbl\b",TRUE,TRUE,TRUE
+"bose","Bose","\bbose\b",TRUE,TRUE,TRUE
+"nokia","Nokia","\bnokia\b",TRUE,TRUE,TRUE
+"motorola","Motorola","\bmotorola\b",TRUE,TRUE,TRUE
+"xiaomi","Xiaomi","\bxiaomi\b",TRUE,TRUE,TRUE
+"google","Google","\bgoogle\b",TRUE,TRUE,TRUE
+"fitbit","Fitbit","\bfitbit\b",TRUE,TRUE,TRUE
+"garmin","Garmin","\bgarmin\b",TRUE,TRUE,TRUE
+"currys","Currys","\bcurrys\b",TRUE,FALSE,FALSE
+"apple","Apple (product name only)","\bimac\b|\bipad\b|\bipod\b|\bmac\s?book\b",FALSE,TRUE,TRUE
+"amazon","Amazon (product name only)","\bkindle\b",FALSE,TRUE,TRUE
+"nintendo","Nintendo (product name only)","\b3ds\b|\bgame\s?boy\b|\bwii\b",FALSE,TRUE,TRUE
+"dyson","Dyson (product name only)","\bv(?:6|7|8|10|11|15)\b",FALSE,TRUE,FALSE
+"samsung","Samsung (product name only)","\bgalaxy\b",FALSE,TRUE,TRUE
+"acer","Acer (product name only)","\bgateway\b",FALSE,TRUE,TRUE
+"sony","Sony (product name only)","\bbravia\b",FALSE,TRUE,TRUE
+"hisense","Hisense","\bhisense\b",TRUE,TRUE,TRUE
+"finlux","Finlux","\bfinlux\b",TRUE,TRUE,TRUE
+"compaq","Compaq","\bcompaq\b",TRUE,TRUE,TRUE
+"asus","Asus","\basus\b",TRUE,TRUE,TRUE
+"western_digital","Western Digital","\bwestern\s?digital\b",TRUE,TRUE,TRUE
+"vaio","Sony Vaio","\b(?:sony\s?)?vaio\b",TRUE,TRUE,TRUE
+"sony","Sony (product name only)","\btrinitron\b",FALSE,TRUE,TRUE
+"lidl","Lidl","\blidl\b",TRUE,FALSE,FALSE
+"aldi","Aldi","\baldi\b",TRUE,FALSE,FALSE
+"morrisons","Morrisons","\bmorrisons\b",TRUE,FALSE,FALSE
+"asda","Asda","\basda\b",TRUE,FALSE,FALSE
+"tesco","Tesco","\btesco'?s?\b",TRUE,FALSE,FALSE
+"sainsburys","Sainsbury's","\bsainsbury'?s\b",TRUE,FALSE,FALSE
+"joseph_joseph","Joseph Joseph","\bjoseph\s?joseph\b",TRUE,FALSE,FALSE
+"hollister","Hollister","\bhollister\b",TRUE,FALSE,FALSE
+"laura_ashley","Laura Ashley","\blaura\s?ashley\b",TRUE,FALSE,FALSE
+"costco","Costco","\bcostco\b",TRUE,FALSE,FALSE
+"denby","Denby","\bdenby\b",TRUE,FALSE,FALSE
+"kirkland","Kirkland","\bkirkland\b",TRUE,FALSE,FALSE
+"le_creuset","Le Creuset","\ble\s?creuset\b",TRUE,FALSE,FALSE
+"waitrose","Waitrose","\bwaitrose\b",TRUE,FALSE,FALSE
+"wedgwood","Wedgwood","\bwedg[e]?wood\b",TRUE,FALSE,FALSE
+"stanley","Stanley","\bstanley\b",TRUE,TRUE,FALSE
+"dolce_gusto","Dolce Gusto","\bdolce\s?gusto\b",TRUE,TRUE,FALSE
+"nespresso","Nespresso","\bnespresso\b",TRUE,TRUE,FALSE
+"tassimo","Tassimo","\btassimo\b",TRUE,TRUE,FALSE
+"nescafe","Nescafe","\bnescaf[eé]\b",TRUE,TRUE,FALSE
+"krups","Krups","\bkrups\b",TRUE,TRUE,FALSE
+"gaggia","Gaggia","\bgaggia\b",TRUE,TRUE,FALSE
+"magimix","Magimix","\bmagimix\b",TRUE,TRUE,FALSE
+"cuisinart","Cuisinart","\bcuisinart\b",TRUE,TRUE,FALSE
+"kitchenaid","KitchenAid","\bkitchen\s?aid\b",TRUE,TRUE,FALSE
+"dualit","Dualit","\bdualit\b",TRUE,TRUE,FALSE
+"salter","Salter","\bsalter\b",TRUE,TRUE,FALSE
+"sodastream","SodaStream","\bsoda\s?stream\b",TRUE,TRUE,FALSE
+"nutribullet","NutriBullet","\bnutri\s?bullet\b",TRUE,TRUE,FALSE
+"instant_pot","Instant Pot","\binstant\s?pot\b",TRUE,TRUE,FALSE
+"crock_pot","Crock-Pot","\bcrock\s?-?\s?pot\b",TRUE,TRUE,FALSE
+"andrew_james","Andrew James","\bandrew\s+james\b",TRUE,TRUE,FALSE
+"lakeland","Lakeland","\blakeland\b",TRUE,TRUE,FALSE
+"remoska","Remoska","\bremoska\b",TRUE,TRUE,FALSE
+"aeg","AEG","\baeg\b",TRUE,TRUE,FALSE
+"electrolux","Electrolux","\belectrolux\b",TRUE,TRUE,FALSE
+"whirlpool","Whirlpool","\bwhirlpool\b",TRUE,TRUE,FALSE
+"siemens","Siemens","\bsiemens\b",TRUE,TRUE,FALSE
+"neff","Neff","\bneff\b",TRUE,TRUE,FALSE
+"haier","Haier","\bhaier\b",TRUE,TRUE,FALSE
+"amica","Amica","\bamica\b",TRUE,TRUE,FALSE
+"belling","Belling","\bbelling\b",TRUE,TRUE,FALSE
+"stoves","Stoves","\bstoves\b",TRUE,TRUE,FALSE
+"rangemaster","Rangemaster","\brangemaster\b",TRUE,TRUE,FALSE
+"lec","Lec","\blec\b",TRUE,TRUE,FALSE
+"servis","Servis","\bservis\b",TRUE,TRUE,FALSE
+"creda","Creda","\bcreda\b",TRUE,TRUE,FALSE
+"baumatic","Baumatic","\bbaumatic\b",TRUE,TRUE,FALSE
+"cda","CDA","\bcda\b",TRUE,TRUE,FALSE
+"montpellier","Montpellier","\bmontpellier\b",TRUE,TRUE,FALSE
+"blomberg","Blomberg","\bblomberg\b",TRUE,TRUE,FALSE
+"grundig","Grundig","\bgrundig\b",TRUE,TRUE,FALSE
+"gorenje","Gorenje","\bgorenje\b",TRUE,TRUE,FALSE
+"candy","Candy","\bcandy\b(?!\s*(?:floss|cane))",TRUE,TRUE,FALSE
+"sharp","Sharp","\bsharp\b",TRUE,TRUE,FALSE
+"daewoo","Daewoo","\bdaewoo\b",TRUE,TRUE,FALSE
+"igenix","Igenix","\bigenix\b",TRUE,TRUE,FALSE
+"bomann","Bomann","\bbomann\b",TRUE,TRUE,FALSE
+"cookworks","Cookworks","\bcookworks\b",TRUE,TRUE,FALSE
+"numatic","Numatic","\bnumatic\b",TRUE,TRUE,FALSE
+"henry","Henry","\bhenry(?=\s+(?:hoover|vac))",TRUE,TRUE,FALSE
+"bissell","Bissell","\bbissell\b",TRUE,TRUE,FALSE
+"gtech","Gtech","\bg\s?tech\b",TRUE,TRUE,FALSE
+"nilfisk","Nilfisk","\bnilfisk\b",TRUE,TRUE,FALSE
+"sebo","Sebo","\bsebo\b",TRUE,TRUE,FALSE
+"roomba","Roomba","\broomba\b",TRUE,TRUE,FALSE
+"ryobi","Ryobi","\bryobi\b",TRUE,TRUE,FALSE
+"einhell","Einhell","\beinhell\b",TRUE,TRUE,FALSE
+"erbauer","Erbauer","\berbauer\b",TRUE,TRUE,FALSE
+"titan","Titan","\btitan\b",TRUE,TRUE,FALSE
+"draper","Draper","\bdraper\b",TRUE,TRUE,FALSE
+"clarke","Clarke","\bclarke\b",TRUE,TRUE,FALSE
+"parkside","Parkside","\bparkside\b",TRUE,TRUE,FALSE
+"worx","Worx","\bworx\b",TRUE,TRUE,FALSE
+"hilti","Hilti","\bhilti\b",TRUE,TRUE,FALSE
+"festool","Festool","\bfestool\b",TRUE,TRUE,FALSE
+"stihl","Stihl","\bstihl\b",TRUE,TRUE,FALSE
+"husqvarna","Husqvarna","\bhusqvarna\b",TRUE,TRUE,FALSE
+"mountfield","Mountfield","\bmountfield\b",TRUE,TRUE,FALSE
+"qualcast","Qualcast","\bqualcast\b",TRUE,TRUE,FALSE
+"hayter","Hayter","\bhayter\b",TRUE,TRUE,FALSE
+"atco","Atco","\batco\b",TRUE,TRUE,FALSE
+"spear_jackson","Spear & Jackson","\bspear\s*(?:&|and)\s*jackson\b",TRUE,FALSE,FALSE
+"bahco","Bahco","\bbahco\b",TRUE,FALSE,FALSE
+"irwin","Irwin","\birwin\b",TRUE,FALSE,FALSE
+"screwfix","Screwfix","\bscrewfix\b",TRUE,FALSE,FALSE
+"challenge","Challenge","\bchallenge\b",TRUE,TRUE,FALSE
+"performance_power","Performance Power","\bperformance\s+power\b",TRUE,TRUE,FALSE
+"technika","Technika","\btechnika\b",TRUE,TRUE,TRUE
+"blaupunkt","Blaupunkt","\bblaupunkt\b",TRUE,TRUE,TRUE
+"linsar","Linsar","\blinsar\b",TRUE,TRUE,TRUE
+"polaroid","Polaroid","\bpolaroid\b",TRUE,TRUE,TRUE
+"ferguson","Ferguson","\bferguson\b",TRUE,TRUE,TRUE
+"sanyo","Sanyo","\bsanyo\b",TRUE,TRUE,TRUE
+"akai","Akai","\bakai\b",TRUE,TRUE,TRUE
+"alba","Alba","\balba\b",TRUE,TRUE,TRUE
+"goodmans","Goodmans","\bgoodmans\b",TRUE,TRUE,TRUE
+"matsui","Matsui","\bmatsui\b",TRUE,TRUE,TRUE
+"hitachi","Hitachi","\bhitachi\b",TRUE,TRUE,TRUE
+"pioneer","Pioneer","\bpioneer\b",TRUE,TRUE,TRUE
+"onkyo","Onkyo","\bonkyo\b",TRUE,TRUE,TRUE
+"yamaha","Yamaha","\byamaha\b",TRUE,TRUE,TRUE
+"denon","Denon","\bdenon\b",TRUE,TRUE,TRUE
+"marantz","Marantz","\bmarantz\b",TRUE,TRUE,TRUE
+"sennheiser","Sennheiser","\bsennheiser\b",TRUE,TRUE,TRUE
+"sonos","Sonos","\bsonos\b",TRUE,TRUE,TRUE
+"roberts","Roberts","\broberts\b",TRUE,TRUE,TRUE
+"ruark","Ruark","\bruark\b",TRUE,TRUE,TRUE
+"technics","Technics","\btechnics\b",TRUE,TRUE,TRUE
+"sandstrom","Sandstrom","\bsandstr[oö]m\b",TRUE,TRUE,TRUE
+"proline","Proline","\bproline\b",TRUE,TRUE,TRUE
+"beats","Beats","\bbeats\b",TRUE,TRUE,TRUE
+"skullcandy","Skullcandy","\bskullcandy\b",TRUE,TRUE,TRUE
+"tivoli","Tivoli","\btivoli\b",TRUE,TRUE,TRUE
+"packard_bell","Packard Bell","\bpackard\s+bell\b",TRUE,TRUE,TRUE
+"fujitsu","Fujitsu","\bfujitsu\b",TRUE,TRUE,TRUE
+"msi","MSI","\bmsi\b",TRUE,TRUE,TRUE
+"medion","Medion","\bmedion\b",TRUE,TRUE,TRUE
+"raspberry_pi","Raspberry Pi","\braspberry\s?pi\b",TRUE,TRUE,TRUE
+"brother","Brother","\bbrother\b",TRUE,TRUE,TRUE
+"lexmark","Lexmark","\blexmark\b",TRUE,TRUE,TRUE
+"kodak","Kodak","\bkodak\b",TRUE,TRUE,TRUE
+"netgear","Netgear","\bnetgear\b",TRUE,TRUE,TRUE
+"tp_link","TP-Link","\btp\s?-?\s?link\b",TRUE,TRUE,TRUE
+"bt","BT","\bbt(?=\s+(?:hub|youview|vision))",TRUE,TRUE,TRUE
+"playstation","PlayStation","\bplay\s?station\b",TRUE,TRUE,TRUE
+"playstation","PlayStation (product name only)","\bps[2345]\b",FALSE,TRUE,TRUE
+"xbox","Xbox","\bx\s?box\b",FALSE,TRUE,TRUE
+"sega","Sega","\bsega\b",TRUE,TRUE,TRUE
+"atari","Atari","\batari\b",TRUE,TRUE,TRUE
+"oneplus","OnePlus","\bone\s?plus\b",TRUE,TRUE,TRUE
+"oppo","Oppo","\boppo\b",TRUE,TRUE,TRUE
+"realme","Realme","\brealme\b",TRUE,TRUE,TRUE
+"alcatel","Alcatel","\balcatel\b",TRUE,TRUE,TRUE
+"doro","Doro","\bdoro\b",TRUE,TRUE,TRUE
+"ghd","GHD","\bghd\b",TRUE,TRUE,FALSE
+"babyliss","BaByliss","\bbabyliss\b",TRUE,TRUE,FALSE
+"remington","Remington","\bremington\b",TRUE,TRUE,FALSE
+"wahl","Wahl","\bwahl\b",TRUE,TRUE,FALSE
+"nicky_clarke","Nicky Clarke","\bnicky\s+clarke\b",TRUE,TRUE,FALSE
+"revlon","Revlon","\brevlon\b",TRUE,TRUE,FALSE
+"oral_b","Oral-B","\boral\s?-?\s?b\b",TRUE,TRUE,FALSE
+"waterpik","Waterpik","\bwaterpik\b",TRUE,TRUE,FALSE
+"corby","Corby","\bcorby\b",TRUE,TRUE,FALSE
+"dimplex","Dimplex","\bdimplex\b",TRUE,TRUE,FALSE
+"meaco","Meaco","\bmeaco\b",TRUE,TRUE,FALSE
+"vonhaus","VonHaus","\bvon\s?haus\b",TRUE,TRUE,FALSE
+"honeywell","Honeywell","\bhoneywell\b",TRUE,TRUE,FALSE
+"duux","Duux","\bduux\b",TRUE,TRUE,FALSE
+"ebac","Ebac","\bebac\b",TRUE,TRUE,FALSE
+"singer","Singer","\bsinger\b",TRUE,TRUE,FALSE
+"janome","Janome","\bjanome\b",TRUE,TRUE,FALSE
+"elna","Elna","\belna\b",TRUE,TRUE,FALSE
+"omron","Omron","\bomron\b",TRUE,TRUE,FALSE
+"beurer","Beurer","\bbeurer\b",TRUE,TRUE,FALSE
+"tanita","Tanita","\btanita\b",TRUE,TRUE,FALSE
+"tommee_tippee","Tommee Tippee","\btommee\s+tippee\b",TRUE,FALSE,FALSE
+"medela","Medela","\bmedela\b",TRUE,TRUE,FALSE
+"avent","Avent","\bavent\b",TRUE,FALSE,FALSE
+"chicco","Chicco","\bchicco\b",TRUE,FALSE,FALSE
+"britax","Britax","\bbritax\b",TRUE,FALSE,FALSE
+"joie","Joie","\bjoie\b",TRUE,FALSE,FALSE
+"cosatto","Cosatto","\bcosatto\b",TRUE,FALSE,FALSE
+"bugaboo","Bugaboo","\bbugaboo\b",TRUE,FALSE,FALSE
+"cybex","Cybex","\bcybex\b",TRUE,FALSE,FALSE
+"nuna","Nuna","\bnuna\b",TRUE,FALSE,FALSE
+"ergobaby","Ergobaby","\bergo\s?baby\b",TRUE,FALSE,FALSE
+"angelcare","Angelcare","\bangelcare\b",TRUE,FALSE,FALSE
+"lay_z_spa","Lay-Z-Spa","\blay\s?-?\s?z\s?-?\s?spa\b",TRUE,TRUE,FALSE
+"bestway","Bestway","\bbestway\b",TRUE,FALSE,FALSE
+"intex","Intex","\bintex\b",TRUE,FALSE,FALSE

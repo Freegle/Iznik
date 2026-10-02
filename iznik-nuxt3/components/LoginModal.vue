@@ -50,6 +50,20 @@
     <div class="signin-container">
       <div class="signin__section--social">
         <b-button
+          v-if="facebookNeedsCookies"
+          class="social-button social-button--facebook social-button--cookie-off"
+          title="Turned off by your cookie choices"
+          @click="openCookieChoices"
+        >
+          <b-img
+            src="/signinbuttons/facebook-logo.png"
+            class="social-button__image"
+          />
+          <span class="p-2 text--medium fw-bold">Continue with Facebook</span>
+          <v-icon icon="lock" class="social-button__lock" />
+        </b-button>
+        <b-button
+          v-else
           class="social-button social-button--facebook"
           :disabled="facebookDisabled"
           @click="loginFacebook"
@@ -85,12 +99,41 @@
           />
           <span class="p-2 text--medium fw-bold">Continue with Google</span>
         </b-button>
+        <b-button
+          v-else-if="googleNeedsCookies"
+          class="social-button social-button--google-app social-button--cookie-off"
+          title="Turned off by your cookie choices"
+          @click="openCookieChoices"
+        >
+          <b-img
+            src="/signinbuttons/google-logo.svg"
+            class="social-button__image"
+          />
+          <span class="p-2 text--medium fw-bold">Continue with Google</span>
+          <v-icon icon="lock" class="social-button__lock" />
+        </b-button>
         <div
-          v-else
+          v-if="!isApp"
+          v-show="!googleNeedsCookies"
           id="googleLoginButton"
           ref="googleLoginButton"
           class="social-button social-button--google clickme"
         />
+        <p v-if="cookieBlockedProviders" class="cookie-off-note">
+          <v-icon icon="lock" class="me-1" />
+          <span v-if="cookiesAnswered">
+            {{ cookieBlockedProviders }} sign in
+            {{ cookieBlockedProviders.includes(' and ') ? 'are' : 'is' }}
+            turned off by your cookie choices.
+            <a href="#" @click.prevent="openCookieChoices"
+              >Change cookie settings</a
+            >
+          </span>
+          <span v-else>
+            To sign in with {{ cookieBlockedProviders }}, please respond to the
+            cookie banner below.
+          </span>
+        </p>
         <notice-message v-if="socialblocked" variant="warning" class="mt-2">
           Social sign in blocked - check your ad blocker settings.
         </notice-message>
@@ -135,6 +178,20 @@
           />
           <NoticeMessage v-if="referToGoogleButton" class="mb-2">
             Tip: Use <em>Continue with Google</em> above instead.
+          </NoticeMessage>
+          <NoticeMessage
+            v-else-if="googleUnavailableForGmail"
+            variant="warning"
+            class="mb-2"
+          >
+            <span v-if="signUp">
+              Google sign in isn't loading. You can join with a password
+              instead, and still use Google later.
+            </span>
+            <span v-else>
+              Google sign in isn't loading. If you have never set a password,
+              use <em>Forgot password?</em> below and we'll email you a link.
+            </span>
           </NoticeMessage>
           <PasswordEntry
             v-model="password"
@@ -201,6 +258,7 @@ import {
   nextTick,
 } from 'vue'
 import { storeToRefs } from 'pinia'
+import * as Sentry from '@sentry/browser'
 import { SocialLogin } from '@capgo/capacitor-social-login'
 import { SignInWithApple } from '@capacitor-community/apple-sign-in'
 import EmailValidator from './EmailValidator'
@@ -249,11 +307,20 @@ const forceSignIn = ref(false)
 const nativeLoginError = ref(null)
 const socialLoginError = ref(null)
 const initialisedSocialLogin = ref(false)
-const showSocialLoginBlocked = ref(false)
+const googleRenderFailed = ref(false)
+// Our cookie tool holds back Google's sign-in script until a member allows
+// Functional cookies, and Facebook's until they allow Advertisement cookies.
+// Without that there is no button to draw, and the member needs telling why.
+const googleNeedsCookies = ref(false)
+const facebookNeedsCookies = ref(false)
+const cookiesAnswered = ref(false)
 const nativeBump = ref(1)
 const timerElapsed = ref(false)
 const buttonClicked = ref(false)
 let bumpTimer = null
+let googleRenderTimer = null
+let googleDrawStarted = 0
+let googleFailureReported = false
 const form = ref(null)
 const loginModal = ref(null)
 const googleLoginButton = ref(null)
@@ -274,17 +341,20 @@ const isiOS = ref(mobileStore.isiOS) // APP
 const facebookDisabled = computed(() => {
   if (isApp.value) return false
   return (
-    bump.value &&
-    (showSocialLoginBlocked.value || typeof window.FB === 'undefined')
+    bump.value && !facebookNeedsCookies.value && typeof window.FB === 'undefined'
   )
 })
 
 const googleDisabled = computed(() => {
-  return (
-    bump.value &&
-    showSocialLoginBlocked.value &&
-    (!window || !window.google || !window.google.accounts)
-  )
+  return bump.value && googleRenderFailed.value && !googleNeedsCookies.value
+})
+
+const cookieBlockedProviders = computed(() => {
+  if (isApp.value) return null
+  const names = []
+  if (googleNeedsCookies.value) names.push('Google')
+  if (facebookNeedsCookies.value) names.push('Facebook')
+  return names.length ? names.join(' and ') : null
 })
 
 const appleDisabled = computed(() => {
@@ -311,10 +381,25 @@ const signUp = computed(() => {
   }
 })
 
-const referToGoogleButton = computed(() => {
-  return (
+const googleAddress = computed(() => {
+  return Boolean(
     email.value?.toLowerCase().includes('gmail') ||
     email.value?.toLowerCase().includes('googlemail')
+  )
+})
+
+// Only point at the Google button while there is a Google button to point at.
+const referToGoogleButton = computed(() => {
+  return (
+    googleAddress.value && !googleRenderFailed.value && !googleNeedsCookies.value
+  )
+})
+
+// A Google account may never have had a password, so "try the password box"
+// is not an answer. Forgot password sets one.
+const googleUnavailableForGmail = computed(() => {
+  return (
+    googleAddress.value && googleRenderFailed.value && !googleNeedsCookies.value
   )
 })
 
@@ -338,6 +423,8 @@ const passwordError = computed(() => {
 
 // Lifecycle hooks
 onMounted(() => {
+  document.addEventListener('cookieyes_consent_update', onCookieConsentChanged)
+
   // Set marketing consent to true if it doesn't have a value yet
   if (
     miscStore.marketingConsent === null ||
@@ -348,11 +435,42 @@ onMounted(() => {
 })
 
 // Methods
+
+// A social sign-in that dies inside the provider SDK never reaches our API, so
+// this is the only place it can be reported from. Without it the failure is
+// visible to the member and to nobody else: Facebook login on the iOS app was
+// dead for five days in August 2026 before a support ticket surfaced it.
+function socialLoginFailed(provider, message, error, cancelled) {
+  socialLoginError.value = message
+
+  if (cancelled) {
+    // The member changed their mind. Not a fault.
+    return
+  }
+
+  let platform = 'web'
+
+  if (isApp.value) {
+    platform = isiOS.value ? 'ios-app' : 'android-app'
+  }
+
+  Sentry.captureException(error instanceof Error ? error : new Error(message), {
+    tags: {
+      social_login_provider: provider,
+      social_login_platform: platform,
+    },
+    extra: { message },
+  })
+}
+
 function tryLater(native) {
   if (native) {
     nativeLoginError.value = 'Something went wrong; please try later.'
   } else {
-    socialLoginError.value = 'Something went wrong; please try later.'
+    socialLoginFailed(
+      loginType.value || 'unknown',
+      'Something went wrong; please try later.'
+    )
   }
 }
 
@@ -397,8 +515,6 @@ function hide() {
 // button click.
 
 function loginNative(e) {
-  loginType.value = 'email/password'
-
   if (signUp.value) {
     api.bandit.chosen({
       uid: 'signUpModal',
@@ -427,6 +543,8 @@ function loginNative(e) {
           password: password.value,
         })
         .then(async () => {
+          loginType.value = 'email/password'
+
           // We are now logged in. Prompt the browser to remember the credentials.
           if (window.PasswordCredential) {
             try {
@@ -492,6 +610,8 @@ function loginNative(e) {
         password: password.value,
       })
       .then(() => {
+        loginType.value = 'email/password'
+
         // We are now logged in. Prompt the browser to remember the credentials.
         if (window.PasswordCredential) {
           try {
@@ -534,6 +654,8 @@ function loginNative(e) {
         password: password.value,
       })
       .then(() => {
+        loginType.value = 'email/password'
+
         // We are now logged in. Prompt the browser to remember the credentials.
         if (window.PasswordCredential) {
           try {
@@ -572,8 +694,6 @@ function loginNative(e) {
 }
 
 async function loginFacebook() {
-  loginType.value = 'Facebook'
-
   if (signUp.value) {
     await api.bandit.chosen({
       uid: 'signUpModal',
@@ -607,9 +727,19 @@ async function loginFacebook() {
       const response = await SocialLogin.login(loginOptions)
       // console.log("Facebook response", response)
       let accessToken = false
+
+      // A Limited Login session has no Graph access token, so the plugin sends
+      // accessToken: null and the JWT in idToken. Facebook also forces limited
+      // login whenever App Tracking Transparency is refused, whatever we asked
+      // for, so believe the response rather than the platform. The flag we send
+      // decides how the server verifies the token, so it has to describe the
+      // token we actually read.
+      let limitedLogin = isiOS.value
       if (response && response.result) {
-        accessToken = response.result.accessToken.token
-        if (isiOS.value) accessToken = response.result.idToken
+        limitedLogin = response.result.isLimitedLogin ?? isiOS.value
+        accessToken = limitedLogin
+          ? response.result.idToken
+          : response.result.accessToken?.token
       }
       if (accessToken) {
         // console.log("accessToken", accessToken)
@@ -617,15 +747,16 @@ async function loginFacebook() {
         await authStore.login({
           fblogin: 1,
           fbaccesstoken: accessToken,
-          fblimited: isiOS.value,
+          fblimited: limitedLogin,
         })
+        loginType.value = 'Facebook'
         // We are now logged in.
         self.pleaseShowModal = false
       } else {
-        socialLoginError.value = 'Facebook app login failed'
+        socialLoginFailed('facebook', 'Facebook app login failed')
       }
     } catch (e) {
-      socialLoginError.value = 'Facebook app login error: ' + e.message
+      socialLoginFailed('facebook', 'Facebook app login error: ' + e.message, e)
     }
     return
   }
@@ -650,15 +781,18 @@ async function loginFacebook() {
         fblogin: 1,
         fbaccesstoken: accessToken,
       })
+      loginType.value = 'Facebook'
 
       // We are now logged in.
       pleaseShowModal.value = false
     } else {
-      socialLoginError.value =
+      socialLoginFailed(
+        'facebook',
         'Facebook response is unexpected.  Please try later.'
+      )
     }
   } catch (e) {
-    socialLoginError.value = 'Facebook login error: ' + e.message
+    socialLoginFailed('facebook', 'Facebook login error: ' + e.message, e)
   }
 }
 
@@ -687,19 +821,19 @@ function loginAppleApp() {
           // We are now logged in.
           self.pleaseShowModal = false
         } else {
-          socialLoginError.value = 'No identityToken given'
+          socialLoginFailed('apple', 'No identityToken given')
         }
       })
       .catch((e) => {
         if (e.message.includes('1001')) {
-          socialLoginError.value = 'Apple login cancelled'
+          socialLoginFailed('apple', 'Apple login cancelled', e, true)
         } else {
-          socialLoginError.value = e.message
+          socialLoginFailed('apple', e.message, e)
         }
       })
   } catch (e) {
     console.log('Apple login error: ', e)
-    socialLoginError.value = 'Apple login error: ' + e.message
+    socialLoginFailed('apple', 'Apple login error: ' + e.message, e)
   }
 }
 
@@ -725,17 +859,16 @@ async function loginGoogleApp() {
       console.log('Logged in')
       self.pleaseShowModal = false
     } else {
-      socialLoginError.value = 'Google: no result.idToken found'
+      socialLoginFailed('google', 'Google: no result.idToken found')
     }
   } catch (e) {
     console.log('Google login error: ', e)
-    socialLoginError.value = 'Google login error: ' + e.message
+    socialLoginFailed('google', 'Google login error: ' + e.message, e)
   }
 }
 
 async function handleGoogleCredentialsResponse(response) {
   console.log('Google login', response)
-  loginType.value = 'Google'
   nativeLoginError.value = null
   socialLoginError.value = null
   if (response?.credential) {
@@ -753,15 +886,16 @@ async function handleGoogleCredentialsResponse(response) {
         googlejwt: response.credential,
         googlelogin: true,
       })
+      loginType.value = 'Google'
 
       // We are now logged in.
       console.log('Logged in')
       pleaseShowModal.value = false
     } catch (e) {
-      socialLoginError.value = 'Google login failed: ' + e.message
+      socialLoginFailed('google', 'Google login failed: ' + e.message, e)
     }
   } else if (response?.error && response.error !== 'immediate_failed') {
-    socialLoginError.value = 'Google login failed: ' + response.error
+    socialLoginFailed('google', 'Google login failed: ' + response.error)
   }
 }
 
@@ -790,32 +924,141 @@ function forgot() {
   router.push('/forgot')
 }
 
+// Google draws this button itself, in the space we leave for it, and tells us
+// nothing when it does not. In September 2026 a member's login screen had no
+// Google button: the script never delivered one. The style on that space gives
+// it a border and a minimum height, so an empty one is not blank. He saw a thin
+// grey line, with a tip beside it telling him to use the button that was not
+// there. Nothing retried, nothing warned him, and nothing reported it, so we
+// heard about it only because he wrote in. Check the space afterwards, ask
+// again a few times, and if it is still empty say so and report it. Measuring
+// the width covers a button drawn too small as well as one never drawn.
+const GOOGLE_DRAW_ATTEMPTS = 4
+const GOOGLE_DRAW_CHECK_MS = 1500
+// For a first-time visitor we hold Google's script back until the browser is
+// idle, so on that path it is normally still on its way when the modal opens.
+const GOOGLE_WAIT_MS = 15000
+
+function googleButtonDrawn() {
+  const child = document.getElementById('googleLoginButton')?.firstElementChild
+  return Boolean(child && child.getBoundingClientRect().width > 0)
+}
+
+// No cookie tool (the app, local development) means nothing holds them back.
+function readCookieConsent() {
+  const consent = window?.getCkyConsent?.()
+  googleNeedsCookies.value = Boolean(consent && !consent.categories?.functional)
+  facebookNeedsCookies.value = Boolean(
+    consent && !consent.categories?.advertisement
+  )
+  cookiesAnswered.value = Boolean(consent?.isUserActionCompleted)
+}
+
+function openCookieChoices() {
+  window?.revisitCkyConsent?.()
+}
+
+// Allowing the cookies releases the script, so draw Google's button again.
+function onCookieConsentChanged() {
+  const googleWasBlocked = googleNeedsCookies.value
+  readCookieConsent()
+
+  if (googleWasBlocked && !googleNeedsCookies.value && showModal.value) {
+    googleRenderFailed.value = false
+    googleDrawStarted = Date.now()
+    drawGoogleButton(0)
+  }
+}
+
+function reportGoogleButtonMissing(attempts) {
+  if (googleFailureReported || googleNeedsCookies.value) {
+    // Missing for want of cookie consent is expected, and the member is told why.
+    return
+  }
+
+  googleFailureReported = true
+
+  // Whatever went wrong is inside Google's own code, so record the few facts
+  // that say which half of it failed. The member who reported this could not
+  // be reproduced afterwards on any browser, connection speed or cache state
+  // we could think of, and a report saying only "it happened again" would
+  // leave the next one just as unanswerable.
+  Sentry.captureException(new Error('Google sign-in button did not draw'), {
+    tags: {
+      social_login_provider: 'google',
+      social_login_platform: 'web',
+    },
+    extra: {
+      scriptLoaded: Boolean(window?.google?.accounts?.id),
+      containerPresent: Boolean(document.getElementById('googleLoginButton')),
+      attempts,
+      waitedMs: Date.now() - googleDrawStarted,
+      signUp: signUp.value,
+    },
+  })
+}
+
+function drawGoogleButton(attempt) {
+  const target = document.getElementById('googleLoginButton')
+  const asked = Boolean(target && window?.google?.accounts?.id)
+
+  if (asked) {
+    // The space may hold a half-drawn button from the last attempt.
+    target.innerHTML = ''
+    window.google.accounts.id.renderButton(target, {
+      theme: 'outline',
+      size: 'large',
+    })
+  }
+
+  clearTimeout(googleRenderTimer)
+  googleRenderTimer = setTimeout(() => {
+    if (!showModal.value) {
+      // Closed while we were waiting. A hidden div measures zero, which is not
+      // the same as Google having failed.
+      return
+    }
+
+    if (googleButtonDrawn()) {
+      googleRenderFailed.value = false
+      return
+    }
+
+    // Still waiting for Google's script is not a failed attempt, so it does
+    // not count as one. Give up on it only once it is plainly not coming,
+    // otherwise every slow first-time visitor would be reported as broken.
+    const next = asked ? attempt + 1 : attempt
+    const waitedTooLong = Date.now() - googleDrawStarted > GOOGLE_WAIT_MS
+
+    if (next < GOOGLE_DRAW_ATTEMPTS && !waitedTooLong) {
+      drawGoogleButton(next)
+    } else {
+      googleRenderFailed.value = true
+      reportGoogleButtonMissing(next)
+    }
+  }, GOOGLE_DRAW_CHECK_MS)
+}
+
 function installGoogleSDK() {
-  if (
-    window &&
-    window.google &&
-    window.google.accounts &&
-    window.google.accounts.id
-  ) {
-    console.log('Install google SDK')
+  if (window?.google?.accounts?.id) {
     window.google.accounts.id.initialize({
       client_id: clientId.value,
       callback: handleGoogleCredentialsResponse,
     })
-
-    console.log('Render google button')
-    window.google.accounts.id.renderButton(
-      document.getElementById('googleLoginButton'),
-      { theme: 'outline', size: 'large' }
-    )
   } else {
-    console.log('Google not yet fully loaded, will retry when GSI loads')
     const prev = window.onGoogleLibraryLoad
     window.onGoogleLibraryLoad = function () {
       if (prev) prev()
       installGoogleSDK()
     }
   }
+
+  readCookieConsent()
+
+  // Either way, check we end up with a button. A script that never arrives
+  // needs telling the member just as much as one that draws nothing.
+  googleDrawStarted = Date.now()
+  drawGoogleButton(0)
 }
 
 function installFacebookSDK() {
@@ -975,10 +1218,18 @@ watch(
 
 // Lifecycle hooks
 onBeforeUnmount(() => {
+  document.removeEventListener(
+    'cookieyes_consent_update',
+    onCookieConsentChanged
+  )
+
   if (bumpTimer) {
     clearTimeout(bumpTimer)
     bumpTimer = null
   }
+
+  clearTimeout(googleRenderTimer)
+  googleRenderTimer = null
 })
 
 // Expose methods to parent components
@@ -1109,6 +1360,7 @@ $color-apple: #000000;
 }
 
 .social-button--facebook {
+  width: 100%;
   border: 1px solid $color-facebook !important;
   background-color: $color-facebook !important;
   color: $color-white !important;
@@ -1135,6 +1387,30 @@ $color-apple: #000000;
   border: 1px solid $color-gray--light;
   background-color: $color-white;
   color: var(--color-gray-700);
+}
+
+// Greyed rather than hidden, so the member can see what is missing. Clicking
+// it opens the cookie choices that turned it off.
+.social-button--cookie-off {
+  position: relative;
+  width: 100%;
+  opacity: 0.45;
+  filter: grayscale(1);
+
+  &:hover {
+    opacity: 0.6;
+  }
+}
+
+.social-button__lock {
+  margin-left: auto;
+  margin-right: 0.75rem;
+}
+
+.cookie-off-note {
+  font-size: 0.85rem;
+  color: var(--color-gray-700);
+  margin: 0 0 0.5rem;
 }
 
 :deep(.social-button--google > div) {

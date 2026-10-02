@@ -10,11 +10,20 @@
 # MemoryHigh throttles-and-reclaims batch before it drives the host into
 # swap; MemoryMax means a runaway job OOMs inside this cgroup instead of
 # taking out the interactive tier. Tune against `free -h` and
-# /proc/pressure/memory after observing real usage (batch-prod RSS was
-# ~2.7G, spatial ~5.8G when these defaults were chosen, host RAM 23G).
+# /proc/pressure/memory after observing real usage.
+#
+# 18G/22G since the rock36 resize (host RAM 23G -> 36G, 8 -> 12 cores,
+# 2026-08-31): the old 10G/14G left the slice pinned at MemoryHigh on first
+# boot - the reach engine's 12-slot working set alone (~12-14G; the compute
+# gate scales with NumCPU) exceeded it, and because the engine's anon heap is
+# swap-denied (see docker-compose.override.batchprod.yml), slice reclaim
+# could only evict the mmap'd leaf tables and the KNN index, refaulting them
+# forever: ~1.4GB/s reads, 94% system CPU, memory PSI full-stall 75%. The new
+# values scale the originally tuned pair by the RAM growth. If the slice sits
+# at MemoryHigh again with high refault IO, this pair is the first suspect.
 
 [Slice]
 CPUWeight=25
-MemoryHigh=10G
-MemoryMax=14G
+MemoryHigh=18G
+MemoryMax=22G
 IOWeight=50

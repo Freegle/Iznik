@@ -112,10 +112,6 @@ export default class MessageAPI extends BaseAPI {
     )
   }
 
-  del(id) {
-    return this.$delv2('/message/' + id)
-  }
-
   put(data) {
     // onbehalfof travels in the query string, where the server reads it and
     // checks the caller is a ChitChat moderator. Keep it out of the body so it
@@ -227,6 +223,18 @@ export default class MessageAPI extends BaseAPI {
       subject,
       stdmsgid,
       body,
+    })
+  }
+
+  // Report a post whose poster never joined Freegle (mod_messaging_allowed false). Every
+  // other post is reported by messaging the community's volunteers; these have no
+  // community that could act, so the report is a vote to take the post down instead.
+  report(id, groupid, message) {
+    return this.$postv2('/message', {
+      action: 'Report',
+      id,
+      groupid,
+      message,
     })
   }
 

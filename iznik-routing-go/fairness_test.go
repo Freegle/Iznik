@@ -7,7 +7,7 @@ import (
 func TestFairnessIsochrone_NoDeprivation(t *testing.T) {
 	g := makeTestGrid(nil)
 	// Without deprivation data, should still return a standard polygon.
-	res := FairnessIsochrone(g, 51.4545, -2.5879, 15*60, Walk, 0.5)
+	res := FairnessIsochrone(g, 51.4545, -2.5879, 15*60, 0.5)
 	if len(res.Standard.Geometry.Coordinates[0]) < 4 {
 		t.Error("expected non-empty standard polygon even without deprivation data")
 	}
@@ -20,8 +20,8 @@ func TestFairnessIsochrone_ZeroWeight(t *testing.T) {
 	idx := LoadDeprivation(sampleLSOACSV)
 	g := makeTestGrid(idx)
 	// W=0 should match standard isochrone exactly.
-	standard := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
-	fair := FairnessIsochrone(g, 51.4545, -2.5879, 15*60, Walk, 0.0)
+	standard := Isochrone(g, 51.4545, -2.5879, 15*60)
+	fair := FairnessIsochrone(g, 51.4545, -2.5879, 15*60, 0.0)
 
 	if len(fair.Standard.Geometry.Coordinates[0]) < 4 {
 		t.Error("expected non-empty standard polygon at W=0")
@@ -36,9 +36,11 @@ func TestFairnessIsochrone_ZeroWeight(t *testing.T) {
 func TestFairnessIsochrone_FullWeight(t *testing.T) {
 	idx := LoadDeprivation(sampleLSOACSV)
 	g := makeTestGrid(idx)
-	// W=1 should explore 2× the base time — more nodes than W=0.
-	r0 := FairnessIsochrone(g, 51.4545, -2.5879, 15*60, Walk, 0.0)
-	r1 := FairnessIsochrone(g, 51.4545, -2.5879, 15*60, Walk, 1.0)
+	// W=1 should explore 2x the base time, so more nodes than W=0. The budget
+	// has to leave room to grow: a car covers the whole fixture grid in far
+	// less than 15 minutes, and a saturated reach cannot get bigger.
+	r0 := FairnessIsochrone(g, 51.4545, -2.5879, 60, 0.0)
+	r1 := FairnessIsochrone(g, 51.4545, -2.5879, 60, 1.0)
 
 	if r1.NodesTouched <= r0.NodesTouched {
 		t.Errorf("W=1 should explore more nodes than W=0: %d vs %d",
@@ -52,7 +54,7 @@ func TestFairnessIsochrone_Q1GetsMoreTime(t *testing.T) {
 	idx := LoadDeprivation(sampleLSOACSV)
 	g := makeTestGrid(idx)
 	const base = 15 * 60
-	r := FairnessIsochrone(g, 51.4545, -2.5879, base, Walk, 1.0)
+	r := FairnessIsochrone(g, 51.4545, -2.5879, base, 1.0)
 
 	// Q1 time budget should be 2× base; Q5 should equal base.
 	const eps = 0.01

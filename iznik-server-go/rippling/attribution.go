@@ -2,9 +2,6 @@ package rippling
 
 import (
 	"regexp"
-	"sync"
-
-	"gorm.io/gorm"
 )
 
 // Attribution channel values - must match the rippling_reply_attribution.attribution enum
@@ -39,25 +36,6 @@ func EstablishedOriginMemberExists(msgCol, userCol string) string {
 	                  INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ` + userCol + `
 	                    AND mem.collection = 'Approved' AND mem.added < og.arrival AND mem.rippled = 0
 	                  WHERE og.msgid = ` + msgCol + ` AND og.rippled_in = 0 AND og.deleted = 0)`
-}
-
-var attributionSchemaOnce sync.Once
-var attributionSchemaWide bool
-
-// AttributionSchemaReady reports whether rippling_reply_attribution has the graded-attribution
-// columns (migration 2026_07_07_000002). The reply capture and the sysadmin metrics both need
-// to work against a production DB that may not have been migrated yet, so each picks its wide
-// or legacy variant off this. Checked once per process (schema changes need a restart to be
-// noticed - deploys restart the API anyway).
-func AttributionSchemaReady(db *gorm.DB) bool {
-	attributionSchemaOnce.Do(func() {
-		var n int64
-		db.Table("information_schema.COLUMNS").
-			Where("TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'rippling_reply_attribution' AND COLUMN_NAME = 'attribution'").
-			Count(&n)
-		attributionSchemaWide = n > 0
-	})
-	return attributionSchemaWide
 }
 
 // DeriveAttribution runs the attribution ladder over the evidence bits captured at reply time

@@ -45,9 +45,15 @@ printf 'Three guards:\n\n- process-wide concurrency cap;\n- a cache keyed on the
 check "short semicolon fragments caught" 2 \
   "$PRC --base master --head x --title t --body-file $TMP/frag.md" "verb taken out"
 
-# A complete sentence may legitimately end in a semicolon inside a list. Measured
-# at 202 chars in a real merged PR versus 55 for the fragments this targets.
-{ printf -- '- '; printf 'the poll fires every minute whether or not anything changed, and refetching then would put every browsing member reach query back onto the server every single minute of the day;\n'; } > "$TMP/longsemi.md"
+# A complete sentence may legitimately end in a semicolon inside a list. The rule
+# only fires on bullets of 100 chars or less, so the fixture has to be longer than
+# that: 113 here versus 55 for the fragments this targets.
+#
+# It is also deliberately PLAIN. The earlier fixture was lifted verbatim from a
+# merged PR and read at grade 16.2, so it failed check 6 rather than the rule this
+# case is named after - and the case then proved nothing about semicolons. Check 6
+# was right about that sentence; the fixture was testing two things at once.
+{ printf -- '- '; printf 'the poll runs every minute even when nothing has changed, and each run asks the server for the same list again;\n'; } > "$TMP/longsemi.md"
 check "long sentence ending in ';' not flagged" 0 \
   "PR_TEXT_VERIFIED=1 $PRC --base master --head x --title t --body-file $TMP/longsemi.md"
 
@@ -58,6 +64,12 @@ check "fenced output exempt" 0 \
 printf 'The `users_expected` table and the `cursor` column are named in backticks.\n' > "$TMP/ticks.md"
 check "backticked spans exempt" 0 \
   "PR_TEXT_VERIFIED=1 $PRC --base master --head x --title t --body-file $TMP/ticks.md"
+
+# House style asks for the Discourse link in the description, so a hyphenated topic
+# slug must not read as a coined compound. This one failed on "feedback-leaving".
+printf 'Prompted by a question from a volunteer.\n\nhttps://discourse.ilovefreegle.org/t/rippling-feedback-leaving-groups-request/10157/4\n' > "$TMP/link.md"
+check "URL slug not read as prose" 0 \
+  "PR_TEXT_VERIFIED=1 $PRC --base master --head x --title t --body-file $TMP/link.md"
 
 check "override works" 0 \
   "PR_PLAIN_ENGLISH_OK=1 PR_TEXT_VERIFIED=1 $PRC --base master --head x --title t --body-file $TMP/jargon.md"

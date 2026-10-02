@@ -28,12 +28,55 @@ type MailSuppression struct {
 
 // DelayedMember is one member whose mail we are currently holding.
 type DelayedMember struct {
-	Userid       uint64  `json:"userid"`
-	Displayname  *string `json:"displayname"`
-	Email        *string `json:"email"`
-	Provider     *string `json:"provider"`
-	Since        *string `json:"since"`
-	HeldMessages uint64  `json:"heldmessages" gorm:"column:heldmessages"`
+	Userid      uint64  `json:"userid"`
+	Displayname *string `json:"displayname"`
+	Email       *string `json:"email"`
+	Provider    *string `json:"provider"`
+	Since       *string `json:"since"`
+	// Generations we declined, NOT a number of emails waiting to be sent.
+	// An immediate digest is generated per matching post, so an active member
+	// on several communities accrues thousands of these in a few days: one
+	// member had 11,694 over five. Named for what it counts, because "held"
+	// read as an inbox count and the numbers made no sense as one.
+	Skipped uint64 `json:"skipped" gorm:"column:skipped"`
+	// What kinds of mail, so a big number is explicable rather than alarming.
+	Types *string `json:"types"`
+	// The provider's own words for why, so the table can say what is wrong
+	// instead of leaving a reader to guess from a blank provider column.
+	Reason *string `json:"reason"`
+	// Whether the reason is this member's own mailbox - full, or an address
+	// that does not resolve - rather than a provider refusing us. They are
+	// different problems with different remedies, and mixing them is what
+	// made this view contradict itself: the suppression list above excludes
+	// per-mailbox reasons deliberately, so the members list showed people
+	// with no matching entry above them and the page claimed all was well
+	// while listing 194 of them.
+	PerMailbox bool `json:"permailbox" gorm:"column:permailbox"`
+}
+
+// RelayQueue is one recipient domain's current standing in the outbound queue.
+//
+// The companion to MailSuppression, and the half that was missing. A
+// suppression says a provider has refused us. This says what is actually
+// sitting in the queue - including the mail nothing has refused, which is
+// queued behind our own rate limiting and so produces no error, no deferral
+// and no suppression. A provider can be accepting our mail perfectly while
+// its members' email runs half a day late, and until this was surfaced the
+// delayed view reported that as "everything is fine".
+type RelayQueue struct {
+	Domain string `json:"domain"`
+	// Queued with nothing refusing it: waiting on our pacing.
+	Waiting uint64 `json:"waiting"`
+	// Queued because a provider gave us a 4xx.
+	Deferred uint64 `json:"deferred"`
+	// Arrival of the oldest waiting message. The age is what matters: depth
+	// says how much, age says how badly.
+	Oldest *string `json:"oldest"`
+	// Deliveries in the probe's log window, so the depth can be turned into a
+	// time to clear rather than left as a number nobody can act on.
+	DeliveredPerHour uint64  `json:"deliveredperhour" gorm:"column:deliveredperhour"`
+	Instance         *string `json:"instance"`
+	Scanned          *string `json:"scanned"`
 }
 
 // Deferrals handles GET /modtools/email/deferrals.
@@ -97,8 +140,17 @@ func Deferrals(c *fiber.Ctx) error {
 	// suppression that explains it; the same shape as the raw SELECTs used
 	// throughout this package.
 	res = db.Table("mail_suppressed_counts msc").
-		Select("msc.userid, u.fullname AS displayname, ue.email, " +
-			"ms.provider, MIN(msc.firstat) AS since, SUM(msc.count) AS heldmessages").
+		Select("msc.userid, u.fullname AS displayname, ue.email, "+
+			"ms.provider, MIN(msc.firstat) AS since, SUM(msc.count) AS skipped, "+
+			"GROUP_CONCAT(DISTINCT msc.emailtype ORDER BY msc.emailtype SEPARATOR ', ') AS types, "+
+			// MAX over a group that is one suppression in practice; a member
+			// with several gets the alphabetically last, which is a reason
+			// rather than no reason.
+			"MAX(ms.reason) AS reason, "+
+			// Their mailbox, not our reputation. Same test the suppression
+			// list above uses to leave these out, so the two halves of this
+			// page can no longer disagree about what is wrong.
+			"MAX(ms.reason REGEXP ?) AS permailbox", maildeferral.PerMailboxReason).
 		Joins("JOIN users u ON u.id = msc.userid").
 		Joins("LEFT JOIN mail_suppressions ms ON ms.id = msc.suppressionid").
 		// The address we would have mailed, resolved the same way the mailer
@@ -108,7 +160,9 @@ func Deferrals(c *fiber.Ctx) error {
 			"WHERE ue2.userid = msc.userid ORDER BY ue2.preferred DESC, ue2.validated DESC LIMIT 1)").
 		Where("msc.caughtup_at IS NULL").
 		Group("msc.userid, u.fullname, ue.email, ms.provider").
-		Order("since ASC").
+		// Worst first. "Since" ordering buried the member with 11,694 skipped
+		// generations below people with one.
+		Order("skipped DESC").
 		Limit(1000).
 		Scan(&members)
 
@@ -116,9 +170,22 @@ func Deferrals(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Could not read delayed members")
 	}
 
+	// What is in the queue right now, whoever's fault it is. Written by the
+	// batch scan; read here without a join because it is already one row per
+	// domain and the whole table is a few hundred rows.
+	queues := []RelayQueue{}
+
+	db.Table("mail_relay_queue").
+		Select("domain, waiting, deferred, oldest, deliveredperhour, instance, scanned").
+		Where("waiting > 0 OR deferred > 0").
+		// Worst first: the question is always "what is worst".
+		Order("waiting + deferred DESC").
+		Scan(&queues)
+
 	return c.JSON(fiber.Map{
 		"suppressions": suppressions,
 		"members":      members,
+		"queues":       queues,
 		// Capped so an estate-wide episode cannot try to render 9,400 rows in
 		// a browser. Say so rather than silently truncate.
 		"memberlimit": 1000,

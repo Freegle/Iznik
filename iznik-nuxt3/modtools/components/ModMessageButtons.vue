@@ -18,6 +18,7 @@
         label="Reject Edit"
       />
       <ModMessageButton
+        v-if="modMessagingAllowed"
         :messageid="message.id"
         :groupid="groupid"
         variant="primary"
@@ -28,7 +29,7 @@
     </div>
     <div v-else-if="pending || spam" class="d-inline">
       <ModMessageButton
-        v-if="!cantpost"
+        v-if="canApprove"
         :messageid="message.id"
         :groupid="groupid"
         variant="primary"
@@ -40,6 +41,7 @@
         :messageid="message.id"
         :groupid="groupid"
         :is-home-group="isHomeGroup"
+        :no-member-message="!modMessagingAllowed"
         variant="warning"
         icon="times"
         reject
@@ -84,6 +86,7 @@
     </div>
     <div v-else-if="approved" class="d-inline">
       <ModMessageButton
+        v-if="isHomeGroup && modMessagingAllowed"
         :messageid="message.id"
         :groupid="groupid"
         variant="primary"
@@ -109,8 +112,13 @@
         spam
         label="Delete as Spam"
       />
+      <!-- Outcomes are facts about the whole post, so they belong to the poster or to the
+           moderators of the group it was posted on. The server refuses them from a group
+           the post merely rippled into, so do not offer them there (Discourse 10102). -->
       <SpinButton
-        v-if="message.type === 'Offer' && !message.outcomes?.length"
+        v-if="
+          isHomeGroup && message.type === 'Offer' && !message.outcomes?.length
+        "
         variant="white"
         class="m-1"
         icon-name="check"
@@ -120,7 +128,9 @@
         @handle="outcome($event, 'Taken')"
       />
       <SpinButton
-        v-if="message.type === 'Wanted' && !message.outcomes?.length"
+        v-if="
+          isHomeGroup && message.type === 'Wanted' && !message.outcomes?.length
+        "
         variant="white"
         class="m-1"
         icon-name="check"
@@ -130,7 +140,7 @@
         @handle="outcome($event, 'Received')"
       />
       <SpinButton
-        v-if="!message.outcomes?.length"
+        v-if="isHomeGroup && !message.outcomes?.length"
         variant="white"
         class="m-1"
         icon-name="trash-alt"
@@ -163,7 +173,7 @@
       </b-button>
     </div>
     <client-only>
-      <div class="mt-1 mb-1 d-flex flex-wrap">
+      <div v-if="modMessagingAllowed" class="mt-1 mb-1 d-flex flex-wrap">
         <OurToggle
           v-model="allowAutoSend"
           :height="30"
@@ -213,10 +223,20 @@ const props = defineProps({
     required: false,
     default: null,
   },
-  // Delete / Delete as Spam remove the post itself (across all its groups), so they're only
-  // offered on the post's home/origin group - not on a rippled-in copy. Defaults true so
-  // non-rippling contexts are unaffected.
+  // Whether this is the post's home/origin group. Removal is per-group in the API, but a
+  // rippled-in group's moderators get the scoped, silent version of it (and Delete as
+  // Spam, which is a judgement on the poster, not on the copy, stays with the home
+  // group). Defaults true so non-rippling contexts are unaffected.
   isHomeGroup: {
+    type: Boolean,
+    required: false,
+    default: true,
+  },
+  // False for a TN post whose poster never joined Freegle. Every action that would send
+  // them something - Blank Reply, the standard messages, a Reject with an explanation -
+  // is withdrawn; Approve, Delete and Hold are not. Defaults true so ordinary posts are
+  // untouched. See the Go modmessaging package for the server-side half.
+  modMessagingAllowed: {
     type: Boolean,
     required: false,
     default: true,
@@ -254,23 +274,35 @@ const heldByOnThisGroup = computed(() => {
   return g?.heldby || null
 })
 
+// A post that rippled to several groups has one row per group, each with its own
+// collection. The buttons describe the copy being administered (props.groupid), not
+// whichever other group still has the post waiting: with the old any-group reading, an
+// Approved copy showed the Pending buttons while a neighbour's copy was still Pending, and
+// a Delete there was refused by the server as "no longer pending" (Discourse 10102). With
+// no group in context, fall back to any row, as before.
 function hasCollection(coll) {
-  let ret = false
-
-  if (message.value?.groups) {
-    message.value.groups.forEach((group) => {
-      if (group.collection === coll) {
-        ret = true
-      }
-    })
-  }
-
-  return ret
+  const groups = message.value?.groups || []
+  const scoped = props.groupid
+    ? groups.filter((g) => parseInt(g.groupid) === parseInt(props.groupid))
+    : groups
+  return scoped.some((g) => g.collection === coll)
 }
 
 const pending = computed(() => {
   return hasCollection('Pending')
 })
+
+// The post's home community sent it back to pending, so a rippled-in copy cannot be approved
+// until they approve theirs. groups[].locked_by_home is the effective lock, so it is already 0
+// once the home copy is approved; the server refuses the approval as well.
+const lockedByHome = computed(() => {
+  const groups = message.value?.groups || []
+  const gid = props.groupid || groups[0]?.groupid
+  const g = groups.find((grp) => parseInt(grp.groupid) === parseInt(gid))
+  return parseInt(g?.locked_by_home) === 1
+})
+
+const canApprove = computed(() => !props.cantpost && !lockedByHome.value)
 
 const approved = computed(() => {
   return hasCollection('Approved')
@@ -284,15 +316,28 @@ const spam = computed(() => {
   return hasCollection('Spam')
 })
 
+// On a copy the post merely rippled into, a standard message whose only effect is to
+// write to the freegler has nothing to do: correspondence about a post belongs to the
+// community it was posted on, and the server refuses it (Discourse 10102). Offer only
+// the ones that act on this group's own copy. Approving and holding are still available
+// as plain buttons, they just carry no note.
 const validActions = computed(() => {
   // The standard messages we show depend on the valid ones for this type of message.
   if (pending.value || spam.value) {
+    if (!props.isHomeGroup) {
+      return ['Reject', 'Delete', 'Edit']
+    }
+
     const ret = ['Reject', 'Leave', 'Delete', 'Edit', 'Hold Message']
-    if (!props.cantpost) {
+    if (canApprove.value) {
       ret.push('Approve')
     }
     return ret
   } else if (approved.value) {
+    if (!props.isHomeGroup) {
+      return ['Delete Approved Message', 'Edit']
+    }
+
     return ['Leave Approved Message', 'Delete Approved Message', 'Edit']
   }
 
@@ -308,6 +353,10 @@ const stdmsgs = computed(() => {
 })
 
 const filterByAction = computed(() => {
+  if (!props.modMessagingAllowed) {
+    return []
+  }
+
   if (modconfig.value) {
     return stdmsgs.value.filter((stdmsg) => {
       return validActions.value.includes(stdmsg.action)

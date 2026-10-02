@@ -93,6 +93,7 @@ describe('ModMemberButton', () => {
             props: ['icon', 'title'],
           },
           ConfirmModal: {
+            name: 'ConfirmModal',
             template: '<div class="confirm-modal" />',
             methods: { show: vi.fn() },
           },
@@ -376,6 +377,56 @@ describe('ModMemberButton', () => {
       const button = wrapper.find('button')
       await button.trigger('click')
       expect(wrapper.emitted('pressed')).toBeTruthy()
+    })
+  })
+
+  // Removing a member whose only tie to the group is a ripple happens, but they are not
+  // told (Discourse 10102). So there is no message to compose: offer the plain
+  // confirmation instead of a compose box whose words would be dropped.
+  describe('ripple-created membership', () => {
+    it('confirms a silent removal instead of composing a message', async () => {
+      mockStdmsgStore.fetch.mockResolvedValue({
+        id: 7,
+        action: 'Delete Approved Member',
+      })
+
+      const wrapper = mountComponent({ stdmsgid: 7, rippleOnly: true })
+      await wrapper.find('button').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.confirm-modal').exists()).toBe(true)
+      expect(wrapper.find('.std-message-modal').exists()).toBe(false)
+    })
+
+    it('removes them with no message when confirmed', async () => {
+      mockStdmsgStore.fetch.mockResolvedValue({
+        id: 7,
+        action: 'Delete Approved Member',
+      })
+
+      const wrapper = mountComponent({ stdmsgid: 7, rippleOnly: true })
+      await wrapper.find('button').trigger('click')
+      await flushPromises()
+      await wrapper.findComponent({ name: 'ConfirmModal' }).vm.$emit('confirm')
+      await flushPromises()
+
+      expect(mockMemberStore.delete).toHaveBeenCalledWith({
+        id: 456,
+        groupid: 789,
+      })
+    })
+
+    it('still composes a message for an ordinary member', async () => {
+      mockStdmsgStore.fetch.mockResolvedValue({
+        id: 7,
+        action: 'Delete Approved Member',
+      })
+
+      const wrapper = mountComponent({ stdmsgid: 7, rippleOnly: false })
+      await wrapper.find('button').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.std-message-modal').exists()).toBe(true)
     })
   })
 })

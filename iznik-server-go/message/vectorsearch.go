@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/utils"
 )
 
@@ -89,6 +90,16 @@ func VectorSearch(term string, limit int, groupids []uint64, allowedIDs map[uint
 
 	queryWords := GetWords(term)
 
+	// One batched routing call resolves every candidate's road-aware blur -
+	// the per-row RoadBlur below is then a cache hit. Search must expose the
+	// SAME blurred point as the feed and the message record for a given post,
+	// or its distance (and pin) disagrees with the badge members just saw.
+	blurCoords := make([][2]float64, 0, len(vecResults))
+	for _, vr := range vecResults {
+		blurCoords = append(blurCoords, [2]float64{vr.Lat, vr.Lng})
+	}
+	roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
+
 	var subjectTier []scoredResult
 	var bodyTier []scoredResult
 
@@ -118,7 +129,7 @@ func VectorSearch(term string, limit int, groupids []uint64, allowedIDs map[uint
 			keywordScore = float32(matched) / float32(len(queryWords))
 		}
 
-		lat, lng := utils.Blur(vr.Lat, vr.Lng, utils.BLUR_USER)
+		lat, lng := roadblur.RoadBlur(vr.Lat, vr.Lng, utils.BLUR_USER)
 		sr := SearchResult{
 			Msgid:   vr.Msgid,
 			Arrival: vr.Arrival,
@@ -147,6 +158,49 @@ func VectorSearch(term string, limit int, groupids []uint64, allowedIDs map[uint
 			stats.Dropped++
 		}
 	}
+	// Lexical guarantee (replaces the retired keyword index): a post whose
+	// subject literally contains ALL the query words must always appear, even
+	// when its embedding cosine is below MinVectorScore and so it was dropped
+	// above — or wasn't even in the store's top-K by cosine. LexicalMatch scans
+	// the whole store for such subjects; we add any not already present to the
+	// subject tier at the tier floor, so exact matches rank among (but below
+	// strong-semantic) subject hits.
+	if len(queryWords) > 0 {
+		seen := make(map[uint64]bool, len(subjectTier)+len(bodyTier))
+		for _, s := range subjectTier {
+			seen[s.result.Msgid] = true
+		}
+		for _, s := range bodyTier {
+			seen[s.result.Msgid] = true
+		}
+		lexical := embedding.Global.LexicalMatch(queryWords, msgtype, groupids, allowedIDs, swlat, swlng, nelat, nelng)
+		for _, lr := range lexical {
+			if seen[lr.Msgid] {
+				continue
+			}
+			seen[lr.Msgid] = true
+			lat, lng := utils.Blur(lr.Lat, lr.Lng, utils.BLUR_USER)
+			subjectTier = append(subjectTier, scoredResult{
+				result: SearchResult{
+					Msgid:   lr.Msgid,
+					Arrival: lr.Arrival,
+					Groupid: lr.Groupid,
+					Lat:     lat,
+					Lng:     lng,
+					Word:    term,
+					Type:    lr.Msgtype,
+					Matchedon: Matchedon{
+						Type: "Vector",
+						Word: term,
+					},
+				},
+				// Tier floor: below every genuine subject-cosine hit (which score
+				// >= MinVectorScore + boost) but present and guaranteed.
+				score: MinVectorScore,
+			})
+		}
+	}
+
 	stats.SubjectTier = len(subjectTier)
 	stats.BodyTier = len(bodyTier)
 
@@ -201,7 +255,7 @@ func fingerprintVec(v []float32) string {
 // logVectorSearch emits a structured diagnostic log to Loki summarising one
 // vector search call. Cheap no-op when Loki is disabled.
 func logVectorSearch(term string, groupids []uint64, msgtype string, userID uint64,
-	searchmode string, returned int, fallbackTaken bool, stats VectorStats) {
+	returned int, fallbackTaken bool, stats VectorStats) {
 
 	l := misc.GetLoki()
 	if l == nil || !l.IsEnabled() {
@@ -214,7 +268,6 @@ func logVectorSearch(term string, groupids []uint64, msgtype string, userID uint
 	}
 
 	labels := map[string]string{
-		"searchmode":     searchmode,
 		"fallback_taken": strconv.FormatBool(fallbackTaken),
 		"empty":          strconv.FormatBool(returned == 0),
 	}

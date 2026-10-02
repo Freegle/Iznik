@@ -62,6 +62,32 @@ function sseResponse(events) {
   }
 }
 
+// Like sseResponse, but the stream never ends after the last event: the
+// investigation is still running, which is the only time the transcript is on
+// screen at all. submitQuery() therefore never resolves - don't await it.
+function sseResponseHeld(events) {
+  let idx = 0
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      getReader: () => ({
+        read: () => {
+          if (idx < events.length) {
+            const chunk = `data: ${JSON.stringify(events[idx])}\n\n`
+            idx += 1
+            return Promise.resolve({
+              done: false,
+              value: new TextEncoder().encode(chunk),
+            })
+          }
+          return new Promise(() => {})
+        },
+      }),
+    },
+  }
+}
+
 describe('ModSupportAIAssistant', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -470,25 +496,153 @@ describe('ModSupportAIAssistant', () => {
       expect(wrapper.text()).toContain('Starting investigation')
     })
 
-    it('renders each transcript event as an ordered step, styling tool steps differently', async () => {
-      const wrapper = mountComponent()
-
+    // Starts an investigation whose stream delivers the given events and then
+    // stays open, so the transcript can be inspected mid-flight.
+    async function midInvestigation(wrapper, events) {
       wrapper.vm.selectedUser = { id: 1 }
-      wrapper.vm.messages = [{ role: 'user', content: 'test' }]
-      wrapper.vm.isProcessing = true
-      wrapper.vm.transcript = [
-        { type: 'status', text: 'Investigating (driver=api)…' },
-        { type: 'thinking', text: 'Looking at recent messages' },
-        { type: 'tool', text: 'db_query {"sql":"select ..."}' },
-      ]
       await nextTick()
+      mockFetch.mockReset()
+      mockFetch.mockResolvedValue(sseResponseHeld(events))
+      wrapper.vm.query = 'Why no emails?'
+      wrapper.vm.submitQuery()
+      await flushPromises()
+      await nextTick()
+    }
+
+    // The helper reads dozens of files and runs many queries on the way to an
+    // answer. Listing each one pushed the conclusions it reaches off the top
+    // of the screen before anyone could read them, so only the conclusions
+    // are listed now.
+    it('lists the conclusions reached so far, not the code and queries being checked', async () => {
+      const wrapper = mountComponent()
+      await midInvestigation(wrapper, [
+        { type: 'status', message: 'Investigating (driver=api)…' },
+        {
+          type: 'thinking',
+          message: 'Their email is bouncing, so mail stops.',
+        },
+        {
+          type: 'tool',
+          message:
+            'Read {"file_path":"/app/codebase/iznik-nuxt3/pages/settings.vue"}',
+        },
+        {
+          type: 'tool',
+          message: 'db_query {"sql":"SELECT reason FROM bounces_emails"}',
+        },
+        { type: 'thinking', message: 'The bounce is permanent, from 3 March.' },
+      ])
 
       const steps = wrapper.findAll('.transcript-step')
       expect(steps.length).toBe(3)
       expect(steps[0].classes()).toContain('transcript-status')
       expect(steps[1].classes()).toContain('transcript-thinking')
-      expect(steps[2].classes()).toContain('transcript-tool')
-      expect(steps[2].text()).toContain('db_query')
+      expect(steps[2].classes()).toContain('transcript-thinking')
+      expect(wrapper.text()).toContain('Their email is bouncing')
+      expect(wrapper.text()).toContain('The bounce is permanent')
+      expect(wrapper.text()).not.toContain('file_path')
+      expect(wrapper.text()).not.toContain('SELECT')
+      // The last event was a conclusion, so nothing is being checked right now.
+      expect(wrapper.find('[data-testid="transcript-activity"]').exists()).toBe(
+        false
+      )
+    })
+
+    // Dropping the tool lines must not make the helper look dead while it is
+    // in the middle of a check: one plain-English line says what kind of check
+    // is running, and is replaced rather than added to.
+    it('shows what is being checked right now in plain words, one line, replaced', async () => {
+      const wrapper = mountComponent()
+      await midInvestigation(wrapper, [
+        { type: 'thinking', message: 'Checking their bounces.' },
+        {
+          type: 'tool',
+          message:
+            'Read {"file_path":"/app/codebase/iznik-nuxt3/pages/settings.vue"}',
+        },
+        {
+          type: 'tool',
+          message: 'db_query {"sql":"SELECT reason FROM bounces_emails"}',
+        },
+      ])
+
+      const activity = wrapper.findAll('[data-testid="transcript-activity"]')
+      expect(activity.length).toBe(1)
+      expect(activity[0].text()).toContain('Querying the database')
+      expect(activity[0].text()).not.toContain('Reading the code')
+      expect(wrapper.text()).not.toContain('db_query')
+    })
+
+    it("describes each kind of check in the volunteer's words", () => {
+      const wrapper = mountComponent()
+      const d = wrapper.vm.describeTool
+      expect(d('Read {"file_path":"x"}')).toBe('Reading the code')
+      expect(d('Grep {"pattern":"x"}')).toBe('Reading the code')
+      expect(d('Glob {"pattern":"x"}')).toBe('Reading the code')
+      expect(d('identify_user {"email":"x"}')).toBe('Identifying the member')
+      expect(d('get_user_dump {"userid":1}')).toBe(
+        'Building the member snapshot'
+      )
+      expect(d('query_dump {"sql":"x"}')).toBe('Querying the member snapshot')
+      expect(d('db_query {"sql":"x"}')).toBe('Querying the database')
+      expect(d('loki_search {"userid":1}')).toBe('Searching the logs')
+      expect(d('sentry_search {"query":"x"}')).toBe(
+        'Checking Sentry for errors'
+      )
+      expect(d('discourse_search {"query":"x"}')).toBe(
+        'Searching the Discourse forum'
+      )
+      expect(d('code_history_search {"keyword":"x"}')).toBe(
+        'Checking the code history'
+      )
+      expect(d('git_fixed_already {"path":"x"}')).toBe(
+        'Checking the code history'
+      )
+      // An unknown tool must not leak its internal name onto the screen.
+      expect(d('frobnicate {"x":1}')).toBe('Checking')
+      expect(d('')).toBe('Checking')
+      expect(d(undefined)).toBe('Checking')
+    })
+
+    // The raw calls are still wanted when something goes wrong - which SQL did
+    // it run, which file did it read - so they go to the Debug panel instead.
+    it('keeps the raw tool calls in the debug log when Debug is on', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.debugMode = true
+      await midInvestigation(wrapper, [
+        {
+          type: 'tool',
+          message: 'db_query {"sql":"SELECT reason FROM bounces_emails"}',
+        },
+      ])
+
+      const toolEntries = wrapper.vm.debugLog.filter((e) => e.type === 'tool')
+      expect(toolEntries.length).toBe(1)
+      expect(toolEntries[0].data).toContain('SELECT reason FROM bounces_emails')
+    })
+
+    it('does not grow the debug log with tool calls when Debug is off', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.debugMode = false
+      await midInvestigation(wrapper, [
+        { type: 'tool', message: 'db_query {"sql":"SELECT 1"}' },
+      ])
+      expect(wrapper.vm.debugLog).toEqual([])
+    })
+
+    it('hides the activity line while the snapshot progress bar is showing', async () => {
+      const wrapper = mountComponent()
+      await midInvestigation(wrapper, [
+        { type: 'tool', message: 'get_user_dump {"userid":1}' },
+        {
+          type: 'progress',
+          message: { tool: 'get_user_dump', percent: 40, section: 'chats' },
+        },
+      ])
+      expect(wrapper.find('[data-testid="dump-progress"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="transcript-activity"]').exists()).toBe(
+        false
+      )
     })
 
     it('shows cancel button when processing', async () => {
@@ -825,7 +979,7 @@ describe('ModSupportAIAssistant', () => {
   })
 
   describe('SSE transcript accumulation', () => {
-    it('appends a transcript step for each thinking/tool/status event, then clears it when result arrives', async () => {
+    it('appends a transcript step for each thinking/status event, then clears it when result arrives', async () => {
       const wrapper = mountComponent()
       wrapper.vm.selectedUser = {
         id: 1,
@@ -852,7 +1006,7 @@ describe('ModSupportAIAssistant', () => {
                 return Promise.resolve({
                   done: false,
                   value: new TextEncoder().encode(
-                    'data: {"type":"tool","message":"db_query select..."}\n\n'
+                    'data: {"type":"thinking","message":"Checking their bounces."}\n\n'
                   ),
                 })
               }
@@ -868,12 +1022,12 @@ describe('ModSupportAIAssistant', () => {
       wrapper.vm.query = 'Why blocked?'
       const submitPromise = wrapper.vm.submitQuery()
 
-      // Let the first SSE chunk (a tool step) be processed while the
+      // Let the first SSE chunk (a thinking step) be processed while the
       // request is still in flight.
       await flushPromises()
 
       expect(wrapper.vm.transcript).toEqual([
-        { type: 'tool', text: 'db_query select...' },
+        { type: 'thinking', text: 'Checking their bounces.' },
       ])
 
       // Release the result event, completing the stream.

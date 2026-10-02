@@ -59,6 +59,27 @@ Shows each worktree, its branch, container count, and URL.
 
 This stops containers, removes volumes, and removes the git worktree.
 
+### 5. Tidy up in bulk
+
+```bash
+./freegle worktree prune --dry-run   # show what would happen
+./freegle worktree prune             # do it
+```
+
+Prune does two separate jobs, and always shows you the plan first:
+
+- **Removes worktrees whose PR is merged or closed.** A worktree with uncommitted
+  or unpushed work is never removed. It is listed as flagged instead, so nothing
+  you have not saved can be lost.
+- **Drops containers for worktrees left idle.** If nothing has been pushed to the
+  branch for a week, the containers go but the worktree, its branch and its
+  volumes all stay. Compose builds the containers again next time you start that
+  instance. Set `WORKTREE_IDLE_DAYS` to use a different number of days.
+
+Idle is measured against the remote branch, so commits you have made locally but
+not pushed do not count as activity. A worktree with containers still running is
+skipped, so an instance someone is using is left alone.
+
 ## CRITICAL: Worktree Isolation is Absolute
 
 **A worktree is a fully isolated environment. You MUST NOT cross these boundaries under any circumstances:**
@@ -132,11 +153,17 @@ docker ps --format '{{.Ports}}' | grep -oP '0\.0\.0\.0:\d+' | sort | uniq -d
 
 ### `spatial` / `spatial-live` exited immediately
 
-They need `iznik-routing-go/data/uk-latest.osm.pbf`, a 2.5GB gitignored download that
-`git worktree add` cannot bring across. `freegle worktree create` hardlinks it from the main
-checkout (one inode, so no extra disk per worktree) and prints `Shared iznik-routing-go/...`
-when it does. If the main checkout has never downloaded it, the two containers will exit(1) and
-everything that does not need the routing graph still works.
+They need `iznik-routing-go/data/uk-latest.osm.pbf`, a 2.5GB gitignored file that
+`git worktree add` cannot bring across. It is not a single download: it is four Geofabrik
+extracts merged by `iznik-routing-go/scripts/build-osm-pbf.sh`, which is what you run to
+create or refresh it. `freegle worktree create` hardlinks it from the main checkout (one
+inode, so no extra disk per worktree) and prints `Shared iznik-routing-go/...` when it does.
+If the main checkout has never built it, the two containers will exit(1) and everything that
+does not need the routing graph still works.
+
+Because of the hardlinks, refresh the file **in place** (the build script does this with
+`cat merged > target`). Renaming a new file over the target breaks the link and leaves every
+other worktree on the old map.
 
 ### CRLF line endings in worktree (WSL)
 If Docker builds fail with "not found" errors on shell scripts, fix line endings:

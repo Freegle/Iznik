@@ -48,6 +48,13 @@ type MessageSummary struct {
 	// order the 'nearby' browse feed. Only populated on that path; zero/
 	// omitted elsewhere.
 	Score float64 `json:"score,omitempty"`
+	// Road drive time/distance from the VIEWER's home to this post's blurred
+	// location (nil when the reach engine cannot answer). Shipped with the
+	// feed so "Closest" can order by road miles from the FIRST render - the
+	// same values the full message record carries - with no client-side
+	// routing calls and no later re-sort.
+	Roadmins  *float64 `json:"roadmins,omitempty" gorm:"-"`
+	Roadmiles *float64 `json:"roadmiles,omitempty" gorm:"-"`
 	// Distance is the great-circle distance in miles from the viewer to this
 	// post, computed from the BLURRED (already-privacy-fuzzed) coordinates —
 	// never the real ones, so it can't be used to triangulate a post's true

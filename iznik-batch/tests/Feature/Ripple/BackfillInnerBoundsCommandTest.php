@@ -5,17 +5,20 @@ namespace Tests\Feature\Ripple;
 use App\Models\Message;
 use App\Services\Ripple\ReachBoundsService;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\SeedsReachCells;
 use Tests\TestCase;
 
 /**
  * ripple:backfill-inner-bounds — the one-shot repair for rows whose inner bound is
  * missing or uselessly small (the town-core-fragment inners behind the Aug 2026 db3
  * saturation). Dry-run reports without touching rows; a real run re-derives the inner
- * from the stored polygon, one row at a time, and leaves useful inners and degraded
+ * from the stored reach grid, one row at a time, and leaves useful inners and degraded
  * (completed-post) rows alone.
  */
 class BackfillInnerBoundsCommandTest extends TestCase
 {
+    use SeedsReachCells;
+
     // Comfortably larger than the ±0.002° derivation tolerance.
     private const WKT = 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))';
 
@@ -44,14 +47,14 @@ class BackfillInnerBoundsCommandTest extends TestCase
             'lng' => -0.1,
         ]);
         DB::statement(
-            'INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, inner_bound, arrival, mode, tick,
+            'INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, inner_bound, arrival, mode, tick,
                 total_ticks, total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ' . ReachBoundsService::outerExpr('ST_GeomFromText(?, 3857)') . ', '
+             VALUES (?, 51.5, -0.1, ?, ' . ReachBoundsService::outerExpr('ST_GeomFromText(?, 3857)') . ', '
                 . ($innerWkt !== null ? 'ST_GeomFromText(?, 3857)' : 'NULL') . ",
                 NOW(), 'drive', 1, 3, 90, 30, NULL, NULL, 'done', NOW(), NOW())",
             $innerWkt !== null
-                ? [$message->id, self::WKT, self::WKT, $innerWkt]
-                : [$message->id, self::WKT, self::WKT]
+                ? [$message->id, $this->reachCellsFor(self::WKT), self::WKT, $innerWkt]
+                : [$message->id, $this->reachCellsFor(self::WKT), self::WKT]
         );
 
         return (int) $message->id;
@@ -60,7 +63,7 @@ class BackfillInnerBoundsCommandTest extends TestCase
     private function innerRatio(int $msgid): float
     {
         return (float) DB::selectOne(
-            'SELECT COALESCE(ST_Area(inner_bound) / NULLIF(ST_Area(polygon), 0), 0) AS r
+            'SELECT COALESCE(ST_Area(inner_bound) / NULLIF(ST_Area(outer_bound), 0), 0) AS r
                FROM rippling_reach WHERE msgid = ?',
             [$msgid]
         )->r;
@@ -96,8 +99,8 @@ class BackfillInnerBoundsCommandTest extends TestCase
 
         $this->artisan('ripple:backfill-inner-bounds')->assertExitCode(0);
 
-        $this->assertGreaterThan(0.5, $this->innerRatio($tiny), 'tiny inner is re-derived from the polygon');
-        $this->assertGreaterThan(0.5, $this->innerRatio($missing), 'missing inner is derived from the polygon');
+        $this->assertGreaterThan(0.5, $this->innerRatio($tiny), 'tiny inner is re-derived from the reach grid');
+        $this->assertGreaterThan(0.5, $this->innerRatio($missing), 'missing inner is derived from the reach grid');
 
         $goodAfter = DB::selectOne(
             'SELECT ST_AsBinary(inner_bound) AS b FROM rippling_reach WHERE msgid = ?',

@@ -591,7 +591,7 @@ func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error
 		})
 	}
 
-	persistent, jwtString, err := auth.CreateSessionAndJWT(userID)
+	persistent, jwtString, err := auth.CreateSessionAndJWT(c, userID, auth.LoginMethodPassword)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
 	}
@@ -610,10 +610,19 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 
 	// Verify the user exists. Deleted users can still log in so they see the
 	// "restore your account" banner.
-	var exists uint64
-	db.Table("users").Select("id").Where("id = ?", uid).Limit(1).Scan(&exists)
+	var target struct {
+		ID       uint64
+		Tnuserid *uint64
+	}
+	res := db.Table("users").Select("id, tnuserid").Where("id = ?", uid).Limit(1).Scan(&target)
 
-	if exists == 0 {
+	if res.Error != nil {
+		// A failed read is an outage, not an unknown member.
+		stdlog.Printf("Link login: user lookup for %d failed: %v", uid, res.Error)
+		return fiber.NewError(fiber.StatusServiceUnavailable, "Please try again")
+	}
+
+	if target.ID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"ret":    2,
 			"status": "Unknown user.",
@@ -632,7 +641,20 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 		})
 	}
 
-	persistent, jwtString, err := auth.CreateSessionAndJWT(uid)
+	// A member who came through TrashNothing never logs in here: their actions
+	// arrive through the partner API. A valid link key presented for one of
+	// them is a harvested or forwarded link, not the member, so refuse it with
+	// the same answer as a wrong key and leave a record of where it came from.
+	if target.Tnuserid != nil {
+		stdlog.Printf("SECURITY: link login refused for partner member %d from %s", uid, c.IP())
+
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"ret":    3,
+			"status": "Invalid key.",
+		})
+	}
+
+	persistent, jwtString, err := auth.CreateSessionAndJWT(c, uid, auth.LoginMethodLink)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
 	}
@@ -956,16 +978,17 @@ func GetSession(c *fiber.Ctx) error {
 	}
 
 	type MembershipRow struct {
-		Groupid                  uint64  `json:"groupid"`
-		Role                     string  `json:"role"`
-		Emailfrequency           int     `json:"emailfrequency"`
-		Eventsallowed            int     `json:"eventsallowed"`
-		Volunteeringallowed      int     `json:"volunteeringallowed"`
-		Microvolunteeringallowed int     `json:"microvolunteeringallowed"`
-		Configid                 *uint64 `json:"configid"`
-		Active                   int     `json:"active"` // 1=active mod, 0=backup mod
-		Type                     string  `json:"-"`      // Used server-side for moderator detection, not returned to client
-		Settings                 *string `json:"-"`      // Per-group membership settings JSON, used to determine active/inactive
+		Groupid                  uint64    `json:"groupid"`
+		Role                     string    `json:"role"`
+		Emailfrequency           int       `json:"emailfrequency"`
+		Eventsallowed            int       `json:"eventsallowed"`
+		Volunteeringallowed      int       `json:"volunteeringallowed"`
+		Microvolunteeringallowed int       `json:"microvolunteeringallowed"`
+		Configid                 *uint64   `json:"configid"`
+		Added                    time.Time `json:"added"`  // When they joined - the feed folds a community's header up after the first week
+		Active                   int       `json:"active"` // 1=active mod, 0=backup mod
+		Type                     string    `json:"-"`      // Used server-side for moderator detection, not returned to client
+		Settings                 *string   `json:"-"`      // Per-group membership settings JSON, used to determine active/inactive
 	}
 
 	type LocationRow struct {
@@ -1035,7 +1058,7 @@ func GetSession(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 		db.Table("memberships m").
-			Select("m.groupid, m.role, m.emailfrequency, m.eventsallowed, m.volunteeringallowed, m.configid, g.type, m.settings, g.microvolunteering AS microvolunteeringallowed").
+			Select("m.groupid, m.role, m.emailfrequency, m.eventsallowed, m.volunteeringallowed, m.configid, m.added, g.type, m.settings, g.microvolunteering AS microvolunteeringallowed").
 			Joins("JOIN `groups` g ON g.id = m.groupid").
 			Where("m.userid = ? AND m.collection = ?", myid, utils.COLLECTION_APPROVED).
 			Order("LOWER(CASE WHEN g.namefull IS NOT NULL THEN g.namefull ELSE g.nameshort END)").
@@ -2245,6 +2268,40 @@ func PatchSession(c *fiber.Ctx) error {
 	})
 }
 
+// logLogout writes the User/Logout audit row, the counterpart of the User/Login
+// row auth.CreateSessionAndJWT writes. V1 wrote "Series $series"
+// (include/session/Session.php); the same series is recorded here so a logout can
+// be paired with the login that opened it, which is how you tell "logged out of
+// ModTools" from "logged out of Freegle" for one account.
+//
+// A logout that could identify neither the series nor the session row deletes
+// nothing (Discourse #9748) - it is still logged, because a client asking to log
+// out and being unable to say which session is exactly the state worth seeing.
+func logLogout(c *fiber.Ctx, myid uint64, sessionId uint64, series uint64) {
+	var text string
+
+	switch {
+	case series > 0:
+		text = "Series " + strconv.FormatUint(series, 10)
+	case sessionId > 0:
+		text = "Session " + strconv.FormatUint(sessionId, 10) + ", series unknown"
+	default:
+		text = "Session unidentified - nothing deleted"
+	}
+
+	if site := auth.RequestSite(c); site != "" {
+		text += " (" + site + ")"
+	}
+
+	log2.Log(log2.LogEntry{
+		Type:    log2.LOG_TYPE_USER,
+		Subtype: log2.LOG_SUBTYPE_LOGOUT,
+		User:    &myid,
+		Byuser:  &myid,
+		Text:    &text,
+	})
+}
+
 // DeleteSession logs the user out by destroying their session.
 //
 // @Summary Logout
@@ -2307,6 +2364,8 @@ func DeleteSession(c *fiber.Ctx) error {
 		// If the current session cannot be identified at all, do NOT delete every
 		// session for the user. A logout that can't scope itself must no-op rather
 		// than evict the user from every device and app (Discourse #9748).
+
+		logLogout(c, myid, sessionId, series)
 	}
 
 	return c.JSON(fiber.Map{

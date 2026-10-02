@@ -12,6 +12,7 @@
 //   legendMode   — ref ('outbound' | 'inbound' | 'catchment') set by the tab/direction
 //                  toggles, so the key on the map matches what is drawn
 import { watch } from 'vue'
+import { attribution, loadLeaflet, osmtile } from '~/composables/useMap'
 import {
   chaikinSmooth,
   geoToLeaflet,
@@ -47,8 +48,13 @@ export async function setupRipplingExplorer({
   legendMode,
   catchmentLegend,
 }) {
-  await import('leaflet/dist/leaflet.css')
-  const L = (await import('leaflet')).default
+  // The app's one Leaflet instance, pinned on window.L. The bare 'leaflet' package is the
+  // UMD build, which assigns window.L to itself when it loads; importing it here swapped
+  // every vue-leaflet map on the page onto a second instance, and the message map's
+  // fitBounds() then rejected bounds built with the first ("Bounds are not valid."),
+  // taking the whole ModTools page to the error view whenever the reach opened.
+  await loadLeaflet()
+  const L = window.L
 
   let map = null
   const cleanupFns = []
@@ -76,14 +82,10 @@ export async function setupRipplingExplorer({
   ]
 
   map = L.map('rippling-map', { zoomControl: true }).setView([52.5, -1.8], 7)
-  L.tileLayer(
-    'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-    {
-      attribution: '© OpenStreetMap © CartoDB',
-      subdomains: 'abcd',
-      maxZoom: 19,
-    }
-  ).addTo(map)
+  L.tileLayer(osmtile(), {
+    attribution: attribution(),
+    maxZoom: 19,
+  }).addTo(map)
 
   // The ACTUAL stored reach outline (per-post reach modal only): what the engine actually
   // holds, as opposed to what the schedule says it should - the two diverge when a reach is

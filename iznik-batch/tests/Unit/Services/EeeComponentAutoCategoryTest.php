@@ -4,6 +4,7 @@ namespace Tests\Unit\Services;
 
 use App\Services\EeeComponentService;
 use App\Services\EeeSqliteService;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -13,6 +14,8 @@ use Tests\TestCase;
  * description, lowercases and trims it, then applies the CATEGORY_RULES
  * constant (an ordered set of regex patterns) to return one of:
  *   'primary_eee'      — the component itself requires electricity as its primary function
+ *   'distinct_function_eee' — a substantive electrical function alongside a
+ *                        non-electrical basic function (fish tank pump, spa jets)
  *   'supplementary_eee'— electrical feature that supports a non-electrical item
  *   'non_electrical'   — purely mechanical / structural component
  *   'unknown'          — no pattern matched; needs manual review
@@ -46,13 +49,95 @@ class EeeComponentAutoCategoryTest extends TestCase
         );
     }
 
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SECTION: distinct_function_eee — a substantive electrical function
+    // alongside a non-electrical basic function.
+    //
+    // The Environment Agency names fish tanks with a pump, spa baths, loft
+    // ladders with electronic controls, roller screens with electronic winders
+    // and riser chairs as EEE. None of them has an electrical BASIC function, so
+    // a primary-function test gets every one of them wrong.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[DataProvider('provideDistinctFunctionCases')]
+    public function test_distinct_function_eee(string $input): void
+    {
+        $this->assertCategory('distinct_function_eee', $input);
+    }
+
+    public static function provideDistinctFunctionCases(): array
+    {
+        return array_map(fn($c) => [$c], [
+            // Powered water/air circulation — fish tanks, ponds, spa baths
+            'filter pump', 'filtration pump', 'pond pump', 'tank pump',
+            'circulation pump', 'air pump',
+            'pump and filter', 'pump filter', 'powered filter',
+            'aerator', 'air stone', 'airstone', 'protein skimmer',
+            // Spa / hydrotherapy
+            'whirlpool jets', 'spa jets', 'hydrotherapy jets', 'massage jets',
+            'air jets', 'jet nozzles', 'air blower',
+            // Powered movement fitted to otherwise non-electrical furniture.
+            // 'recliner motor' and 'bed adjustment motor' are omitted: the existing
+            // primary_eee motor rules claim them first, which gives the same is_eee.
+            'riser actuator', 'lift mechanism',
+            'powered recliner', 'powered riser', 'electric winder',
+            'bed actuator',
+            // Wearable / equipment sensors that are a fundamental feature
+            'heart rate monitor', 'heart rate sensor', 'heart rate strap',
+            'fitness tracker', 'activity sensor', 'step counter',
+        ]);
+    }
+
+    /**
+     * A powered filtration unit must not be swallowed by the passive
+     * '/\bfilter\b/' rule in non_electrical. This was a live bug: "filter pump"
+     * classified as non_electrical, which made a fish tank with a pump come out
+     * as containing no electrical components at all — the exact case the
+     * Environment Agency names as in scope.
+     */
+    public function test_filter_pump_is_not_swallowed_by_passive_filter_rule(): void
+    {
+        $this->assertCategory('distinct_function_eee', 'filter pump');
+        $this->assertCategory('distinct_function_eee', 'filtration pump');
+
+        // Passive filter elements must still classify as non_electrical.
+        $this->assertCategory('non_electrical', 'lint filter');
+        $this->assertCategory('non_electrical', 'coffee filter');
+    }
+
+    /**
+     * Manual pumps are not electrical and must not be caught by the powered
+     * pump patterns.
+     */
+    public function test_manual_pumps_are_not_distinct_function(): void
+    {
+        foreach (['foot pump', 'hand pump', 'bicycle pump'] as $input) {
+            $this->assertNotSame(
+                'distinct_function_eee',
+                $this->service->autoCategory($input),
+                "Manual pump wrongly treated as powered: {$input}"
+            );
+        }
+    }
+
+    /**
+     * Components that only support or control a non-electrical basic function
+     * must stay supplementary, so the text signal decides. This is what keeps a
+     * gas cooker out of scope, which the guidance names explicitly.
+     */
+    public function test_support_and_control_components_stay_supplementary(): void
+    {
+        $this->assertCategory('supplementary_eee', 'electronic ignition');
+        $this->assertCategory('supplementary_eee', 'indicator light');
+        $this->assertCategory('supplementary_eee', 'electronic control panel');
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // SECTION 1: primary_eee — motors, compressors, drives
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * @dataProvider provideMotorAndDriveCases
-     */
+    #[DataProvider('provideMotorAndDriveCases')]
     public function test_primary_eee_motor_and_drive(string $input): void
     {
         $this->assertCategory('primary_eee', $input);
@@ -76,9 +161,7 @@ class EeeComponentAutoCategoryTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider provideHeatingElementCases
-     */
+    #[DataProvider('provideHeatingElementCases')]
     public function test_primary_eee_heating_elements(string $input): void
     {
         $this->assertCategory('primary_eee', $input);
@@ -108,9 +191,7 @@ class EeeComponentAutoCategoryTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider provideBatteryAndPowerCases
-     */
+    #[DataProvider('provideBatteryAndPowerCases')]
     public function test_primary_eee_battery_and_power(string $input): void
     {
         $this->assertCategory('primary_eee', $input);
@@ -130,9 +211,7 @@ class EeeComponentAutoCategoryTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider providePrintingAndScanCases
-     */
+    #[DataProvider('providePrintingAndScanCases')]
     public function test_primary_eee_printing_and_scanning(string $input): void
     {
         $this->assertCategory('primary_eee', $input);
@@ -150,9 +229,7 @@ class EeeComponentAutoCategoryTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider provideTunerAndSignalCases
-     */
+    #[DataProvider('provideTunerAndSignalCases')]
     public function test_primary_eee_tuner_and_signal_processing(string $input): void
     {
         $this->assertCategory('primary_eee', $input);
@@ -172,9 +249,7 @@ class EeeComponentAutoCategoryTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider provideDisplayAndScreenCases
-     */
+    #[DataProvider('provideDisplayAndScreenCases')]
     public function test_primary_eee_display_and_screens(string $input): void
     {
         $this->assertCategory('primary_eee', $input);
@@ -203,9 +278,7 @@ class EeeComponentAutoCategoryTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider provideLightingCases
-     */
+    #[DataProvider('provideLightingCases')]
     public function test_primary_eee_lighting(string $input): void
     {
         $this->assertCategory('primary_eee', $input);
@@ -233,9 +306,7 @@ class EeeComponentAutoCategoryTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider provideAudioCases
-     */
+    #[DataProvider('provideAudioCases')]
     public function test_primary_eee_audio_components(string $input): void
     {
         $this->assertCategory('primary_eee', $input);
@@ -256,9 +327,7 @@ class EeeComponentAutoCategoryTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider provideOpticalDriveCases
-     */
+    #[DataProvider('provideOpticalDriveCases')]
     public function test_primary_eee_optical_drives(string $input): void
     {
         $this->assertCategory('primary_eee', $input);
@@ -277,9 +346,7 @@ class EeeComponentAutoCategoryTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider provideComputingCases
-     */
+    #[DataProvider('provideComputingCases')]
     public function test_primary_eee_computing_hardware(string $input): void
     {
         $this->assertCategory('primary_eee', $input);
@@ -299,9 +366,7 @@ class EeeComponentAutoCategoryTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider provideInputDeviceCases
-     */
+    #[DataProvider('provideInputDeviceCases')]
     public function test_primary_eee_input_devices(string $input): void
     {
         $this->assertCategory('primary_eee', $input);
@@ -326,9 +391,7 @@ class EeeComponentAutoCategoryTest extends TestCase
     // SECTION 2: supplementary_eee — controls, cables, connectors, indicators
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * @dataProvider provideDisplayAndIndicatorCases
-     */
+    #[DataProvider('provideDisplayAndIndicatorCases')]
     public function test_supplementary_eee_displays_and_indicators(string $input): void
     {
         $this->assertCategory('supplementary_eee', $input);
@@ -350,9 +413,7 @@ class EeeComponentAutoCategoryTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider provideSwitchAndControlCases
-     */
+    #[DataProvider('provideSwitchAndControlCases')]
     public function test_supplementary_eee_switches_and_controls(string $input): void
     {
         $this->assertCategory('supplementary_eee', $input);
@@ -375,9 +436,7 @@ class EeeComponentAutoCategoryTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider provideCableAndConnectorCases
-     */
+    #[DataProvider('provideCableAndConnectorCases')]
     public function test_supplementary_eee_cables_and_connectors(string $input): void
     {
         $this->assertCategory('supplementary_eee', $input);
@@ -406,9 +465,7 @@ class EeeComponentAutoCategoryTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider provideLightingSupplementaryCases
-     */
+    #[DataProvider('provideLightingSupplementaryCases')]
     public function test_supplementary_eee_incidental_lighting(string $input): void
     {
         $this->assertCategory('supplementary_eee', $input);
@@ -426,9 +483,7 @@ class EeeComponentAutoCategoryTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider provideIgnitionAndSensorCases
-     */
+    #[DataProvider('provideIgnitionAndSensorCases')]
     public function test_supplementary_eee_ignition_and_sensors(string $input): void
     {
         $this->assertCategory('supplementary_eee', $input);
@@ -440,7 +495,6 @@ class EeeComponentAutoCategoryTest extends TestCase
             'electronic ignition'   => ['electronic ignition'],
             'electric ignition'     => ['electric ignition'],
             'pulse sensor'          => ['pulse sensor'],
-            'heart rate sensor'     => ['heart rate sensor'],
             'infrared receiver'     => ['infrared receiver'],
             'infrared emitter'      => ['infrared emitter'],
             'infrared transmitter'  => ['infrared transmitter'],
@@ -451,9 +505,7 @@ class EeeComponentAutoCategoryTest extends TestCase
     // SECTION 3: non_electrical — mechanical / structural components
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * @dataProvider provideNonElectricalCases
-     */
+    #[DataProvider('provideNonElectricalCases')]
     public function test_non_electrical_mechanical_components(string $input): void
     {
         $this->assertCategory('non_electrical', $input);
@@ -500,9 +552,7 @@ class EeeComponentAutoCategoryTest extends TestCase
     // SECTION 4: unknown — unmatched inputs
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * @dataProvider provideUnknownCases
-     */
+    #[DataProvider('provideUnknownCases')]
     public function test_unknown_for_unrecognised_inputs(string $input): void
     {
         $this->assertCategory('unknown', $input);
@@ -525,9 +575,7 @@ class EeeComponentAutoCategoryTest extends TestCase
     // SECTION 5: Case insensitivity
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * @dataProvider provideCaseInsensitiveCases
-     */
+    #[DataProvider('provideCaseInsensitiveCases')]
     public function test_case_insensitive_matching(string $input, string $expected): void
     {
         $this->assertCategory($expected, $input);
@@ -551,9 +599,7 @@ class EeeComponentAutoCategoryTest extends TestCase
     // SECTION 6: Whitespace trimming
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * @dataProvider provideWhitespaceCases
-     */
+    #[DataProvider('provideWhitespaceCases')]
     public function test_leading_and_trailing_whitespace_is_trimmed(string $input, string $expected): void
     {
         $this->assertCategory($expected, $input, "Whitespace-padded: '{$input}'");

@@ -51,6 +51,25 @@ async function measureDesktopFeedCard(page) {
   return await measureFeedCard(page)
 }
 
+// What the browser actually paints at the centre of the viewport, and where it lives.
+// Asking the browser beats trusting either stylesheet when checking stacking order.
+async function whatIsOnTop(page) {
+  return await page.evaluate(() => {
+    const viewer = document.querySelector('.fullscreen-viewer')
+    const modal = document.querySelector('.message-modal')
+    const el = document.elementFromPoint(
+      Math.round(window.innerWidth / 2),
+      Math.round(window.innerHeight / 2)
+    )
+    return {
+      insideViewer: !!(viewer && el && viewer.contains(el)),
+      insidePostModal: !!(modal && el && modal.contains(el)),
+      viewerZ: viewer ? getComputedStyle(viewer).zIndex : null,
+      postModalZ: modal ? getComputedStyle(modal).zIndex : null,
+    }
+  })
+}
+
 // Helper: sign up and join a group.
 async function signUpAndJoinGroup(page, testEmail, userName, groupName) {
   const signupResult = await signUpViaHomepage(page, testEmail, userName)
@@ -396,5 +415,65 @@ test.describe('Browse Page Tests', () => {
     })
 
     console.log('Browse page loaded successfully')
+  })
+
+  /* A post opens in a modal, so the photo viewer is opened from inside one and has to
+     cover it. Lifting modals as a class above the viewer buries it behind its own
+     opener, and members then see only the sliver of photo outside the modal's edges.
+     The viewer is fixed at z-index 10000, bootstrap's modals sit at about 1050, and
+     nothing may reorder those two. */
+  test('should open the photo viewer on top of the post modal', async ({
+    page,
+    testEnv,
+  }) => {
+    await loginViaHomepage(page, testEnv.mod.email, 'freegle')
+
+    // The group's own page lists its posts, so the card is there whatever the
+    // feed near the viewer holds, and the list is not re-searched underneath us.
+    await page.gotoAndVerify(`/explore/${testEnv.group.name}`, {
+      timeout: timeouts.navigation.default,
+    })
+
+    const card = page
+      .locator(`#msg-${testEnv.messages.offer} .message-summary-mobile`)
+      .first()
+    await expect(card).toBeVisible({ timeout: timeouts.ui.appearance })
+
+    // The profile prompt can open over the page and swallow clicks.
+    const aboutMe = page.locator('.modal.show:has-text("public profile")')
+    if (await aboutMe.isVisible()) {
+      await aboutMe.getByRole('button', { name: 'Skip for now' }).click()
+      await expect(aboutMe).toBeHidden()
+    }
+
+    await card.click()
+
+    // The post opens in a modal, with its photo at the top. Click the whole photo
+    // area: the title sits over the bottom of the photo and the click reaches the
+    // area underneath it, which is what opens the viewer.
+    const postModal = page.locator('.message-modal')
+    await expect(postModal).toBeVisible({ timeout: timeouts.ui.appearance })
+    const photo = postModal.locator('.photo-area:visible').first()
+    await expect(photo).toBeVisible({ timeout: timeouts.ui.appearance })
+
+    await photo.click()
+
+    await expect(page.locator('.fullscreen-viewer')).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
+
+    await expect
+      .poll(async () => (await whatIsOnTop(page)).insideViewer, {
+        timeout: timeouts.ui.appearance,
+      })
+      .toBe(true)
+
+    // Spell the ordering out too, so a failure says which way round they ended up.
+    const stacking = await whatIsOnTop(page)
+    console.log('Photo viewer stacking:', JSON.stringify(stacking))
+    expect(stacking.insidePostModal).toBe(false)
+    expect(Number(stacking.viewerZ)).toBeGreaterThan(
+      Number(stacking.postModalZ)
+    )
   })
 })

@@ -40,7 +40,7 @@ func TestFreeglerReachableGroupIDs_MemberOwnReachability(t *testing.T) {
 		{groupID: 300, lat: 59.0, lng: 1.0},                                                  // offshore: no node
 	}
 
-	got := freeglerReachableGroupIDs(g, reached, members, Walk)
+	got := freeglerReachableGroupIDs(g, reached, members)
 	want := []int64{100}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("freeglerReachableGroupIDs = %v, want %v", got, want)
@@ -51,13 +51,13 @@ func TestFreeglerReachableGroupIDs_MemberOwnReachability(t *testing.T) {
 // members it has.
 func TestFreeglerReachableGroupIDs_OneReachableMemberSuffices(t *testing.T) {
 	g := makeLineGraph(5)
-	all := Isochrone(g, float64(g.Nodes[1].Lat), float64(g.Nodes[1].Lng), 1e9, Walk).ReachedNodes
+	all := Isochrone(g, float64(g.Nodes[1].Lat), float64(g.Nodes[1].Lng), 1e9).ReachedNodes
 
 	members := []memberLoc{
 		{groupID: 42, lat: 59.0, lng: 1.0},                                        // offshore, unreachable
 		{groupID: 42, lat: float64(g.Nodes[1].Lat), lng: float64(g.Nodes[1].Lng)}, // reachable
 	}
-	got := freeglerReachableGroupIDs(g, all, members, Walk)
+	got := freeglerReachableGroupIDs(g, all, members)
 	if !reflect.DeepEqual(got, []int64{42}) {
 		t.Fatalf("freeglerReachableGroupIDs = %v, want [42]", got)
 	}

@@ -168,7 +168,7 @@ func TestForgotPasswordStaleJWTReturns401(t *testing.T) {
 
 	// 3. Simulate a successful u/k auto-login on the forgotpass landing
 	//    page. This creates a brand-new session row for the same user.
-	_, _, err := auth.CreateSessionAndJWT(userID)
+	_, _, err := auth.CreateSessionAndJWT(nil, userID, auth.LoginMethodPassword)
 	assert.NoError(t, err)
 
 	// 4. Frontend fires PATCH /session before localStorage is updated with
@@ -197,9 +197,9 @@ func TestCreateSessionAndJWTSeriesIsNumericAndUnique(t *testing.T) {
 	// Create two sessions for the same user. The series values must both be
 	// non-zero, not MAX uint64, and distinct — anything else indicates the
 	// bigint coercion bug is back.
-	persistent1, _, err1 := auth.CreateSessionAndJWT(userID)
+	persistent1, _, err1 := auth.CreateSessionAndJWT(nil, userID, auth.LoginMethodPassword)
 	assert.NoError(t, err1)
-	persistent2, _, err2 := auth.CreateSessionAndJWT(userID)
+	persistent2, _, err2 := auth.CreateSessionAndJWT(nil, userID, auth.LoginMethodPassword)
 	assert.NoError(t, err2)
 
 	series1, _ := persistent1["series"].(uint64)

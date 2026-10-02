@@ -55,16 +55,6 @@ class UnifiedDigestCardPhotoTest extends TestCase
             'unsubscribeUrl' => 'https://example.com/unsubscribe',
             'userSite'       => 'https://example.com',
             'siteName'       => 'Freegle',
-            // AMP-only (used by amp-form action-xhr per post — already in $post['ampReplyUrl'])
-            'ampPostMeta'    => $posts->mapWithKeys(
-                fn ($p) => [(int) $p['message']->id => [
-                    't' => $p['itemName'],
-                    'k' => '',
-                    'e' => 0,
-                ]]
-            )->toArray(),
-            'ampApiUrl'      => 'https://api.ilovefreegle.org/amp',
-            'ampUserId'      => 1,
         ];
     }
 

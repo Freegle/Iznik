@@ -1,7 +1,9 @@
 package test
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -134,8 +136,26 @@ var spatialMockOnce sync.Once
 // and returns empty for every other dataset. This keeps ClosestPostcode
 // deterministic without depending on a live, populated spatial server, which the
 // test environment doesn't provide.
+//
+// The override is process-wide and permanent (os.Setenv, not t.Setenv), so
+// EVERY later test in this package talks to this mock rather than the real
+// service. That is the point for the index datasets, whose contents the test
+// environment cannot guarantee - but it is wrong for /v1/reach/rasterize,
+// which is pure computation with no index behind it, and which must not be
+// reimplemented anywhere (a second rasteriser could disagree with the real one
+// at a boundary cell and nothing would catch it - see
+// plans/2026-08-24-rippling-reach-raster-storage.md). The same holds for
+// /v1/reach/vectorize (the inverse conversion, also pure computation). So
+// those paths are forwarded to the real server, whose address is captured
+// here before the override replaces it.
+//
+// Without the forward, the catch-all below answers a rasterise request with
+// `{"results":[],"ids":[]}` and HTTP 200 - a perfectly valid-looking response
+// that is not a cell set, which is exactly how this was found.
 func ensureSpatialMock() {
 	spatialMockOnce.Do(func() {
+		realSpatial := os.Getenv("SPATIAL_KNN_URL")
+
 		type pc struct {
 			id       int64
 			lng, lat float64
@@ -146,6 +166,11 @@ func ensureSpatialMock() {
 			{1687412, -4.939858, 52.006292},
 		}
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if (strings.Contains(r.URL.Path, "/reach/rasterize") ||
+				strings.Contains(r.URL.Path, "/reach/vectorize")) && realSpatial != "" {
+				proxyToRealSpatial(w, r, realSpatial)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			if strings.Contains(r.URL.Path, "/postcodes/knn") {
 				lat, _ := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
@@ -166,6 +191,34 @@ func ensureSpatialMock() {
 	})
 }
 
+// proxyToRealSpatial forwards one request to the real spatial server and
+// copies its status and body back verbatim, so a caller cannot tell it went
+// through the mock. Failures are surfaced as 502 with the reason rather than
+// as an empty 200, which would look like a successful conversion.
+func proxyToRealSpatial(w http.ResponseWriter, r *http.Request, base string) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "spatial mock: read body: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	resp, err := http.Post(strings.TrimRight(base, "/")+r.URL.Path, r.Header.Get("Content-Type"), bytes.NewReader(body))
+	if err != nil {
+		http.Error(w, "spatial mock: forward: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "spatial mock: read forwarded body: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	w.WriteHeader(resp.StatusCode)
+	w.Write(out)
+}
+
 // verifyRequiredTables checks that tables created by Laravel migrations exist.
 // These tables are not in schema.sql and are created by iznik-batch migrations.
 // If missing, it means migrations haven't been run before tests.
@@ -181,6 +234,8 @@ func verifyRequiredTables() {
 }
 
 func TestMain(m *testing.M) {
+	dropLegacyReachGeometry()
+
 	code := m.Run()
 
 	// Clean up test groups after all tests complete (pass or fail).
@@ -189,6 +244,31 @@ func TestMain(m *testing.M) {
 	cleanupTestGroups()
 
 	os.Exit(code)
+}
+
+// Every reach fixture in this package inserts the cell grids and nothing else, which is
+// the shape rippling_reach has once 2026_08_25_000001_drop_rippling_reach_legacy_geometry
+// has run. A test database cloned from a dev database that still carries the pre-drop
+// column gets polygon GEOMETRY NOT NULL with no default, so all of those inserts die with
+// "Field 'polygon' doesn't have a default value" - taking the first-reply, reach, browse
+// and nearby tests with them, for a schema reason none of those tests are about.
+//
+// Dropping it here rather than teaching every fixture about a column the code no longer
+// reads. Safe: this runs against the disposable test database, which is rebuilt from a
+// schema clone on every run, and the column's SPATIAL index goes with it.
+func dropLegacyReachGeometry() {
+	db := database.DBConn
+
+	var present int
+	db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() " +
+		"AND table_name = 'rippling_reach' AND column_name = 'polygon'").Scan(&present)
+	if present == 0 {
+		return
+	}
+
+	if err := db.Exec("ALTER TABLE rippling_reach DROP COLUMN polygon").Error; err != nil {
+		fmt.Printf("WARNING: could not drop legacy rippling_reach.polygon: %v\n", err)
+	}
 }
 
 func cleanupTestGroups() {

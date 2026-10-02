@@ -9,16 +9,19 @@ use App\Models\MessageAttachment;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
+use App\Services\Ripple\ReachMemberQueueService;
 use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Tests\Support\FakesRingIndex;
+use Tests\Support\SeedsReachCells;
 use Tests\TestCase;
 
 class UnifiedDigestServiceTest extends TestCase
 {
     use FakesRingIndex;
+    use SeedsReachCells;
 
     protected UnifiedDigestService $service;
 
@@ -328,17 +331,138 @@ class UnifiedDigestServiceTest extends TestCase
 
         // A reach that DOES cover the recipient, so only the frozen status can exclude it.
         DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status, arrival)
-             VALUES (?, 51.5, -0.1,
-                ST_GeomFromText('POLYGON((-10 40, 10 40, 10 60, -10 60, -10 40))', 3857),
-                ST_Envelope(ST_GeomFromText('POLYGON((-10 40, 10 40, 10 60, -10 60, -10 40))', 3857)),
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
+             VALUES (?, 51.5, -0.1, ?,
+                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 3857)),
                 'held', NOW())
              ON DUPLICATE KEY UPDATE status = VALUES(status)",
-            [$message->id]
+            [$message->id, $this->reachCellsFor('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))')]
         );
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
         $this->assertEquals(0, $stats['emails_sent'], 'a post under moderation must not be digested');
+    }
+
+    public function test_daily_digest_drops_a_post_whose_stored_label_says_out(): void
+    {
+        // Labels-truth: the stored road-network label is the deciding record.
+        // The cell grid covers this recipient (over-coverage - the far bank of
+        // an estuary), but the label knows they cannot drive there within the
+        // post's current budget, so the digest must not mail it - the same
+        // narrowing browse applies, so mail can never carry what browse hides.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+        $this->setMyLocation($recipient, 51.5, -0.1);
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $message = $this->createTestMessage($poster, $group);
+
+        // Cells that DO cover the recipient at (51.5, -0.1).
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
+             VALUES (?, 51.5, -0.1, ?,
+                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 3857)),
+                'expanding', NOW())
+             ON DUPLICATE KEY UPDATE status = VALUES(status)",
+            [$message->id, $this->reachCellsFor('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))')]
+        );
+
+        Http::fake(['*/v1/reach-eval*' => Http::response([
+            'results' => [['msgid' => $message->id, 'verdict' => 'out']],
+        ])]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(0, $stats['emails_sent'], 'an OUT label verdict must override in-reach cells');
+    }
+
+    public function test_daily_digest_keeps_a_post_with_no_stored_label(): void
+    {
+        // Not backfilled yet (or the routing server predates labels): the
+        // cell-grid verdict stands unchanged.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+        $this->setMyLocation($recipient, 51.5, -0.1);
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $message = $this->createTestMessage($poster, $group);
+
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
+             VALUES (?, 51.5, -0.1, ?,
+                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 3857)),
+                'expanding', NOW())
+             ON DUPLICATE KEY UPDATE status = VALUES(status)",
+            [$message->id, $this->reachCellsFor('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))')]
+        );
+
+        Http::fake(['*/v1/reach-eval*' => Http::response([
+            'results' => [['msgid' => $message->id, 'verdict' => 'nolabels']],
+        ])]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(1, $stats['emails_sent'], 'with no stored label the cell verdict decides');
+    }
+
+    public function test_daily_digest_discovers_a_labelled_post_the_grid_missed(): void
+    {
+        // The under-coverage band: the post's cell grid does NOT cover this
+        // recipient, so the grid gate alone would exclude it - but its stored
+        // label admits them by road, and the discover arm re-admits it, the
+        // same union the browse feed applies.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+        $this->setMyLocation($recipient, 51.5, -0.1);
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $message = $this->createTestMessage($poster, $group);
+
+        // Cells well away from the recipient at (51.5, -0.1).
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
+             VALUES (?, 51.5, 0.7, ?,
+                ST_Envelope(ST_GeomFromText('POLYGON((0.5 51.3, 0.9 51.3, 0.9 51.7, 0.5 51.7, 0.5 51.3))', 3857)),
+                'expanding', NOW())
+             ON DUPLICATE KEY UPDATE status = VALUES(status)",
+            [$message->id, $this->reachCellsFor('POLYGON((0.5 51.3, 0.9 51.3, 0.9 51.7, 0.5 51.7, 0.5 51.3))')]
+        );
+
+        Http::fake(['*/v1/reach-eval*' => Http::response([
+            'results' => [],
+            'discovered' => [['msgid' => $message->id, 'verdict' => 'in']],
+        ])]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(1, $stats['emails_sent'], 'a label-admitted post the grid missed must still be mailed');
     }
 
     public function test_daily_digest_flags_already_seen_posts_for_the_recipient(): void
@@ -926,6 +1050,404 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(1, $stats['emails_sent']);
     }
 
+    public function test_daily_digest_carries_posts_left_out_at_the_cap_to_the_next_run(): void
+    {
+        // Discourse 10029/17: a post that was eligible but did not fit under the post cap
+        // used to be lost for good, because the cursor moved past it. The digest now
+        // records what it left out and offers those posts again in the next run.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createMembership($poster, $group);
+        for ($i = 1; $i <= $cap + 2; $i++) {
+            $this->createTestMessage($poster, $group, ['subject' => "OFFER: Carry{$i}Zq (TestLocation)"]);
+        }
+
+        Mail::fake();
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(1, $stats['emails_sent']);
+        $sent = [];
+        Mail::assertSent(\App\Mail\Digest\UnifiedDigest::class, function ($m) use (&$sent) {
+            $sent[] = $m;
+            return true;
+        });
+        $this->assertCount(1, $sent);
+        $dropped = $sent[0]->droppedPostIds();
+        $this->assertCount(2, $dropped, 'two posts did not fit under the cap');
+
+        $tracker = UserDigest::where('userid', $recipient->id)
+            ->where('mode', UnifiedDigestService::MODE_DAILY)
+            ->first();
+        $this->assertEqualsCanonicalizing($dropped, $tracker->carryover);
+
+        // Next day: nothing new has arrived, but the two carried posts are offered again,
+        // and once shown they are not carried any further.
+        $tracker->update(['lastsent' => now()->subDay()]);
+        Mail::fake();
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(1, $stats['emails_sent']);
+        $sent = [];
+        Mail::assertSent(\App\Mail\Digest\UnifiedDigest::class, function ($m) use (&$sent) {
+            $sent[] = $m;
+            return true;
+        });
+        $shown = array_map(fn ($p) => (int) $p['msgid'], $sent[0]->mailDescriptor()['posts']);
+        $this->assertEqualsCanonicalizing($dropped, $shown);
+        $this->assertSame([], $sent[0]->droppedPostIds());
+        $this->assertNull($tracker->fresh()->carryover);
+    }
+
+    public function test_carried_posts_sit_below_the_new_ones_in_the_next_digest(): void
+    {
+        // A carried post is older than the cursor by construction, so letting the score
+        // interleave it gives the member a digest whose dates jump around - the exact thing
+        // the roll-up exists to avoid. The carried half sinks below the new posts.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+
+        for ($i = 1; $i <= $cap + 2; $i++) {
+            $this->createTestMessage($poster, $group, [
+                'subject' => "OFFER: Below{$i}Zq (TestLocation)",
+                'arrival' => now()->subHours(2),
+            ]);
+        }
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $carried = $this->digestTrackerFor($recipient)->carryover;
+        $this->assertCount(2, $carried, 'two posts did not fit under the cap');
+
+        // A quiet next day: two new posts arrive, so there is room for everything.
+        $fresh = [];
+        foreach ([1, 2] as $i) {
+            $fresh[] = $this->createTestMessage($poster, $group, [
+                'subject' => "OFFER: Fresh{$i}Zq (TestLocation)",
+            ])->id;
+        }
+        $this->digestTrackerFor($recipient)->update(['lastsent' => now()->subDay()]);
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $shown = array_map(
+            fn ($p) => (int) $p['msgid'],
+            $this->lastDailyDigest()->mailDescriptor()['posts']
+        );
+
+        $this->assertCount(4, $shown, 'all four fit under the cap');
+        $this->assertEqualsCanonicalizing($fresh, array_slice($shown, 0, 2), 'the new posts lead');
+        $this->assertEqualsCanonicalizing($carried, array_slice($shown, 2), 'the carried ones follow');
+    }
+
+    public function test_a_carried_post_stops_being_carried_once_it_is_too_old(): void
+    {
+        // Nothing removes an id from the carryover except being shown, or the post getting an
+        // outcome or being deleted - and a member whose daily volume is over the cap has no
+        // room to show one. Without the age bound they accumulate a permanent block of old
+        // posts at the head of every window.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+
+        for ($i = 1; $i <= $cap + 2; $i++) {
+            $this->createTestMessage($poster, $group, [
+                'subject' => "OFFER: Aged{$i}Zq (TestLocation)",
+                'arrival' => now()->subHours(2),
+            ]);
+        }
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        [$stale, $recent] = $this->digestTrackerFor($recipient)->carryover;
+
+        // Age one of the two past the bound, on the clock the digest window uses.
+        $aged = now()->subDays(UnifiedDigestService::CARRYOVER_MAX_AGE_DAYS + 1);
+        DB::table('messages')->where('id', $stale)->update(['arrival' => $aged]);
+        DB::table('messages_groups')->where('msgid', $stale)->update(['arrival' => $aged]);
+
+        // Next day, a full digest's worth of new posts, so neither carried post has room.
+        for ($i = 1; $i <= $cap; $i++) {
+            $this->createTestMessage($poster, $group, ['subject' => "OFFER: Next{$i}Zq (TestLocation)"]);
+        }
+        $this->digestTrackerFor($recipient)->update(['lastsent' => now()->subDay()]);
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $dropped = $this->lastDailyDigest()->droppedPostIds();
+        $this->assertContains($stale, $dropped, 'the aged post was still a candidate the cap cut');
+        $this->assertContains($recent, $dropped, 'so was the one still within the bound');
+
+        $this->assertSame([$recent], $this->digestTrackerFor($recipient)->carryover);
+    }
+
+    public function test_a_carried_post_the_member_has_since_seen_is_not_carried_again(): void
+    {
+        // scoreAndSortAvailable sinks a seen post by seen_penalty, so it can never win a slot
+        // against anything unseen. Carrying it spends a DIGEST_LOAD_CAP slot - at the FRONT of
+        // the window, since carried posts are older than the cursor - on a post that will
+        // never be shown.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+
+        for ($i = 1; $i <= $cap + 2; $i++) {
+            $this->createTestMessage($poster, $group, [
+                'subject' => "OFFER: Seen{$i}Zq (TestLocation)",
+                'arrival' => now()->subHours(2),
+            ]);
+        }
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        [$viewed, $unviewed] = $this->digestTrackerFor($recipient)->carryover;
+
+        // The member found one of them on the website in the meantime.
+        DB::table('messages_likes')->insert([
+            'msgid' => $viewed, 'userid' => $recipient->id, 'type' => 'View', 'count' => 1,
+        ]);
+
+        for ($i = 1; $i <= $cap; $i++) {
+            $this->createTestMessage($poster, $group, ['subject' => "OFFER: After{$i}Zq (TestLocation)"]);
+        }
+        $this->digestTrackerFor($recipient)->update(['lastsent' => now()->subDay()]);
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $dropped = $this->lastDailyDigest()->droppedPostIds();
+        $this->assertContains($viewed, $dropped, 'the seen post was still a candidate the cap cut');
+
+        $this->assertSame([$unviewed], $this->digestTrackerFor($recipient)->carryover);
+    }
+
+    public function test_the_carryover_never_holds_more_than_one_digest_worth(): void
+    {
+        // The age bound does not bound the SIZE: a member busy enough to drop hundreds fills
+        // the list with three days of recent posts. Size is what costs them, because the
+        // window query is oldest-first under DIGEST_LOAD_CAP. One digest's worth is also the
+        // most that could ever be shown, and droppedPostIds() is in the digest's own priority
+        // order, so the head is the part with a real chance.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+
+        for ($i = 1; $i <= 2 * $cap + 3; $i++) {
+            $this->createTestMessage($poster, $group, [
+                'subject' => "OFFER: Many{$i}Zq (TestLocation)",
+                'arrival' => now()->subHours(2),
+            ]);
+        }
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $dropped = $this->lastDailyDigest()->droppedPostIds();
+        $this->assertCount($cap + 3, $dropped, 'more than a digest\'s worth did not fit');
+
+        $carried = $this->digestTrackerFor($recipient)->carryover;
+        $this->assertCount($cap, $carried, 'the stored list is capped');
+        $this->assertSame(array_slice($dropped, 0, $cap), $carried, 'and it keeps the head');
+    }
+
+    public function test_the_carryover_is_not_ORed_into_the_window_query(): void
+    {
+        // The carryover list is on messages.id; the window's range column is
+        // messages_groups.arrival. ORing them puts a predicate on a DIFFERENT table inside
+        // the range, so MySQL cannot index-merge, abandons the
+        // groupid(groupid,collection,deleted,arrival) index and — because the query is
+        // ORDER BY arrival ASC LIMIT — walks the arrival index from the oldest row of
+        // 11M forward instead. Measured on production 2026-09-17: 60-74s against 0.29s
+        // for the same query with the carryover arm removed, which is what pinned db2 at
+        // 98% of its cores and stopped the daily digest finishing inside its window.
+        // The two arms must therefore be two queries, not one.
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+
+        $carried = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: SplitCarriedZq (TestLocation)',
+            'arrival' => now()->subDays(2),
+        ]);
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: SplitFreshZq (TestLocation)',
+            'arrival' => now()->subHour(),
+        ]);
+
+        $tracker = $this->trackerWithCarryover($recipient, [$carried->id], now()->subDay());
+
+        $queries = [];
+        DB::listen(function ($q) use (&$queries) {
+            $queries[] = $q->sql;
+        });
+        $this->service->getPostsForUser($recipient, $tracker, UnifiedDigestService::MODE_DAILY);
+
+        // Exact, not approximate: the window arm carries the arrival range and the carryover
+        // arm carries the id list. Only the ORed form has both in one statement.
+        $isWindow = fn ($sql) => str_contains($sql, '`messages_groups`.`arrival` >');
+        $hasIdList = fn ($sql) => (bool) preg_match('/`messages`\.`id`\s+in\s*\(/i', $sql);
+
+        foreach ($queries as $sql) {
+            $this->assertFalse(
+                $isWindow($sql) && $hasIdList($sql),
+                "the carryover is ORed into the windowed query, which costs the groupid index:\n" . $sql
+            );
+        }
+
+        // ...and both arms did run, so this is not passing because nothing was queried.
+        $this->assertTrue(collect($queries)->contains($isWindow), 'the window arm did not run');
+        $this->assertTrue(collect($queries)->contains($hasIdList), 'the carryover arm did not run');
+    }
+
+    public function test_a_post_in_both_the_window_and_the_carryover_is_returned_once_per_copy(): void
+    {
+        // Splitting the arms means a post that satisfies BOTH comes back from both queries.
+        // On production 2026-09-17 that overlap was 234 of 1,921 rows. The merge has to
+        // de-duplicate on the (msgid, groupid) PAIR, not on msgid: the query deliberately
+        // returns one row per copy of a cross-posted item, and collapsing by msgid would
+        // silently drop a member's other communities from the digest.
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        $other = $this->createTestGroup();
+        $this->createMembership($recipient, $other, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createMembership($poster, $other);
+
+        // Cross-posted, and INSIDE the window as well as on the carryover list.
+        $both = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: OverlapZq (TestLocation)',
+            'arrival' => now()->subHour(),
+        ]);
+        MessageGroup::create([
+            'msgid' => $both->id,
+            'groupid' => $other->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subHour(),
+        ]);
+
+        $tracker = $this->trackerWithCarryover($recipient, [$both->id], now()->subDay());
+
+        $posts = $this->service->getPostsForUser($recipient, $tracker, UnifiedDigestService::MODE_DAILY);
+
+        $pairs = $posts->map(fn ($p) => (int) $p->id . ':' . (int) $p->groupid)->all();
+        $this->assertSame(
+            count($pairs),
+            count(array_unique($pairs)),
+            'a post on both the window and the carryover came back twice'
+        );
+        $this->assertCount(2, $pairs, 'both copies of the cross-posted item survive the de-duplication');
+    }
+
+    public function test_a_carryover_only_run_does_not_move_the_cursor_backwards(): void
+    {
+        // The cursor is taken from $posts->last() in arrival-ascending order. Carried posts
+        // are older than the cursor by construction, so when a run's window has nothing new
+        // and the carryover is all that comes back, last() is an OLD post and lastmsgdate
+        // regresses. The next run then re-opens a window the member has already been sent,
+        // which both re-offers posts and widens the scan this change exists to narrow.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+
+        // Staggered arrivals, so "backwards" is observable: the cap keeps the newest and
+        // drops the oldest, so everything carried is strictly older than the cursor. Minutes,
+        // not hours - a fresh tracker's window is arrival >= now()-1 day, and DIGEST_POST_CAP
+        // is 65, so hour-spacing would push most of these outside the first run's window.
+        for ($i = 1; $i <= $cap + 2; $i++) {
+            $this->createTestMessage($poster, $group, [
+                'subject' => "OFFER: Cursor{$i}Zq (TestLocation)",
+                'arrival' => now()->subMinutes($cap + 3 - $i),
+            ]);
+        }
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $tracker = $this->digestTrackerFor($recipient);
+        $cursorAfterFirstRun = $tracker->lastmsgdate;
+        $this->assertNotNull($cursorAfterFirstRun, 'the first run set a cursor');
+        $this->assertNotEmpty($tracker->carryover, 'the cap left something to carry');
+
+        // A quiet day: nothing new has arrived, so only the carried posts come back.
+        $tracker->update(['lastsent' => now()->subDay()]);
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $cursorAfterSecondRun = $this->digestTrackerFor($recipient)->lastmsgdate;
+        $this->assertNotNull($cursorAfterSecondRun);
+        $this->assertTrue(
+            $cursorAfterSecondRun->greaterThanOrEqualTo($cursorAfterFirstRun),
+            "a carryover-only run dragged the cursor back into a window already sent: "
+                . "{$cursorAfterFirstRun} -> {$cursorAfterSecondRun}"
+        );
+    }
+
+    /**
+     * A daily tracker with a carryover list and a cursor, as a run that hit the cap leaves it.
+     *
+     * @param int[] $carryover
+     */
+    private function trackerWithCarryover(User $recipient, array $carryover, \DateTimeInterface $cursor): UserDigest
+    {
+        $tracker = UserDigest::firstOrCreate(
+            ['userid' => $recipient->id, 'mode' => UnifiedDigestService::MODE_DAILY],
+        );
+        $tracker->update([
+            'carryover' => $carryover,
+            'lastmsgdate' => $cursor,
+            'lastsent' => now()->subDay(),
+        ]);
+
+        return $tracker->fresh();
+    }
+
+    /**
+     * A recipient on daily, someone to post, and the group they share.
+     *
+     * @return array{0: User, 1: User, 2: Group}
+     */
+    private function dailyDigestMembers(): array
+    {
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createMembership($poster, $group);
+
+        return [$recipient, $poster, $group];
+    }
+
+    private function digestTrackerFor(User $recipient): UserDigest
+    {
+        return UserDigest::where('userid', $recipient->id)
+            ->where('mode', UnifiedDigestService::MODE_DAILY)
+            ->firstOrFail();
+    }
+
+    /**
+     * The digest the run under test just spooled. Mail::assertSent also fails the test when
+     * nothing was sent, which is the assertion every caller here wants anyway.
+     */
+    private function lastDailyDigest(): \App\Mail\Digest\UnifiedDigest
+    {
+        $sent = [];
+        Mail::assertSent(\App\Mail\Digest\UnifiedDigest::class, function ($m) use (&$sent) {
+            $sent[] = $m;
+            return true;
+        });
+
+        return end($sent);
+    }
+
     /**
      * Daily defaults to OFF (empty allowlist = nobody) so a deploy can't
      * double-mail the whole userbase alongside V1's still-running daily cron.
@@ -1118,7 +1640,10 @@ class UnifiedDigestServiceTest extends TestCase
             'primary' => 1, 'archived' => 0,
         ]);
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update(['reach_labels' => 'label-bytes']);
 
+        // The stored label decides who is reached: at first only A's point
+        // (seedReach's box ends at lng 0.0, so A at -0.1 is in, B at 0.5 out).
         $this->service->mailNewlyReachedForPost($msg->id);
 
         $ledgered = fn ($uid) => DB::table('rippling_reach_notified')
@@ -1126,9 +1651,12 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertTrue($ledgered($memberA->id), 'reach-covered member A mailed + ledgered');
         $this->assertFalse($ledgered($memberB->id), 'out-of-reach member B not yet mailed');
 
-        // Reach grows to cover B; the re-run mails B and does NOT re-mail A (ledger dedup).
-        DB::statement('UPDATE rippling_reach SET polygon = ST_GeomFromText(?, 3857) WHERE msgid = ?',
+        // The reach grows to cover B (the label now admits B's point; the
+        // outer bound grows as every writer keeps it growing). The re-run
+        // mails B and does NOT re-mail A (ledger dedup).
+        DB::statement('UPDATE rippling_reach SET outer_bound = ST_Envelope(ST_GeomFromText(?, 3857)) WHERE msgid = ?',
             ['POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))', $msg->id]);
+        $this->reachArrivalBox = $this->wktBounds('POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))');
         $before = DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count();
         $this->service->mailNewlyReachedForPost($msg->id);
         $this->assertTrue($ledgered($memberB->id), 'newly-reached member B mailed on re-run');
@@ -1272,105 +1800,6 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertNotContains($faraway->id, $ids, 'rippling post whose reach does not cover the member is excluded');
     }
 
-    public function test_daily_digest_reach_gate_consults_sandwich_bounds(): void
-    {
-        // The reach gate must consult the sandwich bounds when they exist
-        // (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md): outside outer_bound is an
-        // authoritative cheap reject and inside inner_bound an authoritative cheap
-        // accept — in both cases the exact polygon is never tested. Prove it with
-        // adversarial fixtures whose bounds deliberately contradict their polygon
-        // (impossible for verified writer-derived bounds, but the only way to observe
-        // which shape the query trusted).
-        $poster = $this->createTestUser();
-        $member = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->setMyLocation($member, 51.5, -0.1);
-
-        // Post A: polygon COVERS the member, but outer_bound EXCLUDES them → cheap-rejected.
-        $cheapReject = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: cheap reject (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $cheapReject->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
-        $this->seedReach($cheapReject->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
-        DB::statement(
-            "UPDATE rippling_reach SET outer_bound = ST_GeomFromText('POLYGON((5 5,5.1 5,5.1 5.1,5 5.1,5 5))', 3857),
-                    inner_bound = NULL WHERE msgid = ?",
-            [$cheapReject->id]
-        );
-
-        // Post B: polygon does NOT cover the member, but inner_bound INCLUDES them → cheap-accepted.
-        $cheapAccept = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: cheap accept (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $cheapAccept->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
-        $this->seedReach($cheapAccept->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
-        DB::statement(
-            "UPDATE rippling_reach
-                SET outer_bound = ST_GeomFromText('POLYGON((-0.3 51.3,0.1 51.3,0.1 51.7,-0.3 51.7,-0.3 51.3))', 3857),
-                    inner_bound = ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)
-              WHERE msgid = ?",
-            [$cheapAccept->id]
-        );
-
-        $tracker = UserDigest::create([
-            'userid' => $member->id,
-            'mode' => UnifiedDigestService::MODE_DAILY,
-            'lastmsgid' => 0,
-        ]);
-
-        $ids = $this->service->getPostsForUser($member, $tracker, UnifiedDigestService::MODE_DAILY)
-            ->pluck('id')->all();
-
-        $this->assertNotContains($cheapReject->id, $ids, 'a viewer outside outer_bound is cheap-rejected without testing the polygon');
-        $this->assertContains($cheapAccept->id, $ids, 'a viewer inside inner_bound is cheap-accepted without testing the polygon');
-    }
-
-    public function test_daily_digest_reach_gate_boundary_band_uses_exact_polygon(): void
-    {
-        // Between the bounds — inside outer_bound but not inside inner_bound (here: NULL
-        // inner) — the gate must fall through to the exact polygon test.
-        $poster = $this->createTestUser();
-        $member = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->setMyLocation($member, 51.5, -0.1);
-
-        $outerWkt = 'POLYGON((-0.3 51.3,0.1 51.3,0.1 51.7,-0.3 51.7,-0.3 51.3))';
-
-        // Band post whose exact polygon covers the member → included.
-        $bandIn = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: band in (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $bandIn->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
-        $this->seedReach($bandIn->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
-        DB::statement(
-            "UPDATE rippling_reach SET outer_bound = ST_GeomFromText(?, 3857), inner_bound = NULL WHERE msgid = ?",
-            [$outerWkt, $bandIn->id]
-        );
-
-        // Band post whose exact polygon does NOT cover the member → excluded.
-        $bandOut = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: band out (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $bandOut->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
-        $this->seedReach($bandOut->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
-        DB::statement(
-            "UPDATE rippling_reach SET outer_bound = ST_GeomFromText(?, 3857), inner_bound = NULL WHERE msgid = ?",
-            [$outerWkt, $bandOut->id]
-        );
-
-        $tracker = UserDigest::create([
-            'userid' => $member->id,
-            'mode' => UnifiedDigestService::MODE_DAILY,
-            'lastmsgid' => 0,
-        ]);
-
-        $ids = $this->service->getPostsForUser($member, $tracker, UnifiedDigestService::MODE_DAILY)
-            ->pluck('id')->all();
-
-        $this->assertContains($bandIn->id, $ids, 'boundary band falls back to the exact polygon (covered → included)');
-        $this->assertNotContains($bandOut->id, $ids, 'boundary band falls back to the exact polygon (not covered → excluded)');
-    }
-
     /**
      * Seed a post whose committed reach (and outer_bound, which seedReach derives as the
      * polygon's own envelope) EXCLUDE the ring member's location, with a rural overflow ring
@@ -1391,10 +1820,10 @@ class UnifiedDigestServiceTest extends TestCase
         // Committed reach stops at lng 0.0, well short of the member at 0.4.
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
         DB::table('rippling_reach')->where('msgid', $msg->id)->update([
-            'overflow_bounds' => json_encode([
-                'rural' => [$ringKey => 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))'],
-                'bbox' => [-0.2, 51.4, 0.6, 51.6],
-            ]),
+            'overflow_cells' => $this->overflowCellsDoc(
+                ['rural' => [$ringKey => 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))']],
+                ['bbox' => [-0.2, 51.4, 0.6, 51.6]],
+            ),
         ]);
 
         return $msg;
@@ -1469,8 +1898,9 @@ class UnifiedDigestServiceTest extends TestCase
         // Completion degrades a post's bounds row to a degenerate point (outer=POINT,
         // inner=NULL) to prune it from the browse candidate set. The digest, however,
         // still shows completed posts ("came and went"), so its reach gate must NOT
-        // treat a degraded bounds row as an authoritative reject — it must fall back to
-        // the exact polygon (the design doc's "digest came-and-went posts vanish" trap).
+        // treat a degraded bounds row as an authoritative reject - the containment
+        // universe comes from the stored cells via the reach index, which still
+        // carries the post (the design doc's "digest came-and-went posts vanish" trap).
         $poster = $this->createTestUser();
         $member = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -1500,7 +1930,7 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertContains(
             $taken->id,
             $posts->pluck('id')->all(),
-            'a completed post with degraded bounds still reaches the digest via its exact polygon'
+            'a completed post with degraded bounds still reaches the digest via its stored cells'
         );
         $this->assertSame(
             1,
@@ -1541,15 +1971,56 @@ class UnifiedDigestServiceTest extends TestCase
         $user->save();
     }
 
-    /** Seed a rippling_reach row for a post with the given WKT polygon (SRID 3857). */
+    /** Seed a rippling_reach row for a post whose reach is the given rectangle WKT. */
     protected function seedReach(int $msgid, string $wkt): void
     {
         DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, "
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, "
             . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
-            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$msgid, $wkt, $wkt]
+            . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$msgid, $this->reachCellsFor($wkt), $wkt]
         );
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => 'label-bytes']);
+
+        // The newly-reached mail evaluates the stored label per candidate
+        // point (reach-arrival); fake it to admit points inside the seeded
+        // box. Http::fake merges first-match-wins (null falls through), so
+        // ONE callback is installed and it reads $this->reachArrivalBox -
+        // a test that grows the reach updates the property, not the fake.
+        $this->reachArrivalBox = $this->wktBounds($wkt);
+        if (!$this->reachArrivalFakeInstalled) {
+            $this->reachArrivalFakeInstalled = true;
+            Http::fake(function ($request) {
+                if (!str_contains($request->url(), 'reach-arrival')) {
+                    return null;
+                }
+                [$minLng, $minLat, $maxLng, $maxLat] = $this->reachArrivalBox;
+                $results = [];
+                foreach ($request['points'] ?? [] as $pt) {
+                    $lat = (float) ($pt['lat'] ?? 0);
+                    $lng = (float) ($pt['lng'] ?? 0);
+                    $in = $lat >= $minLat && $lat <= $maxLat && $lng >= $minLng && $lng <= $maxLng;
+                    $results[] = ['arrival' => $in ? 100 : null, 'in' => $in];
+                }
+
+                return Http::response(['results' => $results]);
+            });
+        }
+    }
+
+    /** The box the faked reach-arrival admits; seedReach sets it. */
+    private array $reachArrivalBox = [0.0, 0.0, 0.0, 0.0];
+
+    private bool $reachArrivalFakeInstalled = false;
+
+    /** [minLng, minLat, maxLng, maxLat] of a simple WKT polygon. */
+    private function wktBounds(string $wkt): array
+    {
+        preg_match_all('/(-?\d+\.?\d*) (-?\d+\.?\d*)/', $wkt, $m, PREG_SET_ORDER);
+        $lngs = array_map(fn ($p) => (float) $p[1], $m);
+        $lats = array_map(fn ($p) => (float) $p[2], $m);
+
+        return [min($lngs), min($lats), max($lngs), max($lats)];
     }
 
     /**
@@ -1729,6 +2200,341 @@ class UnifiedDigestServiceTest extends TestCase
             $stats['emails_sent'],
             'a post on two of the same member groups must reach them once, not once per group'
         );
+    }
+
+    /**
+     * ONE ITEM, TWO MESSAGES. A hand cross-post, a TrashNothing copy or a repost puts the
+     * same thing in the database twice, under two msgids. The daily digest already collapses
+     * those into one card (deduplicatePosts); the immediate path must send the FIRST mail and
+     * then stay quiet, or the member gets the same item twice within minutes.
+     */
+    public function test_immediate_mails_a_member_once_for_one_item_posted_as_two_messages(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        // Poster on daily so only the recipient's mails are counted.
+        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($recipient, $group);
+        $this->seedImmediateCursor($group);
+
+        foreach (['a', 'b'] as $copy) {
+            $msg = $this->createTestMessage($poster, $group, [
+                'subject' => 'OFFER: Twice Posted Sofa (TestLocation)',
+                'textbody' => 'Same sofa, posted twice.',
+            ]);
+            $this->makeImmediateReady($msg);
+        }
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(
+            1,
+            $stats['emails_sent'],
+            'one item posted as two messages must produce one immediate mail, not two'
+        );
+    }
+
+    /**
+     * The duplicate usually arrives LATER - after the first mail went out and the cursor moved
+     * past it. In-batch dedup cannot see that, so the check has to read the sent ledger.
+     */
+    public function test_immediate_does_not_remail_a_duplicate_that_arrives_after_the_first_mail(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($recipient, $group);
+        $this->seedImmediateCursor($group);
+
+        $first = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Later Duplicate Lamp (TestLocation)',
+            'textbody' => 'A small lamp.',
+        ]);
+        $this->makeImmediateReady($first);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+        $this->assertEquals(1, $stats['emails_sent'], 'first copy mails normally');
+
+        $second = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Later Duplicate Lamp (TestLocation)',
+            'textbody' => 'A small lamp.',
+        ]);
+        $this->makeImmediateReady($second);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+        $this->assertEquals(
+            0,
+            $stats['emails_sent'],
+            'a duplicate arriving after the first mail must not be mailed again'
+        );
+    }
+
+    /**
+     * Cross-posted BY HAND to two groups as two separate messages, member in both. Each group
+     * is a separate pass, so this only works if the check outlives the batch.
+     */
+    public function test_immediate_mails_a_member_once_for_one_item_posted_to_two_groups_separately(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $this->createMembership($poster, $groupA, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($poster, $groupB, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($recipient, $groupA);
+        $this->createMembership($recipient, $groupB);
+        $this->seedImmediateCursor($groupA);
+        $this->seedImmediateCursor($groupB);
+
+        foreach ([$groupA, $groupB] as $group) {
+            $msg = $this->createTestMessage($poster, $group, [
+                'subject' => 'OFFER: Hand Crossposted Table (TestLocation)',
+                'textbody' => 'One table, two posts.',
+            ]);
+            $this->makeImmediateReady($msg);
+        }
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(
+            1,
+            $stats['emails_sent'],
+            'the same item posted separately to two of the member groups must mail them once'
+        );
+    }
+
+    /**
+     * The guard must not swallow genuinely different things. Same poster, same subject, same
+     * place, DIFFERENT body is two items - exactly the case bodiesMatch() keeps apart in the
+     * daily digest, so immediate must keep them apart too.
+     */
+    public function test_immediate_still_mails_two_different_items_that_share_a_subject(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($recipient, $group);
+        $this->seedImmediateCursor($group);
+
+        foreach (['A blue one, 3-seater.', 'A red armchair, quite worn.'] as $body) {
+            $msg = $this->createTestMessage($poster, $group, [
+                'subject' => 'OFFER: Chair (TestLocation)',
+                'textbody' => $body,
+            ]);
+            $this->makeImmediateReady($msg);
+        }
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(
+            2,
+            $stats['emails_sent'],
+            'two different items sharing a subject are two mails, as in the daily digest'
+        );
+    }
+
+    /**
+     * Location is part of the daily digest's dedup key, so the same wording at a different
+     * place is a different item there. Immediate follows the same rule - no more, no less.
+     */
+    public function test_immediate_still_mails_the_same_wording_from_a_different_location(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($recipient, $group);
+        $this->seedImmediateCursor($group);
+
+        $locA = DB::table('locations')->insertGetId([
+            'name' => 'DedupTestLocA', 'type' => 'Postcode', 'lat' => 51.5, 'lng' => -0.1,
+            'geometry' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
+        ]);
+        $locB = DB::table('locations')->insertGetId([
+            'name' => 'DedupTestLocB', 'type' => 'Postcode', 'lat' => 51.6, 'lng' => -0.2,
+            'geometry' => DB::raw("ST_GeomFromText('POINT(-0.2 51.6)', 3857)"),
+        ]);
+
+        foreach ([$locA, $locB] as $locid) {
+            $msg = $this->createTestMessage($poster, $group, [
+                'subject' => 'OFFER: Moving Boxes (TestLocation)',
+                'textbody' => 'Ten flat boxes.',
+                'locationid' => $locid,
+            ]);
+            $this->makeImmediateReady($msg);
+        }
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(
+            2,
+            $stats['emails_sent'],
+            'same wording at two different locations is two items, matching the daily key'
+        );
+    }
+
+    /**
+     * The reach mailer is the other immediate path (rippling posts go through it, not the
+     * cursor). A member already mailed about one copy must not be mailed about its twin when
+     * the twin's own reach grows over them.
+     */
+    public function test_reach_mailer_does_not_mail_a_duplicate_item_to_an_already_mailed_member(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+
+        $ids = [];
+        foreach (['c', 'd'] as $copy) {
+            $msg = $this->createTestMessage($poster, $group, [
+                'subject' => 'OFFER: Rippled Twice Bike (TestLocation)',
+                'textbody' => 'A bike, one owner.',
+            ]);
+            DB::table('messages_groups')->where('msgid', $msg->id)
+                ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+            DB::table('messages_attachments')->insert([
+                'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat($copy, 32),
+                'primary' => 1, 'archived' => 0,
+            ]);
+            $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+            $ids[] = (int) $msg->id;
+        }
+
+        $this->assertSame(1, $this->service->mailNewlyReachedForPost($ids[0]), 'first copy mails the member');
+        $this->assertSame(
+            0,
+            $this->service->mailNewlyReachedForPost($ids[1]),
+            'the duplicate must not mail a member who already had the first'
+        );
+    }
+
+    /**
+     * The grouping rule itself, in one place: copies of an item group, different items do not,
+     * and another member's identical post is never mine.
+     */
+    public function test_item_siblings_group_copies_and_keep_other_things_apart(): void
+    {
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $other = $this->createTestUser();
+
+        $copyOne = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sibling Kettle (TestLocation)', 'textbody' => 'A kettle.',
+        ]);
+        $copyTwo = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sibling Kettle (TestLocation)', 'textbody' => 'A kettle.',
+        ]);
+        $different = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sibling Kettle (TestLocation)', 'textbody' => 'Actually a toaster.',
+        ]);
+        $someoneElse = $this->createTestMessage($other, $group, [
+            'subject' => 'OFFER: Sibling Kettle (TestLocation)', 'textbody' => 'A kettle.',
+        ]);
+
+        $siblings = $this->service->itemSiblingMsgids([$copyOne->id]);
+
+        $this->assertContains((int) $copyTwo->id, $siblings[$copyOne->id], 'the identical copy is the same item');
+        $this->assertNotContains((int) $different->id, $siblings[$copyOne->id], 'a different body is a different item');
+        $this->assertNotContains((int) $someoneElse->id, $siblings[$copyOne->id], "another member's post is never mine");
+
+        $this->assertSame(
+            (int) $copyOne->id,
+            $this->service->itemIdsForMsgids([$copyTwo->id])[$copyTwo->id],
+            'both copies resolve to the same item id, whichever one is asked about'
+        );
+    }
+
+    /**
+     * The daily digest collapses copies that land in ONE digest. A copy that lands in the NEXT
+     * one is the same item to the member, and is how one thing reached people on four days
+     * running (Discourse 9808).
+     */
+    public function test_daily_digest_does_not_resend_an_item_sent_in_an_earlier_digest(): void
+    {
+        $poster = $this->createTestUser();
+        $member = $this->createTestUser();
+        $member->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $member->lastaccess = now();
+        $member->save();
+        $member->refresh();
+
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Repeated Shelf (TestLocation)',
+            'textbody' => 'A pine shelf.',
+            'arrival' => now()->subHours(2),
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $member->id);
+        $this->assertEquals(1, $stats['emails_sent'], 'the first digest carries the item');
+
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Repeated Shelf (TestLocation)',
+            'textbody' => 'A pine shelf.',
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $member->id);
+        $this->assertEquals(
+            0,
+            $stats['emails_sent'],
+            'a copy of something already sent is not a second digest'
+        );
+    }
+
+    /**
+     * ...but a member on their FIRST digest has been sent nothing, so nothing may be withheld
+     * from them on the grounds that an older copy exists.
+     */
+    public function test_daily_digest_first_run_withholds_nothing_on_a_null_cursor(): void
+    {
+        $poster = $this->createTestUser();
+        $member = $this->createTestUser();
+        $member->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $member->lastaccess = now();
+        $member->save();
+        $member->refresh();
+
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+
+        // Two copies, both inside the first-run 24h window. They collapse to one card, and the
+        // older one must not be read as "already sent".
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: First Run Bike (TestLocation)',
+            'textbody' => 'A bike.',
+            'arrival' => now()->subHours(3),
+        ]);
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: First Run Bike (TestLocation)',
+            'textbody' => 'A bike.',
+            'arrival' => now()->subHour(),
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $member->id);
+
+        $this->assertEquals(1, $stats['emails_sent'], 'a first digest still goes out');
     }
 
     public function test_immediate_sends_one_email_per_new_post(): void
@@ -2532,14 +3338,17 @@ class UnifiedDigestServiceTest extends TestCase
         };
         // Max over all four corners (the southern corners are marginally farther
         // because east-west distance grows with cos(latitude)) — mirrors the
-        // implementation, which takes the greatest origin->vertex distance.
+        // implementation, which takes the greatest origin->covered-cell
+        // distance over the stored grid. The grid covers cells whose CENTRES
+        // lie inside the box, so the farthest covered point sits within one
+        // 33m lattice cell of the true corner - hence the tolerance.
         $expected = 0.0;
         foreach ([[-0.2, 51.4], [0.0, 51.4], [0.0, 51.6], [-0.2, 51.6]] as [$lng, $lat]) {
             $expected = max($expected, $haversine(51.5, -0.1, $lat, $lng));
         }
 
         $r = $this->callPrivate($svc, 'reachRadiusMetres', [$msg->id]);
-        $this->assertEqualsWithDelta($expected, $r, 1.0);
+        $this->assertEqualsWithDelta($expected, $r, 50.0);
         // Sanity: a ~0.1deg box corner from this origin is ~13km — kilometre-scale metres.
         $this->assertGreaterThan(10000, $r);
         $this->assertLessThan(16000, $r);
@@ -2742,13 +3551,28 @@ class UnifiedDigestServiceTest extends TestCase
             'collection' => MessageGroup::COLLECTION_APPROVED,
             'arrival' => now()->subHours(1),
         ]);
-        // Reach polygon (status 'expanding', just updated) covering the member's location.
+        // Reach (status 'expanding', just updated) covering the member's location.
         DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, "
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, "
             . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
-            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
+            . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'), 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
         );
+        DB::table('rippling_reach')->where('msgid', $message->id)->update(['reach_labels' => 'label-bytes']);
+
+        // The stored label admits every asked point: the reach-mail pass is
+        // under test, not the geometry.
+        Http::fake(function ($request) {
+            if (!str_contains($request->url(), 'reach-arrival')) {
+                return null;
+            }
+            $results = array_map(
+                fn ($pt) => ['arrival' => 100, 'in' => true],
+                $request['points'] ?? []
+            );
+
+            return Http::response(['results' => $results]);
+        });
 
         return [$message, $member];
     }
@@ -2924,6 +3748,58 @@ class UnifiedDigestServiceTest extends TestCase
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
 
         $this->assertEquals(1, $stats['emails_sent'], 'the sentinel value means unlimited — unaffected by the new filter');
+    }
+
+    public function test_daily_digest_filters_completed_post_beyond_distance_preference(): void
+    {
+        // Discourse 10167/1: a member with a distance limit saw a "came and
+        // went" (Taken) post from far outside it. $posts (live) is narrowed by
+        // filterByDistancePreference; $completedPosts must be too.
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'browseMaxDistance' => 2,
+            'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278],
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($poster, $group);
+
+        // ~0.9 miles away, inside the 2-mile cap — keeps the digest non-empty
+        // so this test isolates the completed-post filtering, not the send/no-send decision.
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Near item (London)',
+            'lat' => 51.52,
+            'lng' => -0.1278,
+        ]);
+
+        // Taken, ~330 miles away (Edinburgh) — outside the 2-mile cap.
+        $farTaken = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Far taken item (Edinburgh)',
+            'lat' => 55.9533,
+            'lng' => -3.1889,
+        ]);
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $farTaken->id,
+            'outcome' => 'Taken',
+            'timestamp' => now(),
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(1, $stats['emails_sent'], 'the near live post still sends the digest');
+
+        $completedIds = $this->lastDailyDigest()->mailDescriptor()['completed'];
+        $this->assertNotContains(
+            $farTaken->id,
+            $completedIds,
+            "a came-and-went post beyond the recipient's distance preference must not appear in the digest"
+        );
     }
 
     // ─── OUTBOUND (author-side) distance preference ─────────────────────
@@ -3460,8 +4336,6 @@ class UnifiedDigestServiceTest extends TestCase
         string $ringKey = 'sparse'
     ): array {
         config(['freegle.digest.immediate_allowlist' => '*']);
-        UnifiedDigestService::forgetOverflowColumn();
-
         $group = $this->createTestGroup();
         $poster = $this->createTestUser();
         $this->createMembership($poster, $group);
@@ -3492,7 +4366,7 @@ class UnifiedDigestServiceTest extends TestCase
         // The committed reach stops at lng 0.0 - well short of the member at 0.4.
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
         DB::table('rippling_reach')->where('msgid', $msg->id)
-            ->update(['overflow_bounds' => json_encode([$lane => [$ringKey => $ringWkt]])]);
+            ->update(['overflow_cells' => $this->overflowCellsDoc([$lane => [$ringKey => $ringWkt]])]);
 
         return [$member, $msg];
     }
@@ -3664,8 +4538,6 @@ class UnifiedDigestServiceTest extends TestCase
             'freegle.ripple.fairness.enabled' => true,
             'freegle.ripple.cluster.enabled' => true,
         ]);
-        UnifiedDigestService::forgetOverflowColumn();
-
         $group = $this->createTestGroup();
         $poster = $this->createTestUser();
         $this->createMembership($poster, $group);
@@ -3689,10 +4561,10 @@ class UnifiedDigestServiceTest extends TestCase
         // only overflow lane on this post is 'cluster', which covers them geographically.
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
         DB::table('rippling_reach')->where('msgid', $msg->id)->update([
-            'overflow_bounds' => json_encode([
-                'cluster' => ['w1' => 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))'],
-                'bbox' => [-0.2, 51.4, 0.6, 51.6],
-            ]),
+            'overflow_cells' => $this->overflowCellsDoc(
+                ['cluster' => ['w1' => 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))']],
+                ['bbox' => [-0.2, 51.4, 0.6, 51.6]],
+            ),
         ]);
 
         $this->service->mailNewlyReachedForPost($msg->id);
@@ -3701,5 +4573,323 @@ class UnifiedDigestServiceTest extends TestCase
             $this->wasMailed($msg->id, $member->id),
             'a member a cluster wedge admits is mailed, exactly as browse and reply admit them'
         );
+    }
+
+
+    public function test_newly_reached_mail_answers_from_the_label_for_a_retired_grid(): void
+    {
+        // A retired grid (label stored, squares drained): the "you are now in
+        // reach" mail evaluates the stored label at every candidate point in
+        // one routing call, instead of probing squares that no longer exist.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: retired reach mail (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('a', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update([
+            'reach_labels' => 'label-bytes', 'polygon_cells' => null,
+            'tick' => 1, 'max_drive_min' => 30, 'schedule' => null,
+        ]);
+
+        Http::fake(['*reach-arrival*' => Http::response([
+            'results' => [['arrival' => 120, 'in' => true]],
+        ])]);
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertTrue(
+            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $member->id)->exists(),
+            'the label admitted the member, so they are mailed and ledgered'
+        );
+    }
+
+    /**
+     * Seed a reach row whose updated_at is $minutesAgo old, for the watermark tests.
+     */
+    private function seedReachUpdatedAgo(int $minutesAgo): int
+    {
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: mark (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update(['updated_at' => now()->subMinutes($minutesAgo)]);
+
+        return $msg->id;
+    }
+
+    /**
+     * Capture the reach pass's post-selection query.
+     *
+     * @return array<int, array{sql: string, bindings: array}>
+     */
+    private function captureReachSelects(callable $fn): array
+    {
+        $seen = [];
+        DB::listen(function ($query) use (&$seen) {
+            if (stripos($query->sql, 'rippling_reach') !== false && stripos($query->sql, 'updated_at') !== false && stripos($query->sql, 'select') === 0) {
+                $seen[] = ['sql' => $query->sql, 'bindings' => $query->bindings];
+            }
+        });
+        $fn();
+
+        return $seen;
+    }
+
+    /**
+     * The reach pass used to re-read every post whose reach changed in the last 60 minutes,
+     * every minute: 47-68% of db2, ~95% of it re-doing unchanged work. It now resumes from
+     * where the previous pass started. A post updated two hours ago, beyond any window, is
+     * still picked up when the stored mark is older than it - a stall loses nothing.
+     */
+    public function test_reach_pass_resumes_from_its_stored_mark_not_a_window(): void
+    {
+        $mark = now()->subHours(3);
+        DB::table('config')->upsert(
+            ['key' => UnifiedDigestService::reachMailMarkKey(0), 'value' => $mark->toDateTimeString()],
+            ['key'], ['value']
+        );
+        $msgid = $this->seedReachUpdatedAgo(120);
+
+        $stats = null;
+        $selects = $this->captureReachSelects(function () use (&$stats) {
+            $stats = $this->service->sendReachDigests(null, true, 0, 1);
+        });
+
+        $this->assertNotEmpty($selects, 'expected the post-selection query');
+        $bound = array_values(array_filter($selects[0]['bindings'], fn ($b) => is_string($b) && strtotime($b) !== false));
+        $this->assertNotEmpty($bound, 'the selection must be bounded by a datetime');
+        $this->assertSame($mark->toDateTimeString(), $bound[0], 'the bound is the stored mark');
+        $this->assertSame(1, $stats['posts_processed'], 'a post updated after the mark is processed, however old');
+    }
+
+    /**
+     * With no mark stored the pass must not sweep the whole table. It starts from an hour ago,
+     * which is what the old window did, so a cold start costs what today costs and no more.
+     */
+    public function test_reach_pass_cold_start_reads_only_the_last_hour(): void
+    {
+        DB::table('config')->where('key', UnifiedDigestService::reachMailMarkKey(0))->delete();
+        $old = $this->seedReachUpdatedAgo(180);
+        $recent = $this->seedReachUpdatedAgo(30);
+
+        $stats = $this->service->sendReachDigests(null, true, 0, 1);
+
+        $this->assertSame(1, $stats['posts_processed'], 'only the post inside the last hour is read on a cold start');
+    }
+
+    /**
+     * The mark stored after a pass is the time the pass STARTED, not the newest updated_at it
+     * saw. Timestamps are second-granular, so storing max-seen would skip a row that landed in
+     * the same second after the read; pass-start guarantees it is >= mark next tick. The
+     * overlap this leaves is harmless because the notified ledger dedupes.
+     */
+    public function test_reach_pass_stores_the_pass_start_as_its_mark(): void
+    {
+        DB::table('config')->where('key', UnifiedDigestService::reachMailMarkKey(0))->delete();
+        $this->seedReachUpdatedAgo(30);
+
+        $before = now()->subSecond();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $after = now()->addSecond();
+
+        $stored = DB::table('config')->where('key', UnifiedDigestService::reachMailMarkKey(0))->value('value');
+        $this->assertNotNull($stored, 'the pass must store a mark');
+        $storedAt = \Carbon\Carbon::parse($stored);
+        $this->assertTrue($storedAt->between($before, $after), "mark {$stored} must be the pass start, not the 30-minute-old row");
+    }
+
+    /**
+     * Shards partition posts by MOD(msgid, N) and run concurrently, so each keeps its own mark.
+     */
+    public function test_reach_pass_marks_are_per_shard(): void
+    {
+        $other = now()->subHours(5)->toDateTimeString();
+        DB::table('config')->upsert(
+            ['key' => UnifiedDigestService::reachMailMarkKey(1), 'value' => $other],
+            ['key'], ['value']
+        );
+        $this->seedReachUpdatedAgo(30);
+
+        $this->service->sendReachDigests(null, false, 0, 2);
+
+        $this->assertSame(
+            $other,
+            DB::table('config')->where('key', UnifiedDigestService::reachMailMarkKey(1))->value('value'),
+            'running shard 0 must not move shard 1 mark'
+        );
+    }
+
+    /**
+     * A dry run previews the pass and must leave the mark alone: advancing it would make the
+     * next real pass skip everything the preview showed.
+     */
+    public function test_reach_pass_dry_run_does_not_advance_the_mark(): void
+    {
+        $mark = now()->subHours(3)->toDateTimeString();
+        DB::table('config')->upsert(
+            ['key' => UnifiedDigestService::reachMailMarkKey(0), 'value' => $mark],
+            ['key'], ['value']
+        );
+        $this->seedReachUpdatedAgo(30);
+
+        $this->service->sendReachDigests(null, true, 0, 1);
+
+        $this->assertSame($mark, DB::table('config')->where('key', UnifiedDigestService::reachMailMarkKey(0))->value('value'));
+    }
+
+    /**
+     * A settled post: approved, attached, reach seeded over a box, and OUTSIDE the post-side
+     * pass (updated_at three hours ago, mark one hour ago). Only the member queue can reach it.
+     *
+     * @return array{0: int, 1: \App\Models\Group}
+     */
+    private function seedSettledPostOutsideThePostPass(): array
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: queue drain (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('b', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update(['updated_at' => now()->subHours(3)]);
+        DB::table('config')->upsert(
+            ['key' => UnifiedDigestService::reachMailMarkKey(0), 'value' => now()->subHour()->toDateTimeString()],
+            ['key'], ['value']
+        );
+
+        return [$msg->id, $group];
+    }
+
+    private function ledgered(int $msgid, int $userid): bool
+    {
+        return DB::table('rippling_reach_notified')->where('msgid', $msgid)->where('userid', $userid)->exists();
+    }
+
+    /**
+     * The member side of reach mail. A member who joins a group after a post's reach has
+     * settled is queued by the join, and the next pass mails them about the posts that cover
+     * them, then drops the queue row. Today they are mailed only if the join happens to land
+     * inside 60 minutes of the post's last reach change.
+     */
+    public function test_queued_member_inside_a_settled_reach_is_mailed_and_dequeued(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+
+        $stats = $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertSame(0, $stats['posts_processed'], 'precondition: the post side did not reach this post');
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'the queued member is mailed about the post now covering them');
+        $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count(), 'the queue row is consumed');
+        $this->assertSame(1, $stats['members_processed']);
+    }
+
+    /**
+     * A queued member no live reach covers is simply dequeued.
+     */
+    public function test_queued_member_outside_every_reach_is_dequeued_without_mail(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 55.0, -3.0);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_MOVED);
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertFalse($this->ledgered($msgid, $member->id));
+        $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count());
+    }
+
+    /**
+     * The ledger still dedupes: a member mailed in the post-side pass and later queued is not
+     * mailed again.
+     */
+    public function test_drain_does_not_mail_a_member_already_in_the_ledger(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        $this->service->mailNewlyReachedForPost($msgid);
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'precondition: mailed once by the post side');
+        $before = DB::table('rippling_reach_notified')->where('msgid', $msgid)->count();
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_RETURNED);
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertSame($before, DB::table('rippling_reach_notified')->where('msgid', $msgid)->count());
+    }
+
+    /**
+     * Draining a member must evaluate that member only. Re-enumerating every member of every
+     * candidate post per queued member would cost about what the mark saves. Two members sit
+     * inside the reach; only the queued one is mailed.
+     */
+    public function test_drain_evaluates_only_the_queued_member(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $queued = $this->createTestUser();
+        $this->createMembership($queued, $group);
+        $this->setMyLocation($queued, 51.5, -0.1);
+        $bystander = $this->createTestUser();
+        $this->createMembership($bystander, $group);
+        $this->setMyLocation($bystander, 51.45, -0.15);
+        ReachMemberQueueService::enqueue($queued->id, ReachMemberQueueService::REASON_FREQUENCY);
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $queued->id));
+        $this->assertFalse($this->ledgered($msgid, $bystander->id), 'a member nobody queued is not evaluated by the drain');
+    }
+
+    /**
+     * Queued members are partitioned across shards by MOD(userid, N) like posts are by msgid,
+     * so shards drain disjoint sets and never race on one row.
+     */
+    public function test_drain_is_partitioned_by_shard(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+        $mine = (int) ($member->id % 2);
+        $other = 1 - $mine;
+        DB::table('config')->upsert(
+            ['key' => UnifiedDigestService::reachMailMarkKey($other), 'value' => now()->subHour()->toDateTimeString()],
+            ['key'], ['value']
+        );
+
+        $this->service->sendReachDigests(null, false, $other, 2);
+        $this->assertSame(1, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count(), 'the other shard leaves the row alone');
+
+        $this->service->sendReachDigests(null, false, $mine, 2);
+        $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count());
+        $this->assertTrue($this->ledgered($msgid, $member->id));
     }
 }

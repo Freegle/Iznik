@@ -558,3 +558,146 @@ func TestCommentDeleteByAdmin(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM users_comments WHERE id = ?", commentID).Scan(&count)
 	assert.Equal(t, int64(0), count)
 }
+
+// TestCommentDeleteClearsFlagOthers checks that deleting the only flagged note
+// takes away the review it asked for on the member's other groups. Notes are
+// removed outright rather than marked as deleted, so nothing else clears it.
+func TestCommentDeleteClearsFlagOthers(t *testing.T) {
+	prefix := uniquePrefix("cmwr_delclr")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	group1ID := CreateTestGroup(t, prefix+"_g1")
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+	CreateTestMembership(t, modID, group1ID, "Moderator")
+	CreateTestMembership(t, targetID, group1ID, "Member")
+	CreateTestMembership(t, targetID, group2ID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	db := database.DBConn
+	db.Exec("UPDATE memberships SET reviewreason = NULL, reviewrequestedat = NULL WHERE userid = ?", targetID)
+
+	body := fmt.Sprintf(`{"userid":%d,"groupid":%d,"user1":"Flagged user","flag":true}`, targetID, group1ID)
+	req := httptest.NewRequest("POST", "/api/comment?jwt="+modToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	commentID := int(result["id"].(float64))
+
+	var requestedBefore *string
+	db.Raw("SELECT reviewrequestedat FROM memberships WHERE userid = ? AND groupid = ?", targetID, group2ID).Scan(&requestedBefore)
+	assert.NotNil(t, requestedBefore, "flagging the note should ask for a review on the other group")
+
+	req = httptest.NewRequest("DELETE", fmt.Sprintf("/api/comment/%d?jwt=%s", commentID, modToken), nil)
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var reasonAfter *string
+	db.Raw("SELECT reviewreason FROM memberships WHERE userid = ? AND groupid = ?", targetID, group2ID).Scan(&reasonAfter)
+	assert.Nil(t, reasonAfter, "deleting the only flagged note must clear the review reason")
+
+	var requestedAfter *string
+	db.Raw("SELECT reviewrequestedat FROM memberships WHERE userid = ? AND groupid = ?", targetID, group2ID).Scan(&requestedAfter)
+	assert.Nil(t, requestedAfter, "deleting the only flagged note must clear the review request")
+
+	db.Exec("UPDATE memberships SET reviewreason = NULL, reviewrequestedat = NULL WHERE userid = ?", targetID)
+}
+
+// TestCommentDeleteKeepsFlagOthersWhenAnotherNoteIsFlagged checks that a second
+// flagged note keeps the review in place when the first is deleted.
+func TestCommentDeleteKeepsFlagOthersWhenAnotherNoteIsFlagged(t *testing.T) {
+	prefix := uniquePrefix("cmwr_delkeep")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	group1ID := CreateTestGroup(t, prefix+"_g1")
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+	CreateTestMembership(t, modID, group1ID, "Moderator")
+	CreateTestMembership(t, targetID, group1ID, "Member")
+	CreateTestMembership(t, targetID, group2ID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	db := database.DBConn
+	db.Exec("UPDATE memberships SET reviewreason = NULL, reviewrequestedat = NULL WHERE userid = ?", targetID)
+
+	body := fmt.Sprintf(`{"userid":%d,"groupid":%d,"user1":"First note","flag":true}`, targetID, group1ID)
+	req := httptest.NewRequest("POST", "/api/comment?jwt="+modToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var first map[string]interface{}
+	json2.Unmarshal(rsp(resp), &first)
+	firstID := int(first["id"].(float64))
+
+	body = fmt.Sprintf(`{"userid":%d,"groupid":%d,"user1":"Second note","flag":true}`, targetID, group1ID)
+	req = httptest.NewRequest("POST", "/api/comment?jwt="+modToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var second map[string]interface{}
+	json2.Unmarshal(rsp(resp), &second)
+	secondID := int(second["id"].(float64))
+
+	req = httptest.NewRequest("DELETE", fmt.Sprintf("/api/comment/%d?jwt=%s", firstID, modToken), nil)
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var reasonAfter *string
+	db.Raw("SELECT reviewreason FROM memberships WHERE userid = ? AND groupid = ?", targetID, group2ID).Scan(&reasonAfter)
+	assert.NotNil(t, reasonAfter, "the remaining flagged note still needs a review")
+	assert.Equal(t, "Note flagged to other groups", *reasonAfter)
+
+	db.Exec("DELETE FROM users_comments WHERE id = ?", secondID)
+	db.Exec("UPDATE memberships SET reviewreason = NULL, reviewrequestedat = NULL WHERE userid = ?", targetID)
+}
+
+// TestCommentEditUnflagClearsFlagOthers checks that taking the flag off a note
+// takes away the review it asked for, leaving the note itself in place.
+func TestCommentEditUnflagClearsFlagOthers(t *testing.T) {
+	prefix := uniquePrefix("cmwr_unflag")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	group1ID := CreateTestGroup(t, prefix+"_g1")
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+	CreateTestMembership(t, modID, group1ID, "Moderator")
+	CreateTestMembership(t, targetID, group1ID, "Member")
+	CreateTestMembership(t, targetID, group2ID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	db := database.DBConn
+	db.Exec("UPDATE memberships SET reviewreason = NULL, reviewrequestedat = NULL WHERE userid = ?", targetID)
+
+	body := fmt.Sprintf(`{"userid":%d,"groupid":%d,"user1":"Flagged user","flag":true}`, targetID, group1ID)
+	req := httptest.NewRequest("POST", "/api/comment?jwt="+modToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	commentID := int(result["id"].(float64))
+
+	var requestedBefore *string
+	db.Raw("SELECT reviewrequestedat FROM memberships WHERE userid = ? AND groupid = ?", targetID, group2ID).Scan(&requestedBefore)
+	assert.NotNil(t, requestedBefore, "flagging the note should ask for a review on the other group")
+
+	body = fmt.Sprintf(`{"id":%d,"user1":"Flagged user","flag":false}`, commentID)
+	req = httptest.NewRequest("PATCH", "/api/comment?jwt="+modToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var reasonAfter *string
+	db.Raw("SELECT reviewreason FROM memberships WHERE userid = ? AND groupid = ?", targetID, group2ID).Scan(&reasonAfter)
+	assert.Nil(t, reasonAfter, "taking the flag off the only flagged note must clear the review reason")
+
+	var requestedAfter *string
+	db.Raw("SELECT reviewrequestedat FROM memberships WHERE userid = ? AND groupid = ?", targetID, group2ID).Scan(&requestedAfter)
+	assert.Nil(t, requestedAfter, "taking the flag off the only flagged note must clear the review request")
+
+	db.Exec("DELETE FROM users_comments WHERE id = ?", commentID)
+	db.Exec("UPDATE memberships SET reviewreason = NULL, reviewrequestedat = NULL WHERE userid = ?", targetID)
+}

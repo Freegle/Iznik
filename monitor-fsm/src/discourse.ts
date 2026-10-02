@@ -10,6 +10,15 @@ export const DISCOURSE_BASE =
   'https://discourse.ilovefreegle.org'
 
 /**
+ * Where the Discourse user API key is read from. The default is one developer's
+ * home directory, so anywhere else (CI, another machine) has no key and every
+ * post fails with "no Discourse API key available". Set MONITOR_FSM_PROFILE_PATH
+ * to point elsewhere; the test setup writes a fixture and points this at it.
+ */
+export const PROFILE_PATH =
+  process.env.MONITOR_FSM_PROFILE_PATH || '/home/edward/profile.json'
+
+/**
  * Build the `raw` Markdown for a Discourse reply, prepending a [quote] block of
  * the reporting post so the reply visibly quotes what it answers.
  *

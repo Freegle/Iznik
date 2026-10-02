@@ -54,7 +54,7 @@ type fairnessOverflowResult struct {
 //
 // Returns nil when the weight is zero or nothing drawable came back, so the caller omits the
 // field entirely and the response stays byte-identical with the feature off.
-func fairnessOverflowRings(g *Graph, lat, lng float64, mode Mode, ceilingMinutes, weight float64, maxQuintile int) *fairnessOverflowResult {
+func fairnessOverflowRings(g *Graph, lat, lng float64, ceilingMinutes, weight float64, maxQuintile int) *fairnessOverflowResult {
 	w := float32(clampFairnessWeight(weight))
 	if w <= 0 {
 		return nil
@@ -69,11 +69,11 @@ func fairnessOverflowRings(g *Graph, lat, lng float64, mode Mode, ceilingMinutes
 	// The widest budget any eligible quintile earns. Q1 has the largest multiplier, so routing
 	// to Q1's budget once gives every narrower ring for free by filtering the same node set.
 	widest := ceilingMinutes * float64(quintileMultiplier(1, w))
-	iso := Isochrone(g, lat, lng, float32(widest*60), mode)
+	iso := Isochrone(g, lat, lng, float32(widest*60))
 	if len(iso.ReachedNodes) == 0 {
 		return nil
 	}
-	res := NetworkResolution(g, iso.ReachedNodes, mode)
+	res := NetworkResolution(g, iso.ReachedNodes)
 
 	out := make(map[string]*GeoJSONPolygon, maxQuintile)
 	for q := 1; q <= maxQuintile; q++ {

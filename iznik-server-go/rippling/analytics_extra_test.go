@@ -86,13 +86,16 @@ func fptr(v float64) *float64 { return &v }
 // scoreOnePost posts to the routing server's /v1/ripple-eval and turns the
 // response into driveObs, tagging each with its rippled/day/taker flag by
 // index. It is best-effort: any transport, HTTP-status or shape mismatch
-// yields no observations rather than an error.
+// yields no observations rather than an error. It only ever reads drive_min,
+// so it must ask for points only: the rank enumeration it would otherwise
+// pay for is the bulk of a city post's routing cost.
 func TestScoreOnePost_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req rippleEvalReq
 		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
 		assert.Equal(t, "drive", req.Mode)
 		assert.Equal(t, float64(driveMaxMinutes), req.MaxMinutes)
+		assert.True(t, req.PointsOnly, "scorer never reads rank, so it must send points_only")
 		assert.Len(t, req.Points, 2)
 
 		resp := rippleEvalResp{Results: []struct {

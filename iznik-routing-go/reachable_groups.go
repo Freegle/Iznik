@@ -31,7 +31,7 @@ type memberSnap struct {
 // whose node is in the reached set, with the drive-time to that node. Members with no nearby
 // road node (e.g. an offshore point) or whose street is not reached (far bank of a severed
 // crossing) are dropped. Duplicate locations are looked up once.
-func snapMembers(g *Graph, reached map[NodeID]float32, members []memberLoc, mode Mode) []memberSnap {
+func snapMembers(g *Graph, reached map[NodeID]float32, members []memberLoc) []memberSnap {
 	type key struct{ lat, lng float64 }
 	nodeCache := make(map[key]NodeID)
 	snaps := make([]memberSnap, 0, len(members))
@@ -39,7 +39,7 @@ func snapMembers(g *Graph, reached map[NodeID]float32, members []memberLoc, mode
 		k := key{m.lat, m.lng}
 		nn, ok := nodeCache[k]
 		if !ok {
-			nn = nearestNodeForMode(g, m.lat, m.lng, mode)
+			nn = nearestDriveNode(g, m.lat, m.lng)
 			nodeCache[k] = nn
 		}
 		if nn == noNode {
@@ -75,8 +75,8 @@ func groupIDsWithinSeconds(snaps []memberSnap, budgetSeconds float32) []int64 {
 // set. The members passed in are already the active members who live inside their own
 // group's polygon (see queryActiveMembersInBox), so a group is counted only when a real
 // person who lives there can actually drive to the post.
-func freeglerReachableGroupIDs(g *Graph, reached map[NodeID]float32, members []memberLoc, mode Mode) []int64 {
-	return groupIDsWithinSeconds(snapMembers(g, reached, members, mode), float32(math.Inf(1)))
+func freeglerReachableGroupIDs(g *Graph, reached map[NodeID]float32, members []memberLoc) []int64 {
+	return groupIDsWithinSeconds(snapMembers(g, reached, members), float32(math.Inf(1)))
 }
 
 // reachedBBox is the lat/lng bounding box of the reached node set, used to pre-filter the
@@ -178,21 +178,13 @@ func handleReachableGroups(g *Graph) fiber.Handler {
 		if minutes <= 0 || minutes > 120 {
 			minutes = 30
 		}
-		mode := Drive
-		switch c.Query("mode", "drive") {
-		case "walk":
-			mode = Walk
-		case "cycle":
-			mode = Cycle
-		}
-
 		ids := make([]int64, 0)
-		iso := Isochrone(g, lat, lng, float32(minutes*60), mode)
+		iso := Isochrone(g, lat, lng, float32(minutes*60))
 		if len(iso.ReachedNodes) > 0 {
 			if db := ensureGroupsDB(); db != nil {
 				minLat, maxLat, minLng, maxLng := reachedBBox(g, iso.ReachedNodes)
 				if members, err := queryActiveMembersInBox(db, minLat, maxLat, minLng, maxLng); err == nil {
-					ids = freeglerReachableGroupIDs(g, iso.ReachedNodes, members, mode)
+					ids = freeglerReachableGroupIDs(g, iso.ReachedNodes, members)
 				}
 			}
 		}

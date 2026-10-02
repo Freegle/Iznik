@@ -18,7 +18,8 @@ import (
 // "additional"; a stubborn "first" count means first replies are still being held up. The
 // dashboard can only show that if the endpoint splits them.
 //
-// A small square around (51.5, -0.1) in EPSG:3857, used as the reach polygon.
+// A small square around (51.5, -0.1) in EPSG:3857, used only for the outer_bound
+// envelope - the analytics under test read scalar columns, never a grid.
 const heldSplitTick = "POLYGON((-11150 6712000,-11050 6712000,-11050 6712100,-11150 6712100,-11150 6712000))"
 
 // seedHeldSplitPost creates a rippled-out Offer inside the analytics window and returns its id.
@@ -35,11 +36,11 @@ func seedHeldSplitPost(t *testing.T, posterID, groupID uint64, subject string) u
 	// test asks for — keeping the fixture away from whatever else lives in the window.
 	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 	res := db.Exec("INSERT INTO rippling_reach "+
-		"(msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers, "+
+		"(msgid, lat, lng, outer_bound, arrival, mode, tick, total_ticks, total_freeglers, "+
 		" max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "+
-		"VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), "+
+		"VALUES (?, 51.5, -0.1, ST_Envelope(ST_GeomFromText(?, 3857)), "+
 		" NOW(), 'drive', 1, 3, 100, 30, NULL, NOW(), 'expanding', NOW(), NOW())",
-		msgID, heldSplitTick, heldSplitTick)
+		msgID, heldSplitTick)
 	if res.Error != nil {
 		t.Fatalf("could not seed reach: %v", res.Error)
 	}

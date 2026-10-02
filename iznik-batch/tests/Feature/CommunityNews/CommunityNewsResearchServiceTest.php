@@ -5,6 +5,7 @@ namespace Tests\Feature\CommunityNews;
 use App\Models\CommunityNewsArea;
 use App\Models\CommunityNewsItem;
 use App\Services\CommunityNews\CommunityNewsResearchService;
+use App\Services\NewsfeedLinkPreviewService;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
 use Tests\TestCase;
@@ -14,6 +15,7 @@ class CommunityNewsResearchServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->app->instance(NewsfeedLinkPreviewService::class, new UnreachableLinkPreviewService());
         // Isolate from the repo's curated source store so these tests exercise
         // pure web-search research with no seed sources.
         config(['freegle.communitynews.sources_path' => sys_get_temp_dir() . '/cn-none-' . uniqid()]);
@@ -333,6 +335,155 @@ class CommunityNewsResearchServiceTest extends TestCase
     }
 
     /** The prompts must pin the output language, intro included. */
+    // -------------------------------------------------------------------------
+    // Stale sources and repeats never reach the table
+
+    /** Make item URLs reachable so the source-freshness check actually runs. */
+    private function makeSourcesReachable(): void
+    {
+        $this->app->instance(NewsfeedLinkPreviewService::class, new FetchableLinkPreviewService());
+    }
+
+    private function articlePage(string $published): string
+    {
+        return '<html><head><meta property="og:type" content="article" />'
+            . '<meta property="article:published_time" content="' . $published . '" />'
+            . '</head><body>x</body></html>';
+    }
+
+    private function researchReturning(array $items): array
+    {
+        return [
+            'stop_reason' => 'end_turn',
+            'content' => [['type' => 'text', 'text' => json_encode(['intro' => 'Hi', 'items' => $items])]],
+        ];
+    }
+
+    public function test_item_from_a_stale_news_article_is_not_stored(): void
+    {
+        // The RiverFest shape: the model hands back a plausible future date for
+        // an article written over a decade ago.
+        config(['freegle.communitynews.anthropic_api_key' => 'test-key']);
+        config(['freegle.communitynews.check_image_year' => false]);
+        $this->makeSourcesReachable();
+
+        Http::fake([
+            'api.anthropic.com/*' => Http::response($this->researchReturning([
+                ['title' => 'RiverFest', 'blurb' => 'Dragon boats this weekend.', 'url' => 'https://stale.example.org/riverfest', 'source' => 'Mag', 'date' => '2026-08-31'],
+                ['title' => 'Book sale', 'blurb' => 'Paperbacks on Saturday.', 'url' => 'https://fresh.example.org/books', 'source' => 'Library', 'date' => '2026-08-31'],
+            ]), 200),
+            'stale.example.org/*' => Http::response($this->articlePage('2014-08-14T14:57:00Z'), 200),
+            'fresh.example.org/*' => Http::response($this->articlePage('2026-08-20T09:00:00Z'), 200),
+        ]);
+
+        $area = $this->area();
+        $result = $this->svc()->researchArea($area);
+
+        $this->assertTrue($result['ok']);
+        $this->assertSame(1, $result['items'], 'the stale item should not be counted as stored');
+
+        $stored = CommunityNewsItem::where('areaid', $area->id)->pluck('title')->all();
+        $this->assertSame(['Book sale'], $stored);
+    }
+
+    public function test_unreachable_source_still_stores_the_item(): void
+    {
+        // A check we cannot complete must never cost us a good item.
+        config(['freegle.communitynews.anthropic_api_key' => 'test-key']);
+        config(['freegle.communitynews.check_image_year' => false]);
+        $this->makeSourcesReachable();
+
+        Http::fake([
+            'api.anthropic.com/*' => Http::response($this->researchReturning([
+                ['title' => 'Book sale', 'blurb' => 'Paperbacks on Saturday.', 'url' => 'https://down.example.org/books', 'source' => 'Library', 'date' => '2026-08-31'],
+            ]), 200),
+            'down.example.org/*' => Http::response('gone', 503),
+        ]);
+
+        $area = $this->area();
+        $this->svc()->researchArea($area);
+
+        $this->assertSame(1, CommunityNewsItem::where('areaid', $area->id)->count());
+    }
+
+    public function test_url_already_researched_for_the_area_is_not_stored_again(): void
+    {
+        // The RiverFest article was harvested for Hove twice, six days apart:
+        // the first copy expired unposted, the second went out.
+        config(['freegle.communitynews.anthropic_api_key' => 'test-key']);
+
+        $area = $this->area();
+        CommunityNewsItem::create([
+            'areaid' => $area->id,
+            'title' => 'RiverFest (first harvest)',
+            'snippet' => 'Dragon boats.',
+            'url' => 'https://example.org/riverfest',
+            'researched_at' => now()->subDays(6),
+        ]);
+
+        Http::fake(['api.anthropic.com/*' => Http::response($this->researchReturning([
+            ['title' => 'RiverFest again', 'blurb' => 'Dragon boats this weekend.', 'url' => 'https://example.org/riverfest', 'source' => 'Mag'],
+            ['title' => 'Book sale', 'blurb' => 'Paperbacks on Saturday.', 'url' => 'https://example.org/books', 'source' => 'Library'],
+        ]), 200)]);
+
+        $this->svc()->researchArea($area);
+
+        $titles = CommunityNewsItem::where('areaid', $area->id)->orderBy('id')->pluck('title')->all();
+        $this->assertSame(['RiverFest (first harvest)', 'Book sale'], $titles);
+    }
+
+    public function test_the_same_url_is_still_stored_for_a_different_area(): void
+    {
+        // Neighbouring areas legitimately share an event; dedup is per area.
+        config(['freegle.communitynews.anthropic_api_key' => 'test-key']);
+
+        $other = CommunityNewsArea::create([
+            'anchorgroupid' => 2,
+            'name' => 'Nextville',
+            'lat' => 51.6,
+            'lng' => -0.2,
+            'groupids' => [],
+            'groupcount' => 0,
+        ]);
+        CommunityNewsItem::create([
+            'areaid' => $other->id,
+            'title' => 'Shared fair',
+            'snippet' => 'A fair.',
+            'url' => 'https://example.org/fair',
+            'researched_at' => now(),
+        ]);
+
+        Http::fake(['api.anthropic.com/*' => Http::response($this->researchReturning([
+            ['title' => 'Shared fair', 'blurb' => 'Worth the trip on Saturday.', 'url' => 'https://example.org/fair', 'source' => 'Council'],
+        ]), 200)]);
+
+        $area = $this->area();
+        $this->svc()->researchArea($area);
+
+        $this->assertSame(1, CommunityNewsItem::where('areaid', $area->id)->count());
+    }
+
+    public function test_research_prompts_demand_a_current_source(): void
+    {
+        // The code-side guards are the backstop; the model is still told not to
+        // write up a previous year's edition of a recurring event in the first
+        // place, which is exactly how the 2014 RiverFest article got picked up.
+        config(['freegle.communitynews.anthropic_api_key' => 'test-key']);
+
+        Http::fake(['api.anthropic.com/*' => Http::response($this->researchReturning([
+            ['title' => 'T', 'blurb' => 'B', 'url' => 'https://x.org', 'source' => 'S'],
+        ]), 200)]);
+
+        $this->svc()->generate($this->area());
+
+        Http::assertSent(function ($request) {
+            $system = strtolower($request->data()['system'] ?? '');
+
+            return str_contains($system, "previous year's edition")
+                && str_contains($system, 'when the page was published');
+        });
+    }
+
     public function test_research_prompts_demand_english_only(): void
     {
         config(['freegle.communitynews.anthropic_api_key' => 'test-key']);

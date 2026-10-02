@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 )
 
 func init() {
@@ -264,6 +265,21 @@ func TestChatMessageTypeValues(t *testing.T) {
 	assert.Equal(t, "Interested", msg.Type)
 }
 
+func TestGetSnippetReportShowsReporterComment(t *testing.T) {
+	// Reproduces Discourse #10182/68810: a member reports a post via the app
+	// and adds a comment, but the boilerplate report text (which includes a
+	// full message URL) pushes the reporter's comment past the snippet's
+	// 100-char cutoff, so mods only see the report, never why it was made.
+	chatmsg := "I'm reporting this post as inappropriate:\n" +
+		"https://www.ilovefreegle.org/message/68810\n\n" +
+		"Reason: Possible scam\n\n" +
+		"Additional details: \"it may be a medicine, not sure though\""
+
+	snippet := getSnippet(utils.CHAT_MESSAGE_INTERESTED, chatmsg, "")
+
+	assert.Contains(t, snippet, "it may be a medicine, not sure though")
+}
+
 func TestChatMessageImageID(t *testing.T) {
 	// Message without image has nil Imageid
 	msgWithoutImage := ChatMessage{}
@@ -276,4 +292,50 @@ func TestChatMessageImageID(t *testing.T) {
 	}
 	assert.NotNil(t, msgWithImage.Imageid)
 	assert.Equal(t, uint64(42), *msgWithImage.Imageid)
+}
+
+func TestGetSnippetInterestedWithoutReportBoilerplate(t *testing.T) {
+	// A plain "Interested" reply carries no report boilerplate, so it takes
+	// the same truncation the default case does: short replies unchanged,
+	// long ones cut at 100 characters.
+	short := "Is this still available? I could collect tomorrow."
+	assert.Equal(t, short, getSnippet(utils.CHAT_MESSAGE_INTERESTED, short, ""))
+
+	long := ""
+	for i := 0; i < 15; i++ {
+		long += "0123456789"
+	}
+	snippet := getSnippet(utils.CHAT_MESSAGE_INTERESTED, long, "")
+	assert.Equal(t, 100, len(snippet))
+	assert.Equal(t, long[:100], snippet)
+}
+
+func TestGetSnippetReportTruncatesLongComment(t *testing.T) {
+	// A reporter's comment longer than the snippet allows is cut at 100
+	// characters, after the "Reported: " prefix.
+	comment := ""
+	for i := 0; i < 12; i++ {
+		comment += "abcdefghij"
+	}
+	chatmsg := "I'm reporting this post as inappropriate:\n" +
+		"https://www.ilovefreegle.org/message/68810\n\n" +
+		"Reason: Possible scam\n\n" +
+		"Additional details: \"" + comment + "\""
+
+	snippet := getSnippet(utils.CHAT_MESSAGE_INTERESTED, chatmsg, "")
+	assert.Equal(t, "Reported: "+comment[:100], snippet)
+}
+
+func TestGetSnippetReportWithEmptyCommentFallsThrough(t *testing.T) {
+	// The boilerplate with an empty comment has nothing to surface, so the
+	// snippet is the ordinary truncation of the whole message.
+	chatmsg := "I'm reporting this post as inappropriate:\n" +
+		"https://www.ilovefreegle.org/message/68810\n\n" +
+		"Reason: Possible scam\n\n" +
+		"Additional details: \"\""
+
+	snippet := getSnippet(utils.CHAT_MESSAGE_INTERESTED, chatmsg, "")
+	assert.NotContains(t, snippet, "Reported:")
+	assert.Equal(t, 100, len(snippet))
+	assert.Equal(t, chatmsg[:100], snippet)
 }

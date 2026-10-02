@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 ---
 
@@ -37,6 +37,13 @@ being brought into the same Compose stack as batch processing, one step at a tim
 - Roll changes forward one at a time and verify each before the next, so any single step
   can be undone cleanly.
 
+## Images: NFS to object storage
+
+Uploaded photos now go to a local spool and on to an S3-compatible object store; the old
+NFS share is read-only and being copied across in scheduled slices, invisibly to members.
+[The runbook](images-to-object-storage.md) has the order of operations: prove the bucket
+is public, cut tusd over, enable the pusher, run the copy, verify, retire the share.
+
 ## Deployment spend optimisation
 
 A recurring, mostly disk-focused sweep to keep hosting spend down: reclaim wasted space,
@@ -57,6 +64,48 @@ Once a year the AGM gets its own Discourse category, which every user is put on
 - Full steps: **[agm-category.md](agm-category.md)**.
 - The steps are separate on purpose: switching Watching on before the information
   posts exist means every draft notifies the whole forum.
+
+## Outbound relay throttled by a provider
+
+A large receiving provider (Yahoo's estate is the usual one) starts answering
+`421 4.7.0 temporarily deferred` to one of the relay's sending addresses. Mail to that
+provider queues on the relay; the batch side notices and pauses generation for it.
+
+- The relay warms its other sending addresses against that provider and routes the
+  provider's mail to whichever one is being accepted, automatically and per provider.
+- Full description: **[outbound-relay-ip-warmup.md](outbound-relay-ip-warmup.md)**.
+- If you are not yet sure the relay is the problem, start with
+  **[how an email gets sent](../reference/outbound-mail.md)** - it separates our own
+  delay from a provider throttling us, which call for opposite responses.
+- Pause the every-minute automation before touching its state by hand, and judge an
+  address on sustained deliveries, never on a one-off probe.
+
+## Restarting a database node, or rejoining one to the cluster
+
+The database is a Galera cluster of two data nodes and an arbitrator. A node that is stopped cleanly rejoins by
+itself on the next start, catching up incrementally if the others' write-set cache still
+covers its downtime and by a full copy from a donor otherwise. The service wrapper does the
+position recovery and refuses two unsafe automatic starts; nearly every manual step beyond
+stop and start makes a rejoin slower.
+
+- Full steps: **[database-node-restart-and-rejoin.md](database-node-restart-and-rejoin.md)**.
+- Stop with the service, never a kill; do not remove the data directory or touch the state
+  file; a joining node refusing connections for 10 to 18 minutes is a full copy in
+  progress, not a hang.
+
+## CookieYes watchdog says the login is lost
+
+The weekly `cookieyes:check` job (see
+[the developer page](../../developers/reference/cookieyes-watchdog.md)) emails Geeks and
+fails the `cookieyes` housekeeping task when its CookieYes login has expired or been
+revoked. Nothing member-facing is affected: the cookie banner keeps working. Only the
+weekly checks and monthly scans stop until someone logs in again.
+
+- The CookieYes account owner runs `php artisan cookieyes:authorize` on the batch host,
+  opens the link it prints, clicks Allow, and then runs it again with `--callback` set to
+  the address the browser landed on.
+- To verify, run `php artisan cookieyes:check`, which should record a result for the
+  `cookieyes` task on the ModTools Sysadmin housekeeping list.
 
 ## Adding a runbook
 

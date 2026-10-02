@@ -79,13 +79,28 @@ class ItemService
     /**
      * Link a message to an item. Idempotent (INSERT IGNORE on the composite key),
      * matching V1 Message::addItem().
+     *
+     * Also maintains items.popularity, which is the number of messages that have used
+     * the item. This increment was missing, so popularity had been frozen since the
+     * catalog was last backfilled: on live only 2,421 of 3,605,071 rows carried any
+     * value at all. That is not cosmetic - the popularity-weighted mean item weight in
+     * AuthorityStatsService, StatsGenerationService and iznik-server-go/item/impact.go
+     * is computed as SUM(popularity*weight)/SUM(popularity), so a dead column silently
+     * narrows that average to a handful of stale rows.
+     *
+     * Incremented only when the link is genuinely new, so reprocessing a message (a
+     * repost, a re-run of the item extractor) cannot inflate the count.
      */
     public function linkToMessage(int $msgid, int $itemid): void
     {
-        DB::statement(
+        $inserted = DB::affectingStatement(
             'INSERT IGNORE INTO messages_items (msgid, itemid) VALUES (?, ?)',
             [$msgid, $itemid]
         );
+
+        if ($inserted > 0) {
+            DB::table('items')->where('id', $itemid)->increment('popularity');
+        }
     }
 
     /**

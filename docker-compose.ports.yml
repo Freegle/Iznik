@@ -89,6 +89,13 @@ services:
     ports:
       - "0.0.0.0:${PORT_SPATIAL:-8196}:8196"
 
+  # Loopback only: this is the nginx proxy_pass target for
+  # geocode.ilovefreegle.org (the photon replacement), matching photon's own
+  # 127.0.0.1:2322 exposure.
+  spatial-knn:
+    ports:
+      - "127.0.0.1:${PORT_SPATIAL_KNN:-8198}:8194"
+
   spatial-live:
     ports:
       - "0.0.0.0:${PORT_SPATIAL_LIVE:-8197}:8196"

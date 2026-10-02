@@ -4,6 +4,10 @@
 # ─── Line endings ────────────────────────────────────────────────────────────
 # Bash scripts must always use LF (Unix) line endings, even on Windows
 *.sh text eol=lf
+# The Gradle wrapper is a POSIX shell script with no extension, so *.sh misses it.
+# With core.autocrlf=true it is checked out CRLF and every android build fails with
+# "./gradlew: cannot execute: required file not found" (a CR on the shebang line).
+gradlew text eol=lf
 # Windows batch files should use CRLF line endings
 *.cmd text eol=crlf
 *.bat text eol=crlf

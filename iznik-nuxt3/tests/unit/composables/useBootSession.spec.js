@@ -12,6 +12,8 @@
  *   short-circuits in fetchUser without a network call but marks
  *   loginStateKnown.
  * - Errors from fetchMe are swallowed (boot must not throw).
+ * - Before any of the above: adopts a session Block Store carried over from the
+ *   user's previous Android device, so a new phone boots logged in.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
@@ -31,6 +33,7 @@ function makeAuthStore(overrides = {}) {
     auth: { jwt: null, persistent: null },
     loginStateKnown: false,
     userFetchedAt: 0,
+    adoptRestoredSession: vi.fn(async () => false),
     ...overrides,
   }
 }
@@ -130,5 +133,34 @@ describe('bootSession', () => {
     // First call failed; loginStateKnown still false so it retries once.
     expect(fetchMe).toHaveBeenCalledTimes(2)
     expect(user).toBeNull()
+  })
+
+  it('asks for a session transferred from a previous device before deciding there are none', async () => {
+    globalThis.__mockAuthStore = makeAuthStore({ loginStateKnown: true })
+
+    await bootSession()
+
+    expect(globalThis.__mockAuthStore.adoptRestoredSession).toHaveBeenCalled()
+  })
+
+  it('fetches the user when the transferred session supplies credentials', async () => {
+    const store = makeAuthStore({
+      adoptRestoredSession: vi.fn(async () => {
+        // What the real action does on a new device: a persistent token, no JWT.
+        store.auth.persistent = 'transferred-persistent'
+        return true
+      }),
+    })
+    globalThis.__mockAuthStore = store
+    fetchMe.mockImplementation(() => {
+      store.user = { id: 456 }
+      store.loginStateKnown = true
+      return Promise.resolve()
+    })
+
+    const user = await bootSession()
+
+    expect(fetchMe).toHaveBeenCalledWith(true)
+    expect(user).toEqual({ id: 456 })
   })
 })

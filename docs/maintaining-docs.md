@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-09-02
 owner: Freegle dev team
 ---
 
@@ -31,16 +31,22 @@ That only works if everyone follows a few conventions. They are deliberately lig
 docs/
   README.md              index and glossary
   maintaining-docs.md    this file
-  members/               four task guides + assets/ screenshots
-  moderators/            four task guides + assets/ screenshots
+  getting-started/       orientation for a new developer, mobile developer or sysadmin
+  members/               task guides + assets/ screenshots
+  moderators/            task guides + assets/ screenshots
   developers/            orientation pages that link into the code
   ops/                   architecture-level operational pages + runbooks/
   screenshots/           how the screenshot automation works
 ```
 
-The **members** and **moderators** sections each have four numbered guides plus a
-`README.md` index. Keep that shape. If a topic does not fit the four guides, add a
-section to the closest one rather than proliferating files.
+**File names carry no number prefix.** Reading order lives in each folder's `README.md`,
+which lists the pages in the order to read them. Numbering the files meant renaming a
+whole folder every time a page was inserted, and every link to it. Name a page after its
+subject, in lower case with hyphens.
+
+The **members** and **moderators** sections are a small set of task guides plus a
+`README.md` index. If a topic does not fit the existing guides, add a section to the
+closest one rather than proliferating files.
 
 ## Front matter
 

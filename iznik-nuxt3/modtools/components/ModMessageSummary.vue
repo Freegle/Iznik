@@ -18,7 +18,7 @@
         :id="id"
         summary
         class="clickme"
-        :to-me="message.promisedtome"
+        :to-me="message.promisedtoyou"
         @click="expand"
       />
     </template>
@@ -145,7 +145,7 @@ const classes = computed(() => {
       props.showPromised &&
       message.value?.promised &&
       props.replyable &&
-      !message.value?.promisedtome &&
+      !message.value?.promisedtoyou &&
       !message.value?.successful,
     noAttachments:
       !message.value?.attachments?.length && !message.value?.sampleimage,

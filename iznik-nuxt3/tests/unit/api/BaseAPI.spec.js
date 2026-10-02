@@ -3,6 +3,7 @@ import { APIError } from '~/api/APIErrors'
 
 const mockSetAuth = vi.fn()
 const mockSetUser = vi.fn()
+const mockWipeAuth = vi.fn()
 const mockApiCounter = vi.fn()
 const mockWaitForOnline = vi.fn().mockResolvedValue()
 const mockCaptureMessage = vi.fn()
@@ -67,6 +68,7 @@ describe('BaseAPI', () => {
       user: { id: 123 },
       setAuth: mockSetAuth,
       setUser: mockSetUser,
+      wipeAuth: mockWipeAuth,
     }))
     mockUseMiscStore.mockImplementation(() => mockMiscStore)
 
@@ -126,8 +128,10 @@ describe('BaseAPI', () => {
         // expected
       }
 
-      expect(mockSetAuth).toHaveBeenCalledWith(null, null)
-      expect(mockSetUser).toHaveBeenCalledWith(null)
+      // Via wipeAuth, not setAuth/setUser directly: the Block Store copy has to
+      // go too, or an Android device whose localStorage was evicted re-adopts
+      // the same dead token at boot and loops back to the login screen.
+      expect(mockWipeAuth).toHaveBeenCalled()
     })
 
     it('includes status 401 in thrown APIError', async () => {

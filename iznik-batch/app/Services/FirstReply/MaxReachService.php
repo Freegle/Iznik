@@ -11,10 +11,10 @@ use Illuminate\Support\Facades\Schema;
 /**
  * "Will this post ever reach here?", as opposed to "does it reach here yet?".
  *
- * Rippling grows a post's reach over days. rippling_reach.polygon is where it has
- * got to; the tick schedule cached alongside it already describes where it is
- * GOING, because the routing server computes the whole schedule up front. Nothing
- * used that, so every gate could only ask about the present.
+ * Rippling grows a post's reach over days. The stored road-network label
+ * already describes where it is GOING - the label is computed once at the
+ * post's full budget, so evaluating it at that budget answers the eventual
+ * reach exactly.
  *
  * The difference matters in one specific place: a reply from someone the post has
  * not reached yet, but will. Holding that reply back does not protect local-first
@@ -23,42 +23,16 @@ use Illuminate\Support\Facades\Schema;
  * replies that trade is fine. On a post that has NONE it is actively harmful,
  * because a delayed first reply and no reply at all feel identical to the poster.
  *
- * The final-tick geometry is copied into rippling_reach.max_polygon by a
- * background pass rather than derived on demand, because some schedule entries
- * carry no inline WKT and have to be re-fetched from the routing server. A
- * point-in-polygon test on a reply is not somewhere to discover that. Rows the
- * pass has not reached yet keep max_polygon NULL, and every reader treats NULL as
- * "no wider reach known", which degrades exactly to today's behaviour.
+ * The answer comes from the routing server per question. No verdict - the
+ * label not stored yet, or the server unreachable - holds the reply, the
+ * conservative default this gate has always had.
  */
 class MaxReachService
 {
     private const SRID = 3857;
 
-    /** Memoized column-existence check so a pre-migration deploy is a no-op. */
-    private static ?bool $columnExists = null;
-
     public function __construct(private ReachService $reach)
     {
-    }
-
-    /** Has the max_polygon migration run? Everything here no-ops if not. */
-    public function available(): bool
-    {
-        if (self::$columnExists === null) {
-            try {
-                self::$columnExists = Schema::hasColumn('rippling_reach', 'max_polygon');
-            } catch (\Throwable) {
-                self::$columnExists = false;
-            }
-        }
-
-        return self::$columnExists;
-    }
-
-    /** Test-only: forget the memoized column check. */
-    public static function forgetAvailability(): void
-    {
-        self::$columnExists = null;
     }
 
     /**
@@ -75,26 +49,18 @@ class MaxReachService
      */
     public function isWithinMaxReach(int $msgid, float $lat, float $lng): bool
     {
-        if (!$this->available()) {
-            return false;
-        }
-
         try {
-            $point = 'ST_SRID(POINT(?, ?), ' . self::SRID . ')';
-            $row = DB::selectOne(
-                "SELECT EXISTS(
-                    SELECT 1 FROM rippling_reach
-                    WHERE msgid = ?
-                      AND (ST_Contains(polygon, $point) = 1
-                           OR (max_polygon IS NOT NULL AND ST_Contains(max_polygon, $point) = 1))
-                 ) AS within",
-                [$msgid, $lng, $lat, $lng, $lat]
-            );
+            // The stored label at its own full budget IS the eventual reach
+            // (and the current reach is inside it, so one verdict answers the
+            // whole current-or-eventual question). No verdict - the label not
+            // stored yet, or the routing server unreachable - holds the
+            // reply: the conservative default this gate has always had.
+            // There is no grid fallback; routing is a dependency, by design.
+            $verdicts = app(\App\Services\Ripple\ReachService::class)
+                ->labelVerdicts($lat, $lng, [$msgid], 'max');
 
-            return (bool) ($row->within ?? 0);
+            return ($verdicts[$msgid] ?? '') === 'in';
         } catch (\Throwable $e) {
-            // Invalid stored geometry can make ST_Contains throw. A spatial failure
-            // must never decide a reply's fate by exception, so fall back to "no".
             Log::warning('firstreply: max reach test failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
 
             return false;
@@ -108,10 +74,6 @@ class MaxReachService
      */
     public function maxCumulativeUsers(int $msgid): ?int
     {
-        if (!$this->available()) {
-            return null;
-        }
-
         try {
             $val = DB::table('rippling_reach')
                 ->where('msgid', $msgid)
@@ -123,164 +85,19 @@ class MaxReachService
         }
     }
 
-    /**
-     * Populate max_polygon for reach rows that lack it.
-     *
-     * Most rows are free: the final tick's geometry is already inline in the
-     * cached schedule, so this is a JSON decode and an UPDATE. The rest need one
-     * routing call each, which is why $routingBudget bounds them separately from
-     * $limit - a run should never turn into an unbounded fan-out at the routing
-     * server just because a batch happened to be full of them.
-     *
-     * @return array{scanned:int, filled:int, routed:int, skipped:int}
-     */
     public function populate(int $limit = 200, int $routingBudget = 20): array
     {
         $stats = ['scanned' => 0, 'filled' => 0, 'routed' => 0, 'skipped' => 0];
 
-        if (!$this->available()) {
-            return $stats;
-        }
-
-        $rows = DB::table('rippling_reach')
-            ->select('msgid', 'lat', 'lng', 'schedule')
-            ->whereNull('max_polygon')
-            ->whereNotNull('schedule')
-            // Only posts still expanding: a done post's current reach IS its
-            // eventual reach, so no reply to it can be held inside max_polygon
-            // and filling one buys nothing. Without this filter the pass,
-            // having covered every live post, spent its whole routing budget
-            // for days working through completed history (observed 2026-08-08:
-            // 320 fills/run against status=done rows after the live backlog
-            // emptied).
-            ->where('status', 'expanding')
-            ->orderByDesc('updated_at')
-            ->limit($limit)
-            ->get()
-            ->all();
-
-        foreach ($rows as $row) {
-            $stats['scanned']++;
-
-            try {
-                $ticks = json_decode((string) $row->schedule, true);
-                if (!is_array($ticks) || empty($ticks)) {
-                    $stats['skipped']++;
-                    continue;
-                }
-
-                $final = $this->finalTick($ticks);
-                if ($final === null) {
-                    $stats['skipped']++;
-                    continue;
-                }
-
-                $wkt = !empty($final['wkt']) ? (string) $final['wkt'] : null;
-                if ($wkt === null) {
-                    $driveMin = (float) ($final['drive_min'] ?? 0);
-                    if ($driveMin <= 0 || $stats['routed'] >= $routingBudget) {
-                        // Either nothing to ask for, or we have spent this run's
-                        // routing budget. Leave the row for the next pass.
-                        $stats['skipped']++;
-                        continue;
-                    }
-                    $geom = $this->reach->catchmentGeometry((float) $row->lat, (float) $row->lng, $driveMin);
-                    $stats['routed']++;
-                    if ($geom === null || empty($geom['wkt'])) {
-                        $stats['skipped']++;
-                        continue;
-                    }
-                    $wkt = (string) $geom['wkt'];
-                }
-
-                $cumulative = isset($final['cumulative_users']) ? (int) $final['cumulative_users'] : null;
-
-                DB::statement(
-                    'UPDATE rippling_reach
-                     SET max_polygon = ST_GeomFromText(?, ' . self::SRID . '),
-                         max_cumulative_users = ?
-                     WHERE msgid = ?',
-                    [$wkt, $cumulative, $row->msgid]
-                );
-                $stats['filled']++;
-            } catch (\Throwable $e) {
-                $stats['skipped']++;
-                Log::warning('firstreply: max reach populate failed', [
-                    'msgid' => $row->msgid,
-                    'error' => $e->getMessage(),
-                ]);
-            }
-        }
+        // The one remaining fill: max_cumulative_users - the "will be shown
+        // to around N more people" nudge - read from the cached schedule's
+        // final tick. The grid sweep is gone: the stored label answers the
+        // gate, and there is nothing else the grid told anyone.
+        $stats['labelled_cumulative'] = $this->fillCumulativeForLabelled($limit);
 
         return $stats;
     }
 
-    /**
-     * Fill in one post's max_polygon right now, from its cached schedule only.
-     *
-     * Exists because scouting fires as soon as a post is seen, and both it and
-     * the background populate pass run every minute - so a brand-new post is
-     * regularly considered for scouting a beat before its eventual reach is
-     * known, and without that nobody is eligible at all. Rather than make the
-     * post wait a minute for the next tick of a different cron, the scout path
-     * asks for it directly.
-     *
-     * Never calls the routing server: this is on the path of a job we want to
-     * stay fast, and the posts that need a routing call are exactly the ones
-     * worth leaving to the background pass. Returns false when it could not fill
-     * it, and the caller simply finds nobody eligible this time round.
-     */
-    public function populateForPost(int $msgid): bool
-    {
-        if (!$this->available()) {
-            return false;
-        }
-
-        try {
-            $row = DB::table('rippling_reach')
-                ->select('schedule')
-                ->where('msgid', $msgid)
-                ->whereNull('max_polygon')
-                ->whereNotNull('schedule')
-                ->first();
-
-            if ($row === null) {
-                // Either no reach row, or it is already populated. Both are
-                // "nothing to do here" rather than a failure.
-                return false;
-            }
-
-            $ticks = json_decode((string) $row->schedule, true);
-            if (!is_array($ticks) || empty($ticks)) {
-                return false;
-            }
-
-            $final = $this->finalTick($ticks);
-            if ($final === null || empty($final['wkt'])) {
-                return false;
-            }
-
-            DB::statement(
-                'UPDATE rippling_reach
-                 SET max_polygon = ST_GeomFromText(?, ' . self::SRID . '),
-                     max_cumulative_users = ?
-                 WHERE msgid = ?',
-                [
-                    (string) $final['wkt'],
-                    isset($final['cumulative_users']) ? (int) $final['cumulative_users'] : null,
-                    $msgid,
-                ]
-            );
-
-            return true;
-        } catch (\Throwable $e) {
-            Log::warning('firstreply: could not fill max reach on demand', [
-                'msgid' => $msgid, 'error' => $e->getMessage(),
-            ]);
-
-            return false;
-        }
-    }
 
     /**
      * Work out how long each recorded passthrough would have waited, had it been
@@ -372,6 +189,47 @@ class MaxReachService
         }
 
         return $stats;
+    }
+
+    /**
+     * The one write of the max reach, shared by both populate paths. The grid
+     * IS the stored form, so a failed rasterise must not write anything - the
+     * row stays unfilled for the next pass, exactly like a failed routing
+     * call.
+     */
+    /**
+     * max_cumulative_users for rows the label answers: the schedule's final
+     * tick already carries the audience count, so no routing call and no
+     * grid materialisation - just the one column the engagement nudge reads.
+     */
+    private function fillCumulativeForLabelled(int $limit): int
+    {
+        $filled = 0;
+        try {
+            $rows = DB::table('rippling_reach')
+                ->select('msgid', 'schedule')
+                ->whereNotNull('reach_labels')
+                ->whereNull('max_cumulative_users')
+                ->whereNotNull('schedule')
+                ->where('status', 'expanding')
+                ->limit($limit)
+                ->get();
+            foreach ($rows as $row) {
+                $ticks = json_decode((string) $row->schedule, true);
+                $final = is_array($ticks) && !empty($ticks) ? $this->finalTick($ticks) : null;
+                if ($final === null || !isset($final['cumulative_users'])) {
+                    continue;
+                }
+                DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                    'max_cumulative_users' => (int) $final['cumulative_users'],
+                ]);
+                $filled++;
+            }
+        } catch (\Throwable $e) {
+            Log::warning('firstreply: labelled cumulative fill failed', ['error' => $e->getMessage()]);
+        }
+
+        return $filled;
     }
 
     /**

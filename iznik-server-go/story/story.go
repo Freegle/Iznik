@@ -140,8 +140,12 @@ func List(c *fiber.Ctx) error {
 		if len(modGroupIDs) > 0 && reviewed == "0" {
 			// review listing has no public filter, has 31-day date cutoff.
 			storyCutoff := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
+			// memberships.rippled = 0 for the same reason as Group() above: a membership
+			// rippling created is not a relationship with the community, so it must not put
+			// somebody's story in that group's moderators' review queue either.
 			whereSQL = "reviewed = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL " +
-				"AND users_stories.date > ? AND memberships.groupid IN (?) AND memberships.collection = ?"
+				"AND users_stories.date > ? AND memberships.groupid IN (?) AND memberships.collection = ? " +
+				"AND memberships.rippled = 0"
 			whereArgs = []interface{}{reviewed, storyCutoff, modGroupIDs, utils.COLLECTION_APPROVED}
 			tx = db.Table("users_stories").
 				Select("DISTINCT users_stories.id").
@@ -190,8 +194,8 @@ func Group(c *fiber.Ctx) error {
 		Select("DISTINCT users_stories.id").
 		Joins("INNER JOIN memberships ON memberships.userid = users_stories.userid").
 		Joins("INNER JOIN users ON users.id = users_stories.userid").
-		Where("memberships.groupid = ? AND reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL",
-			groupid64, reviewed, public).
+		Where("memberships.groupid = ? AND memberships.collection = ? AND memberships.rippled = 0 AND reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL",
+			groupid64, utils.COLLECTION_APPROVED, reviewed, public).
 		Order("date DESC").
 		Limit(int(limit64)).
 		Pluck("id", &ids)
@@ -449,10 +453,6 @@ func LikeStory(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	// Converted together with its
-	// identical twin at PostStory's Like case (0d3865cbb34e): a half-converted
-	// pair renumbers the survivor's site ID, so gate (h) refuses the split
-	// state.
 	db.Table("users_stories_likes").Clauses(clause.Insert{Modifier: "IGNORE"}).
 		Create(map[string]interface{}{"storyid": req.ID, "userid": myid})
 
@@ -482,44 +482,6 @@ func UnlikeStory(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	db.Table("users_stories_likes").Where("storyid = ? AND userid = ?", req.ID, myid).Delete(nil)
-
-	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
-}
-
-// @Summary Post story action (Like/Unlike)
-// @Tags story
-// @Router /story [post]
-func PostStory(c *fiber.Ctx) error {
-	myid := user.WhoAmI(c)
-	if myid == 0 {
-		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
-	}
-
-	type PostRequest struct {
-		ID     uint64 `json:"id"`
-		Action string `json:"action"`
-	}
-	var req PostRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
-	}
-
-	if req.ID == 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "Missing story ID")
-	}
-
-	db := database.DBConn
-
-	switch req.Action {
-	case "Like":
-		// Twin of 713e8b8dab08 above.
-		db.Table("users_stories_likes").Clauses(clause.Insert{Modifier: "IGNORE"}).
-			Create(map[string]interface{}{"storyid": req.ID, "userid": myid})
-	case "Unlike":
-		db.Table("users_stories_likes").Where("storyid = ? AND userid = ?", req.ID, myid).Delete(nil)
-	default:
-		return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
-	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

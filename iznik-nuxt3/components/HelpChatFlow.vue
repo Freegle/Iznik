@@ -349,7 +349,7 @@ const helpTree = {
     ],
   },
   'emails-fewer': {
-    text: "You can reduce the number and frequency of emails in Settings under 'Mail Settings'. You can choose to get a daily digest instead of individual emails.",
+    text: "You can reduce the number and frequency of emails in Settings under 'Email Settings'. You can choose to get a daily digest instead of individual emails.",
     link: { to: '/settings', text: 'Go to Settings', icon: 'arrow-right' },
   },
   'emails-unsubscribe': {
@@ -357,7 +357,7 @@ const helpTree = {
     link: { to: '/unsubscribe', text: 'Unsubscribe', icon: 'arrow-right' },
   },
   'emails-change': {
-    text: "You can change your email address in Settings under 'Personal Information'.",
+    text: "You can change your email address in Settings under 'Account Settings'.",
     link: { to: '/settings', text: 'Go to Settings', icon: 'arrow-right' },
   },
 

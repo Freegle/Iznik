@@ -83,3 +83,58 @@ func TestUpsertLocationReportsHTTPError(t *testing.T) {
 		t.Error("UpsertLocation returned nil on HTTP 500; the caller needs to know so it can log")
 	}
 }
+
+// A 200 is not proof of a cell set: a misrouted request, a proxy's own 200,
+// or a server too old to know this endpoint would otherwise be returned and
+// STORED by the caller, and every later reader would decode-fail and fall
+// back for the life of the row while the column looked converted - the same
+// failure mode CellSetService::rasterize's PHP twin is hardened against
+// (CellSetServiceTest::test_rasterize_refuses_a_200_that_is_not_a_cell_set).
+func TestRasterizeWKTRejectsA200ThatIsNotACellSet(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<html>oops</html>"))
+	}))
+	defer srv.Close()
+
+	t.Setenv("SPATIAL_KNN_URL", srv.URL)
+
+	if _, err := RasterizeWKT("POLYGON((0 0,1 0,1 1,0 1,0 0))"); err == nil {
+		t.Error("RasterizeWKT returned nil error for a 200 body that is not a cell set")
+	}
+}
+
+func TestRasterizeWKTRejectsAnEmpty200(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	t.Setenv("SPATIAL_KNN_URL", srv.URL)
+
+	if _, err := RasterizeWKT("POLYGON((0 0,1 0,1 1,0 1,0 0))"); err == nil {
+		t.Error("RasterizeWKT returned nil error for an empty 200 body")
+	}
+}
+
+func TestRasterizeWKTAcceptsARealCellSet(t *testing.T) {
+	// A minimal valid header (magic + 4 zeroed fields) is enough to pass the
+	// validation this test targets - decoding it is DecodeCellSet's job, not
+	// RasterizeWKT's.
+	body := []byte{0x43, 0x43, 0x53, 0x31, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	t.Setenv("SPATIAL_KNN_URL", srv.URL)
+
+	got, err := RasterizeWKT("POLYGON((0 0,1 0,1 1,0 1,0 0))")
+	if err != nil {
+		t.Fatalf("RasterizeWKT returned an error for a real cell-set header: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Errorf("RasterizeWKT returned %x, want the server's own bytes %x unchanged", got, body)
+	}
+}

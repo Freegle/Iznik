@@ -1,6 +1,7 @@
 package isochrone
 
 import (
+	"log"
 	"strings"
 
 	"github.com/freegle/iznik-server-go/rippling"
@@ -10,7 +11,7 @@ import (
 
 // Sandwich-bounds prefilter for the browse reach queries — see
 // rippling/reachbounds.go for the shared fragments, the sentinel ladder and the design
-// rationale (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md). The browse form drives
+// rationale (docs/developers/reference/rippling-algorithm.md section 11). The browse form drives
 // the R-tree from the small indexed outer_bound column (the design's target shape), so
 // completed posts — degraded to POINT bounds — are pruned by the index itself.
 //
@@ -22,12 +23,43 @@ import (
 // testing whether the viewer point lies inside rr's reach: the sandwich form when the
 // bounds columns exist, else the legacy exact-polygon test. Callers splice it in place
 // of the old ST_Contains conjunct.
-func reachContainmentSQL(db *gorm.DB, lng, lat float32) (where string, args []interface{}) {
-	if rippling.ReachBoundsReady(db) {
-		return rippling.ReachBrowseWhere(float64(lng), float64(lat), utils.SRID)
+func reachContainmentSQL(db *gorm.DB, lng, lat float32) (where string, args []interface{}, probe bool) {
+	// Spatial-index id-list first (the badge's proven shape, now the feed's
+	// too): the geometry test that was 95-98% of this query's cost is
+	// answered from the spatial index — exactly, from the stored cell grids —
+	// and SQL runs a keyed IN-list lookup. Any spatial failure falls through
+	// to the degraded form below.
+	if in, partial, ok := spatialReachIDs(db, utils.LatLng{Lat: lat, Lng: lng}); ok {
+		if len(partial) > 0 {
+			// A partial id meant a legacy coarse-raster row whose boundary
+			// band needed the exact geometry; healthy rows no longer produce
+			// them. Surface it rather than silently dropping posts.
+			log.Printf("reach containment: %d partial ids with no legacy geometry to resolve them", len(partial))
+		}
+		// Stored labels are the deciding record wherever they exist: drop any
+		// grid-admitted post whose label says the member is NOT reachable by
+		// road at the post's current budget - the estuary's far bank - and
+		// union in the posts the grid prefilter missed. Posts without labels,
+		// and everything when routing is unavailable, keep the grid verdict;
+		// overflow rings re-admit on top of this list exactly as they always
+		// have (composeReachOverflow).
+		// The FEED keeps the grid list when the evaluation is unanswered: an
+		// empty page is the degraded shape it has always had, and the client's
+		// in-flight guard cannot recover from a rejected fetch until the page
+		// is reloaded. The BADGE refuses instead (nearbyCount) - see there.
+		in, _ = labelNarrowAndDiscover(lat, lng, in)
+		// GORM renders an empty slice as IN (NULL) — matches nothing — which
+		// is right for a viewer no reach covers (the ring arm may still admit).
+		return "AND ms.msgid IN (?) ", []interface{}{in}, false
 	}
 
-	return "AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) ", []interface{}{lng, lat, utils.SRID}
+	// Degraded: the spatial server is unreachable. The outer bound — a
+	// stored SUPERSET of the reach — narrows in SQL, and the caller probes
+	// each candidate's stored cells in Go (reachCandidateQuery threads this
+	// flag up). Correct and bounded, just slower: the emergency path, not a
+	// second authority.
+	w, a := rippling.ReachOuterOnlyWhere(float64(lng), float64(lat), utils.SRID)
+	return w, a, true
 }
 
 // viewerOverflowPaths is every ring path that could let this viewer in: their band or
@@ -46,17 +78,80 @@ func viewerAdmittedMsgids(db *gorm.DB, myid uint64, lat, lng float32) []uint64 {
 		viewerOverflowPaths(db, myid, lat, lng))
 }
 
+// reachProbe rides up from reachOrOverflowSQL when the containment conjunct
+// is only the outer-bound SUPERSET (the degraded path in reachContainmentSQL):
+// the caller must keep a returned row only when the viewer's point probes into
+// its stored cells — except ring-admitted posts, which are in via the ring
+// whatever the committed reach says, exactly as the OR arm in the SQL says.
+type reachProbe struct {
+	lng, lat float64
+	admitted map[uint64]struct{}
+}
+
+// keep answers the probe for one candidate row. Undecidable cells do not
+// admit here - but a RETIRED grid (labels-truth drained it) is a healthy,
+// designed state, and filterProbed (isochrone/message.go) routes exactly
+// those undecided rows through one batched label evaluation before giving
+// up, so an empty blob is never treated as corruption.
+func (p *reachProbe) keep(msgid uint64, cells []byte) bool {
+	if _, ok := p.admitted[msgid]; ok {
+		return true
+	}
+	in, ok := rippling.CellSetContains(cells, p.lng, p.lat)
+	return ok && in
+}
+
+// labelNarrowAndDiscover applies the labels-truth transform to a
+// grid-admitted id list: drop ids whose stored label verdicts the member
+// OUT at the post's current budget, and append the labelled posts the grid
+// prefilter missed (discover). The feed and the badge count both go through
+// here, so they can never disagree about which posts the labels admit. The
+// SQL's own visibility conjuncts (held status, spatial joins) still apply
+// to every id, discovered ones included.
+//
+// ok=false means the question went unanswered (routing unreachable, breaker
+// open, a 503 that survived the retry) and the list comes back untouched.
+// Since the grids retired that list is empty, so an unanswered question
+// looks exactly like "nothing is in reach" - which is why the flag exists:
+// each caller decides what unanswered means for its surface.
+func labelNarrowAndDiscover(lat, lng float32, in []int64) ([]int64, bool) {
+	ids := make([]uint64, len(in))
+	for i, id := range in {
+		ids[i] = uint64(id)
+	}
+	verdicts, discovered, ok := rippling.LabelVerdictsWithDiscover(float64(lat), float64(lng), ids)
+	if !ok {
+		return in, false
+	}
+	in = rippling.DropLabelOut(in, verdicts)
+	for _, id := range discovered {
+		in = append(in, int64(id))
+	}
+	return in, true
+}
+
 // reachOrOverflowSQL is reachContainmentSQL plus, when any overflow ring applies to this
 // viewer, the rings as alternative ways in. Returned as ONE conjunct so it can be spliced
 // into the single concatenated WHERE the browse query builds - see the note in
 // reachCandidateQuery about why that query cannot be split across several Where() calls.
-func reachOrOverflowSQL(db *gorm.DB, myid uint64, lng, lat float32) (string, []interface{}) {
-	reachWhere, reachArgs := reachContainmentSQL(db, lng, lat)
+// A non-nil reachProbe means the conjunct is a superset and rows need the Go-side probe.
+func reachOrOverflowSQL(db *gorm.DB, myid uint64, lng, lat float32) (string, []interface{}, *reachProbe) {
+	reachWhere, reachArgs, probe := reachContainmentSQL(db, lng, lat)
+
+	admitted := viewerAdmittedMsgids(db, myid, lat, lng)
 
 	// The rings are resolved to msgids HERE, so composeReachOverflow stays pure
 	// and its SQL shape remains directly testable - which is the point of the
 	// split, and the shape is where this fails silently.
-	return composeReachOverflow(reachWhere, reachArgs, viewerAdmittedMsgids(db, myid, lat, lng))
+	where, args := composeReachOverflow(reachWhere, reachArgs, admitted)
+	if !probe {
+		return where, args, nil
+	}
+	p := &reachProbe{lng: float64(lng), lat: float64(lat), admitted: make(map[uint64]struct{}, len(admitted))}
+	for _, id := range admitted {
+		p.admitted[id] = struct{}{}
+	}
+	return where, args, p
 }
 
 // composeReachOverflow brackets the reach test and the rings as ALTERNATIVES within one

@@ -32,8 +32,8 @@ func TestDriveTimeIncludesStartupAndMatchesIsochrone(t *testing.T) {
 
 	// Ground truth: the Isochrone cost to the destination's node (which is how
 	// the reach tick polygons see it).
-	iso := Isochrone(g, oLat, oLng, 3600, Drive)
-	dest := nearestNodeForMode(g, dLat, dLng, Drive)
+	iso := Isochrone(g, oLat, oLng, 3600)
+	dest := nearestDriveNode(g, dLat, dLng)
 	want, ok := iso.ReachedNodes[dest]
 	if !ok {
 		t.Fatalf("destination not reached by isochrone")
