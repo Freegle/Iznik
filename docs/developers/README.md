@@ -85,6 +85,7 @@ Read these directly; the pages above link into them rather than copy them:
 | TrashNothing / LoveJunk integration | [./reference/trashnothing.md](./reference/trashnothing.md) |
 | SEO: how posts get found | [./reference/seo.md](./reference/seo.md) |
 | ModTools AI Support Helper | [./reference/ai-support-helper.md](./reference/ai-support-helper.md) |
+| CookieYes watchdog (cookie banner checks) | [./reference/cookieyes-watchdog.md](./reference/cookieyes-watchdog.md) |
 | Chat prompts (Freegle's tappable questions) | [./reference/chat-prompts.md](./reference/chat-prompts.md) |
 | Google Play technical quality (DEX, memory, zero-tap) | [./reference/play-technical-quality.md](./reference/play-technical-quality.md) |
 

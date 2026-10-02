@@ -1,7 +1,10 @@
 package userdump
 
 import (
+	"errors"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -73,4 +76,46 @@ func TestIncludeString_DeterministicAcrossRepeatedCalls(t *testing.T) {
 // deduplicated, lower-cased canonical form.
 func TestParseIncludeThenIncludeString_RoundTrips(t *testing.T) {
 	assert.Equal(t, "db,loki,sentry", includeString(parseInclude(" Sentry, db ,LOKI,db")))
+}
+
+// Sections run concurrently: a snapshot is as slow as its slowest section, not
+// the sum of them. Progress callbacks still arrive one at a time with a
+// running count, and every section is recorded.
+func TestRunSections_RunsConcurrently(t *testing.T) {
+	b, err := NewBuilder()
+	assert.NoError(t, err)
+	defer b.Remove()
+	assert.NoError(t, b.InitMeta())
+
+	var plan []section
+	for i := 0; i < dumpWorkers; i++ {
+		name := "s" + strconv.Itoa(i)
+		plan = append(plan, section{name: name, weight: 1, run: func(b *Builder) (int, error) {
+			time.Sleep(300 * time.Millisecond)
+			return 1, nil
+		}})
+	}
+	plan = append(plan, section{name: "bad", weight: 8, run: func(b *Builder) (int, error) {
+		return 0, errors.New("boom")
+	}})
+
+	var dones []int
+	start := time.Now()
+	warnings := runSections(b, plan, dumpWorkers+8, []string{"plan warning"},
+		func(done, total, totalWeight, doneWeight int, sec section, rows int, secErr error) {
+			dones = append(dones, done)
+			assert.Equal(t, len(plan), total)
+		})
+
+	assert.Less(t, time.Since(start), 2*300*time.Millisecond, "sections overlap rather than queue")
+	var want []int
+	for i := 1; i <= len(plan); i++ {
+		want = append(want, i)
+	}
+	assert.Equal(t, want, dones)
+	assert.Equal(t, []string{"plan warning", "bad: boom"}, warnings)
+
+	var n int
+	assert.NoError(t, b.db.QueryRow("SELECT COUNT(*) FROM _sections").Scan(&n))
+	assert.Equal(t, len(plan), n)
 }

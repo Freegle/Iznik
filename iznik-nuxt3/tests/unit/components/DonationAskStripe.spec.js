@@ -273,7 +273,7 @@ describe('DonationAskStripe', () => {
     it('emits cancel on Not now click', async () => {
       const wrapper = createWrapper()
       await flushPromises()
-      const cancelBtn = wrapper.find('.b-button.secondary')
+      const cancelBtn = wrapper.find('.not-now')
       await cancelBtn.trigger('click')
       expect(wrapper.emitted('cancel')).toBeTruthy()
     })

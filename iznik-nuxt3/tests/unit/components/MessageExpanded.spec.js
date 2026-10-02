@@ -48,7 +48,7 @@ const {
       groups: [{ groupid: 1 }],
       successful: false,
       promised: false,
-      promisedtome: false,
+      promisedtoyou: false,
       deadline: null,
       deliverypossible: false,
       replies: [],
@@ -185,7 +185,7 @@ describe('MessageExpanded', () => {
       groups: [{ groupid: 1 }],
       successful: false,
       promised: false,
-      promisedtome: false,
+      promisedtoyou: false,
       deadline: null,
       deliverypossible: false,
       replies: [],
@@ -808,9 +808,9 @@ describe('MessageExpanded', () => {
       expect(wrapper.text()).toContain('Already promised')
     })
 
-    it('shows "Promised to you" when promisedtome', async () => {
+    it('shows "Promised to you" when promisedtoyou', async () => {
       mockMessage.value.promised = true
-      mockMessage.value.promisedtome = true
+      mockMessage.value.promisedtoyou = true
       mockFromme.value = false
       const wrapper = await createWrapper()
       expect(wrapper.text()).toContain('Promised to you')

@@ -273,15 +273,8 @@ func CreateAlert(c *fiber.Ctx) error {
 	})
 }
 
-// RecordAlert handles POST /alert - public access for tracking.
-//
-// @Summary Record alert click
-// @Description Records a click on an alert tracking entry.
-// @Tags alert
-// @Accept json
-// @Produce json
-// @Success 200 {object} map[string]interface{}
-// @Router /api/alert [post]
+// RecordAlert handles POST /modtools/alert - public access for tracking alert clicks.
+// Records a click (action=clicked, trackid=<id>) into alerts_tracking.
 func RecordAlert(c *fiber.Ctx) error {
 	type RecordRequest struct {
 		Action  string `json:"action"`

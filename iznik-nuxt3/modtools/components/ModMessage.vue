@@ -216,6 +216,23 @@
                 </a>
               </span>
             </NoticeMessage>
+            <!-- The post's home community sent it back to pending. This copy
+                 rippled in and cannot be approved until they approve theirs; the
+                 server refuses it too (locked_by_home is the effective lock). -->
+            <NoticeMessage
+              v-if="lockedByHome"
+              variant="warning"
+              class="mt-1 mb-2"
+              data-test="locked-by-home-notice"
+            >
+              The home community is reviewing this post, so it can't be approved
+              here until they approve it. Nothing for you to do for now.
+            </NoticeMessage>
+            <ModMessageTnNotice
+              :mod-messaging-allowed="modMessagingAllowed"
+              :live="contextCopyIsLive"
+              :group-name="currentGroupName"
+            />
             <ModMessageDuplicate
               v-for="(duplicate, index) in duplicates"
               :key="'duplicate-' + duplicate.id + '-' + index"
@@ -253,7 +270,11 @@
             </span>
             <div v-if="expanded" class="d-flex">
               <div class="d-flex flex-column align-content-end">
-                <b-button v-if="!editing" variant="white" @click="startEdit">
+                <b-button
+                  v-if="!editing && modMessagingAllowed"
+                  variant="white"
+                  @click="startEdit"
+                >
                   <v-icon icon="pen" /><span class="d-none d-sm-inline">
                     Edit</span
                   >
@@ -753,6 +774,7 @@
           :editreview="editreview"
           :cantpost="membership && membership.ourpostingstatus === 'PROHIBITED'"
           :is-home-group="isHomeGroup"
+          :mod-messaging-allowed="modMessagingAllowed"
         />
         <b-button
           v-if="editing"
@@ -1149,12 +1171,37 @@ const reachArrival = computed(() => {
   return message.value?.date || null
 })
 
+// False for a TN post whose poster never chose this - or any - Freegle community
+// (messages_groups.mod_messaging_allowed = 0 on its origin row). They have agreed to
+// nothing with the volunteers here, so the actions that talk to them or put words in their
+// mouth are withdrawn: Edit, Blank Reply, standard messages and chat. Approve and Delete
+// stay. Server-enforced too - see the Go modmessaging package.
+const modMessagingAllowed = computed(
+  () => message.value?.mod_messaging_allowed !== false
+)
+
+// Whether the copy being administered is live on the community. Only Approved is;
+// Pending and Spam are both still awaiting a decision. Read off contextGroup rather
+// than the message-wide `pending`, because the notice above speaks about THIS copy -
+// a post can be live on one community while still pending on another, and telling a
+// moderator their pending copy "is live" would be wrong.
+const contextCopyIsLive = computed(
+  () => contextGroup.value?.collection === 'Approved'
+)
+
 // Rippling-out (#6): the post originated on another group and has rippled in to the
 // group this copy is being administered on, so it is "starting to become available" to
 // that group's members. Anchored to currentGroupid (the explicit context group, or the
 // group being administered in the all-communities view) so the banner shows in both.
 const isRippledInToContextGroup = computed(() =>
   isRippledIn(message.value?.groups, currentGroupid.value)
+)
+
+// A moderator of the post's home community sent it back to pending, so this rippled-in
+// copy waits for them. The API sends the effective lock: it is already 0 once the home
+// copy is approved.
+const lockedByHome = computed(
+  () => parseInt(contextGroup.value?.locked_by_home) === 1
 )
 
 // Task #23: the P/Q "quicker to get to" note for the copy on currentGroupid - only present

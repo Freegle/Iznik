@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-15
+last_reviewed: 2026-10-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -10,6 +10,8 @@ covers:
   - iznik-nuxt3/tests/e2e/test-modtools-pending-messages.spec.js
   - iznik-nuxt3/tests/e2e/test-modtools-edits.spec.js
   - iznik-server-go/test/modtools_edits_rippled_in_test.go
+  - iznik-server-go/test/modmessaging_test.go
+  - iznik-server-go/test/modtools_searchmemb_test.go
   - iznik-batch/tests/Unit/Services/Ripple/**
 ---
 
@@ -17,6 +19,13 @@ covers:
 
 Approving and tidying members' posts is the heart of moderation. This guide covers the
 queues, the actions, why posts get held, and how reports work.
+
+## Checked and Trusted
+
+Alongside Pending, **Messages > Checked** and **Messages > Trusted** are oversight queues of
+posts that went live without a moderator approving them: Checked holds posts auto-approved
+by the automated checks from members with no posting status set, and Trusted holds posts
+from trusted members. Look them over and use **Mark all as checked** to clear them.
 
 ## The pending queue
 
@@ -91,6 +100,11 @@ ModTools tells you *why* a post needs a look, right on the post:
   toward Lancaster. People inside a ring can see the post and reply to it, and are
   emailed about it, exactly as those inside the shaded area are. See
   [rippling out](rippling-out.md).
+
+  A few posts have **no reach map at all**, and that is not a fault: a post on a phantom
+  or training community never ripples, and neither does a TrashNothing item we still hold
+  as several separate posts, until those are merged into one. See
+  [TrashNothing posts](rippling-out.md#trashnothing-posts).
 - **Bulk clearance** posts show an item count and a "see how members see it" preview.
 
 ## Standard messages
@@ -116,6 +130,27 @@ recorded by the poster or by the moderators of the community it was posted on, a
 server refuses it from anywhere else. A rippled-in copy
 can also arrive Pending because it breaks your own keyword or worry-word rules, with the
 reason shown on the post. The whole picture is in [rippling out](rippling-out.md).
+
+If the post's **home** community sends it back to pending, your rippled-in copy shows a
+notice that the home community is reviewing it, and there is no Approve button until they
+approve theirs. You can still reject or hold your copy.
+
+### Safeguarding flags
+
+A post that mentions refuges, domestic abuse or violence, fleeing or escaping abuse,
+Women's Aid, safe houses, hostels or shelters is flagged **Safeguarding** and held in
+Pending. The flag says: *"This post may show where someone escaping abuse lives. Before
+approving, check the location. Suggest the poster uses a public place or just the town,
+and doesn't name the service."* Most of these are harmless (an offer to a local refuge), so
+use your judgement; the flag is there to make you look at the location before approving.
+
+Edit or ask the poster to change anything that gives away where somebody is. Bear in mind
+that the map and title already blur a post's location: the pin is moved by a few hundred
+metres and the title shows only the area and postcode district. That is enough for most
+posts, but for a refuge a few hundred metres can still narrow it to a street or two, so do
+not rely on the blurring alone.
+
+Once you approve a flagged post it is treated as normal and ripples out like any other.
 
 Only a copy rippling created counts as rippled in. A post a TrashNothing member sent to
 your community directly, as well as to others, is yours to moderate in full, and the
@@ -152,8 +187,10 @@ shows these with an old-to-new difference, and you **Accept Edit** or **Reject E
 
 **Messages > Approved** (`/messages/approved`) lets you browse posts that are already
 live, search by id, subject or member, and mark OFFERs and WANTEDs as **Taken**,
-**Received** or **Withdrawn** on the member's behalf when needed. You can also move a post
-**Back to Pending** for another look. Tick **Only this group's own posts (hide
+**Received** or **Withdrawn** on the member's behalf when needed. A search by member
+matches the community's current members by name or email address and lists their
+posts; somebody who has since left is found by their member id instead. You can also
+move a post **Back to Pending** for another look. Tick **Only this group's own posts (hide
 rippled-in)** to leave out copies that rippled in from elsewhere; it applies to a search
 by subject as well as to the plain list.
 
@@ -176,6 +213,11 @@ network-wide:
 - **A moderator reporting**, or moving a post **Back to Pending** in ModTools, counts on
   its own - no quorum needed - and pulls the post to Pending everywhere it has reached.
 
+A copy moved **Back to Pending** waits for a moderator of that community. Nothing approves it
+automatically: not the content check, not the auto-approval for posts that rippled in, and not
+the post being approved again on its home community. Approve or reject it as you would any
+other pending post.
+
 In all these cases the copies are **kept**, each community decides independently, and
 re-approving a copy does **not** re-notify members or re-ripple from scratch. Rejecting a
 rippled-in copy simply removes it from your community; the poster is not told, and other
@@ -187,6 +229,34 @@ the pending post now shows the reason (for example *"A moderator moved this post
 pending for review."*), so you can see why it is back rather than assuming your Approve did
 not work. The post's logs on your community record the same pull as a Hold entry, naming
 the moderator who did it when it was a moderator rather than a members' review.
+
+## Posts from Trash Nothing that nobody chose
+
+Some posts arrive from Trash Nothing without the person choosing a Freegle community at
+all - we match them to a community from where they are. Those posts carry a warning saying
+so, worded for where the post has got to: on one waiting in **Pending** it says approve or
+delete is the whole of it, and on one already **live** it says what happens if members
+report it. They behave differently from an ordinary post, because the person behind them
+didn't choose your community and never agreed to hear from you:
+
+- You can **approve** or **delete** them as normal, and hold and release them.
+- You **cannot edit** them, send a **Blank Reply**, or use any **standard message** - those
+  buttons aren't shown, because there is nobody to send them to.
+- **Reject** still works, and simply takes the post off your community without sending
+  anything.
+
+If a member **reports** one of these posts, the report does **not** come to you - there is
+no community that could act on it. Two different people reporting the same post takes it
+off Freegle automatically instead. It is a soft delete, so Support can still see it and put
+it back.
+
+The same applies to the person on the **members page**: they show a warning saying they are
+a Trash Nothing user who didn't choose the community, and the Chat, Mail and standard-message
+buttons are not offered. If they later post to a community they've chosen, all of this goes
+away by itself and they become an ordinary member.
+
+Ordinary freeglers are unaffected - they can still reply to the post, and the reply reaches
+the poster on Trash Nothing as usual.
 
 ## Next steps
 

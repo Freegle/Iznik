@@ -81,6 +81,11 @@ class AutoApproveService
             )
             ->where('messages_groups.collection', MessageGroup::COLLECTION_PENDING)
             ->whereNull('messages_groups.heldby')
+            // A copy a moderator sent back to pending waits for a moderator.
+            ->where('messages_groups.needs_moderator', 0)
+            // A rippled-in copy locked by its home community waits for the home copy to be
+            // approved by a moderator; the receiving community cannot approve it either.
+            ->where('messages_groups.locked_by_home', 0)
             ->where('messages_groups.deleted', 0)
             ->whereNull('messages.deleted')
             // Never auto-approve a message that is in the Spam collection on ANY

@@ -162,6 +162,73 @@
                     <v-icon :icon="categoryIcon" class="placeholder-icon" />
                   </div>
                 </div>
+
+                <!-- Title overlay (mobile only) -->
+                <div class="title-overlay d-lg-none">
+                  <div class="title-row">
+                    <div class="title-content">
+                      <MessageTag
+                        :id="message.id"
+                        :inline="true"
+                        class="title-tag ps-1 pe-1"
+                      />
+                      <span class="title-subject"
+                        >{{ strippedSubject }}
+                        <MessageAvailability
+                          :availablenow="message.availablenow"
+                          :availableinitially="message.availableinitially"
+                          :bulkcount="message.bulkcount"
+                          badge-class="ms-1"
+                          badge-style="font-size: 0.55em; vertical-align: middle"
+                      /></span>
+                    </div>
+                    <div class="photo-actions">
+                      <button class="photo-action-btn" @click.stop="share">
+                        <v-icon icon="share-alt" />
+                      </button>
+                    </div>
+                  </div>
+                  <div v-if="message.area" class="info-row">
+                    <span class="location">
+                      <v-icon icon="map-marker-alt" class="me-1" />{{
+                        message.area
+                      }}
+                    </span>
+                  </div>
+                  <div class="group-row">
+                    <ShowMore :items="messageGroups" :limit="3" inline>
+                      <template #item="{ item }"
+                        ><v-icon
+                          v-if="item.isHome"
+                          icon="home"
+                          class="me-1 text-muted"
+                          title="Home community (where this was originally posted)"
+                        /><nuxt-link
+                          :to="'/explore/' + item.nameshort"
+                          class="group-link"
+                          @click.stop
+                          >{{ item.namedisplay }}</nuxt-link
+                        ></template
+                      >
+                    </ShowMore>
+                    <span
+                      v-if="messageGroups.length && timeAgoExpandedDisplay"
+                      class="group-time-separator"
+                      >·</span
+                    >
+                    <span v-if="timeAgoExpandedDisplay" class="group-time">{{
+                      timeAgoExpandedDisplay
+                    }}</span>
+                    <span class="group-time-separator">·</span>
+                    <nuxt-link
+                      :to="'/message/' + message.id"
+                      class="post-id-link"
+                      @click.stop
+                    >
+                      #{{ message.id }}
+                    </nuxt-link>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -178,15 +245,13 @@
                     />
                     <span class="desktop-subject"
                       >{{ strippedSubject }}
-                      <b-badge
-                        v-if="message.availablenow > 1"
-                        variant="info"
-                        class="ms-1"
-                        style="font-size: 0.7em; vertical-align: middle"
-                      >
-                        {{ message.availablenow }} available
-                      </b-badge></span
-                    >
+                      <MessageAvailability
+                        :availablenow="message.availablenow"
+                        :availableinitially="message.availableinitially"
+                        :bulkcount="message.bulkcount"
+                        badge-class="ms-1"
+                        badge-style="font-size: 0.7em; vertical-align: middle"
+                    /></span>
                   </div>
                   <div class="desktop-info">
                     <template v-if="message.area">
@@ -264,7 +329,7 @@
                   @click.stop="outcome('Taken', $event)"
                 >
                   <v-icon icon="check" />
-                  <span>TAKEN</span>
+                  <span>Mark as TAKEN</span>
                 </button>
                 <button
                   v-if="message.type === 'Wanted' && !received && !withdrawn"
@@ -273,7 +338,7 @@
                   @click.stop="outcome('Received', $event)"
                 >
                   <v-icon icon="check" />
-                  <span>RECEIVED</span>
+                  <span>Mark as RECEIVED</span>
                 </button>
                 <button
                   v-if="
@@ -351,7 +416,7 @@
                 @click="outcome('Taken', $event)"
               >
                 <v-icon icon="check" />
-                <span>TAKEN</span>
+                <span>Mark as TAKEN</span>
               </button>
               <button
                 v-if="message.type === 'Wanted' && !received && !withdrawn"
@@ -359,7 +424,7 @@
                 @click="outcome('Received', $event)"
               >
                 <v-icon icon="check" />
-                <span>RECEIVED</span>
+                <span>Mark as RECEIVED</span>
               </button>
               <button
                 v-if="isPromised && !taken && !received && !withdrawn"
@@ -530,6 +595,7 @@
 
 <script setup>
 import dayjs from 'dayjs'
+import MessageAvailability from './MessageAvailability'
 import { useComposeStore } from '~/stores/compose'
 import { useMessageStore } from '~/stores/message'
 import { useChatStore } from '~/stores/chat'
@@ -1308,7 +1374,7 @@ onMounted(async () => {
 .desktop-actions {
   display: flex;
   gap: 5px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   margin-top: auto;
   padding-top: 8px;
   border-top: 1px solid $color-gray--lighter;

@@ -6,6 +6,7 @@ use App\Models\Message;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\SeedsReachCells;
 use Tests\TestCase;
 
@@ -112,7 +113,7 @@ class RebuildReachCommandTest extends TestCase
         ];
     }
 
-    /** @dataProvider togetherViolationProvider */
+    #[DataProvider('togetherViolationProvider')]
     public function test_shards_and_shard_must_be_supplied_together(array $shardsOpt, array $shardOpt): void
     {
         $this->artisan('ripple:rebuild-reach', array_merge($shardsOpt, $shardOpt))
@@ -129,7 +130,7 @@ class RebuildReachCommandTest extends TestCase
         ];
     }
 
-    /** @dataProvider invalidShardRangeProvider */
+    #[DataProvider('invalidShardRangeProvider')]
     public function test_invalid_shard_range_is_rejected(int $shards, int $shard): void
     {
         $this->artisan('ripple:rebuild-reach', ['--shards' => $shards, '--shard' => $shard])

@@ -312,8 +312,8 @@ var cronJobs = []CronJob{
 	{Command: "messages:remap-subjects", Name: "Remap Subjects", Description: "Updates message subjects when associated location names have changed", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Messages — Lifecycle", Active: true},
 
 	// Messages — Index & Search
-	{Command: "messages:update-index", Name: "Index Unindexed", Description: "Adds search index entries for recent approved messages that aren't indexed yet", Schedule: "Every 30 minutes", IntervalMinutes: 30, Category: "Messages — Index", Active: true},
-	{Command: "messages:deindex", Name: "Deindex Old", Description: "Removes search index entries for messages older than 30 days", Schedule: "Daily at 1am", IntervalMinutes: 1440, Category: "Messages — Index", Active: true},
+	// (Retired: messages:update-index / messages:deindex — the keyword search
+	// index is gone; search is served from vector embeddings below.)
 	{Command: "messages:update-spatial-index", Name: "Spatial Index", Description: "Updates messages_spatial: upserts recent messages, applies outcomes, removes deleted/old/non-approved entries", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Messages — Index", Active: true},
 	{Command: "embeddings:generate", Name: "Vector Embeddings", Description: "Generates vector embeddings for new messages (semantic search)", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Messages — Index", Active: true},
 

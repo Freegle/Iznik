@@ -1,0 +1,16 @@
+[
+  {
+    "org_id": 299761,
+    "name": "Geeks's organization",
+    "websites": [
+      {
+        "id": 440076,
+        "url": "ilovefreegle.org",
+        "status": "active",
+        "banner_status": 1,
+        "is_active": true,
+        "plan": "Ultimate"
+      }
+    ]
+  }
+]

@@ -262,6 +262,22 @@ describe('work_router_decide action', () => {
   })
 })
 
+// The backlog query did not select first_seen_at, so every backlog bug sorted as
+// '9999' and the batch was simply table order: the oldest reports could wait for
+// ever behind newer ones.
+describe('backlog dispatch order', () => {
+  it('dispatches the oldest backlog bugs first, not in table order', async () => {
+    for (let i = 0; i < 7; i++) {
+      upsertDiscourseBug(db, { topic: 9800 + i, post: 1, reporter: 'r', excerpt: 'The Give button does nothing on iOS.', state: 'open' })
+    }
+    // The two inserted last are the oldest.
+    db.prepare(`UPDATE discourse_bug SET first_seen_at = '2026-01-01 00:00:00' WHERE topic IN (9805, 9806)`).run()
+    const result = await workRouterHandler({}, { phase: 'analysis', classifications: [], bugsFixed: [] })
+    const topics = (result.bugBatch ?? []).map((b: any) => Number(b.topic))
+    expect(topics.slice(0, 2).sort()).toEqual([9805, 9806])
+  })
+})
+
 describe('recent merged PR dedup in work_router_decide', () => {
   it('skips DB bug from dispatch when recent merged PR title mentions its featureArea', async () => {
     upsertDiscourseBug(db, { topic: 300, post: 1, state: 'open', featureArea: 'modtools' })

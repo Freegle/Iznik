@@ -4148,3 +4148,42 @@ func TestDeleteSessionLogsWhenNothingDeleted(t *testing.T) {
 		userID, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_LOGOUT).Scan(&text)
 	assert.Contains(t, text, "unidentified")
 }
+
+// A member who came through TrashNothing never logs in on Freegle directly, so a
+// valid link key presented for one of them is a harvested or forwarded link. It
+// gets the same refusal as a wrong key and no session.
+func TestLoginLinkKeyRefusedForPartnerMember(t *testing.T) {
+	prefix := uniquePrefix("login_link_tn")
+	userID := CreateTestUser(t, prefix, "User")
+
+	db := database.DBConn
+	linkKey := fmt.Sprintf("%s-key", prefix)
+	db.Exec("INSERT INTO users_logins (userid, type, credentials, added) VALUES (?, 'Link', ?, NOW())", userID, linkKey)
+
+	// tnuserid is UNIQUE, so release the value from any user a previous run left.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 99998)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 99998, userID)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"u": userID,
+		"k": linkKey,
+	})
+	req := httptest.NewRequest("POST", "/api/session", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 403, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(3), result["ret"])
+	assert.Equal(t, "Invalid key.", result["status"], "same answer as a wrong key")
+	assert.Nil(t, result["jwt"], "no session for a partner member's link")
+
+	// The same key logs the member in once they are no longer a partner member,
+	// so the refusal is about the partner link and not the key.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE id = ?", userID)
+	req = httptest.NewRequest("POST", "/api/session", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+}

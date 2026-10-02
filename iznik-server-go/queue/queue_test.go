@@ -21,6 +21,7 @@ func TestTaskTypeConstants(t *testing.T) {
 	assert.Equal(t, "freebie_alerts_remove", TaskFreebieAlertsRemove)
 	assert.Equal(t, "remap_postcodes", TaskRemapPostcodes)
 	assert.Equal(t, "user_forget", TaskUserForget)
+	assert.Equal(t, "concern_keyword_backfill", TaskConcernKeywordBackfill)
 }
 
 func TestQueueTaskMarshalError(t *testing.T) {

@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Log;
 
 /**
  * Sandwich bounds for rippling_reach.polygon, stored as same-row columns
- * (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md):
+ * (docs/developers/reference/rippling-algorithm.md section 11):
  *
  *   outer_bound ⊇ polygon (NOT NULL, spatially indexed — the R-tree browse drives)
  *   inner_bound ⊆ polygon, or NULL (no cheap accept)

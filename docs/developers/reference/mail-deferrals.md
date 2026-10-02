@@ -500,6 +500,21 @@ a provider cascades. Rows are kept after release; the active set is
 generate, plus the `suppressionid` that was in force at the time. Claimed by
 `caughtup_at` before the catch-up sends, so a crash cannot send it twice.
 
+**It counts mails, not attempts at a mail.** A suppressed chat recipient does not
+have `chat_roster.lastmsgemailed` advanced - deliberately, so the catch-up can
+still see there are unread messages - so every notifier run re-processes the same
+backlog. Counting per call therefore multiplied one member's handful of unread
+messages by how often the notifier ran, and the support screen's "Held" column
+reached 21,016 for a single member. `recordSuppressed()` takes an optional
+per-mail identity (`$mailKey`; for chat, the message id) and increments only when
+it is above `lastkey`, the highest already counted - so replaying a backlog cannot
+count twice, while a genuinely new message does. Callers with no natural identity
+(the once-per-run mailers) pass none and keep counting per call, which is right for
+them: each call really is a separate mail. `lastkey` ships as a migration applied by
+hand on production, so the service checks once per process whether the column is
+there (`hasLastKey`) and falls back to the older statement while it is not. Rows
+written before the change keep their inflated totals - an attempt count cannot be
+converted back into a mail count.
 `mail_relay_queue` - one row per recipient domain: `waiting`, `deferred`, the
 `oldest` waiting arrival, the `deliveredperhour` it is draining at, and the
 postfix `instance` holding it (queue ids are unique only within one, so an

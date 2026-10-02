@@ -1,0 +1,33 @@
+{
+  "scan_date": "2026-09-20T20:45:02.000000Z",
+  "scan_status": "completed",
+  "total_pages": 132,
+  "total_cookies": 43,
+  "total_scripts": 17,
+  "categories": [
+    {
+      "name": "Uncategorized",
+      "cookie_count": 6
+    },
+    {
+      "name": "Necessary",
+      "cookie_count": 9
+    },
+    {
+      "name": "Advertisement",
+      "cookie_count": 23
+    },
+    {
+      "name": "Analytics",
+      "cookie_count": 2
+    },
+    {
+      "name": "Functional",
+      "cookie_count": 2
+    },
+    {
+      "name": "Performance",
+      "cookie_count": 1
+    }
+  ]
+}

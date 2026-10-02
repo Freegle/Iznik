@@ -674,3 +674,58 @@ func TestCommunityEventNullUserid(t *testing.T) {
 	resp, _ = getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
 }
+
+// TestCommunityEventListGroupPendingVisibility verifies that a logged-in creator can
+// see their own pending community event via GET /api/communityevent/group/:id, while
+// anonymous requests only see approved (non-pending) events.
+// Mirrors V1 List's `pending = 0 OR communityevents.userid = ?` behaviour extended to
+// the group listing endpoint (Fix 9).
+func TestCommunityEventListGroupPendingVisibility(t *testing.T) {
+	prefix := uniquePrefix("cependvis")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	creatorID := CreateTestUser(t, prefix+"_creator", "User")
+	CreateTestMembership(t, creatorID, groupID, "Member")
+	_, creatorToken := CreateTestSession(t, creatorID)
+
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	CreateTestMembership(t, otherID, groupID, "Member")
+	_, otherToken := CreateTestSession(t, otherID)
+
+	// Create a pending event owned by creatorID.
+	db.Exec("INSERT INTO communityevents (userid, title, location, description, pending, deleted) "+
+		"VALUES (?, 'Pending Group Event', 'Test Location', 'Pending', 1, 0)", creatorID)
+	var pendingID uint64
+	db.Raw("SELECT id FROM communityevents WHERE userid = ? AND title = 'Pending Group Event' ORDER BY id DESC LIMIT 1", creatorID).Scan(&pendingID)
+	assert.Greater(t, pendingID, uint64(0))
+	db.Exec("INSERT INTO communityevents_groups (eventid, groupid) VALUES (?, ?)", pendingID, groupID)
+	db.Exec("INSERT INTO communityevents_dates (eventid, `start`, `end`) VALUES (?, DATE_ADD(NOW(), INTERVAL 1 DAY), DATE_ADD(NOW(), INTERVAL 2 DAY))", pendingID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM communityevents_dates WHERE eventid = ?", pendingID)
+		db.Exec("DELETE FROM communityevents_groups WHERE eventid = ?", pendingID)
+		db.Exec("DELETE FROM communityevents WHERE id = ?", pendingID)
+	})
+
+	// Anonymous request must NOT see the pending event.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/communityevent/group/%d", groupID), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var anonIDs []uint64
+	json2.Unmarshal(rsp(resp), &anonIDs)
+	assert.NotContains(t, anonIDs, pendingID, "anonymous must not see pending event in group listing")
+
+	// Creator (logged in) must see their own pending event.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/communityevent/group/%d?jwt=%s", groupID, creatorToken), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var creatorIDs []uint64
+	json2.Unmarshal(rsp(resp), &creatorIDs)
+	assert.Contains(t, creatorIDs, pendingID, "creator must see their own pending event in group listing")
+
+	// A different logged-in user must NOT see the pending event.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/communityevent/group/%d?jwt=%s", groupID, otherToken), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var otherIDs []uint64
+	json2.Unmarshal(rsp(resp), &otherIDs)
+	assert.NotContains(t, otherIDs, pendingID, "other user must not see another user's pending event in group listing")
+}

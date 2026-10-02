@@ -1,0 +1,22 @@
+{
+  "num_pages": 1,
+  "posts": [
+    {
+      "post_id": "tn-parity-clean-1",
+      "group_id": null,
+      "user_id": 88020001,
+      "title": "Clean Widget",
+      "content": "A perfectly ordinary free widget, works fine, no scratches.",
+      "date": "2026-07-10T10:00:00Z",
+      "type": "offer",
+      "outcome": null,
+      "latitude": 20.0000,
+      "longitude": 20.0000,
+      "footer": null,
+      "photos": [],
+      "expiration": null,
+      "reselling": false,
+      "url": "https://trashnothing.com/post/tn-parity-clean-1"
+    }
+  ]
+}

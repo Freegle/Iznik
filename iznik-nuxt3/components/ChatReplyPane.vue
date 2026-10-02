@@ -130,7 +130,7 @@
 
         <!-- Promised warning -->
         <NoticeMessage
-          v-if="message?.promised && !message?.promisedtome"
+          v-if="message?.promised && !message?.promisedtoyou"
           variant="warning"
           class="reply-card__notice"
         >

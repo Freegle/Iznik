@@ -280,6 +280,60 @@ describe('MicroVolunteeringCheckMessage', () => {
     })
   })
 
+  // SR-DYS36: a member was sent a withdrawn post, off all their communities,
+  // and saw a raw 403 when they voted on it.
+  describe('a post that no longer needs checking', () => {
+    const NO_LONGER = "This post doesn't need checking any more"
+
+    it('says so, without asking, when the post has an outcome', async () => {
+      const wrapper = createWrapper(
+        {},
+        {
+          ...mockMessage,
+          outcomes: [{ outcome: 'Withdrawn' }],
+        }
+      )
+      await flushPromises()
+
+      expect(wrapper.text()).toContain(NO_LONGER)
+      expect(wrapper.text()).not.toContain('Yes, that looks ok')
+    })
+
+    it('says so when the post is on none of my communities', async () => {
+      const wrapper = createWrapper(
+        {},
+        {
+          ...mockMessage,
+          groups: [{ groupid: 999, arrival: '2023-01-01T10:00:00Z' }],
+        }
+      )
+      await flushPromises()
+
+      expect(wrapper.text()).toContain(NO_LONGER)
+    })
+
+    it('says so, instead of an error, when the vote is refused', async () => {
+      mockMicroVolunteeringRespond.mockRejectedValueOnce(
+        Object.assign(
+          new Error('API Error POST /microvolunteering -> status: 403'),
+          {
+            response: { status: 403 },
+          }
+        )
+      )
+      const wrapper = createWrapper()
+      await flushPromises()
+
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Yes'))
+        .trigger('click')
+      await flushPromises()
+
+      expect(wrapper.text()).toContain(NO_LONGER)
+    })
+  })
+
   describe('rejection flow', () => {
     it('shows comment form when not right clicked', async () => {
       const wrapper = createWrapper()

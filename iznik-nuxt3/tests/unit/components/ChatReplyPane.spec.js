@@ -15,7 +15,7 @@ const mockMessage = {
   textbody: 'A lovely sofa.',
   attachments: [],
   promised: false,
-  promisedtome: false,
+  promisedtoyou: false,
 }
 
 const mockMessageStore = {
@@ -513,21 +513,25 @@ describe('ChatReplyPane', () => {
   })
 
   describe('promised warning', () => {
-    it('shows promised warning when promised and not promisedtome', async () => {
+    it('shows promised warning when promised and not promisedtoyou', async () => {
       mockMessageStore.byId.mockReturnValue({
         ...mockMessage,
         promised: true,
-        promisedtome: false,
+        promisedtoyou: false,
       })
       const wrapper = await createWrapper()
       expect(wrapper.text()).toContain('Already promised')
     })
 
-    it('hides promised warning when promisedtome', async () => {
+    // Regression test for https://discourse.ilovefreegle.org/t/10189/1 :
+    // the API only ever sends `promisedtoyou` (see message.go), never a
+    // `promisedtome` field. A viewer the item IS promised to must not see
+    // the "already promised to someone else" warning on their own thread.
+    it('hides promised warning when promisedtoyou', async () => {
       mockMessageStore.byId.mockReturnValue({
         ...mockMessage,
         promised: true,
-        promisedtome: true,
+        promisedtoyou: true,
       })
       const wrapper = await createWrapper()
       const notices = wrapper

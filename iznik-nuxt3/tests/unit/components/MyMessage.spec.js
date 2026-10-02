@@ -549,18 +549,20 @@ describe('MyMessage', () => {
   })
 
   describe('Action Buttons', () => {
-    it('shows TAKEN button for Offer messages', async () => {
+    it('shows Mark as TAKEN button for Offer messages', async () => {
       mockData.message.type = 'Offer'
       mockData.message.outcomes = []
       const wrapper = await createWrapper()
-      expect(wrapper.text()).toContain('TAKEN')
+      // A bare "TAKEN" with a tick read as a status, so posters thought their new
+      // post was already taken (Discourse 10215).
+      expect(wrapper.text()).toContain('Mark as TAKEN')
     })
 
-    it('shows RECEIVED button for Wanted messages', async () => {
+    it('shows Mark as RECEIVED button for Wanted messages', async () => {
       mockData.message.type = 'Wanted'
       mockData.message.outcomes = []
       const wrapper = await createWrapper()
-      expect(wrapper.text()).toContain('RECEIVED')
+      expect(wrapper.text()).toContain('Mark as RECEIVED')
     })
 
     it('shows Promise button for Offer messages not promised', async () => {

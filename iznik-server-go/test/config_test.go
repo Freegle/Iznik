@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/freegle/iznik-server-go/config"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/queue"
 	"github.com/stretchr/testify/assert"
 	"net/http/httptest"
 	"testing"
@@ -77,6 +78,61 @@ func TestConcernKeywords_Create(t *testing.T) {
 
 	// Clean up
 	database.DBConn.Delete(&config.ConcernKeyword{}, kw.ID)
+}
+
+// A Freegle-wide block keyword is normally added after the content it targets has
+// already landed, so creating one queues a backfill for the batch to apply it to
+// the last 24 hours. A flag keyword only holds new content for review, and a
+// group-scoped block only concerns that group's queue; neither queues anything.
+func TestConcernKeywords_BlockKeywordQueuesBackfill(t *testing.T) {
+	prefix := uniquePrefix("ckblock")
+	supportUserID := CreateTestUser(t, prefix, "Support")
+	_, token := CreateTestSession(t, supportUserID)
+
+	create := func(name, action, scope string) config.ConcernKeyword {
+		body, _ := json2.Marshal(config.CreateConcernKeywordRequest{
+			Keyword:   prefix + "_" + name,
+			Category:  "scam",
+			MatchMode: "literal",
+			Action:    action,
+			Scope:     scope,
+		})
+		req := httptest.NewRequest("POST", "/api/config/admin/concern_keywords?jwt="+token, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var kw config.ConcernKeyword
+		json2.Unmarshal(rsp(resp), &kw)
+		assert.Greater(t, kw.ID, uint64(0))
+		return kw
+	}
+
+	queued := func(id uint64) int64 {
+		var n int64
+		database.DBConn.Raw(
+			"SELECT COUNT(*) FROM background_tasks WHERE task_type = ? AND JSON_EXTRACT(data, '$.keyword_id') = ?",
+			queue.TaskConcernKeywordBackfill, id,
+		).Scan(&n)
+		return n
+	}
+
+	blocked := create("block", "block", "global")
+	flagged := create("flag", "flag", "global")
+	groupBlocked := create("groupblock", "block", "group")
+
+	assert.Equal(t, int64(1), queued(blocked.ID), "creating a global block keyword must queue a backfill")
+	assert.Equal(t, int64(0), queued(flagged.ID), "a flag keyword holds new content only; nothing to backfill")
+	assert.Equal(t, int64(0), queued(groupBlocked.ID), "a group-scoped block is not a Freegle-wide decision")
+
+	// Clean up
+	database.DBConn.Exec(
+		"DELETE FROM background_tasks WHERE task_type = ? AND JSON_EXTRACT(data, '$.keyword_id') IN (?, ?, ?)",
+		queue.TaskConcernKeywordBackfill, blocked.ID, flagged.ID, groupBlocked.ID,
+	)
+	for _, kw := range []config.ConcernKeyword{blocked, flagged, groupBlocked} {
+		database.DBConn.Delete(&config.ConcernKeyword{}, kw.ID)
+	}
 }
 
 func TestConcernKeywords_CreateValidation(t *testing.T) {

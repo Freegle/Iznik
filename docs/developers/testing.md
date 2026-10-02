@@ -63,6 +63,10 @@ from Laravel migrations - see [APIs and data](apis-and-data.md)). After adding a
 migration, rerun the test-database setup so the test schema matches. The seeded data is
 FreeglePlayground around Edinburgh (postcode EH3 6SS).
 
+Locally the database is in memory by default (`PERCONA_STORAGE=ram`), so it is empty
+after percona restarts, including after the idle-stack sweeper stops a worktree. Rerun
+`scripts/setup-test-database.sh`; it takes about 30 seconds.
+
 ## CI
 
 CircleCI runs the full suite on every push to master, via a shared reusable orb. When you

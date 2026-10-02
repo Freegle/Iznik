@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-14
+last_reviewed: 2026-10-02
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -696,18 +696,6 @@ so the animation you watch is the targeting decision at each step, not a geometr
 approximation of it. On by default; `RIPPLE_REACHABLE_GATE=false` is the killswitch, reverting
 targeting and retraction to the polygon-overlap test.
 
-### 4b. Posts that sit out: an item still held as several messages
-
-A post whose TrashNothing post id is also held by another live message does not ripple into
-new groups. Such a set is one physical item existing as more than one Freegle message, and
-each would otherwise ripple on its own account, so the item would reach people once per
-copy. Enforced in `rippleIntoNewGroups`.
-
-This is self-limiting rather than a standing exclusion: once
-`php artisan tn:merge-crossposts` has collapsed the set onto one message there is no other
-live message to match, and the post ripples like any other. Ingestion no longer creates such
-sets - see [TrashNothing](trashnothing.md#cross-posts-and-reposts).
-
 ### 4a. Communities that never ripple: phantom and training
 
 Some communities exist to hold moderator practice posts rather than real items, and their
@@ -746,6 +734,37 @@ only ever covered ripple-in, and only communities named that way - `FreeglePlayg
 its practice posts at a real Edinburgh postcode, so before this change a practice post there
 crossposted into the live Lothians communities.
 
+### 4b. Posts that sit out: an item still held as several messages
+
+A post whose TrashNothing post id is also held by another **live** (not deleted) message does
+not ripple into new groups. Such a set is one physical item existing as more than one Freegle
+message, and each would otherwise ripple on its own account, so the item would reach people
+once per copy. Enforced in `rippleIntoNewGroups`.
+
+**There is no blanket TN exclusion any more, and no feature flag on what is left.** It used to
+be a standing exclusion on every TN post while TN posts arrived by email - TN cross-posted an
+item itself, emailing a separate copy per group, so rippling on top of that spread one item
+much further than either system intended. What replaced it is the rule above, which asks what
+the database holds rather than which era we are in. `FREEGLE_TN_INGEST_POSTS_VIA_API` is what
+stopped new such sets being created (the API path takes only TN's *source* post and discards
+the per-group copies -
+[`GroupPostIngestionService::REASON_CROSSPOST`](../../../iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php)),
+but `ExpandService` never reads it, and flipping it releases nothing on its own.
+
+That distinction matters during the cutover, where the two eras coexist: an API-ingested
+message can land beside unmerged email-era copies of the same item, and it then sits out
+like any other member of such a set - the flag being on does not release it. **Collapsing the
+set does**: once `php artisan tn:merge-crossposts` has merged it onto one message there is no
+other live message to match, and the post ripples like any other. So the exclusion is
+self-limiting rather than permanent, but it is only as short-lived as the merge backlog - and
+the merge is run by hand on the batch host, not scheduled.
+
+Because a post sitting out is otherwise invisible, each one is counted as
+`tn_duplicate_sat_out` in the run stats, which `ripple:expand complete` logs. A cutover window
+where posts are being held back at volume shows up there; the remedy is to run
+`tn:merge-crossposts`, not to touch the flag. See
+[trashnothing.md](trashnothing.md#cross-posts-and-reposts).
+
 ### Rejected targeting approaches
 
 - **Polygon overlap** (`ST_Intersects(group polygon, reach polygon)`). Inherits every raster
@@ -779,6 +798,17 @@ For each due post, `ripple:expand`:
   Best-effort - a routing server without the engine is a quiet no-op, every reader still
   answers from the stored cells, and `ripple:backfill-reach-labels` retries later (with
   `--all` after a partition rebuild, which renumbers the region ids the labels refer to).
+  The reach's `arrival` is the post's earliest live `messages_spatial.arrival`, and the
+  starting tick is whatever that much elapsed time earns, so an older post starts wide.
+  **A member's own repost** is the exception: turning the post back into a draft
+  (`handleRejectToDraft`) removes every copy, so `removeStaleAndRetract` drops the reach row
+  and re-approval arrives here as a new post. `repostCarriedArrivals` reads the post's
+  `logs` instead and dates the reach from when the post first went live (its first
+  Approved/Autoapproved, else its first Received on a community that logs no approval), so it
+  resumes at the tick it had earned and people it had reached are not told "not yet"
+  (Discourse 9808/827). That holds only while the post was live within
+  `repost_keeps_reach_days` (7) before each repost; after a longer gap it starts afresh.
+  Autoreposts never need this: they keep the row and its stamp.
 - **`advanceDue`** advances to the next hazard tick: one catchment call materialises that
   tick's polygon, and the stored per-tick reached-group ids drive the ripple-in - no
   schedule recomputation. The target is normally elapsed time alone, but
@@ -807,6 +837,13 @@ member has done the one thing that most clearly says they want none.
 
 ## 5a. Frozen reaches (`status = 'held'`)
 
+A freeze cannot be the only thing that stops an unapproved post going out: it does nothing to a
+post whose reach row does not exist yet, and `messages_spatial` keeps a post for up to five
+minutes after it leaves Approved. So `initialiseNew` only starts a reach, and
+`rippleIntoNewGroups` only writes a copy, when the post has a live Approved copy on a group it
+was posted to directly. `advanceDue` writes its status with `status <> 'held'`, so a freeze made
+while a run is in flight survives it.
+
 `FreezeReachIfOriginPending` (`iznik-server-go/microvolunteering`) sets `status='held'` when a
 post's origin copy stops being live-Approved, typically Back to Pending. It is the only writer,
 and nothing clears it: the freeze exists precisely so that re-approving a copy cannot re-reach
@@ -821,6 +858,24 @@ Freezing governs what we SEND, not who has been reached:
   a reply from them is still held. They have not been reached, and freezing does not alter that;
   the answer is the same one they would get on a post still expanding.
 
+### Home Back to pending locks the copies (`messages_groups.locked_by_home`)
+
+`handleBackToPending` (`iznik-server-go/message`) sets `locked_by_home = 1` (and
+`needs_moderator = 1`) on each Pending rippled-in copy when the acting moderator moderates a
+group the post was posted to directly (`HomeGroups`, `rippled_in = 0`). Back to pending from a
+receiving community's moderator, or the member-report quorum (`SendForReviewAllGroups`), sets
+nothing.
+
+- `handleApprove` refuses (403) a locked copy while an undeleted home row exists that is not
+  Approved, unless the same action is approving a home group. The check is live, so a stale flag
+  after the home copy has been approved some other way blocks nothing.
+- Approving a home group clears the flag on every copy. The reach stays `held`; nothing is
+  re-sent.
+- `groups[].locked_by_home` in the message payload is the effective lock, not the stored flag.
+- AutoApproveService, ContentCheckService, incoming mail and TrashNothing ingestion each skip a
+  locked copy, as they already skip `needs_moderator` ones.
+- Receiving groups' hold log and `spamreason` say the home community did it.
+
 ---
 
 ## 6. Retraction
@@ -828,8 +883,13 @@ Freezing governs what we SEND, not who has been reached:
 As a capped reach shrinks or the reachable set changes, `retractOutOfReachCopies`
 soft-deletes rippled-in copies no longer in reach, and removes the ripple-join membership
 when the poster has no other live post there. A **held** reach (from a report or
-Back-to-Pending) is frozen: its copies persist for per-group moderation and are never
-retracted, so re-approval restores the copy without re-rippling.
+Back-to-Pending) is frozen: while the home copy still exists, its copies persist for per-group
+moderation and are not retracted, so re-approval restores the copy without re-rippling. Once the
+home copy is deleted or rejected there is nothing left to moderate against, so the freeze no
+longer protects the copies: `retractCopiesOrphanedByOriginRemoval` retracts them whatever the
+reach status. A frozen reach is spared only while the home row is still Pending. (Nothing clears
+`held`, so a Back to pending followed by a delete at home used to leave the copies live.)
+The same applies to `removeStaleAndRetract`, and to a reject at home.
 
 A community switching ripple-out off retracts the same way - see §4a.
 
@@ -902,6 +962,16 @@ rows, its latest row states its outcome.
   whether or not there are candidate towns, and `useReachDistance.loadCap` repairs the stored
   pair on sight - the sentinel below a member's own cap cannot be a choice, because only the
   top stop means "no limit" and only at the ceiling does it store the sentinel.
+
+  The hint's place names no longer come from `towns` at all. They come from the `places`
+  gazetteer (GeoNames, places of 3,000+ people), because with `towns` a Wellingborough member
+  at the 5-minute stop read "Max 1-2 miles by road. Close to Northampton": Wellingborough,
+  Kettering and Rushden are not curated towns, so the nearest one was 12 miles away. The
+  examples are the biggest places in the outer half of the reach, so they move outwards as the
+  slider widens. When nothing is in reach, the nearest place comes back with its
+  road distance (`closer_miles`, from the drive-metrics lookup, omitted rather than replaced by a straight line when routing cannot say), shown as "Nearest town: X, N miles by road". The reach itself is one
+  figure, "Up to about N miles by road", the median frontier. `towns` still anchors Community
+  News areas, which is now its only reader.
 
   *It decays.* Nothing else writes the key, so a member who joins after a run has no band
   limit, ever - and a member who moves, or an area that grows denser, drifts away from the band
@@ -999,7 +1069,7 @@ rows, its latest row states its outcome.
   (Discourse 9933).
 
   The containment test itself is served through **sandwich bounds**
-  (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md): the exact polygons are grid-fill
+  (section 11): the exact polygons are grid-fill
   isochrones averaging ~11k vertices / 178 KB, so the hot queries first consult two small
   derived polygons stored as SAME-ROW columns on `rippling_reach` — `outer_bound` (a
   verified superset, NOT NULL and spatially indexed: outside it = definitely out) and
@@ -1275,6 +1345,8 @@ about travel time, so the reach wins wherever we have it.
   `max_minutes`) - how long an out-of-reach reply waits (§7a). Off reverts to release on
   coverage or backstop alone.
 - `reply_saturation_stop` (5), `hazard_hours`, `rippled_in_pending_hours` (0).
+- `repost_keeps_reach_days` (`RIPPLE_REPOST_KEEPS_REACH_DAYS`, 7) - how recently a post must
+  have been live for a member's repost to resume its reach rather than restart it (§5). 0 disables.
 - `RIPPLE_HIDE_PENDING` (apiv2 env, on by default) - hide a post that has no
   `rippling_reach` row yet for its first ten minutes. Set to `0` to show every post at once.
 
@@ -1858,3 +1930,50 @@ record. The evidence bit is frozen per reply in `rippling_reply_attribution.was_
 `ripple:backfill-reply-attribution` reconstructs it for older rows - re-reading a frozen
 `was_home_member` bit as `ripple_join` where the surviving membership shows that provenance, while
 leaving rows whose membership has since decayed away on their original answer.
+
+## 11. Sandwich bounds: the measured facts behind the design
+
+Section 7 describes how `outer_bound` and `inner_bound` serve the containment test. These are the
+measurements (prod db3, July 2026) that fixed its shape. They are why the obvious alternatives are
+not used.
+
+**Dead ends, do not retry:**
+
+- **A bounding-box or lat/lng prefilter.** The spatial R-tree already is one, and is used. No stored
+  box beats the polygon's own MBR.
+- **Lossless vertex reduction.** `ST_Simplify` at tolerances from 1e-10 to 1e-5 removes no
+  vertices: every vertex of a grid-fill isochrone is a change of direction.
+- **Lossy `ST_Simplify` as the stored reach.** Unsafe. At 0.005 degrees it bridges the Thames at
+  Gravesend and gains the north bank. The tolerance is in degrees because the coordinates are
+  lng/lat labelled SRID 3857, and the Thames there is 0.007-0.012 degrees wide. Simplification may
+  only ever produce a bound, never the answer.
+- **Asking the routing server per request.** Correct at barriers, but 1.8 s at 30 minutes and 14.7 s
+  at 60, against 0.26 s for the whole SQL query.
+
+**MySQL executor facts that dictate the query shape:**
+
+1. `AND` conjuncts run cheap-first, and a BLOB is fetched lazily per stage, so a failing cheap
+   conjunct means the polygon is never read.
+2. Inside a single `OR`, `CASE` or `IF`, any reference to the polygon column fetches it for every
+   evaluated row (2.10 s against 2.3 ms over 8,129 rows). Laziness does not cross expression items.
+3. A correlated `EXISTS (... polygon ...)` inside an `OR` is lazy. It is the only safe place for the
+   exact polygon.
+4. `MBRContains(bound, point)` drives the R-tree from the index alone.
+
+**Rules for anything that writes a reach:**
+
+- Any shrink of the polygon (both `ST_Difference` clip paths) must shrink or NULL `inner_bound` in
+  the same statement. A stale inner bound accepts viewers in an area just clipped out, which is the
+  same class of error as a Thames leak. A stale outer bound is only loose, which is safe.
+- The wholly-within DELETE after a rejected-group clip stays keyed on the exact polygon, not
+  `outer_bound`: `ST_Within(outer, G)` is stricter and would stop the secondary clip firing.
+- Verify at write time that `ST_Contains(outer, polygon) = 1` and `ST_Contains(polygon, inner) = 1`.
+  Anything else, including an error on invalid geometry, falls back to the envelope as outer and
+  NULL as inner, which is always correct.
+
+**Do not prune `rippling_reach` rows for completed posts,** either by deleting them or by
+degenerating the polygon. A deleted row is recreated by `initialiseNew`'s anti-join on the next
+expand, churning and corrupting `created_at`. A degenerate polygon hides "came and went" posts in the
+digest, holds every reply to a taken rippled post, and leaves a post that is reopened (which happens
+automatically) invisible with no repair path. Completed posts are pruned instead by driving browse
+from the `outer_bound` index, whose arms all filter `successful = 0`.

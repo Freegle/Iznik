@@ -1,6 +1,6 @@
 <template>
   <div class="box-wrapper d-flex justify-content-around" :title="title">
-    <ExternalLink :href="url">
+    <component :is="url ? ExternalLink : 'div'" :href="url || undefined">
       <div
         :class="boxClass"
         class="box"
@@ -13,10 +13,12 @@
       <p class="text-center mt-2 fw-normal">
         {{ description }}
       </p>
-    </ExternalLink>
+    </component>
   </div>
 </template>
 <script setup>
+import ExternalLink from '~/components/ExternalLink.vue'
+
 const props = defineProps({
   title: {
     type: String,
@@ -26,9 +28,11 @@ const props = defineProps({
     type: String,
     required: true,
   },
+  // No url means the box shows without a link, e.g. while a link is awaited.
   url: {
     type: String,
-    required: true,
+    required: false,
+    default: null,
   },
   colour: {
     type: String,
