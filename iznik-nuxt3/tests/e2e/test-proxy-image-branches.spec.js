@@ -16,7 +16,7 @@
  * FreeglerPhotoGrid.vue (rendered on the logged-out homepage) passes image
  * 1 preload+fetchpriority="high" and image 3 neither, exercising both
  * ProxyImage branches in one render. NationalReuseDay.vue's banner
- * (src="/NRD/Banner.png?a=2", non-http, contains '?') exercises the
+ * (src="/NRD/Banner2026.png?a=1", non-http, contains '?') exercises the
  * fullSrc branches, and its (logged-out) SupportLink covers that branch.
  * The logged-in SupportLink branch is exercised on /mobile instead:
  * NationalReuseDay uses the 'no-navbar' layout, which never calls
@@ -76,7 +76,7 @@ test.describe('ProxyImage and SupportLink branch coverage', () => {
     // the weserv url= param once, so one decode must show the query as the
     // origin will see it.
     const bannerSrc = await banner.getAttribute('src')
-    expect(decodeURIComponent(bannerSrc)).toContain('/NRD/Banner.png?a=2')
+    expect(decodeURIComponent(bannerSrc)).toContain('/NRD/Banner2026.png?a=1')
 
     // SupportLink is <client-only>; wait for its mailto link explicitly
     // rather than relying on the page title, so hydration has actually
