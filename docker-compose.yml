@@ -628,6 +628,9 @@ services:
     build:
       context: ./claude-agent-sdk
       network: host
+      args:
+        # The host user owning SUPPORT_CLAUDE_DIR/.credentials.json, which session mode reads.
+        CLAUDE_UID: ${SUPPORT_CLAUDE_UID:-1000}
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-ai-support-helper
     profiles:
       - backend

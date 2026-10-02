@@ -68,7 +68,10 @@ One `query()` code path serves both auth modes (see below); everything else is i
 - **api** — only `ANTHROPIC_API_KEY` set. Metered API billing. Production/edge. No `~/.claude` mount.
 - **session** — a read-only `~/.claude` credential mount (a logged-in Claude subscription).
   Testing only. `docker-compose.yml` mounts **just** `.credentials.json`, not the whole
-  `~/.claude` (so a prompt-injected read cannot reach memory/transcripts).
+  `~/.claude` (so a prompt-injected read cannot reach memory/transcripts). That file is mode
+  600, so the container's `claude` user is built with the owning host uid
+  (`SUPPORT_CLAUDE_UID`, default 1000). The entrypoint starts as root only to take ownership
+  of the audit volume, then runs the server as `claude`.
 
 **`CLAUDE_CODE_OAUTH_TOKEN` wins when both are set** - this is a headless background job, so it
 should run on the subscription rather than metered API spend (consistent with Community News'
