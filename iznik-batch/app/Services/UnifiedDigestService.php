@@ -2343,7 +2343,7 @@ class UnifiedDigestService
                 ->concat($posts);
         }
 
-        // De-duplicate on the (msgid, groupid) PAIR. A carried post whose arrival is also
+        // De-duplicate on the (msgid, groupid) PAIR. A carried post, or the member's own post, whose arrival is also
         // inside the window satisfies both arms and comes back from both - 234 rows of 1,921
         // in the production sample. It must NOT be collapsed by msgid alone: this query
         // deliberately returns one row per copy of a cross-posted item, and deduplicatePosts()

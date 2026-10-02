@@ -1828,6 +1828,30 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertContains($own->id, $ids, 'the author own post is in their daily digest');
     }
 
+    public function test_daily_digest_returns_the_members_own_post_once_when_both_arms_match(): void
+    {
+        // An own post inside the window AND the reach gate satisfies both the window arm and
+        // the own-posts arm; it must come back once, not twice.
+        $author = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($author, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+
+        $own = $this->createTestMessage($author, $group, ['subject' => 'OFFER: own once (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $own->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+
+        $tracker = UserDigest::create([
+            'userid' => $author->id,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'lastmsgid' => 0,
+        ]);
+
+        $ids = $this->service->getPostsForUser($author, $tracker, UnifiedDigestService::MODE_DAILY)
+            ->pluck('id')->all();
+
+        $this->assertSame(1, count(array_keys($ids, $own->id)), 'the author own post appears exactly once');
+    }
+
     /**
      * Seed a post whose committed reach (and outer_bound, which seedReach derives as the
      * polygon's own envelope) EXCLUDE the ring member's location, with a rural overflow ring
