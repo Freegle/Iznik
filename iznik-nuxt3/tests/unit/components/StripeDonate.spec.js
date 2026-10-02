@@ -541,6 +541,23 @@ describe('StripeDonate', () => {
     })
   })
 
+  describe('setup-time failures still emit error (wallet fallback)', () => {
+    it('emits error when Stripe.initialize throws in app mode', async () => {
+      mockIsApp.value = true
+      const spy = vi
+        .spyOn(mockCapacitorStripe, 'initialize')
+        .mockImplementation(() => {
+          throw new Error('init failed')
+        })
+
+      const wrapper = await createWrapper()
+
+      const component = wrapper.findComponent(StripeDonate)
+      expect(component.emitted('error')).toBeTruthy()
+      spy.mockRestore()
+    })
+  })
+
   describe('emits', () => {
     it('defines all expected emits', () => {
       const emits = StripeDonate.emits
