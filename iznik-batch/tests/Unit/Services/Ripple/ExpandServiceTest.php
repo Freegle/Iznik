@@ -3492,7 +3492,7 @@ class ExpandServiceTest extends TestCase
      *   'approved' - origin row still live Approved (control)
      * Returns [msgid, groupB, posterId].
      */
-    private function seedRippledCopyWithOrigin(string $originState, float $lat = 51.5, float $lng = -0.1): array
+    private function seedRippledCopyWithOrigin(string $originState, float $lat = 51.5, float $lng = -0.1, string $reachStatus = 'expanding'): array
     {
         $user = $this->createTestUser();
         $origin = $this->createTestGroup();
@@ -3506,7 +3506,7 @@ class ExpandServiceTest extends TestCase
                 'msgid' => $message->id, 'groupid' => $origin->id,
                 'collection' => $originState === 'pending'
                     ? MessageGroup::COLLECTION_PENDING
-                    : MessageGroup::COLLECTION_APPROVED,
+                    : ($originState === 'rejected' ? MessageGroup::COLLECTION_REJECTED : MessageGroup::COLLECTION_APPROVED),
                 'arrival' => now()->subHours(2),
             ]);
         }
@@ -3530,8 +3530,8 @@ class ExpandServiceTest extends TestCase
             "INSERT INTO rippling_reach
                (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, $lat, $lng, $this->reachCellsFor(self::WKT), self::WKT, now()->subHours(2)]
+             VALUES (?, ?, ?, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, ?, NOW(), NOW())",
+            [$message->id, $lat, $lng, $this->reachCellsFor(self::WKT), self::WKT, now()->subHours(2), $reachStatus]
         );
 
         return [(int) $message->id, (int) $groupB->id, (int) $user->id];
@@ -3567,6 +3567,53 @@ class ExpandServiceTest extends TestCase
 
         $this->assertSame(1, (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->value('deleted'),
             'rippled-in copy pulled after the home post was moved back to pending');
+        $this->assertSame(0, (int) DB::table('rippling_reach')->where('msgid', $msgid)->count());
+    }
+
+    /**
+     * Back to pending freezes the reach (status 'held', as Go's FreezeReachIfOriginPending does)
+     * and nothing clears it, so a later delete on the home group must still pull the copies.
+     */
+    public function test_delete_on_home_group_after_freeze_retracts_rippled_copies(): void
+    {
+        $this->fakeSpatialHttp();
+        [$msgid, $groupB, $posterId] = $this->seedRippledCopyWithOrigin('deleted', 51.5, -0.1, 'held');
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame(1, (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->value('deleted'),
+            'frozen reach must not stop a home delete retracting the copies');
+        $this->assertSame(0, (int) DB::table('rippling_reach')->where('msgid', $msgid)->count());
+        $this->assertSame(0, (int) DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB)->count(),
+            'ripple-join membership cleaned up');
+        $this->assertDatabaseHas('logs', [
+            'type' => 'Message', 'subtype' => 'Deleted', 'groupid' => $groupB, 'msgid' => $msgid,
+            'text' => 'Rippling: removed on origin removal',
+        ]);
+    }
+
+    /** A frozen reach with the home copy still Pending keeps its copies for per-group moderation. */
+    public function test_frozen_reach_with_pending_home_keeps_rippled_copies(): void
+    {
+        $this->fakeSpatialHttp();
+        [$msgid, $groupB] = $this->seedRippledCopyWithOrigin('pending', 51.5, -0.1, 'held');
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame(0, (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->value('deleted'),
+            'copies kept while home is pending and the reach is frozen');
+        $this->assertSame(1, (int) DB::table('rippling_reach')->where('msgid', $msgid)->count());
+    }
+
+    /** Rejecting the home copy after a freeze retracts the copies too. */
+    public function test_reject_on_home_group_after_freeze_retracts_rippled_copies(): void
+    {
+        $this->fakeSpatialHttp();
+        [$msgid, $groupB] = $this->seedRippledCopyWithOrigin('rejected', 51.5, -0.1, 'held');
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame(1, (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->value('deleted'));
         $this->assertSame(0, (int) DB::table('rippling_reach')->where('msgid', $msgid)->count());
     }
 

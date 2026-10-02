@@ -530,6 +530,81 @@ class ContentCheckTest extends TestCase
             'the same post on a copy that was not sent back is promoted as normal');
     }
 
+    public function test_edited_copy_locked_by_the_home_community_is_not_auto_promoted(): void
+    {
+        // The home community's Back to pending locks the rippled-in copies. The content
+        // check may record what it finds but must never promote a locked copy, whatever the
+        // needs_moderator flag says.
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $mid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Bookshelf (SW1A)',
+            'textbody' => 'A bookshelf. Collection only.',
+            'message'  => 'A bookshelf. Collection only.',
+            'arrival'  => now()->subHour(),
+            'date'     => now()->subHour(),
+            'editedat' => now(),
+            'source'   => 'Platform',
+            'lat'      => 51.50,
+            'lng'      => -0.13,
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid'                   => $mid,
+            'groupid'                 => $group->id,
+            'collection'              => 'Pending',
+            'arrival'                 => now()->subHour(),
+            'deleted'                 => 0,
+            'rippled_in'              => 1,
+            'needs_moderator'         => 0,
+            'locked_by_home'          => 1,
+            'contentcheck_checked_at' => now()->subMinutes(30),
+        ]);
+
+        $this->service->processUnprocessed();
+
+        $this->assertSame('Pending', DB::table('messages_groups')->where('msgid', $mid)->value('collection'),
+            'a copy locked by the home community stays Pending after an edit');
+    }
+
+    public function test_safeguarding_keywords_flag_with_their_own_category(): void
+    {
+        $group = $this->createTestGroup();
+
+        $result = $this->service->checkConcernKeywords(
+            'WANTED: bedding for a friend', 'She is fleeing domestic abuse and needs bedding.', $group->id
+        );
+
+        $this->assertNotNull($result, 'a post disclosing domestic abuse is flagged');
+        $this->assertSame('safeguarding', $result['category']);
+        $this->assertSame('flag', $result['action']);
+    }
+
+    public function test_safeguarding_shelter_exclusion_still_applies(): void
+    {
+        $group = $this->createTestGroup();
+
+        $this->assertNull(
+            $this->service->checkConcernKeywords('OFFER: garden shelter', 'A small garden shelter.', $group->id),
+            'a garden shelter is not a safeguarding concern'
+        );
+        $result = $this->service->checkConcernKeywords('WANTED: help', 'Looking for a night shelter nearby.', $group->id);
+        $this->assertNotNull($result);
+        $this->assertSame('safeguarding', $result['category']);
+    }
+
+    public function test_refugee_does_not_match_the_refuge_keyword(): void
+    {
+        $group = $this->createTestGroup();
+
+        $this->assertNull(
+            $this->service->checkConcernKeywords('WANTED: clothes', 'For a refugee family we support.', $group->id)
+        );
+    }
+
     public function test_allowed_category_keywords_are_not_flagged(): void
     {
         // 'allowed' is a category (whitelist) in concern_keywords, not an action.
