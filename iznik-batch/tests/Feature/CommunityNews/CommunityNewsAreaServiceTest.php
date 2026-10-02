@@ -50,6 +50,41 @@ class CommunityNewsAreaServiceTest extends TestCase
         return (int) DB::table('towns')->insertGetId(['name' => $name, 'lat' => $lat, 'lng' => $lng]);
     }
 
+    private function nation(string $name, string $wkt): int
+    {
+        return (int) DB::table('authorities')->insertGetId([
+            'name' => $name,
+            'area_code' => 'CUN',
+            'polygon' => DB::raw("ST_GeomFromText('$wkt', 3857)"),
+        ]);
+    }
+
+    public function test_group_does_not_anchor_to_a_town_in_another_nation(): void
+    {
+        // Oswestry Freegle is in England but its nearest town, Wrexham, is in
+        // Wales 12.7 miles away. Fabricated remote geography, same shape:
+        // two adjacent nations split at lng -40. The group sits just EAST of
+        // the border (lng -39.95, Testland East) while its nearest town is WEST.
+        $this->nation('Testland East ' . uniqid(), 'POLYGON((-40 50, -38 50, -38 52, -40 52, -40 50))');
+        $this->nation('Testland West ' . uniqid(), 'POLYGON((-42 50, -40 50, -40 52, -42 52, -42 50))');
+
+        $this->town('Wrexhamlike', 51.0, -40.15);   // west of the border (Testland West), ~7 miles from the group
+        $this->town('Shrewsburylike', 51.0, -39.55); // east of the border, ~15 miles away
+
+        $oswestry = $this->createTestGroup(['lat' => 51.0, 'lng' => -39.95, 'settings' => ['communitynews' => 1]]);
+        // A neighbour on the far side of the border: Wrexhamlike is rightly its town.
+        $wrexham = $this->createTestGroup(['lat' => 51.0, 'lng' => -40.25, 'settings' => ['communitynews' => 1]]);
+
+        config(['freegle.communitynews.area_cluster_miles' => 20]);
+        $this->svc()->rebuildAreas();
+
+        $o = $this->areasContaining([$oswestry->id])->first();
+        $w = $this->areasContaining([$wrexham->id])->first();
+
+        $this->assertSame('Shrewsburylike', $o->name);
+        $this->assertSame('Wrexhamlike', $w->name);
+    }
+
     public function test_groups_assign_to_nearest_town(): void
     {
         // Areas are anchored on the towns table: each enabled group joins its
