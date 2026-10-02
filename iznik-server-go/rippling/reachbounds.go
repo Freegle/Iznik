@@ -28,4 +28,3 @@ func ReachOuterOnlyWhere(lng, lat float64, srid int) (string, []interface{}) {
 			"AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) ",
 		[]interface{}{lng, lat, srid, lng, lat, srid}
 }
-
