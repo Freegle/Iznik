@@ -11,16 +11,18 @@ vi.mock('@chenfengyuan/vue-number-input', () => ({
     name: 'VueNumberInput',
     template:
       '<div class="vue-number-input" :class="$attrs.class"><input :value="modelValue" /></div>',
-    props: [
-      'modelValue',
-      'controls',
-      'inline',
-      'center',
-      'step',
-      'min',
-      'max',
-      'size',
-    ],
+    props: {
+      modelValue: null,
+      controls: Boolean,
+      inline: Boolean,
+      center: Boolean,
+      step: null,
+      min: null,
+      max: null,
+      size: null,
+      // Boolean like the library's, so a bare `rounded` attribute reads true.
+      rounded: Boolean,
+    },
     emits: ['update:modelValue'],
   },
 }))
@@ -79,6 +81,15 @@ describe('NumberIncrementDecrement', () => {
   })
 
   describe('props', () => {
+    it('asks the input to round, so a typed 18.5 cannot reach the API', () => {
+      // Every use is a count of items, and the API takes a whole number: a
+      // decimal fails the whole request with a 400 (SR-UZFMH).
+      const wrapper = createWrapper()
+      expect(
+        wrapper.findComponent({ name: 'VueNumberInput' }).props('rounded')
+      ).toBe(true)
+    })
+
     it('requires modelValue prop', () => {
       const wrapper = createWrapper({ modelValue: 10 })
       expect(wrapper.props('modelValue')).toBe(10)
