@@ -343,6 +343,53 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(0, $stats['emails_sent'], 'a post under moderation must not be digested');
     }
 
+    public function test_daily_digest_carries_every_post_on_a_group_the_recipient_moderates(): void
+    {
+        // A moderator uses the daily digest to spot-check posts on every group they run, so the
+        // reach gate must not hide a post on a moderated group just because its reach has not
+        // got as far as the moderator's own location. An ordinary member is still gated.
+        $poster = $this->createTestUser();
+        $mod = $this->createTestUser();
+        $member = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        foreach ([$mod, $member] as $u) {
+            $u->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+            $u->lastaccess = now();
+            $u->save();
+            $u->refresh();
+            $this->setMyLocation($u, 51.5, -0.1);
+        }
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($mod, $group, [
+            'role' => Membership::ROLE_MODERATOR,
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createMembership($member, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $message = $this->createTestMessage($poster, $group);
+
+        // A reach well away from both recipients.
+        $far = 'POLYGON((-2.3 53.3, -1.9 53.3, -1.9 53.7, -2.3 53.7, -2.3 53.3))';
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
+             VALUES (?, 53.5, -2.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), 'expanding', NOW())
+             ON DUPLICATE KEY UPDATE status = VALUES(status)",
+            [$message->id, $this->reachCellsFor($far), $far]
+        );
+
+        Http::fake(['*/v1/reach-eval*' => Http::response(['results' => []])]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $member->id);
+        $this->assertEquals(0, $stats['emails_sent'], 'an ordinary member is still reach-gated');
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $mod->id);
+        $this->assertEquals(1, $stats['emails_sent'], 'a moderator sees every post on their group');
+    }
+
     public function test_daily_digest_drops_a_post_whose_stored_label_says_out(): void
     {
         // Labels-truth: the stored road-network label is the deciding record.

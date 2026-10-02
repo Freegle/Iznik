@@ -2261,10 +2261,21 @@ class UnifiedDigestService
             // keep-raw: correlated NOT EXISTS with a spliced ringRescue fragment
             // (ringRescueIds returns SQL text) - the builder cannot compose
             // another service's fragment.
+            //
+            // Posts on a group the member moderates are never rejected: the roll-up is how
+            // a moderator spot-checks every group they run, and "has the reach got to my
+            // own location yet" is the wrong question for a post they are responsible for.
+            $modSql = '';
+            $modParams = [];
+            $modGroups = $this->moderatedGroupIds($user);
+            if ($modGroups !== []) {
+                $modSql = ' AND messages_groups.groupid NOT IN (' . implode(',', array_fill(0, count($modGroups), '?')) . ')';
+                $modParams = $modGroups;
+            }
             $exclusions[] = [
                 "NOT EXISTS (SELECT 1 FROM rippling_reach rr
-                    WHERE rr.msgid = messages.id$inSql$ringRescue)",
-                array_merge($inParams, $ringParams),
+                    WHERE rr.msgid = messages.id$inSql$ringRescue$modSql)",
+                array_merge($inParams, $ringParams, $modParams),
             ];
         }
 
@@ -2460,7 +2471,9 @@ class UnifiedDigestService
             }
         }
 
-        return $posts->filter(fn ($p) => $this->passesDistancePreference(
+        $modGroups = array_flip($this->moderatedGroupIds($user));
+
+        return $posts->filter(fn ($p) => isset($modGroups[(int) ($p->groupid ?? 0)]) || $this->passesDistancePreference(
             $latlng,
             $p->lat,
             $p->lng,
@@ -3071,6 +3084,25 @@ class UnifiedDigestService
 
     /** Per-run memo of msgid => the msgids that are the same item. See itemSiblingMsgids(). */
     private array $itemSiblingMemo = [];
+
+    /** Per-run memo of userid => the groups they moderate. */
+    private array $moderatedGroupMemo = [];
+
+    /**
+     * The groups this member moderates (Moderator or Owner, approved).
+     *
+     * Their digest is exempt from the reach gate and the distance slider for posts on these
+     * groups: a moderator reads it to spot-check everything on the groups they run.
+     *
+     * @return int[]
+     */
+    private function moderatedGroupIds(User $user): array
+    {
+        return $this->moderatedGroupMemo[$user->id] ??= $user->memberships()
+            ->where('collection', Membership::COLLECTION_APPROVED)
+            ->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
+            ->pluck('groupid')->map(fn ($v) => (int) $v)->all();
+    }
 
     /**
      * The groups a digest of this mode draws on for this member.
