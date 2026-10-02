@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-30
+last_reviewed: 2026-10-02
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -858,6 +858,24 @@ Freezing governs what we SEND, not who has been reached:
   a reply from them is still held. They have not been reached, and freezing does not alter that;
   the answer is the same one they would get on a post still expanding.
 
+### Home Back to pending locks the copies (`messages_groups.locked_by_home`)
+
+`handleBackToPending` (`iznik-server-go/message`) sets `locked_by_home = 1` (and
+`needs_moderator = 1`) on each Pending rippled-in copy when the acting moderator moderates a
+group the post was posted to directly (`HomeGroups`, `rippled_in = 0`). Back to pending from a
+receiving community's moderator, or the member-report quorum (`SendForReviewAllGroups`), sets
+nothing.
+
+- `handleApprove` refuses (403) a locked copy while an undeleted home row exists that is not
+  Approved, unless the same action is approving a home group. The check is live, so a stale flag
+  after the home copy has been approved some other way blocks nothing.
+- Approving a home group clears the flag on every copy. The reach stays `held`; nothing is
+  re-sent.
+- `groups[].locked_by_home` in the message payload is the effective lock, not the stored flag.
+- AutoApproveService, ContentCheckService, incoming mail and TrashNothing ingestion each skip a
+  locked copy, as they already skip `needs_moderator` ones.
+- Receiving groups' hold log and `spamreason` say the home community did it.
+
 ---
 
 ## 6. Retraction
@@ -865,8 +883,13 @@ Freezing governs what we SEND, not who has been reached:
 As a capped reach shrinks or the reachable set changes, `retractOutOfReachCopies`
 soft-deletes rippled-in copies no longer in reach, and removes the ripple-join membership
 when the poster has no other live post there. A **held** reach (from a report or
-Back-to-Pending) is frozen: its copies persist for per-group moderation and are never
-retracted, so re-approval restores the copy without re-rippling.
+Back-to-Pending) is frozen: while the home copy still exists, its copies persist for per-group
+moderation and are not retracted, so re-approval restores the copy without re-rippling. Once the
+home copy is deleted or rejected there is nothing left to moderate against, so the freeze no
+longer protects the copies: `retractCopiesOrphanedByOriginRemoval` retracts them whatever the
+reach status. A frozen reach is spared only while the home row is still Pending. (Nothing clears
+`held`, so a Back to pending followed by a delete at home used to leave the copies live.)
+The same applies to `removeStaleAndRetract`, and to a reject at home.
 
 A community switching ripple-out off retracts the same way - see §4a.
 

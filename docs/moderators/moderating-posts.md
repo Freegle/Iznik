@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-30
+last_reviewed: 2026-10-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -123,6 +123,27 @@ recorded by the poster or by the moderators of the community it was posted on, a
 server refuses it from anywhere else. A rippled-in copy
 can also arrive Pending because it breaks your own keyword or worry-word rules, with the
 reason shown on the post. The whole picture is in [rippling out](rippling-out.md).
+
+If the post's **home** community sends it back to pending, your rippled-in copy shows a
+notice that the home community is reviewing it, and there is no Approve button until they
+approve theirs. You can still reject or hold your copy.
+
+### Safeguarding flags
+
+A post that mentions refuges, domestic abuse or violence, fleeing or escaping abuse,
+Women's Aid, safe houses, hostels or shelters is flagged **Safeguarding** and held in
+Pending. The flag says: *"This post may show where someone escaping abuse lives. Before
+approving, check the location. Suggest the poster uses a public place or just the town,
+and doesn't name the service."* Most of these are harmless (an offer to a local refuge), so
+use your judgement; the flag is there to make you look at the location before approving.
+
+Edit or ask the poster to change anything that gives away where somebody is. Bear in mind
+that the map and title already blur a post's location: the pin is moved by a few hundred
+metres and the title shows only the area and postcode district. That is enough for most
+posts, but for a refuge a few hundred metres can still narrow it to a street or two, so do
+not rely on the blurring alone.
+
+Once you approve a flagged post it is treated as normal and ripples out like any other.
 
 Only a copy rippling created counts as rippled in. A post a TrashNothing member sent to
 your community directly, as well as to others, is yours to moderate in full, and the

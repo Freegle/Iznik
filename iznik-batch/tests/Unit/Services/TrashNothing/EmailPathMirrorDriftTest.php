@@ -65,7 +65,7 @@ class EmailPathMirrorDriftTest extends TestCase
         // Re-pinned on 25 September: the approval update now skips a copy marked
         // messages_groups.needs_moderator, which only a moderator's Approve clears.
         // The API mirror's approval update carries the same guard.
-        'handleGroupPost'         => '07115bf56134dc646344a62cd4029de824d681589ea68dd0d362c16fb34f9025',
+        'handleGroupPost'         => 'ed0b06f9e8de0f7c0ab41532b2b521bbed8e2bb63bebcc24b966df9674db9e31',
         // Re-pinned on 21 September: createGroupPostMessage now checks that the
         // location id the spatial index hands back still exists in `locations`
         // before writing it to users.lastlocation, and ingests without a location
