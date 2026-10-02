@@ -869,15 +869,6 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/locations", location.ExcludeLocation)
 
 		rg.Get("/modtools/messages", message.ListMessagesMT)
-		// @Router /modtools/messages/markchecked [post]
-		// @Summary Mark Check queue posts as checked
-		// @Description Marks the posts in the Check queue (live posts that published by themselves) as checked by the moderator
-		// @Tags modtools
-		// @Produce json
-		// @Security BearerAuth
-		// @Success 200 {object} map[string]interface{}
-		// @Failure 401 {object} fiber.Error "Unauthorized"
-		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Post("/modtools/messages/markchecked", message.MarkChecked)
 
 		// Message Sitemap
@@ -1491,37 +1482,10 @@ func SetupRoutes(app *fiber.App) {
 		rg.Get("/modtools/email/stats", emailtracking.Stats)
 
 		// Moderation analytics for the auto-approve approach (Admin/Support only).
-		// @Router /modtools/moderationstats [get]
-		// @Summary Get moderation analytics
-		// @Description Moderation analytics for the post-moderation trial (Admin/Support only)
-		// @Tags modtools
-		// @Produce json
-		// @Security BearerAuth
-		// @Success 200 {object} map[string]interface{}
-		// @Failure 401 {object} fiber.Error "Unauthorized"
-		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/moderationstats", moderation.Stats)
 
 		// Automated review: a moderator marks one step wrong; the SysAdmin agreement report.
-		// @Router /modtools/automod/feedback [post]
-		// @Summary Mark an automated review step wrong
-		// @Description A moderator marks one step of an automated review decision as wrong
-		// @Tags modtools
-		// @Produce json
-		// @Security BearerAuth
-		// @Success 200 {object} map[string]interface{}
-		// @Failure 401 {object} fiber.Error "Unauthorized"
-		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Post("/modtools/automod/feedback", automod.Feedback)
-		// @Router /modtools/automod/agreement [get]
-		// @Summary Automated review agreement report
-		// @Description How often moderators agree with automated review, for SysAdmin
-		// @Tags modtools
-		// @Produce json
-		// @Security BearerAuth
-		// @Success 200 {object} map[string]interface{}
-		// @Failure 401 {object} fiber.Error "Unauthorized"
-		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/automod/agreement", automod.Agreement)
 
 		// Deferral suppressions (authenticated, admin only)
