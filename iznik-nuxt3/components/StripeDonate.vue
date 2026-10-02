@@ -168,6 +168,20 @@ if (stripe) {
 
 const error = ref(null)
 
+// A failure once the member has started paying (declined, cancelled, wallet
+// popup closed, intent call failed) must not emit 'error': parents treat that
+// as "no wallets available" and swap the Google Pay/PayPal buttons for a
+// fallback, even when the payment may have gone through. Show a message and
+// let the wallet sheet close instead.
+function paymentFailed(event, message) {
+  error.value = message
+  try {
+    event?.paymentFailed?.({ reason: 'fail' })
+  } catch (e) {
+    console.error('paymentFailed callback threw', e)
+  }
+}
+
 onMounted(async () => {
   if (isApp.value) {
     const stripeKey = runtimeConfig.public.STRIPE_PUBLISHABLE_KEY
@@ -316,10 +330,14 @@ onMounted(async () => {
 
       if (submitError) {
         console.error('Payment submit error')
-        Sentry.captureMessage('Stripe Express Checkout load error', {
-          extra: event,
+        Sentry.captureMessage('Stripe Express Checkout submit error', {
+          extra: { type: event?.expressPaymentType },
         })
-        emit('error')
+        paymentFailed(
+          event,
+          submitError.message ||
+            'Sorry, we could not start that payment. Please try again.'
+        )
       } else if (!props.monthly) {
         // Create the PaymentIntent and obtain clientSecret
         console.log(
@@ -343,7 +361,12 @@ onMounted(async () => {
           console.error('stripeIntent exception:', e)
           console.error('Exception message:', e.message)
           console.error('Exception stack:', e.stack)
-          throw e
+          Sentry.captureException(e)
+          paymentFailed(
+            event,
+            'Sorry, we could not start that payment. Please try again.'
+          )
+          return
         }
 
         const clientSecret = res?.clientSecret
@@ -365,9 +388,13 @@ onMounted(async () => {
         if (error) {
           console.error('Confirm payment error', error)
           Sentry.captureMessage('Confirm payment error', {
-            extra: event,
+            extra: { type: event?.expressPaymentType, code: error.code },
           })
-          emit('error')
+          paymentFailed(
+            event,
+            error.message ||
+              'Sorry, that payment did not go through. Please try again.'
+          )
         } else {
           // The payment UI is support to automatically close. But we have
           // seen a PayPal overlay persist, so remove that if it's present.
@@ -390,13 +417,14 @@ onMounted(async () => {
 
         if (error) {
           console.error('Create subscription error', error)
-          Sentry.captureMessage('Create subscription  error', {
-            extra: event,
+          Sentry.captureMessage('Create subscription error', {
+            extra: { type: event?.expressPaymentType, code: error.code },
           })
-
-          error.value = error.message
-
-          emit('error')
+          paymentFailed(
+            event,
+            error.message ||
+              'Sorry, that payment did not go through. Please try again.'
+          )
         } else {
           emit('success')
         }

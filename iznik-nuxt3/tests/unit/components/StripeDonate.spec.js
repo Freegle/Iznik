@@ -398,7 +398,7 @@ describe('StripeDonate', () => {
       expect(component.emitted('success')).toBeTruthy()
     })
 
-    it('emits error when confirmPayment fails', async () => {
+    it('shows a message, not the wallet fallback, when confirmPayment fails', async () => {
       const wrapper = await createWrapper({ price: 10 })
 
       const confirmCall = mockExpressCheckoutElement.on.mock.calls.find(
@@ -415,10 +415,11 @@ describe('StripeDonate', () => {
       await flushPromises()
 
       const component = wrapper.findComponent(StripeDonate)
-      expect(component.emitted('error')).toBeTruthy()
+      expect(component.emitted('error')).toBeFalsy()
+      expect(component.vm.error).toBeTruthy()
     })
 
-    it('emits error when submit fails', async () => {
+    it('shows a message, not the wallet fallback, when submit fails', async () => {
       const wrapper = await createWrapper({ price: 10 })
 
       const confirmCall = mockExpressCheckoutElement.on.mock.calls.find(
@@ -434,7 +435,8 @@ describe('StripeDonate', () => {
       await flushPromises()
 
       const component = wrapper.findComponent(StripeDonate)
-      expect(component.emitted('error')).toBeTruthy()
+      expect(component.emitted('error')).toBeFalsy()
+      expect(component.vm.error).toBeTruthy()
     })
   })
 
