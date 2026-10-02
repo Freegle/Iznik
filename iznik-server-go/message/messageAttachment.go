@@ -22,6 +22,8 @@ type MessageAttachment struct {
 	Ouruid       string          `json:"ouruid"`
 	Externalmods json.RawMessage `json:"externalmods"`
 	AI           bool            `json:"ai" gorm:"-"`
+	// Masked is set when the picture is a rejected/regenerating/suppressed AI illustration.
+	Masked bool `json:"-" gorm:"column:masked;->"`
 }
 
 // ComputeAI populates the AI field from the externalmods JSON.
@@ -41,4 +43,17 @@ func (a *MessageAttachment) ComputeAI() {
 	case float64:
 		a.AI = v != 0
 	}
+}
+
+// dropMaskedAttachments removes attachments whose AI illustration has been masked. They have no
+// externaluid, so the URL builder would otherwise point them at a legacy path that does not exist
+// and clients would draw a blank photo box. With none left, clients show their no-photo placeholder.
+func dropMaskedAttachments(atts []MessageAttachment) []MessageAttachment {
+	kept := atts[:0]
+	for _, a := range atts {
+		if !a.Masked {
+			kept = append(kept, a)
+		}
+	}
+	return kept
 }
