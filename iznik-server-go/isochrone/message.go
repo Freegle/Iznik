@@ -282,7 +282,7 @@ func filterProbed(cands []reachCandidateRow, probe *reachProbe) []reachCandidate
 // 60s per active member with a saved browseMaxDistance, and it used to run the FULL
 // fetchReachCandidates - per-row views/replies correlated subqueries and the polygon
 // envelope, none of which a COUNT consumes - at ~849ms a call, a steady CPU tax on the
-// write node (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md finding 2).
+// write node (measured July 2026).
 func reachCandidatePoints(db *gorm.DB, myid uint64, latlng utils.LatLng) []reachCandidateRow {
 	var candidates []reachCandidateRow
 	query, probe := reachCandidateQuery(db, myid, latlng, true)

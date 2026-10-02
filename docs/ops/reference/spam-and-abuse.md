@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-27
+last_reviewed: 2026-10-02
 owner: Freegle ops
 covers:
   - conf/rspamd
@@ -102,7 +102,7 @@ Reference data lives in its own tables, each with a moderator-facing editor in M
 
 | Table | What it holds |
 |---|---|
-| `concern_keywords` | Phrases that flag or block a post or chat message, Freegle-wide (`scope = global`) or for one community. `category = allowed` rows are the whitelist: phrases such as place and shop names that must never feed a match |
+| `concern_keywords` | Phrases that flag or block a post or chat message, Freegle-wide (`scope = global`) or for one community. `category = allowed` rows are the whitelist: phrases such as place and shop names that must never feed a match. `category = safeguarding` rows (refuge, domestic abuse, hostel and the like) flag a post that may show where someone escaping abuse lives; a moderator checks the location before approving, and approval then proceeds as for any post |
 | `worrywords` | Words that signal a safeguarding or welfare concern rather than spam - these route to people, not to a bin |
 | `spam_users` | Known bad accounts, shared across communities |
 | `spam_countries` | Country-level signals |

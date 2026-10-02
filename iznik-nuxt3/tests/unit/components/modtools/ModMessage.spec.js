@@ -1965,6 +1965,63 @@ describe('ModMessage', () => {
       expect(warning.text()).toContain('out of area')
     })
 
+    it('tells the moderator the home community is reviewing a locked copy', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            {
+              groupid: 999,
+              namedisplay: 'Origin',
+              collection: 'Pending',
+              rippled_in: 0,
+              arrival: rippleEarlier,
+            },
+            {
+              groupid: 789,
+              namedisplay: 'Context',
+              collection: 'Pending',
+              rippled_in: 1,
+              locked_by_home: 1,
+              arrival: rippleLater,
+            },
+          ],
+        }
+      )
+      const notice = wrapper.find('[data-test="locked-by-home-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toContain('home community is reviewing this post')
+      expect(notice.text()).toContain("can't be approved here")
+    })
+
+    it('shows no locked notice once the lock has lifted', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            {
+              groupid: 999,
+              namedisplay: 'Origin',
+              collection: 'Approved',
+              rippled_in: 0,
+              arrival: rippleEarlier,
+            },
+            {
+              groupid: 789,
+              namedisplay: 'Context',
+              collection: 'Pending',
+              rippled_in: 1,
+              locked_by_home: 0,
+              arrival: rippleLater,
+            },
+          ],
+        }
+      )
+      expect(wrapper.find('[data-test="locked-by-home-notice"]').exists()).toBe(
+        false
+      )
+    })
+
     // Task #23: the P/Q "quicker to get to" note. Wording (fixed by product spec) is
     // "...in {P} than {P} is to {Q}" — P (nearest in-group point to the offer) appears twice,
     // Q (furthest in-group point from P) once. This test locks that exact structure so the

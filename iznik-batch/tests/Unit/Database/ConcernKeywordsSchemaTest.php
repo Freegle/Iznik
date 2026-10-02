@@ -54,7 +54,7 @@ class ConcernKeywordsSchemaTest extends TestCase
         $this->assertNotEmpty($rows);
         $colType = $rows[0]->COLUMN_TYPE;
 
-        foreach (['substance_regulated', 'substance_reportable', 'substance_medicine', 'scam', 'review', 'allowed'] as $val) {
+        foreach (['substance_regulated', 'substance_reportable', 'substance_medicine', 'scam', 'review', 'allowed', 'safeguarding'] as $val) {
             $this->assertStringContainsString($val, $colType, "category enum missing value: {$val}");
         }
     }

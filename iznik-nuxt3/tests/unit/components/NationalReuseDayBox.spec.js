@@ -57,6 +57,14 @@ describe('NationalReuseDayBox', () => {
         'https://freegle.org/page'
       )
     })
+
+    it('shows the box without a link when there is no url', () => {
+      const wrapper = createWrapper({ url: undefined, description: 'Soon' })
+      expect(wrapper.find('.external-link').exists()).toBe(false)
+      expect(wrapper.find('a').exists()).toBe(false)
+      expect(wrapper.find('.box').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Soon')
+    })
   })
 
   describe('colour classes', () => {
@@ -119,7 +127,7 @@ describe('NationalReuseDayBox', () => {
       expect(wrapper.props('description')).toBe('Required Description')
     })
 
-    it('requires url prop', () => {
+    it('accepts url prop', () => {
       const wrapper = createWrapper({ url: 'https://required.url' })
       expect(wrapper.props('url')).toBe('https://required.url')
     })

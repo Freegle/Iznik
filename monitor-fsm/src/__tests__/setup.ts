@@ -27,6 +27,14 @@ const profile = join(dir, 'profile.json')
 writeFileSync(profile, JSON.stringify({ auth_pairs: [{ user_api_key: 'test-key-not-a-credential' }] }))
 process.env.MONITOR_FSM_PROFILE_PATH = profile
 
+// Fix agents' production reads are recorded under this directory. Tests write their
+// own records, so point it at the throwaway directory rather than the real one.
+process.env.MONITOR_FSM_EVIDENCE_DIR = join(dir, 'evidence')
+
+// The key above is fake but the forum is real. A test that forgets to mock a fetch
+// must fail fast against a closed port, not send a request to Discourse.
+process.env.DISCOURSE_URL = 'http://127.0.0.1:9'
+
 // One directory per test file per run, so without this they pile up in /tmp on
 // every machine that runs the suite and on every CI build.
 afterAll(() => {

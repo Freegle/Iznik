@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -27,23 +28,23 @@ import (
 
 const townNearEdinburgh = "lat=55.9533&lng=-3.1883&minutes=30"
 
-// townNearTownID is well above any real towns row, so seeding cannot collide with data a
+// townNearTownID is well above any real places row, so seeding cannot collide with data a
 // future fixture adds.
 const townNearTownID = 990001
 
-// seedTownNearEdinburgh puts one town inside the handler's candidate box.
+// seedTownNearEdinburgh puts one place inside the handler's candidate box.
 //
-// Required, not incidental: the schema-only test database has an EMPTY towns table, and with no
-// candidate towns the handler returns its "no candidates" response BEFORE it ever calls the
+// Required, not incidental: the schema-only test database has an EMPTY places table, and with no
+// candidate places the handler returns its "no candidates" response BEFORE it ever calls the
 // routing server. Without this, every assertion below would pass against a response that never
 // exercised the code under test.
 func seedTownNearEdinburgh(t *testing.T) {
 	t.Helper()
 	db := database.DBConn
-	db.Exec("INSERT IGNORE INTO towns (id, name, lat, lng) VALUES (?, ?, ?, ?)",
-		townNearTownID, "Testburgh", 55.95, -3.19)
+	db.Exec("INSERT IGNORE INTO places (id, name, lat, lng, population, position) VALUES (?, ?, ?, ?, ?, ST_SRID(POINT(?, ?), 3857))",
+		townNearTownID, "Testburgh", 55.95, -3.19, 50000, -3.19, 55.95)
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM towns WHERE id = ?", townNearTownID)
+		db.Exec("DELETE FROM places WHERE id = ?", townNearTownID)
 	})
 }
 
@@ -64,9 +65,13 @@ var stubReachPolygon = map[string]interface{}{
 	},
 }
 
+// stubRoadMiles is the road distance the stub's /v1/drive-metrics gives every target.
+const stubRoadMiles = 3.4
+
 // stubRouting stands in for the routing server's /v1/ripple-eval. It records the request body
 // each call, and returns a polygon only when one was asked for - the same contract the real
-// server honours. Returns the recorder.
+// server honours. It also answers /v1/drive-metrics (the nearest-town road distance), which is
+// not recorded. Returns the recorder.
 func stubRouting(t *testing.T, withPolygon bool) *[]map[string]interface{} {
 	t.Helper()
 	var seen []map[string]interface{}
@@ -75,6 +80,18 @@ func stubRouting(t *testing.T, withPolygon bool) *[]map[string]interface{} {
 		body, _ := io.ReadAll(r.Body)
 		var req map[string]interface{}
 		_ = json2.Unmarshal(body, &req)
+
+		if r.URL.Path == "/v1/drive-metrics" {
+			targets, _ := req["targets"].([]interface{})
+			results := make([]map[string]interface{}, len(targets))
+			for i, tg := range targets {
+				id := tg.(map[string]interface{})["id"]
+				results[i] = map[string]interface{}{"id": id, "mins": 8.0, "miles": stubRoadMiles}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json2.NewEncoder(w).Encode(map[string]interface{}{"results": results})
+			return
+		}
 		seen = append(seen, req)
 
 		// One result per requested point, so the handler's length check passes.
@@ -199,4 +216,75 @@ func TestTownNearPolygonDoesNotChangeTheOtherFields(t *testing.T) {
 func TestTownNearNoPolygonWithoutALocation(t *testing.T) {
 	body := townNear(t, "lat=0&lng=0&minutes=30&polygon=1")
 	assert.NotContains(t, body, "reach_polygon")
+}
+
+// A reachable place is named from the places gazetteer.
+func TestTownNearNamesReachablePlaces(t *testing.T) {
+	seedTownNearEdinburgh(t)
+	stubRouting(t, false) // every point comes back 12.5 minutes away
+
+	body := townNear(t, townNearEdinburgh)
+
+	assert.Equal(t, []interface{}{"Testburgh"}, body["towns"])
+	assert.NotContains(t, body, "closer_than")
+}
+
+// With nothing in reach, the nearest place comes back WITH its road distance. A bare "Close to X"
+// read as the reach extending to X: a Wellingborough member was told "Max 1-2 miles by road.
+// Close to Northampton", 12 miles away. Road, not crow-flies, because the reach beside it is in
+// road miles.
+func TestTownNearNearestPlaceCarriesItsDistance(t *testing.T) {
+	// The road distance goes through the shared routing breaker; an earlier test that tripped it
+	// would otherwise leave this one without a distance.
+	roadblur.ResetRoutingBreaker()
+	t.Cleanup(roadblur.ResetRoutingBreaker)
+	seedTownNearEdinburgh(t)
+	stubRouting(t, false) // 12.5 minutes, beyond a 10-minute budget
+
+	body := townNear(t, "lat=55.9533&lng=-3.1883&minutes=10")
+
+	assert.Empty(t, body["towns"])
+	assert.Equal(t, "Testburgh", body["closer_than"])
+	assert.Equal(t, stubRoadMiles, body["closer_miles"])
+}
+
+// When routing cannot give a road distance, the name comes back alone. A straight-line figure
+// beside a reach shown in road miles would read as a road distance.
+func TestTownNearNearestPlaceWithoutRoadDistance(t *testing.T) {
+	roadblur.ResetRoutingBreaker()
+	t.Cleanup(roadblur.ResetRoutingBreaker)
+	seedTownNearEdinburgh(t)
+
+	// Reach answers as usual (Testburgh 12.5 minutes away, beyond the budget), but drive-metrics
+	// has no road to any target.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]interface{}
+		_ = json2.Unmarshal(body, &req)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/drive-metrics" {
+			targets, _ := req["targets"].([]interface{})
+			results := make([]map[string]interface{}, len(targets))
+			for i, tg := range targets {
+				results[i] = map[string]interface{}{"id": tg.(map[string]interface{})["id"], "mins": nil, "miles": nil}
+			}
+			_ = json2.NewEncoder(w).Encode(map[string]interface{}{"results": results})
+			return
+		}
+		pts, _ := req["points"].([]interface{})
+		results := make([]map[string]interface{}, len(pts))
+		for i := range results {
+			results[i] = map[string]interface{}{"drive_min": 12.5}
+		}
+		_ = json2.NewEncoder(w).Encode(map[string]interface{}{
+			"results": results, "frontier_median_miles": 4.0, "frontier_max_miles": 5.0,
+		})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("ROUTING_EVAL_URL", srv.URL)
+
+	body := townNear(t, "lat=55.9533&lng=-3.1883&minutes=10")
+
+	assert.Equal(t, "Testburgh", body["closer_than"])
+	assert.NotContains(t, body, "closer_miles")
 }

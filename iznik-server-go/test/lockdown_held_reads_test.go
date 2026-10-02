@@ -122,22 +122,28 @@ func TestListMessagesLockdownheldTrueWithUnresolvedHold(t *testing.T) {
 
 	insertPostHold(t, msgID)
 
+	// The ModTools pending queue lists ids, then fetches each post; the hold label rides on
+	// that fetch (Message.Lockdownheld), so check the post appears in the queue and that the
+	// fetch a mod makes of it carries the label.
 	resp, err := getApp().Test(httptest.NewRequest("GET",
-		fmt.Sprintf("/api/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil))
+		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil))
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var result message.ListMessagesResponse
-	json.NewDecoder(resp.Body).Decode(&result)
-
-	found := false
-	for _, m := range result.Messages {
-		if m.ID == msgID {
-			found = true
-			assert.True(t, m.Lockdownheld, "the pending list must carry the same lockdownheld label as the detail fetch")
-		}
+	var list struct {
+		Messages []uint64 `json:"messages"`
 	}
-	assert.True(t, found, "mod must see the pending message")
+	json.NewDecoder(resp.Body).Decode(&list)
+	assert.Contains(t, list.Messages, msgID, "mod must see the pending message")
+
+	resp, err = getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msg message.Message
+	json.NewDecoder(resp.Body).Decode(&msg)
+	assert.True(t, msg.Lockdownheld, "the pending post a mod fetches must carry lockdownheld")
 }
 
 // --- newsfeed.go: Single (GET /api/newsfeed/:id) ---

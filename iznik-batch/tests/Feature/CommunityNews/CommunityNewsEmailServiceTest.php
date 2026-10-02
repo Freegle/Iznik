@@ -237,6 +237,35 @@ class CommunityNewsEmailServiceTest extends TestCase
         ]);
     }
 
+    /**
+     * TN is the master for a TN member's location: their mylocation is stale V1 data, so
+     * a TN member is placed by lastlocation even when mylocation is set.
+     */
+    public function test_places_a_trash_nothing_member_by_lastlocation(): void
+    {
+        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
+        $this->catchment($g1);
+
+        $lastlocId = DB::table('locations')->insertGetId([
+            'name' => 'SW1A 1AA', 'type' => 'Postcode', 'lat' => 51.49, 'lng' => -0.11,
+        ]);
+
+        // Stale mylocation in Edinburgh, TN location inside g1 -> eligible.
+        $tn = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0, 'lastlocation' => $lastlocId]);
+        DB::table('users')->where('id', $tn->id)->update(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->locate($tn, 55.95, -3.19);
+        $this->createMembership($tn, $g1);
+
+        // The same for a Freegle member: their chosen mylocation wins -> not eligible.
+        $fd = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0, 'lastlocation' => $lastlocId]);
+        $this->locate($fd, 55.95, -3.19);
+        $this->createMembership($fd, $g1);
+
+        $ids = $this->svc()->eligibleMembers([$g1->id])->pluck('id')->all();
+        $this->assertContains($tn->id, $ids);
+        $this->assertNotContains($fd->id, $ids);
+    }
+
     public function test_only_mails_members_their_home_group_covers(): void
     {
         config(['freegle.mail.enabled_types' => 'CommunityNews']);

@@ -197,7 +197,7 @@ class AdminMail extends MjmlMailable implements DescribesMemberContent
     }
 
     /**
-     * Get the subject line - prepends "ADMIN: " prefix for admin emails, but not for marketing/newsletters.
+     * Get the subject line - "ADMIN: " for essential admins, "NEWSLETTER: " for non-essential ones, and the subject unchanged for marketing templates.
      */
     protected function getSubject(): string
     {
@@ -205,6 +205,10 @@ class AdminMail extends MjmlMailable implements DescribesMemberContent
             return $this->adminSubject;
         }
 
-        return 'ADMIN: ' . $this->adminSubject;
+        // Strip a prefix the author typed so it is never doubled, then add "ADMIN: " for an
+        // essential admin or "NEWSLETTER: " for one members can opt out of.
+        $subject = preg_replace('/^(?:(?:ADMIN|NEWSLETTER):?\s+)+/', '', $this->adminSubject);
+
+        return ($this->essential ? 'ADMIN: ' : 'NEWSLETTER: ') . $subject;
     }
 }

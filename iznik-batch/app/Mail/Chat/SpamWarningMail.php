@@ -82,6 +82,6 @@ class SpamWarningMail extends MjmlMailable
 
     protected function getSubject(): string
     {
-        return 'A warning from '.$this->siteName.' about '.$this->spammerName;
+        return 'A warning from '.$this->siteName.' about "'.$this->spammerName.'"';
     }
 }

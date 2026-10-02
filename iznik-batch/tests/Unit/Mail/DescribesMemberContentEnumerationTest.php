@@ -86,6 +86,7 @@ class DescribesMemberContentEnumerationTest extends TestCase
         \App\Mail\Engage\EngageMail::class,
         \App\Mail\Fbl\FblNotification::class,
         \App\Mail\Welcome\WelcomeMail::class,
+        \App\Mail\Partnerships\SponsorshipExpiringMail::class,
     ];
 
     /**

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-26
+last_reviewed: 2026-10-02
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -858,6 +858,24 @@ Freezing governs what we SEND, not who has been reached:
   a reply from them is still held. They have not been reached, and freezing does not alter that;
   the answer is the same one they would get on a post still expanding.
 
+### Home Back to pending locks the copies (`messages_groups.locked_by_home`)
+
+`handleBackToPending` (`iznik-server-go/message`) sets `locked_by_home = 1` (and
+`needs_moderator = 1`) on each Pending rippled-in copy when the acting moderator moderates a
+group the post was posted to directly (`HomeGroups`, `rippled_in = 0`). Back to pending from a
+receiving community's moderator, or the member-report quorum (`SendForReviewAllGroups`), sets
+nothing.
+
+- `handleApprove` refuses (403) a locked copy while an undeleted home row exists that is not
+  Approved, unless the same action is approving a home group. The check is live, so a stale flag
+  after the home copy has been approved some other way blocks nothing.
+- Approving a home group clears the flag on every copy. The reach stays `held`; nothing is
+  re-sent.
+- `groups[].locked_by_home` in the message payload is the effective lock, not the stored flag.
+- AutoApproveService, ContentCheckService, incoming mail and TrashNothing ingestion each skip a
+  locked copy, as they already skip `needs_moderator` ones.
+- Receiving groups' hold log and `spamreason` say the home community did it.
+
 ---
 
 ## 6. Retraction
@@ -865,8 +883,13 @@ Freezing governs what we SEND, not who has been reached:
 As a capped reach shrinks or the reachable set changes, `retractOutOfReachCopies`
 soft-deletes rippled-in copies no longer in reach, and removes the ripple-join membership
 when the poster has no other live post there. A **held** reach (from a report or
-Back-to-Pending) is frozen: its copies persist for per-group moderation and are never
-retracted, so re-approval restores the copy without re-rippling.
+Back-to-Pending) is frozen: while the home copy still exists, its copies persist for per-group
+moderation and are not retracted, so re-approval restores the copy without re-rippling. Once the
+home copy is deleted or rejected there is nothing left to moderate against, so the freeze no
+longer protects the copies: `retractCopiesOrphanedByOriginRemoval` retracts them whatever the
+reach status. A frozen reach is spared only while the home row is still Pending. (Nothing clears
+`held`, so a Back to pending followed by a delete at home used to leave the copies live.)
+The same applies to `removeStaleAndRetract`, and to a reject at home.
 
 A community switching ripple-out off retracts the same way - see §4a.
 
@@ -939,6 +962,16 @@ rows, its latest row states its outcome.
   whether or not there are candidate towns, and `useReachDistance.loadCap` repairs the stored
   pair on sight - the sentinel below a member's own cap cannot be a choice, because only the
   top stop means "no limit" and only at the ceiling does it store the sentinel.
+
+  The hint's place names no longer come from `towns` at all. They come from the `places`
+  gazetteer (GeoNames, places of 3,000+ people), because with `towns` a Wellingborough member
+  at the 5-minute stop read "Max 1-2 miles by road. Close to Northampton": Wellingborough,
+  Kettering and Rushden are not curated towns, so the nearest one was 12 miles away. The
+  examples are the biggest places in the outer half of the reach, so they move outwards as the
+  slider widens. When nothing is in reach, the nearest place comes back with its
+  road distance (`closer_miles`, from the drive-metrics lookup, omitted rather than replaced by a straight line when routing cannot say), shown as "Nearest town: X, N miles by road". The reach itself is one
+  figure, "Up to about N miles by road", the median frontier. `towns` still anchors Community
+  News areas, which is now its only reader.
 
   *It decays.* Nothing else writes the key, so a member who joins after a run has no band
   limit, ever - and a member who moves, or an area that grows denser, drifts away from the band
@@ -1036,7 +1069,7 @@ rows, its latest row states its outcome.
   (Discourse 9933).
 
   The containment test itself is served through **sandwich bounds**
-  (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md): the exact polygons are grid-fill
+  (section 11): the exact polygons are grid-fill
   isochrones averaging ~11k vertices / 178 KB, so the hot queries first consult two small
   derived polygons stored as SAME-ROW columns on `rippling_reach` — `outer_bound` (a
   verified superset, NOT NULL and spatially indexed: outside it = definitely out) and
@@ -1897,3 +1930,50 @@ record. The evidence bit is frozen per reply in `rippling_reply_attribution.was_
 `ripple:backfill-reply-attribution` reconstructs it for older rows - re-reading a frozen
 `was_home_member` bit as `ripple_join` where the surviving membership shows that provenance, while
 leaving rows whose membership has since decayed away on their original answer.
+
+## 11. Sandwich bounds: the measured facts behind the design
+
+Section 7 describes how `outer_bound` and `inner_bound` serve the containment test. These are the
+measurements (prod db3, July 2026) that fixed its shape. They are why the obvious alternatives are
+not used.
+
+**Dead ends, do not retry:**
+
+- **A bounding-box or lat/lng prefilter.** The spatial R-tree already is one, and is used. No stored
+  box beats the polygon's own MBR.
+- **Lossless vertex reduction.** `ST_Simplify` at tolerances from 1e-10 to 1e-5 removes no
+  vertices: every vertex of a grid-fill isochrone is a change of direction.
+- **Lossy `ST_Simplify` as the stored reach.** Unsafe. At 0.005 degrees it bridges the Thames at
+  Gravesend and gains the north bank. The tolerance is in degrees because the coordinates are
+  lng/lat labelled SRID 3857, and the Thames there is 0.007-0.012 degrees wide. Simplification may
+  only ever produce a bound, never the answer.
+- **Asking the routing server per request.** Correct at barriers, but 1.8 s at 30 minutes and 14.7 s
+  at 60, against 0.26 s for the whole SQL query.
+
+**MySQL executor facts that dictate the query shape:**
+
+1. `AND` conjuncts run cheap-first, and a BLOB is fetched lazily per stage, so a failing cheap
+   conjunct means the polygon is never read.
+2. Inside a single `OR`, `CASE` or `IF`, any reference to the polygon column fetches it for every
+   evaluated row (2.10 s against 2.3 ms over 8,129 rows). Laziness does not cross expression items.
+3. A correlated `EXISTS (... polygon ...)` inside an `OR` is lazy. It is the only safe place for the
+   exact polygon.
+4. `MBRContains(bound, point)` drives the R-tree from the index alone.
+
+**Rules for anything that writes a reach:**
+
+- Any shrink of the polygon (both `ST_Difference` clip paths) must shrink or NULL `inner_bound` in
+  the same statement. A stale inner bound accepts viewers in an area just clipped out, which is the
+  same class of error as a Thames leak. A stale outer bound is only loose, which is safe.
+- The wholly-within DELETE after a rejected-group clip stays keyed on the exact polygon, not
+  `outer_bound`: `ST_Within(outer, G)` is stricter and would stop the secondary clip firing.
+- Verify at write time that `ST_Contains(outer, polygon) = 1` and `ST_Contains(polygon, inner) = 1`.
+  Anything else, including an error on invalid geometry, falls back to the envelope as outer and
+  NULL as inner, which is always correct.
+
+**Do not prune `rippling_reach` rows for completed posts,** either by deleting them or by
+degenerating the polygon. A deleted row is recreated by `initialiseNew`'s anti-join on the next
+expand, churning and corrupting `created_at`. A degenerate polygon hides "came and went" posts in the
+digest, holds every reply to a taken rippled post, and leaves a post that is reopened (which happens
+automatically) invisible with no repair path. Completed posts are pruned instead by driving browse
+from the `outer_bound` index, whose arms all filter `successful = 0`.

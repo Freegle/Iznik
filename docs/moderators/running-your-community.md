@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-10-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/settings/**
@@ -8,6 +8,9 @@ covers:
   - iznik-nuxt3/modtools/pages/members/stories.vue
   - iznik-nuxt3/modtools/pages/communityevents/**
   - iznik-nuxt3/modtools/pages/admins.vue
+  - iznik-nuxt3/modtools/components/ModAdmin.vue
+  - iznik-server-go/admin/admin.go
+  - iznik-batch/app/Console/Commands/Mail/CopyAdminsCommand.php
   - iznik-nuxt3/modtools/pages/logs.vue
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-modtools-settings-modconfig.spec.js
@@ -84,6 +87,20 @@ already read and copy those.
 (which they can), optionally with a call-to-action button. Admins and Support can target a
 single community or suggest copies to many communities that each community then edits and
 approves. Use these sparingly and keep them warm.
+
+While Freegle is in a [lockdown](../ops/runbooks/lockdown.md), creating, editing or deleting
+an ADMIN is refused for moderators; Support and Admin are exempt.
+
+When Support or Admin suggests an ADMIN to every community, they can add **Guidance for
+local moderators (NOT sent to members)** on the Create tab. It is a separate box from the
+message body. Each community's copy shows that guidance in a highlighted box above the
+message, telling you how you might adapt the ADMIN for your community. It is only advice for
+you: it is never part of the email, and editing or approving your copy does not send it.
+
+The Create tab and each pending copy also have an optional **Send after** date and time. An
+approved ADMIN is held until then. Leave it empty to send as soon as it is approved. The email's
+subject line starts "ADMIN:" for an Essential message and "NEWSLETTER:" for a Newsletter one, and
+a prefix typed into the subject is not doubled.
 
 ## Logs and maps
 

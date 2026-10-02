@@ -32,7 +32,9 @@ function systemPrompt(userId, codebase) {
     member +
     `\n\n## Tools\n` +
     `- **get_user_dump** — the big one: a local SQLite snapshot of the member (~69 tables) + their Loki logs + ` +
-    `Sentry issues, in one call. Prefer this, then **query_dump** (SQL against it) instead of many small live queries.\n` +
+    `Sentry issues, in one call. Prefer this, then **query_dump** (SQL against it) instead of many small live queries. ` +
+    `Its Loki logs leave out the member's logged-out (pre-login) client lines, which name nobody and are too slow to ` +
+    `collect every time; if a question turns on those, use **loki_search** in userid mode.\n` +
     `- **identify_user** — email/name/id → user id + ALL their emails (incl. Apple @privaterelay.appleid.com relay) + logins.\n` +
     `- **db_query** — live read-only SELECT for cross-user/aggregate questions. Email is in users_emails (JOIN it), not users.\n` +
     `- **loki_search** — prod logs: pass a userid for the 3-pass search, or raw LogQL (e.g. trace_id). Keep windows tight; use metric:true for counts.\n` +

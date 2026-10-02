@@ -92,14 +92,19 @@ class LegacyMigrationService
      * chunks, when $limit rows have been examined, or when every source is
      * done. Always does at least one chunk, so progress is always possible.
      *
-     * @return array{scanned:int,copied:int,present:int,missing_source:int,invalid:int,failed:int,bytes:int,finished:bool,budget_exhausted:bool}
+     * A store that is unavailable (see ObjectStoreUnavailable) stops the walk
+     * at the row that met it, with the cursor left BEFORE that row so the next
+     * run retries it, and nothing counted failed: `unavailable` carries the
+     * reason. `failed` is for one object the store would not take.
+     *
+     * @return array{scanned:int,copied:int,present:int,missing_source:int,invalid:int,failed:int,bytes:int,finished:bool,budget_exhausted:bool,unavailable:?string}
      */
     public function migrate(array $sources, int $timeBudgetSeconds, int $chunk, int $limit = 0, float $maxMbps = 0, bool $dryRun = false): array
     {
         $stats = [
             'scanned' => 0, 'copied' => 0, 'present' => 0, 'missing_source' => 0,
             'invalid' => 0, 'failed' => 0, 'bytes' => 0,
-            'finished' => false, 'budget_exhausted' => false,
+            'finished' => false, 'budget_exhausted' => false, 'unavailable' => null,
         ];
 
         $this->runStart = microtime(true);
@@ -117,13 +122,16 @@ class LegacyMigrationService
      * nothing and does not move the copy cursor. Its own cursor lets a long
      * verify be resumed.
      *
-     * @return array{scanned:int,present:int,missing:int,missing_ids:list<string>,invalid:int,finished:bool,budget_exhausted:bool}
+     * An unavailable store stops the verify the same way it stops a copy: at
+     * the row, cursor before it, nothing reported missing.
+     *
+     * @return array{scanned:int,present:int,missing:int,missing_ids:list<string>,invalid:int,finished:bool,budget_exhausted:bool,unavailable:?string}
      */
     public function verify(array $sources, int $timeBudgetSeconds, int $chunk, int $limit = 0): array
     {
         $stats = [
             'scanned' => 0, 'present' => 0, 'missing' => 0, 'missing_ids' => [],
-            'invalid' => 0, 'finished' => false, 'budget_exhausted' => false,
+            'invalid' => 0, 'finished' => false, 'budget_exhausted' => false, 'unavailable' => null,
         ];
 
         $this->walk($sources, $timeBudgetSeconds, $chunk, $limit, $stats, 'verify_last_id', 'verify_completed_at', false,
@@ -144,31 +152,144 @@ class LegacyMigrationService
     }
 
     /**
-     * One row per known source, whether or not it has started.
+     * Copy the files named in a listing of the share that the store lacks.
+     *
+     * The tables cover what the database still refers to. The share also holds
+     * photos of posts since deleted or withdrawn, and those are still fetched:
+     * partner sites keep the URLs, mail clients proxy the images in old
+     * digests, and link previews are cached (42 of the 5,414 distinct uploads
+     * served on 2026-09-30 were on the share alone). A listing of the share,
+     * one tusd id per line, is the only index of them. Listing is safe once
+     * tusd no longer writes to the share. The cursor is the line number, kept
+     * under the source "listing:<file name>", so a run resumes like a table
+     * walk, with the same budget, bandwidth cap and unavailable-store handling.
+     *
+     * @return array{scanned:int,copied:int,present:int,missing_source:int,invalid:int,failed:int,bytes:int,finished:bool,budget_exhausted:bool,unavailable:?string}
+     */
+    public function migrateListing(string $path, int $timeBudgetSeconds, int $limit = 0, float $maxMbps = 0, bool $dryRun = false): array
+    {
+        $stats = [
+            'scanned' => 0, 'copied' => 0, 'present' => 0, 'missing_source' => 0,
+            'invalid' => 0, 'failed' => 0, 'bytes' => 0,
+            'finished' => false, 'budget_exhausted' => false, 'unavailable' => null,
+        ];
+
+        $source = self::listingSource($path);
+        $row = $this->cursorRow($source);
+        if ($row['completed_at'] !== null) {
+            $stats['finished'] = true;
+
+            return $stats;
+        }
+
+        $handle = fopen($path, 'r');
+        if ($handle === false) {
+            throw new \RuntimeException("cannot read the listing {$path}");
+        }
+
+        $this->runStart = microtime(true);
+        $deadline = $this->runStart + max(0, $timeBudgetSeconds);
+
+        try {
+            $line = 0;
+            while ($line < (int) $row['last_id'] && fgets($handle) !== false) {
+                $line++;
+            }
+
+            $stopped = false;
+            while (($value = fgets($handle)) !== false) {
+                // Like the table walk: at least one row per run, the budget
+                // checked between batches rather than before every file.
+                if ($stats['scanned'] > 0 && $stats['scanned'] % 100 === 0 && microtime(true) > $deadline) {
+                    $stats['budget_exhausted'] = true;
+                    $stopped = true;
+                    break;
+                }
+
+                $line++;
+                $row['last_id'] = $line;
+                $stats['scanned']++;
+
+                $uid = trim($value);
+                if ($uid === '' || ! preg_match(self::ID_PATTERN, $uid)) {
+                    $stats['invalid']++;
+                    Log::warning('images:migrate-legacy: not a tusd id', ['source' => $source, 'line' => $line, 'value' => $value]);
+                } else {
+                    try {
+                        $this->copyOne($uid, $stats, $row, $maxMbps, $dryRun);
+                    } catch (ObjectStoreUnavailable $e) {
+                        // Same rule as the table walk: the cursor stops before
+                        // the line that met the outage and nothing is failed.
+                        $stats['scanned']--;
+                        $stats['unavailable'] = $e->getMessage();
+                        $row['last_id'] = $line - 1;
+                        $stopped = true;
+                        Log::error('images:migrate-legacy: object store unavailable; run stopped', ['source' => $source, 'line' => $line, 'error' => $e->getMessage()]);
+                        break;
+                    }
+                }
+
+                if ($line % 100 === 0) {
+                    $this->saveCursor($source, $row, $dryRun);
+                }
+
+                if ($limit > 0 && $stats['scanned'] >= $limit) {
+                    $stopped = true;
+                    break;
+                }
+            }
+
+            if (! $stopped) {
+                $row['completed_at'] = now();
+            }
+            $this->saveCursor($source, $row, $dryRun);
+            $stats['finished'] = ! $stopped;
+        } finally {
+            fclose($handle);
+        }
+
+        return $stats;
+    }
+
+    /** The cursor row a listing is kept under. */
+    public static function listingSource(string $path): string
+    {
+        return 'listing:' . basename($path);
+    }
+
+    /**
+     * One row per known source, whether or not it has started, then any
+     * listing that has been run.
      *
      * @return list<array<string,mixed>>
      */
     public function status(): array
     {
         $rows = DB::table('image_store_migration')->get()->keyBy('source');
-        $out = [];
 
+        $line = fn (string $source, ?object $row): array => [
+            'source' => $source,
+            'last_id' => (int) ($row->last_id ?? 0),
+            'copied' => (int) ($row->copied ?? 0),
+            'present' => (int) ($row->present ?? 0),
+            'missing_source' => (int) ($row->missing_source ?? 0),
+            'failed' => (int) ($row->failed ?? 0),
+            'bytes' => (int) ($row->bytes ?? 0),
+            'verify_last_id' => (int) ($row->verify_last_id ?? 0),
+            'verify_missing' => (int) ($row->verify_missing ?? 0),
+            'completed_at' => $row->completed_at ?? null,
+            'verify_completed_at' => $row->verify_completed_at ?? null,
+            'updated_at' => $row->updated_at ?? null,
+        ];
+
+        $out = [];
         foreach (array_keys(self::SOURCES) as $source) {
-            $row = $rows->get($source);
-            $out[] = [
-                'source' => $source,
-                'last_id' => (int) ($row->last_id ?? 0),
-                'copied' => (int) ($row->copied ?? 0),
-                'present' => (int) ($row->present ?? 0),
-                'missing_source' => (int) ($row->missing_source ?? 0),
-                'failed' => (int) ($row->failed ?? 0),
-                'bytes' => (int) ($row->bytes ?? 0),
-                'verify_last_id' => (int) ($row->verify_last_id ?? 0),
-                'verify_missing' => (int) ($row->verify_missing ?? 0),
-                'completed_at' => $row->completed_at ?? null,
-                'verify_completed_at' => $row->verify_completed_at ?? null,
-                'updated_at' => $row->updated_at ?? null,
-            ];
+            $out[] = $line($source, $rows->get($source));
+        }
+        foreach ($rows as $source => $row) {
+            if (str_starts_with((string) $source, 'listing:')) {
+                $out[] = $line((string) $source, $row);
+            }
         }
 
         return $out;
@@ -177,10 +298,13 @@ class LegacyMigrationService
     /**
      * Start a source again from the beginning: the copy cursor, or the verify
      * cursor. Counters for that pass are zeroed too, so status stays honest.
+     * A listing source ("listing:<file name>") has a copy cursor only.
      */
     public function resetCursor(string $source, bool $verify = false): void
     {
-        self::validateSources([$source]);
+        if (! str_starts_with($source, 'listing:')) {
+            self::validateSources([$source]);
+        }
 
         $values = $verify
             ? ['verify_last_id' => 0, 'verify_missing' => 0, 'verify_completed_at' => null]
@@ -229,6 +353,7 @@ class LegacyMigrationService
                 }
 
                 foreach ($rows as $id => $value) {
+                    $previousId = $lastId;
                     $lastId = (int) $id;
                     $stats['scanned']++;
 
@@ -239,7 +364,19 @@ class LegacyMigrationService
                         continue;
                     }
 
-                    $each($uid, $stats, $row);
+                    try {
+                        $each($uid, $stats, $row);
+                    } catch (ObjectStoreUnavailable $e) {
+                        // Nothing is known about this row, so it is not examined,
+                        // not failed, and the cursor stops before it. Every row
+                        // after it would meet the same answer.
+                        $stats['scanned']--;
+                        $stats['unavailable'] = $e->getMessage();
+                        $lastId = $previousId;
+                        $stopped = true;
+                        Log::error('images:migrate-legacy: object store unavailable; run stopped', ['source' => $source, 'id' => $id, 'error' => $e->getMessage()]);
+                        break;
+                    }
 
                     if ($limit > 0 && $stats['scanned'] >= $limit) {
                         $stopped = true;
@@ -325,6 +462,9 @@ class LegacyMigrationService
             $row['bytes'] += $length;
 
             $this->pace($stats['bytes'], $this->runStart, $maxMbps);
+        } catch (ObjectStoreUnavailable $e) {
+            // The walk stops on this; it is not a failure of the object.
+            throw $e;
         } catch (\Throwable $e) {
             $stats['failed']++;
             $row['failed']++;

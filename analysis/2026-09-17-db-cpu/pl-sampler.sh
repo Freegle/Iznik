@@ -1,7 +1,7 @@
 #!/bin/bash
 # Processlist sampler.  Ranks DB load by sampling information_schema.processlist,
 # NOT events_statements_summary_by_digest (which misses Laravel's prepared
-# statements entirely - see plans/2026-09-02-db2-cpu-reduction.md).
+# statements entirely - measured September 2026).
 #
 # One long-lived mysql connection per burst; DO SLEEP() paces it.  Every poll
 # emits at least one row (the sampler's own connection, tagged PLSAMPLE), so

@@ -3,6 +3,7 @@
 namespace App\Console\Commands\Images;
 
 use App\Services\ImageStore\LegacyMigrationService;
+use App\Services\ImageStore\ObjectStoreUnavailable;
 use Illuminate\Console\Command;
 
 /**
@@ -26,6 +27,7 @@ class MigrateLegacyCommand extends Command
                             {--max-mbps= : Upload bandwidth cap in MB/s (default from config; 0 = none)}
                             {--dry-run : Report what would be copied without copying or moving cursors}
                             {--verify : Report referenced uploads the store lacks; copies nothing}
+                            {--listing= : Copy the files named in this listing of the share (one tusd id per line) that the store lacks; the cursor is the line number}
                             {--status : Show the cursor and counts for every source}
                             {--reset= : Start this source again from the beginning (with --verify: its verify cursor)}';
 
@@ -87,7 +89,17 @@ class MigrateLegacyCommand extends Command
             $this->warn('[DRY RUN] nothing will be copied and no cursor will move');
         }
 
-        $stats = $migrator->migrate($sources, $budget, $chunk, $limit, $maxMbps, $dryRun);
+        $listing = $this->option('listing');
+        if ($listing !== null) {
+            if (! is_file((string) $listing)) {
+                $this->error("The listing {$listing} is not a file.");
+
+                return Command::FAILURE;
+            }
+            $stats = $migrator->migrateListing((string) $listing, $budget, $limit, $maxMbps, $dryRun);
+        } else {
+            $stats = $migrator->migrate($sources, $budget, $chunk, $limit, $maxMbps, $dryRun);
+        }
 
         $this->table(
             ['Metric', 'Count'],
@@ -102,8 +114,18 @@ class MigrateLegacyCommand extends Command
             ]
         );
 
+        if ($stats['unavailable'] !== null) {
+            // Sentry, via the exception handler: the log stack is file-only.
+            $this->error("The object store is unavailable; the run stopped with the cursor before the row that met it, and nothing is counted failed. {$stats['unavailable']}");
+            report(new ObjectStoreUnavailable('images:migrate-legacy: ' . $stats['unavailable']));
+
+            return Command::FAILURE;
+        }
+
         if ($stats['finished']) {
-            $this->info('Every requested source is complete. Run --verify next.');
+            $this->info($listing !== null
+                ? 'The listing is complete: everything it names is in the store or was not on the share.'
+                : 'Every requested source is complete. Run --verify next.');
         } elseif ($stats['budget_exhausted']) {
             $this->line('Time budget used; the next run carries on from the cursor.');
         }
@@ -124,6 +146,13 @@ class MigrateLegacyCommand extends Command
                 ['Not a tusd id', $stats['invalid']],
             ]
         );
+
+        if ($stats['unavailable'] !== null) {
+            $this->error("The object store is unavailable; the verify stopped with its cursor before the row that met it. {$stats['unavailable']}");
+            report(new ObjectStoreUnavailable('images:migrate-legacy --verify: ' . $stats['unavailable']));
+
+            return Command::FAILURE;
+        }
 
         if ($stats['missing'] > 0) {
             $this->error("{$stats['missing']} referenced upload(s) are not in the object store:");

@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Images;
 
+use App\Services\ImageStore\ObjectStoreUnavailable;
 use App\Services\ImageStore\SpoolPusherService;
 use Illuminate\Console\Command;
 
@@ -65,6 +66,14 @@ class PushSpoolCommand extends Command
                 ['Bytes', $stats['bytes']],
             ]
         );
+
+        if ($stats['unavailable'] !== null) {
+            // Sentry, via the exception handler: the log stack is file-only.
+            $this->error("The object store is unavailable; the pass stopped and the spool is untouched. Uploads are served from the spool until it is back. {$stats['unavailable']}");
+            report(new ObjectStoreUnavailable('images:push-spool: ' . $stats['unavailable']));
+
+            return Command::FAILURE;
+        }
 
         if ($stats['failed'] > 0) {
             $this->error("{$stats['failed']} upload(s) could not be pushed; they stay in the spool for the next pass.");
