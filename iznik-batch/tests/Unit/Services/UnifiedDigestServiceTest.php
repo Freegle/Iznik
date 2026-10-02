@@ -3392,6 +3392,42 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertSame([1, 2, 3, 4], $sorted->pluck('id')->all());
     }
 
+    public function test_authors_own_viewed_post_is_not_sunk_below_nearer_rippled_in_posts(): void
+    {
+        config(['freegle.ripple.score.default_reach_metres' => 40000.0]);
+        $latlng = [0.0, 0.0];
+        $authorId = 77;
+
+        $mk = function (int $id, float $lat, int $fromuser, bool $seen) {
+            $p = new \stdClass();
+            $p->id = $id;
+            $p->lat = $lat;
+            $p->lng = 0.0;
+            $p->arrival = now()->subHours(1);
+            $p->views = 0;
+            $p->replies = 0;
+            $p->fromuser = $fromuser;
+            $p->seen_by_user = $seen;
+            return $p;
+        };
+
+        // Three unseen posts rippled in from other members, all further out than the author's own
+        // post. The author has viewed their own post (they posted it), so without an exemption
+        // the seen penalty sinks it and the cap drops it.
+        $own = $mk(1, 0.0004, $authorId, true);
+        $a = $mk(2, 0.0100, 5, false);
+        $b = $mk(3, 0.0110, 6, false);
+        $c = $mk(4, 0.0120, 7, false);
+
+        $sorted = $this->callPrivate(
+            $this->service,
+            'scoreAndSortAvailable',
+            [collect([$a, $b, $c, $own]), $latlng, $authorId]
+        );
+
+        $this->assertSame(1, $sorted->first()->id, "the author's own post leads their digest");
+    }
+
     // -----------------------------------------------------------------------
     // Task 6: Wire score-sort into daily digest flow
     // -----------------------------------------------------------------------

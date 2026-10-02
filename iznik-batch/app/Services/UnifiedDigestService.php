@@ -1933,7 +1933,7 @@ class UnifiedDigestService
         // newer + less-seen float up), matching the /rippling "Digest preview".
         // Dedup runs after, so the kept cross-post representative is the top-scoring one.
         $latlng = $this->resolveUserLatLng($user);
-        $posts = $this->scoreAndSortAvailable($posts, $latlng);
+        $posts = $this->scoreAndSortAvailable($posts, $latlng, (int) $user->id);
         // Distance-preference filter (settings.browseMaxDistance) — a pure narrowing
         // step layered after scoring/sorting and before dedup, so the kept
         // cross-post representative (picked in deduplicatePosts below) is both the
@@ -2685,7 +2685,7 @@ class UnifiedDigestService
      * When the recipient's location is unknown we cannot compute closeness, so we
      * leave the posts in their incoming (arrival) order — fail open, no regression.
      */
-    private function scoreAndSortAvailable(Collection $posts, ?array $latlng): Collection
+    private function scoreAndSortAvailable(Collection $posts, ?array $latlng, ?int $recipientId = null): Collection
     {
         if ($latlng === null || $posts->count() < 2) {
             return $posts->values();
@@ -2752,7 +2752,9 @@ class UnifiedDigestService
             // Sink posts the recipient has already had a chance to see (in-app view
             // or an opened/clicked digest) so the digest leads with fresh posts.
             $score = (float) $s['total'];
-            if (! empty($post->seen_by_user)) {
+            // The author's own post is exempt: they have always "seen" it (they posted it), and
+            // the penalty would sink it below posts rippled in from elsewhere and out of the cap.
+            if (! empty($post->seen_by_user) && ! $this->isOwnPost($post, $recipientId)) {
                 $score *= (float) config('freegle.digest.seen_penalty', 0.15);
             }
             $post->_score = $score;
@@ -2762,7 +2764,12 @@ class UnifiedDigestService
         // Pin the two posts nearest the recipient to the top, then the rest by score.
         // Reduces "I keep seeing posts far away" complaints while keeping the scored
         // order for everything below the top two.
-        return $this->pinClosestTwo($posts->sortByDesc('_score')->values());
+        return $this->pinClosestTwo($posts->sortByDesc('_score')->values(), $recipientId);
+    }
+
+    private function isOwnPost(object $post, ?int $recipientId): bool
+    {
+        return $recipientId !== null && (int) ($post->fromuser ?? 0) === $recipientId;
     }
 
     /**
@@ -2770,14 +2777,14 @@ class UnifiedDigestService
      * nearest first, preserving the scored order of the rest. Each post must carry
      * the _dist set in scoreAndSortAvailable. No-op for two or fewer posts.
      */
-    private function pinClosestTwo(Collection $sorted): Collection
+    private function pinClosestTwo(Collection $sorted, ?int $recipientId = null): Collection
     {
         if ($sorted->count() <= 2) {
             return $sorted;
         }
         // Pin only among posts the recipient hasn't already seen, so a nearby
         // already-seen post isn't forced back to the very top.
-        $closest = $sorted->filter(fn ($p) => empty($p->seen_by_user))
+        $closest = $sorted->filter(fn ($p) => empty($p->seen_by_user) || $this->isOwnPost($p, $recipientId))
             ->sortBy('_dist')->take(2)->values();
         $closestIds = $closest->pluck('id')->all();
         $rest = $sorted->reject(fn ($p) => in_array($p->id, $closestIds, true))->values();
