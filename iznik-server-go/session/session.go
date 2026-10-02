@@ -989,6 +989,13 @@ func GetSession(c *fiber.Ctx) error {
 		Active                   int       `json:"active"` // 1=active mod, 0=backup mod
 		Type                     string    `json:"-"`      // Used server-side for moderator detection, not returned to client
 		Settings                 *string   `json:"-"`      // Per-group membership settings JSON, used to determine active/inactive
+		// Set for a group a moderator moderates that is in the post-moderation trial, so
+		// ModTools shows the Check queue only where it exists.
+		Autoapprovetrial bool `json:"autoapprovetrial,omitempty" gorm:"-"`
+		// Set for a group a moderator moderates that is in either automod list (shadow or
+		// approve), so ModTools shows the automod decision line and modal only where a
+		// decision can exist.
+		Automod bool `json:"automod,omitempty" gorm:"-"`
 	}
 
 	type LocationRow struct {
@@ -1114,8 +1121,10 @@ func GetSession(c *fiber.Ctx) error {
 	// of red (danger) badges. Default is active.
 	var modGroupIDs, activeGroupIDs, inactiveGroupIDs []uint64
 	isFreegleMod := false
-	for _, m := range memberships {
+	for i, m := range memberships {
 		if m.Role == utils.ROLE_OWNER || m.Role == utils.ROLE_MODERATOR {
+			memberships[i].Autoapprovetrial = utils.AutoapproveTrialGroup(m.Groupid)
+			memberships[i].Automod = utils.AutomodGroup(m.Groupid)
 			modGroupIDs = append(modGroupIDs, m.Groupid)
 			if m.Active == 1 {
 				activeGroupIDs = append(activeGroupIDs, m.Groupid)
@@ -1155,8 +1164,20 @@ func GetSession(c *fiber.Ctx) error {
 		var emailin, emailout int64
 		var maildeferrals int64
 		var helperEscalated int64
+		// Informational (blue) count of UNCHECKED live posts for the Check view:
+		// posts that published by themselves from members with no posting status.
+		// A post leaves the count when a mod marks it checked (checkedat set) or
+		// once it is older than the window — older posts simply drop off the queue
+		// (no checkedat is written), so the queue can't pile up indefinitely.
+		var checked int64
 
 		var wg2 sync.WaitGroup
+
+		// The Check queue counts only unchecked posts within the check window.
+		checkedWindowSQL := fmt.Sprintf(
+			"AND mg.checkedat IS NULL AND mg.arrival >= NOW() - INTERVAL %d DAY",
+			utils.MESSAGE_CHECK_WINDOW_DAYS,
+		)
 
 		// --- Pending messages: active groups split by held, inactive all → pendingother ---
 		// Only count messages where contentcheck_checked_at IS NOT NULL: the content
@@ -1204,6 +1225,28 @@ func GetSession(c *fiber.Ctx) error {
 					Count(&inact)
 				pendingother += inact
 			}
+		}()
+
+		// --- Checked: UNCHECKED auto-approved posts from auto-moderated (NULL) members.
+		// Outstanding oversight work (blue): a mod hasn't marked it checked and it
+		// is within the 7-day check window. Only communities in the post-moderation
+		// trial have a Check queue. ---
+		trialGroupIDs := utils.AutoapproveTrialGroups(modGroupIDs)
+		wg2.Add(1)
+		go func() {
+			defer wg2.Done()
+			if len(trialGroupIDs) == 0 {
+				return
+			}
+			db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
+				"INNER JOIN messages m ON m.id = mg.msgid "+
+				"INNER JOIN users u ON u.id = m.fromuser "+
+				"INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "+
+				"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
+				"AND m.deleted IS NULL AND u.deleted IS NULL "+
+				"AND mg.approvedby IS NULL AND mg.rippled_in = 0 AND mem.ourPostingStatus IS NULL "+
+				checkedWindowSQL,
+				trialGroupIDs, utils.COLLECTION_APPROVED).Scan(&checked)
 		}()
 
 		// --- Spam messages (only for active groups) ---
@@ -1643,6 +1686,7 @@ func GetSession(c *fiber.Ctx) error {
 		work = fiber.Map{
 			"pending":              pending,
 			"pendingother":         pendingother,
+			"checked":              checked,
 			"spam":                 spam,
 			"pendingmembers":       pendingmembers,
 			"spammembers":          spammembers,

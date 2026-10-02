@@ -16,6 +16,7 @@ const mockFetchMessagesMT = vi.fn()
 const mockAll = ref([])
 const mockGetByGroup = vi.fn(() => [])
 const mockStoreContext = ref(null)
+const mockPulledBack = {}
 
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => ({
@@ -33,6 +34,7 @@ vi.mock('~/stores/message', () => ({
       mockStoreContext.value = v
     },
     list: {},
+    pulledBack: mockPulledBack,
   }),
 }))
 
@@ -546,5 +548,33 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     await getMessages()
 
     expect(messages.value.map((m) => m.id)).toContain(1)
+  })
+
+  it('keeps a post pulled back from Check in the Approved view, now as Pending', async () => {
+    // Reject in the Check queue turns the card into a Pending card where it is.
+    const pulled = {
+      id: 7,
+      arrival: '2026-01-05',
+      groups: [{ groupid: 10, arrival: '2026-01-05', collection: 'Pending' }],
+    }
+    const other = {
+      id: 8,
+      arrival: '2026-01-04',
+      groups: [{ groupid: 10, arrival: '2026-01-04', collection: 'Pending' }],
+    }
+    mockAll.value = [pulled, other]
+    mockPulledBack[7] = true
+    mockFetchMessagesMT.mockResolvedValue([7, 8])
+
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
+    const { getMessages, collection, messages } = setupModMessages(true)
+    collection.value = 'Approved'
+    await getMessages()
+
+    const ids = messages.value.map((m) => m.id)
+    expect(ids).toContain(7)
+    expect(ids).not.toContain(8)
+    delete mockPulledBack[7]
   })
 })

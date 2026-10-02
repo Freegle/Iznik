@@ -99,6 +99,16 @@
           @mobilehidemenu="mobilehidemenu"
         />
         <ModMenuItemLeft
+          v-if="checkQueue"
+          link="/messages/check"
+          name="Check"
+          :count="['checked']"
+          count-variant="info"
+          indent
+          sub
+          @mobilehidemenu="mobilehidemenu"
+        />
+        <ModMenuItemLeft
           link="/messages/edits"
           name="Edits"
           :count="['editreview']"
@@ -313,6 +323,7 @@
 </template>
 
 <script setup>
+import { useAutoapproveTrial } from '~/modtools/composables/useAutoapproveTrial'
 import { useRouter } from '#imports'
 import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
@@ -411,6 +422,9 @@ useHead({
 
 const loginStateKnown = computed(() => authStore.loginStateKnown)
 const loggedIn = computed(() => authStore.user !== null)
+
+// The Check queue exists only on communities in the post-moderation trial.
+const { inTrial: checkQueue } = useAutoapproveTrial()
 const inMTapp = ref(false)
 
 const discourseCount = computed(() => {

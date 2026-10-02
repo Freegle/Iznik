@@ -181,3 +181,14 @@ days, has the request headers under `request_headers` and joins on `request_id`.
 `query_range`, `direction=forward`, at most 5000 lines per call; a line filter over the whole
 retention is slow and a paged pull across the busy hours will time out silently, so bound each
 call to a day or an hour.
+
+## A rejected post's text is often not what the moderator rejected
+
+Members edit a post after it is rejected, usually to take out the words that got it
+rejected ("a wrench I could lend or be donated" becomes "to be donated", "£60" becomes
+"collection only"). So `messages.subject` and `messages.textbody` today are not what the
+moderator judged. Any analysis of moderation decisions against post text, including
+evaluating automated review, must first walk the post back through `messages_edits`
+(`oldsubject`, `oldtext`) to its text before the first edit after the decision. In one
+sample, 52 of 516 decided posts had changed, and reading today's text halved the apparent
+catch rate on borrowing and money.

@@ -2,6 +2,7 @@
   <div>
     <client-only>
       <ScrollToTop />
+      <ModHelpPending />
       <ModAimsModal
         v-if="showAimsModal"
         ref="showAimsModal"

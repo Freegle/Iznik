@@ -119,6 +119,9 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
           'client-only': {
             template: '<div><slot /></div>',
           },
+          ModHelpApproved: {
+            template: '<div class="mod-help-approved" />',
+          },
           ScrollToTop: {
             template: '<div class="scroll-to-top" />',
             props: ['prepend'],

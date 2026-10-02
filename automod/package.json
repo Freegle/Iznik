@@ -1,0 +1,22 @@
+{
+  "name": "automod",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Flowchart-driven automated review of Pending posts (plans/active/automod-flowchart.md)",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.0.0",
+    "ai-flower": "github:Freegle/ai-flower",
+    "uuid": "^10.0.0",
+    "@anthropic-ai/sdk": "^0.128.0",
+    "zod": "^4.6.5"
+  }
+}

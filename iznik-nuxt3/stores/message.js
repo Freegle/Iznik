@@ -23,6 +23,10 @@ export const useMessageStore = defineStore('message', {
     list: {},
     byUserList: {},
 
+    // ModTools Check queue: posts a moderator pulled back to Pending from there. They stay
+    // in the Check list, now showing as Pending, so the moderator acts on them in place.
+    pulledBack: {},
+
     // Count of unseen items
     count: 0,
 
@@ -704,6 +708,28 @@ export const useMessageStore = defineStore('message', {
       )
       return fetched.filter((id) => id !== null)
     },
+    // Mark auto-published posts as reviewed by a moderator, clearing them from
+    // the Check oversight queue. Returns the number marked.
+    async markChecked(params) {
+      const data = await api(this.config).message.markChecked(params)
+      return data?.checked ?? 0
+    },
+
+    // Fetch SysAdmin moderation analytics for a date range ({start, end}).
+    async fetchModerationStats(params) {
+      return await api(this.config).message.moderationStats(params)
+    },
+
+    // Tell the server a moderator thinks one node of an automated review decision was wrong.
+    async postAutomodFeedback(params) {
+      return await api(this.config).message.automodFeedback(params)
+    },
+
+    // Fetch SysAdmin automated review agreement analytics for the last N days.
+    async fetchAutomodAgreement(params) {
+      return await api(this.config).message.automodAgreement(params)
+    },
+
     async fetchMessagesMT(params) {
       if (params.context) {
         // Server expects context as a JSON-encoded string; URLSearchParams
@@ -833,6 +859,18 @@ export const useMessageStore = defineStore('message', {
         held.heldByOtherMod = true
         throw held
       }
+    },
+    // Reject an auto-published post from the Check oversight queue: pulls it back
+    // to Pending (held) via the markChecked endpoint's reject flag, and removes it from the
+    // local store so it leaves the oversight list immediately.
+    async rejectFromOversight(id, groupid) {
+      await api(this.config).message.markChecked({
+        groupid,
+        ids: [id],
+        reject: true,
+      })
+      this.pulledBack[id] = true
+      await this.refreshOrRemoveFromMTList(id)
     },
     async approve(id, groupid, subject, stdmsgid, body) {
       const msg = this.byId(id)

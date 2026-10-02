@@ -133,6 +133,19 @@
             >
               Pending
             </span>
+            <span
+              v-if="pending && countdownLabel"
+              data-testid="autoapprove-countdown"
+              class="small ms-2"
+              :class="countdownLabel.cls"
+            >
+              {{ countdownLabel.text }}
+            </span>
+            <ModAutomodLine
+              :message="message"
+              :groupid="currentGroupid"
+              :pending="pending"
+            />
             <!-- Approved-by is shown by MessageHistory with resolved name -->
             <div v-if="message.deadline" class="text-danger small">
               Deadline: end {{ dateonly(message.deadline) }}
@@ -333,7 +346,8 @@
             <div v-if="expanded">
               <NoticeMessage
                 v-if="message.outcomes && message.outcomes.length"
-                class="mb-1"
+                variant="info"
+                class="mb-2"
               >
                 {{ message.outcomes[0].outcome.toUpperCase() }}
                 at
@@ -387,7 +401,11 @@
                 {{ fromUser.activedistance }} miles apart.
               </NoticeMessage>
             </div>
-            <NoticeMessage v-if="noLocation" variant="warning" class="mb-2">
+            <NoticeMessage
+              v-if="noLocation && !editing"
+              variant="danger"
+              class="mb-2"
+            >
               We couldn't work out where this post is (often an emailed post
               whose subject has no recognised place name). Please click
               <strong>Edit</strong> and add a postcode (it doesn't have to be
@@ -533,12 +551,7 @@
                   {{ eBody }}
                 </span>
               </div>
-              <b-alert
-                v-if="isBulk"
-                :model-value="true"
-                variant="info"
-                class="mb-3"
-              >
+              <NoticeMessage v-if="isBulk" variant="info" class="mb-2">
                 <strong>
                   <v-icon icon="boxes-stacked" /> Bulk clearance —
                   {{ message.bulkcount }} item{{
@@ -556,7 +569,7 @@
                 >
                   See how members see it
                 </b-button>
-              </b-alert>
+              </NoticeMessage>
               <div v-if="attachments?.length" class="w-100 d-flex flex-wrap">
                 <div
                   v-for="attachment in attachments"
@@ -627,10 +640,11 @@
                     message.myrole === 'Member'
                   "
                   variant="danger"
+                  class="mb-2"
                 >
                   Sender only available to mods.
                 </NoticeMessage>
-                <NoticeMessage v-else variant="danger">
+                <NoticeMessage v-else variant="danger" class="mb-2">
                   Can't identify sender. Could have been purged but perhaps a
                   bug.
                 </NoticeMessage>
@@ -749,13 +763,6 @@
           don't click them by accident. Please check with them before releasing
           the message.
         </div>
-        <NoticeMessage
-          v-else-if="!editing && !message.lat && !message.lng"
-          variant="danger"
-          class="mb-2"
-        >
-          This message needs editing so that we know where it is.
-        </NoticeMessage>
         <div
           v-if="
             pending && (!contextGroup?.heldby || heldbyId === myid) && !editing
@@ -774,6 +781,7 @@
           :editreview="editreview"
           :cantpost="membership && membership.ourpostingstatus === 'PROHIBITED'"
           :is-home-group="isHomeGroup"
+          :oversight="oversight"
           :mod-messaging-allowed="modMessagingAllowed"
         />
         <b-button
@@ -899,6 +907,13 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  // Passed down from the Check oversight page to unlock the per-message Reject button
+  // in ModMessageButtons. Not set on any other page.
+  oversight: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
   /* The messages_groups.collection this listing is browsing (Approved, Pending, ...).
      Used only to pick which group copy currentGroupid falls back to when there is no
      explicit contextGroupid - see currentGroupid below. */
@@ -922,6 +937,11 @@ const modGroupStore = useModGroupStore()
 const userStore = useUserStore()
 
 const message = computed(() => messageStore.byId(props.messageid))
+
+// --- Auto-approve countdown (A5) ---
+// `now` ticks every second (see onMounted) so the countdown label recomputes live.
+const now = ref(Date.now())
+let countdownInterval = null
 
 watch(
   () => props.messageid,
@@ -1274,6 +1294,37 @@ const pending = computed(() => {
   return hasCollection('Pending')
 })
 
+// The soonest non-null autoapproveat across all Pending groups for this message.
+const soonestAutoapproveat = computed(() => {
+  if (!message.value?.groups) return null
+  let best = null
+  for (const g of message.value.groups) {
+    if (g.collection === 'Pending' && g.autoapproveat) {
+      const t = new Date(g.autoapproveat).getTime()
+      if (best === null || t < best) best = t
+    }
+  }
+  return best
+})
+
+// Live countdown label + CSS class, recomputed every second via `now`.
+const countdownLabel = computed(() => {
+  const target = soonestAutoapproveat.value
+  if (target === null) return null
+  const secsLeft = Math.floor((target - now.value) / 1000)
+  if (secsLeft <= 0) return { text: 'Auto-approving…', cls: 'text-info' }
+  const totalMins = Math.floor(secsLeft / 60)
+  const secs = secsLeft % 60
+  if (totalMins >= 60) {
+    const hrs = Math.round(totalMins / 60)
+    return { text: `Auto-approves in ~${hrs}h`, cls: 'text-muted' }
+  }
+  return {
+    text: `Auto-approves in ${totalMins}m ${String(secs).padStart(2, '0')}s`,
+    cls: 'text-warning fw-bold',
+  }
+})
+
 const eSubject = computed(() => {
   if (!message.value) return ''
   return twem(message.value.subject)
@@ -1567,11 +1618,20 @@ onMounted(() => {
       userStore.fetch(heldbyId.value)
     }
   }
+
+  // Per-second ticker for the auto-approve countdown badge.
+  countdownInterval = setInterval(() => {
+    now.value = Date.now()
+  }, 1000)
 })
 
 onBeforeUnmount(() => {
   if (message.value) {
     emit('destroy', message.value.id, props.next)
+  }
+  if (countdownInterval) {
+    clearInterval(countdownInterval)
+    countdownInterval = null
   }
 })
 
