@@ -29,6 +29,10 @@ class ArchiveProfileImagesCommand extends Command
         // are never reached. Those rows accumulate (placeholder gravatar/default
         // avatar entries from upload paths that didn't set userid) and must be
         // cleaned with an explicit `IS NULL` predicate.
+        // keep-raw: two aliased aggregates (MAX(id), COUNT(*)) in a multi-row
+        // SELECT list under GROUP BY, with HAVING on the COUNT(*) alias - the
+        // query builder has no non-raw form for an aliased aggregate alongside
+        // other selected/grouped columns.
         $dups = DB::select(
             'SELECT userid, MAX(id) AS max, COUNT(*) AS count
              FROM users_images
@@ -42,10 +46,10 @@ class ArchiveProfileImagesCommand extends Command
             if ($dryRun) {
                 $duplicatesDeleted += $dup->count - 1;
             } else {
-                $affected = DB::delete(
-                    'DELETE FROM users_images WHERE userid = ? AND id < ?',
-                    [$dup->userid, $dup->max]
-                );
+                $affected = DB::table('users_images')
+                    ->where('userid', $dup->userid)
+                    ->where('id', '<', $dup->max)
+                    ->delete();
                 $duplicatesDeleted += $affected;
             }
         }

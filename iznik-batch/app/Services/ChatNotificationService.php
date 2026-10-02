@@ -8,7 +8,6 @@ use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\ChatRoster;
 use App\Models\User;
-use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -159,7 +158,12 @@ class ChatNotificationService
         // the rippling_held_replies delivery gate — NOT chat_messages.reviewrequired (that
         // bit is shared with the spam/mod hold). Until any reply is held the table is empty,
         // so the gate is always true and nothing changes.
-        $query->whereRaw(RippleReplyService::deliveryGateSql('chat_messages.id'));
+        // Inlined equivalent of RippleReplyService::deliveryGateSql('chat_messages.id').
+        $query->whereNotExists(function ($q) {
+            $q->from('rippling_held_replies as cmr')
+                ->whereColumn('cmr.chatmsgid', 'chat_messages.id')
+                ->where('cmr.status', '<>', 'released');
+        });
 
         // For User2User chats, only include reviewed messages.
         if ($chatType === ChatRoom::TYPE_USER2USER) {

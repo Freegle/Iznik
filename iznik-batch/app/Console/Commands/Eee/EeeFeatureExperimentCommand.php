@@ -60,7 +60,7 @@ class EeeFeatureExperimentCommand extends Command
 
         $attachments = DB::table('messages_attachments as ma')
             ->join('messages as m', 'm.id', '=', 'ma.msgid')
-            ->whereExists(fn($q) => $q->select(DB::raw(1))
+            ->whereExists(fn($q) => $q
                 ->from('messages_items as mi')
                 ->join('items as i', 'i.id', '=', 'mi.itemid')
                 ->whereColumn('mi.msgid', 'm.id')

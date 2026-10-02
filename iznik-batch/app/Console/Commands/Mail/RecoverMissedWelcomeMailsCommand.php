@@ -94,7 +94,7 @@ class RecoverMissedWelcomeMailsCommand extends Command
             $query->where(function ($q) {
                 // No logins since creation.
                 $q->whereNull('lastaccess')
-                    ->orWhereRaw('lastaccess = added');
+                    ->orWhereColumn('lastaccess', 'added');
             });
         }
 

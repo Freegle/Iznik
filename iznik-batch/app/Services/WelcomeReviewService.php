@@ -29,7 +29,7 @@ class WelcomeReviewService
             ->whereNotNull('welcomemail')
             ->where(function ($q) {
                 $q->whereNull('welcomereview')
-                    ->orWhereRaw('DATEDIFF(NOW(), welcomereview) >= ?', [self::REVIEW_INTERVAL_DAYS]);
+                    ->orWhereDate('welcomereview', '<=', today()->subDays(self::REVIEW_INTERVAL_DAYS));
             })
             ->limit(self::BATCH_LIMIT)
             ->select(['id', 'nameshort', 'namefull', 'welcomemail'])
