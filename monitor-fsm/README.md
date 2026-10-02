@@ -22,27 +22,38 @@ tunnels are down and a data-dependent diagnosis cannot be grounded):
 Both degrade gracefully to `{available: false}` when a tunnel is down.
 
 The parallel fix agents are separate processes, so they reach the same reads through
-`node dist/ground.js db "<SELECT>" "<purpose>"` and `node dist/ground.js loki '<LogQL>'`.
+`node dist/ground.js db "<SELECT>" "<purpose>" --bug T/P` and `node dist/ground.js loki '<LogQL>' --bug T/P`.
 
-### No live evidence, no PR
+### No production reads, no PR - and no evidence in the PR
 
 Asking for grounding in a prompt was not enough: PRs #1654, #1657, #1658 and #1659 each had a test
-written from their own hypothesis and nothing from production, and two said so in their own
-description. `create_pr` now reads the description of every Discourse bug-fix PR and refuses it
-(`src/evidence.ts`, regular expressions, not a model) unless:
+written from their own hypothesis and nothing from production.
 
-- a `## Live evidence` section holds a concrete artefact from production - a SQL or LogQL query
-  with a `Result:` line, a Sentry issue with its count, or the reporter's screenshot - and does
-  not say it was not checked or cite the `local-dev` Loki;
-- the description contains no member's details: no email address, full postcode, phone number or
-  IP address. The repository is public, so evidence is the query and counts, never raw rows.
+Production results are full of members' details, and the repository is public, so the evidence
+never goes in the PR. `ground.js` records every read made with `--bug T/P`, with its full result,
+in a **local evidence record** (`/tmp/freegle-monitor/evidence/T-P.jsonl`, or
+`MONITOR_FSM_EVIDENCE_DIR`) that is never committed or published. The agent adds
+`ground.js note T/P "<what it showed>"` to the same record. The PR's `## Live evidence` section is
+the one line `ground.js evidence-line T/P` prints: how many production reads were made, and that the
+results are held locally. A human auditing a diagnosis reads the record.
+
+`create_pr` checks every Discourse bug-fix PR against the record (`src/evidence.ts`, code, not a
+model) and refuses it unless:
+
+- the record holds at least one production read that returned something (the `local-dev` Loki and
+  failed reads do not count), and a note;
+- the Live evidence section is exactly the evidence line, with no queries or results;
+- the description holds no member detail: nothing shaped like an email, full postcode, phone number
+  or IP, and **nothing identifying taken from the record** - a name, email, user or message id, or
+  something a member wrote, in any result column or log field that holds one. A name has no shape a
+  pattern can see; a name the agent read and then repeated is caught this way.
 
 A refused PR is closed (its description blanked first if it held personal details), the report is
 held as `needs-detail`, and the reporter is asked for what would let the next attempt look it up.
-Fix agents run `node dist/ground.js check-pr <file>` before opening a PR, so a refusal is rare. An
-agent that cannot ground its diagnosis because the report names nothing emits
-`OUTCOME=needs-detail` and opens no PR. Sentry and CI fixes are not gated: they have no Discourse
-bug.
+Fix agents run `ground.js check-pr <file> T/P` before opening, so a refusal is rare. An agent that
+cannot ground its diagnosis because the report names nothing emits `OUTCOME=needs-detail` and
+opens no PR. Fixes for Sentry errors and CI failures are not checked this way: they have no
+Discourse report.
 
 ## How it works
 

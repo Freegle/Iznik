@@ -1,22 +1,82 @@
-// Has a bug-fix PR shown that its diagnosis matches production, and does its
-// description keep members' details out of a public repository?
+// Has a bug-fix PR been checked against production, and does its description keep
+// members' details out of a public repository?
 //
 // PRs #1654, #1657, #1658 and #1659 were all closed as guesses. Each carried a test
-// written from its own hypothesis and nothing from production; two said so in their
-// own description ("I did not check live data", "could not be reproduced"). The
-// grounding tools existed, but using them was a request in a prompt, and a request
-// is skipped exactly when the agent is most sure of itself. This makes it a rule the
-// driver checks: no concrete artefact from production, no PR.
+// written from its own hypothesis and nothing from production. Asking for grounding
+// in a prompt was skipped exactly when the agent was most sure of itself, so it is
+// now something the driver checks.
 //
-// Like specifics.ts, this is deliberately regular expressions rather than a model's
-// opinion, so the same description always gets the same answer.
+// The evidence itself never goes in the PR. Production results are full of members'
+// details - names, emails, addresses, IPs, what they wrote - and the repository is
+// public. ground.js records every production read a fix agent makes, with its
+// result, in a local evidence record that is never published. The PR description
+// carries one line saying the record exists and what it holds. create_pr then
+// confirms against the record, not against the agent's say-so: the reads happened,
+// they were against production, and the agent wrote down what they showed.
+//
+// Like specifics.ts this is deliberately code rather than a model's opinion, so the
+// same PR always gets the same answer.
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
-export interface PrEvidence {
-  ok: boolean
-  /** Plain-English reasons, never quoting the offending text. */
-  problems: string[]
-  /** True when the description itself contains a member's details. */
-  confidential: boolean
+/** One production read, or the agent's note of what the reads showed. */
+export interface EvidenceEntry {
+  ts: string
+  kind: 'db' | 'loki' | 'note'
+  query?: string
+  purpose?: string
+  available?: boolean
+  source?: string
+  rowCount?: number
+  /** The raw result, kept locally so a human can audit the diagnosis. */
+  result?: unknown
+  text?: string
+}
+
+export function evidenceDir(): string {
+  return process.env.MONITOR_FSM_EVIDENCE_DIR || '/tmp/freegle-monitor/evidence'
+}
+
+export function parseBugRef(ref: string): { topic: number; post: number } | null {
+  const m = /^(\d+)[/.-](\d+)$/.exec(String(ref ?? '').trim())
+  return m ? { topic: Number(m[1]), post: Number(m[2]) } : null
+}
+
+function recordPath(topic: number, post: number): string {
+  return join(evidenceDir(), `${topic}-${post}.jsonl`)
+}
+
+export function appendEvidence(topic: number, post: number, entry: Omit<EvidenceEntry, 'ts'>): void {
+  mkdirSync(evidenceDir(), { recursive: true })
+  appendFileSync(recordPath(topic, post), JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n')
+}
+
+export function readEvidence(topic: number, post: number): EvidenceEntry[] {
+  const p = recordPath(topic, post)
+  if (!existsSync(p)) return []
+  return readFileSync(p, 'utf8').split('\n').filter(Boolean).flatMap(l => {
+    try { return [JSON.parse(l) as EvidenceEntry] } catch { return [] }
+  })
+}
+
+/** Production reads that returned something: local-dev Loki says nothing about members. */
+function productionReads(record: EvidenceEntry[]): EvidenceEntry[] {
+  return record.filter(e => (e.kind === 'db' || e.kind === 'loki') && e.available === true && e.source !== 'local-dev')
+}
+
+const hasNote = (record: EvidenceEntry[]) => record.some(e => e.kind === 'note' && String(e.text ?? '').trim().length >= 20)
+
+/**
+ * The one line a PR description carries about its evidence. Null when the record
+ * would not pass, so an agent cannot print a line it has not earned.
+ */
+export function evidenceLine(topic: number, post: number, record = readEvidence(topic, post)): string | null {
+  const reads = productionReads(record)
+  if (reads.length === 0 || !hasNote(record)) return null
+  const db = reads.filter(e => e.kind === 'db').length
+  const logs = reads.filter(e => e.kind === 'loki').length
+  return `Checked against production before this PR was opened: ${db} database and ${logs} log read(s). ` +
+    `The results and what they showed are kept in the monitor's local evidence record ${topic}/${post}, not published here.`
 }
 
 const HEADING = /^##\s+Live evidence\s*$/im
@@ -30,19 +90,8 @@ export function liveEvidenceSection(body: string): string | null {
   return (next === -1 ? rest : rest.slice(0, next)).trim()
 }
 
-// The section admitting that nothing was checked. The local dev Loki is not production,
-// so a result from it says nothing about what members saw.
-const DISCLAIMER = /\blocal-dev\b|\b(?:did not|didn't|could not|couldn't|was not|wasn't|were not|not) (?:check|checked|query|queried|reproduce|reproduced|look|looked|verified|confirm|confirmed)\b|\bunavailable\b|\bungrounded\b|\bnot grounded\b|\binferred\b|^\s*(?:n\/a|none|-)\s*\.?\s*$/im
-
-// Concrete artefacts. A query only counts with what it returned beside it.
-const SQL = /\bselect\b[\s\S]{1,600}?\bfrom\b/i
-const LOGQL = /\{\s*[a-z_]+\s*=~?\s*"[^"]+"/
-const RESULT = /^\s*result\s*:/im
-const SENTRY = /\bsentry\b[^\n]{0,40}?\b\d{6,}\b|\bsentry\.io\/\S+/i
-const SCREENSHOT = /!\[[^\]]*\]\([^)]+\)|upload:\/\//
-
-// Members' details. Each pattern names a kind, so a refusal can say what it found
-// without repeating it.
+// Members' details in any text. Each pattern names a kind, so a refusal can say what
+// it found without repeating it.
 const PERSONAL: Array<[string, RegExp]> = [
   ['an email address', /[\w.+-]+@(?!example\.(?:com|org)\b)(?!users\.noreply\.github\.com\b)(?!anthropic\.com\b)[\w-]+(?:\.[\w-]+)+/i],
   ['a full postcode', /\b[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}\b/],
@@ -50,29 +99,85 @@ const PERSONAL: Array<[string, RegExp]> = [
   ['an IP address', /\b(?!127\.0\.0\.1\b)(?!0\.0\.0\.0\b)(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}\b/],
 ]
 
-export function assessPrEvidence(body: string): PrEvidence {
+// Fields whose value identifies a member or is something they wrote.
+const IDENTIFYING_FIELD = /^(?:.*name|e?mail|email.*|username|display.*|fullname|firstname|lastname|subject|textbody|body|message|text|address.*|postcode|phone.*|ip|ipaddress|realname|comment.*|location.*)$/i
+
+// Fields holding an id that points at a member or something they posted.
+const ID_FIELD = /^(?:id|userid|user_id|fromuser|touser|byuser|msgid|messageid|message_id|chatid|chat_id|refmsgid|refchatid|uid)$/i
+
+/**
+ * Values in the record's results that would identify a member if they turned up in
+ * the PR: anything in an identifying column or log field, and anything shaped like
+ * personal data wherever it sits.
+ */
+export function identifyingValues(record: EvidenceEntry[]): string[] {
+  const out = new Set<string>()
+  const consider = (v: unknown, field?: string) => {
+    if (v === null || v === undefined || typeof v === 'object') return
+    const s = String(v).trim()
+    if (field && ID_FIELD.test(field) && /^\d{5,}$/.test(s)) { out.add(s); return }
+    if (s.length < 3 || !/[a-z]/i.test(s)) return
+    if (field && IDENTIFYING_FIELD.test(field)) out.add(s)
+    for (const [, re] of PERSONAL) {
+      const m = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g')
+      for (const hit of s.match(m) ?? []) out.add(hit)
+    }
+  }
+  const walk = (v: unknown, field?: string) => {
+    if (typeof v === 'string' && /^\s*\{/.test(v)) {
+      try { walk(JSON.parse(v)); return } catch { /* not JSON */ }
+    }
+    if (Array.isArray(v)) { v.forEach(x => walk(x, field)); return }
+    if (v && typeof v === 'object') { for (const [k, x] of Object.entries(v)) walk(x, k); return }
+    consider(v, field)
+  }
+  for (const e of productionReads(record)) {
+    const r = e.result as any
+    if (r && Array.isArray(r.columns) && Array.isArray(r.rows)) {
+      for (const row of r.rows) (row as unknown[]).forEach((cell, i) => walk(cell, String(r.columns[i] ?? '')))
+    } else if (r && Array.isArray(r.entries)) {
+      for (const en of r.entries) walk(en.line)
+    } else {
+      walk(r)
+    }
+  }
+  return [...out]
+}
+
+export interface PrEvidence {
+  ok: boolean
+  /** Plain-English reasons, never quoting the offending text. */
+  problems: string[]
+  /** True when the description contains a member's details. */
+  confidential: boolean
+}
+
+export function assessPrEvidence(body: string, topic: number, post: number, record = readEvidence(topic, post)): PrEvidence {
   const text = body ?? ''
   const problems: string[] = []
 
+  if (productionReads(record).length === 0) {
+    problems.push(`there is no record of any production read for ${topic}/${post} (run them through ground.js with --bug ${topic}/${post})`)
+  } else if (!hasNote(record)) {
+    problems.push(`the evidence record for ${topic}/${post} has no note of what the production reads showed`)
+  }
+
   const live = liveEvidenceSection(text)
-  if (live === null || live === '') {
-    problems.push('there is no Live evidence section showing what production says')
-  } else if (DISCLAIMER.test(live)) {
-    problems.push('the Live evidence section says production was not checked')
-  } else {
-    const query = SQL.test(live) || LOGQL.test(live)
-    const artefact = (query && RESULT.test(live)) || SENTRY.test(live) || SCREENSHOT.test(live)
-    if (!artefact) {
-      problems.push(query
-        ? 'the Live evidence query has no "Result:" line saying what it returned'
-        : 'the Live evidence section needs a query with its result, a Sentry issue, or the reporter\'s screenshot')
-    }
+  const expected = evidenceLine(topic, post, record)
+  if (live === null) {
+    problems.push('there is no Live evidence section')
+  } else if (expected && live !== expected) {
+    problems.push('the Live evidence section must be exactly the line ground.js evidence-line prints, with no queries or results')
   }
 
-  const found = PERSONAL.filter(([, re]) => re.test(text)).map(([kind]) => kind)
-  if (found.length > 0) {
-    problems.push(`the description contains ${found.join(', ')}; this repository is public`)
+  const kinds = PERSONAL.filter(([, re]) => re.test(text)).map(([kind]) => kind)
+  // Whole words only, so a member called Sam does not trip on "Sample".
+  const leaked = identifyingValues(record).some(v =>
+    new RegExp(`(?<![\\w@.])${v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w@])`, 'i').test(text))
+  if (leaked) kinds.push('a detail taken from the production results')
+  if (kinds.length > 0) {
+    problems.push(`the description contains ${kinds.join(', ')}; this repository is public`)
   }
 
-  return { ok: problems.length === 0, problems, confidential: found.length > 0 }
+  return { ok: problems.length === 0, problems, confidential: kinds.length > 0 }
 }
