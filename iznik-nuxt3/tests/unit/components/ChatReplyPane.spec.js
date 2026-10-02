@@ -749,7 +749,11 @@ describe('ChatReplyPane', () => {
       expect(wrapper.find('[data-testid="reach-blocked-eta"]').exists()).toBe(
         false
       )
-      expect(wrapper.text()).toContain('as soon as it does')
+      // Never promises the post will reach a member it may be far outside (Discourse
+        // 10091/3: a post 130 miles away was told it would arrive "as soon as it does").
+        const text = wrapper.text().replace(/\s+/g, ' ')
+        expect(text).not.toContain('as soon as it does')
+        expect(text).toContain('People closer to it get first go')
     })
   })
 })

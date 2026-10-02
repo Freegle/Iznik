@@ -434,8 +434,9 @@
                   {{ reachNotice }}
                 </span>
                 <span v-else>
-                  This hasn't reached your area yet — but go ahead and reply.
-                  We'll pass it on to the owner as soon as it does.
+                  This hasn't reached your area yet, but go ahead and reply. People
+                  closer to it get first go, and we'll pass yours on once it has
+                  finished rippling out.
                 </span>
               </NoticeMessage>
               <div
@@ -529,8 +530,9 @@
             {{ reachNotice }}
           </span>
           <span v-else>
-            This hasn't reached your area yet — but go ahead and reply. We'll
-            pass it on to the owner as soon as it does.
+            This hasn't reached your area yet, but go ahead and reply. People
+            closer to it get first go, and we'll pass yours on once it has
+            finished rippling out.
           </span>
         </NoticeMessage>
         <div
