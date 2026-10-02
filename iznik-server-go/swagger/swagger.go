@@ -5761,3 +5761,59 @@ type housekeeperTasksResponse struct {
 //	401: errorResponse
 //	403: errorResponse
 //	404: errorResponse
+
+// swagger:route POST /modtools/messages/markchecked modtools markChecked
+// Mark Check queue posts as checked
+//
+// Marks the posts in the Check queue (live posts that published by themselves) as checked by the moderator
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /modtools/moderationstats modtools getModerationStats
+// Get moderation analytics
+//
+// Moderation analytics for the post-moderation trial (Admin/Support only)
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /modtools/automod/feedback modtools automodFeedback
+// Mark an automated review step wrong
+//
+// A moderator marks one step of an automated review decision as wrong
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /modtools/automod/agreement modtools automodAgreement
+// Automated review agreement report
+//
+// How often moderators agree with automated review, for SysAdmin
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	401: errorResponse
+//	403: errorResponse
