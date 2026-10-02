@@ -85,23 +85,11 @@ Schedule::command('images:push-spool')
     ->sendOutputTo(cronLog('images:push-spool'))
     ->runInBackground();
 
-// The one-off copy of the legacy NFS store, in slices: each stops on its time
-// budget and the next carries on from the cursor. On only between the cutover
-// and a clean --verify. The backup drain's skip() applies to it like every
-// other event, so it merely pauses for the window.
-Schedule::command('images:migrate-legacy')
-    ->everyFiveMinutes()
-    ->withoutOverlapping(10)
-    ->when(fn () => (bool) config('freegle.image_store.enabled', false)
-        && (bool) config('freegle.image_store.migrate_enabled', false))
-    ->sendOutputTo(cronLog('images:migrate-legacy'))
-    ->runInBackground();
-
 // Proves the bucket is still writable and, above all, still PUBLICLY readable:
-// the read chain in frontend-nginx falls through to the legacy share on any
-// bucket error, so a bucket that stops answering (public read switched off, key
-// revoked, service disabled) shows up only as every image that exists solely
-// in the bucket going missing. --report raises ObjectStoreUnavailable in Sentry.
+// the read chain in frontend-nginx ends at the bucket, so a bucket that stops
+// answering (public read switched off, key revoked, service disabled) shows up
+// only as every image not in the spool going missing. --report raises
+// ObjectStoreUnavailable in Sentry.
 Schedule::command('images:object-store-check --report')
     ->everyTenMinutes()
     ->withoutOverlapping(10)

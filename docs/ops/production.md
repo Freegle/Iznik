@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-28
+last_reviewed: 2026-09-29
 owner: Freegle dev team
 covers:
   - docker-compose.override.edge.yml
@@ -68,9 +68,8 @@ host serves the content hostnames directly and does all the background work.
 
 Other external services: **Sentry** (error tracking), **Discourse** (volunteer forum,
 externally hosted), Google Workspace (staff `@ilovefreegle.org` mail). Image originals
-live in a cloud **object store** (S3-compatible, publicly readable). Older originals are
-still on the cloud **NFS share** the Docker host mounts read-only while they are copied
-across - see [the images runbook](runbooks/images-to-object-storage.md).
+live in a cloud **object store** (S3-compatible, publicly readable) - see
+[the images runbook](runbooks/images-to-object-storage.md).
 
 ## The edge tier
 
@@ -82,8 +81,7 @@ services under the `edge` profile (scale-in-place rather than separate machines)
 - **image delivery** - a weserv-based resizing/caching proxy.
 - **uploads** - tusd, writing to a local spool that the batch scheduler moves into the
   object store within a minute or two. The front nginx answers a read for an upload
-  from the spool, then the object store, then (until the copy is done) the NFS share,
-  bound read-only and served as static files.
+  from the spool, then the object store.
 - **map tiles** - an OSM tile server (PostGIS + renderd) with its own replication.
 - **wiki** - MediaWiki with its own MySQL.
 
@@ -99,7 +97,7 @@ spatial container, behind the same host nginx.
 | `modtools.org` | Load balancer → Netlify static build; `/api/ai-support` → AI support helper (Docker host); API calls → v2 API. |
 | `api.ilovefreegle.org` | Load balancer → **v2 Go API on the database nodes**. One node is the active backend; the others are backups. |
 | Shortlinks (`freegle.in`, `freegle.it`, `frgl.it`) | Load balancer → v2 API. |
-| `uploads.ilovefreegle.org` | Load balancer → edge front nginx on the Docker host: tus protocol to tusd; reads from the spool, the object store or the legacy share (app1 backup). |
+| `uploads.ilovefreegle.org` | Load balancer → edge front nginx on the Docker host: tus protocol to tusd; reads from the spool or the object store (app1 backup). |
 | `delivery.ilovefreegle.org` | Load balancer → image delivery cache on the Docker host (app1 backup). |
 | `images.ilovefreegle.org`, `users.ilovefreegle.org` (web) | Load balancer → edge front nginx on the Docker host (legacy image URLs resolve via the v2 API; `users` 302s to the member site). |
 | `spatial.ilovefreegle.org` | Load balancer → routing server on the database nodes (one active, one backup). |
