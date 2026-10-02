@@ -8,7 +8,7 @@ import api from '~/api'
 export const usePartnershipsStore = defineStore('partnerships', {
   state: () => ({
     list: [],
-    // Keyed by partnership id: { partnership, groups, years, payments }.
+    // Keyed by partnership id: { partnership, contacts, groups, years, payments, history }.
     detail: {},
     summary: null,
     statsJobs: [],
@@ -45,15 +45,14 @@ export const usePartnershipsStore = defineStore('partnerships', {
       delete this.detail[id]
       await this.refresh()
     },
-    async fetchGroups(id) {
-      return await api(this.config).partnerships.fetchGroups(id)
-    },
+    // Adding also puts back a community that was left out.
     async addGroup(id, groupid) {
       await api(this.config).partnerships.patchGroups(id, {
         action: 'Add',
         groupid,
       })
       await this.fetchOne(id)
+      await this.fetch()
     },
     async removeGroup(id, groupid) {
       await api(this.config).partnerships.patchGroups(id, {
@@ -61,12 +60,14 @@ export const usePartnershipsStore = defineStore('partnerships', {
         groupid,
       })
       await this.fetchOne(id)
+      await this.fetch()
     },
     async redetectGroups(id) {
       await api(this.config).partnerships.patchGroups(id, {
         action: 'Redetect',
       })
       await this.fetchOne(id)
+      await this.fetch()
     },
     async setYears(id, years) {
       await api(this.config).partnerships.setYears(id, years)

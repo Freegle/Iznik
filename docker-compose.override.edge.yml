@@ -135,8 +135,9 @@ services:
       timeout: 3s
       retries: 5
       start_period: 15s
-    # The base compose mounts the tusd-spool volume at /srv/tusd-data inside
-    # the container.
+    # No NFS bind: the base compose mounts the tusd-spool volume at
+    # /srv/tusd-data INSIDE the container. The old NFS share of the same name
+    # on the host has been copied into the bucket and retired.
 
   # The dev stand-in for the bucket has no place on the prod host.
   objectstore:

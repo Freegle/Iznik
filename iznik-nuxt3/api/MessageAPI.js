@@ -112,10 +112,6 @@ export default class MessageAPI extends BaseAPI {
     )
   }
 
-  del(id) {
-    return this.$delv2('/message/' + id)
-  }
-
   put(data) {
     // onbehalfof travels in the query string, where the server reads it and
     // checks the caller is a ChitChat moderator. Keep it out of the body so it

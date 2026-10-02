@@ -3,6 +3,7 @@
 namespace Tests\Feature\Images;
 
 use App\Services\ImageStore\ObjectStore;
+use App\Services\ImageStore\ObjectStoreUnavailable;
 use App\Services\ImageStore\SpoolPusherService;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
@@ -263,5 +264,33 @@ class SpoolPusherServiceTest extends TestCase
         $this->assertSame(0, $stats['abandoned']);
         Storage::disk('tusd-spool')->assertExists('.hidden.info');
         Storage::disk('tusd-spool')->assertExists('with space.info');
+    }
+    public function test_an_unavailable_store_stops_the_pass_and_keeps_every_local_copy(): void
+    {
+        // The bucket answering 401 to everything (public read off, key gone)
+        // is not a fault of any upload: nothing is counted failed, nothing is
+        // deleted, and the pass stops at the first upload that met it rather
+        // than asking the same question once per upload.
+        $this->spool('pppp', self::JPEG, ageSeconds: 120);
+        $this->spool('qqqq', self::JPEG, ageSeconds: 120);
+
+        $store = new class(Storage::disk('images')) extends ObjectStore {
+            public function sizeOf(string $key): ?int
+            {
+                throw new ObjectStoreUnavailable('Object store unavailable: HeadObject ' . $key . ' got HTTP 401');
+            }
+        };
+        $pusher = new SpoolPusherService($store, Storage::disk('tusd-spool'), 60, 24);
+
+        $stats = $pusher->push();
+
+        $this->assertStringContainsString('HTTP 401', (string) $stats['unavailable']);
+        $this->assertSame(0, $stats['failed']);
+        $this->assertSame(0, $stats['pushed']);
+        $this->assertSame(1, $stats['scanned']);
+        foreach (['pppp', 'qqqq'] as $id) {
+            Storage::disk('tusd-spool')->assertExists($id);
+            Storage::disk('tusd-spool')->assertExists($id . '.info');
+        }
     }
 }

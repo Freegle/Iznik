@@ -71,6 +71,19 @@ FORCE INDEX, which makes the index name load-bearing - rename or drop it and nam
 The ordering is not the lever and must not be "fixed" back: searches order by membership id
 because the pagination cursor is a membership id, and they were made to agree deliberately.
 
+The same trap wore a different coat on "find posts by member" (`/modtools/messages`
+`subaction=searchmemb`). That one scanned the community's posts newest-first, testing each
+poster's name against the term, and stopped once it had a page of matches. It never had a
+page: a moderator looking for one person names somebody with fewer posts in the community
+than the page size, so the scan ran to the end of the community every time, joining each
+approved row to `messages`, `users` and `users_emails` on the way. On a community of 47k
+approved rows that was 14-20s whether the term matched a recent poster or nobody, so every
+member search there hit `MAX_EXECUTION_TIME` and answered 500 - 16 a day - and the query's
+`SELECT DISTINCT` looked like the culprit while merely making it worse. The fix is v1's
+shape: find the matching members first (driven from the group index, as above), then their
+posts through the `fromuser` index. Any "search for a person, newest-first, stop when the
+page is full" plan over a big table has this problem; the person is rare by construction.
+
 ## Queued per group, addressed per person
 
 Push notifications are queued **per group**, but the payload is built **per user**: it is the

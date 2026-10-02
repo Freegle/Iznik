@@ -2,8 +2,21 @@
 
 namespace Tests\Feature\Images;
 
+use App\Services\ImageStore\ObjectStoreUnavailable;
+use Aws\Command;
+use Aws\S3\Exception\S3Exception;
+use GuzzleHttp\Psr7\Response;
+use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use League\Flysystem\Config;
+use League\Flysystem\FileAttributes;
+use League\Flysystem\Filesystem as Flysystem;
+use League\Flysystem\Local\LocalFilesystemAdapter;
+use League\Flysystem\UnableToDeleteFile;
+use League\Flysystem\UnableToRetrieveMetadata;
+use League\Flysystem\UnableToWriteFile;
 use Tests\TestCase;
 
 /**
@@ -88,9 +101,9 @@ class ImageStoreCommandsTest extends TestCase
 
     public function test_object_store_check_fails_when_anonymous_reads_are_refused(): void
     {
-        // A private bucket answers 403. nginx would fall through to the legacy
-        // hop and every NEW image would 404 with nothing in any log naming the
-        // cause, so this is the check that must be loud.
+        // A private bucket answers 403. nginx passes that straight back and
+        // every image not in the spool breaks with nothing in any log naming
+        // the cause, so this is the check that must be loud.
         Http::fake(['http://store.test/images/*' => Http::response('AccessDenied', 403)]);
 
         $this->artisan('images:object-store-check')
@@ -107,5 +120,79 @@ class ImageStoreCommandsTest extends TestCase
         $this->artisan('images:object-store-check')
             ->expectsOutputToContain('IMAGE_STORE_PUBLIC_URL')
             ->assertExitCode(1);
+    }
+    /**
+     * An images disk whose every request the bucket refuses with the given
+     * status, wrapped the way flysystem wraps the real S3 driver. 403 is what
+     * the bucket answered when its public read and key were both revoked.
+     * Built on the fake disk, so nothing touches the network.
+     */
+    private function bucketThatAnswers(int $status): void
+    {
+        $refused = fn (string $operation) => new S3Exception(
+            "{$operation} refused", new Command($operation), ['response' => new Response($status)]
+        );
+
+        $adapter = new class(Storage::disk('images')->path(''), $refused) extends LocalFilesystemAdapter {
+            public function __construct(string $root, private \Closure $refused)
+            {
+                parent::__construct($root);
+            }
+
+            public function fileSize(string $path): FileAttributes
+            {
+                throw UnableToRetrieveMetadata::fileSize($path, '', ($this->refused)('HeadObject'));
+            }
+
+            public function write(string $path, string $contents, Config $config): void
+            {
+                throw UnableToWriteFile::atLocation($path, '', ($this->refused)('PutObject'));
+            }
+
+            public function writeStream(string $path, $contents, Config $config): void
+            {
+                throw UnableToWriteFile::atLocation($path, '', ($this->refused)('PutObject'));
+            }
+
+            public function delete(string $path): void
+            {
+                throw UnableToDeleteFile::atLocation($path, '', ($this->refused)('DeleteObject'));
+            }
+        };
+
+        Storage::set('images', new FilesystemAdapter(new Flysystem($adapter), $adapter, ['throw' => true]));
+    }
+
+    public function test_push_spool_stops_and_reports_when_the_store_is_unavailable(): void
+    {
+        Exceptions::fake();
+        $this->spool('aaaa');
+        $this->spool('bbbb');
+        $this->bucketThatAnswers(403);
+
+        $this->artisan('images:push-spool')
+            ->expectsOutputToContain('unavailable')
+            ->assertExitCode(1);
+
+        Storage::disk('tusd-spool')->assertExists('aaaa');
+        Storage::disk('tusd-spool')->assertExists('bbbb');
+        Exceptions::assertReported(ObjectStoreUnavailable::class);
+    }
+
+    public function test_object_store_check_reports_to_sentry_only_when_asked(): void
+    {
+        Exceptions::fake();
+        $this->bucketThatAnswers(403);
+
+        // By hand, before the cutover, a failing bucket is the operator's to see.
+        $this->artisan('images:object-store-check')
+            ->expectsOutputToContain('403')
+            ->assertExitCode(1);
+        Exceptions::assertNothingReported();
+
+        // On the schedule it must reach Sentry.
+        $this->artisan('images:object-store-check --report')
+            ->assertExitCode(1);
+        Exceptions::assertReported(ObjectStoreUnavailable::class);
     }
 }

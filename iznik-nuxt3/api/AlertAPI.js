@@ -10,6 +10,8 @@ export default class AlertAPI extends BaseAPI {
   }
 
   record(data) {
-    return this.$postv2('/alert', data)
+    // Click-tracking for admin alerts. The Go handler lives under the modtools
+    // prefix; this posted to '/alert' (never registered) and silently 404ed.
+    return this.$postv2('/modtools/alert', data)
   }
 }

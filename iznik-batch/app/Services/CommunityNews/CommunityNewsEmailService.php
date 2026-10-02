@@ -269,11 +269,11 @@ class CommunityNewsEmailService
 
         $memberPoint = "ST_SRID(POINT(" .
             "CASE WHEN JSON_EXTRACT(users.settings, '$.mylocation.lat') IS NOT NULL" .
-            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL" .
+            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL AND users.tnuserid IS NULL" .
             "     THEN CAST(JSON_EXTRACT(users.settings, '$.mylocation.lng') AS DECIMAL(10,6))" .
             "     ELSE lastloc.lng END, " .
             "CASE WHEN JSON_EXTRACT(users.settings, '$.mylocation.lat') IS NOT NULL" .
-            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL" .
+            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL AND users.tnuserid IS NULL" .
             "     THEN CAST(JSON_EXTRACT(users.settings, '$.mylocation.lat') AS DECIMAL(10,6))" .
             "     ELSE lastloc.lat END" .
             "), {$srid})";

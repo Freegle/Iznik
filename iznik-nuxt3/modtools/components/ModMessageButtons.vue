@@ -29,7 +29,7 @@
     </div>
     <div v-else-if="pending || spam" class="d-inline">
       <ModMessageButton
-        v-if="!cantpost"
+        v-if="canApprove"
         :messageid="message.id"
         :groupid="groupid"
         variant="primary"
@@ -292,6 +292,18 @@ const pending = computed(() => {
   return hasCollection('Pending')
 })
 
+// The post's home community sent it back to pending, so a rippled-in copy cannot be approved
+// until they approve theirs. groups[].locked_by_home is the effective lock, so it is already 0
+// once the home copy is approved; the server refuses the approval as well.
+const lockedByHome = computed(() => {
+  const groups = message.value?.groups || []
+  const gid = props.groupid || groups[0]?.groupid
+  const g = groups.find((grp) => parseInt(grp.groupid) === parseInt(gid))
+  return parseInt(g?.locked_by_home) === 1
+})
+
+const canApprove = computed(() => !props.cantpost && !lockedByHome.value)
+
 const approved = computed(() => {
   return hasCollection('Approved')
 })
@@ -317,7 +329,7 @@ const validActions = computed(() => {
     }
 
     const ret = ['Reject', 'Leave', 'Delete', 'Edit', 'Hold Message']
-    if (!props.cantpost) {
+    if (canApprove.value) {
       ret.push('Approve')
     }
     return ret

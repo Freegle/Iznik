@@ -85,6 +85,18 @@ Schedule::command('images:push-spool')
     ->sendOutputTo(cronLog('images:push-spool'))
     ->runInBackground();
 
+// Proves the bucket is still writable and, above all, still PUBLICLY readable:
+// the read chain in frontend-nginx ends at the bucket, so a bucket that stops
+// answering (public read switched off, key revoked, service disabled) shows up
+// only as every image not in the spool going missing. --report raises
+// ObjectStoreUnavailable in Sentry.
+Schedule::command('images:object-store-check --report')
+    ->everyTenMinutes()
+    ->withoutOverlapping(10)
+    ->when(fn () => (bool) config('freegle.image_store.enabled', false))
+    ->sendOutputTo(cronLog('images:object-store-check'))
+    ->runInBackground();
+
 // Record the deployed Laravel commit so /api/version reports the live build
 // (the monitor-fsm "verified-live" reply gate compares it against merged PRs).
 // Lightweight (just a config upsert) — safe to run frequently; deploy:watch is
@@ -1867,6 +1879,22 @@ Schedule::command('partnerships:reminders')
     ->dailyAt('08:00')
     ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('partnerships:reminders'))
+    ->runInBackground();
+
+// And chase the ones that ended without a renewal, when the council should have paid for the
+// next year.
+Schedule::command('partnerships:reminders --ended --days=30 --type=ended')
+    ->dailyAt('08:05')
+    ->withoutOverlapping(30)
+    ->sendOutputTo(cronLog('partnerships:reminders-ended'))
+    ->runInBackground();
+
+// Keep each live deal's communities in line with the council boundary, so a community set up
+// inside it later is covered and shows the sponsor without anyone having to add it.
+Schedule::command('partnerships:sync-groups')
+    ->dailyAt('07:40')
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('partnerships:sync-groups'))
     ->runInBackground();
 
 // Nightly physical database backup. OFF unless BACKUP_DB_ENABLED is set; until then the

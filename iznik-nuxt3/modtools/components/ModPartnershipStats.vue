@@ -2,9 +2,10 @@
   <div>
     <h3>Council statistics</h3>
     <p class="text-muted">
-      The quarterly spreadsheet councils receive. It takes a few minutes to
-      build, so ask for it here and come back for the download - you don't have
-      to keep this page open.
+      The quarterly spreadsheet councils receive. It reports on the communities
+      the council's deal covers, as listed in its details above. It takes a few
+      minutes to build, so ask for it here and come back for the download - you
+      don't have to keep this page open.
     </p>
 
     <b-row class="align-items-end g-2 mb-2">

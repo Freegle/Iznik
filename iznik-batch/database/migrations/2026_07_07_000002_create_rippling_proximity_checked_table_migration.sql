@@ -1,7 +1,7 @@
 -- Idempotent production SQL for 2026_07_07_000002_create_rippling_proximity_checked_table.php
 --
--- Checked-once-forever negative-memoization marker for ripple:proximity-notes (Phase 0 of
--- plans/routing-performance-step-change.md). A row means the (msgid, groupid) rippled-in copy got
+-- Checked-once-forever negative-memoization marker for ripple:proximity-notes. A row means the
+-- (msgid, groupid) rippled-in copy got
 -- a definitive proximity answer (note written, not quicker, or unreachable within budget) and is
 -- never re-queried; failed routing calls are NOT marked and retry next run. The command purges
 -- rows older than 14 days (candidates only span 8 days of arrivals).

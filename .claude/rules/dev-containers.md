@@ -194,13 +194,29 @@ therefore what production executes, which makes ordinary git operations producti
 Check what production is running by grepping the file, not by recalling what you last did. The
 answer changes under you.
 
-## An image bucket that is not public breaks every photo older than a minute
+## A flat directory of millions of files must never be listed while something writes to it
+
+Uploads used to land on one flat NFS directory with two million entries. Listing it - `find /`,
+`du -x /`, `ls`, a shell tab-completion - held the directory lock for every `getdents()`, each
+a long chain of READDIRPLUS calls on NFS, and every tusd create, finish and delete queued
+behind it (2026-09-18: two orphaned `find /` processes put 1,036 tusd threads into D state and
+hung uploads for 25 minutes with the CPU idle). The share is gone, but the shape recurs: the
+local spool volume is small because the pusher drains it every minute, and the object store
+is listed through its API, never as a directory.
+
+- The repos are under `/var/www/FreegleDocker`; look there, never `find /`.
+- If a whole-filesystem scan is unavoidable, `find / -xdev`.
+
+## A bucket that is not public breaks every photo, and now says so
 
 The uploads vhost in `frontend-nginx.conf` answers a GET from the spool, then the object
-store. The pusher empties the spool within a minute or two, so a bucket whose public read
-was switched off answers 403 for nearly every photo on the site. Nothing in Laravel notices,
-because the pusher only writes, and writes still succeed with the key. weserv gets the 403
-and the delivery cache keeps it for five minutes.
+store, and that is the end of the chain: whatever the bucket answers reaches the resizer.
+On 2026-09-28 the bucket answered 401 to every key for an hour (public read and the access
+key revoked together, provider side) and every photo not in the spool was broken, with
+nothing alerting because the pusher and migrator only logged warnings per object. The
+scheduled `images:object-store-check --report` and `ObjectStoreUnavailable` in Sentry exist
+because of that hour. A 401 or 403 from the bucket is that incident again: check the
+bucket's public-read setting and the key in the provider console before anything else.
 
 `php artisan images:object-store-check` reads a probe back anonymously at the public URL
 and is the only thing that proves the bucket is public. Run it after any change to the
@@ -209,6 +225,18 @@ bucket or its keys (`docs/ops/runbooks/images-to-object-storage.md`).
 The same file is an envsubst template. Only `${IMAGE_STORE_*}` is substituted, because
 compose sets `NGINX_ENVSUBST_FILTER`; without the filter every nginx `$variable` is
 blanked and `nginx -t` fails, so that one at least is loud.
+
+## `sed -i` on a bind-mounted file edits nothing the container can see
+
+A single file bound into a container (`frontend-nginx.conf`, `firebase.json`, the SSH
+keys) is bound by inode. `sed -i`, and any editor that writes a new file and renames it
+over the old one, gives the host path a new inode; the container keeps the old one and
+reads the old content forever, with no error. After a live edit, compare
+`stat -c %i` on the host with `stat -c %i` inside the container. To get the new content in
+without a restart, `docker cp` the file to another path inside the container and use it
+from there (render, `nginx -t -c`, `nginx -s reload`); a `docker compose up -d` recreate
+picks up the new inode. `nginx -t -c` on a copy must sit in `/etc/nginx`, because the
+relative `mime.types` include resolves against the config's own directory.
 
 ## Branches, clones and the tools around them
 

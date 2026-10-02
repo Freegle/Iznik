@@ -654,7 +654,7 @@ return [
 
     // The image object store. Uploads keep going through tusd; what changes is
     // where a finished upload is kept. Off by default: the schedule only runs
-    // the pusher and the migrator when this is on, and it is turned on in
+    // the pusher and the bucket check when this is on, and it is turned on in
     // production once images:object-store-check has passed against the real
     // bucket (docs/ops/runbooks/images-to-object-storage.md).
     'image_store' => [
