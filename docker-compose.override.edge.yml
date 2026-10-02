@@ -98,11 +98,6 @@ services:
       # The base default is the dev objectstore, which would 502 here. Refuse
       # to start without the real public bucket URL (trailing slash) in .env.
       - IMAGE_STORE_PUBLIC_URL=${IMAGE_STORE_PUBLIC_URL:?set IMAGE_STORE_PUBLIC_URL in .env to the public base URL of the image bucket}
-    volumes:
-      # The legacy share, read-only, served as static files for any GET the
-      # spool and the bucket both 404. Drop this bind, the nginx hop and the
-      # batch-prod bind below once images:migrate-legacy --verify is clean.
-      - /srv/tusd-data:/images:ro
 
   delivery:
     deploy:
@@ -148,11 +143,9 @@ services:
       timeout: 3s
       retries: 5
       start_period: 15s
-    # No NFS bind any more: the base compose mounts the tusd-spool volume at
-    # /srv/tusd-data INSIDE the container (the host directory of the same name
-    # is the NFS mount - unrelated, and no longer given to tusd). The share
-    # stays mounted on the host for frontend-nginx and batch-prod below,
-    # read-only, until the legacy copy is verified complete.
+    # No NFS bind: the base compose mounts the tusd-spool volume at
+    # /srv/tusd-data INSIDE the container. The old NFS share of the same name
+    # on the host has been copied into the bucket and retired.
 
   # The dev stand-in for the bucket has no place on the prod host.
   objectstore:
@@ -161,12 +154,6 @@ services:
   objectstore-init:
     deploy:
       replicas: 0
-
-  batch-prod:
-    volumes:
-      # The legacy share, read-only, for images:migrate-legacy. It reads files by
-      # name only and never lists the directory.
-      - /srv/tusd-data:/images:ro
 
 volumes:
   # Adopt the host's existing unprefixed volumes (created by confident_curran)
