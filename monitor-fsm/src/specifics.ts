@@ -31,8 +31,9 @@ const LINK = /\bilovefreegle\.org\/\S+/i
 const UPLOAD = /!\[|upload:\/\//
 
 // A reference to one particular thing, with no way of telling which one.
-const VAGUE_MEMBER = /\b(?:a|one|another|some|this|that) (?:member|user|freegler|person)\b|\bsomeone\b|\bsomebody\b|\bone of (?:my|our) (?:members|users)\b/i
-const VAGUE_GROUP = /\b(?:a|one|another|some|this|that) (?:group|community)\b|\bone of (?:my|our) groups\b|\bthe group\b/i
+// Plurals count too: "for some users" is as unfindable as "a user" (topic 10200/1).
+const VAGUE_MEMBER = /\b(?:a|one|another|some|this|that|these|those) (?:members?|users?|freeglers?|people|persons?)\b|\bsomeone\b|\bsomebody\b|\bone of (?:my|our|the) (?:members|users|freeglers)\b/i
+const VAGUE_GROUP = /\b(?:a|one|another|some|this|that|these|those) (?:groups?|communit(?:y|ies))\b|\bone of (?:my|our|the) groups\b|\bthe group\b/i
 const VAGUE_POST = /\b(?:a|one|another|some|this|that|her|his|their) (?:post|message|ad|listing|offer|wanted|item)\b/i
 
 // "I saw some of them, but not which ones."
@@ -49,12 +50,20 @@ const VAGUE_POST = /\b(?:a|one|another|some|this|that|her|his|their) (?:post|mes
 // out twice" counts nothing and names no such thing, and must stay untouched.
 // The "of" is optional on purpose: "a few groups" counts just as much as "a few
 // of the groups", and requiring it let the first phrasing through.
-const COUNTED = /\b(?:a (?:couple|few|handful|number)(?: of)?|several|multiple|numerous|many|lots of|loads of|\d+)\b/i
+// Numbers written as words count the same as digits: "two members" (topic 10200/1).
+const COUNTED = /\b(?:a (?:couple|few|handful|number)(?: of)?|several|multiple|numerous|many|lots of|loads of|\d+|two|three|four|five|six|seven|eight|nine|ten|a dozen)\b/i
 const INSTANCE_NOUN = /\b(?:posts?|messages?|members?|users?|freeglers?|people|persons?|groups?|communities|ads?|listings?|offers?|items?|chats?|replies)\b/i
 // The report describes what somebody saw, so a picture of it would settle a lot.
 const VISUAL = /\b(?:looks?|looking|showing|shows|displayed?|appears?|blank|greyed|grayed|missing|button|screen|page|layout)\b/i
 
+// The reporter asking what would help is them saying they have not given it yet.
+const ASKS_WHAT_HELPS = /\bwhat (?:sort of |kind of )?(?:info(?:rmation)?|details?) (?:would|do you|could|might|should)\b|\bwhat (?:else )?(?:would|do) you need\b/i
+
+/** What to ask when a report names nothing else worth asking about. */
+export const CONTEXT_QUESTION = 'when it happened, and whether they were using the app or the website (and which phone or browser)'
+
 const ASK = {
+  context: CONTEXT_QUESTION,
   member: 'which member this was, with their email address or a link to their profile',
   group: 'which group this was on',
   post: 'a link to the post or message',
@@ -103,6 +112,7 @@ export function assessReportSpecifics(input: {
     if (aboutPeople && !identified && !missing.includes(ASK.member)) missing.push(ASK.member)
     if (!identified && !missing.includes(ASK.post)) missing.push(ASK.post)
   }
+  if (ASKS_WHAT_HELPS.test(text) && !identified) missing.push(ASK.context)
   if (VISUAL.test(text) && !anchors.includes('screenshot') && missing.length > 0) missing.push(ASK.screenshot)
 
   const capped = missing.slice(0, 3)

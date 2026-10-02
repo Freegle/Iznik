@@ -106,6 +106,38 @@ describe('assessReportSpecifics', () => {
     expect(r.missing.length).toBeLessThanOrEqual(3)
   })
 
+  // Topic 10200/1 named no member, chat or device, and the reporter asked what would
+  // help - yet it went straight to a fix (PR #1658, closed as a guess). Number words,
+  // plurals and "one of the members" all slipped past the patterns above.
+  it('asks for detail on a report that counts people in words and names none (10200/1)', () => {
+    const r = assessReportSpecifics({
+      text: 'We’ve now had two members in the last couple of days who appear to have a problem seeing messages which contain an address with a house number and post code. For some users, this seems to result in them not seeing the message. Is this a known problem? What sort of information would be useful to investigate further? P.S. one of the members just wrote back saying that they did eventually receive all the messages in one big batch.',
+    })
+    expect(r.isVague).toBe(true)
+    expect(r.missing.join(' ')).toMatch(/member/)
+  })
+
+  it.each([
+    'Two members say their posts have vanished.',
+    'For some users the chat will not load.',
+    'One of the members says the map is blank.',
+    'Three groups have stopped getting digests.',
+  ])('treats an unnamed instance as needing detail: %s', (text) => {
+    expect(assessReportSpecifics({ text }).isVague).toBe(true)
+  })
+
+  it('asks for detail when the reporter asks what information would help', () => {
+    const r = assessReportSpecifics({
+      text: 'Messages are not arriving for people. What information would help you look into it?',
+    })
+    expect(r.isVague).toBe(true)
+    expect(r.missing.join(' ')).toMatch(/when|app|browser/)
+  })
+
+  it('still leaves a reproducible report with a number word alone', () => {
+    expect(assessReportSpecifics({ text: 'The two buttons overlap on the iOS app.' }).isVague).toBe(false)
+  })
+
   it('reports which anchors it found', () => {
     const r = assessReportSpecifics({ text: 'See https://www.ilovefreegle.org/message/44120987', hasScreenshot: true })
     expect(r.anchors).toContain('link')

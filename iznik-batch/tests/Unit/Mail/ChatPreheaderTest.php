@@ -136,7 +136,7 @@ class ChatPreheaderTest extends TestCase
         ])->render();
 
         $this->assertStringContainsString(
-            '<mj-preview>Be careful - you have been talking to Suspicious Pete about: OFFER: Free laptop (London)</mj-preview>',
+            '<mj-preview>Be careful - you have been talking to &quot;Suspicious Pete&quot; about: OFFER: Free laptop (London)</mj-preview>',
             $html
         );
     }
@@ -153,7 +153,7 @@ class ChatPreheaderTest extends TestCase
         ])->render();
 
         $this->assertStringContainsString(
-            '<mj-preview>Be careful - you have been talking to Suspicious Pete</mj-preview>',
+            '<mj-preview>Be careful - you have been talking to &quot;Suspicious Pete&quot;</mj-preview>',
             $html
         );
         $this->assertStringNotContainsString('about:', $html);
