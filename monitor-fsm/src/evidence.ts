@@ -30,8 +30,9 @@ export function liveEvidenceSection(body: string): string | null {
   return (next === -1 ? rest : rest.slice(0, next)).trim()
 }
 
-// The section admitting that nothing was checked.
-const DISCLAIMER = /\b(?:did not|didn't|could not|couldn't|was not|wasn't|were not|not) (?:check|checked|query|queried|reproduce|reproduced|look|looked|verified|confirm|confirmed)\b|\bunavailable\b|\bungrounded\b|\bnot grounded\b|\binferred\b|^\s*(?:n\/a|none|-)\s*\.?\s*$/im
+// The section admitting that nothing was checked. The local dev Loki is not production,
+// so a result from it says nothing about what members saw.
+const DISCLAIMER = /\blocal-dev\b|\b(?:did not|didn't|could not|couldn't|was not|wasn't|were not|not) (?:check|checked|query|queried|reproduce|reproduced|look|looked|verified|confirm|confirmed)\b|\bunavailable\b|\bungrounded\b|\bnot grounded\b|\binferred\b|^\s*(?:n\/a|none|-)\s*\.?\s*$/im
 
 // Concrete artefacts. A query only counts with what it returned beside it.
 const SQL = /\bselect\b[\s\S]{1,600}?\bfrom\b/i

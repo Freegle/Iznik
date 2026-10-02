@@ -21,6 +21,29 @@ tunnels are down and a data-dependent diagnosis cannot be grounded):
 
 Both degrade gracefully to `{available: false}` when a tunnel is down.
 
+The parallel fix agents are separate processes, so they reach the same reads through
+`node dist/ground.js db "<SELECT>" "<purpose>"` and `node dist/ground.js loki '<LogQL>'`.
+
+### No live evidence, no PR
+
+Asking for grounding in a prompt was not enough: PRs #1654, #1657, #1658 and #1659 each had a test
+written from their own hypothesis and nothing from production, and two said so in their own
+description. `create_pr` now reads the description of every Discourse bug-fix PR and refuses it
+(`src/evidence.ts`, regular expressions, not a model) unless:
+
+- a `## Live evidence` section holds a concrete artefact from production - a SQL or LogQL query
+  with a `Result:` line, a Sentry issue with its count, or the reporter's screenshot - and does
+  not say it was not checked or cite the `local-dev` Loki;
+- the description contains no member's details: no email address, full postcode, phone number or
+  IP address. The repository is public, so evidence is the query and counts, never raw rows.
+
+A refused PR is closed (its description blanked first if it held personal details), the report is
+held as `needs-detail`, and the reporter is asked for what would let the next attempt look it up.
+Fix agents run `node dist/ground.js check-pr <file>` before opening a PR, so a refusal is rare. An
+agent that cannot ground its diagnosis because the report names nothing emits
+`OUTCOME=needs-detail` and opens no PR. Sentry and CI fixes are not gated: they have no Discourse
+bug.
+
 ## How it works
 
 ### The engine
@@ -116,6 +139,14 @@ a model. A report is held when it names **nothing** that can be looked up:
 | a link to ilovefreegle.org | the text |
 | a screenshot or attachment | triage, which sees the post before the HTML is stripped |
 | the name of a group | triage, which is told never to guess one |
+
+Unnamed instances count as vague however they are phrased: "a member", "some users", "one of the
+members", "two members" (number words as well as digits). A reporter asking what information would
+help is held too, and asked when it happened and on what device.
+
+Reports already in the backlog were classified before this check existed, and carry only triage's
+paraphrase, which tidies vagueness away. Before dispatching a batch, `work_router_decide` fetches
+the reporter's own words for each candidate and holds any that name nothing.
 
 The ask is only ever about what the report itself points at vaguely, so a general report ("chat
 notification emails are going out twice") is not held and not asked about. At most three things are

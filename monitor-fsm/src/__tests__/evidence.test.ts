@@ -20,6 +20,7 @@ describe('assessPrEvidence', () => {
     'n/a',
     'None.',
     'Inferred from the code.',
+    'Query: {app="freegle"} |= "donate"\nResult: 0 entries (source: local-dev).',
   ])('refuses a Live evidence section that says it was not checked: %s', (live) => {
     const r = assessPrEvidence(body(live))
     expect(r.ok).toBe(false)

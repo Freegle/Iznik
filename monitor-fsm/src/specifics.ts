@@ -59,8 +59,11 @@ const VISUAL = /\b(?:looks?|looking|showing|shows|displayed?|appears?|blank|grey
 // The reporter asking what would help is them saying they have not given it yet.
 const ASKS_WHAT_HELPS = /\bwhat (?:sort of |kind of )?(?:info(?:rmation)?|details?) (?:would|do you|could|might|should)\b|\bwhat (?:else )?(?:would|do) you need\b/i
 
+/** What to ask when a report names nothing else worth asking about. */
+export const CONTEXT_QUESTION = 'when it happened, and whether they were using the app or the website (and which phone or browser)'
+
 const ASK = {
-  context: 'when it happened, and whether they were using the app or the website (and which phone or browser)',
+  context: CONTEXT_QUESTION,
   member: 'which member this was, with their email address or a link to their profile',
   group: 'which group this was on',
   post: 'a link to the post or message',
