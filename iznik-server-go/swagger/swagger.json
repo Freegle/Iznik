@@ -4416,6 +4416,58 @@
     }
    }
   },
+  "/modtools/automod/feedback": {
+   "post": {
+    "description": "A moderator marks one step of an automated review decision as wrong",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Mark an automated review step wrong",
+    "operationId": "automodFeedback",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/modtools/automod/agreement": {
+   "get": {
+    "description": "How often moderators agree with automated review, for SysAdmin",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Automated review agreement report",
+    "operationId": "automodAgreement",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
   "/modtools/email/deferrals": {
    "get": {
     "description": "Support's view of a deferral episode: which providers have stopped accepting our mail, since when, and which members are affected. Support or Admin only.",
@@ -4866,6 +4918,32 @@
     }
    }
   },
+  "/modtools/messages/markchecked": {
+   "post": {
+    "description": "Marks the posts in the Check queue (live posts that published by themselves) as checked by the moderator",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Mark Check queue posts as checked",
+    "operationId": "markChecked",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
   "/modtools/modconfig": {
    "get": {
     "description": "Returns moderation configuration",
@@ -4948,6 +5026,32 @@
       "$ref": "#/responses/errorResponse"
      },
      "401": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/modtools/moderationstats": {
+   "get": {
+    "description": "Moderation analytics for the post-moderation trial (Admin/Support only)",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Get moderation analytics",
+    "operationId": "getModerationStats",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
       "$ref": "#/responses/errorResponse"
      }
     },
