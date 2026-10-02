@@ -13,6 +13,7 @@
       inline
       center
       :step="1"
+      rounded
       :min="min"
       :max="max"
       :size="size"
