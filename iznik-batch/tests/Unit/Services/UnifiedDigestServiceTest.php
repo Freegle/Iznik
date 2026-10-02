@@ -1800,6 +1800,34 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertNotContains($faraway->id, $ids, 'rippling post whose reach does not cover the member is excluded');
     }
 
+    public function test_daily_digest_includes_the_members_own_post_outside_its_reach(): void
+    {
+        // A rippling post is reach-gated by the recipient's location. The author's own post
+        // must not be: they posted it, and keptUnderCap() reserves it a slot only if it gets
+        // that far (Discourse 10029/9 - rippled-in posts present, the author's own absent).
+        $author = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($author, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->setMyLocation($author, 51.5, -0.1);
+
+        $own = $this->createTestMessage($author, $group, ['subject' => 'OFFER: own (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $own->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        // Reach does NOT cover the author's location (far to the east).
+        $this->seedReach($own->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
+
+        $tracker = UserDigest::create([
+            'userid' => $author->id,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'lastmsgid' => 0,
+        ]);
+
+        $ids = $this->service->getPostsForUser($author, $tracker, UnifiedDigestService::MODE_DAILY)
+            ->pluck('id')->all();
+
+        $this->assertContains($own->id, $ids, 'the author own post is in their daily digest');
+    }
+
     /**
      * Seed a post whose committed reach (and outer_bound, which seedReach derives as the
      * polygon's own envelope) EXCLUDE the ring member's location, with a rural overflow ring

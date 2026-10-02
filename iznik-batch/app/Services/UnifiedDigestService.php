@@ -2306,10 +2306,34 @@ class UnifiedDigestService
         // is well under the cap, so steady-state digests are unchanged.
         $posts = $window->limit(self::DIGEST_LOAD_CAP)->get();
 
+        // The member's OWN posts are a third arm: the author is shown their own post whatever
+        // the reach gate says about where they happen to be (their stored location need not be
+        // the post's). Left in the window arm an own post on a rippling group whose reach row
+        // does not cover the author was dropped, so keptUnderCap() never saw it to reserve a
+        // slot. Frozen (held) reach is still excluded, via the shared first exclusion.
+        // Bounded by the window's own cut-off when that was truncated, so the cursor, which
+        // advances to the newest post returned, never skips past posts the cut left behind.
+        $ownPosts = $baseQuery()
+            ->whereRaw($exclusions[0][0], $exclusions[0][1])
+            ->where('messages.fromuser', $user->id)
+            ->when(
+                $tracker->lastmsgdate,
+                fn ($q) => $q->where('messages_groups.arrival', '>', $tracker->lastmsgdate),
+                fn ($q) => $q->where('messages_groups.arrival', '>=', now()->subDay())
+            )
+            ->when(
+                $posts->count() >= self::DIGEST_LOAD_CAP,
+                fn ($q) => $q->where('messages_groups.arrival', '<=', $posts->max('arrival'))
+            )
+            ->limit(DigestStyle::DIGEST_POST_CAP)
+            ->get();
+
         // Loading the carried posts is NOT showing them first: newPostsFirst() sinks them below
         // the new posts before the cap is applied, so they only take the room the cap leaves.
         // It does mean each carried id costs a DIGEST_LOAD_CAP slot a new post could have had,
         // which is why carryoverFrom() bounds the list by age, seen-ness and size.
+        $posts = $ownPosts->concat($posts);
+
         $carryover = array_values(array_filter(array_map('intval', $tracker->carryover ?? [])));
         if ($carryover !== []) {
             $posts = $armFor()
