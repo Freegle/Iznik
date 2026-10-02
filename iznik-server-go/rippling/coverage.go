@@ -2,10 +2,10 @@ package rippling
 
 import (
 	"encoding/json"
-	"math"
 	"sort"
 	"time"
 
+	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 )
 
@@ -159,7 +159,7 @@ func EstimateCoverage(ticks []ScheduleTick, hazardHours []int, arrival time.Time
 	}
 
 	budget := ticks[len(ticks)-1].DriveMin
-	if haversineMiles(fromLat, fromLng, toLat, toLng) > budget*maxMilesPerMinute {
+	if utils.Haversine(fromLat, fromLng, toLat, toLng) > budget*maxMilesPerMinute {
 		return CoverageAt(ticks, hazardHours, arrival, 0, false)
 	}
 
@@ -169,15 +169,4 @@ func EstimateCoverage(ticks []ScheduleTick, hazardHours []int, arrival time.Time
 	}
 
 	return CoverageAt(ticks, hazardHours, arrival, dt.Minutes, dt.Reachable)
-}
-
-func haversineMiles(lat1, lng1, lat2, lng2 float64) float64 {
-	const r = 3959.0
-	rad := math.Pi / 180
-	dLat := (lat2 - lat1) * rad
-	dLng := (lng2 - lng1) * rad
-	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
-		math.Cos(lat1*rad)*math.Cos(lat2*rad)*math.Sin(dLng/2)*math.Sin(dLng/2)
-
-	return 2 * r * math.Asin(math.Sqrt(a))
 }
